@@ -99,7 +99,7 @@ module Krikri
     end
 
     def self.host_state_path : String
-      base = ENV["XDG_CACHE_HOME"]? || File.join(Path.home.to_s, ".cache")
+      base = ENV["XDG_CACHE_HOME"]? || File.join(ENV["HOME"]? || Path.home.to_s, ".cache")
       File.join(base, "krikri-playbook", "plugin-state.json")
     end
 

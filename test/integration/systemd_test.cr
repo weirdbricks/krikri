@@ -1,4 +1,60 @@
 require "../minitest_helper"
+require "file_utils"
+
+# Every check-mode prediction in the specs below is a decision made from
+# what the host's own `systemctl` answers: `show <unit>` for the unit's
+# properties and ActiveState, `is-enabled` for its boot state. On a host
+# with no service manager at all - a plain container, e.g. the GitHub CI
+# image, where `systemctl` is missing or answers "Failed to connect to
+# system scope bus" - those probes yield no ActiveState, and the module
+# correctly reports "Service is in unknown state" (real Ansible does the
+# same there). The specs are not about that failure path, so they get a
+# fake `systemctl` answering exactly like a healthy systemd host whose
+# only units are the not-found ones they ask about: identical on every
+# machine, and nothing outside the plugin's own child process is touched.
+private def systemd_run(params : Hash(String, String)) : JSON::Any
+  bin_dir = PluginSpecHelper.tmp_path("fake-systemctl-query-bin")
+  FileUtils.mkdir_p(bin_dir)
+  fake = File.join(bin_dir, "systemctl")
+  File.write(fake, <<-SH)
+    #!/bin/sh
+    # Skip any leading flags (--user/--global/--no-block/--force) and take
+    # the verb plus the unit name that follow.
+    verb=""
+    unit=""
+    for arg in "$@"; do
+      case "$arg" in
+        -*) continue;;
+      esac
+      if [ -z "$verb" ]; then verb="$arg"; else unit="$arg"; fi
+    done
+
+    case "$verb" in
+      show)
+        case "$*" in
+          *--property=ActiveState*)
+            echo "inactive"
+            exit 0;;
+        esac
+        # A not-found unit still yields a full property dump from a real
+        # systemd (LoadState=not-found, ActiveState=inactive).
+        echo "Id=$unit"
+        echo "Names=$unit"
+        echo "LoadState=not-found"
+        echo "ActiveState=inactive"
+        echo "SubState=dead"
+        echo "UnitFileState="
+        exit 0;;
+      is-enabled)
+        echo "not-found"
+        exit 1;;
+      *)
+        exit 0;;
+    esac
+  SH
+  File.chmod(fake, 0o755)
+  PluginSpecHelper.run("systemd", params, env: {"PATH" => "#{bin_dir}:#{ENV["PATH"]? || "/usr/bin:/bin"}"})
+end
 
 # The systemd plugin drives the real `systemctl` on the target, so — like the
 # `user`/`group` plugins — these tests exercise only the paths that can't
@@ -11,7 +67,7 @@ describe "systemd plugin" do
     # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
     # 'daemon_reexec']]. Replaces the previous ad-hoc guard's own
     # "Must specify at least one of ..." wording.
-    result = PluginSpecHelper.run("systemd", {} of String => String)
+    result = systemd_run({} of String => String)
     result["failed"].as_bool.must_equal(true)
     result["msg"].to_s.must_equal(
       "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
@@ -25,7 +81,7 @@ describe "systemd plugin" do
   # does exactly this (rounds 975062/978000: this used to fail outright with
   # the required_one_of message instead).
   it "treats a name-only task as a query-only call: succeeds unchanged with a populated status dict" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-unit.service",
       "_ansible_check_mode" => "true",
     })
@@ -40,7 +96,7 @@ describe "systemd plugin" do
   end
 
   it "treats a name-alias-only task (service:) the same way - query-only, unchanged" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "service"             => "nonexistent-krikri-playbook-unit.service",
       "_ansible_check_mode" => "true",
     })
@@ -53,21 +109,21 @@ describe "systemd plugin" do
     # required_by={state: name, enabled: name, masked: name} - real
     # Ansible's check_required_by wording, per-parameter. Replaces the
     # previous "Must specify 'name' when using ..." wording.
-    result = PluginSpecHelper.run("systemd", {"state" => "started"})
+    result = systemd_run({"state" => "started"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].to_s.must_equal("missing parameter(s) required by 'state': name")
   end
 
   {% for key, value in {"enabled" => "true", "masked" => "true"} %}
     it "fails when {{ key.id }} is given without a name, with real Ansible's required_by message" do
-      result = PluginSpecHelper.run("systemd", { {{ key.id.stringify }} => {{ value.id.stringify }} })
+      result = systemd_run({ {{ key.id.stringify }} => {{ value.id.stringify }} })
       result["failed"].as_bool.must_equal(true)
       result["msg"].to_s.must_equal("missing parameter(s) required by '{{ key.id }}': name")
     end
   {% end %}
 
   it "accepts force: with enabled: in check mode (flags only affect the real invocations)" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-unit.service",
       "enabled"             => "true",
       "force"               => "true",
@@ -79,7 +135,7 @@ describe "systemd plugin" do
   end
 
   it "accepts no_block: with state: started in check mode (flags only affect the real invocations)" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-unit.service",
       "state"               => "started",
       "no_block"            => "yes",
@@ -98,7 +154,7 @@ describe "systemd plugin" do
   # validation time, before the module runs. This plugin previously
   # silently accepted and ignored the unknown key and ran anyway.
   it "rejects an unsupported parameter with real Ansible's argument-spec message" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"   => "foo.service",
       "state"  => "started",
       "status" => "yes",
@@ -111,7 +167,7 @@ describe "systemd plugin" do
   end
 
   it "sorts multiple unsupported parameters alphabetically in real Ansible's argument-spec message" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"    => "foo.service",
       "state"   => "started",
       "status"  => "yes",
@@ -125,7 +181,7 @@ describe "systemd plugin" do
   end
 
   it "rejects an invalid state" do
-    result = PluginSpecHelper.run("systemd", {"name" => "foo.service", "state" => "frobnitz"})
+    result = systemd_run({"name" => "foo.service", "state" => "frobnitz"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].to_s.must_include("Invalid state")
   end
@@ -135,7 +191,7 @@ describe "systemd plugin" do
     # `systemd: {daemon_reload: true}` task: real Ansible's own module
     # has no notion of daemon-reload "changedness" and always reports
     # `ok:`, in check mode and for real.
-    result = PluginSpecHelper.run("systemd", {"daemon_reload" => "true", "_ansible_check_mode" => "true"})
+    result = systemd_run({"daemon_reload" => "true", "_ansible_check_mode" => "true"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
   end
@@ -148,13 +204,13 @@ describe "systemd plugin" do
     # and failed outright instead of running the reexec real
     # ansible-playbook performs (same "no changed signal" semantics as
     # daemon_reload above).
-    result = PluginSpecHelper.run("systemd", {"daemon_reexec" => "true", "_ansible_check_mode" => "true"})
+    result = systemd_run({"daemon_reexec" => "true", "_ansible_check_mode" => "true"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
   end
 
   it "predicts a start for a stopped unit in check mode" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-unit.service",
       "state"               => "started",
       "_ansible_check_mode" => "true",
@@ -180,7 +236,7 @@ describe "systemd plugin" do
   # other query, staying inside this file's own no-real-mutation
   # convention.
   it "accepts scope: user without rejecting the parameter" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-user-unit.service",
       "state"               => "started",
       "scope"               => "user",
@@ -203,7 +259,7 @@ describe "systemd plugin" do
   # on a nonexistent (hence inactive) unit must therefore predict a
   # START, not a reload.
   it "predicts a start (not a reload) for an inactive unit with state: reloaded in check mode" do
-    result = PluginSpecHelper.run("systemd", {
+    result = systemd_run({
       "name"                => "nonexistent-krikri-playbook-unit.service",
       "state"               => "reloaded",
       "_ansible_check_mode" => "true",
@@ -225,7 +281,7 @@ describe "systemd plugin" do
   # ansible-playbook ran the same task fine.
   describe "top-level result fields (real Ansible's systemd_service shape)" do
     it "exposes enabled as a top-level bool when the enabled param was given" do
-      result = PluginSpecHelper.run("systemd", {
+      result = systemd_run({
         "name"                => "nonexistent-krikri-playbook-unit.service",
         "enabled"             => "true",
         "_ansible_check_mode" => "true",
@@ -241,7 +297,7 @@ describe "systemd plugin" do
     end
 
     it "exposes the requested state as a top-level string when state was given" do
-      result = PluginSpecHelper.run("systemd", {
+      result = systemd_run({
         "name"                => "nonexistent-krikri-playbook-unit.service",
         "state"               => "started",
         "_ansible_check_mode" => "true",
@@ -257,7 +313,7 @@ describe "systemd plugin" do
       # for every requested state - the requested 'restarted'/'reloaded'
       # never survives verbatim
       {"restarted", "reloaded"}.each do |requested|
-        result = PluginSpecHelper.run("systemd", {
+        result = systemd_run({
           "name"                => "nonexistent-krikri-playbook-unit.service",
           "state"               => requested,
           "_ansible_check_mode" => "true",
@@ -268,7 +324,7 @@ describe "systemd plugin" do
     end
 
     it "omits both fields (and reports an empty status dict) for a daemon_reload-only task" do
-      result = PluginSpecHelper.run("systemd", {
+      result = systemd_run({
         "daemon_reload"       => "true",
         "_ansible_check_mode" => "true",
       })

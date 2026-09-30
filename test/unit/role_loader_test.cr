@@ -583,13 +583,14 @@ describe Krikri::RoleLoader do
     # (CI), create a minimal stand-in collection with the same FQCN and
     # shape and remove it afterward.
     # NOTE: the fixture home must be resolved EXACTLY like the loader
-    # resolves it - passwd database first (System::User.find_by?), then
-    # ENV["HOME"] - because the two can disagree: GitHub Actions container
+    # resolves it - ENV["HOME"] first (real's `os.path.expanduser` order,
+    # which the loader's own `expand_home_path` mirrors), then the passwd
+    # database - because the two can disagree: GitHub Actions container
     # jobs set HOME=/github/home while root's passwd home is /root, and a
     # fixture placed in the wrong one is silently never found. (And it
     # must not be File.expand_path("~", ...), which does NOT expand a
     # leading tilde in Crystal - the very bug this spec pins.)
-    fixture_home = System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ENV["HOME"]? || Path.home.to_s
+    fixture_home = ENV["HOME"]? || System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || Path.home.to_s
     collection_dir = File.join(fixture_home, ".ansible/collections/ansible_collections/devsec/hardening")
     role_dir = File.join(collection_dir, "roles", "mysql_hardening")
     fixture_created = false

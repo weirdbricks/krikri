@@ -618,7 +618,7 @@ module Krikri
       # `plugin_helpers/mysql_connection.cr#resolve_option_file_path`
       # (KNOWN_MISSING.md 0.9.346) and in `BasePlugin#expand_tilde`
       # (used by every plugin's path-type arg) - mirror the
-      # System::User-home-directory + ENV["HOME"] fallback here too.
+      # ENV["HOME"] + System::User-home-directory fallback here too.
       paths << expand_home_path("~/.ansible/collections")
       paths << "/usr/share/ansible/collections"
 
@@ -628,16 +628,25 @@ module Krikri
     # Same logic as `BasePlugin#expand_tilde` and
     # `plugin_helpers/mysql_connection.cr#resolve_option_file_path` -
     # a leading `~` resolves to the current user's home directory
-    # (via `System::User` first, falling back to `ENV["HOME"]`),
-    # otherwise the path is returned unchanged. Used for the
-    # `~/.ansible/collections` default in `collections_paths` above.
+    # (via `ENV["HOME"]` first, falling back to the `System::User`
+    # passwd entry), otherwise the path is returned unchanged. Used for
+    # the `~/.ansible/collections` default in `collections_paths` above.
+    #
+    # `ENV["HOME"]` MUST come first: real Ansible resolves `~` with
+    # `os.path.expanduser`, which consults `$HOME` before the passwd
+    # entry, and the two disagree whenever they are out of sync. This
+    # order was the reverse of the other two copies, so the role-search-
+    # path error message named the passwd entry's home (e.g. /root) while
+    # the plugin's own tilde expansion named `$HOME` - visible as a CI
+    # failure where the runner's `HOME=/github/home` disagrees with the
+    # `root` passwd entry.
     private def self.expand_home_path(path : String) : String
       return path unless path.starts_with?('~')
 
       rest = path[1..]
       username, _, remainder = rest.partition('/')
       home = if username.empty?
-               System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory) || ENV["HOME"]?
+               ENV["HOME"]? || System::User.find_by?(id: LibC.getuid.to_s).try(&.home_directory)
              else
                System::User.find_by?(name: username).try(&.home_directory)
              end

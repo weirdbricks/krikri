@@ -24,6 +24,16 @@ private def write_playbook(root : String, tasks_yaml : String) : String
   path
 end
 
+# The `~/.ansible/roles` entry of the "was not found in ..." message. Real
+# ansible resolves `~` through `os.path.expanduser`, which reads `$HOME`
+# first and only falls back to the passwd entry, so the expectation has to
+# be built the same way - `Path.home` alone disagrees on any host where the
+# two differ (the GitHub CI image runs as a uid whose passwd home is /root
+# while `HOME=/github/home`).
+private def ansible_home : String
+  ENV["HOME"]? || Path.home.to_s
+end
+
 describe "PlaybookParser include directive argument validation" do
   it "refuses include_role without name at parse time, with the task's Origin" do
     path = write_playbook(PluginSpecHelper.tmp_path("incdir_no_name"), <<-YAML)
@@ -212,7 +222,7 @@ describe "PlaybookParser include directive argument validation" do
       Krikri::PlaybookParser.parse(File.expand_path(path))
     end
     ex.message.to_s.must_equal(
-      "the role 'zzznope' was not found in #{File.expand_path(root)}/roles:#{Path.home}/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:#{File.expand_path(root)}")
+      "the role 'zzznope' was not found in #{File.expand_path(root)}/roles:#{ansible_home}/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles:#{File.expand_path(root)}")
     ex.render.not_nil!.must_include("Origin: #{File.expand_path(path)}:")
   end
 end
