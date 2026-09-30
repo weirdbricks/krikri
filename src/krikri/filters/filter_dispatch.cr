@@ -1220,7 +1220,11 @@ module Krikri
           # produces the same UUID. Ansible's own default namespace
           # ('361E6D51-FAEC-444A-9079-341386DA8E2E'), not the standard
           # DNS namespace real uuid5() implementations default to.
-          JSON::Any.new(FilterCore.to_uuid(as_string(value)))
+          # Positional or keyword (`to_uuid(x, ns)` / `to_uuid(x,
+          # namespace=ns)` - real filter_plugin's plain second parameter).
+          positional, kwargs = split_positional_and_kwargs(filter_args, ["namespace"])
+          namespace = as_string(kwargs["namespace"]? || positional[0]? || JSON::Any.new("361E6D51-FAEC-444A-9079-341386DA8E2E"))
+          JSON::Any.new(FilterCore.to_uuid(as_string(value), namespace))
         when "symmetric_difference"
           # symmetric_difference(other) - real Ansible filter: elements
           # in exactly one of value/other, not both.

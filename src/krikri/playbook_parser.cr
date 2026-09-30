@@ -1392,6 +1392,7 @@ module Krikri
       if pos = source_map.at?(task_source_prefix(source_prefix, index))
         task.source_line, task.source_col = pos
       end
+      warn_reserved_vars(task.vars.keys, task.source_file, task.source_line)
     end
 
     # Parse playbook from string
@@ -1763,6 +1764,7 @@ module Krikri
         vars_yaml.each do |key, value|
           play.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
         end
+        warn_reserved_vars(vars_yaml.keys.map(&.to_s), source_file, play_start_line(source_map, index))
       end
 
       # Parse tags
@@ -3108,6 +3110,81 @@ module Krikri
     # only its own module-specific parsing on top. tags: accepts a bare
     # string as well as a list (real Ansible's own parser does; only
     # include_vars's copy of this block used to honor that).
+    # ansible-core's reserved variable names (ansible/vars/reserved.py's
+    # get_reserved_names, live-verified from 2.19.11's own list - the
+    # `with_` PREFIX entry excluded: a vars: entry named `with_items`
+    # does not warn, every exact name does). A play/task `vars:` entry
+    # with one of these names emits "[WARNING]: Found variable using
+    # reserved name 'X'." with an Origin block naming the var key's own
+    # position - live-verified byte-for-byte vs 2.19.11 (play vars and
+    # task vars both warn, at definition/compile time).
+    RESERVED_VAR_NAMES = %w[
+      action always any_errors_fatal args async async_val become become_exe
+      become_flags become_method become_user block changed_when check_mode
+      collections connection cycler debugger delay delegate_facts delegate_to
+      dict diff environment fact_path failed_when force_handlers gather_facts
+      gather_timeout handlers hosts ignore_errors ignore_unreachable joiner
+      lipsum local_action lookup loop loop_control loop_with
+      max_fail_percentage module_defaults name namespace no_log notify now
+      omit order poll port post_tasks pre_tasks q query range register
+      remote_user rescue retries roles run_once serial strategy tags tasks
+      throttle timeout undef until vars vars_files vars_prompt when
+    ]
+
+    private def self.play_start_line(source_map : YamlSourceMap?, index : Int32) : Int32
+      source_map.try(&.at?(index.to_s)).try(&.[0]) || 1
+    end
+
+    private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32) : Nil
+      return unless sf = source_file
+      return unless File.file?(sf)
+      lines = File.read_lines(sf) rescue return
+      keys.each do |key|
+        next unless RESERVED_VAR_NAMES.includes?(key)
+        found = locate_reserved_key(lines, key, from_line)
+        next unless found
+        STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
+        STDERR.puts reserved_origin_block(sf, lines, found[0], found[1])
+        STDERR.puts
+      end
+    end
+
+    # The var key's own line: the first `key:` after *from_line* (1-based),
+    # stopping at the next task/section entry ("- " at column 0-ish) so a
+    # later, unrelated same-named var never steals the position.
+    private def self.locate_reserved_key(lines : Array(String), key : String, from_line : Int32) : Tuple(Int32, Int32)?
+      needle = /^(\s*)#{Regex.escape(key)}:\s*(\S|$)/
+      ((from_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        break if idx > (from_line - 1) && line.strip.empty? == false && line.strip.starts_with?("- ") && line.size - line.lstrip.size < 4
+        if (m = line.match(needle)) && (line.size - line.lstrip.size) >= 4
+          return {idx, m[1].size + 1}
+        end
+      end
+      nil
+    end
+
+    # Same ansible-core 2.19 SourceContext format the task-failure Origin
+    # blocks use (see executor_vars_context.cr's origin_context_block).
+    private def self.reserved_origin_block(path : String, lines : Array(String), line_num : Int, column : Int) : String
+      String.build do |io|
+        io << "Origin: " << File.expand_path(path) << ":" << line_num + 1 << ":" << column << "\n"
+        io << "\n"
+        label_width = (line_num + 1).to_s.size
+        max_src_line_len = 120 - label_width - 1
+        start_idx = Math.max(0, (line_num + 1 - 1) - 2)
+        ((start_idx + 1)..(line_num + 1)).each do |print_idx|
+          src = lines[print_idx - 1]
+          src = src.size > max_src_line_len ? src[0...max_src_line_len] + " ..." : src
+          gutter = print_idx.to_s.rjust(label_width)
+          io << gutter << " " << src << "\n"
+          if print_idx == line_num + 1
+            io << " " * gutter.size << " " << " " * (column - 1) << "^ column " << column << "\n"
+          end
+        end
+      end
+    end
+
     private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any)) : Nil
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }

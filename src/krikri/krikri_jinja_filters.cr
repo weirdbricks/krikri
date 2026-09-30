@@ -433,6 +433,15 @@ module Krikri
         JSON::Any.new(VariableSubstitutor::FilterCore.expanduser(value.to_s))
       end
 
+      # to_uuid's namespace: positional or keyword (`to_uuid(x, ns)` /
+      # `to_uuid(x, namespace=ns)` - real filter_plugin's plain second
+      # parameter). Registered AFTER the batch above so this kwargs-aware
+      # handler is the one the engine sees.
+      KrikriJinja.register_default_json_filter("to_uuid") do |value, args, kwargs|
+        namespace = kwargs["namespace"]? || args[0]? || JSON::Any.new("361E6D51-FAEC-444A-9079-341386DA8E2E")
+        JSON::Any.new(VariableSubstitutor::FilterCore.to_uuid(value.to_s, namespace.to_s))
+      end
+
       KrikriJinja.register_default_json_filter("human_readable") do |value, _args, kwargs|
         isbits = kwargs["isbits"]? ? py_truthy(kwargs["isbits"]) : false
         JSON::Any.new(VariableSubstitutor::FilterCore.format_human_readable(value.to_s.to_i64? || 0_i64, isbits))

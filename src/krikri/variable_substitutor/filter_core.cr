@@ -306,9 +306,14 @@ module Krikri
       end
 
       # to_uuid(namespace=ANSIBLE_NAMESPACE) - deterministic UUID5
-      # (SHA1-based) using Ansible's own default namespace.
-      def self.to_uuid(s : String) : String
-        UUID.v5(s, UUID.new("361E6D51-FAEC-444A-9079-341386DA8E2E")).to_s
+      # (SHA1-based) using Ansible's own default namespace. A caller-
+      # supplied namespace is parsed like Python's uuid.UUID() (any
+      # case, braces stripped) - invalid text is real Ansible's own
+      # "badly formed hexadecimal UUID string" ValueError.
+      def self.to_uuid(s : String, namespace : String = "361E6D51-FAEC-444A-9079-341386DA8E2E") : String
+        UUID.v5(s, UUID.new(namespace)).to_s
+      rescue ArgumentError
+        raise "badly formed hexadecimal UUID string: #{namespace}"
       end
 
       # b64encode/b64decode - standard base64 (not urlsafe). b64decode
