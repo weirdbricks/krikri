@@ -328,6 +328,15 @@ module Krikri
                        result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
                        result["_ansible_verbose_override"]?.try(&.as_bool) != true
 
+      # Real's callback prints a file diff BEFORE the task's own status
+      # line (live-verified against 2.19.11: diff block, blank, `changed:
+      # [host]`), so the diff prints here, ahead of every status branch
+      # below; the trailing blank line inside display_diff separates it
+      # from the status line.
+      if diff_mode && result["diff"]?
+        display_diff(result["diff"])
+      end
+
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
         puts "#{status}: [#{host_label}]#{suffix} => #{dump_pretty(cleaned)}"
@@ -400,11 +409,6 @@ module Krikri
         # fixed here so every ignored failure gets it, matching real
         # Ansible regardless of why the task failed.
         puts "...ignoring".colorize(:red) if ignore_errors
-      end
-
-      # Display diff if present and diff_mode enabled
-      if diff_mode && result["diff"]?
-        display_diff(result["diff"])
       end
     end
 
@@ -995,10 +999,12 @@ module Krikri
       end
     end
 
-    # Display diff (delegates to specific diff types)
+    # Display diff (delegates to specific diff types). Real's callback
+    # prints a file diff BEFORE the task's status line - the diff block,
+    # one blank line, then `changed: [host]` (live-verified 2.19.11) -
+    # and starts it immediately after the TASK banner with no leading
+    # blank of its own.
     def self.display_diff(diff : JSON::Any) : Nil
-      puts ""
-
       # Content diff (copy, template)
       if diff["before"]? && diff["after"]? && diff["before"].as_s? && diff["after"].as_s?
         display_content_diff(diff)

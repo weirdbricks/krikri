@@ -137,7 +137,10 @@ module Krikri
       backup_file, write_failure = persist(path, new_content, being_created, changed, check_mode)
       return write_failure if write_failure
 
-      diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
+      # Real lineinfile's own diff headers (live-verified vs 2.19.11):
+      # `before: <path> (content)` / `after: <path> (content)`, file
+      # created or modified alike.
+      diff = generate_unified_diff(original_content, new_content, "before: #{path} (content)", "after: #{path} (content)") if changed && @diff_mode
 
       # owner:/group:/mode: apply even when the line content itself was
       # already correct - real Ansible's lineinfile module runs the

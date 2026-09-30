@@ -238,12 +238,17 @@ module Krikri
       # Generate diff if in diff mode and content changed
       diff_data = nil
       if @diff_mode && changed
+        # Real template's diff headers (live-verified vs 2.19.11): the
+        # before side is `before: <dest>` when the dest file already
+        # exists and bare `before` when it does not; the after side is
+        # `after:` plus the staged copy of the source the module rendered
+        # (here: krikri's resolved source path).
         src_name = @params["_rendered_from_template"]? || "template"
         diff_data = generate_unified_diff(
           existing_content,
           content,
-          dest,
-          src_name
+          File.exists?(dest) ? "before: #{dest}" : "before",
+          "after: #{src_name}"
         )
       end
 

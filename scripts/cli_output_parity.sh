@@ -12,7 +12,24 @@
 # Default out-dir: /tmp/kpg-x/cli-out. Each case runs both engines in their
 # own fresh temp cwd and compares RAW stdout, RAW stderr and the exit code
 # byte-for-byte. Cases marked head-compare only compare the first N lines
-# of stdout (justification inline, per case). No masks otherwise.
+# of stdout (justification inline, per case). Three justified
+# normalizations, same class as output_parity.sh's masks:
+#
+#   * real's interpreter-discovery warning (Python-specific, krikri can
+#     never emit it - stripped from both sides, a no-op for krikri)
+#
+#   * the `hosts (N):` block in --list-hosts output: real lists those
+#     hosts in Python set/hash-randomized iteration order - two real runs
+#     already disagree byte-for-byte (verified) - so only the ORDER is
+#     normalized (sorted) on both sides; membership is still compared.
+#
+#   * the template diff's after-header: real stages the rendered source
+#     under a random ansible-tmp/ansible-local path that differs on every
+#     run by construction; krikri has no staging and prints its resolved
+#     template source path. Only that one path value is normalized
+#     (<STAGED>) on BOTH sides - an ansible-tmp/ansible-local path, or a
+#     .j2 source path; copy/lineinfile's deterministic dest after-headers
+#     keep being compared byte-for-byte.
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,6 +49,8 @@ mask() {
   local src="$1" dst="$2"
   sed -E \
     -e "/^\\[WARNING\\]: Host '[^']*' is using the discovered Python interpreter/d" \
+    -e "s/^\\+\\+\\+ after: .*ansible-(tmp|local)\\S*/+++ after: <STAGED>/" \
+    -e "s/^\\+\\+\\+ after: \\S+\\.j2$/+++ after: <STAGED>/" \
     "$src" | perl -0pe '
       s/(^ {4}hosts \(\d+\):\n)((?:^ {6}\S.*\n)+)/$1 . join(q{}, sort split(m{^}, $2))/gme;
     ' >"$dst"
@@ -56,6 +75,13 @@ run_case() {
   for bin in "$REAL" "$KRIKRI"; do
     [ "$bin" = "$REAL" ] && cwd="$real_cwd" || cwd="$krikri_cwd"
     [ "$bin" = "$REAL" ] && prefix="$base/real" || prefix="$base/krikri"
+    # Real resolves a relative file-module dest against the PLAYBOOK
+    # directory (krikri: the engine cwd), so a real execution run leaves
+    # its artifacts in the shared corpus dir and the next real run sees
+    # "nothing to do" where krikri reports a change. Reset the known
+    # artifacts before every single run so both engines always start
+    # from the same host-state (each engine's own cwd is already fresh).
+    rm -f "$CORPUS/cp_out.txt" "$CORPUS/tp_out.txt" "$CORPUS/ln_out.txt"
     (
       cd "$cwd" || exit 99
       timeout 20 env -u ANSIBLE_GATHERING -u ANSIBLE_CACHE_PLUGIN -u ANSIBLE_CACHE_PLUGIN_CONNECTION \
@@ -112,7 +138,7 @@ run_case skip-tags             0 --skip-tags deploy -i "$CORPUS/inventory.ini" "
 run_case limit                 0 -l web1 -i "$CORPUS/inventory.ini" "$CORPUS/host_pattern.yml" || fail=1
 run_case limit-no-match        0 -l nosuchhost -i "$CORPUS/inventory.ini" "$CORPUS/host_pattern.yml" || fail=1
 run_case start-at-task         0 --start-at-task 't2' -i "$CORPUS/inventory.ini" "$CORPUS/multi_play_tags.yml" || fail=1
-run_case forks                 0 --forks 3 -i "$CORPUS/inventory.ini" "$CORPUS/host_pattern.yml" || fail=1
+run_case forks                 0 --forks 3 -i "$CORPUS/inventory.ini" "$CORPUS/multi_play_tags.yml" || fail=1
 run_case extra-kv              0 -e extra_val=from_cli -i "$CORPUS/inventory.ini" "$CORPUS/vars_extra.yml" || fail=1
 run_case extra-file            0 -e @"$CORPUS/extra.yml" -i "$CORPUS/inventory.ini" "$CORPUS/vars_extra.yml" || fail=1
 run_case extra-json            0 -e '{"extra_val":"from_json"}' -i "$CORPUS/inventory.ini" "$CORPUS/vars_extra.yml" || fail=1

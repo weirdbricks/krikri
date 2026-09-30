@@ -357,11 +357,15 @@ module Krikri
       # Generate diff if in diff mode
       diff_data = nil
       if @diff_mode
+        # Real copy's diff headers (live-verified vs 2.19.11): the before
+        # side is `before: <dest>` when the dest file already exists and
+        # bare `before` when it does not; the after side is always
+        # `after: <dest>`.
         diff_data = generate_unified_diff(
           existing_content,
           content,
-          dest,
-          "content"
+          File.exists?(dest) ? "before: #{dest}" : "before",
+          "after: #{dest}"
         )
       end
 
