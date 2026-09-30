@@ -662,7 +662,16 @@ module Krikri
       # string that merely begins with those letters) is untouched.
       private def self.render_pure_mustache_value(rendered : String, stripped : String, substitutor : VarSubstitutor) : JSON::Any
         stripped_rendered = rendered.strip
-        if stripped_rendered.starts_with?('[') || stripped_rendered.starts_with?('{')
+        # A rendered output that STARTS WITH `{{` is always string TEXT
+        # containing braces (any real container render - JSON or Python
+        # repr - starts `{"`/`{`/`[`), never a container literal. Treating
+        # it as one re-evaluated the output's inner text as an expression,
+        # and the engine silently evaluated only the part before the first
+        # unquoted `}}` (`'{{' }} literal {{ '}}'` -> `{{`), truncating a
+        # perfectly good string render.
+        if stripped_rendered.starts_with?("{{")
+          JSON::Any.new(rendered)
+        elsif stripped_rendered.starts_with?('[') || stripped_rendered.starts_with?('{')
           # A container literal built from a Python-style dict/set
           # expression (`{ 'Virtual': v } if cond else { 'X': y }`,
           # jtyr.motd's own motd_info__default) finalizes to

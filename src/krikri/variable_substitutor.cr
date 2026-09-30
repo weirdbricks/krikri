@@ -1485,7 +1485,8 @@ module Krikri
         #   HostvarsContext.origin_unsafe?): registered results/set_facts
         #   are execution data and pass through verbatim.
         origin = VariableSubstitutor::HostvarsContext.origin_host_and_key(@vars, stripped)
-        re_templates = re_template_from_variable?(stripped)
+        re_value = re_template_resolved_value(stripped)
+        re_templates = !re_value.nil?
         unsafe_derived =
           if re_templates
             UnsafeValues.contains_unsafe?(rendered) ||
@@ -1511,8 +1512,24 @@ module Krikri
           # own host's scope (bounded by the shared Rerender depth guard).
           if host = origin.try(&.[0])
             VariableSubstitutor::HostvarsContext.substitutor_for(host, @vars).substitute(rendered, strict, output, native)
-          else
+          elsif re_value && rendered == VariableSubstitutor::VariableLookup.new(@vars).format_value(re_value)
+            # The span's evaluation PASSED THE RAW VALUE THROUGH (rendered
+            # output still equals the variable's own stored template text,
+            # formatted) - a path with no recursive re-templating of its
+            # own, so this re-pass IS the recursion (the Oefenweb.apt list
+            # case). When the span's evaluation already rendered - its
+            # output differs from the raw value - that path (the
+            # Crinja-first bare-reference conversion, prepare_var's
+            # rerender_nested_templates) recursed to full depth by
+            # construction, and a second pass would re-scan FINISHED
+            # output: real Ansible renders `{{ esc }}` where esc's own
+            # value is `{{ '{{' }} x {{ '}}' }}` to the literal text
+            # "{{ x }}" and never re-scans it, while a blind re-pass
+            # templated the brace text a second time ("{{ literal }}" ->
+            # "literal") or died on it.
             substitute_impl(rendered, strict, output, native)
+          else
+            rendered
           end
         else
           rendered
@@ -2409,9 +2426,15 @@ module Krikri
     end
 
     private def re_template_from_variable?(span : String) : Bool
+      !re_template_resolved_value(span).nil?
+    end
+
+    # The resolved raw value behind a re-templating span, or nil when the
+    # span shape/resolve rules in #re_template_from_variable? don't apply.
+    private def re_template_resolved_value(span : String) : JSON::Any?
       expr = span.strip
       expr = expr.split("|").first.strip if expr.includes?("|")
-      return false unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
+      return nil unless expr.matches?(/\A[A-Za-z_][A-Za-z0-9_.\[\]"']*\z/)
       # Resolved-value carve-out (0.9.1267 gap): a name published by
       # build_vars_context as execution-resolved (register:/set_fact:)
       # never counts as "raw value is itself a template" no matter
@@ -2420,7 +2443,7 @@ module Krikri
       # while the content check below re-scanned the stored brace
       # text as another template level and died on the inner
       # never-defined name.
-      return false if VarSubstitutor.resolved_var_name?(@host_name, expr.split(/[\.\[]/, 2)[0])
+      return nil if VarSubstitutor.resolved_var_name?(@host_name, expr.split(/[\.\[]/, 2)[0])
       if v = VariableSubstitutor::VariableLookup.new(@vars).resolve(expr)
         # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
         # where the var is a LIST of template strings (each element
@@ -2430,9 +2453,9 @@ module Krikri
         # never entered the re-pass, the list rendered with its
         # inner templates still literal, and apt tried to install
         # a package literally named "[{{ (ansible_facts['distribution'] =".
-        return contains_template?(v.raw)
+        return v if contains_template?(v.raw)
       end
-      false
+      nil
     end
 
     # Recursively scans a resolved raw value (JSON::Any::Type) for any
