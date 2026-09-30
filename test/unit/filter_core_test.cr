@@ -106,7 +106,7 @@ describe Krikri::VariableSubstitutor::FilterCore do
 
     it "password_hash produces a salted crypt(3) hash of the right scheme" do
       result = core.password_hash("s3cret", "sha512", "salt1234")
-      expect(str_starts_with?(result, "$6$salt1234$")).must_equal(true)
+      expect(str_starts_with?(result, "$6$rounds=656000$salt1234$")).must_equal(true)
       assert_raises_message(Exception, "unsupported hashtype") { core.password_hash("x", "bcrypt") }
     end
 

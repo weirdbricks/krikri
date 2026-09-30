@@ -182,7 +182,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result = engine.apply(s("AlicePass123!"), %(password_hash('sha512'))).as_s
     expect(str_starts_with?(result, "$6$")).must_equal(true)
     result.wont_include("AlicePass123!")
-    result.split('$').size.must_equal(4)
+    result.split('$').size.must_equal(5)
   end
 
   it "password_hash defaults to sha512 with no argument" do
@@ -192,7 +192,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
 
   it "password_hash honors an explicit salt for reproducible output" do
     result = engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s
-    result.must_equal("$6$fixedsalt$" + result.split('$').last)
+    # passlib's default rounds=656000 shows in the output (real 2.19.11)
+    result.must_equal("$6$rounds=656000$fixedsalt$" + result.split('$').last)
     engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s.must_equal(result)
   end
 
