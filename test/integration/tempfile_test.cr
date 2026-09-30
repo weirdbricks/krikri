@@ -98,10 +98,9 @@ describe "tempfile plugin" do
     File.delete(file)
   end
 
-  # AnsibleModule's type='path' runs unfrackpath, so a relative path is
-  # resolved against the module's own working directory (and normalized)
-  # before it ever reaches mkstemp - and it is that absolute form real
-  # quotes in the error.
+  # AnsibleModule's type='path' only expands ~ and $VARS, but real's
+  # tempfile applies os.path.abspath to `dir` for state: file - so that
+  # state's error quotes the resolved, normalized absolute path.
   it "resolves a relative path: against the working directory in the error" do
     dir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-rel")
     Dir.mkdir_p(dir)
@@ -133,5 +132,68 @@ describe "tempfile plugin" do
     result = PluginSpecHelper.run("tempfile", {"path" => "./sub/../no_such_dir_here/"}, {"playbook_dir" => basedir})
 
     result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.real_path(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
+  end
+
+  # Python's tempfile splits the two states here: mkstemp (state: file)
+  # does dir = os.path.abspath(dir) before it ever opens anything, while
+  # mkdtemp (state: directory) only does os.path.join(dir, name) - so a
+  # relative `path` reaches os.mkdir() exactly as the user wrote it and
+  # the OSError names that string, never an absolute form. Getting this
+  # wrong made krikri quote an absolute path real could never produce.
+  it "quotes the path verbatim, unresolved, for state: directory" do
+    basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-verbatim")
+    Dir.mkdir_p(basedir)
+
+    result = PluginSpecHelper.run("tempfile", {"path" => "./no_such_dir_here", "state" => "directory", "suffix" => ".txt"}, {"playbook_dir" => basedir})
+
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '\.\/no_such_dir_here\/ansible\.[a-z0-9_]{8}\.txt'$/)
+  end
+
+  it "keeps a relative numeric-looking path verbatim for state: directory" do
+    basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-verbatim-77")
+    Dir.mkdir_p(basedir)
+
+    result = PluginSpecHelper.run("tempfile", {"path" => "77", "state" => "directory", "prefix" => "tmp_", "suffix" => ".txt"}, {"playbook_dir" => basedir})
+
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '77\/tmp_[a-z0-9_]{8}\.txt'$/)
+  end
+
+  # os.path.join collapses the doubled separator a trailing slash would
+  # otherwise produce ('77/' + name is '77/name', not '77//name').
+  it "collapses a trailing slash in the state: directory error" do
+    basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-trailing")
+    Dir.mkdir_p(basedir)
+
+    result = PluginSpecHelper.run("tempfile", {"path" => "77/", "state" => "directory"}, {"playbook_dir" => basedir})
+
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '77\/ansible\.[a-z0-9_]{8}'$/)
+  end
+
+  # ENOENT vs ENOTDIR must keep the same split: the errno comes from the
+  # directory, the directory part of the message from the state's own
+  # Python helper.
+  it "quotes the path verbatim for state: directory errno 20 too" do
+    basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-verbatim-enotdir")
+    Dir.mkdir_p(basedir)
+    File.write(File.join(basedir, "plain-file"), "")
+
+    result = PluginSpecHelper.run("tempfile", {"path" => "./plain-file", "state" => "directory"}, {"playbook_dir" => basedir})
+
+    result["msg"].as_s.must_match(/^\[Errno 20\] Not a directory: '\.\/plain-file\/ansible\.[a-z0-9_]{8}'$/)
+  end
+
+  # Only the message is verbatim: the tempfile itself is still created
+  # relative to the module's working directory (playbook_dir under a
+  # local connection), and both states return an absolute path.
+  it "creates under a relative path: and returns an absolute path for state: directory" do
+    basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-rel-dir")
+    Dir.mkdir_p(File.join(basedir, "ex"))
+
+    result = PluginSpecHelper.run("tempfile", {"path" => "ex", "state" => "directory"}, {"playbook_dir" => basedir})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    path = result["path"].as_s
+    File.dirname(path).must_equal(File.realpath(File.join(basedir, "ex")))
+    Dir.delete(path)
   end
 end

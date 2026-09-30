@@ -38,7 +38,7 @@ module Krikri
 
       dir = target_dir
       if dir && (errno = dir_errno(dir))
-        return PluginResult.new(changed: false, failed: true, msg: mkstemp_failure_msg(dir, errno))
+        return PluginResult.new(changed: false, failed: true, msg: failure_msg(dir, errno, state))
       end
 
       result = remote_exec(mktemp_command(state, dir))
@@ -56,14 +56,25 @@ module Krikri
       state
     end
 
-    # AnsibleModule's own type='path' conversion, unfrackpath:
-    # os.path.normpath(os.path.abspath(os.path.expanduser(path))) - so a
-    # relative path resolves against the module's own working directory
-    # and `.`, `..` and duplicate/trailing slashes collapse. Real's error
-    # messages quote that absolute, normalized path, so it has to be the
-    # same string the module would have handed to mkstemp().
+    # AnsibleModule's own type='path' conversion is just
+    # os.path.expanduser(os.path.expandvars(value)) - it neither makes the
+    # path absolute nor normalizes it, so `77`, `./x` and `77/` all survive
+    # as written. That verbatim string is what mkdtemp hands to
+    # os.mkdir() and therefore what its failure message quotes.
+    private def raw_dir : String?
+      @params["path"]?.try { |pth| expand_tilde(pth) }
+    end
+
+    # Where the tempfile is actually created: a relative path resolves
+    # against the module's own working directory and `.`, `..` and
+    # duplicate/trailing slashes collapse, matching Python's
+    # os.path.abspath (which real's mkstemp applies to `dir`, and which
+    # both mkstemp and mkdtemp apply to the path they return - so the
+    # absolute form is also what the mktemp template must use to get an
+    # absolute path back). Only mkdtemp's failure message still shows
+    # the verbatim form - see #failure_msg.
     private def target_dir : String?
-      @params["path"]?.try { |pth| unfrackpath(expand_tilde(pth)) }
+      raw_dir.try { |pth| unfrackpath(pth) }
     end
 
     private def unfrackpath(path : String) : String
@@ -130,20 +141,40 @@ module Krikri
       Errno::ENOENT
     end
 
-    # Real's failure text is str(OSError) from the failed open, i.e.
-    # "[Errno 2] No such file or directory: '<dir>/<prefix><8 random
-    # chars><suffix>'" - the 8 characters are mkstemp's own random name
-    # (lowercase letters, digits and underscore, exactly Python's
+    # Real's failure text is str(OSError) from the failed open/mkdir, i.e.
+    # "[Errno 2] No such file or directory: '<path>/<prefix><8 random
+    # chars><suffix>'" - and the two states legitimately quote DIFFERENT
+    # directory forms. Python's tempfile does
+    #   mkstemp (state: file):      dir = _os.path.abspath(dir)  <- first
+    #   mkdtemp (state: directory): file = _os.path.join(dir, name)
+    # so only mkstemp resolves and normalizes `path` up front; mkdtemp
+    # joins the user's own string and its OSError names that string as
+    # written. The 8 characters are mkstemp's own random name (lowercase
+    # letters, digits and underscore, exactly Python's
     # tempfile._RandomNameSequence), which is why this reproduces the
     # shape and not the same bytes real would have picked.
-    private def mkstemp_failure_msg(dir : String, errno : Errno) : String
-      "[Errno #{errno.value}] #{errno.message}: '#{dir}/#{name_prefix}#{random_name}#{@params["suffix"]? || ""}'"
+    private def failure_msg(dir : String, errno : Errno, state : String) : String
+      name = "#{name_prefix}#{random_name}#{name_suffix}"
+      quoted = state == "directory" ? os_path_join(raw_dir || dir, name) : "#{dir}/#{name}"
+      "[Errno #{errno.value}] #{errno.message}: '#{quoted}'"
+    end
+
+    # os.path.join's two-argument form: a directory already ending in a
+    # separator absorbs the extra one, and an empty directory is ignored
+    # entirely (`os.path.join('', name)` is just `name`).
+    private def os_path_join(dir : String, name : String) : String
+      return name if dir.empty?
+      dir.ends_with?('/') ? "#{dir}#{name}" : "#{dir}/#{name}"
     end
 
     private def name_prefix : String
       prefix = @params["prefix"]?
       prefix = "ansible." if prefix.nil? || prefix.empty?
       prefix
+    end
+
+    private def name_suffix : String
+      @params["suffix"]? || ""
     end
 
     private def random_name : String
@@ -154,7 +185,7 @@ module Krikri
     end
 
     private def mktemp_command(state : String, dir : String?) : String
-      template = "#{name_prefix}XXXXXX#{@params["suffix"]? || ""}"
+      template = "#{name_prefix}XXXXXX#{name_suffix}"
       full_template = dir ? "#{dir.chomp('/')}/#{template}" : template
       mktemp_flag = state == "directory" ? "-d " : ""
 
