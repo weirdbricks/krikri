@@ -64,6 +64,18 @@ module Krikri
   # evaluation, not to the literal.
   NON_STRING_PARAM_PREFIX = "\u{E000}nonstring:"
 
+  # The MEMBER counterpart: the parser's comma-joined list branch marks a
+  # non-string scalar list member with THIS prefix instead, so a
+  # single-element list whose only member is a non-string (`parents: [7]`)
+  # stays distinguishable from the whole-value scalar literal (`parents:
+  # 7`) that real Ansible crashes on DIFFERENTLY ("object is not iterable"
+  # vs "object has no attribute 'replace'"). The demotion sites treat both
+  # prefixes identically - decode the JSON payload, emit the exact
+  # stringify_value text - so no plugin that never asks changes behavior;
+  # only the executor-side hooks mirroring real's member-iterating action
+  # plugins (group_by/add_host) tell them apart.
+  NON_STRING_MEMBER_PREFIX = "\u{E000}nonmember:"
+
   # Decodes a NON_STRING_PARAM_PREFIX-prefixed param value back into the
   # native YAML scalar (JSON::Any wrapping Int64/Float64/Bool), or nil when
   # the value is not a marked literal. Shared by BasePlugin's param parse
@@ -76,12 +88,24 @@ module Krikri
     nil
   end
 
+  # Same decode for a NON_STRING_MEMBER_PREFIX-prefixed list member (or a
+  # single-member list whose whole wire value carries the member prefix).
+  def self.non_string_member_scalar(value : String?) : JSON::Any?
+    return nil unless value && value.starts_with?(NON_STRING_MEMBER_PREFIX)
+    JSON.parse(value[NON_STRING_MEMBER_PREFIX.size..])
+  rescue
+    nil
+  end
+
   # The plain string form a marked literal demotes to on the plugin wire -
   # exactly what stringify_value produced before the marker existed, so
   # every plugin that never asks about the native type sees identical text.
+  # A marked nil (YAML `key:` with no value) demotes to "" like
+  # stringify_value's own Nil case.
   def self.non_string_param_text(native : JSON::Any) : String
     case native.raw
     when Int64, Int32, Float64, Bool then native.raw.to_s
+    when Nil                         then ""
     else                                  native.to_s
     end
   end
@@ -92,14 +116,36 @@ module Krikri
   # the text they always did. Returns the same hash object when nothing is
   # marked (the common case - no copying).
   def self.strip_non_string_param_markers(params : Hash(String, String)) : Hash(String, String)
-    return params unless params.each_value.any? { |v| v.starts_with?(NON_STRING_PARAM_PREFIX) }
+    return params unless params.each_value.any? do |v|
+      v.includes?(NON_STRING_PARAM_PREFIX) || v.includes?(NON_STRING_MEMBER_PREFIX)
+    end
     params.transform_values do |value|
-      if (native = non_string_scalar(value))
+      strip_non_string_markers_in_value(value)
+    end
+  end
+
+  # Demotes every non-string marker in ONE param value: a whole-value
+  # marked literal (either prefix at the very start, its JSON payload
+  # consuming the entire rest) back to its plain scalar text, and - since
+  # the parser's comma-joined list branch marks non-string MEMBERS in
+  # place - marked members inside a comma-joined list back to their own
+  # plain text. The comma-join invariant (a scalar JSON payload never
+  # contains a comma) keeps the split exact, and a marker occurrence whose
+  # payload does not parse as a complete JSON document can only sit in a
+  # member position ("\u{E000}nonmember:7,g1"), so the member path takes
+  # over.
+  def self.strip_non_string_markers_in_value(value : String) : String
+    return value unless value.includes?(NON_STRING_PARAM_PREFIX) || value.includes?(NON_STRING_MEMBER_PREFIX)
+    if (native = non_string_scalar(value)) || (native = non_string_member_scalar(value))
+      return non_string_param_text(native)
+    end
+    value.split(',').map do |part|
+      if (native = non_string_scalar(part)) || (native = non_string_member_scalar(part))
         non_string_param_text(native)
       else
-        value
+        part
       end
-    end
+    end.join(',')
   end
 
   # Python truthiness of a task-param value, native-type aware: a marked
@@ -114,6 +160,7 @@ module Krikri
       when Bool    then native.as_bool
       when Int64   then native.as_i64 != 0
       when Float64 then native.as_f != 0.0
+      when Nil     then false
       else              true
       end
     else
@@ -129,7 +176,26 @@ module Krikri
   def self.python_str_scalar(native : JSON::Any) : String
     case native.raw
     when Bool then native.as_bool ? "True" : "False"
+    when Nil  then "None"
     else           non_string_param_text(native)
+    end
+  end
+
+  # The Python type name real ansible-core 2.19 reports for ANY non-string
+  # value in an "'X' object has no attribute ..." crash - scalars (see
+  # #python_scalar_type_name) plus the container/None shapes a YAML list
+  # member or `name:` value can carry (live-verified vs 2.19.11: dict and
+  # list members report _AnsibleTaggedDict/_AnsibleTaggedList, a nil one
+  # plain 'NoneType').
+  def self.python_value_type_name(native : JSON::Any) : String
+    case native.raw
+    when Int64, Int32 then "_AnsibleTaggedInt"
+    when Float64      then "_AnsibleTaggedFloat"
+    when Bool         then "bool"
+    when Nil          then "NoneType"
+    when Hash         then "_AnsibleTaggedDict"
+    when Array        then "_AnsibleTaggedList"
+    else                   "str"
     end
   end
 
@@ -142,6 +208,7 @@ module Krikri
     when Int64, Int32 then "_AnsibleTaggedInt"
     when Float64      then "_AnsibleTaggedFloat"
     when Bool         then "bool"
+    when Nil          then "NoneType"
     else                   native.raw.class.to_s
     end
   end

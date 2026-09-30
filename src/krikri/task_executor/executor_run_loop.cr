@@ -1495,16 +1495,28 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
+      # Real's add_host: the name failure / groups failure (action stage)
+      # and the inventory.add_host name crash (result-processing stage,
+      # which aborts the whole run) - see add_host_literal_type_failure.
+      # Same hook as execute_task_once's own, for the batched path.
+      if violation = add_host_literal_type_failure(task, substituted_params)
+        return apply_changed_failed_when(task, violation, vars_context, host)
+      end
+
       if ActionPluginManager.has_action_plugin?(task.module_name)
         action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, host, resolve_task_check_mode(task, vars_context))
 
         unless action_result.success?
-          failed = JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
-          return apply_changed_failed_when(task, failed, vars_context, host)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 
         # debug:/assert:/fail:/set_fact:/pause: - the action plugin
@@ -1812,12 +1824,16 @@ module Krikri
         )
 
         unless action_result.success?
-          result = JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
-          return apply_changed_failed_when(task, result, vars_context, host)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 
         if final = action_result.final_result

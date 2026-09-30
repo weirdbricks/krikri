@@ -371,8 +371,20 @@ module Krikri
     # what execute_task_once returns for a skipped task.
     private def execute_group_by(params : Hash(String, String), host : Host) : JSON::Any
       key = params["key"]?
-      if key.nil? || key.empty?
-        return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: key"}.to_json)
+      if key.nil?
+        # Real group_by.py returns a failed RESULT for a missing key (no
+        # raise): the fatal dump's msg stays bare while the [ERROR] chain
+        # wraps it as "Task failed: Action failed: <msg>" - the same
+        # shape include_vars's own failed results render through (see
+        # ResultDisplay's _ansible_action_level + _ansible_error_detail
+        # handling).
+        return JSON.parse({
+          "changed"               => false,
+          "failed"                => true,
+          "msg"                   => "the 'key' param is required when using group_by",
+          "_ansible_action_level" => true,
+          "_ansible_error_detail" => "Action failed: the 'key' param is required when using group_by",
+        }.to_json)
       end
 
       inventory = @inventory
@@ -387,14 +399,42 @@ module Krikri
       # non-list/non-string, hits the
       # `[name.replace(' ', '-') for name in parent_groups]` comprehension
       # - "'<type>' object is not iterable". Falsy literals crash too
-      # (args.get returns the value whenever the key is present); the key
-      # crash precedes the parents crash (add_group is assigned first).
-      # Live-verified vs 2.19.11 for int/float/bool on both params.
+      # (args.get returns the value whenever the key is present), a None
+      # key (`key:` with no value - the parser wires literal nulls as
+      # NONE_SENTINEL - included); the key crash precedes the parents
+      # crash (add_group is assigned first).
+      if key == Krikri::NONE_SENTINEL
+        return literal_crash_result("'NoneType' object has no attribute 'replace'")
+      end
       if native = Krikri.non_string_scalar(key)
         return literal_attribute_crash_result(native, "replace")
       end
-      if (parents_raw = params["parents"]?) && (native = Krikri.non_string_scalar(parents_raw))
-        return literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object is not iterable")
+      if parents_raw = params["parents"]?
+        if parents_raw == Krikri::NONE_SENTINEL
+          return literal_crash_result("'NoneType' object is not iterable")
+        end
+        if native = Krikri.non_string_scalar(parents_raw)
+          return literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object is not iterable")
+        end
+        # A LIST parents arg whose MEMBERS aren't all strings crashes the
+        # same comprehension at the first non-string member - see
+        # list_member_attribute_crash. (The key-"" inventory abort comes
+        # only after this: real builds the whole result dict before the
+        # executor's add_group processing touches the inventory.)
+        if bare = list_member_attribute_crash(parents_raw, "replace")
+          return literal_crash_result(bare)
+        end
+      end
+
+      # An empty-string key passes the action's checks and aborts the
+      # whole run in the executor's add_group processing - real's
+      # inventory layer, rc 1, no recap, no further output (same stage
+      # and shape as add_host's empty-name abort below).
+      if key.empty?
+        STDERR.puts "[ERROR]: Invalid empty/false group name provided:".colorize(:red)
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
       end
 
       group_names = key.split(",").map(&.strip).reject(&.empty?)
@@ -442,8 +482,12 @@ module Krikri
       connect_timeout = params["connect_timeout"]?.try(&.to_i?) || 5
       pre_reboot_delay = params["pre_reboot_delay"]?.try(&.to_i?) || 2
       post_reboot_delay = params["post_reboot_delay"]?.try(&.to_i?) || 0
-      test_command = params["test_command"]?.try { |v| v.empty? ? nil : v } || "whoami"
-      reboot_command = params["reboot_command"]?.try { |v| v.empty? ? nil : v } || "systemctl reboot"
+      # A None test/reboot command (YAML `test_command:` with no value -
+      # the parser wires literal nulls as NONE_SENTINEL - or a whole-span
+      # null template) falls back to real's argspec defaults, same as an
+      # empty string always did.
+      test_command = params["test_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "whoami"
+      reboot_command = params["reboot_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "systemctl reboot"
 
       connection_host = PluginManager.get_connection_host(exec_host, vars_context)
       user = exec_host.user || "root"
@@ -848,7 +892,10 @@ module Krikri
       src = params["src"]?
       # A falsy non-string literal src (false/0/0.0 - the parser marks
       # those) is ignored by real's copy action plugin (`not source`),
-      # exactly like an absent or empty one.
+      # exactly like an absent or empty one - and so is a None one (a
+      # YAML `src:` with no value, wired as NONE_SENTINEL, same as a
+      # whole-span null template).
+      src = "" if src == Krikri::NONE_SENTINEL
       return params unless src && Krikri.python_param_truthy?(src)
 
       # Real Ansible's copy action plugin resolves a relative src against
@@ -1272,6 +1319,10 @@ module Krikri
       return params if params.has_key?("copy") && !ansible_boolean_param?(params["copy"]?)
 
       src = params["src"]?
+      # A None src (`src:` with no value - NONE_SENTINEL, same as a
+      # whole-span null template) fails the module's own required-argument
+      # check downstream, exactly like the empty string always did.
+      src = "" if src == Krikri::NONE_SENTINEL
       return params if src.nil? || src.empty?
       # URL sources are downloaded by the plugin itself - never stage.
       return params if src.starts_with?("http://") || src.starts_with?("https://")
@@ -1605,8 +1656,11 @@ module Krikri
       src = params["src"]?
       # Real's check is Python truthiness (`source and content is not
       # None`): a falsy non-string literal src (false/0/0.0 - the parser
-      # marks those) is simply ignored and the content path runs.
-      return nil unless Krikri.python_param_truthy?(src)
+      # marks those) is simply ignored and the content path runs, and so
+      # is a None one (a YAML `src:` with no value - the parser wires
+      # literal nulls as NONE_SENTINEL, same as a whole-span null
+      # template).
+      return nil unless src && src != Krikri::NONE_SENTINEL && Krikri.python_param_truthy?(src)
       return nil unless params.has_key?("content")
       JSON.parse({"changed" => false, "failed" => true, "msg" => "src and content are mutually exclusive"}.to_json)
     end
@@ -1766,36 +1820,79 @@ module Krikri
     #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
     #   literal (0/0.0/false) is skipped by the action's `if groups:`
     #   truthiness check entirely.
-    # - name/hostname: the action itself never type-checks the name; the
-    #   crash fires later, in the executor's result processing
-    #   (inventory.add_host): a truthy non-string aborts the WHOLE run
-    #   with a bare stderr line - "Invalid host name supplied, expected a
-    #   string but got <class 'ansible.module_utils._internal._datatag
-    #   ._AnsibleTaggedInt'> for 5" - and a falsy one with "Invalid empty
-    #   host name provided: 0"; both rc 1, no recap, no further output.
+    # - name/hostname/host (real precedence, the FIRST PRESENT key wins -
+    #   args.get returns a present key's value even when it is None or
+    #   ""): a None value - the key absent everywhere, a YAML `name:`
+    #   with no value (the parser wires literal nulls as NONE_SENTINEL),
+    #   or a whole-span null template - fails the task inside the action
+    #   plugin with AnsibleActionFail "name, host or hostname needs to be
+    #   provided" BEFORE the groups handling, an un-prefixed fatal msg
+    #   plus the plain "Task failed: <msg>" chain (no "Module failed."
+    #   segment, no "Action failed." one either - a raised
+    #   AnsibleActionFail, unlike group_by's returned failed result). An
+    #   empty-STRING value passes the action's `is None` check and aborts
+    #   the whole run at inventory.add_host with "Invalid empty host name
+    #   provided:" (rc 1, no recap), exactly like the falsy non-string
+    #   literals ("Invalid empty host name provided: 0") and the truthy
+    #   non-string ones ("Invalid host name supplied, expected a string
+    #   but got <class 'ansible.module_utils._internal._datatag
+    #   ._AnsibleTaggedInt'> for 5") below.
+    # - groups/group/groupname (real precedence, first present wins): a
+    #   TRUTHY non-list/non-string fails the task inside the action
+    #   plugin with AnsibleActionFail "Groups must be specified as a
+    #   list." - an un-prefixed fatal msg plus a two-segment [ERROR]
+    #   block whose cause carries the failing param value's own Origin
+    #   (see emit_task_error_block's _ansible_fail_param branch). A falsy
+    #   literal (0/0.0/false) is skipped by the action's `if groups:`
+    #   truthiness check entirely. A LIST whose MEMBERS aren't all
+    #   strings crashes the member loop's `group_name.strip()` at the
+    #   first non-string member - see list_member_attribute_crash.
     #   The groups failure precedes the name crash (action stage before
-    #   result processing).
+    #   result processing), and the name failure precedes the groups
+    #   failure (real's name check is the first raise in the action).
     private def add_host_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.add_host" || task.module_name == "add_host"
 
-      {"groupname", "groups", "group"}.each do |group_key|
-        raw = params[group_key]? || next
-        next unless native = Krikri.non_string_scalar(raw)
-        next unless Krikri.python_param_truthy?(raw)
+      effective_name : String? = nil
+      {"name", "hostname", "host"}.each do |name_key|
+        if raw = params[name_key]?
+          effective_name = raw
+          break
+        end
+      end
+
+      if effective_name.nil? || effective_name == Krikri::NONE_SENTINEL
         return JSON.parse({
           "changed"               => false,
           "failed"                => true,
-          "msg"                   => "Groups must be specified as a list.",
+          "msg"                   => "name, host or hostname needs to be provided",
           "_ansible_action_level" => true,
-          "_ansible_error_detail" => "Groups must be specified as a list.",
-          "_ansible_fail_param"   => group_key,
         }.to_json)
       end
 
-      {"name", "hostname"}.each do |name_key|
-        raw = params[name_key]? || next
-        next unless native = Krikri.non_string_scalar(raw)
-        if Krikri.python_param_truthy?(raw)
+      {"groupname", "groups", "group"}.each do |group_key|
+        raw = params[group_key]? || next
+        if raw == Krikri::NONE_SENTINEL
+          next
+        end
+        if native = Krikri.non_string_scalar(raw)
+          next unless Krikri.python_param_truthy?(raw)
+          return JSON.parse({
+            "changed"               => false,
+            "failed"                => true,
+            "msg"                   => "Groups must be specified as a list.",
+            "_ansible_action_level" => true,
+            "_ansible_error_detail" => "Groups must be specified as a list.",
+            "_ansible_fail_param"   => group_key,
+          }.to_json)
+        end
+        if bare = list_member_attribute_crash(raw, "strip")
+          return literal_crash_result(bare)
+        end
+      end
+
+      if native = Krikri.non_string_scalar(effective_name)
+        if Krikri.python_param_truthy?(effective_name)
           STDERR.puts "[ERROR]: Invalid host name supplied, expected a string but got <class '#{Krikri.python_scalar_class_path(native)}'> for #{Krikri.python_str_scalar(native)}".colorize(:red)
         else
           STDERR.puts "[ERROR]: Invalid empty host name provided: #{Krikri.python_str_scalar(native)}".colorize(:red)
@@ -1806,6 +1903,48 @@ module Krikri
         STDOUT.flush
         STDERR.flush
         Process.exit(1)
+      end
+      if effective_name.empty?
+        # Real's message carries the name's Python str() after the colon
+        # only when there IS one - an empty string renders the bare colon
+        # with no trailing space (live-verified byte-for-byte vs 2.19.11).
+        STDERR.puts "[ERROR]: Invalid empty host name provided:".colorize(:red)
+        STDOUT.flush
+        STDERR.flush
+        Process.exit(1)
+      end
+      nil
+    end
+
+    # Real's group_by/add_host action plugins iterate a YAML list arg's
+    # members with plain string ops (group_by's
+    # `[name.replace(' ', '-') for name in parent_groups]`, add_host's
+    # `group_name.strip()`), so a non-string MEMBER crashes the action -
+    # "'<type>' object has no attribute '<attr>'" - at the FIRST such
+    # member in list order (live-verified vs 2.19.11 for
+    # int/float/bool/nil/dict/list members on both params). Members reach
+    # these hooks as either the parser's JSON array wire (dict members
+    # present - native member types preserved in the JSON itself) or its
+    # comma-joined wire with NON_STRING_MEMBER_PREFIX-marked non-string
+    # members. Returns the bare crash message, or nil when every member
+    # is a string (or the value is a plain string that merely looks like
+    # a list - the same JSON-decode ambiguity the add_host plugin's own
+    # parse_group_names already accepts).
+    private def list_member_attribute_crash(raw : String, attribute : String) : String?
+      if raw.starts_with?('[') && (parsed = (JSON.parse(raw) rescue nil)) && (items = parsed.as_a?)
+        items.each do |item|
+          unless item.as_s?
+            return "'#{Krikri.python_value_type_name(item)}' object has no attribute '#{attribute}'"
+          end
+        end
+        return nil
+      end
+      return nil unless raw.includes?(Krikri::NON_STRING_MEMBER_PREFIX)
+      raw.split(',').each do |part|
+        next if part.empty? || !part.starts_with?(Krikri::NON_STRING_MEMBER_PREFIX)
+        if native = Krikri.non_string_member_scalar(part)
+          return "'#{Krikri.python_value_type_name(native)}' object has no attribute '#{attribute}'"
+        end
       end
       nil
     end

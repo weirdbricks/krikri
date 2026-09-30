@@ -710,11 +710,16 @@ module Krikri
         )
 
         unless action_result.success?
-          return JSON.parse({
+          failed = {
             "changed" => false,
             "failed"  => true,
             "msg"     => action_result.error_message || "Action plugin failed",
-          }.to_json)
+          }
+          # An ACTION-level failure (a bare AnsibleActionFail raised by
+          # the plugin itself) renders without the "Module failed." chain
+          # segment - see ActionResult#action_level.
+          failed["_ansible_action_level"] = true if action_result.action_level?
+          return JSON.parse(failed.to_json)
         end
 
         if final = action_result.final_result

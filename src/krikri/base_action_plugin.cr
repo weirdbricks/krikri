@@ -63,9 +63,18 @@ module Krikri
     # params (template:'s own use).
     property final_result : JSON::Any?
 
+    # Set when the failure was raised by the controller-side ACTION
+    # plugin itself (a bare AnsibleActionFail): the [ERROR] block is the
+    # plain "Task failed: <msg>" chain with no "Module failed." middle
+    # segment and the fatal dump's msg stays un-prefixed, unlike a
+    # module-side failure. The executor's action-failure result builders
+    # turn this into the result's _ansible_action_level key (see
+    # ResultDisplay's own branch).
+    property? action_level : Bool
+
     def initialize(@success : Bool, @modified_params : Hash(String, String)? = nil,
                    @error_message : String? = nil, @changed : Bool = false,
-                   @final_result : JSON::Any? = nil)
+                   @final_result : JSON::Any? = nil, @action_level : Bool = false)
     end
 
     # Create success result
@@ -76,6 +85,14 @@ module Krikri
     # Create failure result
     def self.failure(error_message : String) : ActionResult
       new(success: false, error_message: error_message)
+    end
+
+    # Create a failure result raised by the ACTION plugin itself (a bare
+    # AnsibleActionFail - add_host's "name, host or hostname needs to be
+    # provided"): rendered action-level, not module-level (see
+    # #action_level).
+    def self.action_failure(error_message : String) : ActionResult
+      new(success: false, error_message: error_message, action_level: true)
     end
 
     # Create pass-through result (no modifications)

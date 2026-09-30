@@ -434,12 +434,21 @@ module Krikri
         finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
         return
       end
+      name_key, name_unhashable = include_vars_name_shape(task)
       unless task.include_vars_dir || task.include_vars_file
         unless @include_vars_null_warned
           STDERR.puts "[WARNING]: Invalid request to find a file that matches a \"null\" value"
           @include_vars_null_warned = true
         end
-        finish_include_vars_failure(task, host, "include_vars: null file")
+        # Real's scope assignment (`scope[self.return_results_as_name] =
+        # results`) happens AFTER _find_needle has already failed, so a
+        # truthy unhashable `name:` supersedes the null-file failure
+        # with the unhashable crash (see include_vars_name_shape).
+        if unhashable = name_unhashable
+          finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+        else
+          finish_include_vars_failure(task, host, "include_vars: null file")
+        end
         return
       end
 
@@ -580,8 +589,16 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
+          end
+          # Real's scope assignment crashes on a truthy unhashable `name:`
+          # after the per-item path lookup, superseding every file error
+          # (see include_vars_name_shape); the whole task fails at the
+          # first item whose path resolved.
+          if unhashable = name_unhashable
+            finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+            return
           end
           path = resolve_include_vars_path(task, candidate)
 
@@ -589,7 +606,7 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
 
@@ -599,14 +616,14 @@ module Krikri
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
             failed = true
-            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => JSON::Any.new({} of String => JSON::Any)} of String => JSON::Any)
+            item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
 
           store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-          if name = task.include_vars_name
-            store[name] = JSON::Any.new(loaded)
-          else
+          if store_key = include_vars_store_key(task, name_key)
+            store[store_key] = JSON::Any.new(loaded)
+          elsif name_key.nil?
             loaded.each { |key, value| store[key] = value }
           end
           @hv_generation += 1
@@ -614,7 +631,7 @@ module Krikri
 
           puts "ok: [#{host.connection_host}] => (item=#{item_label})".colorize(:green)
           executed = true
-          item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => JSON::Any.new(loaded)} of String => JSON::Any)
+          item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => include_vars_wrapped_facts(name_key, loaded)} of String => JSON::Any)
         end
 
         if register_name = task.register
@@ -729,6 +746,13 @@ module Krikri
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
       end
+      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # after _find_needle has run, superseding every file error (see
+      # include_vars_name_shape).
+      if unhashable = name_unhashable
+        finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
+        return
+      end
       path = resolve_include_vars_path(task, candidate)
 
       unless path
@@ -744,9 +768,9 @@ module Krikri
       end
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-      if name = task.include_vars_name
-        store[name] = JSON::Any.new(loaded)
-      else
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(loaded)
+      elsif name_key.nil?
         loaded.each { |key, value| store[key] = value }
       end
       @hv_generation += 1
@@ -754,13 +778,15 @@ module Krikri
       # A non-looped `include_vars: ... register: some_var` - same
       # register: gap as the looped branch above, just the plain
       # (non-`.results`) shape real Ansible's own include_vars module
-      # returns: `{ansible_facts: {...loaded...}, changed: false}`.
+      # returns: `{ansible_facts: {...loaded...}, changed: false}` -
+      # wrapped under the `name:` key when one is set (real's scope
+      # assignment).
       if register_name = task.register
         unless register_name.empty?
           @registered_vars[host.name][register_name] = JSON::Any.new({
             "changed"       => JSON::Any.new(false),
             "failed"        => JSON::Any.new(false),
-            "ansible_facts" => JSON::Any.new(loaded),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, loaded),
           } of String => JSON::Any)
           @hv_generation += 1
         end
@@ -802,6 +828,14 @@ module Krikri
         substitutor.substitute(raw_dir, strict: true).strip
       rescue ex : UndefinedVariableError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
+        return
+      end
+      name_key, name_unhashable = include_vars_name_shape(task)
+      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # after the directory checks, superseding every dir error (see
+      # include_vars_name_shape).
+      if unhashable = name_unhashable
+        finish_include_vars_arg_failure(task, host, "unhashable type: '#{unhashable}'")
         return
       end
 
@@ -869,9 +903,9 @@ module Krikri
       end
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-      if name = task.include_vars_name
-        store[name] = JSON::Any.new(combined)
-      else
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(combined)
+      elsif name_key.nil?
         combined.each { |key, value| store[key] = value }
       end
       @hv_generation += 1
@@ -881,7 +915,7 @@ module Krikri
           @registered_vars[host.name][register_name] = JSON::Any.new({
             "changed"       => JSON::Any.new(false),
             "failed"        => JSON::Any.new(false),
-            "ansible_facts" => JSON::Any.new(combined),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, combined),
           } of String => JSON::Any)
           @hv_generation += 1
         end
@@ -954,6 +988,72 @@ module Krikri
         return path if File.exists?(path)
       end
       nil
+    end
+
+    # Real include_vars.py's `scope[self.return_results_as_name] =
+    # results` runs whenever the `name:` value is Python-TRUTHY,
+    # regardless of whether the file load succeeded - so a missing file
+    # with `name: 27` still reports `ansible_facts: {"27": {}}`. The
+    # value's own type decides: a truthy scalar (string, int, float, bool
+    # true) wraps the results under its key - the JSON dump stringifies
+    # the key the way Python's JSON encoder does non-string dict keys
+    # (int 27 -> "27", true -> "true", 27.5 -> "27.5"); a falsy value
+    # (0/0.0/false/""/null/[]/{}) skips the wrap entirely; a truthy
+    # unhashable container (list/dict) raises TypeError at the dict-key
+    # assignment - "unhashable type: '_AnsibleTaggedList' /
+    # '_AnsibleTaggedDict'" - which aborts the action AFTER the file
+    # lookup but BEFORE any result dict exists, superseding every
+    # file/dir error while still losing to arg validation and to the
+    # args-templating failures. Returns {wrapped key or nil, unhashable
+    # type name or nil}; the `name:` value itself rides the parser's
+    # NON_STRING_PARAM_PREFIX marker for non-string literals (see
+    # parse_include_vars_task).
+    private def include_vars_name_shape(task : Task) : {String?, String?}
+      name = task.include_vars_name
+      return {nil, nil} unless name
+      if native = Krikri.non_string_scalar(name)
+        case raw = native.raw
+        when Bool         then raw ? {"true", nil} : {nil, nil}
+        when Int64        then raw != 0 ? {raw.to_s, nil} : {nil, nil}
+        when Float64      then raw != 0.0 ? {raw.to_s, nil} : {nil, nil}
+        when Nil          then {nil, nil}
+        when Array        then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedList"}
+        when Hash         then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedDict"}
+        else                   {nil, nil}
+        end
+      else
+        name.empty? ? {nil, nil} : {name, nil}
+      end
+    end
+
+    # The ansible_facts dict an include_vars result carries: the loaded
+    # vars wrapped under the truthy `name:` key, or bare.
+    private def include_vars_wrapped_facts(name_key : String?, loaded : Hash(String, JSON::Any)) : JSON::Any
+      return JSON::Any.new(loaded) unless name_key
+      JSON::Any.new({name_key => JSON::Any.new(loaded)} of String => JSON::Any)
+    end
+
+    # The ansible_facts dict a FAILED include_vars result carries: the
+    # (empty) loaded dict, wrapped under the truthy `name:` key.
+    private def include_vars_failure_facts(name_key : String?) : JSON::Any
+      include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
+    end
+
+    # The variable-STORE key for the `name:` wrap - only a plain STRING
+    # name defines a variable krikri's string-keyed store can hold. A
+    # truthy non-string name (int/float/bool literal) stores the facts
+    # under the NATIVE key in real (Python dict key 27/True), which is
+    # unreachable through every string-keyed lookup (`lookup('vars',
+    # '27')` is undefined in real 2.19.11, live-verified) - so krikri
+    # records nothing rather than defining a string-keyed variable real
+    # does not have; the register and result ansible_facts still carry
+    # the wrapped key. A nil name_key (falsy or absent name) means real
+    # merges the file's own keys.
+    private def include_vars_store_key(task : Task, name_key : String?) : String?
+      return nil unless name_key
+      name = task.include_vars_name
+      return nil if name.nil? || name.empty? || !Krikri.non_string_scalar(name).nil?
+      name
     end
 
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
@@ -1047,8 +1147,9 @@ module Krikri
     # (see finish_include_vars_failure's history note).
     private def include_vars_suppressed_success(task : Task, host : Host) : Nil
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
-      if name = task.include_vars_name
-        store[name] = JSON::Any.new(Hash(String, JSON::Any).new)
+      name_key, _ = include_vars_name_shape(task)
+      if store_key = include_vars_store_key(task, name_key)
+        store[store_key] = JSON::Any.new(Hash(String, JSON::Any).new)
       end
       # Bump the context-cache generation whenever anything changed -
       # the included_vars store is generation-keyed, so a skipped bump
@@ -1059,7 +1160,7 @@ module Krikri
           @registered_vars[host.name][register_name] = JSON::Any.new({
             "changed"       => JSON::Any.new(false),
             "failed"        => JSON::Any.new(false),
-            "ansible_facts" => JSON::Any.new({} of String => JSON::Any),
+            "ansible_facts" => include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new),
           } of String => JSON::Any)
         end
       end
@@ -1083,14 +1184,21 @@ module Krikri
     # message: <detail>, msg: "Task failed: Action failed: Unknown error"} with
     # a bare "Task failed: Action failed: Unknown error." block; an undefined
     # variable in the args is the usual multi-level finalization failure.
+    # The ansible_facts dict carries the `name:` wrap (real's scope
+    # assignment happens regardless of the load outcome - see
+    # include_vars_name_shape). The unhashable-`name:` crash itself never
+    # reaches this display (every load-failure path pre-empts it before
+    # calling), and the undefined-var finalization path must keep its own
+    # shape - real's args templating fails before the action ever runs.
     private def display_include_vars_failure(task : Task, host : Host, message : String) : Nil
+      name_key, _ = include_vars_name_shape(task)
       h = Hash(String, JSON::Any).new
       if message == "include_vars: null file"
         # Real's _find_needle('vars', None) - the dataloader refuses a
         # null lookup value WITHOUT the quoted-name form the missing-
         # file case gets: "Could not find file on the Ansible
         # Controller." (live-verified vs 2.19.11).
-        h["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+        h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
         h["changed"] = JSON::Any.new(false)
         h["failed"] = JSON::Any.new(true)
@@ -1113,7 +1221,7 @@ module Krikri
                      "YAML parsing failed: #{raw}"
                    end
                  end
-        h["ansible_facts"] = JSON::Any.new({} of String => JSON::Any)
+        h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
         h["changed"] = JSON::Any.new(false)
         h["failed"] = JSON::Any.new(true)
@@ -2055,6 +2163,11 @@ module Krikri
     # this matters for bare (non-`{{ }}`) when: conditions.
     private def resolve_role_relative_src(task : Task, params : Hash(String, String)) : Hash(String, String)
       src = params["src"]?
+      # A None src (`src:` with no value - the parser wires literal nulls
+      # as NONE_SENTINEL, same as a whole-span null template) behaves like
+      # the empty string always did here - the module's own required-
+      # argument check fails the task downstream.
+      src = "" if src == Krikri::NONE_SENTINEL
       return params if src.nil? || src.starts_with?('/')
 
       # synchronize (ansible.posix) shares the copy:/assemble: files/-

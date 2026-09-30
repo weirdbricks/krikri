@@ -20,8 +20,17 @@ module Krikri
   # host), delegate_to: against a dynamically-added host, and inventory
   # plugins re-running over the mutated inventory.
   class AddHostActionPlugin < ActionPlugin
-    NAME_PARAMS  = {"name", "hostname"}
-    GROUP_PARAMS = {"groups", "group"}
+    # Real precedence (add_host.py's args.get chains): the host name is
+    # the FIRST PRESENT of name/hostname/host; the group source the first
+    # present of groupname/groups/group. `host` and `group` are NOT in
+    # real's special_args set, so they additionally land in the new
+    # host's vars.
+    NAME_PARAMS  = {"name", "hostname", "host"}
+    GROUP_PARAMS = {"groupname", "groups", "group"}
+
+    # Real's own special_args - the only params NOT copied into the new
+    # host's vars (add_host.py's host_vars loop).
+    SPECIAL_PARAMS = {"name", "hostname", "groupname", "groups"}
 
     def execute : ActionResult
       inventory = @inventory
@@ -29,14 +38,21 @@ module Krikri
         return ActionResult.failure("add_host: no inventory available in this context")
       end
 
+      # Real's action raises AnsibleActionFail BEFORE anything else when
+      # the name chain resolves to None (add_host.py: "name, host or
+      # hostname needs to be provided") - an ACTION-level failure, so no
+      # "Module failed." segment anywhere. The executor's
+      # add_host_literal_type_failure hook already catches the None
+      # values it can see (absent key aside); this is the absent-key
+      # fallback.
       name = find_param(NAME_PARAMS)
       unless name
-        return ActionResult.failure("add_host: requires a non-empty 'name' (or 'hostname') argument")
+        return ActionResult.action_failure("name, host or hostname needs to be provided")
       end
 
       host = inventory.hosts[name]? || Host.new(name)
       @params.each do |key, value|
-        next if NAME_PARAMS.includes?(key) || GROUP_PARAMS.includes?(key)
+        next if SPECIAL_PARAMS.includes?(key)
         host.vars[key] = JSON::Any.new(value)
       end
 

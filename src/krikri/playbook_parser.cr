@@ -2919,7 +2919,17 @@ module Krikri
         elsif file = hash["file"]?
           task.include_vars_file = file.as_s
         end
-        task.include_vars_name = hash["name"]?.try(&.as_s?)
+        task.include_vars_name = hash["name"]?.try do |name_val|
+          # The `name:` value becomes the FACTS KEY verbatim (real
+          # include_vars.py's `scope[self.return_results_as_name] =
+          # results`), so a non-string YAML literal keeps its native type
+          # across the string property the same way task params do
+          # (NON_STRING_PARAM_PREFIX) - the executor stringifies truthy
+          # scalars for the JSON dump and crashes on the unhashable
+          # containers exactly like real's dict-key assignment, and a
+          # falsy value (0/false/""/null/[]/{}) skips the wrap entirely.
+          name_val.as_s? || (Krikri::NON_STRING_PARAM_PREFIX + name_val.to_json)
+        end
       else
         task.include_vars_file = value.as_s
       end
@@ -3827,6 +3837,38 @@ module Krikri
             # indistinguishable - and each plugin's own leading-bracket
             # JSON branch decodes both to no elements.
             params[key.to_s] = "[]"
+          elsif (list = value.as_a?) && list.any? { |item| item.raw.is_a?(Hash) || item.raw.is_a?(Array) }
+            # A literal list carrying dict or nested-list members: real
+            # Ansible keeps every member natively typed (group_by's
+            # parents/add_host's groups crash on a non-string member with
+            # '_AnsibleTaggedDict'/'_AnsibleTaggedList'), and a
+            # comma-joined wire could neither carry the container shape
+            # nor keep the member types - so this is the JSON wire the
+            # dict-member case already took, now extended to nested-list
+            # members (previously flattened away by stringify_value's
+            # join).
+            params[key.to_s] = value.to_json
+          elsif (list = value.as_a?) && !list.any? { |item| item.raw.is_a?(Hash) || item.raw.is_a?(Array) }
+            # A literal non-empty YAML list without dict members - the
+            # generic comma-joined wire form every list param already
+            # travels as. Non-string SCALAR members (ints, floats, bools,
+            # nils) keep their YAML type under the MEMBER counterpart of
+            # the whole-value literal marker (NON_STRING_MEMBER_PREFIX -
+            # a separate prefix so a single-element `parents: [7]` stays
+            # distinguishable from the scalar `parents: 7` real crashes
+            # on differently); every demotion site (BasePlugin's param
+            # parse, the executor's strip_non_string_param_markers,
+            # action-plugin param prep) reduces them back to the exact
+            # member text stringify_value always produced, so no plugin
+            # that never asks changes behavior - while the executor-side
+            # hooks mirroring real's member-iterating action plugins
+            # (group_by's parents/`replace`, add_host's groups/`strip`)
+            # can still see the native member type and crash where real
+            # crashes. A nested-list member takes the JSON branch below
+            # (its JSON payload would carry commas and break the
+            # comma-join invariant) and keeps its native type there;
+            # dict members do the same.
+            params[key.to_s] = list.map { |item| marked_list_member(item) }.join(",")
           elsif key.to_s.in?({"mode", "directory_mode"}) && (raw = value.raw).is_a?(Int64 | Int32)
             # `mode: 0770` (unquoted, no string quotes - the way most
             # real playbooks write it) is genuinely ambiguous YAML: 1.1's
@@ -3866,6 +3908,17 @@ module Krikri
             # found immediately after the fix above, on the very next
             # task in the same real-host round.
             params[key.to_s] = "0" + raw.to_s(8)
+          elsif value.raw.is_a?(Nil)
+            # A literal YAML null param value (`key:` with no value) is
+            # Python None in real ansible-core - NOT an empty string. The
+            # strings-only param wire collapses the two, so the literal
+            # rides the same sentinel a whole-span null template already
+            # uses (NONE_SENTINEL): BasePlugin demotes it to "" while
+            # recording it as an explicit null param (exactly like the
+            # templated case), and the executor-side readers that mirror
+            # real's falsy/None checks treat it accordingly. Templated
+            # values are never touched here.
+            params[key.to_s] = NONE_SENTINEL
           elsif value.raw.is_a?(Int64 | Int32 | Float64 | Bool)
             # A non-string scalar literal (`dest: 89`, `follow: true`,
             # `ratio: 1.5`) keeps its YAML type across the strings-only
@@ -4639,6 +4692,18 @@ module Krikri
                "null"
              end
       Krikri::NATIVE_TYPED_PREFIX + json
+    end
+
+    # One member of a parser comma-joined list param: non-string scalars
+    # (ints/floats/bools/nils) ride the NON_STRING_PARAM_PREFIX marker so
+    # their YAML type survives the strings-only wire (see the list branch
+    # in #parse_module_params); everything else stringifies exactly as
+    # before.
+    private def self.marked_list_member(item : YAML::Any) : String
+      case item.raw
+      when Int64, Int32, Float64, Bool, Nil then Krikri::NON_STRING_MEMBER_PREFIX + item.to_json
+      else                                       stringify_value(item)
+      end
     end
 
     private def self.stringify_value(yaml : YAML::Any) : String

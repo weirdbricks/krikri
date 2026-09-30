@@ -267,6 +267,12 @@ module Krikri
             # for #non_string_param.
             @non_string_params[key] = native
             @params[key] = Krikri.non_string_param_text(native)
+          elsif (text = value.as_s?) && (text.includes?(Krikri::NON_STRING_PARAM_PREFIX) || text.includes?(Krikri::NON_STRING_MEMBER_PREFIX))
+            # Marked non-string MEMBERS inside a parser comma-joined list
+            # (see parse_module_params's list branch): demote them the
+            # same way, so every plugin's own split(',') keeps seeing the
+            # plain member text it always did.
+            @params[key] = Krikri.strip_non_string_markers_in_value(text)
           else
             @params[key] = value.to_s
           end

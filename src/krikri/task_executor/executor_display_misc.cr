@@ -365,6 +365,10 @@ module Krikri
     # inventory group parent/child nesting already has here.
     private def execute_set_stats(params : Hash(String, String), host : Host, vars_context : Hash(String, JSON::Any)) : JSON::Any
       data_json = params["data"]?
+      # A None data (`data:` with no value - the parser wires literal
+      # nulls as NONE_SENTINEL, same as a whole-span null template) is
+      # real's missing-required-argument shape, same as the empty string.
+      data_json = "" if data_json == Krikri::NONE_SENTINEL
       if data_json.nil? || data_json.empty?
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: data"}.to_json)
       end

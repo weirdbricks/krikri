@@ -409,3 +409,133 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.wont_include("PLAY RECAP")
   end
 end
+
+describe "non-string YAML literal list MEMBERS (group_by/add_host)" do
+  it "group_by crashes on the first non-string parents member like real's replace comprehension" do
+    output, _scratch = run_playbook(<<-YAML)
+          - group_by:
+              key: g1
+              parents: [a, 7]
+            ignore_errors: true
+          - group_by:
+              key: g2
+              parents: [a, true]
+            ignore_errors: true
+          - group_by:
+              key: g3
+              parents: [a, 1.5]
+            ignore_errors: true
+          - group_by:
+              key: g4
+              parents: [a, null]
+            ignore_errors: true
+          - group_by:
+              key: g5
+              parents: [{a: b}]
+            ignore_errors: true
+          - group_by:
+              key: g6
+              parents: [a, [b]]
+            ignore_errors: true
+          - group_by:
+              key: g7
+              parents: [7, g9]
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedFloat' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: 'NoneType' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedDict' object has no attribute 'replace'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedList' object has no attribute 'replace'"))
+    # The FIRST member crashes when it is itself non-string (list order).
+    output.scan(/'_AnsibleTaggedInt' object has no attribute 'replace'/).size.must_equal(4)
+  end
+
+  it "add_host crashes on the first non-string groups member like real's strip loop" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: h1
+              groups: [g1, 7]
+            ignore_errors: true
+          - add_host:
+              name: h2
+              groups: [g1, true]
+            ignore_errors: true
+          - add_host:
+              name: h3
+              groups: [{a: b}]
+            ignore_errors: true
+          - add_host:
+              name: h4
+              groups: [[x]]
+            ignore_errors: true
+          - add_host:
+              name: h5
+              groups: [7, g9]
+            ignore_errors: true
+    YAML
+
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'strip'"))
+    output.must_include(%("msg": "Task failed: 'bool' object has no attribute 'strip'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedDict' object has no attribute 'strip'"))
+    output.must_include(%("msg": "Task failed: '_AnsibleTaggedList' object has no attribute 'strip'"))
+    output.scan(/'_AnsibleTaggedInt' object has no attribute 'strip'/).size.must_equal(4)
+  end
+end
+
+describe "add_host name-chain failure shapes (missing/null/empty name)" do
+  it "fails a missing name with real's action-level AnsibleActionFail" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              naem: eigrxz
+              groups: [ilmuwy, zrdsgj]
+            ignore_errors: true
+          - debug:
+              msg: still here
+    YAML
+
+    output.must_include("[ERROR]: Task failed: name, host or hostname needs to be provided")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "name, host or hostname needs to be provided"}))
+    output.wont_include("Module failed")
+    output.must_include("still here")
+    output.must_match(/ignored=1/)
+  end
+
+  it "fails a name present as null before the hostname fallback, like real's args.get chain" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: null
+            ignore_errors: true
+          - add_host:
+              name: null
+              hostname: web2
+            ignore_errors: true
+    YAML
+
+    # A PRESENT name key wins real's args.get('name', ...) even when its
+    # value is None - the hostname fallback is never consulted
+    # (live-verified vs 2.19.11).
+    output.scan(/name, host or hostname needs to be provided/).size.must_equal(4)
+    output.must_match(/ignored=2/)
+  end
+
+  it "aborts the run on an empty-string name like real's inventory empty-host check" do
+    output, _scratch = run_playbook(<<-YAML)
+          - add_host:
+              name: ""
+            ignore_errors: true
+          - debug:
+              msg: never reached
+    YAML
+
+    # Byte-exact vs 2.19.11: the bare colon carries NO trailing space when
+    # the name is the empty string (a falsy non-None literal like `name:
+    # false` renders "Invalid empty host name provided: False").
+    output.must_include("[ERROR]: Invalid empty host name provided:")
+    output.wont_include("Invalid empty host name provided: ")
+    output.wont_include("never reached")
+    output.wont_include("PLAY RECAP")
+  end
+end
