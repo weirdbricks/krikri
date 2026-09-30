@@ -87,6 +87,13 @@ MASKS=(
   # alone. A custom prefix is not masked - it is not random, so both
   # engines must reproduce it verbatim.
   "s/(ansible\\.)[a-z0-9_]{8}([^'\"]*)(')/\\1<RND>\\2\\3/g"
+  # Sixth-and-a-half entry: a CHANGED copy:/template: result quotes the
+  # STAGED SOURCE file's path under "src" - real ansible stages the
+  # content under a random ansible-tmp-<epoch>-<pid>-<random>/.source.txt
+  # path that is different on every run by construction, so only that
+  # whole key/value pair is masked (krikri has no equivalent staged path
+  # to emit).
+  "s/\"src\": \"[^\"]*ansible-tmp[^\"]*\", //g"
   # Seventh entry: the same mkstemp name when the user gave a CUSTOM prefix
   # (the prefix and suffix are deterministic, only the 8 characters between
   # them are random). Anchored on an Errno message's single-quoted path.

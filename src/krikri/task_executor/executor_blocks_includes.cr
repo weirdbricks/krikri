@@ -591,7 +591,7 @@ module Krikri
           # codebase (which already goes through this same helper).
           item_label = item_display(item)
           begin
-            next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true)
+            next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true, item: item)
           rescue ex : WhenEvaluationError
             puts "failed: [#{host.connection_host}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
@@ -1655,7 +1655,7 @@ module Krikri
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
-          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return true
         end
@@ -2075,7 +2075,7 @@ module Krikri
         unless when_result
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
-          puts "skipping: [#{connection_host}]#{suffix}".colorize(:cyan)
+          puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return
         end

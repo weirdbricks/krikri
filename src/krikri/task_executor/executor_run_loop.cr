@@ -546,7 +546,7 @@ module Krikri
                       # used to produce at SSH time.
                       if when_skips_task?(task, vars_context, host, shared_sub)
                         @results[host.name]["skipped"] += 1
-                        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+                        puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
                         register_skip_result(task, host)
                         return
                       end
@@ -873,7 +873,7 @@ module Krikri
     # its elements. Only called when task.loop_items_needs_flatten? (set
     # at parse time only for a literal with_items: array, never for
     # loop:, which has no such behavior).
-    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false, item : JSON::Any? = nil) : Bool
       # Real Ansible evaluates a non-looped task's `when:` BEFORE it ever
       # attempts to resolve the task's module - so a `when:` that itself
       # raises (an undefined variable, a bad attribute access) is a fatal
@@ -931,7 +931,7 @@ module Krikri
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
         suffix = shown ? " => (item=#{shown}) " : ""
-        puts "skipping: [#{host.connection_host}]#{suffix}".colorize(:cyan)
+        puts "skipping: [#{host.connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
       end
       register_skip_result(task, host)
       false
@@ -1047,7 +1047,7 @@ module Krikri
     # a *prior* iteration's real "changed" result into a later iteration
     # whose own task was skipped, wrongly running the dependent task.
     private def print_batched_skip(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
-      puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+      puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
       @results[host.name]["skipped"] += 1
     end
 

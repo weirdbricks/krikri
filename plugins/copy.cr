@@ -307,11 +307,11 @@ module Krikri
             result = PluginResult.new(
               changed: attributes_fixed,
               failed: false,
-              msg: "File already exists with identical content",
               dest: dest,
               checksum: content_sha1
             )
             add_path_info(result, dest)
+            result.extra["path"] = JSON::Any.new(dest)
             return result
           end
         rescue
@@ -338,7 +338,6 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would write content to #{dest} (check mode)",
           diff: diff_data
         )
       end
@@ -375,7 +374,6 @@ module Krikri
       result = PluginResult.new(
         changed: changed,
         failed: false,
-        msg: "Content written to file",
         diff: diff_data,
         dest: dest,
         checksum: content_sha1,
@@ -407,7 +405,6 @@ module Krikri
           result = PluginResult.new(
             changed: false,
             failed: false,
-            msg: "File already identical (check mode)",
             dest: dest,
             checksum: @params["__precomputed_checksum"]?.presence || ""
           )
@@ -420,11 +417,11 @@ module Krikri
         result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
-          msg: "File already exists with identical content",
           dest: dest,
           checksum: @params["__precomputed_checksum"]? || ""
         )
         add_path_info(result, dest)
+        result.extra["path"] = JSON::Any.new(dest)
         return result
       end
 
@@ -490,7 +487,7 @@ module Krikri
       # algorithm; MD5 for the backwards-compat `md5sum:` field).
       begin
         src_sha1 = native_checksum(src, "sha1")
-        src_md5 = native_checksum(src, "md5")
+        _src_md5 = native_checksum(src, "md5")
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -548,7 +545,7 @@ module Krikri
         result = PluginResult.new(
           changed: changed,
           failed: false,
-          msg: changed ? "Would copy #{src} to #{dest} (check mode)" : "File already identical (check mode)"
+          msg: ""
         )
         # A would-CHANGE check result is real Ansible's copy ACTION
         # PLUGIN's own bare `changed: true` (no dest, no stat fields).
@@ -576,7 +573,6 @@ module Krikri
         result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
-          msg: "File already exists with identical content",
           dest: dest,
           checksum: src_sha1
         )
@@ -639,10 +635,8 @@ module Krikri
       result = PluginResult.new(
         changed: true,
         failed: false,
-        msg: "File copied successfully",
         dest: dest,
-        checksum: src_sha1,
-        md5sum: src_md5
+        checksum: src_sha1
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       add_path_info(result, dest)

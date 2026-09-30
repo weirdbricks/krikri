@@ -23,6 +23,60 @@ module Krikri
 
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
+    # Real ansible-playbook -v and above append a small JSON dump to every
+    # "skipping:" line. A when:-false skip carries the RAW when: condition
+    # under "false_condition" (a literal YAML false stays an unquoted
+    # `false`, anything written as a string keeps its quotes); a looped
+    # skip adds the item; a fully-skipped loop's trailing line carries
+    # {"msg": "All items skipped"} (live-verified vs 2.19.11). Default
+    # verbosity prints no dump at all.
+    def self.skip_line_suffix(when_text : String? = nil, item : JSON::Any? = nil, all_skipped : Bool = false) : String
+      return "" unless RunOptions.verbosity >= 1
+      dump = if all_skipped
+               {"changed" => JSON::Any.new(false), "msg" => JSON::Any.new("All items skipped")} of String => JSON::Any
+             else
+               d = {} of String => JSON::Any
+               if when_text
+                 d["false_condition"] = case when_text
+                                        when "false" then JSON::Any.new(false)
+                                        when "true"  then JSON::Any.new(true)
+                                        else              JSON::Any.new(when_text)
+                                        end
+               end
+               d["item"] = item if item
+               d
+             end
+      return "" if dump.empty?
+      " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
+    end
+
+    # Single-line sorted JSON dump at -v/-vv; real's pretty 4-space-indent
+    # shape from -vvv up. Shared by every skip suffix helper.
+    def self.dump_suffix(value : JSON::Any) : String
+      RunOptions.verbosity >= 3 ? dump_pretty(value) : python_json_dump(value)
+    end
+
+    # The -v suffix for a skipped result that carries a full module payload
+    # (check-mode skips, plugin-side skipped: results): real dumps the whole
+    # cleaned result - the "skipped"/"failed" flags and the "invocation"
+    # block are absent from the visible dump at -v/-vv (invocation only
+    # shows at -vvv; live-verified vs 2.19.11). A looped skip's dump
+    # additionally carries ansible_loop_var + the item, same as ok/changed
+    # loop dumps.
+    def self.skip_result_suffix(result : JSON::Any, item : JSON::Any? = nil, loop_var_name : String? = nil) : String
+      return "" unless RunOptions.verbosity >= 1
+      top = result.as_h
+      return "" if top.empty?
+      cleaned = RunOptions.verbosity >= 3 ? top.reject("skipped", "skipped_reason", "failed") : top.reject("skipped", "skipped_reason", "failed", "invocation", "warnings", "deprecations")
+      if item
+        var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
+        cleaned["ansible_loop_var"] = JSON::Any.new(var_name)
+        cleaned[var_name] = item
+      end
+      return "" if cleaned.empty?
+      " => #{ResultDisplay.dump_suffix(JSON::Any.new(cleaned))}"
+    end
+
     # Warning texts already printed this run (real Display.warning dedups).
     @@warned_texts = Set(String).new
 
@@ -116,8 +170,9 @@ module Krikri
       # Real's callback (CallbackBase._dump_results) drops these top-level
       # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
-      # unless -vvv (getent-style results carry one for `register`).
-      if (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
+      # unless -vvv (getent-style results carry one for `register`). At -vvv
+      # and above real keeps all of them inside the dumps.
+      if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
         result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
       end
 
@@ -273,6 +328,23 @@ module Krikri
       if verbose_always
         cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
         puts "#{status}: [#{host_label}]#{suffix} => #{dump_pretty(cleaned)}"
+      elsif Krikri::RunOptions.verbosity >= 1
+        # Real -v/-vv appends the whole (cleaned) result as a single-line
+        # sorted JSON dump to every ok/changed status line; at -vvv and
+        # above the dump flips to real's pretty 4-space-indented shape.
+        # A looped item's dump carries the merged loop keys
+        # (ansible_loop_var + the item under the loop var's name), same
+        # as the failed-item path below.
+        cleaned = clean_for_display(result)
+        if item_label && (item = loop_item)
+          h = cleaned.as_h.try(&.dup) || Hash(String, JSON::Any).new
+          var_name = loop_var_name.try { |name| !name.empty? ? name : nil } || "item"
+          h["ansible_loop_var"] = JSON::Any.new(var_name)
+          h[var_name] = item
+          cleaned = JSON::Any.new(h)
+        end
+        dump = Krikri::RunOptions.verbosity >= 3 ? dump_pretty(cleaned) : ResultDisplay.python_json_dump(cleaned)
+        puts "#{status}: [#{host_label}]#{suffix} => #{dump}"
       else
         puts "#{status}: [#{host_label}]#{suffix}"
       end

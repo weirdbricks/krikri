@@ -845,6 +845,20 @@ end
 if verbose
   puts cfg_path ? "Using #{cfg_path} as config file" : "No config file found; using defaults"
 end
+if verbosity_level >= 3
+  # Real -vvv prints one "Parsed <source> inventory source with <plugin>
+  # plugin" line per inventory source, right after the config-file line.
+  Krikri::RunOptions.inventory_sources.each do |source|
+    plugin_name = if source.includes?(",") && !File.exists?(source)
+                    "host_list"
+                  elsif [".yml", ".yaml", ".json"].includes?(File.extname(source))
+                    "yaml"
+                  else
+                    "ini"
+                  end
+    puts "Parsed #{source} inventory source with #{plugin_name} plugin"
+  end
+end
 if verbosity_level >= 2
   puts "Skipping callback 'minimal', as we already have a stdout callback."
   puts "Skipping callback 'oneline', as we already have a stdout callback."

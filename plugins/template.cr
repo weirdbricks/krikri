@@ -2,6 +2,7 @@
 
 require "json"
 require "digest/md5"
+require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
 
@@ -154,8 +155,10 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: encoding_error)
       end
 
-      # Calculate MD5 of the encoded content (see output_encoding above)
+      # Calculate MD5 of the encoded content (see output_encoding above);
+      # the RESULT's checksum is real Ansible's SHA1 of the dest content.
       content_md5 = Digest::MD5.hexdigest(content_bytes)
+      content_sha1 = Digest::SHA1.hexdigest(content_bytes)
 
       # Get existing content for diff and idempotency - read as raw
       # BYTES, not File.read: a file previously written in a non-UTF-8
@@ -238,14 +241,12 @@ module Krikri
           return PluginResult.new(
             changed: true,
             failed: false,
-            msg: "Would write rendered template to #{dest} (check mode)",
             diff: diff_data
           )
         else
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Template already rendered correctly (check mode)",
             diff: diff_data
           )
         end
@@ -269,13 +270,15 @@ module Krikri
             msg: "Failed to apply file attributes: #{ex.message}"
           )
         end
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
-          msg: "File already exists with identical content",
           dest: dest,
-          checksum: content_md5
+          checksum: content_sha1
         )
+        add_path_info(result, dest)
+        result.extra["path"] = JSON::Any.new(dest)
+        return result
       end
 
       # Content will change - create backup if requested
@@ -372,7 +375,7 @@ module Krikri
         # BasePlugin#create_staging_temp. The old write-first shape held
         # a rendered secret (vault-decrypted values interpolated in) at
         # 0644 & ~umask for the whole write + validate + move span.
-        create_staging_temp(temp_file, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         # Write the OUTPUT-ENCODED bytes (see output_encoding above) -
         # not the UTF-8 string. perm 0600 only matters if the temp
         # vanished between creation and here: recreate narrow, never
@@ -456,7 +459,7 @@ module Krikri
               # above for a not-yet-existing dest; an existing dest's
               # mode is untouched by opening it for writing.
               unless File.exists?(dest)
-                create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+                create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
               end
               File.write(dest, content_bytes, perm: 0o600)
             rescue ex
@@ -489,15 +492,17 @@ module Krikri
         )
       end
 
-      PluginResult.new(
+      result = PluginResult.new(
         changed: true,
         failed: false,
-        msg: "Template rendered successfully",
         diff: diff_data,
         dest: dest,
-        checksum: content_md5,
-        backup_file: backup_file.empty? ? nil : backup_file
+        checksum: content_sha1,
+        md5sum: content_md5
       )
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      add_path_info(result, dest)
+      result
     end
 
     # Create backup of existing file

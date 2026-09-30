@@ -1049,7 +1049,7 @@ module Krikri
                          # (real prints in iteration order).
                          if task.when_condition
                            passes = begin
-                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true)
+                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item)
                            rescue WhenEvaluationError
                              true # execute_task_once re-evaluates and turns the raise into a real failed result
                            end
@@ -1183,7 +1183,7 @@ module Krikri
 
         begin
           item_lbl = item_label_for(task, item, vars_context, host)
-          unless when_passes?(task, vars_context, host, item_label: item_lbl, shared: item_substitutor, defer_stats: true, defer_display: true)
+          unless when_passes?(task, vars_context, host, item_label: item_lbl, shared: item_substitutor, defer_stats: true, defer_display: true, item: item)
             # Defer the "skipping:" print to finish_looped_task so it lands
             # in iteration order with the executed items (real's ordering);
             # printing here (during batch-prep, before the shared round
@@ -1284,7 +1284,7 @@ module Krikri
         if (sk_lbl = skipped_labels[idx]?)
           connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
-          puts "skipping: [#{connection_host}] => (item=#{shown}) ".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{shown}) #{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
           next
         end
 
@@ -1350,7 +1350,7 @@ module Krikri
           # Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
           item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
-          puts "skipping: [#{connection_host}] => (item=#{item_shown}) ".colorize(:cyan)
+          puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
         else
           executed_count += 1
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
@@ -1412,7 +1412,14 @@ module Krikri
         # the bare line in BOTH shapes, so both share this same
         # executed_count == 0 condition.
         connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        # Real -v distinguishes the two shapes: an empty loop's trailing
+        # line stays bare, while a loop whose every item was skipped
+        # (by when: or by a check-mode/plugin-side skip) carries
+        # {"changed": false, "msg": "All items skipped"} (live-verified
+        # vs 2.19.11).
+        all_skipped = !skipped_labels.empty? ||
+                      item_results.any? { |res| res.try { |entry| entry["skipped"]?.try(&.as_bool) == true } }
+        puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(all_skipped: all_skipped)}".colorize(:cyan)
         @results[host.name]["skipped"] += 1
       else
         # Any item that failed at the SSH transport level makes the whole

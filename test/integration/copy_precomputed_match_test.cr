@@ -31,7 +31,8 @@ describe "copy plugin - __precomputed_match" do
 
     result["changed"].as_bool.must_equal(false)
     expect(result["failed"]?.try(&.as_bool)).wont_equal(true)
-    result["msg"].as_s.must_equal("File already exists with identical content")
+    # real copy reports no msg for an identical destination
+    result["msg"]?.must_be_nil
     result["checksum"]?.try(&.as_s).must_equal("deadbeef")
     File.read(dest).must_equal("already here\n")
   ensure

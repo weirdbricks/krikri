@@ -617,7 +617,7 @@ module Krikri
       # real Ansible correctly shows these as `skipping:` and counts
       # them under `skipped=`, not `ok=`.
       if result["skipped"]?.try(&.as_bool) == true
-        puts "skipping: [#{host.connection_host}]".colorize(:cyan)
+        puts "skipping: [#{host.connection_host}]#{Krikri::ResultDisplay.skip_result_suffix(result)}".colorize(:cyan)
         @results[host.name]["skipped"] += 1
         return
       end

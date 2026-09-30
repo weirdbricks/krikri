@@ -60,7 +60,7 @@ describe "file plugin" do
       result["msg"]?.must_be_nil
     end
 
-    it "still reports the update msg when a directory's attributes genuinely change" do
+    it "reports a change without any msg when a directory's attributes change (real's file module has none)" do
       path = tmp_path("changed_msg_dir")
       Dir.mkdir_p(path)
       File.chmod(path, 0o755)
@@ -68,7 +68,7 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "mode" => "0700"})
 
       result["changed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_equal("Directory attributes updated")
+      result["msg"]?.must_be_nil
     end
   end
 

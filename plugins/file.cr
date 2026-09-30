@@ -332,11 +332,13 @@ module Krikri
         end
 
         if @check_mode
-          return PluginResult.new(
+          result = PluginResult.new(
             changed: changed,
             failed: false,
-            msg: changed ? "Would update directory attributes (check mode)" : "Directory already correct (check mode)"
+            path: path
           )
+          add_path_info(result, path)
+          return result
         end
 
         if changed
@@ -353,7 +355,7 @@ module Krikri
         return PluginResult.new(
           changed: changed,
           failed: false,
-          msg: changed ? "Directory attributes updated" : "",
+          msg: "",
           path: path
         )
       end
@@ -362,7 +364,7 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would create directory (check mode)"
+          msg: ""
         )
       end
 
@@ -425,7 +427,6 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        msg: "Directory created",
         path: path
       )
     end
@@ -454,11 +455,13 @@ module Krikri
         changed = update_attributes_if_needed(path, is_directory: true)
 
         if @check_mode
-          return PluginResult.new(
+          result = PluginResult.new(
             changed: changed,
             failed: false,
-            msg: changed ? "Would update directory attributes (check mode)" : "Directory already correct (check mode)"
+            path: path
           )
+          add_path_info(result, path)
+          return result
         end
 
         if changed
@@ -470,7 +473,7 @@ module Krikri
           failed: false,
           # Same no-msg-on-unchanged shape as handle_directory's own
           # existing-directory branch (round900902 juju4.adduser).
-          msg: changed ? "Directory attributes updated" : "",
+          msg: "",
           path: path
         )
       end
@@ -493,7 +496,7 @@ module Krikri
         return PluginResult.new(
           changed: changed,
           failed: false,
-          msg: changed ? "Would update file attributes (check mode)" : "File already correct (check mode)",
+          msg: "",
           diff: diff_data
         )
       end
@@ -528,7 +531,7 @@ module Krikri
             return PluginResult.new(
               changed: changed,
               failed: false,
-              msg: "Link already correct (check mode)"
+              msg: ""
             )
           end
 
@@ -551,7 +554,7 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would create symbolic link (check mode)"
+          msg: ""
         )
       end
 
@@ -678,7 +681,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "Hard link already exists (check mode)"
+          msg: ""
         )
       end
 
@@ -710,7 +713,7 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would create hard link (check mode)"
+          msg: ""
         )
       end
 
@@ -876,7 +879,7 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Path already absent (check mode)",
+            msg: "",
             path: path
           )
         end
@@ -894,7 +897,7 @@ module Krikri
         result = PluginResult.new(
           changed: true,
           failed: false,
-          msg: "Would remove path (check mode)",
+
           path: path
         )
         # Check mode does NOT remove - the file still exists at module
@@ -925,7 +928,6 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        msg: "Path removed",
         path: path
       )
     end
