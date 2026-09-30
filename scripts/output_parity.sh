@@ -110,6 +110,9 @@ mask() {
     # random per real process (string hash randomization): sort the list on both
     # sides so only the order is normalized, never the membership.
     s/(Invalid options for [\w.]+: )([\w,]+)/$1.join(",", sort split(",", $2))/ge;
+    # With several wrong-typed string options real reports one of them chosen by
+    # random Python set order (same playbook alternates tasks_from/vars_from).
+    s/Expected a string for (?:defaults_from|handlers_from|tasks_from|vars_from) but got/Expected a string for <OPT> but got/g;
     s/,\n[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\]//g;
     s/^[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\],\n//mg;
   ' >"$dst"
