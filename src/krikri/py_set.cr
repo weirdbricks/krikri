@@ -8,14 +8,14 @@ module Krikri
   # load). String sets are hash-randomized per real process and cannot be
   # matched - callers must only use this for lists of plain integers.
   class PySet
-    LINEAR_PROBES =  9
-    PERTURB_SHIFT =  5
-    MINSIZE       =  8
+    LINEAR_PROBES = 9
+    PERTURB_SHIFT = 5
+    MINSIZE       = 8
     HASH_MOD      = (1_u64 << 61) - 1
     # setobject.c stores a deleted entry as key=<dummy>, hash=-1; no integer
     # hash can collide with it (int hashes are |n| mod 2**61-1, so they never
     # reach 2**64-1), which makes this a safe marker for a tombstone slot.
-    DUMMY_HASH    =  ~0_u64
+    DUMMY_HASH = ~0_u64
 
     @keys : Array(Int64?)
     @hashes : Array(UInt64)

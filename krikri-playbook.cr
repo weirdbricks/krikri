@@ -1178,4 +1178,3 @@ if (start_at = start_at_task) && start_at_pending
   puts %([ERROR]: No matching task "#{start_at}" found. Note: --start-at-task can only follow static includes.).colorize(:red)
   exit 0
 end
-

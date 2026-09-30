@@ -2146,8 +2146,8 @@ module Krikri
       # required-argument checks fail before it computes any checksum.)
       if !action_level_only &&
          ((task.module_name == "ansible.builtin.template" && !remote_src_param?(params)) ||
-           (task.module_name == "ansible.builtin.copy" &&
-             (params.has_key?("content") || !remote_src_param?(params))))
+         (task.module_name == "ansible.builtin.copy" &&
+         (params.has_key?("content") || !remote_src_param?(params))))
         if checksum = argspec_source_checksum(params)
           result["checksum"] = JSON::Any.new(checksum)
         end

@@ -160,11 +160,11 @@ module Krikri
     private def parse_int_arg(value : String, name : String) : Int64?
       if native = Krikri.non_string_scalar(value)
         case raw = native.raw
-        when Bool     then raw ? 1_i64 : 0_i64
-        when Int64    then raw
-        when Int32    then raw.to_i64
-        when Float64  then raw.to_i64
-        else                nil
+        when Bool    then raw ? 1_i64 : 0_i64
+        when Int64   then raw
+        when Int32   then raw.to_i64
+        when Float64 then raw.to_i64
+        else              nil
         end
       else
         f = value.to_f?

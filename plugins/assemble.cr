@@ -150,15 +150,15 @@ module Krikri
     private def remote_src_delegated? : Bool
       return false unless @params.has_key?("remote_src")
       truthy = if native = non_string_param("remote_src")
-        case native.raw
-        when Bool    then native.as_bool
-        when Int64   then native.as_i64 == 1
-        when Float64 then native.as_f == 1.0
-        else              false
-        end
-      else
-        %w[y yes on 1 true t].includes?(@params["remote_src"].downcase.strip)
-      end
+                 case native.raw
+                 when Bool    then native.as_bool
+                 when Int64   then native.as_i64 == 1
+                 when Float64 then native.as_f == 1.0
+                 else              false
+                 end
+               else
+                 %w[y yes on 1 true t].includes?(@params["remote_src"].downcase.strip)
+               end
       !truthy
     end
 

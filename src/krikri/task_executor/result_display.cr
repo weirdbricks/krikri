@@ -475,7 +475,7 @@ module Krikri
           next if stripped.empty? || stripped.starts_with?('#')
           break unless stripped.starts_with?("- ")
           if count == index
-            dash = item_line.index("- ").not_nil!
+            dash = item_line.index!("- ")
             item_rest = item_line[(dash + 2)..]
             column = dash + 2 + (item_rest.size - item_rest.lstrip.size) + 1
             return ErrorBlock.origin_context(path, item_idx + 1, column)

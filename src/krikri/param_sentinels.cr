@@ -117,8 +117,8 @@ module Krikri
   # marked (the common case - no copying).
   def self.strip_non_string_param_markers(params : Hash(String, String)) : Hash(String, String)
     return params unless params.each_value.any? do |v|
-      v.includes?(NON_STRING_PARAM_PREFIX) || v.includes?(NON_STRING_MEMBER_PREFIX)
-    end
+                           v.includes?(NON_STRING_PARAM_PREFIX) || v.includes?(NON_STRING_MEMBER_PREFIX)
+                         end
     params.transform_values do |value|
       strip_non_string_markers_in_value(value)
     end

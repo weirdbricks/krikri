@@ -336,7 +336,6 @@ describe "systemd plugin" do
   end
 end
 
-
 # Builds a throwaway fake `systemctl` that reproduces every
 # no-service-manager stderr shape (never touching the dev machine's own
 # systemd), first on the child's PATH.
@@ -375,9 +374,9 @@ describe "systemd plugin - no-service-manager failure cmd" do
     result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
     result["rc"].as_i.must_equal(1)
     result["msg"].as_s.must_equal("System has not been booted with systemd as init system (PID 1). Can't operate." \
-      "\nFailed to connect to system scope bus via local transport: Host is down")
+                                  "\nFailed to connect to system scope bus via local transport: Host is down")
     result["stderr"].as_s.must_equal("System has not been booted with systemd as init system (PID 1). Can't operate." \
-      "\nFailed to connect to system scope bus via local transport: Host is down\n")
+                                     "\nFailed to connect to system scope bus via local transport: Host is down\n")
     result["stderr_lines"].as_a.size.must_equal(2)
     result["stdout"].as_s.must_equal("")
     result["stdout_lines"].as_a.must_equal([] of JSON::Any)

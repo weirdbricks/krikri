@@ -873,9 +873,6 @@ module Krikri
         jsonarg_type_error(name, kind)
       elsif wanted == "bytes" || wanted == "bits"
         size_type_error(name, wanted, raw, kind)
-      else
-        # str/path/raw/any: a wire string always converts.
-        nil
       end
     end
 

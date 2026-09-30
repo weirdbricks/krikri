@@ -2133,7 +2133,7 @@ module Krikri
         stripped = line.strip
         break if stripped.starts_with?("- ")
         next unless stripped.starts_with?("#{key}:")
-        rest = line[line.index("#{key}:").not_nil! + key.size + 1..]
+        rest = line[line.index!("#{key}:") + key.size + 1..]
         if rest.lstrip.empty?
           # Folded list form: scan the item lines for the raw conditional.
           ((idx + 1)...lines.size).each do |item_idx|
@@ -2143,7 +2143,7 @@ module Krikri
             item = item_stripped[2..].strip
             unquoted = item.gsub(/\A["']|["']\z/, "")
             next unless unquoted == raw.strip
-            dash_idx = item_line.index("- ").not_nil!
+            dash_idx = item_line.index!("- ")
             item_rest = item_line[(dash_idx + 2)..]
             column = dash_idx + 2 + (item_rest.size - item_rest.lstrip.size) + 1
             return {item_idx, column}

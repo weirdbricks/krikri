@@ -146,22 +146,22 @@ end
 # separately below). Special placements/wordings are asserted by the
 # dedicated cases at the bottom.
 BOOL_PARAM_TABLE = {
-  "apt"               => %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove clean fail_on_autoremove force force_apt_get install_recommends only_upgrade purge update_cache],
-  "apt_key"           => %w[validate_certs],
-  "apt_repository"    => %w[install_python_apt update_cache validate_certs],
-    # remote_src deliberately absent (see the dedicated case at the bottom):
+  "apt"            => %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove clean fail_on_autoremove force force_apt_get install_recommends only_upgrade purge update_cache],
+  "apt_key"        => %w[validate_certs],
+  "apt_repository" => %w[install_python_apt update_cache validate_certs],
+  # remote_src deliberately absent (see the dedicated case at the bottom):
   # real's assemble action reads it through boolean(strict=False) FIRST,
   # so the module only ever receives BOOLEANS_TRUE values and its own
   # strict conversion can never fail
-  "assemble"          => %w[backup decrypt ignore_hidden unsafe_writes],
-  "assert"            => %w[quiet],
-  "blockinfile"       => %w[append_newline backup create prepend_newline unsafe_writes],
-  "command"           => %w[expand_argument_vars stdin_add_newline strip_empty_ends],
-    # follow is validated only on copy's remote_src branch: real's copy
-    # ACTION plugin reads it through boolean(strict=False) and hands the
-    # MODULE the coerced boolean (copy.py:328-335), so a bad spelling is
-    # silently False on the controller-side path. Asserted by the
-    # dedicated case below.
+  "assemble"    => %w[backup decrypt ignore_hidden unsafe_writes],
+  "assert"      => %w[quiet],
+  "blockinfile" => %w[append_newline backup create prepend_newline unsafe_writes],
+  "command"     => %w[expand_argument_vars stdin_add_newline strip_empty_ends],
+  # follow is validated only on copy's remote_src branch: real's copy
+  # ACTION plugin reads it through boolean(strict=False) and hands the
+  # MODULE the coerced boolean (copy.py:328-335), so a bad spelling is
+  # silently False on the controller-side path. Asserted by the
+  # dedicated case below.
   "copy"              => %w[backup decrypt force local_follow remote_src unsafe_writes],
   "cron"              => %w[backup disabled env],
   "debconf"           => %w[unseen],
@@ -170,38 +170,38 @@ BOOL_PARAM_TABLE = {
   "dnf5"              => %w[allow_downgrade allowerasing auto_install_module_deps autoremove best bugfix cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest security skip_broken sslverify update_cache update_only validate_certs],
   "expect"            => %w[echo],
   "fetch"             => %w[],
-    # ... because real's fetch ACTION plugin does the whole transfer
-    # itself (only slurp/copy ever run behind the scenes), so the fetch
-    # module's own bool spec - flat/fail_on_missing/validate_checksum -
-    # never runs; the action plugin reads all three through
-    # boolean(strict=False) (fetch.py:45-48), where an unrecognized
-    # spelling is simply truthy. Asserted by the dedicated case below.
-  "file"              => %w[follow force recurse unsafe_writes],
-  "find"              => %w[exact_mode follow get_checksum hidden read_whole_file recurse use_regex],
-  "getent"            => %w[fail_key],
-  "get_url"           => %w[backup decompress force force_basic_auth unsafe_writes use_gssapi use_netrc use_proxy validate_certs],
-  "git"               => %w[accept_hostkey accept_newhostkey bare clone force recursive single_branch track_submodules update verify_commit],
-  "group"             => %w[force local non_unique system],
-  "iptables"          => %w[chain_management flush numeric],
-  "known_hosts"       => %w[hash_host],
-  "lineinfile"        => %w[backrefs backup create firstmatch unsafe_writes],
-  "mount_facts"       => %w[include_aggregate_mounts],
-  "package"           => %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove best bugfix cacheonly clean disable_gpg_check download_only fail_on_autoremove force force_apt_get install_repoquery install_weak_deps nobest only_upgrade purge security skip_broken sslverify update_cache update_only validate_certs],
-  "pip"               => %w[break_system_packages editable virtualenv_site_packages],
-  "replace"           => %w[backup unsafe_writes],
-  "rpm_key"           => %w[validate_certs],
-  "service"           => %w[enabled],
-  "shell"             => %w[stdin_add_newline],
-  "stat"              => %w[follow get_attributes get_checksum get_mime],
-  "subversion"        => %w[checkout export force in_place switch update validate_certs],
-  "systemd"           => %w[daemon_reexec daemon_reload enabled force masked no_block],
-    # ... and template's action plugin always coerces follow before it
-    # delegates to copy, so its spec never sees it either.
-  "template"          => %w[backup force unsafe_writes],
-  "unarchive"         => %w[copy decrypt keep_newer list_files remote_src unsafe_writes validate_certs],
-  "uri"               => %w[decompress force force_basic_auth remote_src return_content unsafe_writes use_gssapi use_netrc use_proxy validate_certs],
-  "user"              => %w[append create_home force generate_ssh_key hidden local move_home non_unique password_lock remove system],
-  "yum_repository"    => %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify unsafe_writes],
+  # ... because real's fetch ACTION plugin does the whole transfer
+  # itself (only slurp/copy ever run behind the scenes), so the fetch
+  # module's own bool spec - flat/fail_on_missing/validate_checksum -
+  # never runs; the action plugin reads all three through
+  # boolean(strict=False) (fetch.py:45-48), where an unrecognized
+  # spelling is simply truthy. Asserted by the dedicated case below.
+  "file"        => %w[follow force recurse unsafe_writes],
+  "find"        => %w[exact_mode follow get_checksum hidden read_whole_file recurse use_regex],
+  "getent"      => %w[fail_key],
+  "get_url"     => %w[backup decompress force force_basic_auth unsafe_writes use_gssapi use_netrc use_proxy validate_certs],
+  "git"         => %w[accept_hostkey accept_newhostkey bare clone force recursive single_branch track_submodules update verify_commit],
+  "group"       => %w[force local non_unique system],
+  "iptables"    => %w[chain_management flush numeric],
+  "known_hosts" => %w[hash_host],
+  "lineinfile"  => %w[backrefs backup create firstmatch unsafe_writes],
+  "mount_facts" => %w[include_aggregate_mounts],
+  "package"     => %w[allow_change_held_packages allow_downgrade allow_unauthenticated auto_install_module_deps autoclean autoremove best bugfix cacheonly clean disable_gpg_check download_only fail_on_autoremove force force_apt_get install_repoquery install_weak_deps nobest only_upgrade purge security skip_broken sslverify update_cache update_only validate_certs],
+  "pip"         => %w[break_system_packages editable virtualenv_site_packages],
+  "replace"     => %w[backup unsafe_writes],
+  "rpm_key"     => %w[validate_certs],
+  "service"     => %w[enabled],
+  "shell"       => %w[stdin_add_newline],
+  "stat"        => %w[follow get_attributes get_checksum get_mime],
+  "subversion"  => %w[checkout export force in_place switch update validate_certs],
+  "systemd"     => %w[daemon_reexec daemon_reload enabled force masked no_block],
+  # ... and template's action plugin always coerces follow before it
+  # delegates to copy, so its spec never sees it either.
+  "template"       => %w[backup force unsafe_writes],
+  "unarchive"      => %w[copy decrypt keep_newer list_files remote_src unsafe_writes validate_certs],
+  "uri"            => %w[decompress force force_basic_auth remote_src return_content unsafe_writes use_gssapi use_netrc use_proxy validate_certs],
+  "user"           => %w[append create_home force generate_ssh_key hidden local move_home non_unique password_lock remove system],
+  "yum_repository" => %w[async countme enabled enablegroups gpgcheck keepalive module_hotfixes protect repo_gpgcheck s3_enabled skip_if_unavailable ssl_check_cert_permissions sslverify unsafe_writes],
 }
 
 # Context params a plugin needs to REACH its bool validation (its own
@@ -318,16 +318,16 @@ describe "core plugins' documented bool params (table sweep)" do
     # action plugin coerces follow before delegating, so the remote_src
     # branch there still sees a real boolean.
     result = PluginSpecHelper.run("copy", {"dest" => "/tmp/krikri-bool-probe-follow",
-      "src" => "/etc/hostname", "follow" => "krikri-not-a-bool"})
+                                           "src" => "/etc/hostname", "follow" => "krikri-not-a-bool"})
     msg_of(result).wont_include("unable to convert to bool")
 
     remote = PluginSpecHelper.run("copy", {"dest" => "/tmp/krikri-bool-probe-follow",
-      "src" => "/etc/hostname", "remote_src" => "true", "follow" => "krikri-not-a-bool"})
+                                           "src" => "/etc/hostname", "remote_src" => "true", "follow" => "krikri-not-a-bool"})
     remote["failed"].as_bool.must_equal(true)
     remote["msg"].as_s.must_equal(bool_error("follow", "str", "krikri-not-a-bool"))
 
     tpl = PluginSpecHelper.run("template", {"dest" => "/tmp/krikri-bool-probe-follow",
-      "remote_src" => "true", "follow" => "krikri-not-a-bool"})
+                                            "remote_src" => "true", "follow" => "krikri-not-a-bool"})
     msg_of(tpl).wont_include("unable to convert to bool")
   end
 
@@ -343,7 +343,7 @@ describe "core plugins' documented bool params (table sweep)" do
     # conversion with it - never runs at all (live-verified vs 2.19.11:
     # `remote_src: krikri-not-a-bool` with a real fragment dir SUCCEEDS).
     result = PluginSpecHelper.run("assemble", {"dest" => "/tmp/krikri-bool-probe.cfg",
-      "src" => "/nonexistent", "remote_src" => "krikri-not-a-bool"})
+                                               "src" => "/nonexistent", "remote_src" => "krikri-not-a-bool"})
     msg_of(result).wont_include("unable to convert to bool")
   end
 
@@ -355,7 +355,7 @@ describe "core plugins' documented bool params (table sweep)" do
     # fetch whose bools are spelled wrong still transfers, and the
     # spelling is read as falsy rather than rejected.
     missing = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
-      "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
+                                             "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
     msg_of(missing).wont_include("unable to convert to bool")
     missing["failed"].as_bool.must_equal(true)
 
@@ -364,14 +364,14 @@ describe "core plugins' documented bool params (table sweep)" do
     # fail_on_missing takes the "do not fail" branch instead of failing
     # the task
     ignored = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
-      "dest" => "/tmp", "flat" => "krikri-not-a-bool", "fail_on_missing" => "krikri-not-a-bool"})
+                                             "dest" => "/tmp", "flat" => "krikri-not-a-bool", "fail_on_missing" => "krikri-not-a-bool"})
     msg_of(ignored).wont_include("unable to convert to bool")
     ignored["changed"].as_bool.must_equal(false)
     ignored["msg"].as_s.must_equal("the remote file does not exist, not transferring, ignored")
 
     # ... while the argspec default (the option absent) still fails
     failed = PluginSpecHelper.run("fetch", {"src" => "/nonexistent/krikri-fetch-probe",
-      "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
+                                            "dest" => "/tmp", "flat" => "krikri-not-a-bool"})
     failed["failed"].as_bool.must_equal(true)
   end
 end

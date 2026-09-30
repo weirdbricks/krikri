@@ -105,7 +105,7 @@ module Krikri
           "_ansible_verbose_always" => JSON::Any.new(true),
           # 2.19.11 renders the undefined var's error inline (older releases
           # printed "VARIABLE IS NOT DEFINED!")
-          var_name                  => JSON::Any.new("<< error 1 - #{Krikri.strict_undefined_message(var_name, @vars)} >>"),
+          var_name => JSON::Any.new("<< error 1 - #{Krikri.strict_undefined_message(var_name, @vars)} >>"),
         }))
       end
 

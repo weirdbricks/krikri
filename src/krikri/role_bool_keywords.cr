@@ -100,12 +100,12 @@ module Krikri
 
     private def self.convertible_to_bool?(value : YAML::Any) : Bool
       case raw = value.raw
-      when Nil      then true
-      when Bool     then true
-      when Int64    then raw == 0 || raw == 1
-      when Float64  then raw == 0.0 || raw == 1.0
-      when String   then TRUE_WORDS.includes?(raw.downcase) || FALSE_WORDS.includes?(raw.downcase)
-      else               false
+      when Nil     then true
+      when Bool    then true
+      when Int64   then raw == 0 || raw == 1
+      when Float64 then raw == 0.0 || raw == 1.0
+      when String  then TRUE_WORDS.includes?(raw.downcase) || FALSE_WORDS.includes?(raw.downcase)
+      else              false
       end
     end
 
@@ -114,15 +114,15 @@ module Krikri
     # rendered with Python's spacing, scalars bare.
     def self.python_repr(value : YAML::Any) : String
       case raw = value.raw
-      when Nil          then "None"
-      when Bool         then raw ? "True" : "False"
+      when Nil            then "None"
+      when Bool           then raw ? "True" : "False"
       when Int64, Float64 then raw.to_s
-      when String       then "'" + raw.gsub("\\", "\\\\\\\\").gsub("'", "\\\\'") + "'"
+      when String         then "'" + raw.gsub("\\", "\\\\\\\\").gsub("'", "\\\\'") + "'"
       when Array(YAML::Any)
         "[" + raw.map { |item| python_repr(item) }.join(", ") + "]"
       when Hash(YAML::Any, YAML::Any)
         "{" + raw.map { |key, item| "'#{key}': #{python_repr(item)}" }.join(", ") + "}"
-      else                   raw.to_s
+      else raw.to_s
       end
     end
   end

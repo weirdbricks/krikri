@@ -1028,13 +1028,13 @@ module Krikri
       return {nil, nil} unless name
       if native = Krikri.non_string_scalar(name)
         case raw = native.raw
-        when Bool         then raw ? {"true", nil} : {nil, nil}
-        when Int64        then raw != 0 ? {raw.to_s, nil} : {nil, nil}
-        when Float64      then raw != 0.0 ? {raw.to_s, nil} : {nil, nil}
-        when Nil          then {nil, nil}
-        when Array        then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedList"}
-        when Hash         then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedDict"}
-        else                   {nil, nil}
+        when Bool    then raw ? {"true", nil} : {nil, nil}
+        when Int64   then raw != 0 ? {raw.to_s, nil} : {nil, nil}
+        when Float64 then raw != 0.0 ? {raw.to_s, nil} : {nil, nil}
+        when Nil     then {nil, nil}
+        when Array   then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedList"}
+        when Hash    then raw.empty? ? {nil, nil} : {nil, "_AnsibleTaggedDict"}
+        else              {nil, nil}
         end
       else
         name.empty? ? {nil, nil} : {name, nil}

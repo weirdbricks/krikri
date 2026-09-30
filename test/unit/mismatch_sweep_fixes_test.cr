@@ -41,10 +41,10 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
 
   it "cron accepts special_time alone (defaults are not explicit fields)" do
     result = PluginSpecHelper.run("cron", {
-      "name"         => "krikri-spec-c4",
+      "name" => "krikri-spec-c4",
       "special_time" => "daily",
-      "job"          => "/usr/bin/true",
-      "cron_file"    => "/tmp/krikri-spec-crontab", "user" => "root",
+      "job" => "/usr/bin/true",
+      "cron_file" => "/tmp/krikri-spec-crontab", "user" => "root",
     })
 
     (result["failed"]?.try(&.as_bool) || false).must_equal(false)

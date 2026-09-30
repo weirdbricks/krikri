@@ -3073,7 +3073,7 @@ module Krikri
         # report comes out in alphabetical key order, not YAML order - e.g.
         # `files_macthing:` after `free-form:` still reports files_macthing
         # because "files_macthing" < "free-form".
-        hash.keys.map(&.to_s).sort.each do |k|
+        hash.keys.map(&.to_s).sort!.each do |k|
           if INCLUDE_VARS_DIR_ARGS.includes?(k)
             dirs += 1
           elsif INCLUDE_VARS_FILE_ARGS.includes?(k)
@@ -3139,7 +3139,7 @@ module Krikri
         # include_tasks:/include_role: already raise.
         if !value.as_s? && !value.raw.nil?
           type_name = unexpected_meta_param_type(value) ||
-            "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
+                      "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
           raise_include_directive_error(
             "unexpected parameter type in action: <class '#{type_name}'>",
             true, source_file, source_map, source_prefix, source_index)
@@ -3344,9 +3344,9 @@ module Krikri
     # carry 2.19's datatag subclasses.
     private def self.unexpected_meta_param_type(meta_yaml : YAML::Any) : String?
       case meta_yaml.raw
-      when Int64       then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
-      when Float64     then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
-      when Bool        then "bool"
+      when Int64            then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      when Float64          then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      when Bool             then "bool"
       when Array(YAML::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
       end
     end
@@ -3358,13 +3358,13 @@ module Krikri
     # explicit YAML null is NoneType).
     private def self.include_arg_type_name(yaml : YAML::Any) : String
       case yaml.raw
-      when nil                    then "NoneType"
-      when String                 then "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
-      when Int64                  then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
-      when Float64                then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
-      when Bool                   then "bool"
-      when Array(YAML::Any)       then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
-      else "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
+      when nil              then "NoneType"
+      when String           then "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
+      when Int64            then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+      when Float64          then "ansible.module_utils._internal._datatag._AnsibleTaggedFloat"
+      when Bool             then "bool"
+      when Array(YAML::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedList"
+      else                       "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
       end
     end
 
@@ -3389,14 +3389,14 @@ module Krikri
     private def self.include_arg_truthy?(yaml : YAML::Any?) : Bool
       return false unless yaml
       case raw = yaml.raw
-      when nil      then false
-      when Bool     then raw
-      when Int64    then raw != 0
-      when Float64  then raw != 0.0
-      when String   then !raw.empty?
+      when nil                        then false
+      when Bool                       then raw
+      when Int64                      then raw != 0
+      when Float64                    then raw != 0.0
+      when String                     then !raw.empty?
       when Hash(YAML::Any, YAML::Any) then !raw.empty?
-      when Array(YAML::Any) then !raw.empty?
-      else true
+      when Array(YAML::Any)           then !raw.empty?
+      else                                 true
       end
     end
 
@@ -3422,9 +3422,9 @@ module Krikri
       else
         return {nil, nil} unless include_arg_truthy?(yaml)
         type_name = case raw
-                    when Int64           then "_AnsibleTaggedInt"
-                    when Float64         then "_AnsibleTaggedFloat"
-                    when Bool            then "bool"
+                    when Int64            then "_AnsibleTaggedInt"
+                    when Float64          then "_AnsibleTaggedFloat"
+                    when Bool             then "bool"
                     when Array(YAML::Any) then "_AnsibleTaggedList"
                     else                       "_AnsibleTaggedDict"
                     end
@@ -3473,7 +3473,7 @@ module Krikri
       file_yaml = value.as_h? ? (value.as_h["_raw_params"]? || value.as_h["file"]?) : value
       case file_yaml.try(&.raw)
       when Int64, Float64, Bool then JSON::Any.new(file_yaml.not_nil!.raw.as(Int64 | Float64 | Bool))
-      else                              nil
+      else                           nil
       end
     end
 
@@ -3554,7 +3554,7 @@ module Krikri
       when Int64   then raw.to_s
       when Float64 then raw.to_s
       when Bool    then raw ? "True" : "False"
-      else nil
+      else              nil
       end
     end
 
@@ -4465,7 +4465,7 @@ module Krikri
             # found immediately after the fix above, on the very next
             # task in the same real-host round.
             params[key.to_s] = "0" + raw.to_s(8)
-          elsif value.raw.is_a?(Nil)
+          elsif value.raw.nil?
             # A literal YAML null param value (`key:` with no value) is
             # Python None in real ansible-core - NOT an empty string. The
             # strings-only param wire collapses the two, so the literal

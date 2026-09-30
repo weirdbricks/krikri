@@ -462,14 +462,14 @@ module Krikri
 
   private def self.python_type_name(value : JSON::Any) : String
     case value.raw
-    when Nil     then "NoneType"
-    when Bool    then "bool"
-    when Int     then "int"
-    when Float   then "float"
-    when String  then "str"
-    when Array   then "list"
-    when Hash    then "dict"
-    else              "object"
+    when Nil    then "NoneType"
+    when Bool   then "bool"
+    when Int    then "int"
+    when Float  then "float"
+    when String then "str"
+    when Array  then "list"
+    when Hash   then "dict"
+    else             "object"
     end
   end
 

@@ -24,18 +24,18 @@ require "../../src/krikri/yaml_source_map"
 describe Krikri::YamlSourceMap do
   it "maps task positions by path through plays and task lists" do
     content = <<-YAML
-    ---
-    - name: 'play one'
-      hosts: all
-      gather_facts: false
-      tasks:
-      - name: 'first task'
-        ansible.builtin.debug:
-          msg: hello
-      - name: 'second task'
-        ansible.builtin.debug:
-          msg: bye
-    YAML
+      ---
+      - name: 'play one'
+        hosts: all
+        gather_facts: false
+        tasks:
+        - name: 'first task'
+          ansible.builtin.debug:
+            msg: hello
+        - name: 'second task'
+          ansible.builtin.debug:
+            msg: bye
+      YAML
 
     map = Krikri::YamlSourceMap.scan(content)
     map.at?("0/tasks/0").must_equal({6, 5})
@@ -46,15 +46,15 @@ describe Krikri::YamlSourceMap do
 
   it "maps nested block task positions with section-prefixed paths" do
     content = <<-YAML
-    - name: play
-      hosts: all
-      tasks:
-      - name: my block
-        block:
-        - name: inner task
-          ansible.builtin.debug:
-            msg: hi
-    YAML
+      - name: play
+        hosts: all
+        tasks:
+        - name: my block
+          block:
+          - name: inner task
+            ansible.builtin.debug:
+              msg: hi
+      YAML
 
     map = Krikri::YamlSourceMap.scan(content)
     # parse_block_task builds "<prefix>/<index>/block" for the block's
@@ -66,13 +66,13 @@ describe Krikri::YamlSourceMap do
     documents = [] of String
     50.times do |i|
       documents << <<-YAML
-      - name: 'generated play #{i}'
-        hosts: all
-        gather_facts: false
-        tasks:
-        - name: 'task #{i}'
-          ansible.builtin.command: /bin/true
-      YAML
+        - name: 'generated play #{i}'
+          hosts: all
+          gather_facts: false
+          tasks:
+          - name: 'task #{i}'
+            ansible.builtin.command: /bin/true
+        YAML
     end
 
     3.times do
