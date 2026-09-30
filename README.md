@@ -17,17 +17,6 @@ the same syntax you already write, unmodified. There's no Python, no
 picture, on either the controller or the target - it's one compiled binary
 (`krikri-playbook`) plus a directory of small compiled module binaries.
 
-It is not a new automation DSL you have to learn, and not a "mostly
-compatible" reimplementation verified by eyeballing docs - every plugin's
-behavior is checked against real `ansible-playbook` output on real hosts,
-across the real Galaxy roles listed in
-[ROLES_TESTED.md](ROLES_TESTED.md), and a Docker-based compatibility
-harness (`compat/`) runs the same playbooks through both engines side by
-side and diffs the resulting state. Any observed
-divergence from real Ansible's behavior is treated as a bug in this
-project, not a documented limitation, unless it's one of the deliberate
-structural exclusions called out below.
-
 | By the numbers | |
 |---|---|
 | Compatibility target | ansible-core 2.19.11 (byte-for-byte console output) |
