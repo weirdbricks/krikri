@@ -1527,8 +1527,13 @@ module Krikri
           }
           # An ACTION-level failure (a bare AnsibleActionFail raised by
           # the plugin itself) renders without the "Module failed." chain
-          # segment - see ActionResult#action_level.
+          # segment - see ActionResult#action_level. A crash_failure's msg
+          # is real's own "Task failed: <exception>" wrapper while its
+          # [ERROR] block text stays bare - see ActionResult#error_detail.
           failed["_ansible_action_level"] = true if action_result.action_level?
+          if detail = action_result.error_detail?
+            failed["_ansible_error_detail"] = detail
+          end
           return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 
@@ -1856,8 +1861,13 @@ module Krikri
           }
           # An ACTION-level failure (a bare AnsibleActionFail raised by
           # the plugin itself) renders without the "Module failed." chain
-          # segment - see ActionResult#action_level.
+          # segment - see ActionResult#action_level. A crash_failure's msg
+          # is real's own "Task failed: <exception>" wrapper while its
+          # [ERROR] block text stays bare - see ActionResult#error_detail.
           failed["_ansible_action_level"] = true if action_result.action_level?
+          if detail = action_result.error_detail?
+            failed["_ansible_error_detail"] = detail
+          end
           return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
         end
 

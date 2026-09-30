@@ -72,9 +72,18 @@ module Krikri
     # ResultDisplay's own branch).
     property? action_level : Bool
 
+    # The [ERROR] block's own text when it differs from the result's msg.
+    # Real's task executor wraps an UNCAUGHT Python exception raised inside
+    # an action plugin itself ("Task failed: %s" % to_native(e)), so such a
+    # failure's fatal msg carries that prefix while the block still shows
+    # the bare message - which is what this carries. A deliberate
+    # AnsibleActionFail has no prefix in either place, so it stays nil.
+    property? error_detail : String?
+
     def initialize(@success : Bool, @modified_params : Hash(String, String)? = nil,
                    @error_message : String? = nil, @changed : Bool = false,
-                   @final_result : JSON::Any? = nil, @action_level : Bool = false)
+                   @final_result : JSON::Any? = nil, @action_level : Bool = false,
+                   @error_detail : String? = nil)
     end
 
     # Create success result
@@ -93,6 +102,20 @@ module Krikri
     # #action_level).
     def self.action_failure(error_message : String) : ActionResult
       new(success: false, error_message: error_message, action_level: true)
+    end
+
+    # Create a failure raised by an UNCAUGHT Python exception inside the
+    # action plugin - the codec-stack crash real's template action plugin
+    # dies with on a non-string output_encoding ("encode() argument
+    # 'encoding' must be str, not _AnsibleTaggedInt") and its
+    # unknown-codec LookupError. Real's task executor wraps such an
+    # exception itself, so the fatal dump's msg keeps the "Task failed: "
+    # prefix while the [ERROR] block shows the bare message (see
+    # #error_detail).
+    def self.crash_failure(error_message : String) : ActionResult
+      new(success: false,
+        error_message: "Task failed: #{error_message}",
+        action_level: true, error_detail: error_message)
     end
 
     # Create pass-through result (no modifications)

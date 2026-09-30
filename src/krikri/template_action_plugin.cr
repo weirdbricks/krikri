@@ -17,16 +17,18 @@ module Krikri
     def execute : ActionResult
       # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
       # arrive intact here (execute_action deliberately exempts template:)
-      # because the src/dest conversions need the native type (src is
-      # coerced through Python str() here; dest rides the marker to the
-      # plugin binary, which applies the same coercion). Every OTHER
-      # param is demoted back to its plain string first, so the
+      # because the src/dest/output_encoding conversions need the native
+      # type (src is coerced through Python str() here; dest rides the
+      # marker to the plugin binary, which applies the same coercion, and
+      # output_encoding is read through real's own `or 'utf-8'` fallback
+      # plus its encode() type crash - see template_output_encoding).
+      # Every OTHER param is demoted back to its plain string first, so the
       # Jinja knob bools (`trim_blocks: true`) and strings see exactly the
       # text they always did - the same contract BasePlugin's param parse
       # gives the plugin binaries.
       demoted = Hash(String, String).new
       @params.each do |key, value|
-        if key != "src" && key != "dest" && (native = Krikri.non_string_scalar(value))
+        if !{"src", "dest", "output_encoding"}.includes?(key) && (native = Krikri.non_string_scalar(value))
           demoted[key] = Krikri.non_string_param_text(native)
         else
           demoted[key] = value
@@ -128,6 +130,27 @@ module Krikri
         rendered_content = rendered_content.split(/\r\n|\r|\n/).join(newline_sequence)
       end
 
+      # output_encoding: real's action plugin writes the rendered result
+      # into its own temporary file with Python's
+      # `to_bytes(resultant, encoding=output_encoding, errors=...)` and only
+      # THEN hands the task to the copy action plugin - so a non-string
+      # output_encoding crashes the ACTION plugin with Python's own
+      # TypeError, before the copy module's spec ever sees the args. That
+      # makes the crash the first thing such a task reports: a typo'd
+      # option or a wrong-typed bool beside the literal is never
+      # reported (live-verified vs 2.19.11: int/float/bool/list/dict all
+      # crash here, and so do the typo'd and the wrong-typed-boolean
+      # neighbours). Placed after the render for the same reason real
+      # encodes after it - a broken template body still reports the
+      # template error first.
+      output_encoding, encode_crash = template_output_encoding
+      if encode_crash
+        return ActionResult.crash_failure(encode_crash)
+      end
+      if output_encoding && !known_output_encoding?(output_encoding)
+        return ActionResult.crash_failure("unknown encoding: #{output_encoding}")
+      end
+
       # Modify params to send rendered CONTENT to remote instead of template path
       # The remote plugin will receive the rendered content, not the template
       modified_params = @params.dup
@@ -135,8 +158,77 @@ module Krikri
       modified_params["content"] = rendered_content      # Add rendered content
       modified_params["_rendered_from_template"] = src   # Track for debugging
       modified_params["_content_checksum"] = content_md5 # For idempotency
+      modified_params["output_encoding"] = output_encoding if output_encoding
 
       ActionResult.success?(modified_params, changed: false)
+    end
+
+    # The encoding real's template action plugin writes the rendered
+    # result with, and the Python TypeError it dies with when the value
+    # cannot be one - the pair `{encoding, crash_message}`, exactly the
+    # shape of real's own line
+    # `output_encoding = self._task.args.get('output_encoding', 'utf-8') or 'utf-8'`
+    # followed by its `to_bytes(resultant, encoding=output_encoding)`
+    # (template.py:74 and :158, live-verified against 2.19.11):
+    #
+    # - a FALSY value is silently the default: `false`, `0`, `0.0`, an
+    #   explicit None and an empty list/dict all deploy as utf-8, so the
+    #   plugin binary must not be handed the literal's own text (it would
+    #   try to encode to "false"/"0" and fail a task real completes);
+    # - a TRUTHY non-string value crashes Python's codec stack - "encode()
+    #   argument 'encoding' must be str, not _AnsibleTaggedInt" for an
+    #   int, plain 'bool' for a bool (bools are not tagged in real 2.19),
+    #   '_AnsibleTaggedFloat'/'_AnsibleTaggedList'/'_AnsibleTaggedDict'
+    #   for the rest;
+    # - a plain string is the codec name as written (an unknown one still
+    #   fails the task with real's "unknown encoding: ..." wording, which
+    #   the plugin binary produces). A LIST of plain strings is
+    #   indistinguishable from such a string on the params wire (the
+    #   parser comma-joins it), so it keeps the string reading - the one
+    #   deliberate gap here; a list with non-string members keeps its
+    #   marker and is read as the list real sees.
+    private def template_output_encoding : {String?, String?}
+      raw = @params["output_encoding"]?
+      return {nil, nil} if raw.nil?
+      return {"utf-8", nil} if raw.empty? || raw == Krikri::NONE_SENTINEL
+      if native = Krikri.non_string_scalar(raw)
+        return {nil, template_encode_crash(native)} if Krikri.python_param_truthy?(raw)
+        return {"utf-8", nil}
+      end
+      if (parsed = (JSON.parse(raw) rescue nil)) && (parsed.as_a? || parsed.as_h?)
+        return {"utf-8", nil} if parsed.as_a?.try(&.empty?) || parsed.as_h?.try(&.empty?)
+        return {nil, template_encode_crash(parsed)}
+      end
+      if raw.includes?(Krikri::NON_STRING_MEMBER_PREFIX)
+        return {nil, "encode() argument 'encoding' must be str, not _AnsibleTaggedList"}
+      end
+      {raw, nil}
+    end
+
+    private def template_encode_crash(native : JSON::Any) : String
+      "encode() argument 'encoding' must be str, not #{Krikri.python_value_type_name(native)}"
+    end
+
+    # Whether *name* is a codec real's Python stack can encode to. Real
+    # resolves the name in its own codec registry and raises
+    # LookupError("unknown encoding: <name>") for one it does not have -
+    # from the same to_bytes call as the non-string crash above, so an
+    # unknown codec is reported as an action-plugin crash there too, not
+    # as a module failure. The candidate search mirrors the plugin
+    # binary's own encode_output (real's documented "latin-1" is
+    # "latin1"/"ISO-8859-1" to iconv); the byte-level conversion itself
+    # still happens in the plugin binary, which is the only place the
+    # rendered content exists.
+    private def known_output_encoding?(name : String) : Bool
+      return true if name.downcase == "utf-8" || name.downcase == "utf8"
+      {name, name.delete("-_"), name.upcase, name.delete("-").upcase}.each do |candidate|
+        begin
+          "".encode(candidate)
+          return true
+        rescue ArgumentError
+        end
+      end
+      false
     end
 
     # Render a Jinja2 template with krikri-jinja. A role-local

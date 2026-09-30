@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1355`.**
+**Currently at `0.9.1386`.**
 
 ## Open gaps
 
@@ -144,6 +144,14 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   on lists of strings) and the order of several invalid options in one error message. Integer set order
   *is* reproduced.
 - A malformed `-e '{...'` JSON argument produces a different error chain.
+- `template:` with an `output_encoding:` written as a YAML list of plain strings
+  (`[a, b]`) reports real's `unknown encoding: a,b` instead of real's
+  `encode() argument 'encoding' must be str, not _AnsibleTaggedList`: the params
+  wire is comma-joined for a list of strings, so that value is indistinguishable
+  from the equally plausible STRING `"a,b"` - which real itself reads as a codec
+  name. Every other non-string `output_encoding` (int, float, bool, a list with a
+  non-string member, a dict, an empty container) matches real exactly, as does
+  the falsy fallback to utf-8 and the unknown-codec failure.
 - Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators
