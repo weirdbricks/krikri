@@ -1448,6 +1448,7 @@ module Krikri
         return failed
       end
 
+      warn_groupby_storage(task)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # Same pre-inline copy src+content gate as execute_task_once (see
       # there) - the batched path must fail identically.
@@ -1779,6 +1780,7 @@ module Krikri
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
+      warn_groupby_storage(task)
       substituted_params = resolve_role_relative_src(task, substituted_params)
       # Real's copy ACTION plugin rejects src+content together before
       # anything else runs (even before the src file lookup) - live-

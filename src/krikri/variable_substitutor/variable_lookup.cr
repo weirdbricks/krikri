@@ -438,6 +438,18 @@ module Krikri
       # #apply_method_suffix for that public entry point - added for
       # ExpressionEvaluator's `lookup(...).method()` shape, where the
       # "base" is a lookup() call's return value, not a `@vars` name.
+      # Real Jinja2 3.x groupby yields _GroupTuple namedtuples (a pair
+      # with fields grouper/list that ALSO tuple-indexes and
+      # JSON-serializes as an array) - the groupby filter emits a plain
+      # 2-element array, so these two field names resolve to the pair's
+      # elements the way the namedtuple would. A plain list has no such
+      # attribute in real Jinja either (renders undefined), but no real
+      # template reads .grouper off a non-groupby list.
+      private def groupby_pair_attr(raw : Array(JSON::Any), part : String) : JSON::Any?
+        return nil unless raw.size == 2 && (part == "grouper" || part == "list")
+        raw[part == "grouper" ? 0 : 1]
+      end
+
       private def apply_dotted_parts(current : JSON::Any, parts : Array(String)) : JSON::Any?
         parts.each do |part|
           dict_method = hash_method_call(current, part)
@@ -473,6 +485,10 @@ module Krikri
             # against an Array fell through to the generic `else return
             # nil`, and the `when:` itself then raised "item.1.stdout is
             # undefined" instead of resolving the pair's second element.
+            if (pair = groupby_pair_attr(raw, part))
+              current = pair
+              next
+            end
             index = part.to_i?
             return nil unless index
             index += raw.size if index < 0

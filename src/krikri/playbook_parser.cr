@@ -902,11 +902,18 @@ module Krikri
         else
           # One line of leading context, when there is one - real Ansible
           # prints the preceding source line before the offending one.
-          if @line > 1 && (previous = lines[@line - 2]?)
-            io << @line - 1 << " " << echo(previous) << "\n"
+          gutter = @line.to_s.size
+          # Real prints up to TWO leading context lines (ansible-core's
+          # SourceContext shows the two lines before the offending one).
+          if @line > 2
+            ((Math.max(1, @line - 2))..(@line - 1)).each do |ctx|
+              io << ctx.to_s.rjust(gutter) << " " << echo(lines[ctx - 1]) << "\n"
+            end
+          elsif @line > 1 && (previous = lines[@line - 2]?)
+            io << (@line - 1).to_s.rjust(gutter) << " " << echo(previous) << "\n"
           end
 
-          prefix = "#{@line} "
+          prefix = "#{@line} ".rjust(gutter + 1)
           io << prefix << echo(lines[@line - 1]) << "\n"
           io << " " * (prefix.size + @column - 1) << "^ column " << @column << "\n"
         end

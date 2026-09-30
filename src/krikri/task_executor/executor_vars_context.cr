@@ -1976,6 +1976,84 @@ module Krikri
       puts text
     end
 
+    # Real ansible-core 2.19.11 warns whenever a groupby result (a
+    # GroupTuple namedtuple) lands in variable storage - task-arg
+    # finalization and set_fact values both count (live-verified); the
+    # warning is "[WARNING]: Type 'GroupTuple' is unsupported in variable
+    # storage, converting to 'list'." with an Origin block at the param
+    # KEY's own position, deduplicated like real's Display dedup.
+    @@groupby_storage_warnings = Set(String).new
+
+    private def warn_groupby_storage(task : Task) : Nil
+      path = @playbook_file
+      return unless path && File.file?(path)
+      task.params.each do |key, value|
+        next unless groupby_reaches_storage?(value)
+        lines = File.read_lines(path) rescue next
+        found_module_idx, module_col = module_key_position(lines, task)
+        next unless found_module_idx
+        param_idx, param_col = locate_param_key_position(lines, found_module_idx, key) ||
+                               {found_module_idx, module_col}
+        text = "[WARNING]: Type 'GroupTuple' is unsupported in variable storage, converting to 'list'."
+        dedup_key = "#{path}:#{param_idx + 1}:#{param_col}"
+        next unless @@groupby_storage_warnings.add?(dedup_key)
+        STDERR.puts text
+        STDERR.puts origin_context_block(path, lines, param_idx + 1, param_col)
+        STDERR.puts
+      end
+    end
+
+    # Whether a groupby result survives to the value's storage: the
+    # chain after `groupby(...)` must not transform the pairs away. A
+    # `| map(...)` (attribute extraction or per-item filter) and the
+    # scalar extractors (length/count/sum/join/first/last/min/max) turn
+    # every GroupTuple into something else, so real's warning fires only
+    # for the shapes that keep the pairs (a bare result, select*/sort/
+    # reverse/list, indexing). Text-level approximation of real's
+    # value-type check - verified for the debug: bare, map('first'),
+    # selectattr and set_fact shapes against 2.19.11.
+    private def groupby_reaches_storage?(value : String) : Bool
+      offset = 0
+      while (rel = value.index("groupby(", offset))
+        start = rel
+        offset = rel + 8
+        rest = value[(start + "groupby(".size)..]
+        depth = 1
+        close = nil
+        rest.each_char_with_index do |char, idx|
+          depth += 1 if char == '('
+          if char == ')' && (depth -= 1) == 0
+            close = idx
+            break
+          end
+        end
+        next unless close
+        after = rest[(close + 1)..]
+        after = after.split("}}").first
+        converted = after.matches?(/\|\s*(map|length|count|sum|join|first|last|min|max)\b/) ||
+                    after.includes?("}}")
+        return true unless converted
+      end
+      false
+    end
+
+    # The module key's own line/col, by name (located) or the task's
+    # stamped position (nameless tasks).
+    # The module key's own line/col, by name (located) or the task's
+    # stamped position (nameless tasks).
+    private def module_key_position(lines : Array(String), task : Task) : {Int32?, Int32}
+      name_line = locate_name_line(lines, task)
+      if name_line
+        if module_line = locate_module_key_line(lines, name_line[0], task.module_name)
+          return {module_line[0], module_line[1]}
+        end
+        return {nil, 0}
+      end
+      return {nil, 0} unless task.source_line > 0
+      col = task.source_col > 0 ? task.source_col : (lines[task.source_line - 1].size - lines[task.source_line - 1].lstrip.size + 1)
+      {task.source_line - 1, col}
+    end
+
     # The value token's position for a free-form module call: on the module
     # key's own line, just past `<module>:` (real's origin for `_raw_params`).
     private def free_form_value_position(lines : Array(String), module_idx : Int32, module_name : String) : {Int32, Int32}
@@ -2046,7 +2124,10 @@ module Krikri
     # carries no key context or the key isn't found before the next task.
     private def locate_param_value_line(lines : Array(String), from_idx : Int32, msg : String) : {Int32, Int32}?
       return nil unless (m = msg.match(/\AError while resolving value for '([^']+)':/m))
-      key = m[1]
+      locate_param_key_position(lines, from_idx, m[1])
+    end
+
+    private def locate_param_key_position(lines : Array(String), from_idx : Int32, key : String) : {Int32, Int32}?
       # Flow style (`- debug: msg="..."`): the param sits on the module
       # key's own line - real's inner Origin points at the param KEY's
       # first character there (col 14 for `    - debug: msg=...`,
