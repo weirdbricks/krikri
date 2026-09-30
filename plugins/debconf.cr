@@ -45,7 +45,6 @@ module Krikri
       vtype = @params["vtype"]?
       value = debconf_value
       unseen = true?(@params["unseen"]?)
-      check_mode = true?(@params["_ansible_check_mode"]?)
 
       # Real Ansible's module declares
       # `required_together=(['question', 'vtype', 'value'],)` - if any
@@ -64,10 +63,32 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "No question given, nothing to set")
       end
 
+      apply_selection(pkg, question, vtype, value, unseen)
+    end
+
+    # Real's own flow from here on: read the package's current
+    # selections, refuse a null value, compare, and only then - outside
+    # check mode - build and write the debconf-set-selections line, which
+    # is where a non-string `value:` literal kills the module (see
+    # #selection_type_failure), so an unchanged value and a --check run
+    # both report changed without ever getting there.
+    private def apply_selection(pkg : String, question : String, vtype : String, value : String, unseen : Bool) : PluginResult
       prev = get_selections(pkg)
+
+      # Real's `if vtype is None or value is None` guard (debconf.py:210)
+      # sits AFTER get_selections (a debconf-show failure is reported
+      # first) and BEFORE the comparison: a literal `value:` with no
+      # value - or a template that natively resolved to Python None - is
+      # None there, not an empty string.
+      return missing_vtype_or_value if value_param_null?
+
       changed = value_differs?(prev, question, vtype, value)
 
-      if changed && !check_mode
+      if changed && !true?(@params["_ansible_check_mode"]?)
+        if error = selection_type_failure(vtype)
+          return error
+        end
+
         result = set_selection(pkg, question, vtype, value, unseen)
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
@@ -105,6 +126,101 @@ module Krikri
     # value:/answer: are documented aliases of each other
     private def debconf_value : String?
       @params["value"]? || @params["answer"]?
+    end
+
+    # The wire key value:/answer: actually arrived under - the native-type
+    # marker rides on the key the task used, not on the alias.
+    private def value_param_key : String?
+      return "value" if @params.has_key?("value")
+      return "answer" if @params.has_key?("answer")
+      nil
+    end
+
+    # Was value:/answer: explicitly null (a literal `value:`, or a
+    # template that natively resolved to None)? BasePlugin demotes both
+    # to "" and records the null (see NONE_SENTINEL).
+    private def value_param_null? : Bool
+      key = value_param_key
+      !key.nil? && explicit_null_param?(key)
+    end
+
+    # debconf.py:210's fail_json, verbatim.
+    private def missing_vtype_or_value : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "when supplying a question you must supply a valid vtype and value")
+    end
+
+    # The failure real's set_selection (debconf.py:179) dies with for a
+    # `value:` that is not a Python string: it builds the line with
+    # `' '.join([pkg, question, vtype, value])`, and the uncaught
+    # TypeError ends the module ("Task failed: Module failed: sequence
+    # item 3: expected str instance, int found" - live-verified vs
+    # 2.19.11 for int/bool/float). name/question/vtype cannot reach it:
+    # their `type: str` spec converts an int literal to its text, and
+    # only `value:` (`type: raw`) keeps its own type.
+    #
+    # `vtype: boolean` is the one carve-out - real runs the value through
+    # `to_text(value).lower()` for its comparison (debconf.py:214), which
+    # makes ANY type a string before the join is ever reached, so an int
+    # value there seeds "76" like real.
+    #
+    # A `value:` LIST is a different join in real: under `vtype:
+    # multiselect` the list itself is joined, so a non-string member fails
+    # there instead (see #multiselect_join_failure). A list under any
+    # other vtype would crash like a scalar, but that shape cannot reach a
+    # plugin at all - the strings-only param wire comma-joins a list of
+    # plain strings into text indistinguishable from one string - so only
+    # the members the parser marked (see #marked_list_members) are
+    # visible here.
+    private def selection_type_failure(vtype : String) : PluginResult?
+      return nil if vtype == "boolean"
+      key = value_param_key
+      return nil unless key
+
+      if (members = marked_list_members(key)) && vtype == "multiselect"
+        return multiselect_join_failure(members)
+      end
+      return nil unless (native = non_string_param(key))
+
+      join_crash(3, Krikri.python_join_type_name(native))
+    end
+
+    # Real's `", ".join(value)` for a multiselect list whose members are
+    # not all strings (debconf.py:239-243), which real catches and
+    # reports as its own fail_json instead of crashing. It sorts the list
+    # first, so a homogeneous non-string list always names its FIRST
+    # element. A list mixing strings and non-strings never gets there -
+    # real's sorted() raises its own "'<' not supported between
+    # instances of ..." TypeError first, which is deliberately not
+    # mirrored (the pair Python names there depends on list order).
+    private def multiselect_join_failure(members : Array(JSON::Any)) : PluginResult?
+      natives = members.reject { |member| member.raw.is_a?(String) }
+      return nil if natives.empty?
+      return nil unless natives.all? { |member| member.raw.class == natives.first.raw.class }
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "Invalid value provided for 'multiselect': sequence item 0: " \
+             "expected str instance, #{Krikri.python_join_type_name(natives.first)} found")
+    end
+
+    # The native members of a parser comma-joined list value, read from
+    # the RAW wire - BasePlugin's demotion has already turned the member
+    # markers into plain text by the time a plugin sees @params
+    # (set_fact/xml read @config["params"] the same way for the same
+    # reason). nil when the value is not a marked list.
+    private def marked_list_members(key : String) : Array(JSON::Any)?
+      raw = @config["params"]?.try(&.as_h?).try { |params| params[key]?.try(&.as_s?) }
+      Krikri.non_string_list_members(raw)
+    end
+
+    # The uncaught-module-crash shape real's own task executor renders:
+    # the "Task failed: Module failed: " brief in the fatal msg, the bare
+    # exception text in the [ERROR] block (see BasePlugin's
+    # _ansible_error_detail bookkeeping, and mount's own os.makedirs('')).
+    private def join_crash(index : Int32, type_name : String) : PluginResult
+      detail = "sequence item #{index}: expected str instance, #{type_name} found"
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
     end
 
     # Does the stored selection differ from the requested value?

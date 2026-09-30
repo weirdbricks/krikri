@@ -785,3 +785,48 @@ describe "assemble's action-branch remote_src semantics (boolean(strict=False), 
     output.wont_include("is not a directory")
   end
 end
+
+# debconf's `value:` is its module's only `type: raw` option, so an int
+# literal reaches real's `' '.join([pkg, question, vtype, value])`
+# (debconf.py:179) as itself and kills the module - probed against real
+# ansible-playbook 2.19.11, whose console rendering of that uncaught
+# exception is what the two must_include's below pin down. The debconf
+# binaries are PATH-shimmed through the task's own `environment:` so
+# nothing here touches the real debconf database (and the crash means
+# nothing is ever seeded).
+describe "non-string YAML literal module args (debconf value)" do
+  it "debconf fails with real's uncaught ' '.join TypeError for an int value" do
+    scratch = PluginSpecHelper.tmp_path("nonstring-debconf-cwd")
+    shim = File.join(scratch, "shim")
+    log = File.join(scratch, "set-selections.log")
+    FileUtils.mkdir_p(shim)
+    File.write(File.join(shim, "debconf-show"), "#!/bin/sh\nexit 0\n")
+    File.write(File.join(shim, "debconf-set-selections"), "#!/bin/sh\ncat >> \"#{log}\"\n")
+    File.write(File.join(shim, "debconf-get-selections"), "#!/bin/sh\nexit 0\n")
+    %w[debconf-show debconf-set-selections debconf-get-selections].each do |bin|
+      File.chmod(File.join(shim, bin), 0o755)
+    end
+    playbook = File.join(scratch, "play.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - debconf:
+              name: kpgpkg
+              question: 16
+              value: 76
+              vtype: text
+            environment:
+              PATH: "#{shim}:/usr/bin:/bin"
+            ignore_errors: true
+    YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: scratch)
+
+    output.to_s.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Module failed: sequence item 3: expected str instance, int found"}))
+    output.to_s.must_include("[ERROR]: Task failed: Module failed: sequence item 3: expected str instance, int found")
+    output.to_s.wont_include("\u{E000}")
+    File.exists?(log).must_equal(false)
+  end
+end

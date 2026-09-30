@@ -97,6 +97,23 @@ module Krikri
     nil
   end
 
+  # The members of a parser comma-joined list param value, in wire
+  # order: a member the parser marked with NON_STRING_MEMBER_PREFIX (see
+  # that prefix's comment) as its decoded native scalar, every other
+  # member as its own plain text. nil when the value carries no member
+  # marker at all - a plain string, or a whole-value scalar literal
+  # (which rides NON_STRING_PARAM_PREFIX instead and stays
+  # #non_string_scalar's business). The plugin-side counterpart of the
+  # demotion every param-parse site performs: a plugin mirroring a real
+  # module's per-MEMBER type checking can still see the native types
+  # here, since the demoted @params text has lost the markers.
+  def self.non_string_list_members(value : String?) : Array(JSON::Any)?
+    return nil unless value && value.includes?(NON_STRING_MEMBER_PREFIX)
+    value.split(',').map do |part|
+      non_string_member_scalar(part) || JSON::Any.new(part)
+    end
+  end
+
   # The plain string form a marked literal demotes to on the plugin wire -
   # exactly what stringify_value produced before the marker existed, so
   # every plugin that never asks about the native type sees identical text.
@@ -204,6 +221,26 @@ module Krikri
     when Bool then native.as_bool ? "True" : "False"
     when Nil  then "None"
     else           non_string_param_text(native)
+    end
+  end
+
+  # The Python type name CPython's str.join puts in its own "sequence item
+  # N: expected str instance, X found" TypeError - the message real's
+  # debconf module dies with when a non-string `value:` literal reaches its
+  # `' '.join([pkg, question, vtype, value])` (debconf.py:179, live-verified
+  # vs 2.19.11). These values are PLAIN Python objects by then - the same
+  # `value:` literal that would be reported as an _AnsibleTaggedInt in an
+  # "'X' object has no attribute" crash names plain `int` here - so this is
+  # the builtin name, unlike #python_value_type_name.
+  def self.python_join_type_name(native : JSON::Any) : String
+    case native.raw
+    when Int64, Int32 then "int"
+    when Float64      then "float"
+    when Bool         then "bool"
+    when Nil          then "NoneType"
+    when Hash         then "dict"
+    when Array        then "list"
+    else                   native.raw.class.to_s
     end
   end
 
