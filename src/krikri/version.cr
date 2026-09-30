@@ -3,6 +3,11 @@ require "yaml"
 module Krikri
   VERSION = "0.9.1376"
 
+  # The ansible-core release krikri's output is verified against, byte for
+  # byte (see README "Compatibility target"). Also the value of the
+  # `ansible_version` magic variable.
+  ANSIBLE_TARGET_VERSION = "2.19.11"
+
   # Baked in at compile time via the same `--release` flag `build.sh`
   # passes through to `crystal build`. A timing-sensitive round run
   # against a debug binary is ~1.8x slower wall-clock than release on
@@ -126,7 +131,8 @@ module Krikri
 
   def self.version_info : String
     version_info("krikri", VERSION,
-      "Fast, Ansible-compatible automation tool written in Crystal")
+      "Fast, Ansible-compatible automation tool written in Crystal\n" \
+      "Targets ansible-core #{ANSIBLE_TARGET_VERSION} (output-compatible)")
   end
 
   # Shared --version shape for every krikri binary (playbook, ad-hoc
