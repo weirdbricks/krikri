@@ -42,26 +42,8 @@ structural exclusions called out below.
 
 ## 🎯 Compatibility target
 
-**krikri targets `ansible-core` 2.19.11** (the release shipped in Debian 13 "trixie"; the `ansible` 12.0.0
-package there bundles `community.general` 11.2.1 and `ansible.posix` 2.1.0). `ansible_version` reports
-`2.19.11`, `krikri-playbook --version` names it, and the goal is **byte-for-byte identical console output**
-(stdout, stderr and exit code) to `ansible-playbook` 2.19.11 for the same playbook - including error blocks,
-argument validation, warnings, result shapes and `-v` output.
-
-How that is checked: `scripts/output_parity.sh` runs a playbook under both engines and diffs the raw bytes,
-and a generator (`krikri-playbook-generator`) produces valid and deliberately mutated ("chaos") playbooks per
-module and compares the two engines inside fresh containers. Recent chaos sweeps of ~150 playbooks across ~50
-modules come back with a handful of differences or fewer.
-
-Intentional or unavoidable differences:
-- Python interpreter-discovery warnings (`Host ... is using the discovered Python interpreter ...`) are not
-  emulated - krikri has no Python interpreter to discover.
-- `-vv` and higher: real ansible's environment banner (Python/Jinja/PyYAML versions, module search paths) is
-  not reproduced.
-- Values that are random per real run cannot be matched: temp file/dir names, and the order of string sets
-  (`union`/`intersect`/... on lists of strings, the list of several invalid options in an error message).
-  Integer set order *is* reproduced.
-- Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
+**krikri targets `ansible-core` 2.19.11** and aims for byte-for-byte identical console output (stdout, stderr, exit code) to `ansible-playbook` 2.19.11, checked with `scripts/output_parity.sh` and a per-module generator of valid and mutated playbooks.
+Known unavoidable differences: no Python interpreter-discovery warning, no `-vv` environment banner, and values that are random per real run (temp file names, string-set ordering).
 
 ---
 
