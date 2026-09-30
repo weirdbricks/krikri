@@ -20,14 +20,23 @@ picture, on either the controller or the target - it's one compiled binary
 It is not a new automation DSL you have to learn, and not a "mostly
 compatible" reimplementation verified by eyeballing docs - every plugin's
 behavior is checked against real `ansible-playbook` output on real hosts,
-across **6,680 real Galaxy roles tested to date** (see
-[ROLES_TESTED.md](ROLES_TESTED.md); **Differences** and **What's missing**
-below), and a Docker-based compatibility harness (`compat/`) runs the same
-playbooks through both engines side by side and diffs the resulting
-state. Any observed
+across the real Galaxy roles listed in
+[ROLES_TESTED.md](ROLES_TESTED.md), and a Docker-based compatibility
+harness (`compat/`) runs the same playbooks through both engines side by
+side and diffs the resulting state. Any observed
 divergence from real Ansible's behavior is treated as a bug in this
 project, not a documented limitation, unless it's one of the deliberate
 structural exclusions called out below.
+
+| By the numbers | |
+|---|---|
+| Compatibility target | ansible-core 2.19.11 |
+| Real Galaxy roles tested on real hosts | 6,680 |
+| Third-party collection modules natively ported | 62 |
+| Automated tests | 6,408 passing, 0 failures |
+| Cold run vs. real `ansible-playbook` | 2.36x faster |
+| Warm run vs. real `ansible-playbook` | 7.17x faster |
+| Fastest of the three benchmarked engines | 57 of 61 roles (93%) |
 
 ---
 
@@ -61,38 +70,12 @@ Intentional or unavoidable differences:
 If you already know Ansible, here's what actually changes when you swap
 `ansible-playbook` for `./bin/krikri-playbook`:
 
-### Architecture: compiled binaries, not a Python interpreter per task
-
-Real Ansible ships a Python module's source, templates it, and starts a
-fresh Python interpreter for it on the target host **for every single
-task**, every run - even when nothing changes. krikri compiles
-each module (`apt`, `copy`, `service`, ...) into its own small native
-binary once; running a task means uploading that binary (cached after the
-first run) and executing it directly - no interpreter startup, no module
-templating step, no `AnsiballZ` wrapper. Consecutive tasks bound for the
-same host are also batched into a single SSH round trip by default
-(`--no-batching` to disable) instead of one round trip per task.
-
-This is the single biggest practical difference, and it shows up directly
-in wall-clock time - see **Performance** below.
-
-### What's structurally different (by design, not a gap)
-
-Third-party collection modules aren't vendored wholesale - a
-`community.*`/etc. module only runs once natively ported into a compiled
-plugin binary (a role's own private `library/*.py` module is unaffected
-either way). Porting is usage-driven: every one of the **6,680+ real
-Galaxy roles** this project is benchmarked against surfaces whichever
-third-party modules real tasks actually call, and **62 are natively
-ported as of this writing** (see `AVAILABLE_PLUGINS` in
-`src/krikri/playbook_parser.cr`). Anything else hard-stops cleanly
-(`"krikri does not yet have module 'x.y.z' implemented"`) rather than
-silently skipping.
-
-Cloud provider modules are out of scope **except AWS/EC2**, which is
-fully supported (`ec2_instance` and its supporting cluster, plus the
-`aws_ec2` inventory plugin) - a deliberate, scoped exception, not an
-opening of the whole category. See **What's missing** below.
+| Area | Difference |
+|---|---|
+| Module execution | Real Ansible ships a module's source, templates it, and starts a fresh Python interpreter on the target **for every task, every run**, even when nothing changes. krikri compiles each module (`apt`, `copy`, `service`, ...) into a small native binary once, uploads it (cached after the first run) and runs it directly - no interpreter startup, no module templating, no `AnsiballZ` wrapper. This is the single biggest practical difference, and what the wall-clock numbers in **Performance** are made of. |
+| SSH round trips | Consecutive tasks bound for the same host are batched into a single round trip by default (`--no-batching` to disable) instead of one per task. |
+| Third-party collection modules (deliberate exclusion, not a gap) | Not vendored wholesale: a `community.*`/etc. module runs only once natively ported into a compiled plugin binary (a role's own private `library/*.py` module is unaffected either way). Porting is usage-driven - the real Galaxy roles this project is benchmarked against surface whichever third-party modules real tasks actually call (counts in the table above; the list is `AVAILABLE_PLUGINS` in `src/krikri/playbook_parser.cr`). Anything else hard-stops cleanly (`"krikri does not yet have module 'x.y.z' implemented"`) rather than silently skipping. |
+| Cloud provider modules (deliberate exclusion, not a gap) | Out of scope, except AWS/EC2, which is fully supported (`ec2_instance` and its supporting cluster, plus the `aws_ec2` inventory plugin) - a scoped exception, not an opening of the whole category. |
 
 ---
 
@@ -118,8 +101,7 @@ from a pre-planned feature checklist:
 Native compiled modules, one persistent SSH connection per host, and
 batched round trips make the biggest difference on **idempotent
 re-runs** - the common case for a config-management tool running on a
-schedule, where most tasks find nothing to change but Python still pays
-a fresh interpreter-and-module cost per task regardless.
+schedule, where most tasks find nothing to change.
 
 A 3-way benchmark against real `ansible-playbook` and `ansible-playbook`
 with the Mitogen strategy plugin, across a 100-role random sample, found
@@ -134,7 +116,8 @@ outcome:
 | Warm (median/role) | 14.49s | 6.97s | 2.00s | 7.99x faster | 4.00x faster |
 
 krikri-playbook was the fastest of the three engines in 57 of 61 roles
-(93%). Full methodology and the broader 78-role set: see
+(93%, see the table at the top). Full methodology and the broader
+78-role set: see
 [ansible-vs-mitogen-vs-krikri.md](ansible-vs-mitogen-vs-krikri.md).
 
 Per-role cold/warm timings: see [ROLES_TESTED.md](ROLES_TESTED.md).
