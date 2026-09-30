@@ -2093,6 +2093,13 @@ module Krikri
     # inside the module's own AnsibleModule init - i.e. after the action
     # plugin stage, before any module-side file access - which is exactly
     # where the two callers of this hook sit.
+    # Core modules whose real module source declares
+    # supports_check_mode=False (and whose plugin mirrors the skip).
+    NO_CHECK_MODE_MODULES = %w[
+      ansible.builtin.uri ansible.builtin.wait_for ansible.builtin.tempfile
+      community.mysql.mysql_query community.mysql.mysql_variables
+    ]
+
     private def argspec_validation_result(
       task : Task,
       params : Hash(String, String),
@@ -2123,6 +2130,13 @@ module Krikri
       # --check too.
       return nil if check_mode && !action_level_only &&
                     task.module_name == "ansible.builtin.template" && !remote_src_param?(params)
+      # Modules that do not support check mode never reach their
+      # AnsibleModule init under --check (2.19's action layer raises
+      # AnsibleActionSkip "This action (...) does not support check mode."
+      # before any argument validation - live-verified vs 2.19.11: uri
+      # with an invalid status_code element SKIPS under --check instead
+      # of failing), so their module-level spec checks are skipped too.
+      return nil if check_mode && !action_level_only && NO_CHECK_MODE_MODULES.includes?(task.module_name)
       # ... and outside check mode the copy MODULE only runs when the
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)

@@ -1584,11 +1584,11 @@
     ],
     "type": "str_or_list_of_str"
    },
-   "quiet": {
-    "type": "bool"
-   },
    "success_msg": {
     "type": "str_or_list_of_str"
+   },
+   "quiet": {
+    "type": "bool"
    },
    "that": {
     "required": true

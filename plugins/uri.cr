@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "big"
 require "http/client"
 require "uri"
 require "base64"
@@ -107,7 +108,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Parameter 'method' needs to be a single word in uppercase, like GET or POST.")
       end
 
-      status_codes = (@params["status_code"]? || "200").split(",").map(&.strip.to_i)
+      status_codes = (@params["status_code"]? || "200").split(",").map { |part| decimal_int(part.strip) }
 
       # creates:/removes: idempotency short-circuit, same semantics as
       # command's (exist → skip / not-exist → skip). Real uri.py exits
@@ -141,10 +142,11 @@ module Krikri
         dest_path = expand_tilde(dest_param)
         last_mod_time = File.info(dest_path).modification_time if File.file?(dest_path)
       end
-      # A scheme-less URL never reaches an HTTP request in real: urllib falls
-      # through to a local-file open (live-verified message and result keys)
+      # A scheme-less URL never reaches an HTTP request in real: urllib's
+      # urlopen raises "unknown url type: '<url>'" (live-verified vs
+      # 2.19.11 message and result keys: no elapsed/redirected/content).
       unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
-        return PluginResult.new(changed: false, failed: true, msg: "Status code was -1 and not #{status_codes}: Connection failure: [Errno 2] No such file or directory", url: url, status: -1, elapsed: 0, redirected: false)
+        return PluginResult.new(changed: false, failed: true, msg: "unknown url type: '#{url}'", url: url, status: -1)
       end
       begin
         status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
@@ -365,10 +367,24 @@ module Krikri
       (status_code == 303 || ((status_code == 301 || status_code == 302) && method == "POST")) ? "GET" : method
     end
 
+    # Real's check_type_int conversion (Decimal(value), integral required):
+    # a spec-valid int-typed option that is not a plain integer spelling
+    # ("1.0") still converts to its truncated int instead of crashing the
+    # plugin's own strict parse. A YAML boolean member demotes to
+    # "true"/"false" wire text and real keeps it a Python bool - an int
+    # subclass (True == 1) - so it converts too.
+    private def decimal_int(raw : String) : Int32
+      return 1 if raw == "true"
+      return 0 if raw == "false"
+      BigDecimal.new(raw).to_i
+    rescue
+      raw.to_i
+    end
+
     private def build_client(uri : URI) : HTTP::Client
       client = HTTP::Client.new(uri)
 
-      timeout = (@params["timeout"]? || "30").to_i.seconds
+      timeout = decimal_int((@params["timeout"]? || "30")).seconds
       client.connect_timeout = timeout
       client.read_timeout = timeout
 

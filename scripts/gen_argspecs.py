@@ -364,8 +364,8 @@ VIRTUAL = {
             # to str_or_list_of_str: a string or list of strings is
             # required" BEFORE the unsupported-params error.
             "fail_msg": {"aliases": ["msg"], "type": "str_or_list_of_str"},
-            "quiet": {"type": "bool"},
             "success_msg": {"type": "str_or_list_of_str"},
+            "quiet": {"type": "bool"},
             "that": {"required": True},
         },
         "print": {

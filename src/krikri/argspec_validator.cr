@@ -87,6 +87,46 @@ module Krikri
       @@table ||= JSON.parse({{ read_file("#{__DIR__}/../../data/argspecs.json") }}).as_h
     end
 
+    @@option_order : Hash(String, Array(String))? = nil
+
+    # Each module's option names in real's argument_spec DECLARATION order
+    # (data/argspecs.json preserves it; Crystal's JSON object decode does
+    # not). Real's validation walks the spec dict in declaration order, so
+    # the first failing option - not the hash-decoded order - decides which
+    # type/choices error wins. Re-read through a pull parser because the
+    # table itself was decoded order-less above.
+    private def option_order_table : Hash(String, Array(String))
+      @@option_order ||= begin
+        order = Hash(String, Array(String)).new
+        pull = JSON::PullParser.new({{ read_file("#{__DIR__}/../../data/argspecs.json") }})
+        pull.read_object do |module_name|
+          names = [] of String
+          pull.read_object do |key|
+            if key == "options"
+              pull.read_object do |option_name|
+                names << option_name
+                pull.skip
+              end
+            else
+              pull.skip
+            end
+          end
+          order[module_name] = names
+        end
+        order
+      end
+    end
+
+    # The options map as (name, spec) pairs in declaration order; names
+    # missing from the order list (defensive) keep their relative order
+    # at the end.
+    private def ordered_option_pairs(options : Hash(String, JSON::Any), order : Array(String)?) : Array(Tuple(String, JSON::Any))
+      pairs = options.to_a
+      return pairs unless order
+      pairs.sort_by! { |(name, _)| order.index(name) || order.size }
+      pairs
+    end
+
     # Whether this msg on this module is an argspec-validation failure we
     # emitted (used by ResultDisplay to pick the right error-block chain
     # shape - template's own file-not-found chain must not swallow these).
@@ -152,10 +192,11 @@ module Krikri
       # capture the markers (alias-resolved to the canonical option name)
       # BEFORE the strip below hides them.
       non_string_natives = collect_non_string_natives(entry, params)
+      non_string_lists = collect_non_string_lists(entry, params)
 
       params = prepare_module_params(module_name, params, entry)
 
-      outcome = action_plugin_preflight(module_name, params, entry, non_string_natives, vars_context)
+      outcome = action_plugin_preflight(module_name, params, entry, non_string_natives, non_string_lists, vars_context)
       return outcome.failure if outcome.failure
       return nil if outcome.defer?
 
@@ -168,10 +209,10 @@ module Krikri
       # a dest that is not a directory here defers to the plugin's own failure.
       return nil if defers_to_unarchive_action?(module_name, params)
 
-      print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
+      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
       return nil unless entry
 
-      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+      validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists)
     end
 
     # What the action-plugin checks that run BEFORE module argument
@@ -215,6 +256,23 @@ module Krikri
       end
 
       nil
+    end
+
+    # The parser's non-string YAML LIST literals (a comma-joined wire with
+    # NON_STRING_MEMBER_PREFIX-marked members, e.g. `status_code: [1.5]`),
+    # captured under the canonical option name BEFORE the demotion strip -
+    # the per-element type checks (elements=int) need the members' native
+    # types, which the stripped wire text has lost.
+    private def collect_non_string_lists(entry : JSON::Any, params : Hash(String, String)) : Hash(String, JSON::Any)
+      alias_lookup = alias_map(entry["options"]?.try(&.as_h?) || Hash(String, JSON::Any).new)
+      lists = {} of String => JSON::Any
+      params.each do |key, value|
+        next if INTERNAL_KEYS.includes?(key)
+        if members = Krikri.non_string_list_members(value)
+          lists[alias_lookup[key]? || key] = JSON::Any.new(members)
+        end
+      end
+      lists
     end
 
     # The natively-typed params captured under their canonical (alias
@@ -316,6 +374,7 @@ module Krikri
       params : Hash(String, String),
       entry : JSON::Any,
       non_string_natives : Hash(String, JSON::Any),
+      non_string_lists : Hash(String, JSON::Any),
       vars_context : Hash(String, JSON::Any),
     ) : ActionOutcome
       if module_name == "ansible.builtin.assemble" && assemble_action_local_path?(params)
@@ -323,7 +382,7 @@ module Krikri
         if copy_entry = table["ansible.builtin.copy"]?
           delegated = params.reject { |key, _| ASSEMBLE_ACTION_CONSUMED.includes?(key) }
           return ActionOutcome.new(validate_spec_entry("ansible.builtin.copy", "ansible.builtin.copy", delegated,
-            copy_entry, non_string_natives, vars_context), true)
+            copy_entry, non_string_natives, non_string_lists, vars_context), true)
         end
       end
 
@@ -412,20 +471,23 @@ module Krikri
       params : Hash(String, String),
       entry : JSON::Any,
       non_string_natives : Hash(String, JSON::Any),
+      non_string_lists : Hash(String, JSON::Any),
       vars_context : Hash(String, JSON::Any),
     ) : Failure?
-      print_name, entry = resolve_entry(action_name, module_name, entry, vars_context)
+      print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
       return nil unless entry
 
-      validate_spec_entry_tail(action_name, print_name, entry, params, non_string_natives)
+      validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists)
     end
 
     private def validate_spec_entry_tail(
       action_name : String,
       print_name : String,
       entry : JSON::Any,
+      spec_owner : String,
       params : Hash(String, String),
       non_string_natives : Hash(String, JSON::Any),
+      non_string_lists : Hash(String, JSON::Any),
     ) : Failure?
       if supported = entry["supported"]?.try(&.as_a?)
         return virtual_supported_failure(action_name, print_name, entry, params, supported)
@@ -439,7 +501,7 @@ module Krikri
       provided, unsupported = collect_provided(params, options, consumed_keys(entry))
 
       defaults = default_values(options)
-      failure_msg = run_spec_checks(entry, options, provided, defaults, unsupported, non_string_natives)
+      failure_msg = run_spec_checks(spec_owner, entry, options, provided, defaults, unsupported, non_string_natives, non_string_lists)
       if failure_msg
         return Failure.new(failure_msg, entry["action_level"]?.try(&.as_bool?) || false,
           omit_changed: result_keys_msg_only?(entry))
@@ -580,12 +642,14 @@ module Krikri
     # only the FIRST failing check's message is ever surfaced (real's
     # AnsibleModule fails on errors[0]).
     private def run_spec_checks(
+      spec_owner : String,
       entry : JSON::Any,
       options : Hash(String, JSON::Any),
       provided : Hash(String, String),
       defaults : Hash(String, JSON::Any),
       unsupported : Array(String),
       non_string_natives : Hash(String, JSON::Any),
+      non_string_lists : Hash(String, JSON::Any),
     ) : String?
       # Real's ArgumentSpecValidator.validate runs its no_log value walk
       # (_list_no_log_values) immediately after alias resolution - before
@@ -597,7 +661,8 @@ module Krikri
       # only happens later, for options WITHOUT suboptions (which the
       # walk never descends into). Specs regenerated with nested
       # "options"/"elements" keys make this check data-driven.
-      if msg = check_no_log_walk(options, provided)
+      order = option_order_table[spec_owner]?
+      if msg = check_no_log_walk(options, provided, order)
         return msg
       end
       if msg = check_mutually_exclusive(entry, provided)
@@ -606,10 +671,10 @@ module Krikri
       if msg = check_required(options, provided, defaults)
         return msg
       end
-      if msg = check_types(options, provided, non_string_natives)
+      if msg = check_types(options, provided, non_string_natives, non_string_lists, order)
         return msg
       end
-      if msg = check_choices(options, provided)
+      if msg = check_choices(options, provided, order)
         return msg
       end
       if msg = check_required_together(entry, provided, defaults)
@@ -632,7 +697,11 @@ module Krikri
     # Returns {print_name, effective_entry} - effective_entry nil means
     # the spec target cannot be determined (no host fact), so validation
     # is skipped rather than guessed.
-    private def resolve_entry(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?}
+    # Computes the module name real would print for this invocation, the
+    # effective entry, and the FQCN whose declaration-ordered options the
+    # spec checks walk (a fact-delegated target owns the order, not the
+    # action spelling).
+    private def resolve_entry(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}
       if delegated = resolve_fact_delegate(action_name, module_name, entry, vars_context)
         return delegated
       end
@@ -645,23 +714,23 @@ module Krikri
           print_name = override.as_s
         end
       end
-      {print_name, entry}
+      {print_name, entry, module_name}
     end
 
     # The fact-delegating half of resolve_entry, or nil for a spec that
     # isn't fact-delegated at all.
-    private def resolve_fact_delegate(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?}?
+    private def resolve_fact_delegate(action_name : String, module_name : String, entry : JSON::Any, vars_context : Hash(String, JSON::Any)) : {String, JSON::Any?, String}?
       fact_delegate = entry["fact_delegate"]?
       return nil unless fact_delegate
       fact = fact_delegate["fact"].as_s
       fact_value = delegating_fact(fact, vars_context)
       target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
       if target && (target_entry = table[target]?)
-        return {"ansible.legacy.#{target.split(".").last}", target_entry}
+        return {"ansible.legacy.#{target.split(".").last}", target_entry, target}
       end
-      return {action_name, nil} unless fact == "ansible_service_mgr"
+      return {action_name, nil, module_name} unless fact == "ansible_service_mgr"
 
-      {"ansible.legacy.#{module_name.split(".").last}", entry}
+      {"ansible.legacy.#{module_name.split(".").last}", entry, module_name}
     end
 
     # Facts not gathered: real's action plugin runs setup for just the
@@ -732,12 +801,22 @@ module Krikri
       missing.empty? ? nil : "missing required arguments: #{missing.sort.join(", ")}"
     end
 
-    private def check_types(options : Hash(String, JSON::Any), provided : Hash(String, String), non_string_natives : Hash(String, JSON::Any)) : String?
-      options.each do |name, spec|
+    private def check_types(options : Hash(String, JSON::Any), provided : Hash(String, String),
+                            non_string_natives : Hash(String, JSON::Any),
+                            non_string_lists : Hash(String, JSON::Any), order : Array(String)?) : String?
+      ordered_option_pairs(options, order).each do |name, spec|
         raw = provided[name]?
         next unless raw
         wanted = spec["type"]?.try(&.as_s?) || "str"
         error = type_error(name, wanted, raw, spec, non_string_natives[name]?)
+        return error if error
+        # The option's own type converted cleanly: a list typed option
+        # with an elements= constraint converts each element in the same
+        # walk (real's check_type_list runs the element checker inline),
+        # so uri's status_code element failure is part of the types pass
+        # and beats any later option's type error and every choices check
+        # (live-verified vs 2.19.11).
+        error = elements_type_error(name, spec, raw, non_string_natives[name]?, non_string_lists[name]?)
         return error if error
       end
       nil
@@ -776,8 +855,8 @@ module Krikri
     # level into the sub-spec recursively. Elements that are neither
     # strings nor dicts fail with real's own (format-arg-swapped)
     # "Value 'x' in the sub parameter field 'y' must be a ..." wording.
-    private def check_no_log_walk(options : Hash(String, JSON::Any), provided : Hash(String, String)) : String?
-      options.each do |name, spec|
+    private def check_no_log_walk(options : Hash(String, JSON::Any), provided : Hash(String, String), order : Array(String)?) : String?
+      ordered_option_pairs(options, order).each do |name, spec|
         sub_spec = spec["options"]?.try(&.as_h?) || next
         wanted = spec["type"]?.try(&.as_s?) || "str"
         next unless wanted == "dict" ||
@@ -917,12 +996,13 @@ module Krikri
     # str(value) there).
     private def python_value_repr(value : JSON::Any) : String
       case raw = value.raw
-      when Nil              then "None"
-      when Bool             then raw ? "True" : "False"
-      when Int64            then raw.to_s
-      when Float64          then raw.to_s
-      when Array(JSON::Any) then "[#{raw.map { |item| python_value_repr(item) }.join(", ")}]"
-      else                       raw.to_s
+      when Nil                     then "None"
+      when Bool                    then raw ? "True" : "False"
+      when Int64                   then raw.to_s
+      when Float64                 then raw.to_s
+      when Array(JSON::Any)        then "[#{raw.map { |item| python_value_repr(item) }.join(", ")}]"
+      when Hash(String, JSON::Any) then "{#{raw.map { |k, v| "'#{k}': #{python_value_repr(v)}" }.join(", ")}}"
+      else                              raw.to_s
       end
     end
 
@@ -1125,6 +1205,66 @@ module Krikri
       "<class 'dict'> cannot be converted to a list"
     end
 
+    # Real's check_type_list runs the elements= checker on every element
+    # inline; only elements=int is strict enough to ever fail here (str/
+    # path/raw elements coerce leniently), so only that one is mirrored.
+    # The first failing element's error wins, wrapped as "Elements value
+    # for option ..." instead of "argument ..." (live-verified vs
+    # 2.19.11: uri status_code [200, abc] / [1.5] / [null] / [[1]]).
+    private def elements_type_error(name : String, spec : JSON::Any, raw : String, native : JSON::Any?, native_list : JSON::Any?) : String?
+      return nil unless spec["elements"]?.try(&.as_s?) == "int"
+      element_values(raw, native, native_list).each do |element|
+        if msg = int_element_error(name, element)
+          return msg
+        end
+      end
+      nil
+    end
+
+    # The list real's check_type_list would hand to the element checker:
+    # a natively-typed param is its own container (or a one-element list),
+    # a JSON/demoted-YAML list decodes to its members, and a plain string
+    # splits on commas (or stands alone) - see the native elements probes.
+    private def element_values(raw : String, native : JSON::Any?, native_list : JSON::Any?) : Array(JSON::Any)
+      if native
+        return native.as_a? || [native]
+      end
+      return native_list.as_a if native_list && native_list.as_a?
+      json = (JSON.parse(raw) rescue nil)
+      return json.as_a if json && json.as_a?
+      if raw.includes?(",")
+        return raw.split(",").map { |part| JSON::Any.new(part) }
+      end
+      [JSON::Any.new(raw)]
+    end
+
+    # One element against the int checker: bools pass (a Python bool IS an
+    # int), int-like values pass (real converts through Decimal, so "1.0"
+    # and 1.0 convert and "abc"/1.5 do not), everything else fails with
+    # its own Python class and repr.
+    private def int_element_error(name : String, element : JSON::Any) : String?
+      case raw = element.raw
+      when Int64, Int32, Bool
+        nil
+      when Float64
+        repr = python_value_repr(element)
+        return nil if int_like?(repr)
+        "Elements value for option '#{name}' is of type float and we were unable to convert to int: " \
+        "\"#{repr}\" cannot be converted to an int"
+      when String
+        return nil if int_like?(raw)
+        "Elements value for option '#{name}' is of type str and we were unable to convert to int: " \
+        "\"'#{raw}'\" cannot be converted to an int"
+      when Nil
+        "Elements value for option '#{name}' is of type NoneType and we were unable to convert to int: " \
+        "\"None\" cannot be converted to an int"
+      else
+        kind = element.as_a? ? "list" : "dict"
+        "Elements value for option '#{name}' is of type #{kind} and we were unable to convert to int: " \
+        "\"#{python_value_repr(element)}\" cannot be converted to an int"
+      end
+    end
+
     private def jsonarg_type_error(name : String, kind : Symbol) : String?
       return nil unless kind == :bool
       "argument '#{name}' is of type bool and we were unable to convert to jsonarg: " \
@@ -1224,8 +1364,8 @@ module Krikri
       s.matches?(/\A[0-9]+(\.[0-9]+)?\s*[KMGTPE](i)?B?\z/i)
     end
 
-    private def check_choices(options : Hash(String, JSON::Any), provided : Hash(String, String)) : String?
-      options.each do |name, spec|
+    private def check_choices(options : Hash(String, JSON::Any), provided : Hash(String, String), order : Array(String)? = nil) : String?
+      ordered_option_pairs(options, order).each do |name, spec|
         raw = provided[name]?
         next unless raw
         choices = spec["choices"]?.try(&.as_a?) || next

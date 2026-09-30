@@ -632,6 +632,69 @@ describe Krikri::ArgspecValidator do
       "dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, " \
       "selevel, serole, setype, seuser, src, unsafe_writes, validate (attr).")
   end
+
+  # Declaration-order selection: with SEVERAL invalid arguments real
+  # reports the first failing option in argument_spec DECLARATION order,
+  # not hash/alpha order - and every type conversion precedes every
+  # choices check, and every spec check precedes the unsupported-params
+  # report. (Live-verified vs 2.19.11, /tmp/kpg-x/probeK.)
+  it "reports assert's first failing option in declaration order (success_msg before quiet)" do
+    failure = Krikri::ArgspecValidator.validate(
+      "assert", "ansible.builtin.assert",
+      {"fail_msg" => "kpg failed", "quiet" => "desbfi",
+       "success_msg" => Krikri::NON_STRING_PARAM_PREFIX + "14", "that" => "qbtoxp"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "argument 'success_msg' is of type int and we were unable to convert to str_or_list_of_str: " \
+      "a string or list of strings is required")
+    failure.as(Failure).action_level?.must_equal(true)
+  end
+
+  it "reports assert's quiet bool error when no earlier option fails" do
+    failure = Krikri::ArgspecValidator.validate(
+      "assert", "ansible.builtin.assert",
+      {"quiet" => "desbfi", "that" => "qbtoxp"}, vars)
+    failure.as(Failure).msg.must_equal(
+      "argument 'quiet' is of type str and we were unable to convert to bool: " \
+      "The value 'desbfi' is not a valid boolean. Valid booleans include: " \
+      "#{Krikri::ArgspecValidator::BOOLEANS_REPR.join(", ")}")
+  end
+
+  it "reports uri's status_code element conversion ahead of a later option's type error and choices" do
+    # status_code is declared AFTER creates/removes but BEFORE timeout;
+    # follow_redirects' choices check never runs when any type conversion
+    # fails, and a typo'd option never beats any spec check.
+    elements = "Elements value for option 'status_code' is of type str and we were unable to convert to int"
+    {
+      {"status_code" => "zqkfkq", "timeout" => "notanint"}    => "#{elements}: \"'zqkfkq'\" cannot be converted to an int",
+      {"status_code" => "zqkfkq", "follow_redirects" => "56"} => "#{elements}: \"'zqkfkq'\" cannot be converted to an int",
+      {"status_code" => "zqkfkq", "bogus_param" => "1"}       => "#{elements}: \"'zqkfkq'\" cannot be converted to an int",
+      {"status_code" => "200,abc", "timeout" => "notanint"}   => "#{elements}: \"'abc'\" cannot be converted to an int",
+      {"timeout" => "notanint", "follow_redirects" => "56"}   => "argument 'timeout' is of type str and we were unable to convert to int: \"'notanint'\" cannot be converted to an int",
+    }.each do |params, expected|
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri", params.merge({"url" => "jhbslx"}), vars)
+      failure.as(Failure).msg.must_equal(expected)
+    end
+  end
+
+  it "reports uri's element type conversions with real's own classes and reprs" do
+    {
+      {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "1.5"} => "float and we were unable to convert to int: \"1.5\"",
+      {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "null"} => "NoneType and we were unable to convert to int: \"None\"",
+      {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "[1]"} => "list and we were unable to convert to int: \"[1]\"",
+      {"status_code" => "1.0"} => nil,
+      {"status_code" => "200"} => nil,
+    }.each do |params, expected|
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri", params.merge({"url" => "jhbslx"}), vars)
+      if expected
+        failure.as(Failure).msg.must_equal(
+          "Elements value for option 'status_code' is of type #{expected} cannot be converted to an int")
+      else
+        failure.must_be_nil
+      end
+    end
+  end
 end
 
 # End-to-end display shape: a validation failure flowing through
