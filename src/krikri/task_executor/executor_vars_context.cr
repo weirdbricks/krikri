@@ -1611,6 +1611,16 @@ module Krikri
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': Syntax error in template: #{e.message}")
         rescue e : VariableSubstitutor::TemplateSyntaxError
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        rescue e : FilterPluginError
+          # mandatory's filter-plugin failure rides the same chain.
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
+        rescue e : TestPluginError
+          # A test plugin's RUNTIME failure ("The test plugin 'FQCN'
+          # failed: <cause>") rides the same finalization chain - real
+          # 2.19.11's fatal msg reads "Task failed: Finalization of task
+          # args for 'MOD' failed: Error while resolving value for 'KEY':
+          # The test plugin 'FQCN' failed: <cause>" (live-verified).
+          raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
         end
 
         # A block-tag template (`{%`/`{#`) that renders to a literally
@@ -1936,6 +1946,21 @@ module Krikri
       l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
 
+      # A test-plugin failure carries one MORE cause level: real's chain
+      # ends "... : The test plugin 'FQCN' failed: <cause>" and the block
+      # then shows "Error while resolving value for 'KEY': The test
+      # plugin 'FQCN' failed." (Origin at the param), then the bare
+      # <cause> text with NO Origin (live-captured 2.19.11).
+      # The TEST plugin case splits the cause into its own innermost
+      # stanza; the FILTER plugin case (mandatory) keeps the full text in
+      # the middle stanza with no extra level (live-captured 2.19.11).
+      test_plugin_pattern = /\A(Error while resolving value for '[^']+': The test plugin '[^']+' failed): (.*)\z/m
+      plugin_cause = nil
+      if (m = msg.match(test_plugin_pattern)) && !m[2].empty?
+        l3 = m[1] + "."
+        plugin_cause = m[2]
+      end
+
       name_line = locate_name_line(lines, task)
       if name_line
         name_idx, name_col = name_line
@@ -1971,7 +1996,13 @@ module Krikri
         io << "\n<<< caused by >>>\n\n"
         io << l3 << "\n"
         io << origin_context_block(path, lines, param_idx + 1, param_col)
-        io << "\n"
+        if cause = plugin_cause
+          io << "\n<<< caused by >>>\n\n"
+          io << cause << "\n"
+          io << "\n"
+        else
+          io << "\n"
+        end
       end
       puts text
     end
@@ -2340,8 +2371,16 @@ module Krikri
 
       lines = File.read_lines(path)
       located = locate_name_line(lines, task)
-      return unless located
-      name_idx, name_col = located
+      if located
+        name_idx, name_col = located
+      else
+        # A nameless task's origin is the module key line itself (real's
+        # two-level shape: "Task failed." + Origin at the module key) -
+        # the same fallback emit_finalization_error_block uses.
+        return unless task.source_line > 0
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
 
       raw = task.when_condition.to_s
       key_line = locate_conditional_origin(lines, name_idx, "when", raw)

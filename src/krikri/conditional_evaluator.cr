@@ -19,6 +19,16 @@ module Krikri
   # - Existence: is defined, is not defined
   # - Truthiness: bare variable names
 
+  # A FILTER plugin's runtime failure - same wrapper shape as the test
+  # plugin one ("The filter plugin '<fqcn>' failed: <cause>").
+  class FilterPluginError < Exception
+    getter cause_text : String
+
+    def initialize(message : String, @cause_text : String)
+      super(message)
+    end
+  end
+
   # A TEST PLUGIN's runtime failure - real ansible-core 2.19 wraps it as
   # "The test plugin '<fqcn>' failed: <cause>" and the [ERROR] chain block
   # shows the cause as its own innermost stanza. test_name carries the

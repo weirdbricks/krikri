@@ -206,6 +206,33 @@ module Krikri
   # from *vars* (a straight lookup, no evaluation), so none of this
   # evaluator's documented expression-syntax gaps can turn into a
   # spurious task failure here.
+  # Whether *expr* (a filter chain) pipes its source through the named
+  # filter FIRST - shared shape logic with
+  # #undefined_tolerant_first_filter?.
+  def self.chain_first_filter?(expr : String, name : String) : Bool
+    return false unless expr.includes?('|')
+    parts = VariableSubstitutor::FilterEngine.split_chain(expr)
+    return false unless parts.size >= 2
+    first_filter = parts[1].strip.lchop("ansible.builtin.")
+    paren = first_filter.index('(')
+    filter_name = (paren ? first_filter[0, paren] : first_filter).strip
+    filter_name == name
+  end
+
+  # mandatory's failure text: real's filter plugin uses its msg argument
+  # when given ("custom message here"), else "Mandatory variable 'X' not
+  # defined." quoting the UNDEFINED variable's name (live-verified).
+  def self.mandatory_message(chain : String, undefined_name : String) : String
+    if (m = chain.match(/mandatory\((.*)\)\s*\z/m)) && !m[1].strip.empty?
+      arg = m[1].strip
+      if (arg.starts_with?('\'') && arg.ends_with?('\'')) || (arg.starts_with?('"') && arg.ends_with?('"'))
+        return arg[1..-2]
+      end
+      return arg
+    end
+    "Mandatory variable '#{undefined_name}' not defined."
+  end
+
   def self.undefined_filter_chain_source(expr : String, vars : Hash(String, JSON::Any)) : String?
     return nil unless expr.includes?('|')
 
@@ -551,7 +578,10 @@ module Krikri
     if missing_key = dict_attribute_miss_name(expr, vars)
       "object of type '#{@@miss_type}' has no attribute '#{missing_key}'"
     else
-      "'#{expr}' is undefined"
+      # Real names the chain's ROOT variable, never the whole expression
+      # ("'missing' is undefined", not "'missing['key']' is undefined" -
+      # live-verified vs 2.19.11 for both dotted and bracket chains).
+      "'#{expr.split(/[\.\[]/, 2)[0]}' is undefined"
     end
   end
 
@@ -2104,6 +2134,18 @@ module Krikri
         # Ansible as the bare reference itself (see
         # Krikri.undefined_filter_chain_source).
         if undefined_name = Krikri.undefined_filter_chain_source(inner, @vars)
+          # `undefined | mandatory(...)` never reaches the filter in real
+          # Ansible either - but there the UNDEFINED value flows into the
+          # mandatory FILTER PLUGIN, which fails the task with real's own
+          # wrapper ("The filter plugin 'ansible.builtin.mandatory'
+          # failed: <message>"), not the plain undefined-variable error
+          # (live-verified vs 2.19.11).
+          if Krikri.chain_first_filter?(inner, "mandatory")
+            raise Krikri::FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.mandatory' failed: #{Krikri.mandatory_message(inner, undefined_name)}",
+              Krikri.mandatory_message(inner, undefined_name)
+            )
+          end
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars))
         end
         # A chained-subscript/dot expression whose actual lookup would
