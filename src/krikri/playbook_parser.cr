@@ -1014,6 +1014,20 @@ module Krikri
     end
   end
 
+  # A playbook document that is not a list of plays (a bare string, a
+  # mapping). Real Ansible refuses it at playbook-load time with
+  # "[ERROR]: A playbook must be a list of plays, got a <class '...'>
+  # instead: <path>" plus the document's 1:1 Origin block, rc=4
+  # (live-verified vs 2.19.11). Carries the fully rendered stderr block
+  # for krikri-playbook.cr to print verbatim.
+  class PlaybookNotListError < Exception
+    getter render : String
+
+    def initialize(message : String, @render : String)
+      super(message)
+    end
+  end
+
   # A bad argument on an include/include-role directive (`include_role:`,
   # `import_role:`, `import_tasks:`, `include_tasks:`), rejected by real
   # ansible-core at PLAYBOOK-LOAD time - TaskInclude.check_options /
@@ -1391,9 +1405,35 @@ module Krikri
         raise YamlSyntaxError.new(path, content, ex)
       end
 
-      # Playbook is an array of plays
+      # Playbook is an array of plays. A non-list document (a bare
+      # string, a mapping) is real Ansible's own playbook-load refusal -
+      # "[ERROR]: A playbook must be a list of plays, got a <class '...'>
+      # instead: <path>" with the document's Origin at 1:1, rc=4
+      # (live-verified vs 2.19.11: a mapping document renders
+      # _AnsibleTaggedDict and shows the file's first source line).
       unless yaml.as_a?
-        raise "Playbook must be a YAML list of plays"
+        type_name = case yaml.raw
+                    when String                     then "ansible.module_utils._internal._datatag._AnsibleTaggedStr"
+                    when Hash(YAML::Any, YAML::Any) then "ansible.module_utils._internal._datatag._AnsibleTaggedDict"
+                    when Int64                      then "ansible.module_utils._internal._datatag._AnsibleTaggedInt"
+                    when Bool                       then "bool"
+                    else                                 "NoneType"
+                    end
+        message = "A playbook must be a list of plays, got a <class '#{type_name}'> instead: #{path}"
+        render = String.build do |io|
+          io << "[ERROR]: " << message << "\n"
+          if File.file?(path)
+            io << "Origin: " << File.expand_path(path) << ":1:1\n"
+            io << "\n"
+            first_line = File.read_lines(path).first?.try(&.chomp) rescue nil
+            if first_line && !first_line.empty?
+              io << "1 " << first_line << "\n"
+              io << "  ^ column 1\n"
+            end
+            io << "\n"
+          end
+        end
+        raise PlaybookNotListError.new(message, render)
       end
 
       playbook_dir = File.dirname(path)

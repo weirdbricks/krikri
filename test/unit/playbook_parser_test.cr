@@ -360,7 +360,7 @@ describe Krikri::PlaybookParser do
     end
 
     it "raises when the top-level document is not a list" do
-      assert_raises_message(Exception, /must be a YAML list/) do
+      assert_raises_message(Krikri::PlaybookNotListError, /A playbook must be a list of plays, got a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'> instead/) do
         Krikri::PlaybookParser.parse_string(<<-YAML
           name: Not a list
           YAML

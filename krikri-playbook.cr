@@ -521,7 +521,10 @@ if playbook_file.empty?
 end
 
 unless File.exists?(playbook_file)
-  puts "Error: Playbook file not found: #{playbook_file}".colorize(:red)
+  # Real's own text and stream for a missing playbook (live-verified vs
+  # 2.19.11): `[ERROR]: the playbook: <path> could not be found` on
+  # STDERR, exit code 1.
+  STDERR.puts "[ERROR]: the playbook: #{playbook_file} could not be found".colorize(:red)
   exit 1
 end
 
@@ -558,6 +561,53 @@ end
 # itself in those modes, and that output is routinely machine-read in
 # CI, so warnings are suppressed there.
 quiet_listing_mode = syntax_check_only || list_tasks_only || list_hosts_only || list_tags_only
+
+# Parse inventory
+# Starts as an empty inventory rather than nil: an unreadable source is
+# a warning, not a fatal error (see the rescue below), so every later
+# reference is to a real Inventory either way.
+inventory = Krikri::Inventory.new
+begin
+  inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file, File.dirname(File.expand_path(playbook_file))) }
+
+  if verbose && verbose_extras
+    stats = Krikri::InventoryParser.stats(inventory)
+    puts "Inventory Statistics:".colorize(:green).bold
+    puts "  Hosts: #{stats["hosts"]}".colorize(:white)
+    puts "  Groups: #{stats["groups"]}".colorize(:white)
+    puts "  Variables: #{stats["vars"]}".colorize(:white)
+    puts ""
+  end
+
+  # Show inventory warnings (real ansible emits these on stderr as
+  # [WARNING]: lines) - in the listing modes too, verified against
+  # 2.19.11: --syntax-check/--list-tasks print the same inventory
+  # warnings before their listing.
+  inv_warnings = Krikri::InventoryParser.validate(inventory)
+  if !inv_warnings.empty?
+    inv_warnings.each do |warning|
+      STDERR.puts "[WARNING]: #{warning}"
+    end
+  end
+rescue ex
+  # Real Ansible does NOT abort when an inventory source can't be read:
+  # INVENTORY_UNPARSED_IS_FAILED defaults to false, so it warns, carries
+  # on with an empty inventory, and leaves the implicit localhost as the
+  # only reachable host - which is why `ansible-playbook play.yml` with
+  # no -i at all works there and used to stop here with "Error loading
+  # inventory" (the common CI shape: a `hosts: localhost` playbook and
+  # no inventory file in the repo at all).
+  #
+  # Note what "empty inventory" does and does not match, exactly as in
+  # real Ansible: `hosts: localhost` runs (Inventory#single_pattern_hosts
+  # synthesizes the implicit localhost with a local connection), while
+  # `hosts: all` matches nothing and the play is skipped.
+  inventory = Krikri::Inventory.new
+
+  STDERR.puts "[WARNING]: Unable to parse #{inventory_file} as an inventory source: #{ex.message}" if inventory_explicit
+  STDERR.puts "[WARNING]: No inventory was parsed, only implicit localhost is available"
+  STDERR.puts "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
+end
 
 # Parse playbook
 playbook = nil
@@ -656,7 +706,13 @@ rescue ex : Krikri::ConflictingActionStatementsError
   # real module key is real Ansible's own ModuleArgsParser PARSER error -
   # rc=4, not RemovedActionError's rc=1 (verified against ansible-core
   # 2.19.4: jdauphant.ssh-config's own `shell: ... always_run:` task).
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # Real prints the "[ERROR]:" line on STDERR with the task's Origin
+  # block (live-verified vs 2.19.11), not a bare line on stdout.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
   exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
@@ -685,8 +741,16 @@ rescue ex : Krikri::StaticImportMissingFileError
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
-  # with a caret. See YamlSyntaxError#render.
-  print ex.render
+  # with a caret. See YamlSyntaxError#render. Real prints it on STDERR
+  # (live-verified vs 2.19.11).
+  STDERR.print ex.render
+  exit 4
+rescue ex : Krikri::PlaybookNotListError
+  # A playbook document that is not a list of plays (a bare string, a
+  # mapping) is real Ansible's own playbook-load refusal - rendered at
+  # the raise site with the document's 1:1 Origin block; on STDERR,
+  # parser-error rc=4 (live-verified vs 2.19.11).
+  STDERR.print ex.render
   exit 4
 rescue ex : Krikri::MetaActionTypeError
   # A non-string free-form meta: value (`meta: 5`, `meta: [a]`) is real
@@ -720,53 +784,6 @@ rescue ex
   # matching real Ansible's own 1 for a missing playbook - that case
   # deliberately does NOT come through here.
   exit 4
-end
-
-# Parse inventory
-# Starts as an empty inventory rather than nil: an unreadable source is
-# a warning, not a fatal error (see the rescue below), so every later
-# reference is to a real Inventory either way.
-inventory = Krikri::Inventory.new
-begin
-  inventory = Krikri::TimingProfile.measure("parse.inventory") { Krikri::InventoryParser.parse(inventory_file, File.dirname(File.expand_path(playbook_file))) }
-
-  if verbose && verbose_extras
-    stats = Krikri::InventoryParser.stats(inventory)
-    puts "Inventory Statistics:".colorize(:green).bold
-    puts "  Hosts: #{stats["hosts"]}".colorize(:white)
-    puts "  Groups: #{stats["groups"]}".colorize(:white)
-    puts "  Variables: #{stats["vars"]}".colorize(:white)
-    puts ""
-  end
-
-  # Show inventory warnings (real ansible emits these on stderr as
-  # [WARNING]: lines) - in the listing modes too, verified against
-  # 2.19.11: --syntax-check/--list-tasks print the same inventory
-  # warnings before their listing.
-  inv_warnings = Krikri::InventoryParser.validate(inventory)
-  if !inv_warnings.empty?
-    inv_warnings.each do |warning|
-      STDERR.puts "[WARNING]: #{warning}"
-    end
-  end
-rescue ex
-  # Real Ansible does NOT abort when an inventory source can't be read:
-  # INVENTORY_UNPARSED_IS_FAILED defaults to false, so it warns, carries
-  # on with an empty inventory, and leaves the implicit localhost as the
-  # only reachable host - which is why `ansible-playbook play.yml` with
-  # no -i at all works there and used to stop here with "Error loading
-  # inventory" (the common CI shape: a `hosts: localhost` playbook and
-  # no inventory file in the repo at all).
-  #
-  # Note what "empty inventory" does and does not match, exactly as in
-  # real Ansible: `hosts: localhost` runs (Inventory#single_pattern_hosts
-  # synthesizes the implicit localhost with a local connection), while
-  # `hosts: all` matches nothing and the play is skipped.
-  inventory = Krikri::Inventory.new
-
-  STDERR.puts "[WARNING]: Unable to parse #{inventory_file} as an inventory source: #{ex.message}" if inventory_explicit
-  STDERR.puts "[WARNING]: No inventory was parsed, only implicit localhost is available"
-  STDERR.puts "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'"
 end
 
 # The listing modes dispatch here, after the inventory warnings: real
