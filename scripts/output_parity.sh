@@ -87,6 +87,10 @@ MASKS=(
   # alone. A custom prefix is not masked - it is not random, so both
   # engines must reproduce it verbatim.
   "s/(ansible\\.)[a-z0-9_]{8}([^'\"]*)(')/\\1<RND>\\2\\3/g"
+  # Seventh entry: the same mkstemp name when the user gave a CUSTOM prefix
+  # (the prefix and suffix are deterministic, only the 8 characters between
+  # them are random). Anchored on an Errno message's single-quoted path.
+  "s/(\\[Errno [0-9]+\\] [^:]+: '[^']*[\/_.-])[a-z0-9_]{8}([^'\/]*')/\\1<RND>\\2/g"
 )
 
 mask() {
