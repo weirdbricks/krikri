@@ -97,7 +97,7 @@ MASKS=(
   # Seventh entry: the same mkstemp name when the user gave a CUSTOM prefix
   # (the prefix and suffix are deterministic, only the 8 characters between
   # them are random). Anchored on an Errno message's single-quoted path.
-  "s/(\\[Errno [0-9]+\\] [^:]+: '[^']*[\/_.-])[a-z0-9_]{8}([^'\/]*')/\\1<RND>\\2/g"
+  "s/(\\[Errno [0-9]+\\] [^:]+: '[^']*\/[^'\/]*)[a-z0-9_]{8}(([.]|[^a-z0-9_'\/])[^'\/]*)?'/\\1<RND>\\2'/g"
 )
 
 mask() {
