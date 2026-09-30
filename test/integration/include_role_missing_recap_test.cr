@@ -97,4 +97,36 @@ describe "include_tasks: naming a file that doesn't exist" do
 
     FileUtils.rm_rf(src_dir)
   end
+
+  it "keeps a non-string literal file path's own type in the fatal dump" do
+    # Real 2.19.11 (live-verified): the "include" value is echoed as the
+    # playbook wrote it, so a YAML int stays a JSON int (`"include": 21`)
+    # even though the path it resolved - and the error text - is that
+    # value's Python str(). A bool keeps its own type too, while the path
+    # uses "True" capitalization.
+    {21 => "21", true => "True"}.each do |literal, path_text|
+      src_dir = File.tempname("include-tasks-missing-literal")
+      Dir.mkdir_p(src_dir)
+
+      playbook = File.join(src_dir, "pb.yml")
+      File.write(playbook, <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: include missing
+              ansible.builtin.include_tasks: {file: #{literal}}
+      YAML
+
+      output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
+      exit_code = $?.exit_code
+
+      output.must_include("Could not find or access '#{src_dir}/#{path_text}' on the Ansible Controller")
+      output.must_include(%("include": #{literal}, "reason":))
+      output.wont_include(%("include": "#{path_text}"))
+      exit_code.must_equal(2)
+
+      FileUtils.rm_rf(src_dir)
+    end
+  end
 end

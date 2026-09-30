@@ -1847,7 +1847,13 @@ module Krikri
                 "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
       ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{task.include_file.to_s.to_json}, \"reason\": #{message.to_json}}".colorize(:red)
+      # Real echoes the file path under "include" as the playbook wrote
+      # it: a non-string literal keeps its own JSON type there
+      # (`"include": 21`) even though the path it resolved from was that
+      # literal's Python str(), so the parser-supplied native value wins
+      # whenever there is one.
+      include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
+      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
     end

@@ -465,6 +465,12 @@ module Krikri
     # (wherever the include_tasks: line itself lives) are carried on the
     # Task for the executor to use at run time.
     property include_file : String?
+    # The same value as include_file when the playbook wrote it as a
+    # non-string YAML literal (`file: 21`), kept native: real Ansible's
+    # fatal include dump echoes the value as written - `"include": 21`,
+    # not `"include": "21"` - while the path it is resolved from is the
+    # Python str() of it. nil for every ordinary (string) path.
+    property include_file_native : JSON::Any?
     property include_file_dir : String?
     # meta: - only set when module_name == "_meta". Holds the meta action
     # ("clear_facts"); see TaskExecutor#execute_meta.
@@ -584,6 +590,7 @@ module Krikri
       @ansible_collection_name = nil
       @role_path = nil
       @include_file = nil
+      @include_file_native = nil
       @include_file_dir = nil
       @include_vars = nil
       @include_vars_file = nil
@@ -2241,7 +2248,8 @@ module Krikri
           written_directive_key(task_hash, "include_tasks"), include_tasks_value,
           source_file, source_map, source_prefix, index)
         raise "include_tasks: missing a file path" unless include_tasks_file
-        return parse_include_tasks(name || "include_tasks", task_hash, include_tasks_file, play, file_dir)
+        return parse_include_tasks(name || "include_tasks", task_hash, include_tasks_file, play, file_dir,
+          include_file_native_value(include_tasks_value))
       end
 
       if include_role_value = directive(task_hash, "include_role")
@@ -3336,6 +3344,21 @@ module Krikri
       raise IncludeDirectiveError.new(render)
     end
 
+    # The native value of an include directive's file path when the
+    # playbook wrote it as a non-string YAML literal (`file: 21`), or nil
+    # when it was an ordinary string (the common case) or a shape this
+    # engine soft-skips. Real Ansible keeps the literal's own type all the
+    # way to the fatal dump it prints when the file is missing
+    # (`"include": 21`), so the value has to survive alongside the
+    # stringified path the file is actually resolved from.
+    private def self.include_file_native_value(value : YAML::Any) : JSON::Any?
+      file_yaml = value.as_h? ? (value.as_h["_raw_params"]? || value.as_h["file"]?) : value
+      case file_yaml.try(&.raw)
+      when Int64, Float64, Bool then JSON::Any.new(file_yaml.not_nil!.raw.as(Int64 | Float64 | Bool))
+      else                              nil
+      end
+    end
+
     # Real Ansible's TaskInclude.check_options (task_include.py), run at
     # PLAYBOOK-LOAD time for both import_tasks: and include_tasks:.
     # Order mirrors the source exactly: unknown options, then the
@@ -3746,11 +3769,12 @@ module Krikri
     # apply: aborts the whole run with rc=4 before any play banner,
     # live-verified vs 2.19.11 - even though the file itself is only read
     # at run time).
-    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String) : Task
+    private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil) : Task
       validate_include_keys(task_hash, "TaskInclude", "include_tasks")
 
       task = Task.new(name, "_include_tasks")
       task.include_file = file_rel
+      task.include_file_native = include_file_native
       task.include_file_dir = file_dir
 
       parse_common_task_attributes(task, task_hash)
