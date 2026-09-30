@@ -17,6 +17,10 @@ the same syntax you already write, unmodified. There's no Python, no
 picture, on either the controller or the target - it's one compiled binary
 (`krikri-playbook`) plus a directory of small compiled module binaries.
 
+Three binaries ship: `krikri-playbook` (runs playbooks, the
+`ansible-playbook` equivalent), `krikri` (ad-hoc commands, the `ansible`
+equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
+
 | By the numbers | |
 |---|---|
 | Compatibility target | ansible-core 2.19.11 (byte-for-byte console output) |
@@ -81,15 +85,13 @@ brew install weirdbricks/krikri/krikri
 ```
 
 Covers macOS (arm64/x86_64) and Linux (arm64/x86_64) - no Crystal
-toolchain needed. See **Build & Run** below to build from source instead.
+toolchain needed. See **Build from source** below instead.
 
-### Prerequisites
-- Crystal (tested with 1.21.x - see `shard.yml` for the declared minimum)
-  ([install guide](https://crystal-lang.org/install/))
-- The `ssh` CLI on `PATH` for remote targets (SSH connections use native
-  `ssh`/`ControlMaster` under the hood, not a bundled library)
+### Build from source
 
-### Build & Run
+Crystal is only needed to *build* from source (the Homebrew tap above ships
+prebuilt binaries). The `ssh` CLI on `PATH` is needed for remote targets -
+SSH goes through native `ssh`/`ControlMaster`, not a bundled library.
 
 ```bash
 # Install dependencies
@@ -97,17 +99,9 @@ shards install
 
 # Build (all plugins + the CLI)
 ./build.sh
-
-# Run a playbook
-./bin/krikri-playbook playbook.yml
-
-# With options
-./bin/krikri-playbook --check --diff -i inventory.ini playbook.yml
 ```
 
----
-
-## 💡 Usage Example
+### Example playbook
 
 ```yaml
 - name: Deploy app
@@ -122,70 +116,45 @@ shards install
       service:
         name: nginx
         state: started
-      notify: reload nginx
-
-  handlers:
-    - name: reload nginx
-      service:
-        name: nginx
-        state: reloaded
 ```
 
-Supports standard Ansible playbook syntax. See the
-[Ansible documentation](https://docs.ansible.com/) for playbook reference.
+Run it against an inventory:
+
+```bash
+./bin/krikri-playbook -i inventory.ini playbook.yml
+```
+
+Playbook syntax is standard Ansible's - see the
+[Ansible documentation](https://docs.ansible.com/) for the full reference.
 
 ---
 
 ## 🎯 Command Reference
 
 ```bash
-# Basic usage
-./bin/krikri-playbook playbook.yml
-
-# With inventory
-./bin/krikri-playbook -i inventory.ini playbook.yml
-
-# Dry-run (check mode)
-./bin/krikri-playbook --check playbook.yml
-
-# Show changes
-./bin/krikri-playbook --diff playbook.yml
-
-# Verbose output
-./bin/krikri-playbook -v playbook.yml
-
-# Limit to a host group/pattern, run only tagged tasks
-./bin/krikri-playbook -l webservers -t deploy playbook.yml
-
-# Vault-encrypted playbook/vars
-./bin/krikri-playbook --ask-vault-pass playbook.yml
-./bin/krikri-playbook --vault-password-file pass.txt playbook.yml
-
-# Disable task batching (on by default - see Performance above)
-./bin/krikri-playbook --no-batching -i inventory.ini playbook.yml
-
-# Run each task against up to 10 hosts concurrently (default: 5, matching
-# ansible-playbook; --forks 1 restores one-host-at-a-time)
-./bin/krikri-playbook --forks 10 -i inventory.ini playbook.yml
-
-# Fact gathering policy (default: implicit, matching ansible-playbook):
-#   implicit - every play re-gathers
-#   explicit - only plays that set gather_facts: true
-#   smart    - each host gathered at most once per run
-# Under smart, add `meta: clear_facts` to a play (e.g. after a reboot or a
-# package install) to force the next play to gather again.
-./bin/krikri-playbook --gathering smart -i inventory.ini playbook.yml
-
-# Multiple options
-./bin/krikri-playbook --check --diff -i production.ini playbook.yml
+./bin/krikri-playbook playbook.yml                          # basic run
+./bin/krikri-playbook -i inventory.ini playbook.yml         # inventory
+./bin/krikri-playbook --check playbook.yml                  # dry-run
+./bin/krikri-playbook --diff playbook.yml                   # show file diffs
+./bin/krikri-playbook -v playbook.yml                       # verbose
+./bin/krikri-playbook -l webservers -t deploy playbook.yml  # host limit / tag filter
+./bin/krikri-playbook --ask-vault-pass playbook.yml         # vault-encrypted playbooks/vars
+./bin/krikri-playbook --no-batching playbook.yml            # one SSH round trip per task
+./bin/krikri-playbook --forks 10 playbook.yml               # host concurrency (default: 25)
+./bin/krikri-playbook --gathering smart playbook.yml        # fact gathering policy
 ```
 
-### Ad-hoc commands (`krikri`)
+`--forks` defaults to 25 here (a fork is a cheap fiber, not a forked
+Python interpreter); `--forks 5` matches ansible-playbook's default
+exactly, `--forks 1` runs one host at a time. `--gathering` takes
+`implicit` (the default, every play re-gathers), `explicit` (only plays
+with `gather_facts: true`) or `smart`.
 
-A separate binary, matching real Ansible's own `ansible`/`ansible-playbook`
-split - runs exactly one module against a pattern of inventory hosts,
-reusing the same connection/become/check-mode/forks engine as the
-playbook runner:
+Everything else - `--syntax-check`, `--list-hosts`, `-e`, `--start-at-task`,
+vault subcommands and the rest - is documented in
+`./bin/krikri-playbook --help`.
+
+### Ad-hoc commands (`krikri`)
 
 ```bash
 ./bin/krikri all -m ping
@@ -195,21 +164,22 @@ playbook runner:
 ./bin/krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
 ```
 
-Supports `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
-`-f`/`--forks`, `-l`/`--limit`, `-v`. Output matches real ansible's own
-minimal callback (`host | SUCCESS => {...}` / `host | CHANGED | rc=0 >>`),
-not ansible-playbook's `ok: [host]` TASK-recap style.
+The `krikri` binary is the ad-hoc counterpart of `krikri-playbook` (real
+Ansible's own `ansible`/`ansible-playbook` split): one module, one run,
+against a pattern of inventory hosts. It supports
+`-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
+`-f`/`--forks`, `-l`/`--limit`, `-v`, and its output matches real ansible's
+own minimal callback style (`host | SUCCESS => {...}` /
+`host | CHANGED | rc=0 >>`), not ansible-playbook's `ok: [host]` TASK-recap.
 
 ---
 
 ## 🔍 Linting (`krikri-lint`)
 
-A sibling binary, `krikri-lint`, is a from-scratch reimplementation of
-`ansible-lint` - same rules, same output format, same exit codes,
-verified against the real tool the same way `krikri-playbook` is
-verified against real `ansible-playbook` (a parity harness diffing
-output on a shared fixture corpus, not eyeballed docs). It's static
-analysis only - no host connection, no execution, no SSH.
+`krikri-lint` is a from-scratch reimplementation of `ansible-lint` - same
+rules, same output format, same exit codes, verified against the real tool
+rather than against its documentation. It's static analysis only: no host
+connection, no execution, no SSH.
 
 ```bash
 ./bin/krikri-lint playbook.yml
@@ -218,13 +188,8 @@ analysis only - no host connection, no execution, no SSH.
 ./bin/krikri-lint --list-rules
 ```
 
-Covers the core `ansible-lint` rule set (syntax, command/shell idioms,
-risky permissions, naming, FQCN, the yamllint-derived `yaml[*]` subset,
-`args[module]` argument-spec validation, `var-naming`, profiles,
-`# noqa`, `.ansible-lint` config) plus `--fix` autofix for the safely
-mechanical rules. Run `./bin/krikri-lint --list-rules` for full rule
-coverage; see [KNOWN_MISSING.md](KNOWN_MISSING.md) for deliberate
-divergences and `.github/workflows/lint-parity.yml` for parity status.
+See [KNOWN_MISSING.md](KNOWN_MISSING.md) for the rules it deliberately
+diverges on.
 
 ---
 
@@ -244,6 +209,14 @@ crystal run compat/run.cr
 
 See [compat/README.md](compat/README.md) for what the compatibility
 harness covers and how it works.
+
+For output parity specifically, `scripts/output_parity.sh OUTDIR
+playbook.yml...` runs a playbook under real `ansible-playbook` and
+`krikri-playbook` and diffs stdout, stderr and the exit code byte for byte
+(it needs a real `ansible-playbook` installed). The separate
+[krikri-playbook-generator](https://github.com/weirdbricks/krikri-playbook-generator)
+repo goes wider: it generates valid and deliberately mutated playbooks per
+module and compares both engines on them in fresh containers.
 
 ---
 
@@ -306,7 +279,3 @@ Thanks also to:
 **Ansible** and the Ansible logo are trademarks of Red Hat, Inc., registered
 in the United States and other countries. This project is not affiliated
 with, sponsored by, or endorsed by Red Hat, Inc. or the Ansible project.
-
----
-
-**krikri - Ansible-compatible automation in Crystal** 🚀
