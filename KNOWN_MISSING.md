@@ -138,11 +138,19 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 
 - Python interpreter-discovery warnings (`Host ... is using the discovered Python interpreter ...`) are not
   emulated - krikri has no Python interpreter to discover.
-- `-vv` and higher: real ansible's environment banner (Python/Jinja/PyYAML versions, module search paths,
-  `task path:` lines) is not reproduced.
 - Values that are random per real run: temp file/dir names, the order of string sets (`union`/`intersect`/...
   on lists of strings) and the order of several invalid options in one error message. Integer set order
   *is* reproduced.
+- `-vvv` module-execution mechanics lines are not emulated (`<host> Attempting python interpreter
+  discovery.`, `<host> ESTABLISH LOCAL CONNECTION ...`, the `<host> EXEC`/`<host> PUT` shell commands,
+  `Using module file ...`, `Pipelining is enabled.`) - krikri has no Python interpreter, no module files
+  and no staged tmp dirs, and the commands embed the per-run random `ansible-tmp-<epoch>-<pid>-<random>`
+  staging paths. `scripts/output_parity.sh` masks these (and the copy/template action-plugin
+  `invocation.module_args` blocks carrying the same random staged paths) from both sides.
+- `copy:`/`template:` results at `-vvv` that real dispatches through a *staged Python module* carry an
+  `invocation.module_args` block naming that random staged file; krikri's action dispatch produces no
+  module invocation block for those (except the deterministic check-mode content-copy shape, which IS
+  reproduced). Masked in `scripts/output_parity.sh` - see above.
 - A malformed `-e '{...'` JSON argument produces a different error chain.
 - `template:` with an `output_encoding:` written as a YAML list of plain strings
   (`[a, b]`) reports real's `unknown encoding: a,b` instead of real's
