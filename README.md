@@ -3,13 +3,13 @@
 **A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
 
 [![Version](https://img.shields.io/badge/version-0.9.1374-blue)](https://github.com/weirdbricks/krikri)
-[![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-this-is)
+[![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
 
 ---
 
-## 📋 What this is
+## 📋 What is krikri?
 
 krikri parses and runs **standard Ansible playbook YAML directly** -
 the same syntax you already write, unmodified. There's no Python, no
