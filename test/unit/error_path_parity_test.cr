@@ -232,7 +232,8 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     scheme["dest"]?.must_be_nil
 
     uri = PluginSpecHelper.run("uri", {"url" => "wezwmn"})
-    uri["msg"].as_s.must_equal("Status code was -1 and not [200]: Connection failure: [Errno 2] No such file or directory")
+    uri["msg"].as_s.must_equal("unknown url type: 'wezwmn'")
+    uri["status"].as_i.must_equal(-1)
     uri["content"]?.must_be_nil
   end
 
