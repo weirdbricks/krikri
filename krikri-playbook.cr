@@ -538,7 +538,9 @@ end
 playbook_display_path = playbook_file
 playbook_file = File.expand_path(playbook_file)
 inventory_file = File.exists?(inventory_file) ? File.expand_path(inventory_file) : inventory_file
-vault_password_file = vault_password_file.try { |pf| File.exists?(pf) ? File.expand_path(pf) : pf }
+if pf = vault_password_file
+  vault_password_file = File.exists?(pf) ? File.expand_path(pf) : pf
+end
 Dir.cd(File.dirname(playbook_file))
 
 # --vault-id label@source. The source is a password FILE, or "prompt"

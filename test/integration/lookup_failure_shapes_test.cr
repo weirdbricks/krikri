@@ -48,12 +48,10 @@ describe "lookup plugin failure and kwarg shapes" do
     # the copy landed next to the PLAYBOOK, and the lookup read it there
     File.exists?(File.join(File.dirname(playbook), "parity.txt")).must_equal(true)
   ensure
-    playbook.try { |pb| File.delete(pb) if File.exists?(pb) }
-    File.delete(File.join(File.dirname(pb_path(playbook)), "parity.txt")) rescue nil
-  end
-
-  private def pb_path(playbook)
-    playbook || ""
+    if pb = playbook
+      File.delete(pb) if File.exists?(pb)
+      File.delete(File.join(File.dirname(pb), "parity.txt")) rescue nil
+    end
   end
 
   private def temp_workdir
