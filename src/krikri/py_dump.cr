@@ -71,8 +71,8 @@ module Krikri
     # json.dumps(ensure_ascii=True) string encoding
     private def self.json_string(io : IO, text : String) : Nil
       io << '"'
-      text.each_char do |ch|
-        case ch
+      text.each_char do |char|
+        case char
         when '"'  then io << "\\\""
         when '\\' then io << "\\\\"
         when '\n' then io << "\\n"
@@ -81,7 +81,7 @@ module Krikri
         when '\b' then io << "\\b"
         when '\f' then io << "\\f"
         else
-          code = ch.ord
+          code = char.ord
           if code < 0x20
             io << "\\u" << code.to_s(16).rjust(4, '0')
           elsif code > 0x7e && code != 0x7f
@@ -93,7 +93,7 @@ module Krikri
               io << "\\u" << code.to_s(16).rjust(4, '0')
             end
           else
-            io << ch
+            io << char
           end
         end
       end
@@ -464,7 +464,7 @@ module Krikri
           elsif breaks
             if ch.nil? || !(ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' ')
               write_line_break if chars[start] == '\n'
-              chars[start...idx].each { |br| br == '\n' ? write_line_break : write_line_break(br.to_s) }
+              chars[start...idx].each { |line_break| line_break == '\n' ? write_line_break : write_line_break(line_break.to_s) }
               write_indent
               @whitespace = false
               @indention = false
@@ -508,7 +508,7 @@ module Krikri
           elsif breaks
             if ch.nil? || !(ch == '\n' || ch == '\u0085' || ch == ' ' || ch == ' ')
               write_line_break if chars[start] == '\n'
-              chars[start...idx].each { |br| br == '\n' ? write_line_break : write_line_break(br.to_s) }
+              chars[start...idx].each { |line_break| line_break == '\n' ? write_line_break : write_line_break(line_break.to_s) }
               write_indent
               start = idx
             end

@@ -163,7 +163,7 @@ module Krikri
 
       # pip.py: version= with more than one package - after the virtualenv/pip
       # resolution above, before any install (that order is real's)
-      if @params["version"]? && name && name.split(",").map(&.strip).reject(&.empty?).size > 1
+      if @params["version"]? && name && name.split(",").count { |spec| !spec.strip.empty? } > 1
         return PluginResult.new(changed: false, failed: true,
           msg: "'version' argument is ambiguous when installing multiple package distributions. " \
                "Please specify version restrictions next to each package in 'name' argument.")

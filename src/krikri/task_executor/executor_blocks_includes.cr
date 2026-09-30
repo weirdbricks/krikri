@@ -1920,7 +1920,7 @@ module Krikri
                       end
                     end
       value_origin = if pos = failure.origin
-                       task.source_file.try { |path| ErrorBlock.origin_context(path, pos[0], pos[1]) }
+                       task.source_file.try { |source_path| ErrorBlock.origin_context(source_path, pos[0], pos[1]) }
                      end
       if task_origin
         conversion = ErrorBlock::Node.new(failure.conversion_message, source_context: value_origin)

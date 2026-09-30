@@ -2013,7 +2013,7 @@ module Krikri
         if raw == Krikri::NONE_SENTINEL
           next
         end
-        if native = Krikri.non_string_scalar(raw)
+        if Krikri.non_string_scalar(raw)
           next unless Krikri.python_param_truthy?(raw)
           return JSON.parse({
             "changed"               => false,

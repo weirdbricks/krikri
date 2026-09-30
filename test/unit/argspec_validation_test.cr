@@ -670,8 +670,10 @@ describe "argspec validation display shapes" do
   # channel (not OutputRouting), so these captures assert the fatal-dump
   # half; the chain shape is pinned by the failure_kind? specs above.
   it "renders template's validation failure with the collapsed Module-failed chain" do
-    result = JSON.parse(%({"changed": false, "failed": true, "checksum": "04358ba4b61baf28347545d243f04382da4584a8",
-                           "msg": "Unsupported parameters for (ansible.legacy.copy) module: mdoe. Supported parameters include: _original_basename, attributes, backup, checksum, content, dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, selevel, serole, setype, seuser, src, unsafe_writes, validate (attr)."}))
+    result = JSON.parse(<<-JSON)
+      {"changed": false, "failed": true, "checksum": "04358ba4b61baf28347545d243f04382da4584a8",
+       "msg": "Unsupported parameters for (ansible.legacy.copy) module: mdoe. Supported parameters include: _original_basename, attributes, backup, checksum, content, dest, directory_mode, follow, force, group, local_follow, mode, owner, remote_src, selevel, serole, setype, seuser, src, unsafe_writes, validate (attr)."}
+      JSON
     out = capture_output do
       Krikri::ResultDisplay.display_result(Krikri::Host.new("localhost"), result, false,
         ignore_errors: true, module_name: "ansible.builtin.template",

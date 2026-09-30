@@ -341,7 +341,6 @@ module Krikri
       cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
       started_at = Time.utc
-      ended_at = started_at
       begin
         # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
         # driven by the command module's expand_argument_vars, default true)

@@ -209,11 +209,11 @@ describe "cron plugin" do
         File.delete(path) if File.exists?(path)
 
         result = PluginSpecHelper.run("cron", {
-          "name" => "CURRENT_DATE",
-          "env" => "true",
-          "value" => "date +%Y%m%d",
-          "user" => "root",
-          "cron_file" => path, "user" => "root",
+          "name"      => "CURRENT_DATE",
+          "env"       => "true",
+          "value"     => "date +%Y%m%d",
+          "user"      => "root",
+          "cron_file" => path,
         })
 
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -223,7 +223,7 @@ describe "cron plugin" do
 
       it "is idempotent on a second identical value: run" do
         path = tmp_path("cron-env-alias-idempotent.txt")
-        params = {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "user" => "root", "cron_file" => path, "user" => "root"}
+        params = {"name" => "CURRENT_DATE", "env" => "true", "value" => "date +%Y%m%d", "user" => "root", "cron_file" => path}
 
         PluginSpecHelper.run("cron", params)
         second = PluginSpecHelper.run("cron", params)

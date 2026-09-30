@@ -42,7 +42,7 @@ module Krikri
       property source_context : String?
       property help_text : String?
       property chain_reason : String?
-      property chain_follow : Bool
+      property? chain_follow : Bool
       property chain : Node?
       property events : Array(Node)?
 
@@ -117,7 +117,7 @@ module Krikri
         messages = [event.msg]
         link = event
 
-        while (child = link.chain) && link.chain_follow
+        while (child = link.chain) && link.chain_follow?
           break if child.events
 
           if child.source_context || child.help_text
@@ -142,7 +142,7 @@ module Krikri
         segment = message_lines(msg, event.help_text, event.source_context).join('\n') + '\n'
         segments << segment
 
-        if (child = link.chain) && link.chain_follow
+        if (child = link.chain) && link.chain_follow?
           segments << "\n#{link.chain_reason}\n\n"
           event = child
         else
@@ -175,8 +175,9 @@ module Krikri
       parts = [] of String
       loop do
         parts << event.msg
-        break unless event.chain && event.chain_follow
-        event = event.chain.not_nil!
+        chain = event.chain
+        break unless event.chain_follow? && chain
+        event = chain
       end
       deduplicate_message_parts(parts)
     end

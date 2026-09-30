@@ -3471,9 +3471,9 @@ module Krikri
     # stringified path the file is actually resolved from.
     private def self.include_file_native_value(value : YAML::Any) : JSON::Any?
       file_yaml = value.as_h? ? (value.as_h["_raw_params"]? || value.as_h["file"]?) : value
-      case file_yaml.try(&.raw)
-      when Int64, Float64, Bool then JSON::Any.new(file_yaml.not_nil!.raw.as(Int64 | Float64 | Bool))
-      else                           nil
+      return nil unless file_yaml
+      case file_yaml.raw
+      when Int64, Float64, Bool then JSON::Any.new(file_yaml.raw.as(Int64 | Float64 | Bool))
       end
     end
 
@@ -3487,8 +3487,6 @@ module Krikri
     # engine's legacy soft-skipped path (real stringifies those into its
     # own file-not-found error; unmirrored).
     private def self.validate_task_include_options(action : String, value : YAML::Any, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : String?
-      prefix = task_source_prefix(source_prefix, source_index)
-
       # mod_args refuses a non-string, non-mapping free-form value
       # outright (`import_tasks: 5` - live-verified vs 2.19.11, rc=4).
       unless value.as_h? || value.as_s? || value.raw.nil?
@@ -3549,12 +3547,12 @@ module Krikri
           true, source_file, source_map, source_prefix, source_index)
       end
 
-      case raw = file_yaml.not_nil!.raw
+      return nil unless file_yaml
+      case raw = file_yaml.raw
       when String  then raw
       when Int64   then raw.to_s
       when Float64 then raw.to_s
       when Bool    then raw ? "True" : "False"
-      else              nil
       end
     end
 

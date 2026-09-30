@@ -37,8 +37,8 @@ module Krikri
       end
 
       dir = target_dir
-      if (errno = dir ? dir_errno(dir) : nil)
-        return PluginResult.new(changed: false, failed: true, msg: mkstemp_failure_msg(dir.not_nil!, errno))
+      if dir && (errno = dir_errno(dir))
+        return PluginResult.new(changed: false, failed: true, msg: mkstemp_failure_msg(dir, errno))
       end
 
       result = remote_exec(mktemp_command(state, dir))

@@ -428,7 +428,7 @@ module Krikri
         # other element type keeps first-seen order (string sets are
         # hash-randomized per real process and cannot be matched).
         if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
-          return Krikri::PySet.union(ia, ib).map { |n| JSON::Any.new(n) }
+          return Krikri::PySet.union(ia, ib).map { |num| JSON::Any.new(num) }
         end
         (a + b).uniq(&.to_json)
       end
@@ -445,7 +445,7 @@ module Krikri
 
       def self.intersect(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
         if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
-          return Krikri::PySet.intersect(ia, ib).map { |n| JSON::Any.new(n) }
+          return Krikri::PySet.intersect(ia, ib).map { |num| JSON::Any.new(num) }
         end
         bset = b.to_set
         a.uniq.select { |item| bset.includes?(item) }
@@ -453,7 +453,7 @@ module Krikri
 
       def self.difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
         if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
-          return Krikri::PySet.difference(ia, ib).map { |n| JSON::Any.new(n) }
+          return Krikri::PySet.difference(ia, ib).map { |num| JSON::Any.new(num) }
         end
         bset = b.to_set
         a.uniq.reject { |item| bset.includes?(item) }
@@ -461,7 +461,7 @@ module Krikri
 
       def self.symmetric_difference(a : Array(JSON::Any), b : Array(JSON::Any)) : Array(JSON::Any)
         if (ia = plain_int_list(a)) && (ib = plain_int_list(b))
-          return Krikri::PySet.symmetric_difference(ia, ib).map { |n| JSON::Any.new(n) }
+          return Krikri::PySet.symmetric_difference(ia, ib).map { |num| JSON::Any.new(num) }
         end
         left = a.uniq(&.to_json)
         right = b.uniq(&.to_json)
