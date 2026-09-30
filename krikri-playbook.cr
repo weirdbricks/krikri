@@ -566,14 +566,26 @@ rescue ex : Krikri::ConflictingActionStatementsError
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is real Ansible's own
-  # plain "[ERROR]: the role '<name>' was not found ..." at rc=1 -
-  # verified live (both cases give the identical rc=1) - not the
-  # parser-error 4 this engine fell back to when the missing role
-  # silently emptied the whole play list ("No valid plays found").
-  # Found benchmarking weareinteractive.sftp (round 178): its own
-  # meta/main.yml depends on franklinkim.ssh, a role no longer
-  # published anywhere.
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # "[ERROR]: the role '<name>' was not found in <search paths>" block
+  # at rc=1, on STDERR, with an Origin block when the raise site had a
+  # source position (live-verified vs 2.19.11) - not the parser-error 4
+  # this engine fell back to when the missing role silently emptied the
+  # whole play list ("No valid plays found"). Found benchmarking
+  # weareinteractive.sftp (round 178): its own meta/main.yml depends on
+  # franklinkim.ssh, a role no longer published anywhere.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 1
+rescue ex : Krikri::StaticImportMissingFileError
+  # import_tasks:' resolved file genuinely missing is real Ansible's
+  # own DataLoader AnsibleError - on STDERR, NO Origin block, and rc=1
+  # rather than the parser-error 4 (live-verified vs 2.19.11; the
+  # render carries the hint line, the chained OSError text and the
+  # trailing blank).
+  STDERR.print ex.render
   exit 1
 rescue ex : Krikri::YamlSyntaxError
   # Rendered the way real ansible-playbook renders a YAML syntax error -
@@ -588,6 +600,17 @@ rescue ex : Krikri::MetaActionTypeError
   # task's Origin block, parser-error rc=4 on STDERR (live-verified vs
   # 2.19.11). The render was built at the raise site (it needs the source
   # map); print it verbatim.
+  STDERR.print ex.render
+  exit 4
+rescue ex : Krikri::IncludeDirectiveError
+  # Bad arguments on an include/include-role directive (include_role:/
+  # import_role:/import_tasks:/include_tasks:) are real Ansible's own
+  # playbook-load refusal - TaskInclude.check_options / IncludeRole.load
+  # run at load time, so the "[ERROR]: ..." block (with the task's
+  # Origin block except for the FROM_ARGS "Expected a string" raise,
+  # live-verified vs 2.19.11) prints on STDERR with rc=4 before any
+  # play banner. The render was built at the raise site; print it
+  # verbatim.
   STDERR.print ex.render
   exit 4
 rescue ex

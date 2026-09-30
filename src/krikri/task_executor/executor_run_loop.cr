@@ -2226,8 +2226,12 @@ module Krikri
     # against real ansible-playbook 2.19.11: a run_once ansible.builtin.
     # fail in a 3-host play recaps failed=1 and no host reaches the next
     # task's banner).
-    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil) : Nil
-      return unless failed && !resolve_task_ignore_errors(task)
+    # force_halt skips the ignore_errors: check - for a dynamic
+    # include_role:'s role-resolution failure, which real Ansible halts
+    # on unconditionally (live-verified vs 2.19.11: `failed=1 ignored=0`
+    # even with ignore_errors: true on the include task).
+    private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false) : Nil
+      return unless failed && (force_halt || !resolve_task_ignore_errors(task))
 
       @failed_task_info[host.name] = {task, result} if result
       @halted_hosts.add(host.name)

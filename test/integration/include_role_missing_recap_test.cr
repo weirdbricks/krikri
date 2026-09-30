@@ -43,10 +43,56 @@ describe "include_role: naming a role that doesn't exist" do
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
     exit_code = $?.exit_code
 
-    output.must_include("failed: [localhost]")
-    output.must_include("Failed to load role 'nonexistent_role_xyz'")
+    # Real 2.19.11's fatal include shape (live-verified, both from a play
+    # task and from inside a role's own tasks): the loader's AnsibleError
+    # goes to STDERR as an "[ERROR]: the role 'x' was not found in <search
+    # paths>" block whose Origin points at the role-name VALUE inside the
+    # role's own tasks file, the task result line is the two-key fatal
+    # dump, and the play halts for that host unconditionally (ignore_
+    # errors: does not apply - failed=1 ignored=0).
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "reason": "the role 'nonexistent_role_xyz' was not found in #{src_dir}/roles:))
+    output.must_include("[ERROR]: the role 'nonexistent_role_xyz' was not found in ")
+    output.must_include("Origin: #{src_dir}/roles/outer/tasks/main.yml:3:11")
     output.wont_include("should not run")
-    output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1/)
+    output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
+    exit_code.must_equal(2)
+
+    FileUtils.rm_rf(src_dir)
+  end
+end
+
+describe "include_tasks: naming a file that doesn't exist" do
+  it "fails with real's fatal include shape, ignoring ignore_errors:" do
+    # Real 2.19.11 (live-verified): the DataLoader error block goes to
+    # STDERR with no Origin, STDOUT gets the two-key fatal dump with the
+    # as-written file under "include:", the task counts as failed only -
+    # ignore_errors: does NOT apply (failed=1 ignored=0) - and the play
+    # halts for that host (rc=2).
+    src_dir = File.tempname("include-tasks-missing")
+    Dir.mkdir_p(src_dir)
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: include missing
+            ansible.builtin.include_tasks: nosuch_tasks.yml
+            ignore_errors: true
+          - name: After
+            ansible.builtin.debug:
+              msg: should not run
+      YAML
+
+    output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
+    exit_code = $?.exit_code
+
+    output.must_include("[ERROR]: Could not find or access '#{src_dir}/nosuch_tasks.yml' on the Ansible Controller: Unable to retrieve file contents.")
+    output.must_include("If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{src_dir}/nosuch_tasks.yml'")
+    output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "include": "nosuch_tasks.yml", "reason": "Could not find or access '#{src_dir}/nosuch_tasks.yml'))
+    output.wont_include("should not run")
+    output.must_match(/ok=0\s+changed=0\s+unreachable=0\s+failed=1\s+skipped=0\s+rescued=0\s+ignored=0/)
     exit_code.must_equal(2)
 
     FileUtils.rm_rf(src_dir)

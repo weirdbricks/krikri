@@ -137,7 +137,7 @@ module Krikri
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
         unless File.exists?(resolved_path)
-          fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+          fail_include_tasks_file_not_found(task, host, resolved_path)
           next
         end
 
@@ -1667,7 +1667,7 @@ module Krikri
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
       unless File.exists?(resolved_path)
-        fail_include(task, host, "Included tasks file not found: #{resolved_path}")
+        fail_include_tasks_file_not_found(task, host, resolved_path)
         return true
       end
 
@@ -1832,6 +1832,48 @@ module Krikri
         @results[host.name]["failed"] += 1
       end
       halt_if_failed(task, host, true)
+    end
+
+    # include_tasks: whose file resolves nowhere at run time - real
+    # Ansible's own fatal include shape (live-verified vs 2.19.11):
+    # STDERR gets the DataLoader error block (no Origin), STDOUT gets
+    # the fatal dump with the as-written file under "include:", the
+    # task counts as failed only - ignore_errors: does NOT apply
+    # (live-verified: failed=1 ignored=0 with ignore_errors: true) -
+    # and the play halts for the host (rc=2).
+    private def fail_include_tasks_file_not_found(task : Task, host : Host, resolved_path : String) : Nil
+      message = "Could not find or access '#{resolved_path}' on the Ansible Controller: Unable to retrieve file contents.\n" \
+                "Could not find or access '#{resolved_path}' on the Ansible Controller.\n" \
+                "If you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '#{resolved_path}'"
+      ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{task.include_file.to_s.to_json}, \"reason\": #{message.to_json}}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true, force_halt: true)
+    end
+
+    # include_role: whose named role resolves nowhere - real Ansible's
+    # own fatal shape (live-verified vs 2.19.11, both from a play task
+    # and from inside a role's own tasks): the loader's AnsibleError is
+    # printed on STDERR as an "[ERROR]: the role 'x' was not found in
+    # <search paths>" block whose Origin points at the role-name VALUE,
+    # the task result line is the two-key fatal dump, the task counts as
+    # failed only, and the play halts for that host UNCONDITIONALLY -
+    # ignore_errors: does not apply to a role-resolution failure (real:
+    # `failed=1 ignored=0`, the next task never runs, rc=2), unlike
+    # every ordinary module failure.
+    private def fail_include_role_not_found(task : Task, host : Host, message : String) : Nil
+      connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      node = if (origin_pos = task.include_role_name_origin) && (source_file = task.source_file)
+               ErrorBlock::Node.new(message,
+                 source_context: ErrorBlock.origin_context(source_file, origin_pos[0], origin_pos[1]))
+             else
+               ErrorBlock::Node.new(message)
+             end
+      ErrorBlock.emit_stderr(node)
+      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true, force_halt: true)
     end
 
     # Runs an include_role: task - the dynamic counterpart to a roles:
@@ -2039,6 +2081,18 @@ module Krikri
         # "Failed to load role" failure. See UnresolvedModuleError's
         # own comment for the graceful/hard-stop boundary.
         raise ex
+      rescue ex : RoleNotFoundError
+        # include_role: naming a role that resolves nowhere is real
+        # Ansible's own fatal include failure shape (live-verified vs
+        # 2.19.11): the loader's AnsibleError goes to STDERR as an
+        # "[ERROR]: the role 'x' was not found in <search paths>" block
+        # with the role-name VALUE's own Origin, the task result is the
+        # two-key fatal dump `{"changed": false, "reason": ...}`, and
+        # the play HALTS for that host unconditionally - ignore_errors:
+        # does NOT apply (live-verified: `failed=1 ignored=0`, the next
+        # task never runs, rc=2), unlike every ordinary module failure.
+        fail_include_role_not_found(task, host, ex.message || "role not found")
+        return
       rescue ex
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return

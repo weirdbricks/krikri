@@ -74,6 +74,18 @@ module Krikri
       true
     end
 
+    # Same rendering and dedup as emit, but on STDERR. Real Ansible
+    # routes an error block to stderr when the error is raised OUTSIDE
+    # task result processing - a dynamic include_role:'s role resolution
+    # failure ("the role 'x' was not found in ...") - while ordinary
+    # task-failure blocks go to stdout (live-verified vs 2.19.11).
+    def self.emit_stderr(node : Node) : Bool
+      text = "[ERROR]: " + format_event(node)
+      return false unless @@seen.add?(text)
+      STDERR.print text
+      true
+    end
+
     # Test hook: forget all displayed blocks.
     def self.reset_seen : Nil
       @@seen.clear

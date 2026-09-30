@@ -1825,7 +1825,7 @@ describe Krikri::PlaybookParser do
             - does_not_exist
         YAML
 
-      assert_raises_message(Krikri::RoleNotFoundError, /Role not found/) do
+      assert_raises_message(Krikri::RoleNotFoundError, /the role 'does_not_exist' was not found in .*\/roles:/) do
         Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
       end
     end
@@ -2589,16 +2589,22 @@ describe Krikri::PlaybookParser do
       task.include_role_name.must_equal("greeter")
     end
 
-    it "skips (with a warning) an include_role: with no name: rather than failing the whole play" do
-      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
-        - name: play
-          hosts: all
-          tasks:
-            - include_role:
-                allow_duplicates: true
-        YAML
-
-      playbook.plays[0].tasks.must_be_empty
+    it "refuses the whole playbook (real's IncludeRole.load, rc=4) for an include_role: with no name:" do
+      # Live-verified against real ansible-core 2.19.11: IncludeRole.load
+      # runs at playbook-load time, so a missing name aborts the run with
+      # "'name' is a required field for include_role." + the task's
+      # Origin block (rc=4, no play banner) - the old expectation (a soft
+      # per-task warning, play silently emptied) was wrong against real.
+      assert_raises_message(Krikri::IncludeDirectiveError,
+        "'name' is a required field for include_role.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: play
+            hosts: all
+            tasks:
+              - include_role:
+                  allow_duplicates: true
+          YAML
+      end
     end
 
     it "treats vars: as a sibling task keyword, not nested inside include_role: (per ansible-doc)" do
