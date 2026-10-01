@@ -563,6 +563,83 @@ describe "pip plugin" do
       end
     end
   end
+
+  # geerlingguy.elasticsearch-curator (round 975000-975099): a repeat
+  # `pip: name: argparse` reported ok in krikri but changed in real
+  # Ansible. Root cause: pip's own installed-distribution iteration
+  # (pip._internal.metadata.base.stdlib_pkgs = {'argparse', 'python',
+  # 'wsgiref'} in pip 25) SKIPS these stdlib-shadow names, so `pip
+  # install argparse` never sees the previous install and reinstalls,
+  # printing "Successfully installed" every run - while `pip show
+  # argparse` (krikri's old pre-check) does NOT skip it, so the
+  # short-circuit reported "Package already installed" where real
+  # Ansible, which has no pre-check and decides purely on
+  # 'Successfully installed' in the install output, reports changed.
+  # The shim reproduces exactly that pip duality hermetically: `show`
+  # finds argparse (exit 0), `install` "reinstalls" it with real pip's
+  # own "Successfully installed argparse-1.4.0" line.
+  describe "pip stdlib-skipped distributions" do
+    it "reports changed: true for a repeat install of argparse (pip reinstalls stdlib-shadow names every run)" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_stdlib_skip_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "argparse",
+          "executable" => pip,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
+        result["msg"].as_s.wont_equal("Package already installed")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+
+    it "still short-circuits ok for a non-stdlib package pip show finds" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_stdlib_skip_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "regularpkg",
+          "executable" => pip,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(false)
+        marker = File.read(File.join(shim_dir, "marker"))
+        marker.wont_include("install")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+  end
+end
+
+# A fake pip mirroring real pip's argparse duality: `show argparse`
+# SUCCEEDS (pip show does not go through the stdlib skip list) while
+# `install argparse` acts as a real reinstall would - "Successfully
+# installed argparse-1.4.0" on stdout, exit 0. `show regularpkg` also
+# succeeds (so the idempotency short-circuit takes it). Records its
+# argv to a marker file. No real pip, no network.
+private def write_stdlib_skip_shim(shim_dir : String) : String
+  shim = File.join(shim_dir, "stdlib-skip-pip")
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    printf '%s\\n' "$*" >> #{File.join(shim_dir, "marker")}
+    case "$1 $2" in
+      "show argparse") exit 0 ;;
+      "show regularpkg") exit 0 ;;
+      "install argparse") echo "Successfully installed argparse-1.4.0"; exit 0 ;;
+    esac
+    exit 1
+    SH
+  )
+  File.chmod(shim, 0o755)
+  shim
 end
 
 private def write_venv_shim(shim_dir : String, name : String, help_lists_no_site_packages : Bool) : String

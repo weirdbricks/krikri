@@ -43,11 +43,6 @@ and fixed and when.
   that's a krikri-specific regression or simply this hardening role's own
   SSH/firewall changes taking effect (which real Ansible never got far
   enough to also demonstrate) is unresolved.
-- **`geerlingguy.elasticsearch-curator`'s `pip: name: argparse` idempotency
-  (round 975000-975099, 2026-09-26):** krikri's `pip` module reports the
-  second install of `argparse` as unchanged; real Ansible's own `pip`
-  module reports `changed` on a repeat install of this specific package.
-  Not yet root-caused - low priority, single role, single task.
 - **Round 811000-812999: `k8s` missing module** (`dymurray.
   memcached_operator_role`; real ansible-playbook doesn't complete
   cleanly on the one role that hits it either, low value).

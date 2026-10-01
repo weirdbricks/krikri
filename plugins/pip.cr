@@ -623,12 +623,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to install: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
       end
 
-      # Real Ansible's own state: latest changed-detection: pip prints
-      # "Requirement already up-to-date" (older pip) or "Requirement
-      # already satisfied" with no "Successfully installed" line when
-      # an upgrade genuinely changed nothing.
-      changed = !(result[:stdout].includes?("Requirement already up-to-date") ||
-                  (upgrade && !result[:stdout].includes?("Successfully installed")))
+      # Real Ansible's own changed-detection for BOTH present and
+      # latest (pip.py: `changed = 'Successfully installed' in
+      # out_pip`, the only path when there's no requirements file or
+      # VCS name - out_freeze_before stays None): pip prints
+      # "Requirement already up-to-date"/"Requirement already
+      # satisfied" - never "Successfully installed" - when the
+      # invocation genuinely changed nothing.
+      changed = result[:stdout].includes?("Successfully installed")
 
       PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout])
     end
@@ -710,10 +712,33 @@ module Krikri
     # Per-package idempotency check for a non-upgrade, non-requirements
     # install: every package already installed (or - for a `==` pin -
     # already at the requested version)?
+    #
+    # pip's own stdlib-shadow skip: pip's installed-distribution
+    # iteration (`pip._internal.metadata.base.stdlib_pkgs`, pip 25.1:
+    # {'argparse', 'python', 'wsgiref'}) deliberately omits these
+    # module names, so `pip install argparse` NEVER sees an existing
+    # argparse install - it re-downloads and reinstalls it, printing
+    # "Successfully installed" every single run (verified live in a
+    # throwaway venv: two consecutive `pip install argparse` both end
+    # "Successfully installed argparse-1.4.0", while `pip show
+    # argparse` - which does NOT go through the skip list - finds it
+    # fine). Real Ansible's pip.py has no pre-check at all for
+    # state=present: it runs the install and decides
+    # `changed = 'Successfully installed' in out_pip` - so real reports
+    # changed on EVERY repeat install of these names (found via
+    # geerlingguy.elasticsearch-curator's `pip: name: argparse`, round
+    # 975000-975099). Counting them as satisfied via `pip show`
+    # short-circuited with changed: false where real runs a real
+    # reinstall - so these names are never "already installed" here and
+    # the actual pip install runs, its own output deciding changed.
+    PIP_STDLIB_SKIPPED_DISTRIBUTIONS = %w[argparse python wsgiref]
+
     private def all_packages_satisfied?(pip_bin : String, spec : String?) : Bool
       sp = spec || raise "pip: spec is required"
       packages = split_requirements(sp)
       packages.all? do |package|
+        next false if PIP_STDLIB_SKIPPED_DISTRIBUTIONS.includes?(distribution_name(package).downcase)
+
         if package.includes?("==")
           bare, _, wanted_version = package.partition("==")
           installed_version(pip_bin, bare) == wanted_version
