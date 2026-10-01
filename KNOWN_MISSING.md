@@ -34,6 +34,17 @@ and fixed and when.
 
 ## Open gaps
 
+- **groupby's pair shape needs an unpublished `krikri-jinja` tag**: `shard.yml` still pins
+  `krikri-jinja` v0.4.23, but groupby yielding real Jinja2 3.x's `[grouper, list]` pair arrays
+  lives in the sibling checkout's v0.4.25/v0.4.26 commits, which were never pushed (the tag bump
+  was left pending, see e1008b98). A fresh `shards install` therefore gets the old engine, where
+  groups render as `{grouper, list}` objects, and `test/integration/groupby_pair_storage_warning_test.cr`
+  fails on both its rendered-pair assertions - deterministically, run alone included. Fix: push
+  those engine tags, bump the `tag:` in `shard.yml`, `shards update krikri-jinja`, `./build.sh`.
+  (`scripts/minitest.sh` now rebuilds `bin/krikri-playbook` when it is older than `src/`/`lib/`/
+  `plugins/`, so the suite and the binaries its specs spawn can no longer come from different
+  engine revisions - which is what made this look order-dependent rather than simply broken.)
+
 - **Crystal 1.21 deprecation warnings in the build/test output** (seen on 1.21.1): `Time.monotonic` -> `Time.instant` (e.g. `src/krikri/timing_profile.cr`,
   `test/unit/ssh_manager_timeout_test.cr`, `test/unit/local_executor_test.cr`), `File.executable?` -> `File::Info.executable?` (`src/krikri/plugin_helpers/facts_gatherer.cr`),
   `::sleep(Float)` -> `::sleep(Time::Span)` (`src/krikri/action_plugins/pause_action_plugin.cr`), `Process::Status#exit_signal` -> `#exit_signal?`

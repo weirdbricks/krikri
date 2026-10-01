@@ -38,6 +38,33 @@ while IFS= read -r var; do
   unset "$var"
 done < <(env | grep -o '^ANSIBLE_[A-Za-z0-9_]*')
 
+# Most integration specs don't call engine code in-process: they spawn
+# bin/krikri-playbook (and bin/plugins/*) and assert on what it prints.
+# Those binaries are compiled ONLY by ./build.sh, while the suite binary
+# below is rebuilt here from src/ + lib/ - so after an edit, or after
+# `shards install`/`shards update` swaps the engine shard under lib/, the
+# suite compiles against the new sources while every spawned binary keeps
+# running the PREVIOUS build until someone remembers ./build.sh. The
+# symptoms are a handful of order-dependent failures whose assertions are
+# about the engine (groupby rendering [grouper, list] pairs rather than
+# {grouper, list} objects is exactly that: it lives in lib/krikri-jinja,
+# the shard bump lands in lib/ first, and ./build.sh is a separate step).
+# Refresh the spawned binaries from the same sources the suite is built
+# from, so both halves always come from one revision. build.sh is
+# mtime-gated, so this is a no-op (one find) whenever they already agree.
+spawned_binaries_stale() {
+  local main_bin="$ROOT/bin/krikri-playbook"
+  [ -x "$main_bin" ] || return 0 # never built: nothing to compare against
+  [ -n "$(find "$ROOT/src" "$ROOT/lib" "$ROOT/plugins" -name '*.cr' -newer "$main_bin" -print -quit 2>/dev/null)" ]
+}
+
+if spawned_binaries_stale; then
+  echo "test: bin/krikri-playbook is older than src//lib//plugins/ - building it first" >&2
+  if ! (cd "$ROOT" && ./build.sh >&2); then
+    echo "test: ./build.sh FAILED - specs that spawn bin/krikri-playbook will run against a stale build" >&2
+  fi
+fi
+
 # A single explicit test file is run directly; no globbing needed.
 if [ $# -gt 0 ] && [ -f "${1:-}" ]; then
   cd "$ROOT"

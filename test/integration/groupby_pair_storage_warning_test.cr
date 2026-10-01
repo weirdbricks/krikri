@@ -13,9 +13,23 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
+# The classic suite pre-created a shared spec/tmp in before_suite; the
+# minitest suite gives every test its own tmp_path subtree instead.
+private def tmp_path(name : String) : String
+  PluginSpecHelper.tmp_path(name)
+end
+
 describe "groupby pair shape and GroupTuple storage warning" do
   it "renders [grouper, list] pairs, keeps .grouper access, warns on storage only" do
-    playbook = File.tempname("groupby-pairs", ".yml")
+    # The playbook lives in this test's OWN scratch subtree, never in the
+    # process-wide /tmp: krikri resolves playbook-adjacent paths (group_vars/,
+    # host_vars/, roles/, filter_plugins/, library/) from the playbook's
+    # directory, so a playbook parked directly in /tmp picks up whatever
+    # /tmp/group_vars, /tmp/filter_plugins or /tmp/library happens to exist -
+    # from another spec running at the same time, from another worktree, or
+    # from an earlier run's leftovers. tmp_path() is per-test, and the
+    # run_one hook in minitest_helper.cr removes the subtree afterwards.
+    playbook = tmp_path("groupby-pairs.yml")
     File.write(playbook, <<-YAML)
       - hosts: localhost
         gather_facts: false
@@ -29,18 +43,27 @@ describe "groupby pair shape and GroupTuple storage warning" do
           - debug: msg="{{ items | groupby('color') }}"
             ignore_errors: true
       YAML
-    output = IO::Memory.new
-    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
-    text = output.to_s
+
+    # stdout and stderr into SEPARATE buffers: the warning goes to stderr
+    # (like real's Display) and the play to stdout, and both arrive through
+    # two independent pipes drained by two fibers. Merging them into one
+    # IO::Memory lets a stderr chunk land between two stdout chunks, which
+    # makes "this substring came from stdout" a property of the schedule
+    # instead of of the output. Asserting each stream on its own buffer
+    # also pins the real split (warning on stderr, nothing extra on stdout).
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook],
+      output: stdout, error: stderr, chdir: File.dirname(playbook))
+    out = stdout.to_s
+    warnings = stderr.to_s
 
     # map('first') extracts the groupers (converted pairs: no warning)
-    text.must_include("msg\": [\n        \"blue\",\n        \"red\"\n    ]")
+    out.must_include("msg\": [\n        \"blue\",\n        \"red\"\n    ]")
     # the bare groupby result renders as an array of [grouper, list] pairs
-    text.must_include("[\n        [\n            \"blue\",")
+    out.must_include("[\n        [\n            \"blue\",")
     # and warns exactly once, at the second debug's msg param
-    text.scan("Type 'GroupTuple' is unsupported in variable storage").size.must_equal(1)
-    text.must_include("Origin: #{playbook}:10:14")
-  ensure
-    File.delete(playbook) if playbook && File.exists?(playbook)
+    warnings.scan("Type 'GroupTuple' is unsupported in variable storage").size.must_equal(1)
+    warnings.must_include("Origin: #{playbook}:10:14")
   end
 end
