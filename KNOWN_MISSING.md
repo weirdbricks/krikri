@@ -216,7 +216,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - Open, known and not yet fixed (matchable in principle):
   - `replace:` that also changes owner/group/mode: real's message is `1 replacements made and ownership, perms
     or SE linux context changed`; krikri says `1 replacements made`.
-  - A registered *failed* `copy:` result keeps `"diff": []` in real; krikri omits the `diff` key there.
 - Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators

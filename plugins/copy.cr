@@ -55,13 +55,24 @@ module Krikri
     end
 
     def execute : PluginResult
-      result = execute_copy
+      # Real's argspec failure (a module-level failure, live-verified)
+      # is a copy result like any other - it goes through the same
+      # post-processing below (notably the always-present `diff` key),
+      # so it is caught here rather than left to run_and_capture's
+      # generic rescue, which builds a bare result without it.
+      result = begin
+        execute_copy
+      rescue ex : BoolParamError
+        PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter")
+      end
       # Real copy's wire result ALWAYS carries a `diff` key - an empty
       # LIST when no diff data was computed (live-verified vs 2.19.11 at
       # -vvv, run and --check alike; the display layer strips it below
-      # -vvv, so only -vvv sees it). A real diff payload (diff mode)
-      # keeps the computed content.
-      if result.diff.nil? && !result.failed?
+      # -vvv, so only -vvv sees it). Failed module results keep it too -
+      # the registered result of a failed copy shows `"diff": []` (argspec
+      # failures and module failures alike, live-verified). A real diff
+      # payload (diff mode) keeps the computed content.
+      if result.diff.nil?
         result.diff = JSON::Any.new([] of JSON::Any)
       end
       # Real 2.19.11's CHECK-MODE content copy reports its module

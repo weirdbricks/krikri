@@ -2164,6 +2164,12 @@ module Krikri
         "msg"     => JSON::Any.new(failure.msg),
       } of String => JSON::Any
       result.delete("changed") if failure.omit_changed?
+      # copy's module-level failure keeps real's always-present "diff" key
+      # (an empty LIST): a registered failed copy shows "diff": [] for the
+      # argspec case too (live-verified vs 2.19.11) - the plugin's own
+      # post-processing adds it to every copy result that reaches the
+      # module binary, so the controller-simulated ones need it here.
+      result["diff"] = JSON::Any.new([] of JSON::Any) if task.module_name == "ansible.builtin.copy" && !action_level_only
       # copy/template: real's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
       # the fatal dump carries "checksum" for these two modules - but
