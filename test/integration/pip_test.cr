@@ -616,6 +616,70 @@ describe "pip plugin" do
       end
     end
   end
+
+  # --- state: latest + version: parity ---------------------------------
+  #
+  # pip.py guards `if state == 'latest' and version is not None` INSIDE
+  # the umask try-block, before chdir handling and before any
+  # virtualenv/pip resolution. A version: pinned at state: latest
+  # therefore fails with that message rather than with whatever the
+  # deeper resolution would have hit first (a missing virtualenv
+  # command, an unresolvable pip, ...). `version is not None` is a
+  # presence check, so an empty version: string trips it too.
+
+  it "rejects version: at state: latest before resolving the virtualenv" do
+    venv = PluginSpecHelper.tmp_path("pip-latest-version-venv")
+
+    result = PluginSpecHelper.run("pip", {
+      "name"       => "somepkg",
+      "state"      => "latest",
+      "version"    => "1.2.3",
+      "virtualenv" => venv,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("version is incompatible with state=latest")
+    # No venv was created: the guard fires before setup_virtualenv().
+    File.exists?(venv).must_equal(false)
+  end
+
+  it "treats an empty version: at state: latest as present, like real's None check" do
+    result = PluginSpecHelper.run("pip", {"name" => "somepkg", "state" => "latest", "version" => ""})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("version is incompatible with state=latest")
+  end
+
+  it "rejects version: at state: latest after a bad umask, matching pip.py's order" do
+    result = PluginSpecHelper.run("pip", {
+      "name"    => "somepkg",
+      "state"   => "latest",
+      "version" => "1.2.3",
+      "umask"   => "not-octal",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    # The umask conversion is the try-block's own prologue and runs first.
+    result["msg"].as_s.must_equal("umask must be an octal integer")
+  end
+
+  it "leaves version: at state: present alone" do
+    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-latest-bin")
+    Dir.mkdir(shim_dir)
+    pip = write_pip_shim(shim_dir)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "present-pkg",
+        "state"      => "present",
+        "version"    => "1.2.3",
+        "executable" => pip,
+      })
+
+      result["msg"].as_s.wont_equal("version is incompatible with state=latest")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
+  end
 end
 
 # A fake pip mirroring real pip's argparse duality: `show argparse`

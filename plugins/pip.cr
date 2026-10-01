@@ -183,6 +183,17 @@ module Krikri
         return bad_umask
       end
 
+      # pip.py's `if state == 'latest' and version is not None` guard sits
+      # INSIDE the umask try-block, before chdir handling and before any
+      # virtualenv/pip resolution - so a version: pinned at state: latest
+      # fails here rather than deeper in (e.g. on a missing virtualenv
+      # command). `version is not None` is a presence check, so an empty
+      # version: string trips it too (live-verified vs 2.19.11).
+      if (@params["state"]? || "present") == "latest" && @params["version"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "version is incompatible with state=latest")
+      end
+
       if missing_binary = ensure_pip_binary
         return missing_binary
       end

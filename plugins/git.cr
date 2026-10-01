@@ -81,11 +81,154 @@ module Krikri
     end
 
     private def raise_check_rc(command : String, r) : NoReturn
+      raise CheckRcFailure.new(check_rc_result(command, r))
+    end
+
+    # run_command(..., check_rc=True): basic.py's own failure - msg is the
+    # bare rstripped stderr, never a "Failed to ..." label, and cmd/rc/
+    # stdout/stderr (plus the *_lines the controller derives from them)
+    # all ride along.
+    private def check_rc_result(command : String, r) : PluginResult
       git = Process.find_executable(@git_path) || @git_path
-      raise CheckRcFailure.new(PluginResult.new(changed: false, failed: true,
-        msg: r[:stderr].rstrip, cmd: "#{git} #{command}", rc: r[:exit_code],
+      PluginResult.new(changed: false, failed: true, msg: r[:stderr].rstrip,
+        cmd: "#{git} #{command}", rc: r[:exit_code],
         stdout: r[:stdout], stdout_lines: r[:stdout].lines.map(&.chomp),
-        stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp)))
+        stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp))
+    end
+
+    # git.py's own `module.fail_json(msg=..., stdout=out, stderr=err,
+    # rc=rc)` failure sites: the msg is the module's own wording and the
+    # command's output travels in the sibling keys, never appended to the
+    # message. `cmd` is emitted only by the sites that pass one in
+    # git.py; it is always the argv joined the way basic.py's
+    # `_clean_args` renders it (shlex.quote per token, spaces between).
+    private def fail_with_output(msg : String, r, cmd : String? = nil) : PluginResult
+      result = PluginResult.new(changed: false, failed: true, msg: msg,
+        rc: r[:exit_code], stdout: r[:stdout], stdout_lines: r[:stdout].lines.map(&.chomp),
+        stderr: r[:stderr], stderr_lines: r[:stderr].lines.map(&.chomp))
+      result.extra["cmd"] = JSON::Any.new(cmd) if cmd
+      result
+    end
+
+    # git.py's `fail_json(msg="Failed to %s: %s %s" % (label, out, err))`
+    # with no other kwargs - set_remote_url()'s shape: out and err are
+    # concatenated INTO the message, and nothing else rides along (no
+    # cmd, no rc, no stdout/stderr siblings).
+    private def fail_msg_only(msg : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    # The `<git> <args>` string real reports in `cmd`: git resolved to its
+    # absolute path (module.get_bin_path('git', True) / the executable:
+    # value) plus the argv exactly as git.py built it. krikri's own
+    # execution goes through `-C <dest>`, which real instead expresses as
+    # run_command's cwd=, so that never appears here.
+    private def reported_cmd(args : String) : String
+      git = Process.find_executable(@git_path) || @git_path
+      "#{git} #{args}"
+    end
+
+    # The `cmd` string real reports, for a command krikri assembled as
+    # shell-quoted text (do_clone). basic.py's _clean_args re-renders each
+    # argv token through shlex.quote, which leaves an already-safe token
+    # bare - so krikri's execution quoting ('origin') must be stripped
+    # here or the reported cmd would differ from real's for every clone.
+    # git.py builds every command it reports as an argv LIST, which
+    # basic.py's _clean_args renders through shlex.quote per token - safe
+    # tokens stay bare, anything else is quoted. krikri needs both
+    # renderings of the same argv: this one for the reported `cmd`, and
+    # the single-quoted one to actually execute.
+    private def render_argv(argv : Array(String)) : Tuple(String, String)
+      {
+        argv.map { |arg| sq(arg) }.join(" "),
+        argv.map { |arg| Shell.quote_arg(arg) }.join(" "),
+      }
+    end
+
+    # Real Ansible resolves the git binary up front
+    # (`module.params['executable'] or module.get_bin_path('git', True)`)
+    # at the very top of main(), BEFORE the dest/separate_git_dir
+    # checks. With no `executable:` given and no git anywhere on PATH
+    # (plus the sbin dirs get_bin_path also searches) it fails with
+    # get_bin_path's own ValueError text - and that failure wins over
+    # the dest-required failure which follows it.
+    private def preflight_git_path : PluginResult?
+      return nil if @params["executable"]?
+      return nil if git_on_path?
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "Failed to find required executable \"git\" in paths: #{search_paths.join(":")}")
+    end
+
+    # git.py's main() then probes the binary with git_version()'s
+    # `<git> --version`, right after the dest checks and before any repo
+    # work. Two consequences this mirrors:
+    #
+    #  * A missing/unusable `executable:` never reaches a real git
+    #    command at all - basic.py's run_command Popen raises OSError
+    #    and its handler fail_jsons with rc=ex.errno (2 ENOENT, 13
+    #    EACCES), msg "Error executing command." and the `<git>
+    #    --version` cmd. Reported here as the module failure it is,
+    #    rather than as the downstream ls-remote/clone fallout.
+    #  * git_version() yields None when the probe fails or its banner
+    #    does not parse, which clone() then hard-fails on for
+    #    single_branch: and separate_git_dir:.
+    #
+    # Verified against ansible-playbook 2.19.11 (missing path, a
+    # non-executable file, a directory, a bare name not on PATH, a PATH
+    # without git at all, and a working non-git binary as executable:).
+    private def preflight_git_version : PluginResult?
+      path = @git_path
+      return nil unless @params["executable"]?
+
+      # Popen raises for a name it cannot exec at all; a bare name that
+      # is not on PATH raises the same ENOENT as a missing path.
+      if errno = exec_errno(path)
+        return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+          cmd: "#{path} --version", rc: errno, stdout: "", stdout_lines: [] of String,
+          stderr: "", stderr_lines: [] of String,
+          _ansible_error_detail: "Error executing command: [Errno #{errno}] #{errno == 13 ? "Permission denied" : "No such file or directory"}: b'#{path}'")
+      end
+
+      r = remote_exec("#{Shell.single_quote(path)} --version")
+      version = nil.as(Regex::MatchData?)
+      if r[:exit_code] == 0
+        version = /git version (?<version>.+)$/.match(r[:stdout])
+      end
+      return nil if version && version["version"]?
+
+      # git_version() came back None (non-zero rc, or a banner that does
+      # not parse). Only clone()'s single_branch:/separate_git_dir: paths
+      # treat that as fatal.
+      if true?(@params["single_branch"]?) || @params["separate_git_dir"]?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Cannot find git executable at #{path}")
+      end
+      nil
+    end
+
+    # PATH entries get_bin_path searches, in its own order: PATH first,
+    # then the sbin dirs (only those that exist).
+    private def search_paths : Array(String)
+      paths = (ENV["PATH"]? || "").split(':').reject(&.empty?)
+      ["/sbin", "/usr/sbin", "/usr/local/sbin"].each do |dir|
+        paths << dir if Dir.exists?(dir) && !paths.includes?(dir)
+      end
+      paths
+    end
+
+    private def git_on_path? : Bool
+      search_paths.any? { |dir| File.executable?(File.join(dir, "git")) && !File.directory?(File.join(dir, "git")) }
+    end
+
+    # The errno Popen would raise for *path*, or nil when it is
+    # executable. Mirrors POSIX exec semantics: a name with no slash is
+    # searched on PATH; a directory or a non-executable file is EACCES.
+    private def exec_errno(path : String) : Int32?
+      candidates = path.includes?("/") ? [path] : search_paths.map { |dir| File.join(dir, path) }
+      return 2 if candidates.none? { |c| File.exists?(c) }
+      return 13 if candidates.all? { |c| File.directory?(c) || !File.executable?(c) }
+      nil
     end
 
     private def execute_checked : PluginResult
@@ -101,6 +244,12 @@ module Krikri
       # (which requires a protocol) works on local clones.
       repo = "file://#{repo}" if repo.starts_with?("/")
       @repo = repo
+
+      # git.py resolves the git binary (executable: or get_bin_path) before
+      # the dest checks - see #preflight_git_path.
+      if preflight = preflight_git_path
+        return preflight
+      end
 
       dest = @params["dest"]?.try { |path| expand_tilde(path) }
       allow_clone = @params["clone"]?.nil? || true?(@params["clone"]?)
@@ -128,6 +277,12 @@ module Krikri
       @gpg_allowlist = parse_string_list(@params["gpg_allowlist"]? || @params["gpg_whitelist"]?)
       @git_path = @params["executable"]?.try { |path| expand_tilde(path) } || "git"
       @cmd_prefix = build_command_prefix
+
+      # git.py's git_version() probe runs right after the dest checks and
+      # before any repo work - see #preflight_git_version.
+      if preflight = preflight_git_version
+        return preflight
+      end
 
       # Relocate the git dir when separate_git_dir points somewhere else
       # (real Ansible's relocate_repo path in main()).
@@ -194,7 +349,8 @@ module Krikri
           end
           unless check_mode
             r = run_git("reset --hard HEAD", d)
-            return git_failure("reset local modifications", r) unless r[:exit_code] == 0
+            # reset() is run_command(..., check_rc=True) in git.py.
+            return check_rc_result("reset --hard HEAD", r) unless r[:exit_code] == 0
           end
         end
 
@@ -345,16 +501,17 @@ module Krikri
       parent = File.dirname(dest)
       Dir.mkdir_p(parent) unless Dir.exists?(parent)
 
-      cmd = "#{sq(@git_path)} clone"
-      cmd += @bare ? " --bare" : " --origin #{sq(@remote)}"
+      argv = ["clone"]
+      argv << "--bare" if @bare
+      argv += ["--origin", @remote] unless @bare
 
       is_branch_or_tag = remote_branch?(nil, @repo, @version) || remote_tag?(nil, @repo, @version)
       branch_added = false
       if dep = @depth
         if @version == "HEAD" || @refspec
-          cmd += " --depth #{Shell.quote_arg(dep)}"
+          argv += ["--depth", dep]
         elsif is_branch_or_tag
-          cmd += " --depth #{Shell.quote_arg(dep)} --branch #{sq(@version)}"
+          argv += ["--depth", dep, "--branch", @version]
           branch_added = true
         else
           # Real Ansible warns and ignores depth for refs that cannot be
@@ -362,29 +519,34 @@ module Krikri
         end
       end
       if reference = @reference
-        cmd += " --reference #{sq(reference)}"
+        argv += ["--reference", reference]
       end
       if single_branch
-        cmd += " --single-branch"
-        cmd += " --branch #{sq(@version)}" if is_branch_or_tag && !branch_added
+        argv << "--single-branch"
+        argv += ["--branch", @version] if is_branch_or_tag && !branch_added
       end
       if sep_dir = @separate_git_dir
-        cmd += " --separate-git-dir=#{sq(sep_dir)}"
+        argv << "--separate-git-dir=#{sep_dir}"
       end
-      cmd += " #{sq(@repo)} #{sq(dest)}"
+      argv += [@repo, dest]
 
-      r = remote_exec(@cmd_prefix + cmd)
-      return git_failure("clone repository", r) unless r[:exit_code] == 0
+      exec_args, report_args = render_argv(argv)
+      r = remote_exec(@cmd_prefix + "#{sq(@git_path)} #{exec_args}")
+      # clone()'s clone command is run_command(..., check_rc=True): basic.py's
+      # own failure - the rstripped stderr as msg, never a "Failed to clone"
+      # label (git.py has no such string).
+      return check_rc_result(report_args, r) unless r[:exit_code] == 0
 
       if @bare && @remote != "origin"
         r = run_git("remote add #{sq(@remote)} #{sq(@repo)}", dest)
-        return git_failure("add remote #{@remote}", r) unless r[:exit_code] == 0
+        return check_rc_result("remote add #{@remote} #{@repo}", r) unless r[:exit_code] == 0
       end
 
       if rs = @refspec
         depth_flag = @depth ? "--depth #{@depth} " : ""
         r = run_git("fetch #{depth_flag}#{sq(@remote)} #{sq(rs)}", dest)
-        return git_failure("fetch refspec #{rs}", r) unless r[:exit_code] == 0
+        # Also check_rc=True in clone().
+        return check_rc_result("fetch #{depth_flag}#{@remote} #{rs}", r) unless r[:exit_code] == 0
       end
 
       nil
@@ -430,7 +592,27 @@ module Krikri
       refspecs.each { |refspec| args += " #{sq(refspec)}" }
 
       r = run_git(args, d)
-      r[:exit_code] == 0 ? nil : git_failure("download remote objects and refs", r)
+      return nil if r[:exit_code] == 0
+
+      # fetch()'s own failure: msg is "Failed to <label>: <out> <err>" with
+      # the command as a LIST (git.py passes the argv, not a joined string)
+      # and no rc/stdout/stderr siblings.
+      cmd_argv = [git_bin, "fetch"]
+      cmd_argv.concat(depth_flag.split(' ').reject(&.empty?)) unless depth_flag.empty?
+      cmd_argv << "--tags" unless tags_flag.empty?
+      cmd_argv << "--force" if @force
+      cmd_argv << @remote
+      cmd_argv.concat(refspecs)
+      result = PluginResult.new(changed: false, failed: true,
+        msg: "Failed to download remote objects and refs: #{r[:stdout]} #{r[:stderr]}")
+      result.extra["cmd"] = JSON::Any.new(cmd_argv.map { |a| JSON::Any.new(a) })
+      result
+    end
+
+    # Real Ansible's git_path as it appears in a reported cmd: the
+    # executable: value, or the resolved absolute git.
+    private def git_bin : String
+      Process.find_executable(@git_path) || @git_path
     end
 
     # Real Ansible's switch_version(): branch-aware checkout + hard reset
@@ -441,10 +623,18 @@ module Krikri
         return git_failure("determine HEAD branch",
           {exit_code: 1, stdout: "", stderr: "could not determine HEAD branch"}) unless branch
 
+        # switch_version()'s per-command failures: the message is git.py's
+        # own wording and the command output rides in stdout/stderr/rc.
         r = run_git("checkout --force #{sq(branch)}", d)
-        return git_failure("checkout branch #{branch}", r) unless r[:exit_code] == 0
+        unless r[:exit_code] == 0
+          return fail_with_output("Failed to checkout branch #{branch}", r,
+            cmd: reported_cmd("checkout --force #{branch}"))
+        end
         r = run_git("reset --hard #{sq(@remote)}/#{sq(branch)} --", d)
-        return git_failure("checkout branch #{branch}", r) unless r[:exit_code] == 0
+        unless r[:exit_code] == 0
+          return fail_with_output("Failed to checkout branch #{branch}", r,
+            cmd: reported_cmd("reset --hard #{@remote}/#{branch} --"))
+        end
       else
         if remote_branch?(d, @remote, @version)
           if (dep = @depth) && !local_branch?(d, @version)
@@ -454,20 +644,36 @@ module Krikri
             r = run_git("fetch --depth=#{Shell.quote_arg(dep)} #{sq(@remote)} " \
                         "+refs/heads/#{sq(@version)}:refs/heads/#{sq(@version)} " \
                         "+refs/heads/#{sq(@version)}:refs/remotes/#{sq(@remote)}/#{sq(@version)}", d)
-            return git_failure("fetch branch from remote: #{@version}", r) unless r[:exit_code] == 0
+            unless r[:exit_code] == 0
+              return fail_with_output("Failed to fetch branch from remote: #{@version}", r,
+                cmd: reported_cmd("fetch --depth=#{dep} #{@remote} " \
+                                  "+refs/heads/#{@version}:refs/heads/#{@version} " \
+                                  "+refs/heads/#{@version}:refs/remotes/#{@remote}/#{@version}"))
+            end
           end
           if !local_branch?(d, @version)
             r = run_git("checkout --track -b #{sq(@version)} #{sq(@remote)}/#{sq(@version)}", d)
-            return git_failure("checkout #{@version}", r) unless r[:exit_code] == 0
+            unless r[:exit_code] == 0
+              return fail_with_output("Failed to checkout #{@version}", r,
+                cmd: reported_cmd("checkout --track -b #{@version} #{@remote}/#{@version}"))
+            end
           else
             r = run_git("checkout --force #{sq(@version)}", d)
-            return git_failure("checkout branch #{@version}", r) unless r[:exit_code] == 0
+            unless r[:exit_code] == 0
+              return fail_with_output("Failed to checkout branch #{@version}", r)
+            end
             r = run_git("reset --hard #{sq(@remote)}/#{sq(@version)}", d)
-            return git_failure("checkout branch #{@version}", r) unless r[:exit_code] == 0
+            unless r[:exit_code] == 0
+              return fail_with_output("Failed to checkout branch #{@version}", r,
+                cmd: reported_cmd("reset --hard #{@remote}/#{@version}"))
+            end
           end
         else
           r = run_git("checkout --force #{sq(@version)}", d)
-          return git_failure("checkout #{@version}", r) unless r[:exit_code] == 0
+          unless r[:exit_code] == 0
+            return fail_with_output("Failed to checkout #{@version}", r,
+              cmd: reported_cmd("checkout --force #{@version}"))
+          end
         end
       end
 
@@ -536,7 +742,9 @@ module Krikri
 
       before = submodule_revs(d, "HEAD")
       r = run_git("submodule foreach #{@git_path} fetch", d)
-      return {false, git_failure("fetch submodules", r)} unless r[:exit_code] == 0
+      # git.py runs these with check_rc=True, so the failure is basic.py's
+      # (bare rstripped stderr), not git.py's own message.
+      return {false, check_rc_result("submodule foreach #{@git_path} fetch", r)} unless r[:exit_code] == 0
 
       if track_submodules
         after = submodule_revs(d, "#{@remote}/master")
@@ -544,7 +752,7 @@ module Krikri
       end
 
       st = run_git("submodule status", d)
-      return {false, git_failure("retrieve submodule status", st)} unless st[:exit_code] == 0
+      return {false, check_rc_result("submodule status", st)} unless st[:exit_code] == 0
       moved = st[:stdout].each_line.any? do |line|
         line.starts_with?('+') || line.starts_with?('-')
       end
@@ -559,14 +767,20 @@ module Krikri
     # Real Ansible's submodule_update: sync, then update --init --recursive
     # (with --remote for track_submodules and --force with force).
     private def submodule_update(d : String, track_submodules : Bool) : PluginResult?
+      # The sync is check_rc=True in git.py; the update is NOT, and gets
+      # git.py's own "Failed to init/update submodules: <out><err>" (no
+      # space between the two, no rc, no cmd).
       r = run_git("submodule sync", d)
-      return git_failure("sync submodules", r) unless r[:exit_code] == 0
+      return check_rc_result("submodule sync", r) unless r[:exit_code] == 0
 
       args = "submodule update --init --recursive"
       args += " --remote" if track_submodules
       args += " --force" if @force
       r = run_git(args, d)
-      r[:exit_code] == 0 ? nil : git_failure("init/update submodules", r)
+      return nil if r[:exit_code] == 0
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "Failed to init/update submodules: #{r[:stdout]}#{r[:stderr]}")
     end
 
     # Real Ansible's create_archive: idempotent via byte comparison against
@@ -630,7 +844,10 @@ module Krikri
       if url.nil? || !same_repo_location?(url, @repo)
         r = run_git("remote set-url #{sq(@remote)} #{sq(@repo)}", d)
         if r[:exit_code] != 0
-          return {changed: false, fail: git_failure("set a new url #{@repo} for #{@remote}", r)}
+          # set_remote_url()'s own failure: out/err concatenated into the
+          # msg, and git.py passes nothing else alongside it.
+          return {changed: false, fail: fail_msg_only(
+            "Failed to set a new url #{@repo} for #{@remote}: #{r[:stdout]} #{r[:stderr]}")}
         end
         return {changed: !url.nil?, fail: nil}
       end
