@@ -17,7 +17,26 @@ module Krikri
     # module_utils/common/validation.py).
     module IptablesCommand
       # Real-Ansible parameter order, flag-for-flag (construct_rule()).
-      def self.construct_rule(params : Hash(String, String)) : Array(String)
+      # Returns the flag list, or a real-Ansible failure message when
+      # building it raises the way Python does - see the two quirks
+      # noted inline below.
+      def self.construct_rule(params : Hash(String, String)) : Array(String) | String
+        # Real quirk 1: `tcp_flags` given as a dict without both
+        # `flags` and `flags_set` still passes the module's own
+        # `'flags' in param and 'flags_set' in param` guard (the
+        # argspec fills both suboptions with None), and then
+        # `','.join(param['flags'])` raises "can only join an
+        # iterable". Verified live against ansible-core 2.19.11 -
+        # krikri silently dropped the flag instead.
+        if raw = params["tcp_flags"]?
+          parsed = JSON.parse(raw) rescue nil
+          if parsed
+            flags = parsed["flags"]?
+            flags_set = parsed["flags_set"]?
+            return "can only join an iterable" if flags.nil? || flags_set.nil?
+          end
+        end
+
         rule = [] of String
         append_param(rule, params["protocol"]?, "-p")
         append_param(rule, params["source"]?, "-s")
@@ -85,11 +104,11 @@ module Krikri
         if match_set = params["match_set"]?
           if match_tokens(params).includes?("set")
             append_param(rule, match_set, "--match-set")
-            rule << params["match_set_flags"].to_s if params["match_set_flags"]?
+            note_match_set_flags(rule, params)
           else
             rule.concat(["-m", "set"])
             append_param(rule, match_set, "--match-set")
-            rule << params["match_set_flags"].to_s if params["match_set_flags"]?
+            note_match_set_flags(rule, params)
           end
         end
         if (params["limit"]? && !params["limit"].empty?) ||
@@ -125,7 +144,30 @@ module Krikri
         if comment = params["comment"]?
           rule.concat(["-m", "comment", "--comment", shell_single_quote(comment)])
         end
+
+        # Real quirk 2: `match_set` without `match_set_flags` appends
+        # real's None into the rule list (append_match_flag takes the
+        # flag value unconditionally), so the module's own
+        # `rule=' '.join(construct_rule(...))` raises with the index of
+        # that None. Verified live against ansible-core 2.19.11.
+        if none_at = rule.index(NONE_PLACEHOLDER)
+          return "sequence item #{none_at}: expected str instance, NoneType found"
+        end
+
         rule
+      end
+
+      # Stand-in for the None real appends for a missing
+      # match_set_flags; replaced by the failure message before
+      # construct_rule ever returns a list.
+      private NONE_PLACEHOLDER = "\u0000krikri-iptables-none\u0000"
+
+      private def self.note_match_set_flags(rule : Array(String), params : Hash(String, String)) : Nil
+        if flags = params["match_set_flags"]?
+          rule << flags
+        else
+          rule << NONE_PLACEHOLDER
+        end
       end
 
       # Real Ansible's push_arguments(): everything it builds (the `-C`

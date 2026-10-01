@@ -140,4 +140,22 @@ describe "pam_limits plugin" do
     result["msg"].as_s.must_equal("*\thard\tcore\t0\n")
     result["diff"].as_h["before"].as_s.must_equal(result["diff"].as_h["after"].as_s)
   end
+
+  # kpg32 seed 32: all four divergent pam_limits playbooks passed a
+  # BARE RELATIVE dest ("irdwxz", "subkkx", ...). Real takes
+  # os.path.dirname("irdwxz") == "", os.path.isdir("") is False, so the
+  # module fails on the directory-writability check - before it ever
+  # validates the limit value. Crystal's File.dirname returns "." there,
+  # a writable directory, so the relative dest sailed past that check and
+  # krikri went on to report the (also correct, but never reached)
+  # invalid-value error instead.
+  it "fails a bare relative dest on the directory check, before value validation, like real" do
+    result = PluginSpecHelper.run("pam_limits", {
+      "dest" => "irdwxz", "domain" => "*", "limit_type" => "-",
+      "limit_item" => "priority", "value" => "nlrntm",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("directory  is not writable (check presence, access rights, use sudo)")
+  end
 end

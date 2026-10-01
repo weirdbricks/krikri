@@ -97,6 +97,16 @@ module Krikri
       # travis" task (`community.general.gem: {name: travis, ...}`).
       "community.general.gem",
       "ansible.builtin.cron",
+      # cronvar lives in community.general, not ansible-core - real
+      # ansible-core's own ansible_builtin_runtime.yml redirects the
+      # legacy `ansible.builtin.cronvar` spelling to it (so the built-in
+      # spelling below stays registered), but the CANONICAL FQCN every
+      # role and generator writes is community.general.cronvar. That was
+      # missing here, so every such task was dropped as "Plugin not
+      # available" and reported as a silent `skipping:` (kpg32 seed-32:
+      # 15/15 cronvar playbooks, 0/15 matching, because the task never
+      # ran at all). Both spellings resolve to the same cronvar binary.
+      "community.general.cronvar",
       "ansible.builtin.cronvar",
       "ansible.posix.acl",
       # ansible.builtin.acl (0.9.1119): same legacy-redirect shape as

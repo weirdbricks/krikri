@@ -58,22 +58,30 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: err)
       end
 
-      # Real Ansible's log-jump enforcement: logging options force
-      # jump=LOG when unset and fail with any other jump target.
-      if @params["log_prefix"]? || @params["log_level"]?
-        jump = @params["jump"]?
-        if jump.nil?
-          @params["jump"] = "LOG"
-        elsif jump != "LOG"
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Logging options can only be used with the LOG jump target."
-          )
-        end
+      # Real Ansible's main() builds the args dict - including
+      # `rule=' '.join(construct_rule(module.params))` - BEFORE its own
+      # log-jump enforcement, so a construct_rule crash wins over the
+      # "Logging options can only be used with the LOG jump target."
+      # failure. Live-verified against ansible-core 2.19.11.
+      rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
+      if rule_flags.is_a?(String)
+        # Both quirks are uncaught exceptions inside real's own
+        # construct_rule(), so they reach the user through the
+        # module-crash wrapper rather than fail_json - the "Task failed:
+        # Module failed: " brief in the fatal msg, the bare exception
+        # text in the [ERROR] block (same shape debconf.cr's join_crash
+        # and mount.cr's os.makedirs('') already produce).
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Task failed: Module failed: #{rule_flags}", _ansible_error_detail: rule_flags)
       end
 
-      rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
+      # Real Ansible's log-jump enforcement: logging options force
+      # jump=LOG when unset and fail with any other jump target. Mutates
+      # @params exactly as real's main() does (it fills the jump in
+      # BEFORE construct_rule is ever re-read).
+      if failure = enforce_log_jump
+        return PluginResult.new(changed: false, failed: true, msg: failure)
+      end
 
       msgs = [] of String
 
@@ -96,7 +104,24 @@ module Krikri
       )
     end
 
+    # Real Ansible's log-jump enforcement block, lifted out of #execute.
+    # Fills @params["jump"] with LOG when unset (mutating params exactly
+    # as real's main() does), and returns the failure message for any
+    # other explicit jump target.
+    private def enforce_log_jump : String?
+      return nil unless @params["log_prefix"]? || @params["log_level"]?
+
+      jump = @params["jump"]?
+      if jump.nil?
+        @params["jump"] = "LOG"
+        nil
+      elsif jump != "LOG"
+        "Logging options can only be used with the LOG jump target."
+      end
+    end
+
     private def apply_for_bin(bin : String, flush : Bool, policy : String?, chain : String?,
+
                               rule_flags : Array(String), state : String, chain_management : Bool,
                               check_mode : Bool, msgs : Array(String)) : Bool
       if flush

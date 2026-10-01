@@ -3,6 +3,7 @@
 require "json"
 require "file_utils"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/file_attrs"
 
 module Krikri
   # ini_file plugin - manages [section]/option=value entries in an INI-style
@@ -10,6 +11,8 @@ module Krikri
   # (path/dest, section, option, value, state, create, exclusive,
   # no_extra_spaces, backup, mode).
   class IniFilePlugin < BasePlugin
+    include PluginHelpers::FileAttrs
+
     def execute : PluginResult
       path = @params["path"]? || @params["dest"]?
       return missing_param("path") unless path
@@ -34,7 +37,7 @@ module Krikri
         return err
       end
 
-      if err = validate_inputs(path, section, option, values, state, create)
+      if err = validate_inputs(path, create)
         return err
       end
 
@@ -104,6 +107,21 @@ module Krikri
 
       write_new_content(path, new_content) if changed && !check_mode
 
+      # Real main()'s own tail, AFTER do_ini returns:
+      # `if not module.check_mode and os.path.exists(path):
+      #    changed = module.set_fs_attributes_if_different(file_args, changed)`.
+      # It runs on an UNCHANGED content result too, so a mode:/owner:/
+      # group: that drifted from the file is itself a change - this
+      # plugin used to tie apply_mode to the content write, so a
+      # mode-only task on already-correct content reported changed=false
+      # and never touched the mode (found by kpg32 seed 32 on the
+      # state=absent + mode: playbook pair).
+      if !check_mode && File.exists?(path)
+        attrs_changed, failure = apply_file_attrs(path, check_mode)
+        return failure if failure
+        changed = changed || attrs_changed
+      end
+
       result = PluginResult.new(
         changed: changed,
         failed: false,
@@ -114,6 +132,10 @@ module Krikri
       # Real module includes backup_file only when a backup was actually
       # made (its None default is dropped by exit_json).
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      # Real's exit_json runs add_path_info over every result whose
+      # `path` still exists, so the file's stat fields are part of the
+      # success result too, not just a failure's.
+      add_path_info(result, path)
       result
     end
 
@@ -171,14 +193,17 @@ module Krikri
         msg: "Parameter 'value(s)' must be defined if state=present and allow_no_value=False.")
     end
 
-    private def validate_inputs(path : String, section : String?, option : String?, values : Array(String)?,
-                                state : String, create : Bool) : PluginResult?
+    # Real do_ini has exactly ONE precondition here - the destination
+    # file - and its `create` gate covers the file alone, never a
+    # section header: a missing `[section]` is appended (with its
+    # option) even under create=false, reporting "section and option
+    # added". This plugin used to also fail a missing section with an
+    # invented "Section [x] does not exist" message, so a
+    # create=false task aimed at a not-yet-existing section
+    # hard-failed where real succeeded (found by kpg32 seed 32).
+    private def validate_inputs(path : String, create : Bool) : PluginResult?
       unless File.exists?(path) || create
         return PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist!")
-      end
-
-      if section && !find_section_header(read_lines(path), section) && !create && state == "present"
-        return PluginResult.new(changed: false, failed: true, msg: "Section [#{section}] does not exist in #{path}")
       end
 
       nil
@@ -196,7 +221,6 @@ module Krikri
       dir = File.dirname(path)
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
       File.write(path, new_content)
-      apply_mode(path)
     end
 
     private def missing_param(name : String) : PluginResult
@@ -505,20 +529,6 @@ module Krikri
       backup_file = "#{path}.#{Process.pid}.#{timestamp}~"
       File.copy(path, backup_file)
       backup_file
-    end
-
-    private def apply_mode(path : String) : Nil
-      if mode = @params["mode"]?
-        begin
-          # Real Ansible parses ANY all-digit mode string as octal,
-          # leading zero or not. See template.cr's identical fix (round
-          # 40, robertdebock.redis) for the full story.
-          if mode =~ /\A0?[0-7]{3,4}\z/
-            File.chmod(path, mode.to_i(8))
-          end
-        rescue
-        end
-      end
     end
   end
 end

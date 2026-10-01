@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/archive_paths"
 
 module Krikri
   # PamLimits Plugin - Manage user PAM limits entries (limits.conf /
@@ -88,7 +89,15 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: "#{dest} is not writable. Use sudo")
         end
       else
-        dest_dir = File.dirname(dest)
+        # Python's os.path.dirname, not Crystal's File.dirname: for a
+        # bare relative `dest:` real yields "" (and os.path.isdir("")
+        # rejects it, so the module fails with "directory  is not
+        # writable"), while File.dirname yields "." - a writable
+        # directory that let a relative dest sail past this check and
+        # reach the value validation instead. Found by kpg32 seed 32,
+        # where 4/4 divergent pam_limits playbooks passed a relative
+        # dest.
+        dest_dir = PluginHelpers::ArchivePaths.python_dirname(dest)
         if File.directory?(dest_dir) && File::Info.writable?(dest_dir)
           does_not_exist = true
           changed = true

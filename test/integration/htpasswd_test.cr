@@ -141,4 +141,88 @@ describe "htpasswd plugin" do
     result["changed"].as_bool.must_equal(false)
     result["msg"].as_s.must_equal("johndoe already present")
   end
+
+  # kpg32 seed 32: every one of the sweep's htpasswd playbooks passed a
+  # scheme name real's passlib does not know. Real's message is the
+  # passlib CryptContext ValueError, whose str() carries the algorithm
+  # name in single quotes inside the module's own double quotes.
+  it "reports an unknown hash_scheme exactly like passlib's CryptContext" do
+    path = PluginSpecHelper.tmp_path("htpasswd-unknown-scheme")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {
+      "path" => path, "name" => "johndoe", "password" => "x", "hash_scheme" => "nosuchscheme",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(%("no crypt handler found for algorithm: 'nosuchscheme'"))
+  end
+
+  it "reports real's passlib None-secret error for state=present without a password" do
+    path = PluginSpecHelper.tmp_path("htpasswd-no-password")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("secret must be unicode or bytes, not None")
+  end
+
+  it "does not validate hash_scheme for state=absent, like real's absent()" do
+    path = PluginSpecHelper.tmp_path("htpasswd-absent-bad-scheme")
+    File.write(path, "johndoe:hash\n")
+
+    result = PluginSpecHelper.run("htpasswd", {
+      "path" => path, "name" => "johndoe", "state" => "absent", "hash_scheme" => "nosuchscheme",
+    })
+
+    result["failed"]?.try(&.as_bool).must_be_nil
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  it "reports real's IsADirectoryError when path: is a directory" do
+    dir = PluginSpecHelper.tmp_path("htpasswd-a-directory")
+    Dir.mkdir_p(dir)
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => dir, "name" => "johndoe", "password" => "x"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("[Errno 21] Is a directory: '#{dir}'")
+  end
+
+  it "words the create=false failure like real's present() ValueError" do
+    path = PluginSpecHelper.tmp_path("htpasswd-create-false")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {
+      "path" => path, "name" => "johndoe", "password" => "x", "create" => "false",
+    })
+
+    result["msg"].as_s.must_equal("Destination #{path} does not exist")
+  end
+
+  it "says \"Remove <user>\" on an absent removal, like real's absent()" do
+    path = PluginSpecHelper.tmp_path("htpasswd-remove-msg")
+    File.write(path, "johndoe:hash\n")
+
+    result = PluginSpecHelper.run("htpasswd", {"path" => path, "name" => "johndoe", "state" => "absent"})
+
+    result["msg"].as_s.must_equal("Remove johndoe")
+  end
+
+  # ldap_sha1 is one of the four apache_hashes passlib's htpasswd
+  # context always carries, so real accepts it everywhere - and being
+  # unsalted it is the one non-plaintext scheme computable without
+  # shelling out at all.
+  it "hashes with ldap_sha1, one of passlib's apache_hashes" do
+    path = PluginSpecHelper.tmp_path("htpasswd-ldap-sha1")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {
+      "path" => path, "name" => "johndoe", "password" => "pw", "hash_scheme" => "ldap_sha1",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("johndoe:{SHA}GpHWL3ymc5liWkNopqtdSjuqYHM=\n")
+  end
 end

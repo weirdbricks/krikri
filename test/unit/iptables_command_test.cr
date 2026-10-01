@@ -96,12 +96,50 @@ describe Krikri::PluginHelpers::IptablesCommand do
       ])
     end
 
-    it "skips --tcp-flags unless both flags and flags_set are present (real Ansible)" do
-      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+    # Corrected against real ansible-core 2.19.11 (kpg32 seed 32):
+    # append_tcp_flags' own guard is `'flags' in param and 'flags_set'
+    # in param`, and the argspec fills BOTH suboptions with None for a
+    # partial dict - so the guard passes and the very next expression,
+    # `','.join(param['flags'])`, raises "can only join an iterable".
+    # This test previously asserted the skip-the-flag behavior, which is
+    # what the module would do with no dict at all - not what it does
+    # with a partial one.
+    it "fails with real's join TypeError when tcp_flags is missing a suboption" do
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "tcp_flags" => %({"flags": ["ALL"]}),
         "jump"      => "DROP",
-      })
-      rule.must_equal(["-j", "DROP"])
+      }).must_equal("can only join an iterable")
+    end
+
+    it "fails with real's join TypeError for an empty tcp_flags dict" do
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "tcp_flags" => "{}",
+        "jump"      => "DROP",
+      }).must_equal("can only join an iterable")
+    end
+
+    # The same uncaught crash for match_set without match_set_flags:
+    # append_match_flag takes the flag value unconditionally, so real
+    # appends None and `' '.join(...)` trips on it. The index in the
+    # message is that None's own position in the rule list.
+    it "fails with real's NoneType join error when match_set has no match_set_flags" do
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "match_set" => "admin_hosts",
+      }).must_equal("sequence item 4: expected str instance, NoneType found")
+    end
+
+    it "quotes the shifted index when a jump precedes match_set" do
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "jump"      => "RETURN",
+        "match_set" => "admin_hosts",
+      }).must_equal("sequence item 6: expected str instance, NoneType found")
+    end
+
+    it "builds --match-set normally when match_set_flags is given" do
+      Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "match_set"       => "admin_hosts",
+        "match_set_flags" => "src",
+      }).must_equal(["-m", "set", "--match-set", "admin_hosts", "src"])
     end
 
     it "adds --gateway right after -j for jump: TEE" do

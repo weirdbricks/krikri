@@ -214,13 +214,22 @@ describe "ini_file plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "fails when section does not exist and create is false" do
+  # Corrected against real community.general.ini_file 12.5.0 (kpg32
+  # seed 32): `create` gates the FILE only, never a section header -
+  # do_ini appends a missing `[section]` and its option regardless, so
+  # this used-to-fail case is a plain "section and option added" in
+  # real. The replacement spec for the still-real failure (a missing
+  # FILE) lives in the "create:false against a missing section" block
+  # at the end of this file.
+  it "appends a missing section under create: false, as real's do_ini does" do
     path = PluginSpecHelper.tmp_path("ini_file-no-create")
     File.write(path, "[client]\nport = 3306\n")
 
     result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306", "create" => "false"})
 
-    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("section and option added")
+    File.read(path).must_equal("[client]\nport = 3306\n[mysqld]\nport = 3306\n")
   end
 
   # Real community.general ini_file's per-branch msg strings and
@@ -393,6 +402,79 @@ describe "ini_file plugin" do
       result["changed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("option changed")
       File.read(path).must_equal("opt1\n")
+    end
+  end
+
+  # kpg32 seed 32. Real ini_file's `create` gates the FILE only - it
+  # never guards a section header, and do_ini appends a missing
+  # `[section]` (with its option) either way, reporting "section and
+  # option added". krikri used to fail the task with an invented
+  # "Section [x] does not exist" message instead, so a create=false
+  # task aimed at a not-yet-existing section hard-failed where real
+  # succeeded.
+  describe "create:false against a missing section (real behavior)" do
+    it "appends the section and its option rather than failing" do
+      path = PluginSpecHelper.tmp_path("ini_file-create-false-missing-section")
+      File.write(path, "key = value\nkpg setting = on\n")
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "kpg setting",
+        "value" => "one", "create" => "false",
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("section and option added")
+      File.read(path).must_equal("key = value\nkpg setting = on\n[main]\nkpg setting = one\n")
+    end
+
+    it "still fails with real's message when the FILE itself is missing" do
+      path = PluginSpecHelper.tmp_path("ini_file-create-false-missing-file")
+      File.delete(path) if File.exists?(path)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "kpg setting",
+        "value" => "one", "create" => "false",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Destination #{path} does not exist!")
+    end
+  end
+
+  # Real main()'s tail: `if not module.check_mode and os.path.exists(path):
+  # changed = module.set_fs_attributes_if_different(file_args, changed)`.
+  # It runs even when the content itself did not change, so a drifted
+  # mode: IS a change - krikri used to tie apply_mode to the content
+  # write, so a mode-only task on already-correct content reported
+  # changed=false and left the mode alone.
+  describe "file attributes on an otherwise-unchanged task" do
+    it "applies mode: and reports the change even with no content change" do
+      path = PluginSpecHelper.tmp_path("ini_file-mode-only")
+      File.write(path, "[main]\nkey = value\n")
+      File.chmod(path, 0o644)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "key",
+        "value" => "value", "mode" => "0755",
+      })
+
+      result["changed"].as_bool.must_equal(true)
+      File.read(path).must_equal("[main]\nkey = value\n")
+      (File.info(path).permissions.value & 0o7777).must_equal(0o755)
+    end
+
+    it "reports no change when the mode already matches" do
+      path = PluginSpecHelper.tmp_path("ini_file-mode-converged")
+      File.write(path, "[main]\nkey = value\n")
+      File.chmod(path, 0o644)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "key",
+        "value" => "value", "mode" => "0644",
+      })
+
+      result["changed"].as_bool.must_equal(false)
+      (File.info(path).permissions.value & 0o7777).must_equal(0o644)
     end
   end
 end

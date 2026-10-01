@@ -200,6 +200,47 @@ describe "cronvar plugin" do
     result["msg"].as_s.must_include("mutually exclusive")
   end
 
+  # kpg32 seed 32: real ansible-core 2.19.11 emits the arg_spec.py
+  # wording verbatim, without the parentheses this plugin wrapped the
+  # pair in.
+  it "words the insertbefore/insertafter clash exactly like real arg_spec.py" do
+    result = PluginSpecHelper.run("cronvar", {
+      "name"         => "MAILTO",
+      "value"        => "root",
+      "cron_file"    => tmp_path("cronvar-mutually-exclusive.txt"),
+      "insertafter"  => "SHELL",
+      "insertbefore" => "SHELL",
+    })
+
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
+  end
+
+  it "rejects a state outside the argument spec's choices" do
+    result = PluginSpecHelper.run("cronvar", {
+      "name"  => "MAILTO",
+      "value" => "root",
+      "state" => "present_x",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("value of state must be one of: absent, present, got: present_x")
+  end
+
+  # Live-verified against ansible-core 2.19.11: arg_spec's
+  # mutually_exclusive check runs before the per-parameter choices
+  # check, which in turn runs before the module body's own
+  # "You must specify 'value'" check.
+  it "checks mutual exclusion before the state choices, like real Ansible" do
+    result = PluginSpecHelper.run("cronvar", {
+      "name"         => "MAILTO",
+      "state"        => "bogus",
+      "insertafter"  => "SHELL",
+      "insertbefore" => "PATH",
+    })
+
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
+  end
+
   # Real community.general cronvar's result shape (live-verified against
   # ansible-core 2.19.11): changed + vars (the full current var-name
   # list), plus cron_file/backup_file only when they apply - a backup

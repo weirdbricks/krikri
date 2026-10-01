@@ -37,6 +37,11 @@ module Krikri
   # must already exist (community.general's added parent-dir check);
   # here a missing parent directory is created, matching cron.cr.
   class CronVarPlugin < BasePlugin
+    # argument_spec's `state` choices, in the real module's order (the
+    # wording "value of state must be one of: absent, present, got: X"
+    # is ansible-core's own choices error, not a cronvar-specific one).
+    STATE_CHOICES = ["absent", "present"]
+
     def execute : PluginResult
       name = @params["name"]?
       return missing_param("name") unless name
@@ -44,14 +49,24 @@ module Krikri
       state = @params["state"]? || "present"
       value = @params["value"]?
 
-      if state == "present" && !value
-        return PluginResult.new(changed: false, failed: true, msg: "You must specify 'value' to insert a new cron variable")
-      end
-
+      # Real Ansible validates in argument-spec order: mutually_exclusive
+      # first (arg_spec.py), then the per-parameter type/choices checks
+      # (parameters.py), and only then the module's own body checks
+      # ("You must specify 'value'..."). Verified live against
+      # ansible-core 2.19.11: insertbefore+insertafter beats a bogus
+      # state, a bogus state beats a missing cron_file parent dir.
       insertafter = @params["insertafter"]?
       insertbefore = @params["insertbefore"]?
       if insertafter && insertbefore
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: (insertbefore|insertafter)")
+        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: insertbefore|insertafter")
+      end
+
+      unless STATE_CHOICES.includes?(state)
+        return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: #{STATE_CHOICES.join(", ")}, got: #{state}")
+      end
+
+      if state == "present" && !value
+        return PluginResult.new(changed: false, failed: true, msg: "You must specify 'value' to insert a new cron variable")
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
@@ -131,7 +146,10 @@ module Krikri
         tmp_file.close
         install_result = remote_exec("crontab #{crontab_target} #{tmp_file.path}")
         unless install_result[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true, msg: "crontab install failed: #{install_result[:stderr]}")
+          # Real CronVar.write() hands `crontab`'s stderr straight to
+          # fail_json(msg=err) - verbatim, trailing newline and all, with
+          # no prefix of its own.
+          return PluginResult.new(changed: false, failed: true, msg: install_result[:stderr])
         end
       ensure
         tmp_file.delete rescue nil
