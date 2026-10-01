@@ -213,8 +213,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   non-string scalars and lists with a non-string member are reproduced (same class as the `output_encoding`
   entry above). A `debconf` multiselect list mixing strings and ints raises real's order-dependent
   `'<' not supported` TypeError first and is not reproduced either.
-- Open, known and not yet fixed (matchable in principle):
-  - A registered *failed* `copy:` result keeps `"diff": []` in real; krikri omits the `diff` key there.
 - Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators
