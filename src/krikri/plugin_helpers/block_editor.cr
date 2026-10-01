@@ -23,6 +23,13 @@ module Krikri
       # (skipped at EOF or when that line is already blank) - both no-ops
       # on reruns, since the blank line they add satisfies them the next
       # time.
+      #
+      # Real blockinfile.py builds its marker-delimited `blocklines` only
+      # when the task is present AND the block is non-empty (`if present
+      # and block:`), so a missing/empty block means "remove", but the
+      # two padding flags are gated on `present` ALONE - a state: present
+      # task with no block: at all still inserts the blank line they ask
+      # for and reports changed (verified against ansible-core 2.19.11).
       def self.apply(
         lines : Array(String),
         marker_begin_line : String,
@@ -36,6 +43,9 @@ module Krikri
       ) : {Array(String), Bool}
         begin_index, end_index = find_block(lines, marker_begin_line, marker_end_line)
 
+        # state: absent returns here, so everything below IS real's
+        # `present` path - including its padding, which real gates on
+        # `present` alone and not on there being a block to insert.
         if state == "absent"
           return {lines, false} unless begin_index && end_index
           new_lines = lines.dup
@@ -43,26 +53,31 @@ module Krikri
           return {new_lines, true}
         end
 
-        desired = [marker_begin_line] + block_lines + [marker_end_line]
+        desired = block_lines.empty? ? [] of String : [marker_begin_line] + block_lines + [marker_end_line]
 
-        if begin_index && end_index
-          new_lines = lines.dup
-          new_lines.delete_at(begin_index, end_index - begin_index + 1)
-          new_lines = insert_with_newlines(new_lines, begin_index, desired, append_newline, prepend_newline)
-          # Real Ansible byte-compares original vs result; in the stripped-
-          # lines domain the array comparison is the same question.
-          {new_lines, new_lines != lines}
-        else
-          insert_index = LineEditor.insertion_index(lines, insertafter, insertbefore)
-          new_lines = insert_with_newlines(lines, insert_index, desired, append_newline, prepend_newline)
-          {new_lines, true}
-        end
+        new_lines =
+          if begin_index && end_index
+            replaced = lines.dup
+            replaced.delete_at(begin_index, end_index - begin_index + 1)
+            insert_with_newlines(replaced, begin_index, desired, append_newline, prepend_newline)
+          else
+            insert_index = LineEditor.insertion_index(lines, insertafter, insertbefore)
+            insert_with_newlines(lines, insert_index, desired, append_newline, prepend_newline)
+          end
+
+        # Real Ansible byte-compares original vs result; in the stripped-
+        # lines domain the array comparison is the same question.
+        {new_lines, new_lines != lines}
       end
 
       # Inserts the marker-delimited block at insert_index, honoring the
       # append_newline/prepend_newline blank-line padding params with real
       # Ansible's exact skip conditions (BOF/EOF and already-blank
       # neighbors - verified against ansible-core 2.19.4's module source).
+      # The padding is NOT gated on there being a block to insert: real
+      # runs it between the "remove any existing block" and "insert the
+      # new block" steps, so an empty desired list still gets the blank
+      # line a state: present task asked for.
       private def self.insert_with_newlines(
         lines : Array(String),
         insert_index : Int32,

@@ -300,46 +300,18 @@ module Krikri
       # Real Ansible hands `executable:` to run_command as the SHELL
       # BINARY itself (subprocess executable=), so a nonexistent one
       # raises OSError before any process starts: fail_json(rc=e.errno,
-      # msg="[Errno 2] No such file or directory: b'...'") - changed
-      # stays FALSE and rc is the raw errno (2 for ENOENT, 13 for
-      # EACCES), not a shell "command not found" exit code with changed:
-      # true. This engine's remote_exec would have reported exactly
-      # that (changed=true, rc=1) - live-verified divergence via the
-      # podman-diff command_edge_cases C5 harness case.
+      # msg="Error executing command.", cmd=self._clean_args(args),
+      # exception=ex) - changed stays FALSE and rc is the raw errno (2
+      # for ENOENT, 13 for EACCES), not a shell "command not found" exit
+      # code with changed: true. This engine's remote_exec would have
+      # reported exactly that (changed=true, rc=1) - live-verified
+      # divergence via the podman-diff command_edge_cases C5 harness case.
       if executable != "/bin/sh"
         unless File.file?(executable)
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "No such file or directory: '#{executable}'",
-            cmd: command_string,
-            rc: 2,
-            exit_code: 2,
-            stdout: "",
-            stdout_lines: [] of String,
-            stderr: "",
-            stderr_lines: [] of String,
-            start: nil,
-            end: nil,
-            delta: nil
-          )
+          return spawn_failure_result(2, "No such file or directory", executable, command_string)
         end
         unless File.executable?(executable)
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Permission denied: '#{executable}'",
-            cmd: command_string,
-            rc: 13,
-            exit_code: 13,
-            stdout: "",
-            stdout_lines: [] of String,
-            stderr: "",
-            stderr_lines: [] of String,
-            start: nil,
-            end: nil,
-            delta: nil
-          )
+          return spawn_failure_result(13, "Permission denied", executable, command_string)
         end
       end
 
@@ -462,6 +434,41 @@ module Krikri
     # apt.cr's parse_package_names).
     private def parse_argv_list(raw : String) : Array(String)
       Array(String).from_json(raw.strip)
+    end
+
+    # A spawn that never started fails with run_command's own OSError
+    # branch: the fixed message "Error executing command.", the errno as
+    # rc, empty stdout/stderr, and `cmd` set to its `_clean_args` - the
+    # shlex-quoted join of the argv it tried to spawn, which for shell is
+    # [executable, "-c", <command string>]. The OSError text itself
+    # reaches only the [ERROR] block, through the `exception` key real
+    # fail_json(exception=...) attaches (live-verified against 2.19.11:
+    # `shell: {cmd: echo hi, executable: /nope}` fails with msg "Error
+    # executing command.", rc 2 and cmd "/nope -c 'echo hi'").
+    private def spawn_failure_result(errno : Int32, reason : String, executable : String, command_string : String) : PluginResult
+      result = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Error executing command.",
+        cmd: [executable, "-c", command_string].map { |arg| shlex_quote(arg) }.join(' '),
+        rc: errno,
+        stdout: "",
+        stdout_lines: [] of String,
+        stderr: "",
+        stderr_lines: [] of String
+      )
+      result.extra["exception"] = JSON::Any.new("[Errno #{errno}] #{reason}: b'#{executable}'")
+      result
+    end
+
+    # Python shlex.quote: bare only when every char is in
+    # [\w@%+=:,./-], else single-quoted with the '\'' escape - the shape
+    # run_command's `_clean_args` joins into its failure `cmd`.
+    private def shlex_quote(value : String) : String
+      return "''" if value.empty?
+      return value if value.matches?(/\A[\w@%+=:,.\-\/]+\z/)
+
+      shell_single_quote(value)
     end
 
     # Helper to convert string/bool to boolean
