@@ -677,6 +677,80 @@ describe Krikri::ArgspecValidator do
     end
   end
 
+  # uri's controller-side action plugin (plugins/action/uri.py) runs
+  # BEFORE the module, so both of its checks surface as action-level
+  # failures here - ahead of the module's own mutually_exclusive check.
+  # Messages live-verified against ansible-core 2.19.11.
+  describe "uri's controller-side action plugin" do
+    it "fails a src: the controller cannot see, with _find_needle's own message" do
+      missing = File.join(Dir.tempdir, "uri-action-src-#{Random::Secure.hex(4)}.txt")
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri", {"url" => "http://127.0.0.1:1/x", "src" => missing}, vars)
+      failure.as(Failure).msg.must_equal(
+        "Task failed: Could not find or access '#{missing}' on the Ansible Controller.\n" \
+        "If you are using a module and expect the file to exist on the remote, see the remote_src option")
+      failure.as(Failure).action_level?.must_equal(true)
+    end
+
+    it "reports the controller-side src: failure ahead of the module's mutual exclusion" do
+      missing = File.join(Dir.tempdir, "uri-action-src-#{Random::Secure.hex(4)}.txt")
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "src" => missing, "body" => "hello"}, vars)
+      failure.as(Failure).msg.must_include("on the Ansible Controller")
+    end
+
+    it "skips the controller-side src: check when remote_src is truthy" do
+      missing = File.join(Dir.tempdir, "uri-action-src-#{Random::Secure.hex(4)}.txt")
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "src" => missing, "remote_src" => "true"}, vars)
+      failure.must_be_nil
+    end
+
+    it "names the templated Python class of a non-mapping form-multipart body" do
+      {
+        "asgaub"                               => "_AnsibleTaggedStr",
+        "true"                                 => "bool",
+        Krikri::NON_STRING_PARAM_PREFIX + "5"  => "_AnsibleTaggedInt",
+        Krikri::NON_STRING_PARAM_PREFIX + "1.5" => "_AnsibleTaggedFloat",
+        %(["1", "2"])                          => "_AnsibleTaggedList",
+      }.each do |body, class_name|
+        failure = Krikri::ArgspecValidator.validate(
+          "uri", "ansible.builtin.uri",
+          {"url" => "http://127.0.0.1:1/x", "body_format" => "form-multipart", "body" => body}, vars)
+        failure.as(Failure).msg.must_equal("body must be mapping, cannot be type #{class_name}")
+        failure.as(Failure).action_level?.must_equal(true)
+      end
+    end
+
+    it "reports a missing form-multipart body as NoneType" do
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "body_format" => "form-multipart"}, vars)
+      failure.as(Failure).msg.must_equal("body must be mapping, cannot be type NoneType")
+    end
+
+    it "leaves a mapping body and a non-multipart body_format alone" do
+      Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "body_format" => "form-multipart", "body" => %({"a":"b"})}, vars
+      ).must_be_nil
+      Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "body_format" => "form-urlencoded", "body" => "asgaub"}, vars
+      ).must_be_nil
+    end
+
+    it "reports the body failure ahead of the module's method check" do
+      failure = Krikri::ArgspecValidator.validate(
+        "uri", "ansible.builtin.uri",
+        {"url" => "http://127.0.0.1:1/x", "method" => "bad method",
+         "body_format" => "form-multipart", "body" => "asgaub"}, vars)
+      failure.as(Failure).msg.must_equal("body must be mapping, cannot be type _AnsibleTaggedStr")
+    end
+  end
+
   it "reports uri's element type conversions with real's own classes and reprs" do
     {
       {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "1.5"} => "float and we were unable to convert to int: \"1.5\"",

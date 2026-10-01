@@ -200,7 +200,7 @@ module Krikri
       return outcome.failure if outcome.failure
       return nil if outcome.defer?
 
-      if failure = action_plugin_option_failures(module_name, params)
+      if failure = action_plugin_option_failures(module_name, params, non_string_natives, non_string_lists)
         return failure
       end
 
@@ -386,7 +386,7 @@ module Krikri
         end
       end
 
-      if failure = action_plugin_option_failures(module_name, params)
+      if failure = action_plugin_option_failures(module_name, params, non_string_natives, non_string_lists)
         return ActionOutcome.new(failure)
       end
 
@@ -396,7 +396,7 @@ module Krikri
     # The option checks template's, package's and unarchive's own action
     # plugins run before the module validates anything, each in its own
     # order.
-    private def action_plugin_option_failures(module_name : String, params : Hash(String, String)) : Failure?
+    private def action_plugin_option_failures(module_name : String, params : Hash(String, String), non_string_natives : Hash(String, JSON::Any), non_string_lists : Hash(String, JSON::Any)) : Failure?
       case module_name
       when "ansible.builtin.template"
         return template_action_failure(params)
@@ -404,8 +404,114 @@ module Krikri
         return package_action_failure(params)
       when "ansible.builtin.unarchive"
         return unarchive_arg_failure(params)
+      when "ansible.builtin.uri"
+        return uri_action_failure(params, non_string_natives, non_string_lists)
       end
       nil
+    end
+
+    # uri's controller-side action plugin (plugins/action/uri.py), in its
+    # own order, both before the module validates anything - which is why
+    # they are action-level failures here and not module-side checks in
+    # plugins/uri.cr:
+    #
+    #   * `src:` without a truthy remote_src: is resolved on the
+    #     CONTROLLER (_find_needle) and staged to the target; a file that
+    #     isn't there fails with _find_needle's own message, which is why
+    #     that one - and only that one - carries a "Task failed: " prefix
+    #     INSIDE msg (live-verified vs 2.19.11: the fatal dump shows
+    #     {"msg": "Task failed: Could not find or access '...' on the
+    #     Ansible Controller.\nIf you are using a module and expect the
+    #     file to exist on the remote, see the remote_src option"}, while
+    #     the multipart guard below has none). Being an action-level
+    #     failure also decides its place against the module's own
+    #     mutually_exclusive check: `src:` (missing) + `body:` reports the
+    #     controller-side message, the same pair with an existing src
+    #     reports "parameters are mutually exclusive: body|src".
+    #   * body_format: form-multipart with a body that is not a mapping.
+    #     Only reachable when src is absent/falsy (the action's own
+    #     if/elif) - a truthy remote_src: returns from the action plugin
+    #     before either branch runs, and the module's own copy of the
+    #     check then produces the different, module-worded message (see
+    #     plugins/uri.cr). Real sees the TEMPLATED args here, so every
+    #     non-bool scalar/container reports its _AnsibleTagged* subclass
+    #     name while a bool stays plain `bool` (live-verified vs
+    #     2.19.11 across NoneType/bool/str/int/float/list).
+    #
+    # The staging itself stays unimplemented for a genuinely remote target
+    # (and so does its transfer-failure message, which embeds the
+    # controller's own tmp path); for ansible_connection=local - the
+    # overwhelmingly common uri+src case - controller and target are the
+    # same filesystem and the existence check is the whole story.
+    private def uri_action_failure(params : Hash(String, String), non_string_natives : Hash(String, JSON::Any), non_string_lists : Hash(String, JSON::Any)) : Failure?
+      # A truthy remote_src: short-circuits the whole controller-side
+      # branch (real's action plugin returns the module result directly),
+      # so neither check below can fire.
+      return nil if Krikri.lenient_boolean_true?(params["remote_src"]?)
+
+      src = params["src"]?
+      if src && Krikri.python_param_truthy?(src)
+        unless File.exists?(src)
+          return Failure.new("Task failed: Could not find or access '#{src}' on the Ansible Controller.\n" \
+                             "If you are using a module and expect the file to exist on the remote, see the remote_src option", true)
+        end
+      elsif params["body_format"]? == "form-multipart"
+        if type_name = uri_multipart_body_type_name(params, non_string_natives, non_string_lists)
+          return Failure.new("body must be mapping, cannot be type #{type_name}", true)
+        end
+      end
+      nil
+    end
+
+    # Python class name for a uri body: that is not a mapping, spelled the
+    # way real's own action-plugin guard spells it. A parser-marked
+    # non-string YAML literal or list literal (NON_STRING_PARAM_PREFIX /
+    # the member markers) keeps its native type; every other value
+    # arrives as text, where a value that parses as JSON is a container
+    # (list), and text that does not parse is a plain string.
+    private def uri_multipart_body_type_name(params : Hash(String, String), non_string_natives : Hash(String, JSON::Any), non_string_lists : Hash(String, JSON::Any)) : String?
+      return "_AnsibleTaggedList" if non_string_lists.has_key?("body")
+
+      raw = params["body"]?
+      return "NoneType" if raw.nil? || raw == Krikri::NONE_SENTINEL
+
+      marked = uri_marked_body_type_name(non_string_natives)
+      return marked if marked
+
+      # JSON.parse(...).raw, NOT the JSON::Any itself: `case json when
+      # Bool` against a JSON::Any subject never matches (the case tests
+      # the wrapper's type), which silently turned a JSON-typed body into
+      # "no failure at all".
+      parsed = begin
+        JSON.parse(raw).raw
+      rescue
+        nil
+      end
+      return "_AnsibleTaggedStr" if parsed.nil?
+
+      # A JSON object is a Mapping, the one shape that passes the check;
+      # no `else` arm, because that is exactly the nil this returns.
+      case parsed
+      when Bool    then "bool"
+      when Int64   then "_AnsibleTaggedInt"
+      when Float64 then "_AnsibleTaggedFloat"
+      when String  then "_AnsibleTaggedStr"
+      when Array   then "_AnsibleTaggedList"
+      end
+    end
+
+    # The class name of a body: the parser marked as a non-string YAML
+    # literal, or nil when it was an ordinary string/container value.
+    private def uri_marked_body_type_name(non_string_natives : Hash(String, JSON::Any)) : String?
+      native = non_string_natives["body"]?
+      return nil unless native
+      case native.raw
+      when Bool    then "bool"
+      when Int64   then "_AnsibleTaggedInt"
+      when Float64 then "_AnsibleTaggedFloat"
+      when Array   then "_AnsibleTaggedList"
+      when Nil     then "NoneType"
+      end
     end
 
     # template's controller-side action plugin checks src/dest presence

@@ -3,6 +3,7 @@ require "http/server"
 require "base64"
 require "compress/gzip"
 require "file_utils"
+require "../../src/krikri/param_sentinels"
 
 # A tiny local HTTP server exercising GET/POST/redirect/JSON/plain-text
 # responses, started once for the whole file.
@@ -595,6 +596,189 @@ describe "uri plugin" do
       result["msg"].as_s.must_equal("Status code was 304 and not [200]: HTTP Error 304: Not Modified")
     ensure
       File.delete(path) if File.exists?(path)
+    end
+  end
+
+  # The connection-failure result shape (real uri.py's own resp assembly
+  # for a request that ran and came back with status -1): redirected and
+  # elapsed are always there, content only when return_content asked for
+  # it (live-verified vs 2.19.11 - a return_content: false
+  # connection-refused result has NO content key).
+  describe "pre-request failures (real fetch_url's own handlers)" do
+    it "fails a ciphers list that selects nothing, before any request" do
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "ciphers" => %(["fdpfji", "ahatju"]),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: ('No cipher can be selected.',)")
+      result["status"].as_i.must_equal(-1)
+      result["elapsed"].as_i.must_equal(0)
+      result["redirected"].as_bool.must_equal(false)
+      result["url"].as_s.must_equal("#{URI_BASE}/text")
+      result["content"]?.must_be_nil
+    end
+
+    it "carries an empty content on the same failure when return_content is set" do
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "ciphers" => %(["fdpfji"]), "return_content" => "true",
+      })
+
+      result["content"].as_s.must_equal("")
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: ('No cipher can be selected.',)")
+    end
+
+    it "omits content on a plain connection failure without return_content" do
+      closed_server = TCPServer.new("127.0.0.1", 0)
+      closed_port = closed_server.local_address.port
+      closed_server.close
+      result = PluginSpecHelper.run("uri", {"url" => "http://127.0.0.1:#{closed_port}/"})
+
+      result["status"].as_i.must_equal(-1)
+      result["content"]?.must_be_nil
+    end
+
+    it "fails an unreadable ca_path with real's OSError wording" do
+      missing = PluginSpecHelper.tmp_path("no-such-ca-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "ca_path" => missing})
+
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: [Errno 2] No such file or directory")
+    end
+
+    it "fails an unreadable client_cert before the request" do
+      missing = PluginSpecHelper.tmp_path("no-such-client-cert-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "client_cert" => missing})
+
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: [Errno 2] No such file or directory")
+    end
+
+    it "fails a client_cert that is a directory the way real's open() does" do
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "client_cert" => PluginSpecHelper.tmp_path("."),
+      })
+
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: [Errno 21] Is a directory")
+    end
+
+    it "lets a creates: skip win over the preflight, like real does" do
+      # uri.py short-circuits on creates:/removes: BEFORE fetch_url ever
+      # builds the context - live-verified with a bogus ciphers list.
+      existing = PluginSpecHelper.tmp_path("creates-exists-#{Random::Secure.hex(4)}.txt")
+      File.write(existing, "x")
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "ciphers" => %(["fdpfji"]),
+        "creates" => existing,
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["stdout"].as_s.must_equal("skipped, since '#{existing}' exists")
+    ensure
+      File.delete(existing) if existing && File.exists?(existing)
+    end
+
+    it "reports the cipher failure ahead of a scheme-less URL's own error" do
+      result = PluginSpecHelper.run("uri", {"url" => "wezwmn", "ciphers" => %(["fdpfji"])})
+
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: ('No cipher can be selected.',)")
+    end
+  end
+
+  # The module-side twin of the uri action plugin's non-mapping
+  # form-multipart guard (real uri.py's own prepare_multipart call), which
+  # is the one a remote_src: true task reaches - different wording, and
+  # only the tagged/untagged class names differ. Both live-verified vs
+  # 2.19.11.
+  describe "form-multipart body validation" do
+    it "fails a non-mapping body with real's module-side message and Python class names" do
+      {
+        "asgaub"                          => "str",
+        "5"                               => "int",
+        "1.5"                             => "float",
+        "true"                            => "bool",
+        %(["1", "2"])                     => "list",
+        Krikri::NON_STRING_PARAM_PREFIX + "5" => "int",
+      }.each do |body, class_name|
+        result = PluginSpecHelper.run("uri", {
+          "url" => "#{URI_BASE}/text", "body_format" => "form-multipart",
+          "body" => body, "remote_src" => "true",
+        })
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal(
+          "failed to parse body as form-multipart: Mapping is required, cannot be type #{class_name}")
+      end
+    end
+
+    it "fails a missing body as NoneType" do
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "body_format" => "form-multipart", "remote_src" => "true",
+      })
+
+      result["msg"].as_s.must_equal(
+        "failed to parse body as form-multipart: Mapping is required, cannot be type NoneType")
+    end
+
+    it "reports the body failure ahead of a creates: skip" do
+      # uri.py validates the body BEFORE the creates:/removes:
+      # short-circuits - live-verified with a removes: file that does not
+      # exist (which would otherwise skip with ok).
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "body_format" => "form-multipart",
+        "body" => "asgaub", "remote_src" => "true",
+        "removes" => PluginSpecHelper.tmp_path("never-created-#{Random::Secure.hex(4)}.txt"),
+      })
+
+      result["msg"].as_s.must_include("failed to parse body as form-multipart")
+    end
+  end
+
+  # real uri.py reads src: inside its uri() helper, i.e. AFTER the
+  # creates:/removes: short-circuits, and its own failure carries elapsed
+  # and nothing else (no url/status/redirected).
+  describe "src: handling" do
+    it "fails a src: the plugin cannot read with only elapsed beside msg" do
+      missing = PluginSpecHelper.tmp_path("no-such-src-#{Random::Secure.hex(4)}.txt")
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "src" => missing, "remote_src" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Unable to open source file #{missing}")
+      result["elapsed"].as_i.must_equal(0)
+      result["url"]?.must_be_nil
+      result["status"]?.must_be_nil
+      result["redirected"]?.must_be_nil
+    end
+
+    it "fails a src: that is a directory instead of crashing the plugin" do
+      # File.read on a directory raises the plain IO::Error - which is
+      # File::Error's PARENT, so the narrower rescue never caught it.
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "src" => PluginSpecHelper.tmp_path("."), "remote_src" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Unable to open source file #{PluginSpecHelper.tmp_path(".")}")
+    end
+
+    it "lets a creates: skip win over a missing src:, like real does" do
+      existing = PluginSpecHelper.tmp_path("creates-exists-src-#{Random::Secure.hex(4)}.txt")
+      File.write(existing, "x")
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "remote_src" => "true",
+        "src" => PluginSpecHelper.tmp_path("no-such-src-#{Random::Secure.hex(4)}.txt"),
+        "creates" => existing,
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["stdout"].as_s.must_equal("skipped, since '#{existing}' exists")
+    ensure
+      File.delete(existing) if existing && File.exists?(existing)
     end
   end
 end

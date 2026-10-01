@@ -747,4 +747,116 @@ describe "get_url plugin" do
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  # Real Ansible builds the request's SSL context BEFORE urllib parses the
+  # URL (module_utils/urls.py's Request.open: _configure_auth ->
+  # make_context -> urllib.request.Request), so these failures happen with
+  # no request at all - over a plain http:// URL, not only a broken one.
+  # Every expectation here live-verified against ansible-core 2.19.11.
+  describe "pre-request failures (real fetch_url's own handlers)" do
+    it "fails a ciphers list that selects nothing, before any request" do
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "ciphers" => %(["fdpfji", "ahatju"]),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Connection failure: ('No cipher can be selected.',)")
+      result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
+      result["dest"].as_s.must_equal(dest)
+      result["elapsed"].as_i.must_equal(0)
+      # status_code belongs to the OTHER get_url failure (its non-200
+      # "Request failed" branch), not to this one.
+      result["status_code"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "accepts a ciphers list that selects something" do
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "ciphers" => %(["ECDHE-RSA-AES256-GCM-SHA384"]),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["dest"].as_s.must_equal(dest)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "fails an unreadable client_cert with real's OSError wording" do
+      dest = File.tempname("get-url-spec")
+      missing = PluginSpecHelper.tmp_path("no-such-client-cert-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "client_cert" => missing,
+      })
+
+      result["msg"].as_s.must_equal("Connection failure: [Errno 2] No such file or directory")
+      result["dest"].as_s.must_equal(dest)
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "fails a client_cert that is a directory the way real's open() does" do
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "client_cert" => PluginSpecHelper.tmp_path("."),
+      })
+
+      result["msg"].as_s.must_equal("Connection failure: [Errno 21] Is a directory")
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "ignores a client_key that has no client_cert (real never opens it)" do
+      # make_context only calls load_cert_chain - the one call that reads
+      # the keyfile - when client_cert is set.
+      dest = File.tempname("get-url-spec")
+      missing = PluginSpecHelper.tmp_path("no-such-client-key-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "client_key" => missing,
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["dest"].as_s.must_equal(dest)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports the cipher failure ahead of a scheme-less URL's own error" do
+      dest = File.tempname("get-url-spec")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "wezwmn", "dest" => dest, "ciphers" => %(["fdpfji"]),
+      })
+
+      result["msg"].as_s.must_equal("Connection failure: ('No cipher can be selected.',)")
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "skips the request - and the preflight - for a dest that matches its checksum" do
+      # get_url.py only short-circuits on an existing dest when a checksum
+      # was given and matches, and that happens before url_get/fetch_url:
+      # live-verified that this task is ok even with a ciphers list that
+      # could not possibly have connected.
+      dest = PluginSpecHelper.tmp_path("checksum-skip-#{Random::Secure.hex(4)}.txt")
+      File.write(dest, FILE_CONTENT)
+      digest = OpenSSL::Digest.new("SHA256")
+      digest.update(FILE_CONTENT)
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "wezwmn", "dest" => dest, "checksum" => "sha256:#{digest.final.hexstring}",
+        "ciphers" => %(["fdpfji"]),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["msg"].as_s.must_equal("file already exists")
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+  end
 end

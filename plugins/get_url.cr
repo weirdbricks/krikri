@@ -5,6 +5,7 @@ require "http/client"
 require "uri"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/http_download"
+require "../src/krikri/plugin_helpers/url_preflight"
 
 module Krikri
   # get_url plugin (ansible.builtin.get_url) - downloads a URL to a file.
@@ -57,12 +58,6 @@ module Krikri
       checksum = resolved_checksum(url)
       return checksum if checksum.is_a?(PluginResult)
 
-      # urllib's ValueError for a scheme-less URL, surfaced through fetch_url's
-      # info dict (live-verified: no dest/elapsed keys on this failure)
-      unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
-        return PluginResult.new(changed: false, failed: true, msg: "unknown url type: '#{url}'", status: -1, url: url)
-      end
-
       force = true?(@params["force"]?, default: false)
 
       # Real get_url's pre-download dest-existence check (and its
@@ -79,6 +74,29 @@ module Krikri
         # check_existing_dest): fall through and re-download, regardless
         # of force - the checksum is its own freshness check, matching
         # real Ansible's get_url behavior.
+      end
+
+      # Real get_url only reaches its request (get_url.py's url_get ->
+      # fetch_url) once the above skipped, and fetch_url builds the SSL
+      # context and resolves the gssapi handler BEFORE urllib parses the
+      # URL - so a bad ciphers: list, an unusable client_cert:/client_key:
+      # or use_gssapi: on a host without python-gssapi fails with THAT
+      # error, and only a request that survives all of it can reach
+      # urllib's scheme-less-URL ValueError. Live-verified both halves
+      # against ansible-core 2.19.11: get_url with ciphers: [fdpfji,
+      # ahatju] over a plain http:// URL fails with "Connection failure:
+      # ('No cipher can be selected.',)" (no request is ever made), and a
+      # dest that already matches its checksum: short-circuits with ok
+      # even for a scheme-less URL that would have failed had it been
+      # requested at all.
+      if failure = PluginHelpers::URLPreflight.check(
+           url,
+           ciphers: tls_ciphers,
+           client_cert: @params["client_cert"]?,
+           client_key: @params["client_key"]?,
+           use_gssapi: true?(@params["use_gssapi"]?, default: false),
+         )
+        return preflight_failure_result(failure, url, dest)
       end
 
       if true?(@params["_ansible_check_mode"]?)
@@ -177,6 +195,36 @@ module Krikri
       result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
       add_path_info(result, dest)
       result
+    end
+
+    # Real get_url's three pre-request failures (see URLPreflight) reach
+    # the task with three different result shapes, all live-verified
+    # against ansible-core 2.19.11:
+    #
+    #   * MissingLibrary - fetch_url's `except MissingModuleError` handler
+    #     is a bare fail_json(msg=...): {changed: false, msg}, with no
+    #     url/dest/elapsed at all.
+    #   * UnknownUrlType - the ValueError from urllib's Request(url),
+    #     re-raised as fail_json(msg=..., **info) with info = {url,
+    #     status: -1}: no dest/elapsed either.
+    #   * ConnectionFailure - the OSError became info['msg'] with
+    #     status -1, and get_url's url_get re-fails on that status with
+    #     fail_json(msg=info['msg'], url=url, dest=dest, elapsed=elapsed).
+    #     Unlike the download-failure path below it carries NO status_code
+    #     key: that one comes from the non-200 branch
+    #     (msg="Request failed", status_code=..., response=...), which is a
+    #     different failure entirely.
+    private def preflight_failure_result(failure : PluginHelpers::URLPreflight::Failure, url : String, dest : String) : PluginResult
+      case failure.kind
+      when PluginHelpers::URLPreflight::Kind::MissingLibrary
+        PluginResult.new(changed: false, failed: true, msg: failure.msg)
+      when PluginHelpers::URLPreflight::Kind::UnknownUrlType
+        PluginResult.new(changed: false, failed: true, msg: failure.msg, url: url, status: -1)
+      else
+        result = PluginResult.new(changed: false, failed: true, msg: failure.msg, url: url, dest: dest, elapsed: 0)
+        add_path_info(result, dest)
+        result
+      end
     end
 
     private def download_to_dest(url : String, dest : String, checksum : {String, String}?, dest_is_dir = false) : PluginResult

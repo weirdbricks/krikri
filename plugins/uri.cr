@@ -8,6 +8,7 @@ require "base64"
 require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/url_preflight"
 
 module Krikri
   # uri plugin (ansible.builtin.uri) - makes an HTTP request (API calls,
@@ -72,32 +73,21 @@ module Krikri
       username = ["url_username", "user"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first?
       password = ["url_password", "password"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first? || ""
 
+      # Real Ansible's uri ACTION plugin (its src: staging and its non-mapping
+      # form-multipart body guard) runs before the module and therefore
+      # before every check below - ArgspecValidator's action-level pass
+      # is where those live, so they also fire ahead of the
+      # mutually_exclusive validation here (live-verified: `src:`
+      # pointing at a file the controller cannot see plus a `body:`
+      # reports the controller-side "Could not find or access", while the
+      # same pair with an EXISTING src reports "parameters are mutually
+      # exclusive: body|src").
+
       # src: and body: are mutually exclusive (real uri.py's
       # mutually_exclusive=[['body', 'src']]; failure text live-verified
       # against ansible-core 2.19.4).
       if @params["src"]? && @params["body"]?
         return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: body|src")
-      end
-
-      # POST body from a file (real uri.py: `data = open(src, 'rb')`).
-      # The plugin binary runs on the target host, so this reads the
-      # plugin-host filesystem - identical to remote_src: true. The
-      # remote_src: false controller-file-staging half (real Ansible
-      # uploads the controller file for you) is NOT implemented - for
-      # ansible_connection=local (the overwhelmingly common uri+src
-      # case: posting a rendered payload) controller and target are the
-      # same machine and it's exact.
-      src_body = nil
-      if src = @params["src"]?
-        begin
-          src_body = File.read(expand_tilde(src))
-        rescue File::Error
-          return PluginResult.new(changed: false, failed: true, msg: "Unable to open source file #{src}", url: url, status: -1, elapsed: 0, redirected: false)
-        end
-      end
-
-      if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true)
       end
 
       method = (@params["method"]? || "GET").upcase
@@ -106,6 +96,24 @@ module Krikri
       # accepted but a multi-word or non-alpha method fails outright.
       unless method.matches?(/\A[A-Z]+\z/)
         return PluginResult.new(changed: false, failed: true, msg: "Parameter 'method' needs to be a single word in uppercase, like GET or POST.")
+      end
+
+      # The module-side twin of the action plugin's guard (real uri.py's
+      # own body_format == 'form-multipart' branch, running
+      # prepare_multipart on the body): a non-mapping body fails HERE for
+      # a remote_src: true task (which is the one shape the action plugin
+      # skips), before creates:/removes: are even looked at -
+      # live-verified, a task whose removes: file does not exist (which
+      # would otherwise skip with ok) fails on the body instead. Note this
+      # check is NOT limited to remote_src: true: a remote_src: false
+      # task with a non-mapping body fails here only if the action plugin
+      # did not already reject it (e.g. under a check-mode skip, which
+      # raises before the module runs at all).
+      if body_format? == "form-multipart"
+        if type_name = non_mapping_body_type_name
+          return PluginResult.new(changed: false, failed: true,
+            msg: "failed to parse body as form-multipart: Mapping is required, cannot be type #{type_name}")
+        end
       end
 
       status_codes = (@params["status_code"]? || "200").split(",").map { |part| decimal_int(part.strip) }
@@ -131,6 +139,34 @@ module Krikri
         end
       end
 
+      # POST body from a file (real uri.py: `data = open(src, 'rb')`),
+      # read INSIDE its uri() helper - i.e. after the creates:/removes:
+      # short-circuits above (live-verified: a remote_src: true task whose
+      # creates: file exists skips with ok without ever reporting the
+      # missing src). The plugin binary runs on the target host, so this
+      # reads the plugin-host filesystem - identical to remote_src: true.
+      # Real's failure here is its own fail_json with elapsed and NOTHING
+      # else: no url, no status, no redirected.
+      src_body = nil
+      if src = @params["src"]?
+        begin
+          src_body = File.read(expand_tilde(src))
+        rescue IO::Error
+          # IO::Error, not File::Error: a src: that is a DIRECTORY raises
+          # the plain IO::Error (File::Error is its SUBCLASS, so the
+          # narrower rescue never caught it and the plugin crashed with
+          # "Plugin execution failed: read (...): Is a directory") -
+          # real fails the task with exactly this msg instead
+          # (live-verified vs 2.19.11: a remote_src: true task with a
+          # directory src).
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to open source file #{src}", elapsed: 0)
+        end
+      end
+
+      if true?(@params["_ansible_check_mode"]?)
+        return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true)
+      end
+
       start = Time.monotonic
       # Real uri.py: when dest is already a regular FILE (checked on the
       # ORIGINAL dest, before any directory-filename resolution), the
@@ -142,11 +178,26 @@ module Krikri
         dest_path = expand_tilde(dest_param)
         last_mod_time = File.info(dest_path).modification_time if File.file?(dest_path)
       end
-      # A scheme-less URL never reaches an HTTP request in real: urllib's
-      # urlopen raises "unknown url type: '<url>'" (live-verified vs
-      # 2.19.11 message and result keys: no elapsed/redirected/content).
-      unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
-        return PluginResult.new(changed: false, failed: true, msg: "unknown url type: '#{url}'", url: url, status: -1)
+      # Real Ansible's fetch_url builds the SSL context and resolves the
+      # gssapi handler BEFORE urllib parses the URL, so a bad ciphers:
+      # list, an unusable ca_path:/client_cert:/client_key: or
+      # use_gssapi: on a host without python-gssapi fails before any
+      # request - and only a request that survives all of it can reach
+      # urllib's scheme-less-URL ValueError ("unknown url type: '<url>'",
+      # live-verified vs 2.19.11 message and result keys: no
+      # elapsed/redirected/content). It sits here, after the
+      # creates:/removes: short-circuits (a task whose creates: file
+      # exists skips with ok whatever its URL or ciphers say -
+      # live-verified) and after the src: read.
+      if failure = PluginHelpers::URLPreflight.check(
+           url,
+           ciphers: tls_ciphers,
+           ca_path: @params["ca_path"]?,
+           client_cert: @params["client_cert"]?,
+           client_key: @params["client_key"]?,
+           use_gssapi: true?(@params["use_gssapi"]?, default: false),
+         )
+        return preflight_failure_result(failure, url, status_codes)
       end
       begin
         status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
@@ -158,19 +209,20 @@ module Krikri
         # `when: r.status == 200` into a hard "object has no attribute
         # 'status'" evaluation error instead of a normal skip
         # (levonet.ci_registry_rm_container divergence).
-        # The same failed result also carries content: "" - real uri.py
-        # merges fetch_url's body ('' when there was no response) into
-        # resp before fail_json, live-verified against ansible-core 2.19:
-        # a connection-refused result is {"status": -1, "content": "",
-        # "msg": "Status code was -1 and not [200]: Request failed: ..."}.
-        # Omitting it turned a role's failed_when reading the registered
-        # result's .content (geerlingguy.node_exporter's
-        # "'Metrics' not in metrics_output.content", round 970310) into
-        # "object of type 'dict' has no attribute 'content'" - masking the
-        # real request failure, where real Ansible reports the request
-        # error through the same "Status code was %s and not %s: %s"
-        # formatting the non-exception path above uses.
-        return PluginResult.new(changed: false, failed: true, msg: "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url: url, status: -1, elapsed: 0, redirected: false, content: "")
+        # The same failed result carries content: "" - real uri.py merges
+        # fetch_url's body ('' when there was no response) into resp before
+        # fail_json - but ONLY when return_content asked for it (uri.py's
+        # own fail_json(content=u_content, **uresp) vs fail_json(**uresp)),
+        # live-verified against ansible-core 2.19: a return_content: false
+        # connection-refused result is {"status": -1, "elapsed": 0,
+        # "msg": "Status code was -1 and not [200]: Request failed: ...",
+        # "redirected": false} with no content key, and the
+        # return_content: true one adds "content": "" (a role's
+        # failed_when reading the registered result's .content,
+        # geerlingguy.node_exporter's "'Metrics' not in
+        # metrics_output.content", round 970310, needs exactly that).
+        return failed_request_result(
+          "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url)
       end
       elapsed = (Time.monotonic - start).total_seconds.to_i
 
@@ -381,6 +433,102 @@ module Krikri
       raw.to_i
     end
 
+    # Real uri.py's three pre-request failures (see URLPreflight) reach
+    # the task with two different shapes, live-verified against
+    # ansible-core 2.19.11:
+    #
+    #   * MissingLibrary - fetch_url's `except MissingModuleError` handler
+    #     is a bare fail_json(msg=...): {changed: false, msg} alone, no
+    #     url/status/elapsed.
+    #   * UnknownUrlType - the ValueError from urllib's Request(url),
+    #     re-raised the same way with info = {url, status: -1}.
+    #   * ConnectionFailure - the OSError became info['msg'] with
+    #     status -1, so the request DID run uri.py's own
+    #     "Status code was %s and not %s: %s" formatting, on top of the
+    #     redirected/elapsed/changed keys its resp always carries.
+    private def preflight_failure_result(failure : PluginHelpers::URLPreflight::Failure, url : String, status_codes : Array(Int32)) : PluginResult
+      case failure.kind
+      when PluginHelpers::URLPreflight::Kind::MissingLibrary
+        PluginResult.new(changed: false, failed: true, msg: failure.msg)
+      when PluginHelpers::URLPreflight::Kind::UnknownUrlType
+        PluginResult.new(changed: false, failed: true, msg: failure.msg, url: url, status: -1)
+      else
+        failed_request_result("Status code was -1 and not #{status_codes}: #{failure.msg}", url)
+      end
+    end
+
+    # A uri failure that went through uri.py's own resp assembly (a
+    # request that ran and came back with status -1): status, url,
+    # redirected: false, elapsed: 0, plus content: "" when return_content
+    # asked for the body.
+    private def failed_request_result(msg : String, url : String) : PluginResult
+      result = PluginResult.new(changed: false, failed: true, msg: msg, url: url, status: -1, elapsed: 0, redirected: false)
+      result.extra["content"] = JSON::Any.new("") if true?(@params["return_content"]?)
+      result
+    end
+
+    # ciphers: real uri types it as a LIST of cipher names joined with ":"
+    # (module doc: "all ciphers are joined in order with C(:)"). The param
+    # arrives here as its JSON text (["TLS_AES_256_GCM_SHA384",...]); a
+    # plain string passes through untouched.
+    private def tls_ciphers : String?
+      raw = @params["ciphers"]? || return nil
+      begin
+        list = Array(String).from_json(raw)
+        list.empty? ? nil : list.join(":")
+      rescue
+        raw
+      end
+    end
+
+    private def body_format? : String
+      (@params["body_format"]? || "raw").downcase
+    end
+
+    # The Python type name real Ansible puts in its "cannot be type X"
+    # multipart messages, or nil when body: IS a mapping (the only shape
+    # that gets past the check). Live-verified against ansible-core
+    # 2.19.11 for NoneType/bool/str/int/float/list - the UNTAGGED
+    # wording, since the module receives the task args untouched (the
+    # action plugin's _AnsibleTagged* wording lives in
+    # ArgspecValidator, which is where that check runs).
+    #
+    # Known residue: a string body whose own text happens to be valid JSON
+    # (`body: "5"`) reaches a plugin indistinguishable from the number 5.
+    private def non_mapping_body_type_name : String?
+      # A marked non-string YAML literal keeps its native type through
+      # BasePlugin (non_string_param / non_string_member_list), which is
+      # what decides bool/int/float/list here.
+      if native = non_string_param("body")
+        return python_type_name(native.raw)
+      end
+      return "list" if non_string_member_list("body")
+
+      raw = @params["body"]?
+      return "NoneType" unless raw
+
+      parsed = begin
+        JSON.parse(raw).raw
+      rescue
+        nil
+      end
+      return "str" if parsed.nil?
+      python_type_name(parsed)
+    end
+
+    # Python class name for a JSON-decoded value. A JSON object is a
+    # Mapping - the one shape that gets past the check - and falls out of
+    # the case as this method's nil.
+    private def python_type_name(value : JSON::Any::Type) : String?
+      case value
+      when Bool    then "bool"
+      when Int64   then "int"
+      when Float64 then "float"
+      when String  then "str"
+      when Array   then "list"
+      end
+    end
+
     private def build_client(uri : URI) : HTTP::Client
       client = HTTP::Client.new(uri)
 
@@ -398,6 +546,8 @@ module Krikri
       # side certificate authentication - real uri.py's docs allow the
       # key to be bundled in the cert file, in which case client_key is
       # simply absent and OpenSSL reads both from the one file.
+      # ciphers: the OpenSSL cipher-list string, joined from the LIST
+      # param exactly as real uri.py hands it to make_context.
       if tls = client.tls?
         if ca_path = @params["ca_path"]?
           tls.ca_certificates = ca_path
@@ -407,6 +557,9 @@ module Krikri
         end
         if key = @params["client_key"]?
           tls.private_key = key
+        end
+        if ciphers = tls_ciphers
+          tls.ciphers = ciphers
         end
       end
 
