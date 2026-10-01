@@ -41,6 +41,19 @@ module Krikri
     REVISION_LINE_RE = /^\w+\s?:\s+\d+$/
     URL_LINE_RE      = /^URL\s?:/
 
+    # Real main()'s `svn_path = module.params['executable'] or
+    # module.get_bin_path('svn', True)` - a bare lookup with NO existence
+    # check of its own when `executable:` is given, and the dest-required
+    # check that follows it runs BEFORE any svn command is ever spawned.
+    # Set once in #execute so the per-operation spawn check can name the
+    # binary the way real's failure does.
+    @svn_path : String? = nil
+    @svn_auth_display : Array(String) = [] of String
+    # Cached answer to "can this svn_path be spawned at all?", probed
+    # once, on the first operation that would actually run.
+    @svn_exec_errno : Int32? = nil
+    @svn_exec_errno_probed : Bool = false
+
     def execute : PluginResult
       validate_bool_params!
       repo = @params["repo"]?
@@ -55,29 +68,35 @@ module Krikri
       revision = @params["revision"]? || "HEAD"
       force = true?(@params["force"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
-      # module.params['executable'] or module.get_bin_path('svn', True)
+      # module.params['executable'] or module.get_bin_path('svn', True).
+      # Real does NOT stat or probe an `executable:` it was handed - the
+      # only lookup here that can fail is get_bin_path for the default,
+      # and the dest-required check below runs before any svn command is
+      # spawned, so a bad `executable:` loses to it.
       svn = @params["executable"]?.presence
       if svn.nil?
         unless remote_exec("command -v svn >/dev/null 2>&1")[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("svn"))
         end
         svn = "svn"
-      elsif remote_exec("test -x #{shell_quote(svn)}")[:exit_code] != 0
-        # run_command([svn_path, '--version', '--quiet'], check_rc=True) on an
-        # executable that cannot be spawned: basic.py's "Error executing
-        # command." failure (the OSError text rides in the [ERROR] block only)
-        errno = remote_exec("test -e #{shell_quote(svn)}")[:exit_code] == 0 ? "[Errno 13] Permission denied" : "[Errno 2] No such file or directory"
-        return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
-          cmd: "#{svn} --version --quiet", rc: 2, stdout: "", stdout_lines: [] of String,
-          stderr: "", stderr_lines: [] of String,
-          _ansible_error_detail: "Error executing command: #{errno}: b'#{svn}'")
+        # The default lookup already proved this binary is on PATH and
+        # executable - real's Popen can spawn it, so no per-operation
+        # probe is needed for it.
+        @svn_exec_errno_probed = true
       end
+      @svn_path = svn
+      @svn_auth_display = auth_display_args(validate_certs)
       auth = build_auth_args(validate_certs)
 
       dest = @params["dest"]?
       if dest.nil? || dest.empty?
         if checkout || do_update || export
           return PluginResult.new(changed: false, failed: true, msg: "the destination directory must be specified unless checkout=no, update=no, and export=no")
+        end
+        # Real's get_remote_revision() is the only svn call this branch
+        # makes, so its `info` is the command a bad binary is named under.
+        if failure = spawn_failure(["info", repo])
+          return failure
         end
         after = remote_revision(svn, repo, auth)
         return PluginResult.new(changed: false, failed: false, after: after)
@@ -119,6 +138,68 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
     end
 
+    # Real's Subversion._exec argv prefix, in real's own order: the
+    # global options come BEFORE the operation args, which is the order
+    # basic.py's `_clean_args` space-joins into the `cmd` it reports when
+    # the spawn fails. (The command krikri actually RUNS keeps
+    # #build_auth_args's own spelling, which puts them after the
+    # subcommand just as svn itself accepts them either way - only the
+    # reported `cmd` has to match real byte for byte.)
+    private def auth_display_args(validate_certs : Bool) : Array(String)
+      args = ["--non-interactive", "--no-auth-cache"]
+      args << "--trust-server-cert" unless validate_certs
+      if username = @params["username"]?
+        args << "--username" << username
+      end
+      if password = @params["password"]?
+        args << "--password" << password
+      end
+      args
+    end
+
+    # Real's Subversion._exec hands its argv to module.run_command, and
+    # basic.py's handler for the OSError a non-spawnable svn_path raises
+    # fail_jsons with rc = the errno (2 ENOENT, 13 EACCES), msg "Error
+    # executing command.", the FULL argv space-joined as `cmd`, and
+    # empty stdout/stderr (the errno text rides in the [ERROR] block
+    # only). Real never runs a `--version` probe up front - only
+    # has_option_password_from_stdin() does, and only when a password was
+    # given - so the command named in the failure is whichever operation
+    # the module reached FIRST. Checked per operation, in the order the
+    # real module reaches them, with the probe result cached so only the
+    # first one pays for it. Verified against ansible-playbook 2.19.11
+    # for the checkout and export first invocations.
+    private def spawn_failure(op : Array(String)) : PluginResult?
+      return nil unless path = @svn_path
+      unless @svn_exec_errno_probed
+        @svn_exec_errno_probed = true
+        @svn_exec_errno = exec_errno(path)
+      end
+      return nil unless errno = @svn_exec_errno
+
+      cmd = ([path] + @svn_auth_display + op).join(' ')
+      reason = errno == 13 ? "Permission denied" : "No such file or directory"
+      PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+        cmd: cmd, rc: errno, stdout: "", stdout_lines: [] of String,
+        stderr: "", stderr_lines: [] of String,
+        _ansible_error_detail: "Error executing command: [Errno #{errno}] #{reason}: b'#{path}'")
+    end
+
+    # A svn_path basic.py's Popen cannot exec at all: absent (ENOENT), or
+    # present but not an executable file (EACCES) - a directory included.
+    # Probed on the target through remote_exec, like every other svn call.
+    private def exec_errno(path : String) : Int32?
+      resolved = path
+      unless path.includes?("/")
+        resolved = remote_exec("command -v #{shell_quote(path)} 2>/dev/null")[:stdout].strip
+        return 2 if resolved.empty?
+      end
+      return 2 if remote_exec("test -e #{shell_quote(resolved)}")[:exit_code] != 0
+      return nil if remote_exec("test -x #{shell_quote(resolved)}")[:exit_code] == 0
+
+      13
+    end
+
     private def build_auth_args(validate_certs : Bool) : String
       args = [] of String
       if username = @params["username"]?
@@ -133,6 +214,13 @@ module Krikri
     end
 
     private def checkout(svn : String, repo : String, dest : String, revision : String, auth : String, force : Bool = false) : PluginResult
+      op = ["checkout"]
+      op << "--force" if force
+      op += ["-r", revision, repo, dest]
+      if failure = spawn_failure(op)
+        return failure
+      end
+
       parent = File.dirname(dest)
       remote_exec("mkdir -p #{shell_quote(parent)}")
 
@@ -148,6 +236,13 @@ module Krikri
     end
 
     private def run_export(svn : String, repo : String, dest : String, revision : String, force : Bool, auth : String) : PluginResult
+      op = ["export"]
+      op << "--force" if force
+      op += ["-r", revision, repo, dest]
+      if failure = spawn_failure(op)
+        return failure
+      end
+
       parent = File.dirname(dest)
       remote_exec("mkdir -p #{shell_quote(parent)}")
 
@@ -160,6 +255,12 @@ module Krikri
     end
 
     private def update(svn : String, repo : String, dest : String, revision : String, force : Bool, auth : String, check_mode : Bool, switch : Bool) : PluginResult
+      # Real reaches is_svn_repo()'s `svn info` first, then switch and
+      # update; one spawn failure names whichever of those comes first.
+      if failure = spawn_failure(["info", dest])
+        return failure
+      end
+
       before_info = svn_info(svn, dest, auth)
       before = before_info[:revision]
       before_lines = [before_info[:rev_line], before_info[:url_line]]
@@ -206,6 +307,10 @@ module Krikri
     end
 
     private def switch_to_repo(svn : String, repo : String, dest : String, revision : String, auth : String) : {changed: Bool, failure: PluginResult?}
+      if failure = spawn_failure(["switch", "--revision", revision, repo, dest])
+        return {changed: false, failure: failure}
+      end
+
       current_url = working_copy_url(svn, dest, auth)
       return {changed: false, failure: nil} if current_url.empty? || current_url == repo
 

@@ -90,15 +90,8 @@ module Krikri
       systemd_backend = pick_backend
       init_nosystemd_paths unless systemd_backend
 
-      # Backend init: NosystemdTimezone requires hwclock's binary ONLY
-      # when hwclock is planned (required="hwclock" in self.value). Both
-      # backends verify the planned zone file BEFORE checking any
-      # current state.
-      resolve_binaries
-      if !systemd_backend && planned.has_key?("hwclock") && @bins["hwclock"].empty?
-        return fail(PluginHelpers::GetBinPath.missing_executable_error("hwclock", @searched_paths))
-      end
-      if planned.has_key?("name") && (error = verify_timezone(planned["name"]))
+      # Backend init, in real's own order.
+      if error = init_backend(planned, systemd_backend)
         return error
       end
 
@@ -114,6 +107,34 @@ module Krikri
         msg: @msg.empty? ? "" : @msg.join("\n"),
         diff: generate_attribute_diff(before, after),
       )
+    end
+
+    # Backend init, in real's own order. NosystemdTimezone.__init__
+    # verifies the planned zone FIRST, then resolves its helper binaries
+    # - cp, then hwclock, then the Debian branch's ln - so a bad timezone
+    # name is reported even on a host that has no hwclock at all, and a
+    # missing helper binary is reported through module_utils' own
+    # unwrapped get_bin_path failure (NOT through the module's abort()
+    # "Error message:" wrapper, which only the zone check and the
+    # command failures use).
+    #
+    # SystemdTimezone.__init__ instead resolves timedatectl (already
+    # probed by pick_backend) and only then verifies the zone.
+    private def init_backend(planned : Hash(String, String), systemd_backend : Bool) : PluginResult?
+      if systemd_backend
+        return verify_timezone(planned["name"]) if planned.has_key?("name")
+        return nil
+      end
+
+      if planned.has_key?("name")
+        if error = verify_timezone(planned["name"])
+          return error
+        end
+        return missing_binary("cp") if @bins["cp"].empty?
+      end
+      return missing_binary("hwclock") if planned.has_key?("hwclock") && @bins["hwclock"].empty?
+      return missing_binary("ln") if @debian && planned.has_key?("name") && @bins["ln"].empty?
+      nil
     end
 
     private def apply_changes(planned : Hash(String, String), systemd_backend : Bool, before : Hash(String, String)) : {Hash(String, String), PluginResult?}
@@ -169,6 +190,14 @@ module Krikri
         lines.concat(@msg)
       end
       PluginResult.new(changed: false, failed: true, msg: lines.join("\n"))
+    end
+
+    # module_utils/basic.py get_bin_path(required=True) failure: plain
+    # fail_json, no abort() "Error message:" wrapper (confirmed live
+    # against real ansible-playbook 2.19.11 on a host without hwclock).
+    private def missing_binary(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: PluginHelpers::GetBinPath.missing_executable_error(name, @searched_paths))
     end
 
     # Timezone.__new__ on Linux: timedatectl found AND usable -> systemd.

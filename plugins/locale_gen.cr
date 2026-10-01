@@ -35,17 +35,31 @@ module Krikri
     VAR_LIB_LOCALES_LOCAL = "/var/lib/locales/supported.d/local"
     SUPPORTED_LOCALES     = ["/usr/share/i18n/SUPPORTED", "/usr/local/share/i18n/SUPPORTED"]
 
+    MECHANISM_MISSING_MESSAGE = "#{VAR_LIB_LOCALES} and #{ETC_LOCALE_GEN} are missing. Is the package \"locales\" installed?"
+
     def execute : PluginResult
       names = parse_names
-      return PluginResult.new(changed: false, failed: true,
-        msg: "missing required argument: name") if names.empty?
+      # A required argument counts as missing only when the key is
+      # absent: real's AnsibleModule accepts an explicitly empty list
+      # and runs it through to an unchanged success (verified live
+      # against real ansible-playbook 2.19.11).
+      unless @params.has_key?("name")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing required arguments: name")
+      end
 
       state = @params["state"]? || "present"
       return PluginResult.new(changed: false, failed: true,
-        msg: "value of state must be one of: present, absent, got #{state}") unless ["present", "absent"].includes?(state)
+        msg: "value of state must be one of: absent, present, got: #{state}") unless ["present", "absent"].includes?(state)
 
+      # The real module is a community.general ModuleHelper: every
+      # variable it holds is echoed back as a top-level key of the wire
+      # result, and a do_raise() failure carries those keys plus an
+      # `output`/`vars` copy of the whole VarDict (verified live against
+      # real ansible-playbook 2.19.11 - found via the kpg32 generator
+      # sweep, where every locale_gen failure dropped all of them).
       mechanism = detect_mechanism
-      return mechanism if mechanism.is_a?(PluginResult)
+      return raise_result(MECHANISM_MISSING_MESSAGE, names, nil) unless mech = mechanism
 
       check_mode = true?(@params["_ansible_check_mode"]?)
 
@@ -67,19 +81,22 @@ module Krikri
         available
       end
       unless unavailable.empty?
-        return PluginResult.new(changed: false, failed: true,
-          msg: "The following locales you have entered are not available on your system: #{unavailable.join(", ")}")
+        return raise_result("The following locales you have entered are not available on your system: #{unavailable.join(", ")}", names, mech)
       end
 
       all_present = not_present.empty?
       changed = PluginHelpers::LocaleGenCommand.changed?(state, all_present, check_mode)
       if changed && !check_mode
-        apply_result = state == "present" ? apply_change_present(mechanism.as(String), names) : apply_change_absent(mechanism.as(String), names)
+        apply_result = state == "present" ? apply_change_present(mech, names) : apply_change_absent(mech, names)
         return apply_result if apply_result
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "state: #{state}",
-        mechanism: mechanism.as(String), state: state)
+      # Real's exit_json(changed=..., **output): the ModuleHelper's
+      # visible variables only - name, ubuntu_mode and mechanism, with
+      # NO msg key (the module never sets one on success).
+      PluginResult.new(changed: changed, failed: false,
+        name: names, mechanism: mech,
+        ubuntu_mode: mech != "glibc")
     end
 
     private def parse_names : Array(String)
@@ -97,14 +114,33 @@ module Krikri
       raw.includes?(",") ? raw.split(",").map(&.strip).reject(&.empty?) : [raw]
     end
 
-    private def detect_mechanism : (String | PluginResult)
+    private def detect_mechanism : String?
       if remote_file_exists?(ETC_LOCALE_GEN)
         "glibc"
       elsif remote_file_exists?(VAR_LIB_LOCALES)
         "ubuntu_legacy"
+      end
+    end
+
+    # Real's do_raise() path (ModuleHelperException caught by the
+    # module_fails_on_exception decorator): fail_json carries msg, the
+    # VarDict's visible variables BOTH as top-level keys and as the
+    # `output`/`vars` copies. The mechanism-missing raise happens before
+    # the mechanism/ubuntu_mode variables are ever set, so that one
+    # carries `name` alone (live-verified against real ansible-playbook
+    # 2.19.11 through the generator sweep's missing-locales case).
+    private def raise_result(msg : String, names : Array(String), mechanism : String?) : PluginResult
+      name_json = JSON::Any.new(names.map { |name| JSON::Any.new(name) })
+      extras = {"name" => name_json}
+      if mechanism
+        extras["ubuntu_mode"] = JSON::Any.new(mechanism != "glibc")
+        extras["mechanism"] = JSON::Any.new(mechanism)
+        PluginResult.new(changed: false, failed: true, msg: msg,
+          name: names, ubuntu_mode: mechanism != "glibc", mechanism: mechanism,
+          output: extras, vars: extras.dup)
       else
-        PluginResult.new(changed: false, failed: true,
-          msg: "#{VAR_LIB_LOCALES} and #{ETC_LOCALE_GEN} are missing. Is the package \"locales\" installed?")
+        PluginResult.new(changed: false, failed: true, msg: msg,
+          name: names, output: extras, vars: extras.dup)
       end
     end
 

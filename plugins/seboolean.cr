@@ -63,6 +63,19 @@ module Krikri
       ignore_selinux_state = parse_ignore_selinux_state
       return ignore_selinux_state if ignore_selinux_state.is_a?(PluginResult)
 
+      # Real seboolean.py imports libselinux and libsemanage at module
+      # scope and fails through missing_required_lib() when either is
+      # absent - BEFORE the SELinux-enabled check and before any
+      # parameter's runtime use, so on a host without those Python
+      # bindings EVERY seboolean task fails, whatever ignore_selinux_state
+      # says (found via the kpg32 generator sweep, 15/15 seboolean
+      # playbooks: this used to report an unchanged success there).
+      # This plugin is Crystal and has no Python dependency of its own,
+      # so it asks the target's own python3 for the same two modules.
+      if gate = library_gate
+        return gate
+      end
+
       unless ignore_selinux_state
         return PluginResult.new(changed: false, failed: true, msg: "SELinux is disabled on this host.") unless selinux_enabled?
       end
@@ -111,6 +124,50 @@ module Krikri
     # Real's enabled check is libselinux's is_selinux_enabled(); the
     # closest CLI proxy is whether `getenforce` runs and reports
     # something other than Disabled.
+    # missing_required_lib() gate: probe the target's python3 for the two
+    # modules real binds against, in the same order real checks them.
+    # Returns nil when python3 itself is unavailable to answer the
+    # question (the plugin then falls back to its CLI-tool behavior).
+    private def library_gate : PluginResult?
+      ["python3", "python"].each do |interpreter|
+        next unless Process.find_executable(interpreter)
+        probe = <<-PYTHON
+          import os, sys
+          print("exe=" + os.path.realpath(sys.executable))
+          for name in ("selinux", "semanage"):
+              try:
+                  __import__(name)
+                  print(name + "=yes")
+              except Exception:
+                  print(name + "=no")
+          PYTHON
+        io = IO::Memory.new
+        status = Process.run(interpreter, {"-c", probe}, output: io, error: Process::Redirect::Close)
+        next unless status.success?
+
+        found = {} of String => String
+        io.to_s.each_line do |line|
+          key, _, value = line.strip.partition("=")
+          found[key] = value unless key.empty?
+        end
+        executable = found["exe"]? || interpreter
+        return missing_library("libselinux-python", executable) if found["selinux"]? != "yes"
+        return missing_library("libsemanage-python or python3-libsemanage", executable) if found["semanage"]? != "yes"
+        return nil
+      end
+      nil
+    end
+
+    private def missing_library(library : String, python : String) : PluginResult
+      PluginResult.new(
+        changed: false, failed: true,
+        msg: "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
+             "Please read the module documentation and install it in the appropriate location. " \
+             "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+             "please consult the documentation on ansible_python_interpreter",
+      )
+    end
+
     private def selinux_enabled? : Bool
       enforce = remote_exec("getenforce")
       enforce[:exit_code] == 0 && enforce[:stdout].strip.downcase != "disabled"

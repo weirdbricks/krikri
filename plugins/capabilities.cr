@@ -44,23 +44,35 @@ module Krikri
       path = path.strip
       capability = capability.strip.downcase
 
+      # Real CapabilitiesModule.__init__ resolves BOTH helper binaries
+      # through module.get_bin_path(required=True) BEFORE it parses the
+      # capability argument, so a host without libcap2-bin reports the
+      # missing getcap even when the capability string is malformed
+      # (found via the kpg32 generator sweep, 15/15 capabilities
+      # playbooks: this used to parse the capability first and reported
+      # the operator error instead).
+      getcap_cmd = find_executable("getcap")
+      return missing_binary("getcap") unless getcap_cmd
+      setcap_cmd = find_executable("setcap")
+      return missing_binary("setcap") unless setcap_cmd
+
       cap_name, cap_op, cap_flags = parse_cap(capability, op_required: state == "present")
-      current_caps = getcap(path)
-      sync_caps(path, state, current_caps, cap_name, cap_op, cap_flags, check_mode)
+      current_caps = getcap(path, getcap_cmd)
+      sync_caps(path, state, current_caps, cap_name, cap_op, cap_flags, check_mode, setcap_cmd)
     rescue ex : CapError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "capabilities module error")
     end
 
-    private def sync_caps(path : String, state : String, current_caps : Array(Cap), cap_name : String, cap_op : String?, cap_flags : String?, check_mode : Bool) : PluginResult
+    private def sync_caps(path : String, state : String, current_caps : Array(Cap), cap_name : String, cap_op : String?, cap_flags : String?, check_mode : Bool, setcap_cmd : String) : PluginResult
       cap_names = current_caps.map { |itm| itm[0] }
 
       if state == "present" && !current_caps.includes?({cap_name, cap_op, cap_flags})
         new_caps = current_caps.reject { |itm| itm[0] == cap_name }
         new_caps << {cap_name, cap_op, cap_flags}
-        apply_caps(path, new_caps, state, check_mode)
+        apply_caps(path, new_caps, state, check_mode, setcap_cmd)
       elsif state == "absent" && cap_names.includes?(cap_name)
         new_caps = current_caps.reject { |itm| itm[0] == cap_name }
-        apply_caps(path, new_caps, state, check_mode)
+        apply_caps(path, new_caps, state, check_mode, setcap_cmd)
       else
         # Real module's own unchanged exit: `exit_json(changed=False,
         # state=self.state)` - no msg at all (its wire result is just
@@ -71,15 +83,15 @@ module Krikri
     end
 
     # Commit the new capability set (or just report it, in check mode)
-    private def apply_caps(path : String, new_caps : Array(Cap), state : String, check_mode : Bool) : PluginResult
+    private def apply_caps(path : String, new_caps : Array(Cap), state : String, check_mode : Bool, setcap_cmd : String) : PluginResult
       return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
 
-      stdout = setcap(path, new_caps)
+      stdout = setcap(path, new_caps, setcap_cmd)
       PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
     end
 
-    private def getcap(path : String) : Array(Cap)
-      result = remote_exec("getcap -v #{shell_quote(path)}")
+    private def getcap(path : String, getcap_cmd : String) : Array(Cap)
+      result = remote_exec("#{getcap_cmd} -v #{shell_quote(path)}")
       stdout = result[:stdout].strip
       stderr = result[:stderr].strip
       raise CapError.new("Unable to get capabilities of #{path}") if result[:exit_code] != 0 || !stderr.empty?
@@ -109,9 +121,9 @@ module Krikri
       rval
     end
 
-    private def setcap(path : String, caps : Array(Cap)) : String
+    private def setcap(path : String, caps : Array(Cap), setcap_cmd : String) : String
       cap_string = caps.map { |(name, op, flags)| "#{name}#{op}#{flags}" }.join(" ")
-      result = remote_exec("setcap #{shell_quote(cap_string)} #{shell_quote(path)}")
+      result = remote_exec("#{setcap_cmd} #{shell_quote(cap_string)} #{shell_quote(path)}")
       raise CapError.new("Unable to set capabilities of #{path}: #{result[:stderr]}") if result[:exit_code] != 0
       result[:stdout]
     end
@@ -129,7 +141,11 @@ module Krikri
       end
 
       if op_index == -1
-        raise CapError.new("Couldn't find operator (one of: #{OPS.join(", ")})") if op_required
+        # Real's message interpolates the OPS TUPLE, so it prints with
+        # Python repr punctuation (live-verified against real
+        # ansible-playbook 2.19.11, which says
+        # Couldn't find operator (one of: ('=', '-', '+'))).
+        raise CapError.new("Couldn't find operator (one of: ('#{OPS.join("', '")}'))") if op_required
         return {cap, nil, nil}
       end
 
@@ -139,6 +155,26 @@ module Krikri
 
     private def shell_quote(s : String) : String
       Process.quote(s)
+    end
+
+    # module_utils/basic.py get_bin_path(): the module process's PATH
+    # first, then the /sbin, /usr/sbin and /usr/local/sbin dirs that
+    # exist and are not listed already; first executable match wins.
+    private def find_executable(name : String) : String?
+      (ENV["PATH"]? || "").split(':').each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        return candidate if File.exists?(candidate) && !File.directory?(candidate) && File::Info.executable?(candidate)
+      end
+      {"/sbin", "/usr/sbin", "/usr/local/sbin"}.each do |dir|
+        candidate = File.join(dir, name)
+        return candidate if Dir.exists?(dir) && File.exists?(candidate) && !File.directory?(candidate) && File::Info.executable?(candidate)
+      end
+      nil
+    end
+
+    private def missing_binary(name : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: missing_executable_message(name))
     end
   end
 end
