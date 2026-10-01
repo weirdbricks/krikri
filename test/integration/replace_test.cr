@@ -107,6 +107,49 @@ describe "replace plugin" do
     (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o600)
   end
 
+  it "appends the ownership/perms suffix when content and mode both changed" do
+    # Real replace.py runs check_file_attrs AFTER write_changes, whose
+    # atomic_move preserves the dest's old mode - so the task's mode: is
+    # a real post-write drift and check_file_attrs appends the suffix.
+    # This engine used to pre-apply the task's numeric mode onto the
+    # staging temp, apply_attributes saw no drift, and the msg was a
+    # bare "N replacements made" (live-verified vs 2.19.11 at -v).
+    path = fresh_file("content_and_attrs.conf", "gpgcheck=0\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^gpgcheck", "replace" => "gpgcheck=1", "mode" => "0600"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("1 replacements made and ownership, perms or SE linux context changed")
+    (File.info(path).permissions.value & 0o777).must_equal(0o600)
+  end
+
+  it "reports the bare suffix as the whole msg when only the attrs changed" do
+    # Real: changed starts false, check_file_attrs flips it and the empty
+    # message gets only the suffix (no leading " and ").
+    path = fresh_file("attrs_only.conf", "a=1\n")
+    File.chmod(path, 0o644)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^nomatch", "replace" => "x", "mode" => "0600"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("ownership, perms or SE linux context changed")
+    (File.info(path).permissions.value & 0o777).must_equal(0o600)
+  end
+
+  it "adds no suffix when the requested mode already matches the file" do
+    # Real's set_file_attributes_if_different returns False when nothing
+    # actually drifted, so a re-run with no content change and the mode
+    # already in place is a plain ok with an empty msg.
+    path = fresh_file("mode_already.conf", "a=1\n")
+    File.chmod(path, 0o600)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^nomatch", "replace" => "x", "mode" => "0600"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("")
+  end
+
   it "accepts owner/group (applied on disk) and reports no stat fields (add_file_common_args)" do
     me = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || ENV["USER"]? || "root"
     path = fresh_file("owner.conf", "x=1\n")
