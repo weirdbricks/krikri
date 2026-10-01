@@ -96,6 +96,12 @@ Fiber.yield
 
 private GET_URL_TEST_BASE = "http://#{GET_URL_TEST_ADDRESS}"
 
+# SHA1 hexdigest of `content` - get_url.py's own comparison digest
+# (module.sha1) for both the staged download and the existing dest.
+def sha1_of(content : String) : String
+  OpenSSL::Digest.new("SHA1").update(content).final.hexstring
+end
+
 describe "get_url plugin" do
   it "downloads a new file" do
     dest = File.tempname("get-url-spec")
@@ -308,6 +314,336 @@ describe "get_url plugin" do
 
     result["failed"].as_bool.must_equal(true)
     File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  # Every failure shape below is real Ansible's own url_get branch
+  # (get_url.py) driven by the status module_utils/urls.py's fetch_url
+  # folds its exceptions into - `info['status'] == -1` fails with
+  # msg=info['msg'] and NO status_code, anything else that is not 200
+  # fails with msg="Request failed", status_code=info['status'] and
+  # response=info['msg']. krikri used to report every download failure as
+  # "failed to download <url>: ..." plus a made-up `status_code: -1`.
+  # Live-verified against ansible-core 2.19.11 (localhost playbooks,
+  # connection: local, the failed result registered and dumped).
+  describe "generic download-failure shapes" do
+    it "reports a non-200 response as real's 'Request failed' branch (msg, status_code, response)" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/missing.txt", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Request failed")
+      result["status_code"].as_i.must_equal(404)
+      # The HTTPError text, with the reason phrase that came off the
+      # server's own status line.
+      result["response"].as_s.must_match(/\AHTTP Error 404: \S+/)
+      result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/missing.txt")
+      result["dest"].as_s.must_equal(dest)
+      result["elapsed"].as_i.must_equal(0)
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a refused connect with fetch_url's URLError text and no status_code" do
+      dest = File.tempname("get-url-spec")
+      closed_server = TCPServer.new("127.0.0.1", 0)
+      closed_port = closed_server.local_address.port
+      closed_server.close
+
+      result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:#{closed_port}/x", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Request failed: <urlopen error [Errno 111] Connection refused>")
+      result["url"].as_s.must_equal("http://127.0.0.1:#{closed_port}/x")
+      result["dest"].as_s.must_equal(dest)
+      result["elapsed"].as_i.must_equal(0)
+      result["status_code"]?.must_be_nil
+      result["response"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports an unknown URL TYPE as fetch_url's URLError text, with dest and elapsed" do
+      # A URL whose type urllib's opener has no handler for dies in
+      # UnknownHandler (not in Request's constructor), so it comes back
+      # as info['msg'] at status -1 - the same shape as a refused
+      # connect, not the ValueError shape of a type-less URL below.
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "gopher://127.0.0.1:1/x", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Request failed: <urlopen error unknown url type: gopher>")
+      result["url"].as_s.must_equal("gopher://127.0.0.1:1/x")
+      result["dest"].as_s.must_equal(dest)
+      result["status_code"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "splits Python's URL typing the way urllib does (no RFC scheme required)" do
+      # Python's own type split is `([^/:]+):` - everything up to the
+      # first colon, so "127.0.0.1:80/x" types as "127.0.0.1" and gets
+      # the UnknownHandler treatment, while a URL with no colon at all
+      # raises the ValueError half (whose result carries url + status:
+      # -1 and nothing else).
+      dest = File.tempname("get-url-spec")
+
+      typed = PluginSpecHelper.run("get_url", {"url" => "127.0.0.1:1/x", "dest" => dest})
+      typed["msg"].as_s.must_equal("Request failed: <urlopen error unknown url type: 127.0.0.1>")
+      typed["status_code"]?.must_be_nil
+
+      typeless = PluginSpecHelper.run("get_url", {"url" => "wezwmn", "dest" => dest})
+      typeless["msg"].as_s.must_equal("unknown url type: 'wezwmn'")
+      typeless["url"].as_s.must_equal("wezwmn")
+      typeless["status"].as_i.must_equal(-1)
+      typeless["dest"]?.must_be_nil
+      typeless["elapsed"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a response-head timeout as fetch_url's OSError branch ('Connection failure: timed out')" do
+      # A timeout while waiting for the response head is a bare
+      # socket.timeout on urllib's side, i.e. the OSError handler's
+      # "Connection failure: timed out" - not the URLError wording.
+      hang_server = TCPServer.new("127.0.0.1", 0)
+      hang_port = hang_server.local_address.port
+      spawn do
+        loop { hang_server.accept }
+      rescue
+        # the server was closed by the test
+      end
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "http://127.0.0.1:#{hang_port}/hang", "dest" => dest, "timeout" => "1",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Connection failure: timed out")
+      result["url"].as_s.must_equal("http://127.0.0.1:#{hang_port}/hang")
+      result["dest"].as_s.must_equal(dest)
+      result["status_code"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      hang_server.try(&.close)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a body-read timeout from get_url's own copyfileobj handler (elapsed alone)" do
+      # Once fetch_url has RETURNED, the staged write of the body is
+      # get_url.py's own copyfileobj - whose failure carries elapsed only,
+      # with no url and no dest.
+      stall_server = TCPServer.new("127.0.0.1", 0)
+      stall_port = stall_server.local_address.port
+      spawn do
+        loop do
+          client = stall_server.accept
+          # A Content-Length far past what is actually sent, then silence:
+          # the response head arrives, the body never finishes.
+          client.print("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nContent-Type: text/plain\r\n\r\npartial")
+          client.flush
+        end
+      rescue
+        # the server was closed by the test
+      end
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "http://127.0.0.1:#{stall_port}/stall", "dest" => dest, "timeout" => "1",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("failed to create temporary content file: timed out")
+      result["elapsed"].as_i.must_equal(0)
+      result["url"]?.must_be_nil
+      result["dest"]?.must_be_nil
+      result["status_code"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      stall_server.try(&.close)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a directory dest as the directory itself on a download failure" do
+      # Real get_url only derives the filename from the final response,
+      # which a failed request never produces - so a failed download into
+      # a directory dest reports the DIRECTORY (with its stat metadata),
+      # not a guessed <dir>/<name>.
+      parent = PluginSpecHelper.tmp_path("geturl-dirdest-#{Random::Secure.hex(4)}")
+      dest_dir = File.join(parent, "dl")
+      Dir.mkdir_p(dest_dir)
+
+      result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:1/x", "dest" => dest_dir})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Request failed: <urlopen error [Errno 111] Connection refused>")
+      result["dest"].as_s.must_equal(dest_dir)
+      result["state"].as_s.must_equal("directory")
+      result["status_code"]?.must_be_nil
+    ensure
+      FileUtils.rm_rf(parent) if parent
+    end
+
+    it "reports a checksum mismatch in real's own wording and result shape" do
+      # get_url.py verifies the checksum AFTER url_get and AFTER its
+      # destination checks, so the failure carries the full module
+      # result dict (checksum_src/checksum_dest/src/...) with
+      # changed: false - nothing has been moved onto dest: yet.
+      dest = File.tempname("get-url-spec")
+      expected_wrong = "0" * 64
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "checksum" => "sha256:#{expected_wrong}",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      # the "it was" digest is the one of the REQUESTED algorithm, not
+      # always sha1 (get_url.py: module.digest_from_file(tmpsrc, algorithm))
+      result["msg"].as_s.must_match(/^The checksum for .+ did not match #{expected_wrong}; it was #{FILE_CHECKSUM}\.$/)
+      result["checksum_src"].as_s.must_equal(sha1_of(FILE_CONTENT))
+      result["checksum_dest"].raw.nil?.must_equal(true)
+      result["dest"].as_s.must_equal(dest)
+      result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
+      result["src"].as_s.wont_be_empty
+      File.exists?(dest).must_equal(false)
+      # the staged copy is cleaned up, as real's os.remove(tmpsrc) does
+      File.exists?(result["src"].as_s).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a checksum mismatch over an existing dest with that dest's own SHA1 as checksum_dest" do
+      dest = File.tempname("get-url-spec")
+      existing = "what is already there\n"
+      File.write(dest, existing)
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "checksum" => "sha256:#{"0" * 64}",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["checksum_dest"].as_s.must_equal(sha1_of(existing))
+      File.read(dest).must_equal(existing)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports an unwritable destination directory after the download, not as a download failure" do
+      # Real get_url stages in its own remote tmp dir, so the download
+      # itself succeeds and only get_url.py's own destination check
+      # fails - with the full post-download result dict.
+      root = PluginSpecHelper.tmp_path("geturl-ro-#{Random::Secure.hex(4)}")
+      Dir.mkdir_p(root)
+      File.chmod(root, 0o555)
+      dest = File.join(root, "data.bin")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Destination #{root} is not writable")
+      result["dest"].as_s.must_equal(dest)
+      result["checksum_src"].as_s.must_equal(sha1_of(FILE_CONTENT))
+      result["checksum_dest"].raw.nil?.must_equal(true)
+      result["src"].as_s.wont_be_empty
+      File.exists?(result["src"].as_s).must_equal(false)
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.chmod(root, 0o755) if root && Dir.exists?(root)
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "reports an unwritable existing dest, and an unreadable one, in real's own wording" do
+      dest = File.tempname("get-url-spec")
+      File.write(dest, "old content\n")
+      File.chmod(dest, 0o444)
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "force" => "true",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Destination #{dest} is not writable")
+      result["checksum_dest"].raw.nil?.must_equal(true)
+      File.read(dest).must_equal("old content\n")
+
+      # writable but not readable is the second of real's two checks
+      File.chmod(dest, 0o200)
+      unreadable = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "force" => "true",
+      })
+
+      unreadable["failed"].as_bool.must_equal(true)
+      unreadable["msg"].as_s.must_equal("Destination #{dest} is not readable")
+    ensure
+      File.chmod(dest, 0o644) if dest && File.exists?(dest)
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "fails with 'Destination <dir> does not exist' instead of creating the parent directory" do
+      # Real get_url never mkdir -p's a missing parent; it fails with
+      # its own message, carrying the post-download result dict.
+      root = PluginSpecHelper.tmp_path("geturl-missing-#{Random::Secure.hex(4)}")
+      dest = File.join(root, "nodir", "data.bin")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Destination #{File.dirname(dest)} does not exist")
+      result["checksum_src"].as_s.must_equal(sha1_of(FILE_CONTENT))
+      Dir.exists?(File.dirname(dest)).must_equal(false)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    it "reports a failed CHECKSUM url fetch against the checksum url, like real's own url_get call" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "checksum" => "sha256:#{GET_URL_TEST_BASE}/no-such-sums.txt",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Request failed")
+      result["status_code"].as_i.must_equal(404)
+      result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/no-such-sums.txt")
+      result["dest"].as_s.must_equal(dest)
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
+    it "reports a checksum file with no entry for the target in real's wording, with no url/dest" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "checksum" => "sha256:#{GET_URL_TEST_BASE}/sha256sums-no-match.txt",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal(
+        "Unable to find a checksum for file 'file.txt' in '#{GET_URL_TEST_BASE}/sha256sums-no-match.txt'"
+      )
+      result["url"]?.must_be_nil
+      result["dest"]?.must_be_nil
+      File.exists?(dest).must_equal(false)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
   end
 
   it "names a refused connect with urllib's own errno text" do
@@ -760,13 +1096,22 @@ describe "get_url plugin" do
   end
 
   it "fails a file:// URL whose local source does not exist" do
+    # Real urllib's FileHandler os.stat()s the local file and wraps the
+    # OSError in a URLError, which fetch_url reports as
+    # info['msg'] = "Request failed: <urlopen error ...>" with status
+    # -1 - so get_url's url_get fails with msg=info['msg'] and NO
+    # status_code (that key belongs to its non-200 branch).
     src = "#{File.tempname("get-url-spec-missing")}.never-created"
     dest = File.tempname("get-url-spec")
 
     result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
 
     result["failed"].as_bool.must_equal(true)
-    result["status_code"].as_i.must_equal(-1)
+    result["msg"].as_s.must_equal("Request failed: <urlopen error [Errno 2] No such file or directory: '#{src}'>")
+    result["url"].as_s.must_equal("file://#{src}")
+    result["dest"].as_s.must_equal(dest)
+    result["elapsed"].as_i.must_equal(0)
+    result["status_code"]?.must_be_nil
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(dest) if dest && File.exists?(dest)
