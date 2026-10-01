@@ -98,6 +98,23 @@ ensure
   Dir.delete(shim_dir.not_nil!) rescue nil
 end
 
+# The mirror image of with_apt_key_shim: a PATH with no apt-key
+# anywhere on it, which is the state of every current Debian/Ubuntu
+# host (apt-key was dropped in Debian 12 / Ubuntu 22.04+) and the state
+# real's find_needed_binaries() then fails the task on. PATH is
+# process-global, so the whole block holds ENV_MUTEX.
+private def without_apt_key_on_path(&)
+  PluginSpecHelper::ENV_MUTEX.synchronize do
+    old_path = ENV["PATH"]?
+    ENV["PATH"] = "/nonexistent-apt-key-path"
+    begin
+      yield
+    ensure
+      ENV["PATH"] = old_path if old_path
+    end
+  end
+end
+
 private def apt_key_spec_state_file : String
   File.tempname("/tmp", ".krikri-spec-aptkey-state")
 end
@@ -128,24 +145,60 @@ describe "apt_key plugin" do
   end
 
   it "requires url or data when adding a key" do
-    result = PluginSpecHelper.run("apt_key", {"state" => "present"})
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present"})
 
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("url or data")
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("url or data")
+    end
+    File.delete(state) rescue nil
   end
 
   it "requires id when removing a key" do
-    result = PluginSpecHelper.run("apt_key", {"state" => "absent"})
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent"})
 
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("id")
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_include("id")
+    end
+    File.delete(state) rescue nil
   end
 
   it "reports already-absent as unchanged for a key id that was never added" do
-    result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
 
-    result["changed"].as_bool.must_equal(false)
-    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    end
+    File.delete(state) rescue nil
+  end
+
+  # Real's find_needed_binaries() resolves `apt-key` (then `gpg`)
+  # through module.get_bin_path(..., required=True) BEFORE any of the
+  # key_id / key-material validation above - and in ansible-core 2.19
+  # that helper fail_jsons itself rather than raising, so the bare
+  # get_bin_path text is the WHOLE message (apt_key.py's own `except
+  # ValueError`, whose exit_json would have appended "Apt-key has been
+  # deprecated...", is dead code). apt-key was dropped from Debian 12 /
+  # Ubuntu 22.04+, so on a current host this is what every apt_key:
+  # task does - which is why the tests above install the double rather
+  # than relying on the host having one. Verified against
+  # ansible-playbook 2.19.11 on a host with no apt-key, for the
+  # state: present / state: absent / absent+id / keyserver shapes
+  # alike: all four report the executable message, none reach their own
+  # validation.
+  it "fails on a host without apt-key before any key validation, with get_bin_path's own message" do
+    without_apt_key_on_path do
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "id" => FAKE_KEY_ID})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_include(%(Failed to find required executable "apt-key" in paths: ))
+    end
   end
 
   it "requires id when keyserver: is given, matching real Ansible's exact message" do
@@ -157,10 +210,14 @@ describe "apt_key plugin" do
     # (`apt-key adv --keyserver ... --recv ...`) needs network access
     # and a real apt-key binary (not installed on this dev machine
     # either), so only the validation path is exercised here.
-    result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com"})
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "present", "keyserver" => "keyserver.ubuntu.com"})
 
-    result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("Missing key_id, required with keyserver.")
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Missing key_id, required with keyserver.")
+    end
+    File.delete(state) rescue nil
   end
 
   it "fetches url: via curl (not Crystal's own HTTP::Client) and reaches apt-key add, not a crash" do

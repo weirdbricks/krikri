@@ -100,6 +100,24 @@ module Krikri
           msg: "parameters are mutually exclusive: #{mutex_params.join('|')}")
       end
 
+      # Real's find_needed_binaries(module) runs next - before any
+      # keyring work, key_id parsing or url/data handling - resolving
+      # `apt-key` and then `gpg` through module.get_bin_path(...,
+      # required=True). Note that in ansible-core 2.19 that helper does
+      # NOT raise for the module author to catch: with required=True it
+      # calls fail_json itself, so apt_key.py's own `except ValueError`
+      # (the one whose exit_json adds "Apt-key has been deprecated. See
+      # the deb822_repository as an alternative.") is dead code and the
+      # module simply FAILS with the bare get_bin_path text.
+      # apt-key was dropped from Debian 12 / Ubuntu 22.04+, so on any
+      # current host EVERY apt_key: task ends right here - which is what
+      # real does. Verified against ansible-playbook 2.19.11 for the
+      # url: shape and for state: absent with file:/id:.
+      %w[apt-key gpg].each do |binary|
+        next if remote_exec("command -v #{binary} >/dev/null 2>&1")[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: missing_executable_message(binary))
+      end
+
       state = @params["state"]?.try(&.downcase) || "present"
 
       if state == "absent"

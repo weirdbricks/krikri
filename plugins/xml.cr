@@ -4,6 +4,7 @@ require "json"
 require "file_utils"
 require "krikri-xml"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # xml plugin - manages bits and pieces of XML files via xpath. Port of
@@ -133,6 +134,27 @@ module Krikri
 
       @namespaces = namespaces_from(raw)
       @doc = nil
+
+      # Real's main() opens with the lxml gate right after its
+      # AnsibleModule argument validation and before it touches the
+      # target XML source at all: `if not HAS_LXML:
+      # module.fail_json(msg=missing_required_lib("lxml"),
+      # exception=LXML_IMP_ERR)`. lxml is a module-level import, so a
+      # target without it fails HERE - it never reaches the source
+      # existence/readability checks or the parse below. krikri parses
+      # with its own krikri-xml and so has no lxml dependency of its
+      # own, which used to leave it reporting "The target XML source
+      # '...' does not exist." (or a parse error) where real reports
+      # the missing library. Reproduced as-is, at the same point in the
+      # flow. Verified against ansible-playbook 2.19.11 +
+      # community.general on a target without lxml. No `exception:`
+      # detail rides along: real's LXML_IMP_ERR is a formatted
+      # traceback, which its display does not append to this message
+      # (confirmed live - the [ERROR] block carries the bare text).
+      if gate = Krikri.missing_python_library("lxml", "lxml.etree")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
+
       if xmlstring
         parse_doc(xmlstring, xmlstring)
       else

@@ -127,6 +127,48 @@ module Krikri
     end
   end
 
+  # The plugin-side view of BasePlugin#initialize's param parse, for the
+  # callers that read the RAW config JSON rather than the demoted
+  # @params hash - the FactsGatherer behind `setup:`/`facts:` does
+  # exactly that, and used to see a `gather_timeout: 75` written
+  # unquoted in the playbook as the literal STRING
+  # "nonstring:75" (the parser's marker rides the strings-only
+  # wire), so a type-specific read failed the module with "argument
+  # 'gather_timeout' is of type str and we were unable to convert to
+  # int" where real Ansible - which converts the native int - happily
+  # gathers. Restores each marked literal to the JSON value it stood
+  # for, exactly as the demotion sites above do, so a reader sees the
+  # same numbers/lists/strings the playbook actually wrote.
+  def self.restore_native_param_values(params : JSON::Any?) : JSON::Any?
+    hash = params.try(&.as_h?)
+    return params unless hash
+    return params unless hash.each_value.any? do |value|
+                           text = value.as_s?
+                           text && (text.includes?(NON_STRING_PARAM_PREFIX) || text.includes?(NON_STRING_MEMBER_PREFIX))
+                         end
+
+    JSON::Any.new(hash.transform_values { |value| restore_native_param_value(value) })
+  end
+
+  # One param value's restoration: a whole-value marked literal goes
+  # back to the JSON value it encoded (an int/float/bool keeps its
+  # type, which is the whole point - a JSON number no longer looks like
+  # a string to as_i64?/as_bool?), and a comma-joined list's marked
+  # members go back to their own plain text. Anything unmarked is
+  # returned untouched.
+  def self.restore_native_param_value(value : JSON::Any) : JSON::Any
+    text = value.as_s?
+    return value unless text
+    if native = non_string_scalar(text)
+      return native
+    end
+    return value unless text.includes?(NON_STRING_MEMBER_PREFIX)
+
+    JSON::Any.new(text.split(',').map do |part|
+      JSON::Any.new(non_string_param_text(non_string_member_scalar(part) || JSON::Any.new(part)))
+    end)
+  end
+
   # Executor-side demotion: every param value the parser marked as a
   # non-string YAML literal is stripped back to its plain string form, so
   # the spec checks (and every other executor-side consumer) see exactly

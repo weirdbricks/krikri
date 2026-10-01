@@ -39,6 +39,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 @[Link("util")]
 lib LibPty
@@ -78,16 +79,18 @@ module Krikri
     # compiled regex, answers, whether the task gave a LIST response)
     alias Response = {String, Regex, Array(String), Bool}
 
+    # The `responses:` map #execute hands to the pty loop, parsed by
+    # #preflight.
+    @responses : Array(Response) = [] of Response
+
     def execute : PluginResult
       validate_bool_params!
       command = @params["command"]? || @params["_raw_params"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: command") unless command
 
-      responses_json = @params["responses"]?
-      return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: responses") unless responses_json
-
-      responses = parse_responses(responses_json)
-      return PluginResult.new(changed: false, failed: true, msg: "responses must be a dictionary of pattern -> response") unless responses
+      if failure = preflight(command, @params["responses"]?)
+        return failure
+      end
 
       # Real expect.py strips and rejects an empty command with rc=256
       # BEFORE chdir/creates/removes are considered.
@@ -116,7 +119,41 @@ module Krikri
         end
       end
 
-      run_expect(command, responses, timeout, chdir, echo)
+      run_expect(command, @responses, timeout, chdir, echo)
+    end
+
+    # Everything real expect.py's main() does before its first line of
+    # module logic, in real's order: the AnsibleModule argument
+    # validation (responses required, coerced to a dict) and then,
+    # immediately after it, the pexpect import gate.
+    # The gate is `if not HAS_PEXPECT: module.fail_json(msg=
+    # missing_required_lib("pexpect"), exception=PEXPECT_IMP_ERR)`;
+    # pexpect is a module-level import there, so a target without it
+    # fails HERE - it never reaches the empty-command check, the
+    # creates/removes skip, or the spawn. krikri drives the pty layer
+    # directly and needs no pexpect, which used to leave it reporting
+    # its own downstream outcome ("The command was not found or was
+    # not executable: <cmd>." for a command real never tried, or plain
+    # success on a creates:/removes: skip) where real reports the
+    # missing library. Reproduced as-is, at the same point in the
+    # flow. Verified against ansible-playbook 2.19.11 on a target
+    # without pexpect, for the skip, non-skip and nonexistent-command
+    # shapes alike.
+    private def preflight(command : String, responses_json : String?) : PluginResult?
+      unless responses_json
+        return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: responses")
+      end
+
+      unless responses = parse_responses(responses_json)
+        return PluginResult.new(changed: false, failed: true, msg: "responses must be a dictionary of pattern -> response")
+      end
+
+      if gate = Krikri.missing_python_library("pexpect", "pexpect")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg], _ansible_error_detail: gate[:detail])
+      end
+
+      @responses = responses
+      nil
     end
 
     private def parse_responses(json : String) : Array(Response)?
