@@ -1475,17 +1475,34 @@ module Krikri
         raw = provided[name]?
         next unless raw
         choices = spec["choices"]?.try(&.as_a?) || next
-        json = (JSON.parse(raw) rescue nil)
-        if json && json.as_a?
-          missing = json.as_a.map(&.to_s).reject { |item| choices_strings(choices).includes?(item) }
+        allowed = choices_strings(choices)
+        # Real runs _validate_argument_values on the ALREADY
+        # type-converted parameters, and its list branch is guarded by
+        # `isinstance(parameters[param], list)` - which every option
+        # declared `type: list` satisfies, because check_type_list has
+        # already comma-split a scalar by then. So a scalar given to a
+        # list+choices option reports the PER-MEMBER wording (the list
+        # comment in real's code says as much: "Allow one or more when
+        # type='list' param with choices"), not the single-value one -
+        # `deb822_repository: types: <not deb|deb-src>` fails with "must
+        # be one or more of: ... Got no match for: <value>".
+        json = JSON.parse(raw) rescue nil
+        members =
+          if arr = json.try(&.as_a?)
+            arr
+          elsif spec["type"]?.try(&.as_s?) == "list"
+            raw.split(',')
+          end
+        if members
+          missing = members.map(&.to_s).reject { |item| allowed.includes?(item) }
           unless missing.empty?
-            return "value of #{name} must be one or more of: #{choices_strings(choices).join(", ")}. " \
+            return "value of #{name} must be one or more of: #{allowed.join(", ")}. " \
                    "Got no match for: #{missing.join(", ")}"
           end
         else
           value = raw == Krikri::NONE_SENTINEL ? "None" : raw
-          unless choices_strings(choices).includes?(value)
-            return "value of #{name} must be one of: #{choices_strings(choices).join(", ")}, got: #{value}"
+          unless allowed.includes?(value)
+            return "value of #{name} must be one of: #{allowed.join(", ")}, got: #{value}"
           end
         end
       end

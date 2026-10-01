@@ -1,4 +1,5 @@
 require "json"
+require "../param_sentinels"
 require "./distribution_facts"
 require "./service_mgr_fact"
 
@@ -2247,7 +2248,7 @@ module Krikri
     # means real Ansible's argument-spec defaults (gather_subset=all,
     # gather_timeout=10, no filter, fact_path=/etc/ansible/facts.d).
     def run(config : JSON::Any?) : String
-      params = config.try(&.["params"]?)
+      params = Krikri.restore_native_param_values(config.try(&.["params"]?))
 
       # gather_subset: comma-separated in string form (type=list in real
       # Ansible's argument spec, whose check_type_list splits on ','
