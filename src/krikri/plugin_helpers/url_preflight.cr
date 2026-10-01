@@ -19,10 +19,17 @@ module Krikri
     #      SSLError; both are OSError subclasses, so fetch_url's
     #      `except OSError` handler folds them into
     #      info['msg'] = "Connection failure: <str(ex)>" with status -1.
-    #   3. urllib.request.Request(url) - a scheme-less URL raises
+    #   3. urllib.request.Request(url) - a URL with no type at all raises
     #      ValueError("unknown url type: '<url>'"), which fetch_url
     #      re-raises through fail_json(msg=..., **info) with
-    #      info = {url, status: -1}.
+    #      info = {url, status: -1}. A URL that DOES have a type but no
+    #      handler (gopher://..., "127.0.0.1:80/x" - Python's type split
+    #      does not require an RFC scheme) instead dies later, in
+    #      urllib's own UnknownHandler, with
+    #      URLError('unknown url type: <type>') - so it comes back as
+    #      info['msg'] = "Request failed: <urlopen error unknown url
+    #      type: <type>>" with status -1, i.e. the same info dict the
+    #      OSError half below produces.
     #
     # The order matters as much as the checks: make_context runs before
     # the URL is parsed, so a task carrying BOTH a bogus ciphers: list and
@@ -50,11 +57,21 @@ module Krikri
         ConnectionFailure
         # ValueError from urllib: {msg, url, status: -1}.
         UnknownUrlType
+        # URLError from urllib's UnknownHandler: a URL that HAS a type
+        # no default handler serves (gopher://..., "127.0.0.1:80/x") is
+        # not a Request-construction failure - the request object builds
+        # fine and dies at open() - so it arrives as info['msg'] with
+        # status -1, the same dict the OSError half above produces.
+        UnknownUrlScheme
       end
 
       record Failure, kind : Kind, msg : String
 
-      # `ciphers` is the OpenSSL cipher-list string the real params join
+      # The URL types urllib's default opener actually has a handler
+      # for (urllib.request's own default handler list).
+      URL_TYPES = %w(http https ftp file data)
+
+      # The `ciphers` is the OpenSSL cipher-list string the real params join
       # into ("all ciphers are joined in order with ':'", get_url's own
       # docs) - nil or empty means "don't set them", in which case real
       # Ansible skips set_ciphers entirely.
@@ -74,11 +91,29 @@ module Krikri
         # then the client certificate chain.
         context_failure(ca_path, ciphers, client_cert, client_key).try { |failure| return failure }
 
-        unless url.matches?(/\A[A-Za-z][A-Za-z0-9+.\-]*:/)
+        if type = url_type(url)
+          unless URL_TYPES.includes?(type)
+            return Failure.new(Kind::UnknownUrlScheme, "Request failed: <urlopen error unknown url type: #{type}>")
+          end
+        else
           return Failure.new(Kind::UnknownUrlType, "unknown url type: '#{url}'")
         end
 
         nil
+      end
+
+      # Python's own type split - urllib.request._splittype's
+      # `([^/:]+):` - returns everything up to the first colon, whatever
+      # it is made of (it does NOT require an RFC scheme, so
+      # "127.0.0.1:80/x" types as "127.0.0.1"), or nil when the URL
+      # carries no colon at all. nil is the ValueError half of the two
+      # unknown-URL-type failures (Request's own _parse), a type no
+      # handler serves is the URLError half (UnknownHandler).
+      private def self.url_type(url : String) : String?
+        head, separator, _ = url.partition(":")
+        return nil if separator.empty?
+        return nil if head.empty? || head.includes?("/")
+        head.downcase
       end
 
       # The _configure_auth half: use_gssapi: on a host whose python cannot

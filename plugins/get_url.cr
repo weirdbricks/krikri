@@ -3,6 +3,7 @@
 require "json"
 require "http/client"
 require "uri"
+require "socket"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/http_download"
 require "../src/krikri/plugin_helpers/url_preflight"
@@ -38,6 +39,11 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
       dest = expand_tilde(dest)
+      # Real get_url's own `dest` param, verbatim. Every failure result
+      # real reports names THIS path, including a directory dest (whose
+      # filename is only derived once the request came back, so a failed
+      # download of a directory dest reports the directory itself).
+      dest_param = dest
       # Real get_url only derives the final filename AFTER the request
       # completes when dest: is a directory (get_url.py's dest_is_dir
       # block): first the final response's Content-Disposition filename,
@@ -55,7 +61,7 @@ module Krikri
       # from (real Ansible HEADs the URL for this; we keep the guess).
       dest = File.join(dest, url_filename(url)) if dest_is_dir
 
-      checksum = resolved_checksum(url)
+      checksum = resolved_checksum(url, dest_param)
       return checksum if checksum.is_a?(PluginResult)
 
       force = true?(@params["force"]?, default: false)
@@ -111,7 +117,7 @@ module Krikri
         return tmp_error
       end
 
-      download_to_dest(url, dest, checksum, dest_is_dir)
+      download_to_dest(url, dest_param, checksum, dest_is_dir)
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
@@ -126,13 +132,8 @@ module Krikri
     # checksum: "" identically. Without this, krikri tried to verify the
     # real download against an empty expected hash and failed every
     # single time ("checksum mismatch: expected , got <real hash>")
-    # where real Ansible correctly skips verification. A resolution
-    # failure carries status_code: -1, the shape real Ansible's
-    # fetch_url-based url_get produces when a request dies before any
-    # HTTP response (its fail_json spreads info['status'], initialized
-    # to -1, into status_code), so a role's registered-result guards see
-    # identical keys.
-    private def resolved_checksum(url : String) : {String, String}? | PluginResult
+    # where real Ansible correctly skips verification.
+    private def resolved_checksum(url : String, dest : String) : {String, String}? | PluginResult
       checksum_param = @params["checksum"]?
       return nil if checksum_param.nil? || checksum_param.strip.empty?
 
@@ -146,7 +147,9 @@ module Krikri
       end
 
       begin
-        parse_checksum(checksum_param, url)
+        parsed = parse_checksum(checksum_param, url, dest)
+        return parsed if parsed.is_a?(PluginResult)
+        parsed.as({String, String})
       rescue ex
         PluginResult.new(changed: false, failed: true, msg: "failed to resolve checksum: #{ex.message}", status_code: -1)
       end
@@ -207,13 +210,13 @@ module Krikri
     #   * UnknownUrlType - the ValueError from urllib's Request(url),
     #     re-raised as fail_json(msg=..., **info) with info = {url,
     #     status: -1}: no dest/elapsed either.
-    #   * ConnectionFailure - the OSError became info['msg'] with
-    #     status -1, and get_url's url_get re-fails on that status with
-    #     fail_json(msg=info['msg'], url=url, dest=dest, elapsed=elapsed).
-    #     Unlike the download-failure path below it carries NO status_code
-    #     key: that one comes from the non-200 branch
-    #     (msg="Request failed", status_code=..., response=...), which is a
-    #     different failure entirely.
+    #   * ConnectionFailure / UnknownUrlScheme - both became info['msg']
+    #     with status -1, so the request DID run url_get's own
+    #     status == -1 branch, fail_json(msg=info['msg'], url=url,
+    #     dest=dest, elapsed=elapsed). Like the download failures below
+    #     they carry NO status_code: that key belongs to the non-200
+    #     branch (msg="Request failed", status_code=...,
+    #     response=...), a different failure entirely.
     private def preflight_failure_result(failure : PluginHelpers::URLPreflight::Failure, url : String, dest : String) : PluginResult
       case failure.kind
       when PluginHelpers::URLPreflight::Kind::MissingLibrary
@@ -227,19 +230,13 @@ module Krikri
       end
     end
 
-    private def download_to_dest(url : String, dest : String, checksum : {String, String}?, dest_is_dir = false) : PluginResult
-      tmp_path = staging_path(dest)
-      begin
-        info = download(url, tmp_path)
+    private def download_to_dest(url : String, dest_param : String, checksum : {String, String}?, dest_is_dir = false) : PluginResult
+      tmp_path = staging_path(dest_param)
+      info = begin
+        download(url, tmp_path)
       rescue ex
         File.delete(tmp_path) if File.exists?(tmp_path)
-        # Same fetch_url contract as the checksum rescue above: real Ansible
-        # includes status_code: -1 (plus url/dest/elapsed) in get_url's
-        # download-failure result, so `when: r.status_code == -1` behaves
-        # identically here.
-        failure_result = PluginResult.new(changed: false, failed: true, msg: "failed to download #{url}: #{ex.message}", status_code: -1, url: url, dest: dest, elapsed: 0)
-        add_path_info(failure_result, dest)
-        return failure_result
+        return fetch_failure_result(ex, url, dest_param)
       end
       info = info.as(PluginHelpers::HTTPDownload::Result)
 
@@ -247,9 +244,20 @@ module Krikri
       # Content-Disposition first, else the final (post-redirect) URL's
       # basename, real get_url's dest_is_dir ordering (get_url.py: "pluck
       # the URL from the info, since a redirect could have changed it").
-      dest = File.join(File.dirname(dest), download_filename(info)) if dest_is_dir
+      dest = dest_is_dir ? File.join(dest_param, download_filename(info)) : dest_param
 
-      if checksum && (mismatch = checksum_mismatch_result(tmp_path, checksum))
+      # Real get_url's post-download destination checks, in its own order
+      # (get_url.py, between url_get and the checksum verification): an
+      # existing dest must be writable and readable, a not-yet-existing
+      # one must have an existing, writable parent directory. They run on
+      # the STAGED copy, so the request always happens first - which is
+      # why a download into an unwritable directory reports the
+      # destination error rather than a download error.
+      if failure = destination_failure_result(tmp_path, dest, url)
+        return failure
+      end
+
+      if checksum && (mismatch = checksum_mismatch_result(tmp_path, dest, url, checksum))
         return mismatch
       end
 
@@ -291,20 +299,113 @@ module Krikri
       result
     end
 
+    # Real url_get's own branches for a request that never produced a
+    # usable body (module_utils/urls.py's fetch_url folds every failure
+    # into `info`, and get_url.py branches on info['status'] alone):
+    #
+    #   * status != 200 and != 304 -> fail_json(msg="Request failed",
+    #     status_code=info['status'], response=info['msg'], url=..., dest,
+    #     elapsed) - this is the ONLY failure of the two that carries a
+    #     status_code, and its response is the HTTPError's own text.
+    #   * status == -1 -> fail_json(msg=info['msg'], url, dest, elapsed),
+    #     with no status_code at all.
+    #
+    # `dest` is real's own dest param, i.e. a directory dest stays the
+    # directory here (the filename is only derived after a request that
+    # came back).
+    private def fetch_failure_result(ex : Exception, url : String, dest : String) : PluginResult
+      result = case ex
+               when PluginHelpers::HTTPDownload::FetchError
+                 fetch_error_result(ex, url, dest)
+               else
+                 # Anything else on this path died on the socket layer,
+                 # where urllib would have wrapped it in a URLError.
+                 PluginResult.new(changed: false, failed: true,
+                   msg: "Request failed: <urlopen error #{ex.message}>", url: url, dest: dest, elapsed: 0)
+               end
+      add_path_info(result, dest)
+      result
+    end
+
+    private def fetch_error_result(ex : PluginHelpers::HTTPDownload::FetchError, url : String, dest : String) : PluginResult
+      case ex.kind
+      when PluginHelpers::HTTPDownload::FetchError::Kind::HttpError
+        PluginResult.new(changed: false, failed: true, msg: "Request failed",
+          status_code: ex.status_code, response: ex.info_msg, url: url, dest: dest, elapsed: 0)
+      when PluginHelpers::HTTPDownload::FetchError::Kind::ContentCopy
+        # get_url.py's own copyfileobj handler: the request was fine, so
+        # only elapsed comes with it - no url, no dest.
+        PluginResult.new(changed: false, failed: true,
+          msg: "failed to create temporary content file: #{ex.reason}", elapsed: 0)
+      else
+        PluginResult.new(changed: false, failed: true, msg: ex.info_msg, url: url, dest: dest, elapsed: 0)
+      end
+    end
+
+    # get_url.py's post-download destination checks, verbatim: an existing
+    # dest must be writable and then readable; a dest that does not exist
+    # yet needs an existing and then writable parent directory. Returns
+    # nil when dest is usable.
+    private def destination_failure_result(tmp_path : String, dest : String, url : String) : PluginResult?
+      msg = if File.exists?(dest)
+              if !File.writable?(dest)
+                "Destination #{dest} is not writable"
+              elsif !File.readable?(dest)
+                "Destination #{dest} is not readable"
+              end
+            else
+              dest_dir = File.dirname(dest)
+              if !Dir.exists?(dest_dir)
+                "Destination #{dest_dir} does not exist"
+              elsif !File.writable?(dest_dir)
+                "Destination #{dest_dir} is not writable"
+              end
+            end
+      return nil unless msg
+
+      post_download_failure_result(msg, tmp_path, dest, url, nil)
+    end
+
+    # The result shape every failure raised AFTER a successful request
+    # shares (get_url.py's module-level `result` dict as it stands by
+    # then): changed, checksum_dest (still unset - real computes it only
+    # after these checks pass), checksum_src of the staged file, dest,
+    # elapsed, url and the staged file's own `src` path, plus the dest
+    # stat metadata. The staged file is removed, exactly as real's own
+    # os.remove(tmpsrc) does on each of these branches.
+    private def post_download_failure_result(
+      msg : String,
+      tmp_path : String,
+      dest : String,
+      url : String,
+      checksum_dest : String?,
+    ) : PluginResult
+      checksum_src = native_checksum(tmp_path, "sha1")
+      File.delete(tmp_path) if File.exists?(tmp_path)
+      result = PluginResult.new(changed: false, failed: true, msg: msg,
+        checksum_dest: checksum_dest, checksum_src: checksum_src,
+        dest: dest, elapsed: 0, url: url, src: tmp_path)
+      add_path_info(result, dest)
+      result
+    end
+
     # Verifies the freshly staged download against a provided
     # checksum: tuple; returns a failed PluginResult (staging file
     # cleaned up) on mismatch, nil when it matches or no checksum was
-    # given. changed: true mirrors real Ansible: the download itself
-    # already happened by the time the checksum is evaluated, so the
-    # task is reported as having changed even though the failure means
-    # nothing landed on dest:.
-    private def checksum_mismatch_result(tmp_path : String, checksum : {String, String}) : PluginResult?
+    # given. changed: false like real Ansible: by the time the checksum
+    # is evaluated the download is still only staged, so nothing has
+    # changed yet (and the module-level result dict carries its initial
+    # changed=False).
+    private def checksum_mismatch_result(tmp_path : String, dest : String, url : String, checksum : {String, String}) : PluginResult?
       algorithm, expected = checksum
       actual = native_checksum(tmp_path, algorithm)
       return nil if actual == expected
 
-      File.delete(tmp_path) if File.exists?(tmp_path)
-      PluginResult.new(changed: true, failed: true, msg: "checksum mismatch: expected #{expected}, got #{actual}")
+      post_download_failure_result(
+        "The checksum for #{tmp_path} did not match #{expected}; it was #{actual}.",
+        tmp_path, dest, url,
+        File.exists?(dest) ? native_checksum(dest, "sha1") : nil
+      )
     end
 
     # backup: true copies the existing dest aside (timestamp-suffixed,
@@ -325,9 +426,12 @@ module Krikri
     # non-atomically - the same fallback shape copy.cr/lineinfile.cr
     # use. Without the flag the exception propagates (task fails), as
     # before this pass.
+    #
+    # No parent directory is created here: real Ansible never makes one
+    # either (get_url.py fails with "Destination <dir> does not exist"
+    # in destination_failure_result, above), so a dest under a missing
+    # directory is an error, not a mkdir.
     private def move_into_place(tmp_path : String, dest : String) : Nil
-      dest_dir = File.dirname(dest)
-      Dir.mkdir_p(dest_dir) unless Dir.exists?(dest_dir)
       begin
         File.rename(tmp_path, dest)
       rescue ex
@@ -338,13 +442,28 @@ module Krikri
 
     # Where the download is staged (real get_url's
     # tempfile.mkstemp(dir=tmp_dest); tmp_dest validity was already
-    # checked in #execute). When absent, the staging file goes NEXT TO
-    # dest rather than in the system tmp dir: same-filesystem staging is
+    # checked in #execute). Normally the staging file goes NEXT TO dest
+    # rather than in the system tmp dir: same-filesystem staging is
     # what makes the final File.rename unconditionally atomic, where
     # real Ansible (which starts from the system tmp dir) needs its own
     # EXDEV fallback inside atomic_move to reach the same place.
+    #
+    # The exception is a destination directory that cannot be written:
+    # real Ansible stages in its own remote tmp dir (module.tmpdir) and
+    # only discovers the unwritable destination afterwards, in
+    # destination_failure_result - staging there too is what makes the
+    # download SUCCEED and the task fail with the destination message,
+    # instead of dying with a permission error on the staging file. An
+    # explicit tmp_dest: is always honoured (its own validity checks ran
+    # in #execute, and a task that names an unwritable one must fail on
+    # it rather than quietly stage somewhere else).
     private def staging_path(dest : String) : String
-      base = @params["tmp_dest"]? || File.dirname(dest)
+      if tmp_dest = @params["tmp_dest"]?
+        return File.join(tmp_dest, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
+      end
+
+      dest_dir = File.dirname(dest)
+      base = File.writable?(dest_dir) ? dest_dir : Dir.tempdir
       File.join(base, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
     end
 
@@ -384,24 +503,39 @@ module Krikri
     # per real Ansible's documented get_url behavior, a URL pointing to a
     # sha*sums-format file (one "<hash>  <filename>" line per file) - in
     # which case the hash for `url`'s own basename is looked up within it.
-    private def parse_checksum(checksum_param : String, url : String) : {String, String}
+    # Returns a failed PluginResult when the checksum URL itself cannot be
+    # fetched or holds no entry for the target - both of real Ansible's own
+    # fail_json points (get_url.py, before the main download is attempted).
+    private def parse_checksum(checksum_param : String, url : String, dest : String) : {String, String} | PluginResult
       algorithm, _, value = checksum_param.partition(":")
       algorithm = algorithm.downcase
 
       if value.starts_with?("http://") || value.starts_with?("https://") || value.starts_with?("file:")
-        {algorithm, resolve_checksum_url(value, url)}
+        # Real Ansible's own is_url() gate is scheme-based too (http,
+        # https, ftp, file), so a "gopher://"-style value is just a
+        # (nonsense) literal hash here rather than a second fetch.
+        resolved = resolve_checksum_url(value, url, dest)
+        return resolved if resolved.is_a?(PluginResult)
+        {algorithm, resolved.as(String)}
       else
         {algorithm, value.downcase}
       end
     end
 
-    private def resolve_checksum_url(checksum_url : String, target_url : String) : String
+    private def resolve_checksum_url(checksum_url : String, target_url : String, dest : String) : String | PluginResult
       tmp_path = "#{Dir.tempdir}/get_url_checksum_#{Process.pid}_#{Random.rand(1_000_000)}.tmp"
       begin
         # Route through #download (not the HTTP helper directly) so a
         # file:// checksum file - also a valid fetch_url source for real
-        # Ansible - resolves the same way as an http(s) one.
-        download(checksum_url, tmp_path)
+        # Ansible - resolves the same way as an http(s) one. Real runs
+        # the same url_get call for this file, so a failure here carries
+        # the same shape as the main download's, naming the CHECKSUM url
+        # (that is the request that failed) against the task's dest.
+        begin
+          download(checksum_url, tmp_path)
+        rescue ex
+          return fetch_failure_result(ex, checksum_url, dest)
+        end
 
         target_basename = File.basename(URI.parse(target_url).path)
         lines = File.read_lines(tmp_path).map(&.strip).reject(&.empty?)
@@ -431,7 +565,11 @@ module Krikri
           return hash.downcase if File.basename(filename) == target_basename
         end
 
-        raise "no checksum entry for #{target_basename} found in #{checksum_url}"
+        # get_url.py: "Unable to find a checksum for file '%s' in '%s'" -
+        # a bare fail_json, no url/dest/elapsed (its module-level result
+        # dict is not spread here).
+        PluginResult.new(changed: false, failed: true,
+          msg: "Unable to find a checksum for file '#{target_basename}' in '#{checksum_url}'")
       ensure
         File.delete(tmp_path) if File.exists?(tmp_path)
       end
@@ -448,11 +586,33 @@ module Krikri
       # of the pipeline (checksum verification, changed-comparison,
       # atomic move, attribute reconciliation) is shared unchanged.
       if path = local_file_path(url)
-        raise "file not found: #{path}" unless File.exists?(path)
-        File.copy(path, tmp_path)
-        # Match the HTTP path's staging perms (perm 0666 & ~umask on the
-        # final rename) rather than inheriting the source file's mode.
-        File.chmod(tmp_path, 0o666)
+        # urllib's FileHandler opens the file itself and wraps any OSError
+        # in a URLError, so the messages below are the ones fetch_url
+        # folds into info['msg'] ("Request failed: <urlopen error ...>").
+        if !File.exists?(path)
+          raise PluginHelpers::HTTPDownload::FetchError.new(
+            PluginHelpers::HTTPDownload::FetchError::Kind::UrlError,
+            "Request failed: <urlopen error [Errno 2] No such file or directory: '#{path}'>"
+          )
+        end
+        if File.directory?(path)
+          raise PluginHelpers::HTTPDownload::FetchError.new(
+            PluginHelpers::HTTPDownload::FetchError::Kind::UrlError,
+            "Request failed: <urlopen error [Errno 21] Is a directory: '#{path}'>"
+          )
+        end
+        if !local_file_host?(URI.parse(url).host)
+          raise PluginHelpers::HTTPDownload::FetchError.new(
+            PluginHelpers::HTTPDownload::FetchError::Kind::UrlError,
+            "Request failed: <urlopen error file not on local host>"
+          )
+        end
+        # Stage through a fresh 0666 open so the staging file carries the
+        # HTTP path's perms (0666 & ~umask, which is what real Ansible's
+        # atomic_move gives a NEW dest) rather than the source's mode.
+        File.open(tmp_path, "w", 0o666) do |staged|
+          File.open(path) { |src| IO.copy(src, staged) }
+        end
         return PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: HTTP::Headers.new)
       end
 
@@ -460,18 +620,34 @@ module Krikri
     end
 
     # file:// URL to a local path: nil when the URL isn't a file:// URL
-    # (let it fall through to the HTTP helper). RFC 8089 allows an empty
-    # or "localhost" host only - anything else is an error, as is a
-    # missing path. Percent-decoding matches urllib's unquote of the
-    # path component.
+    # (let it fall through to the HTTP helper). Percent-decoding matches
+    # urllib's unquote of the path component; a missing path is an error
+    # (real: the local file simply cannot be opened).
     private def local_file_path(url : String) : String?
       return nil unless url.starts_with?("file:")
       uri = URI.parse(url)
       return nil unless uri.scheme == "file"
-      raise "invalid host in file URL: #{url}" unless {nil, "", "localhost"}.includes?(uri.host)
       path = uri.path
       raise "no path in file URL: #{url}" if path.nil? || path.empty?
       URI.decode(path)
+    end
+
+    # urllib's FileHandler only serves a file:// URL whose host is EMPTY
+    # or resolves to one of this host's own addresses
+    # (FileHandler.open_local_file: "not port and
+    # _safe_gethostbyname(host) in self.get_names()"), and otherwise ends
+    # with URLError('file not on local host'). An explicit port on the
+    # host also disqualifies it.
+    private def local_file_host?(host : String?) : Bool
+      return true if host.nil? || host.empty?
+      return false if host.includes?(':')
+
+      Socket::Addrinfo.resolve(host, 80, Socket::Family::UNSPEC, Socket::Type::STREAM, Socket::Protocol::TCP) do |addrinfo|
+        return true if addrinfo.ip_address.loopback?
+      end
+      false
+    rescue
+      false
     end
 
     private def download_options : PluginHelpers::HTTPDownload::Options
