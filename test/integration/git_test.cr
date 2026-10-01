@@ -640,4 +640,238 @@ describe "git plugin param coverage" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     File.read(File.join(dest, "sub", "sub.txt")).strip.must_equal("two")
   end
+
+  # --- Failure-result shape parity with ansible.builtin.git -------------
+  #
+  # git.py reports each failure through a DIFFERENT shape, depending on
+  # whether the command ran under run_command(check_rc=True) (basic.py's
+  # own failure: the rstripped stderr as msg, plus cmd/rc/stdout/stderr)
+  # or through one of the module's own fail_json(msg=..., stdout=, stderr=,
+  # rc=, cmd=) sites. It never appends the command output to a
+  # "Failed to <action>: <output>" message. Every expectation below was
+  # read off ansible-playbook 2.19.11's own git.py and confirmed against
+  # a live 2.19.11 run.
+
+  it "fails a checkout of a nonexistent ref with git.py's own message and fields" do
+    repo = tmp_path("git-fixture-checkout-fail")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-checkout-fail-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest, "version" => "no-such-ref"})
+
+    result["failed"].as_bool.must_equal(true)
+    # switch_version()'s fail_json: the message is the module's own
+    # wording, and the pathspec error is NOT appended to it.
+    result["msg"].as_s.must_equal("Failed to checkout no-such-ref")
+    # ... with the command, its rc, and both streams as siblings.
+    result["cmd"].as_s.must_include("checkout --force no-such-ref")
+    result["rc"].as_i64.must_equal(1)
+    result["stderr"].as_s.must_include("did not match any file(s) known to git")
+    result["stdout"].as_s.must_equal("")
+  end
+
+  it "fails a clone of an existing non-empty directory with basic.py's check_rc shape" do
+    repo = tmp_path("git-fixture-clone-fail")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-clone-fail-dest")
+    `rm -rf #{dest}`
+    # git happily clones into an existing EMPTY directory, so the
+    # "already exists" failure needs something already in there.
+    FileUtils.mkdir_p(dest)
+    File.write(File.join(dest, "occupied"), "")
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    # clone()'s clone command is check_rc=True, so msg is the bare
+    # rstripped stderr - git.py has no "Failed to clone repository" text.
+    result["msg"].as_s.must_include("already exists")
+    result["msg"].as_s.wont_include("Failed to")
+    result["msg"].as_s.wont_include("\n")
+    result["cmd"].as_s.must_include("clone")
+    result["rc"].as_i64.wont_equal(0)
+    result["stderr"].as_s.must_include("already exists")
+  end
+
+  it "reports the clone command in cmd the way _clean_args renders it" do
+    repo = tmp_path("git-fixture-clone-cmd")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-clone-cmd-dest")
+    `rm -rf #{dest}`
+    FileUtils.mkdir_p(dest)
+    File.write(File.join(dest, "occupied"), "")
+
+    result = PluginSpecHelper.run("git", {"repo" => repo, "dest" => dest})
+
+    # basic.py shlex-quotes each argv token, leaving safe ones bare -
+    # krikri's own execution quoting must not leak into the reported cmd.
+    result["cmd"].as_s.must_include(" --origin origin ")
+    result["cmd"].as_s.wont_include("'origin'")
+  end
+
+  it "fails a post-clone refspec fetch with basic.py's check_rc shape" do
+    repo = tmp_path("git-fixture-refspec-fail")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-refspec-fail-dest")
+    `rm -rf #{dest}`
+
+    result = PluginSpecHelper.run("git", {
+      "repo"    => repo,
+      "dest"    => dest,
+      "refspec" => "no-such-ref",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    # clone()'s refspec fetch is also check_rc=True.
+    result["msg"].as_s.must_equal("fatal: couldn't find remote ref no-such-ref")
+    result["cmd"].as_s.must_include("fetch origin no-such-ref")
+    result["rc"].as_i64.wont_equal(0)
+  end
+
+  # --- git_version() preflight parity ----------------------------------
+  #
+  # git.py resolves the binary (executable: or get_bin_path('git', True))
+  # at the top of main(), then probes it with `<git> --version` before any
+  # repo work. A binary that cannot be exec'd therefore fails as
+  # "Error executing command." with rc = the errno - it never reaches the
+  # ls-remote/clone that would otherwise produce the confusing fallout.
+
+  it "fails an executable: that does not exist the way Popen does" do
+    repo = tmp_path("git-fixture-exec-missing")
+    build_fixture_repo(repo)
+    missing = tmp_path("git-no-such-binary")
+
+    result = PluginSpecHelper.run("git", {
+      "repo"       => repo,
+      "dest"       => tmp_path("git-exec-missing-dest"),
+      "executable" => missing,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    # ENOENT, and the failing command is the version probe, not an
+    # ls-remote against the nonexistent binary.
+    result["rc"].as_i64.must_equal(2)
+    result["cmd"].as_s.must_equal("#{missing} --version")
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["stderr"].as_s.must_equal("")
+    result["stdout"].as_s.must_equal("")
+  end
+
+  it "fails a non-executable executable: with EACCES" do
+    repo = tmp_path("git-fixture-exec-noexec")
+    build_fixture_repo(repo)
+    plain = tmp_path("git-not-executable")
+    File.write(plain, "")
+    File.chmod(plain, 0o644)
+
+    result = PluginSpecHelper.run("git", {
+      "repo"       => repo,
+      "dest"       => tmp_path("git-exec-noexec-dest"),
+      "executable" => plain,
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i64.must_equal(13)
+    result["cmd"].as_s.must_equal("#{plain} --version")
+  end
+
+  it "fails a bare executable: name that is not on PATH with ENOENT" do
+    repo = tmp_path("git-fixture-exec-bare")
+    build_fixture_repo(repo)
+
+    result = PluginSpecHelper.run("git", {
+      "repo"       => repo,
+      "dest"       => tmp_path("git-exec-bare-dest"),
+      "executable" => "git-not-a-real-binary-name",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["rc"].as_i64.must_equal(2)
+    result["cmd"].as_s.must_equal("git-not-a-real-binary-name --version")
+  end
+
+  it "checks the git binary before requiring dest" do
+    # get_bin_path runs at the top of main(), so a PATH with no git wins
+    # over the dest-required failure that follows it. An empty PATH also
+    # keeps the sbin dirs get_bin_path appends out of the picture.
+    repo = tmp_path("git-fixture-no-git")
+    build_fixture_repo(repo)
+
+    result = PluginSpecHelper.run("git", {"repo" => repo}, {} of String => String, "localhost",
+      env: {"PATH" => "/nonexistent-git-path"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Failed to find required executable")
+  end
+
+  it "requires dest before probing a missing executable:" do
+    # ...but the dest check itself runs BEFORE git_version()'s probe, so
+    # with no dest at all the dest message is the one reported.
+    repo = tmp_path("git-fixture-exec-vs-dest")
+    build_fixture_repo(repo)
+
+    result = PluginSpecHelper.run("git", {
+      "repo"       => repo,
+      "executable" => tmp_path("git-no-such-binary-2"),
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("the destination directory must be specified unless clone=no")
+  end
+
+  it "fails a non-git executable: only where clone() would" do
+    # git_version() returns None for a binary that runs but is not git;
+    # clone() turns that into a hard failure for single_branch: and
+    # separate_git_dir: only.
+    repo = tmp_path("git-fixture-not-git")
+    build_fixture_repo(repo)
+    not_git = tmp_path("git-true")
+    File.write(not_git, "#!/bin/sh\nexit 0\n")
+    File.chmod(not_git, 0o755)
+
+    single = PluginSpecHelper.run("git", {
+      "repo"          => repo,
+      "dest"          => tmp_path("git-not-git-sb-dest"),
+      "executable"    => not_git,
+      "single_branch" => "yes",
+    })
+    single["failed"].as_bool.must_equal(true)
+    single["msg"].as_s.must_equal("Cannot find git executable at #{not_git}")
+
+    separate = PluginSpecHelper.run("git", {
+      "repo"              => repo,
+      "dest"              => tmp_path("git-not-git-sgd-dest"),
+      "executable"        => not_git,
+      "separate_git_dir"  => tmp_path("git-not-git-sgd"),
+    })
+    separate["failed"].as_bool.must_equal(true)
+    separate["msg"].as_s.must_equal("Cannot find git executable at #{not_git}")
+  end
+
+  it "reports a failed remote-url rewrite the way set_remote_url does" do
+    # set_remote_url()'s fail_json concatenates out/err into the message
+    # and passes neither rc nor cmd.
+    repo = tmp_path("git-fixture-seturl-fail")
+    build_fixture_repo(repo)
+    dest = tmp_path("git-seturl-fail-dest")
+    `rm -rf #{dest}`
+    run!("git clone -q #{repo} #{dest}")
+    # Break the repo so `git remote set-url` fails while the module still
+    # takes the update path: a .git/config that is a DIRECTORY satisfies
+    # git.py's os.path.exists(gitconfig) gate but leaves git unable to
+    # read or write the config.
+    run!("rm -f #{dest}/.git/config && mkdir #{dest}/.git/config")
+
+    other = tmp_path("git-seturl-fail-other")
+    build_fixture_repo(other)
+    result = PluginSpecHelper.run("git", {"repo" => other, "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Failed to set a new url")
+    result.as_h.has_key?("rc").must_equal(false)
+    result.as_h.has_key?("cmd").must_equal(false)
+    result.as_h.has_key?("stdout").must_equal(false)
+    result.as_h.has_key?("stderr").must_equal(false)
+  end
 end
