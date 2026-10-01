@@ -83,7 +83,7 @@ tree_dir = nil.as(String?)
 
 begin
   OptionParser.parse(cli_args) do |parser|
-    parser.banner = "Usage: ansible <pattern> [options]"
+    parser.banner = "Usage: krikri <pattern> [options]"
 
     parser.on("-m MODULE", "--module-name=MODULE", "Module name to execute (default: command)") do |mat|
       module_name = mat
@@ -248,11 +248,11 @@ begin
       puts parser
       puts ""
       puts "Examples:"
-      puts "  ansible all -m ping"
-      puts "  ansible webservers -a 'uptime'"
-      puts "  ansible all -m command -a 'systemctl status nginx'"
-      puts "  ansible all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b"
-      puts "  ansible db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b"
+      puts "  krikri all -m ping"
+      puts "  krikri webservers -a 'uptime'"
+      puts "  krikri all -m command -a 'systemctl status nginx'"
+      puts "  krikri all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b"
+      puts "  krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b"
       exit
     end
 
@@ -269,7 +269,7 @@ begin
 rescue ex : OptionParser::InvalidOption
   puts "Error: #{ex.message}".colorize(:red)
   puts ""
-  puts "Run 'ansible --help' for usage information"
+  puts "Run 'krikri --help' for usage information"
   exit 1
 rescue ex : Exception
   puts "Error: #{ex.message}".colorize(:red)
@@ -278,8 +278,8 @@ end
 
 if pattern.empty?
   puts "Error: A host pattern is required"
-  puts "Usage: ansible <pattern> [options]"
-  puts "Try 'ansible --help' for more information"
+  puts "Usage: krikri <pattern> [options]"
+  puts "Try 'krikri --help' for more information"
   exit 1
 end
 
