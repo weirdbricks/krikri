@@ -34,6 +34,11 @@ and fixed and when.
 
 ## Open gaps
 
+- **Connection-refused message on `uri`/`get_url` requests** (kpg30 sweep): real says `Request failed: <urlopen error [Errno 111] Connection refused>`;
+  krikri says `Error connecting to '127.0.0.1:1': Resource temporarily unavailable` (EAGAIN, sometimes "Operation now in progress") - a
+  Crystal socket-error mapping issue. The same artifact fails the nsupdate refused-TCP spec (`[Errno 11]` vs `[Errno 111]`).
+- **`get_url` generic download-failure shape** (kpg30 sweep): krikri emits `failed to download <url>: ...` + `status_code: -1`; real emits
+  `msg=<fetch_url msg>` + `{url, dest, elapsed}` and reserves `status_code`/`response` for its non-200 branch.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
