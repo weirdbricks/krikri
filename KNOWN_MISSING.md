@@ -34,6 +34,10 @@ and fixed and when.
 
 ## Open gaps
 
+- **Crystal 1.21 deprecation warnings in the build/test output** (seen on 1.21.1): `Time.monotonic` -> `Time.instant` (e.g. `src/krikri/timing_profile.cr`,
+  `test/unit/ssh_manager_timeout_test.cr`, `test/unit/local_executor_test.cr`), `File.executable?` -> `File::Info.executable?` (`src/krikri/plugin_helpers/facts_gatherer.cr`),
+  `::sleep(Float)` -> `::sleep(Time::Span)` (`src/krikri/action_plugins/pause_action_plugin.cr`), `Process::Status#exit_signal` -> `#exit_signal?`
+  (`src/krikri/local_executor.cr`). Run a full build and grep `Deprecated` for the complete list; keep `crystal >= 1.20.0` compatibility in mind.
 - **Connection-refused message on `uri`/`get_url` requests** (kpg30 sweep): real says `Request failed: <urlopen error [Errno 111] Connection refused>`;
   krikri says `Error connecting to '127.0.0.1:1': Resource temporarily unavailable` (EAGAIN, sometimes "Operation now in progress") - a
   Crystal socket-error mapping issue. The same artifact fails the nsupdate refused-TCP spec (`[Errno 11]` vs `[Errno 111]`).
