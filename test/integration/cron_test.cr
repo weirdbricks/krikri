@@ -41,7 +41,7 @@ describe "cron plugin" do
     })
 
     resolved = "/etc/cron.d/krikri-playbook-spec-relative"
-    if File.writable?("/etc/cron.d")
+    if File::Info.writable?("/etc/cron.d")
       # failed is a JSON::Any - normalize via as_bool, and use be_falsey:
       # a JSON::Any(false) is not == false for the matcher, and a SUCCESS
       # result omits the failed key entirely (nil) - the path that runs

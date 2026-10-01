@@ -310,7 +310,7 @@ module Krikri
         unless File.file?(executable)
           return spawn_failure_result(2, "No such file or directory", executable, command_string)
         end
-        unless File.executable?(executable)
+        unless File::Info.executable?(executable)
           return spawn_failure_result(13, "Permission denied", executable, command_string)
         end
       end

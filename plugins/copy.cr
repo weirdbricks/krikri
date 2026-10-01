@@ -767,7 +767,7 @@ module Krikri
       # match_hidden: real Ansible walks the whole tree with os.walk,
       # dotfiles included - the default glob silently dropped `.env`,
       # `.gitignore`, `.ssh/` etc. from a directory copy.
-      Dir.glob(File.join(src, "**", "*"), match_hidden: true, follow_symlinks: false).sort.each do |entry|
+      Dir.glob(File.join(src, "**", "*"), match: File::MatchOptions.glob_default | File::MatchOptions::DotFiles, follow_symlinks: false).sort.each do |entry|
         relative = entry.sub(src.rstrip('/') + "/", "")
         dest_path = File.join(dest_root, relative)
 

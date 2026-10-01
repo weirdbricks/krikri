@@ -47,7 +47,7 @@ module Krikri
       connect_timeout = int_arg("connect_timeout", 5)
       return invalid_int_result("connect_timeout") unless connect_timeout
 
-      start_monotonic = Time.monotonic
+      start_monotonic = Time.instant
 
       if true?(@params["_ansible_check_mode"]?)
         return PluginResult.new(changed: false, failed: false,
@@ -58,7 +58,7 @@ module Krikri
       # One unconditional sleep before the loop, matching real Ansible.
       sleep delay.seconds if delay > 0
 
-      deadline = Time.monotonic + timeout.seconds
+      deadline = Time.instant + timeout.seconds
 
       loop do
         if probe_connection(connect_timeout)
@@ -66,9 +66,9 @@ module Krikri
             elapsed: elapsed_since(start_monotonic))
         end
 
-        return timeout_result(start_monotonic) if Time.monotonic >= deadline
+        return timeout_result(start_monotonic) if Time.instant >= deadline
 
-        remaining = (deadline - Time.monotonic).total_seconds
+        remaining = (deadline - Time.instant).total_seconds
         sleep [sleep_interval, remaining.to_i].min.clamp(0..).seconds
       end
     end
@@ -88,7 +88,7 @@ module Krikri
     # TimedOutException("timed out waiting for ping module test: ping
     # test failed") and turns that into the failed result's msg (plus
     # elapsed, whole seconds since task start).
-    private def timeout_result(start_monotonic : Time::Span) : PluginResult
+    private def timeout_result(start_monotonic : Time::Instant) : PluginResult
       PluginResult.new(
         changed: false,
         failed: true,
@@ -100,8 +100,8 @@ module Krikri
     # Whole seconds, matching real Ansible's own `elapsed.seconds`
     # timedelta read (not total_seconds - values wrap past hours there
     # too).
-    private def elapsed_since(start_monotonic : Time::Span) : Int32
-      (Time.monotonic - start_monotonic).seconds
+    private def elapsed_since(start_monotonic : Time::Instant) : Int32
+      (Time.instant - start_monotonic).seconds
     end
 
     # A trivial no-op command, same purpose as real Ansible's own

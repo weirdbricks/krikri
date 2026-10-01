@@ -245,7 +245,7 @@ describe "hostname plugin - use: parameter coverage" do
   describe "use: alpine" do
     it "is idempotent off /etc/hostname content alone (no commands)" do
       hostname_file = "/etc/hostname"
-      skip("real /etc/hostname not readable") unless File.readable?(hostname_file)
+      skip("real /etc/hostname not readable") unless File::Info.readable?(hostname_file)
       current = File.read(hostname_file).strip
       with_hostname_shims("", "") do |env, log|
         result = PluginSpecHelper.run("hostname", {
@@ -264,7 +264,7 @@ describe "hostname plugin - use: parameter coverage" do
       # command order plus that failure; skipped when running as root
       # (where the plugin - and real Ansible - would legitimately
       # rewrite the file).
-      skip("would touch the real /etc/hostname") if File.writable?("/etc/hostname")
+      skip("would touch the real /etc/hostname") if File::Info.writable?("/etc/hostname")
       with_hostname_cmd_shim do |env, log|
         result = PluginSpecHelper.run("hostname", {
           "name" => "krikri-spec-unreachable", "use" => "alpine", "_environment" => env,
@@ -315,7 +315,7 @@ describe "hostname plugin - use: parameter coverage" do
       # rendered here as Python's str(OSError), matching real Ansible's
       # "failed to update hostname: %s" % to_native(e) shape (Errno 2
       # variant container-verified side by side).
-      skip("would touch the real /etc/hostname") if File.writable?("/etc/hostname")
+      skip("would touch the real /etc/hostname") if File::Info.writable?("/etc/hostname")
       with_hostname_cmd_shim do |env, _log|
         result = PluginSpecHelper.run("hostname", {
           "name" => "krikri-spec-unreachable", "use" => "alpine", "_environment" => env,

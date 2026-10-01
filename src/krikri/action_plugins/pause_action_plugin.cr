@@ -138,7 +138,7 @@ module Krikri
       clamped = wait < 1 ? 1_i64 : wait
       console = ["Pausing for #{clamped} seconds#{echo_note}"]
       console << INTERRUPT_HINT if prompt_given?
-      sleep clamped.to_f
+      sleep clamped.seconds
       console.map { |line| JSON::Any.new(line) }
     end
 

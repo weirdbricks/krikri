@@ -85,9 +85,9 @@ describe Krikri::LocalExecutor do
     it "does not hang when a backgrounded command chains a never-exiting daemon after &&" do
       marker = File.tempname("local-executor-spec-daemon-marker")
 
-      started = Time.monotonic
+      started = Time.instant
       result = Krikri::LocalExecutor.exec("sleep 0.1 && (touch #{marker}; tail -f /dev/null) &")
-      elapsed = Time.monotonic - started
+      elapsed = Time.instant - started
 
       result[:exit_code].must_equal(0)
       expect((elapsed.total_seconds) < (3.0)).must_equal(true)

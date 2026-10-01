@@ -54,7 +54,7 @@ module Krikri
       end
 
       if path
-        unless File.readable?(path)
+        unless File::Info.readable?(path)
           return failure("Error while reading public key file from disk: [Errno 2] No such file or directory: '#{path}'")
         end
         key_data = File.read(path)

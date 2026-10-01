@@ -84,12 +84,12 @@ module Krikri
       changed = false
       does_not_exist = false
       if File.file?(dest)
-        unless File.writable?(dest)
+        unless File::Info.writable?(dest)
           return PluginResult.new(changed: false, failed: true, msg: "#{dest} is not writable. Use sudo")
         end
       else
         dest_dir = File.dirname(dest)
-        if File.directory?(dest_dir) && File.writable?(dest_dir)
+        if File.directory?(dest_dir) && File::Info.writable?(dest_dir)
           does_not_exist = true
           changed = true
         else

@@ -107,7 +107,7 @@ describe "tempfile plugin" do
 
     result = PluginSpecHelper.run("tempfile", {"path" => "./no_such_dir_here", "suffix" => ".txt"}, chdir: dir)
 
-    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.real_path(dir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}\.txt'$/)
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.realpath(dir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}\.txt'$/)
   end
 
   # Real's local connection plugin runs every module with cwd = the
@@ -122,7 +122,7 @@ describe "tempfile plugin" do
 
     result = PluginSpecHelper.run("tempfile", {"path" => "no_such_dir_here"}, {"playbook_dir" => basedir}, chdir: elsewhere)
 
-    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.real_path(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.realpath(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
   end
 
   it "normalizes . and .. in path: like real's unfrackpath" do
@@ -131,7 +131,7 @@ describe "tempfile plugin" do
 
     result = PluginSpecHelper.run("tempfile", {"path" => "./sub/../no_such_dir_here/"}, {"playbook_dir" => basedir})
 
-    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.real_path(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
+    result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.realpath(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
   end
 
   # Python's tempfile splits the two states here: mkstemp (state: file)

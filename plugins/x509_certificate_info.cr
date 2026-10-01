@@ -45,7 +45,7 @@ module Krikri
       end
 
       if path
-        return failure("Unable to read the file #{path}") unless File.readable?(path)
+        return failure("Unable to read the file #{path}") unless File::Info.readable?(path)
         raw = File.read(path)
       else
         raw = content || ""

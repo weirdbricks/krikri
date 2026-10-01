@@ -345,7 +345,7 @@ module Krikri
       # DescribeInstances entirely counts as terminated (EC2 removes it
       # from the response once the termination fully settles).
       def self.wait_for(region : String, credentials : Ec2Api::Credentials, instance_ids : Array(String), target_state : String, timeout : Int32) : Array(Instance)
-        deadline = Time.monotonic + Time::Span.new(seconds: timeout)
+        deadline = Time.instant + Time::Span.new(seconds: timeout)
         loop do
           found = describe_instances(region, credentials, lookup_params(nil, instance_ids, [] of Tuple(String, Array(String)), state_filter: false))
           reached = instance_ids.all? do |id|
@@ -358,10 +358,10 @@ module Krikri
           end
           return found if reached
 
-          if Time.monotonic >= deadline
+          if Time.instant >= deadline
             raise Ec2Api::Error.new("timed out waiting for instance(s) #{instance_ids.join(", ")} to reach state #{target_state}")
           end
-          sleep @@poll_interval
+          sleep @@poll_interval.seconds
         end
       end
 

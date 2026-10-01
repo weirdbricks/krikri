@@ -619,7 +619,7 @@ module Krikri
       path_override.try &.split(':').each do |dir|
         next if dir.empty?
         candidate = File.join(dir, name)
-        return candidate if File.executable?(candidate) && !File.directory?(candidate)
+        return candidate if File::Info.executable?(candidate) && !File.directory?(candidate)
       end
       nil
     end

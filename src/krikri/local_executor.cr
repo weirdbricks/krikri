@@ -165,7 +165,15 @@ module Krikri
     # process; map that to the conventional 128+signal value instead of
     # crashing the shell/command module's result handling.
     private def self.signal_safe_exit_code(status : Process::Status) : Int32
-      status.normal_exit? ? status.exit_code : 128 + status.exit_signal.to_i
+      if status.normal_exit?
+        status.exit_code
+      elsif signal = status.exit_signal?
+        128 + signal.to_i
+      else
+        # Unreachable on Unix (a signal-less status is a Normal exit
+        # reason); Windows-only fallback, see SSHManager's twin.
+        128
+      end
     end
 
     # Copies *pipe* into *buffer* on a separate fiber, signaling completion

@@ -363,7 +363,7 @@ module Krikri
       # DIRECTORY, not the file: a writable dir with an
       # existing-file-dest proceeds normally.
       unless true?(@params["unsafe_writes"]?)
-        unless File.writable?(dest_dir)
+        unless File::Info.writable?(dest_dir)
           return PluginResult.new(
             changed: false,
             failed: true,

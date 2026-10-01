@@ -9,7 +9,7 @@ module Krikri
   #
   # Off by default and, when off, `#measure` degrades to a bare `yield`
   # (it is a yielding method, so the compiler inlines the block) - no
-  # Time.monotonic call, no Hash lookup, nothing. That matters because
+  # Time.instant call, no Hash lookup, nothing. That matters because
   # the finest-grained bucket here wraps `VarSubstitutor#substitute`,
   # which a real role calls tens of thousands of times.
   #
@@ -40,7 +40,7 @@ module Krikri
   # a strictly additive profile.
   module TimingProfile
     @@enabled = false
-    @@run_start = Time.monotonic
+    @@run_start = Time.instant
     @@counts = Hash(String, Int64).new(0_i64)
     @@nanos = Hash(String, Int64).new(0_i64)
     @@depth = Hash({UInt64, String}, Int32).new(0)
@@ -68,11 +68,11 @@ module Krikri
       @@counts.clear
       @@nanos.clear
       @@depth.clear
-      @@run_start = Time.monotonic
+      @@run_start = Time.instant
     end
 
     def self.wall : Time::Span
-      Time.monotonic - @@run_start
+      Time.instant - @@run_start
     end
 
     def self.count(bucket : String) : Int64
@@ -100,13 +100,13 @@ module Krikri
       end
 
       @@depth[key] = 1
-      started = Time.monotonic
+      started = Time.instant
       begin
         yield
       ensure
         @@depth.delete(key)
         @@counts[bucket] += 1
-        @@nanos[bucket] += (Time.monotonic - started).total_nanoseconds.to_i64
+        @@nanos[bucket] += (Time.instant - started).total_nanoseconds.to_i64
       end
     end
 

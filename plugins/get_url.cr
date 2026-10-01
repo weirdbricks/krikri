@@ -348,16 +348,16 @@ module Krikri
     # nil when dest is usable.
     private def destination_failure_result(tmp_path : String, dest : String, url : String) : PluginResult?
       msg = if File.exists?(dest)
-              if !File.writable?(dest)
+              if !File::Info.writable?(dest)
                 "Destination #{dest} is not writable"
-              elsif !File.readable?(dest)
+              elsif !File::Info.readable?(dest)
                 "Destination #{dest} is not readable"
               end
             else
               dest_dir = File.dirname(dest)
               if !Dir.exists?(dest_dir)
                 "Destination #{dest_dir} does not exist"
-              elsif !File.writable?(dest_dir)
+              elsif !File::Info.writable?(dest_dir)
                 "Destination #{dest_dir} is not writable"
               end
             end
@@ -463,7 +463,7 @@ module Krikri
       end
 
       dest_dir = File.dirname(dest)
-      base = File.writable?(dest_dir) ? dest_dir : Dir.tempdir
+      base = File::Info.writable?(dest_dir) ? dest_dir : Dir.tempdir
       File.join(base, ".get_url_#{Process.pid}_#{Random::Secure.hex(8)}.tmp")
     end
 

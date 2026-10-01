@@ -2,9 +2,9 @@ require "../minitest_helper"
 
 describe "pause plugin" do
   it "sleeps for the given seconds" do
-    started = Time.monotonic
+    started = Time.instant
     result = PluginSpecHelper.run("pause", {"seconds" => "1"})
-    elapsed = Time.monotonic - started
+    elapsed = Time.instant - started
 
     result["changed"].as_bool.must_equal(false)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -26,9 +26,9 @@ describe "pause plugin" do
   end
 
   it "continues immediately when neither seconds nor minutes is given" do
-    started = Time.monotonic
+    started = Time.instant
     result = PluginSpecHelper.run("pause", {} of String => String)
-    elapsed = Time.monotonic - started
+    elapsed = Time.instant - started
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     (elapsed.total_seconds < 1.0).must_equal(true)

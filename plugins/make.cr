@@ -135,7 +135,7 @@ module Krikri
       paths = ENV["PATH"]?.try(&.split(':')) || ["/usr/bin", "/bin"]
       paths.each do |dir|
         candidate = "#{dir}/#{name}"
-        return candidate if File.executable?(candidate) && !File.directory?(candidate)
+        return candidate if File::Info.executable?(candidate) && !File.directory?(candidate)
       end
       nil
     end

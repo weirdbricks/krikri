@@ -58,7 +58,7 @@ describe "Krikri::FactsGatherer (facts_mount_network_scoping_test.cr)" do
       # emits no network facts at all; krikri must match that there.
       ip_present = ((ENV["PATH"]?.try(&.split(':')) || [] of String) +
                     ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]).any? do |dir|
-        !dir.empty? && File.executable?(File.join(dir, "ip"))
+        !dir.empty? && File::Info.executable?(File.join(dir, "ip"))
       end
 
       facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h

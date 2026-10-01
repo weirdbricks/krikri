@@ -262,7 +262,7 @@ module Krikri::DifferentialFuzz
       io << " | " << name
       unless args.empty?
         io << '('
-        args.join(", ", io, &.render(io))
+        args.join(io, ", ", &.render(io))
         io << ')'
       end
     end
@@ -456,7 +456,7 @@ module Krikri::DifferentialFuzz
 
     def render(io : IO) : Nil
       io << '['
-      items.join(", ", io, &.render(io))
+      items.join(io, ", ", &.render(io))
       io << ']'
     end
   end
@@ -487,7 +487,7 @@ module Krikri::DifferentialFuzz
 
     def render(io : IO) : Nil
       io << '{'
-      keys.zip(values).join(", ", io) do |(key, value), inner|
+      keys.zip(values).join(io, ", ") do |(key, value), inner|
         inner << "'" << key << "': "
         value.render(inner)
       end

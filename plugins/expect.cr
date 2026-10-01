@@ -180,13 +180,14 @@ module Krikri
       child_pid = pid
       LibC.close(aslave)
 
-      master_io = IO::FileDescriptor.new(amaster, blocking: true)
-      timed_out, exhausted, output = read_until_deadline(amaster, responses, Time.monotonic + timeout.seconds)
+      master_io = IO::FileDescriptor.new(amaster)
+      IO::FileDescriptor.set_blocking(amaster, true)
+      timed_out, exhausted, output = read_until_deadline(amaster, responses, Time.instant + timeout.seconds)
 
       LibC.kill(child_pid, Signal::TERM.value) rescue nil
       raw_status = uninitialized LibC::Int
       LibC.waitpid(child_pid, pointerof(raw_status), 0)
-      status = Process::Status.new(raw_status)
+      status = build_status(raw_status)
       master_io.close rescue nil
 
       # Real rstrip('\r\n')s the accumulated pty output.
@@ -214,7 +215,8 @@ module Krikri
     # canonical-mode local echo unless the task explicitly asked for it
     # (echo: true), matching pexpect's own `setecho()` behavior.
     private def setup_slave_echo(aslave : LibC::Int, echo : Bool) : Nil
-      slave_io = IO::FileDescriptor.new(aslave, blocking: true)
+      slave_io = IO::FileDescriptor.new(aslave)
+      IO::FileDescriptor.set_blocking(aslave, true)
       echo ? slave_io.echo! : slave_io.noecho!
     end
 
@@ -248,16 +250,29 @@ module Krikri
       LibC._exit(127) # only reached if execvp itself failed
     end
 
+    # `Process::Status.new(Int)` is deprecated since 1.21 in favour of the
+    # portable `Process::Status.[]` - but `[]` takes an exit CODE (or a
+    # Signal), and what waitpid(2) hands back is the raw status word, so
+    # the keyword ctor naming that word is the right replacement. It only
+    # exists from 1.21 on, hence the version guard.
+    private def build_status(raw_status : Int32) : Process::Status
+      {% if compare_versions(Crystal::VERSION, "1.21.0") >= 0 %}
+        Process::Status.new(system_exit_status: raw_status)
+      {% else %}
+        Process::Status.new(raw_status)
+      {% end %}
+    end
+
     # pexpect.spawn's own PATH resolution (pexpect.which semantics: no
     # directories, X_OK access, PATH order).
     private def which(name : String) : String?
       return nil if name.empty?
-      return name if name.includes?('/') && File.executable?(name) && !File.directory?(name)
+      return name if name.includes?('/') && File::Info.executable?(name) && !File.directory?(name)
 
       paths = ENV["PATH"]?.try(&.split(':')) || ["/usr/bin", "/bin"]
       paths.each do |dir|
         candidate = "#{dir}/#{name}"
-        return candidate if File.executable?(candidate) && !File.directory?(candidate)
+        return candidate if File::Info.executable?(candidate) && !File.directory?(candidate)
       end
       nil
     end
@@ -338,7 +353,7 @@ module Krikri
     # LIST response (the same prompt matching again with no answers left)
     # aborts the loop immediately - real's response_closure fail_json's
     # mid-session the same way.
-    private def read_until_deadline(amaster : LibC::Int, responses : Array(Response), deadline : Time::Span) : {Bool, {String, String}?, String}
+    private def read_until_deadline(amaster : LibC::Int, responses : Array(Response), deadline : Time::Instant) : {Bool, {String, String}?, String}
       buffer = IO::Memory.new
       # Per-pattern (next unsent answer index, search offset) - the
       # search offset advances past each match so a still-visible earlier
@@ -354,7 +369,7 @@ module Krikri
       exhausted = nil.as({String, String}?)
 
       loop do
-        remaining_ms = (deadline - Time.monotonic).total_milliseconds.to_i
+        remaining_ms = (deadline - Time.instant).total_milliseconds.to_i
         if remaining_ms <= 0
           timed_out = true
           break

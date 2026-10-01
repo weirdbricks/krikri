@@ -57,7 +57,7 @@ module Krikri
 
       delay = (@params["delay"]? || "0").to_i
       timeout = (@params["timeout"]? || "300").to_i
-      started = Time.monotonic
+      started = Time.instant
       sleep(delay.seconds) if delay > 0
 
       if result = try_drained(port, state, timeout, started)
@@ -84,7 +84,7 @@ module Krikri
     # `not_nil!`) keeps the compiler's own narrowing doing the work
     # instead. Split out of #execute to keep its own branch count down
     # (ameba's cyclomatic-complexity budget).
-    private def try_drained(port : Int32?, state : String, timeout : Int32, started : Time::Span) : PluginResult?
+    private def try_drained(port : Int32?, state : String, timeout : Int32, started : Time::Instant) : PluginResult?
       return nil unless state == "drained"
       return nil unless (drained_port = port) && (host_hex = PluginHelpers::ProcNetTcp.ipv4_to_hex(@params["host"]? || "127.0.0.1"))
 
@@ -138,27 +138,27 @@ module Krikri
     # Polls /proc/net/tcp until no active connection matches host:/port:
     # (see PluginHelpers::ProcNetTcp's own class doc for the exact
     # matching rules and IPv4-only scope).
-    private def poll_drained(port : Int32, host_hex : String, timeout : Int32, started : Time::Span) : PluginResult
+    private def poll_drained(port : Int32, host_hex : String, timeout : Int32, started : Time::Instant) : PluginResult
       host = @params["host"]? || "127.0.0.1"
       port_hex = PluginHelpers::ProcNetTcp.port_to_hex(port)
       active_states = @params["active_connection_states"]?.try { |raw| raw.split(',').map(&.strip) } || PluginHelpers::ProcNetTcp::DEFAULT_ACTIVE_STATES
       exclude_hexes = @params["exclude_hosts"]?.try { |raw| raw.split(',').map(&.strip).compact_map { |excluded| PluginHelpers::ProcNetTcp.ipv4_to_hex(excluded) } } || [] of String
       sleep_interval = (@params["sleep"]? || "1").to_i.seconds
-      deadline = Time.monotonic + timeout.seconds
+      deadline = Time.instant + timeout.seconds
 
       loop do
         connections = PluginHelpers::ProcNetTcp.parse(read_proc_net_tcp)
         active = PluginHelpers::ProcNetTcp.count_active(connections, host_hex, port_hex, active_states, exclude_hexes)
         return success_result(nil, nil, started) if active == 0
 
-        break if Time.monotonic >= deadline
+        break if Time.instant >= deadline
         sleep(sleep_interval)
       end
 
       PluginResult.new(
         changed: false, failed: true,
         msg: @params["msg"]? || "Timeout when waiting for #{host}:#{port} to drain",
-        elapsed: (Time.monotonic - started).total_seconds.to_i
+        elapsed: (Time.instant - started).total_seconds.to_i
       )
     end
 
@@ -166,28 +166,28 @@ module Krikri
       File.exists?("/proc/net/tcp") ? File.read("/proc/net/tcp") : ""
     end
 
-    private def poll_until_satisfied(port : Int32?, path : String?, timeout : Int32, started : Time::Span) : PluginResult
+    private def poll_until_satisfied(port : Int32?, path : String?, timeout : Int32, started : Time::Instant) : PluginResult
       up = (@params["state"]? || "started").in?("started", "present")
       sleep_interval = (@params["sleep"]? || "1").to_i.seconds
-      deadline = Time.monotonic + timeout.seconds
+      deadline = Time.instant + timeout.seconds
 
       loop do
         satisfied, match = check_condition(port, path, up, deadline)
         return success_result(path, match, started) if satisfied
 
-        break if Time.monotonic >= deadline
+        break if Time.instant >= deadline
         sleep(sleep_interval)
       end
 
       PluginResult.new(
         changed: false, failed: true,
         msg: @params["msg"]? || timeout_message(port, path),
-        elapsed: (Time.monotonic - started).total_seconds.to_i
+        elapsed: (Time.instant - started).total_seconds.to_i
       )
     end
 
-    private def success_result(path : String?, match : Regex::MatchData?, started : Time::Span) : PluginResult
-      result = PluginResult.new(changed: false, failed: false, msg: "", path: path, elapsed: (Time.monotonic - started).total_seconds.to_i)
+    private def success_result(path : String?, match : Regex::MatchData?, started : Time::Instant) : PluginResult
+      result = PluginResult.new(changed: false, failed: false, msg: "", path: path, elapsed: (Time.instant - started).total_seconds.to_i)
       groups = match.try(&.to_a[1..].compact.map { |group| JSON::Any.new(group) }) || [] of JSON::Any
       result.extra["match_groups"] = JSON::Any.new(groups)
       result.extra["match_groupdict"] = JSON::Any.new(Hash(String, JSON::Any).new)
@@ -226,7 +226,7 @@ module Krikri
     # search_regex hit (used to populate match_groups/mch_groupdict).
     # Only called with a port or a path - the no-condition "just sleep"
     # case is handled directly in execute before this is ever reached.
-    private def check_condition(port : Int32?, path : String?, up : Bool, deadline : Time::Span) : {Bool, Regex::MatchData?}
+    private def check_condition(port : Int32?, path : String?, up : Bool, deadline : Time::Instant) : {Bool, Regex::MatchData?}
       if port
         if up && (regex = @params["search_regex"]?)
           check_port_regex(port, regex, deadline)
@@ -252,7 +252,7 @@ module Krikri
     # outer poll loop (already implemented) reconnects and retries after
     # its own sleep: interval, same as real Ansible's outer while loop
     # does on any not-yet-satisfied iteration.
-    private def check_port_regex(port : Int32, regex : String, deadline : Time::Span) : {Bool, Regex::MatchData?}
+    private def check_port_regex(port : Int32, regex : String, deadline : Time::Instant) : {Bool, Regex::MatchData?}
       host = @params["host"]? || "127.0.0.1"
       connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
       # Real Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
@@ -264,7 +264,7 @@ module Krikri
 
       socket = TCPSocket.new(host, port, connect_timeout: connect_timeout)
       begin
-        remaining = deadline - Time.monotonic
+        remaining = deadline - Time.instant
         socket.read_timeout = remaining > Time::Span.zero ? remaining : 1.milliseconds
 
         data = IO::Memory.new
@@ -278,7 +278,7 @@ module Krikri
             break {true, match}
           end
 
-          break {false, nil} if Time.monotonic >= deadline
+          break {false, nil} if Time.instant >= deadline
         end
       ensure
         socket.close rescue nil

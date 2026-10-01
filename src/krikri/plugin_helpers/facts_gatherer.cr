@@ -133,7 +133,7 @@ module Krikri
       paths.each do |dir|
         next if dir.empty?
         candidate = File.join(dir, name)
-        return candidate if File.executable?(candidate)
+        return candidate if File::Info.executable?(candidate)
       end
       nil
     end

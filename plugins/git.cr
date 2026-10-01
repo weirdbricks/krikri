@@ -218,7 +218,7 @@ module Krikri
     end
 
     private def git_on_path? : Bool
-      search_paths.any? { |dir| File.executable?(File.join(dir, "git")) && !File.directory?(File.join(dir, "git")) }
+      search_paths.any? { |dir| File::Info.executable?(File.join(dir, "git")) && !File.directory?(File.join(dir, "git")) }
     end
 
     # The errno Popen would raise for *path*, or nil when it is
@@ -226,8 +226,8 @@ module Krikri
     # searched on PATH; a directory or a non-executable file is EACCES.
     private def exec_errno(path : String) : Int32?
       candidates = path.includes?("/") ? [path] : search_paths.map { |dir| File.join(dir, path) }
-      return 2 if candidates.none? { |c| File.exists?(c) }
-      return 13 if candidates.all? { |c| File.directory?(c) || !File.executable?(c) }
+      return 2 if candidates.none? { |candidate| File.exists?(candidate) }
+      return 13 if candidates.all? { |candidate| File.directory?(candidate) || !File::Info.executable?(candidate) }
       nil
     end
 

@@ -52,12 +52,12 @@ module Krikri
     # way real Ansible's apt module does.
     def apt_with_lock_retry(cmd : String, lock_timeout : Int32,
                             exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
-      start = Time.monotonic
+      start = Time.instant
       loop do
         result = exec_remote.call(cmd)
         return result if result[:exit_code] == 0 || !apt_lock_held?(result[:stderr])
 
-        elapsed = (Time.monotonic - start).total_seconds.to_i
+        elapsed = (Time.instant - start).total_seconds.to_i
         if elapsed >= lock_timeout
           return result
         end

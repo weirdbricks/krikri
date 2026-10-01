@@ -181,7 +181,7 @@ module Krikri
       # points raise. Anything readable is passed through to the real
       # request (see this module's comment on content-level errors).
       private def self.file_error(path : String) : String?
-        return nil if File.file?(path) && File.readable?(path)
+        return nil if File.file?(path) && File::Info.readable?(path)
         return "[Errno 21] Is a directory" if File.directory?(path)
         return "[Errno 13] Permission denied" if File.exists?(path)
         "[Errno 2] No such file or directory"

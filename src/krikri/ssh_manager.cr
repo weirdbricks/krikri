@@ -192,7 +192,17 @@ module Krikri
     # reporting a status. Map a signal death to the conventional
     # 128+signal value; anything else passes through unchanged.
     private def self.signal_safe_exit_code(status : Process::Status) : Int32
-      status.normal_exit? ? status.exit_code : 128 + status.exit_signal.to_i
+      if status.normal_exit?
+        status.exit_code
+      elsif signal = status.exit_signal?
+        128 + signal.to_i
+      else
+        # Unreachable on Unix: a status with no signal is a Normal exit
+        # reason, so the branch above already took it. Only Windows can
+        # land here (it never reports a signal) - fall back to the
+        # conventional "died abnormally" code rather than raising.
+        128
+      end
     end
 
     # stderr shapes only ssh(1) itself (or this class's own rescue/
@@ -804,9 +814,9 @@ module Krikri
       # a facts-only play a daemon to shut down. Doubling to a 20ms
       # ceiling keeps a long-tail straggler cheap to wait on, and the 1s
       # hard deadline is unchanged.
-      deadline = Time.monotonic + 1.second
+      deadline = Time.instant + 1.second
       interval = 1.millisecond
-      while Time.monotonic < deadline
+      while Time.instant < deadline
         break if processes.all?(&.terminated?)
         sleep interval
         interval = {interval * 2, 20.milliseconds}.min

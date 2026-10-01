@@ -99,7 +99,7 @@ module Krikri
     private def executable_in_path?(binary : String) : Bool
       ENV.fetch("PATH", "").split(':').any? do |dir|
         exe = File.join(dir, binary)
-        File.exists?(exe) && File.executable?(exe)
+        File.exists?(exe) && File::Info.executable?(exe)
       end
     end
 

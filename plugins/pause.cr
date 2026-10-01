@@ -53,7 +53,7 @@ module Krikri
 
       start = Time.local
       if w = wait
-        sleep(w < 1 ? 1.0 : w)
+        sleep((w < 1 ? 1.0 : w).seconds)
       end
       stop = Time.local
 

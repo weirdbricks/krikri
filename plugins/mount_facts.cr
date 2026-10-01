@@ -364,7 +364,7 @@ module Krikri
       begin
         Dir.children("/dev/disk/by-uuid").each do |uuid|
           begin
-            return uuid if File.real_path(File.join("/dev/disk/by-uuid", uuid)) == real_device
+            return uuid if File.realpath(File.join("/dev/disk/by-uuid", uuid)) == real_device
           rescue
             next
           end
@@ -410,7 +410,7 @@ module Krikri
     end
 
     private def real_path(path : String) : String
-      File.real_path(path)
+      File.realpath(path)
     rescue
       path
     end

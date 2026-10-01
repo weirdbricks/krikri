@@ -35,14 +35,14 @@ describe "Krikri::SSHManager (ssh_manager_timeout_test.cr)" do
 
     it "SIGKILLs the process and returns its real exit status when the timeout fires" do
       process = Process.new("sleep", ["30"])
-      start = Time.monotonic
+      start = Time.instant
 
       result = Krikri::SSHManager.run_with_timeout(process, 1) do |proc|
         status = proc.wait
         {exit_code: status.exit_code, stdout: "", stderr: ""}
       end
 
-      elapsed = Time.monotonic - start
+      elapsed = Time.instant - start
       # Bounded by timeout + the 5s grace - the old unenforced-timeout
       # bug would have taken the full 30s (or hung forever).
       expect((elapsed) < (10.seconds)).must_equal(true)

@@ -79,7 +79,7 @@ describe "Krikri::FactsGatherer (facts_selinux_ipv6_test.cr)" do
       # facts at all (see facts_mount_network_scoping_spec.cr for FS5).
       ip_present = ((ENV["PATH"]?.try(&.split(':')) || [] of String) +
                     ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]).any? do |dir|
-        !dir.empty? && File.executable?(File.join(dir, "ip"))
+        !dir.empty? && File::Info.executable?(File.join(dir, "ip"))
       end
 
       skip("conditional skip") unless ip_present

@@ -168,7 +168,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true)
       end
 
-      start = Time.monotonic
+      start = Time.instant
       # Real uri.py: when dest is already a regular FILE (checked on the
       # ORIGINAL dest, before any directory-filename resolution), the
       # file's mtime goes to fetch_url as last_mod_time and comes out as
@@ -230,7 +230,7 @@ module Krikri
         return failed_request_result(
           "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url)
       end
-      elapsed = (Time.monotonic - start).total_seconds.to_i
+      elapsed = (Time.instant - start).total_seconds.to_i
 
       failed = !status_codes.includes?(status)
       # Real failure msgs carry urllib's own HTTPError string as a suffix

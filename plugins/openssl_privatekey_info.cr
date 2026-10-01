@@ -55,7 +55,7 @@ module Krikri
       end
 
       if path
-        unless File.readable?(path)
+        unless File::Info.readable?(path)
           res = failure("Error while reading private key file from disk: [Errno 2] No such file or directory: '#{path}'")
           res.extra["can_load_key"] = JSON::Any.new(false)
           res.extra["can_parse_key"] = JSON::Any.new(false)
