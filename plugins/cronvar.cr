@@ -31,11 +31,6 @@ module Krikri
   # computing the would-be result without writing - consistent with
   # every other check_mode-aware plugin here, and strictly safer than
   # real cronvar's "run it for real or skip" behavior.
-  #
-  # Deliberately NOT supported: the real module always writes via the
-  # `crontab` binary even for cron_file: targets whose parent directory
-  # must already exist (community.general's added parent-dir check);
-  # here a missing parent directory is created, matching cron.cr.
   class CronVarPlugin < BasePlugin
     # argument_spec's `state` choices, in the real module's order (the
     # wording "value of state must be one of: absent, present, got: X"
@@ -65,14 +60,36 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: #{STATE_CHOICES.join(", ")}, got: #{state}")
       end
 
+      # Real CronVar.__init__ resolves cron_file (absolute as-is, relative
+      # against /etc/cron.d) and fails when its parent directory is not
+      # one - a check that runs inside the constructor, i.e. BEFORE
+      # main()'s own "You must specify 'value'" check and before anything
+      # is written. This plugin used to CREATE the missing parent
+      # directory instead (cron.cr's behavior), which silently diverged
+      # on every cron_file under a nonexistent directory.
+      cron_file = @params["cron_file"]?
+      if failure = missing_parent_failure(cron_file)
+        return failure
+      end
+
       if state == "present" && !value
         return PluginResult.new(changed: false, failed: true, msg: "You must specify 'value' to insert a new cron variable")
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
-
-      cron_file = @params["cron_file"]?
       cron_file ? execute_file(cron_file, name, value, state, insertbefore, insertafter, check_mode) : execute_user_crontab(name, value, state, insertbefore, insertafter, check_mode)
+    end
+
+    # Real CronVar.__init__'s parent-directory guard, or nil when the
+    # cron_file's parent is a directory (or there is no cron_file at all).
+    private def missing_parent_failure(cron_file : String?) : PluginResult?
+      return nil unless cron_file
+      resolved = cron_file.starts_with?("/") ? cron_file : File.join("/etc/cron.d", cron_file)
+      parent = File.dirname(resolved)
+      return nil if parent.empty? || File.directory?(parent)
+
+      PluginResult.new(changed: false, failed: true,
+        msg: "Parent directory '#{parent}' does not exist for cron_file: '#{cron_file}'")
     end
 
     private def execute_file(raw_cron_file : String, name : String, value : String?, state : String, insert_before : String?, insert_after : String?, check_mode : Bool) : PluginResult
@@ -86,9 +103,9 @@ module Krikri
       backup_file = ""
       if changed && !check_mode
         backup_file = write_backup(path) if should_backup?(path)
-        dir = File.dirname(path)
-        Dir.mkdir_p(dir) unless Dir.exists?(dir)
-        File.write(path, new_content)
+        if failure = write_file_failure(path, new_content)
+          return failure
+        end
       end
 
       result = PluginResult.new(
@@ -160,6 +177,29 @@ module Krikri
 
     private def should_backup?(path : String) : Bool
       true?(@params["backup"]?) && File.exists?(path)
+    end
+
+    # Real CronVar.write() opens the cron file with a bare
+    # `open(self.cron_file, "w")` - no try/except - so a file it may not
+    # write (a cron.d target the module does not own) ends the module with
+    # an UNCAUGHT OSError, which the controller reports under the generic
+    # "Task failed: Module failed: " brief with the errno text.
+    private def write_file_failure(path : String, content : String) : PluginResult?
+      File.write(path, content)
+      nil
+    rescue ex : File::Error
+      message = ex.message || ""
+      errno_text = if ex.is_a?(File::AccessDeniedError)
+                     "[Errno 13] Permission denied: '#{path}'"
+                   elsif message.includes?("Not a directory")
+                     "[Errno 20] Not a directory: '#{path}'"
+                   elsif message.includes?("Is a directory")
+                     "[Errno 21] Is a directory: '#{path}'"
+                   else
+                     "[Errno 2] No such file or directory: '#{path}'"
+                   end
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{errno_text}", _ansible_error_detail: errno_text)
     end
 
     private def write_backup(path : String) : String

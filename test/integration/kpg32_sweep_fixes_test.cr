@@ -229,7 +229,12 @@ end
 private def python_without_libs(name : String) : String
   dir = PluginSpecHelper.tmp_path("kpg32-pylibs-#{name}")
   Dir.mkdir_p(dir)
-  shim = File.join(dir, "python3")
+  # Named for the FIRST entry of real's INTERPRETER_PYTHON_FALLBACK:
+  # discovery runs `command -v` over that list and this directory is the
+  # whole PATH for the duration, so this is the interpreter real would
+  # hand the module - and the one missing_required_lib's sys.executable
+  # then names.
+  shim = File.join(dir, "python3.13")
   # Reports its own executable the way real's missing_required_lib names
   # it, then fails any import with Python's own ImportError tail.
   # Pure shell (parameter expansion only): this directory is the whole

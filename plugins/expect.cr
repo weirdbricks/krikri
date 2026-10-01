@@ -92,19 +92,48 @@ module Krikri
         return failure
       end
 
+      # Real expect.py's own check_type_int(timeout), right after the
+      # pexpect gate and BEFORE the empty-command check: `timeout` is
+      # declared `type: raw`, so a non-numeric one gets no argspec error,
+      # it fails here in the module body instead.
+      converted = convert_timeout
+      if (timeout_failure = converted[1])
+        return timeout_failure
+      end
+      timeout = converted[0]
+
       # Real expect.py strips and rejects an empty command with rc=256
       # BEFORE chdir/creates/removes are considered.
       if command.strip.empty?
         return PluginResult.new(changed: false, failed: true, msg: "no command given", rc: 256)
       end
 
-      timeout = @params["timeout"]?.try(&.to_i?) || 30
       chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
       echo = @params["echo"]?.try { |v| ["true", "yes", "1"].includes?(v.downcase) } || false
 
-      # Real expect.py os.chdir's the module process before the
-      # creates/removes checks, so relative guards resolve against chdir.
-      # (Unlike command.py, these are plain os.path.exists - NO glob.)
+      # Real expect.py does `chdir = os.path.abspath(chdir); os.chdir(chdir)`
+      # with no try/except, so an unusable chdir is an UNCAUGHT OSError:
+      # the task fails with the errno text under the generic
+      # "Task failed: Module failed: " brief, before the creates/removes
+      # guards are even looked at. Reproduced here rather than left to
+      # the child's own chdir(2), which would surface the same errno as
+      # a pexpect "command was not found" instead.
+      if chdir && (chdir_failure_result = chdir_failure(chdir))
+        return chdir_failure_result
+      end
+
+      if failure = guard_skip(chdir)
+        return failure
+      end
+
+      run_expect(command, @responses, timeout, chdir, echo)
+    end
+
+    # Real expect.py's creates:/removes: skips, evaluated AFTER it
+    # os.chdir's the module process, so relative guards resolve against
+    # chdir (and, unlike command.py's, are plain os.path.exists - NO
+    # glob). The skip result when one of them applies, nil otherwise.
+    private def guard_skip(chdir : String?) : PluginResult?
       guard_base = chdir.try { |dir| File.expand_path(dir) }
 
       if creates = @params["creates"]?
@@ -119,7 +148,7 @@ module Krikri
         end
       end
 
-      run_expect(command, @responses, timeout, chdir, echo)
+      nil
     end
 
     # Everything real expect.py's main() does before its first line of
@@ -154,6 +183,37 @@ module Krikri
 
       @responses = responses
       nil
+    end
+
+    # expect.py's check_type_int(timeout): the int itself, or the failure
+    # result real's `module.fail_json(msg=f"argument 'timeout' is of type
+    # {type(timeout)} and we were unable to convert to int: {te}")`
+    # produces. `timeout` is `type: raw`, so real's argspec never looks
+    # at it - the module body is the only thing that rejects one.
+    private def convert_timeout : {Int32, PluginResult?}
+      raw_timeout = @params["timeout"]?
+      return {30, nil} unless raw_timeout
+      return {raw_timeout.to_i, nil} if raw_timeout.to_i?
+
+      {0, PluginResult.new(changed: false, failed: true,
+        msg: "argument 'timeout' is of type <class 'str'> and we were unable to convert to int: " \
+             "\"'#{raw_timeout}'\" cannot be converted to an int")}
+    end
+
+    # os.chdir's errno text (real lets the OSError escape uncaught):
+    # ENOENT for a path that is not there, ENOTDIR for one that is not a
+    # directory, EACCES for one it may not enter.
+    private def chdir_failure(chdir : String) : PluginResult?
+      path = File.expand_path(chdir)
+      errno_text = if File.directory?(path)
+                     return nil
+                   elsif File.exists?(path)
+                     "[Errno 20] Not a directory: '#{path}'"
+                   else
+                     "[Errno 2] No such file or directory: '#{path}'"
+                   end
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{errno_text}", _ansible_error_detail: errno_text)
     end
 
     private def parse_responses(json : String) : Array(Response)?

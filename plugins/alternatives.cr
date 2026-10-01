@@ -14,6 +14,18 @@ module Krikri
   # Debian/Ubuntu (`update-alternatives`) only - `family:` is RHEL-only
   # and not supported (no RHEL host available to verify against).
   class AlternativesPlugin < BasePlugin
+    # One alternative as `update-alternatives --display` reports it
+    # (alternatives.py's parse(): the regex's family group is None on
+    # Debian, where --display never prints one, and a real family name
+    # on RHEL - the module compares it verbatim against `family:`).
+    alias Alternative = NamedTuple(priority: Int32, family: String?)
+
+    # real's `module.get_bin_path("update-alternatives", True)`, resolved
+    # through the UPDATE_ALTERNATIVES property - lazily, so the first
+    # call is parse()'s `--display`. The absolute path it resolves to is
+    # also what the `cmd` of any run_command failure reads back.
+    @update_alternatives : String? = nil
+
     def execute : PluginResult
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
@@ -28,7 +40,8 @@ module Krikri
       end
 
       path = @params["path"]?
-      unless path || @params["family"]?
+      family = @params["family"]?
+      unless path || family
         return PluginResult.new(changed: false, failed: true,
           msg: "one of the following is required: path, family")
       end
@@ -38,30 +51,42 @@ module Krikri
       subcommands = @params["subcommands"]?.try { |str| Array(JSON::Any).from_json(str) }
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      current_mode, current_path, current_link, current_alternatives = parse_display(name)
+      unless bin = resolve_update_alternatives
+        return PluginResult.new(changed: false, failed: true,
+          msg: missing_executable_message("update-alternatives"))
+      end
+
+      current_mode, current_path, current_link, current_alternatives = parse_display(bin, name)
 
       mode_present = ["present", "selected", "auto"].includes?(state)
       messages = [] of String
 
       if mode_present
         effective_link = link || current_link
-        early = install_alternative_if_needed(name, path, effective_link, priority_param, subcommands, current_alternatives, messages, check_mode)
+        early = install_alternative_if_needed(bin, name, path, family, effective_link, priority_param, subcommands, current_alternatives, messages, check_mode)
         return early if early
 
-        select_or_auto(state, name, path, current_path, current_mode, messages, check_mode)
+        late = select_or_auto(bin, state, name, path, family, current_path, current_mode, current_alternatives, messages, check_mode)
+        return late if late
       else
-        remove_alternative(name, path, current_alternatives, messages, check_mode)
+        late = remove_alternative(bin, name, path, current_alternatives, messages, check_mode)
+        return late if late
       end
 
       PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '))
     end
 
     # Install the alternative for path when it's missing or its priority
-    # changed. Returns the failure result when the path doesn't exist or
-    # the link needed to install is missing, nil otherwise.
-    private def install_alternative_if_needed(name : String, path : String?, effective_link : String?, priority_param : Int32?, subcommands : Array(JSON::Any)?, current_alternatives : Hash(String, NamedTuple(priority: Int32)), messages : Array(String), check_mode : Bool) : PluginResult?
+    # changed. Returns the failure result when the path doesn't exist,
+    # the link needed to install is missing, or update-alternatives
+    # rejects the install; nil otherwise.
+    #
+    # Real gates the whole branch on `self.path is not None and (...)`,
+    # so a family-only invocation never installs (alternatives.py run()).
+    private def install_alternative_if_needed(bin : String, name : String, path : String?, family : String?, effective_link : String?, priority_param : Int32?, subcommands : Array(JSON::Any)?, current_alternatives : Hash(String, Alternative), messages : Array(String), check_mode : Bool) : PluginResult?
       return nil unless path
-      needs_install = !current_alternatives.has_key?(path) || (priority_param && current_alternatives[path][:priority] != priority_param)
+      current = current_alternatives[path]?
+      needs_install = current.nil? || (priority_param && current[:priority] != priority_param)
       return nil unless needs_install
 
       # Real install() validates the path's existence before the link
@@ -72,44 +97,89 @@ module Krikri
       unless effective_link
         return PluginResult.new(changed: false, failed: true, msg: "Needed to install the alternative, but unable to do so as we are missing the link")
       end
-      priority = priority_param || current_alternatives[path]?.try(&.[:priority]) || 50
-      cmd = ["update-alternatives", "--install", effective_link, name, path, priority.to_s]
+      priority = priority_param || current.try(&.[:priority]) || 50
+      argv = [bin, "--install", effective_link, name, path, priority.to_s]
+      argv += ["--family", family] if family
       if subcommands
         subcommands.each do |str|
-          cmd += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
+          argv += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
         end
       end
-      remote_exec(cmd.map { |itm| shell_quote(itm) }.join(' ')) unless check_mode
+      return run_check_rc(argv) unless check_mode
       messages << "Install alternative '#{path}' for '#{name}'."
       nil
     end
 
-    # state: selected - point the alternative at path; state: auto -
-    # switch it back to auto mode
-    private def select_or_auto(state : String, name : String, path : String?, current_path : String?, current_mode : String?, messages : Array(String), check_mode : Bool) : Nil
-      is_same_path = path && current_path == path
-      if state == "selected" && path && !is_same_path
-        remote_exec("update-alternatives --set #{shell_quote(name)} #{shell_quote(path)}") unless check_mode
-        messages << "Set alternative '#{path}' for '#{name}'."
+    # state: selected - point the alternative at path, or at family when
+    # only `family:` was given (real's set(): "path takes precedence over
+    # family as it is more specific"); state: auto - switch it back to
+    # auto mode. Returns the failure result when update-alternatives
+    # rejects the command.
+    #
+    # The gate is real's `not (is_same_path or is_same_family)`, NOT a
+    # `path &&` guard: with only `family:` given, self.path is None so
+    # is_same_path is always false and real still runs
+    # `--set <name> <family>`.
+    private def select_or_auto(bin : String, state : String, name : String, path : String?, family : String?, current_path : String?, current_mode : String?, current_alternatives : Hash(String, Alternative), messages : Array(String), check_mode : Bool) : PluginResult?
+      is_same_path = !path.nil? && current_path == path
+      is_same_family = !current_path.nil? && current_alternatives.has_key?(current_path) &&
+                       current_alternatives[current_path][:family] == family
+
+      if state == "selected" && !(is_same_path || is_same_family)
+        arg = path || family
+        argv = [bin, "--set", name, arg.to_s]
+        return run_check_rc(argv) unless check_mode
+        messages << "Set alternative '#{arg}' for '#{name}'."
       end
 
       if state == "auto" && current_mode == "manual"
-        remote_exec("update-alternatives --auto #{shell_quote(name)}") unless check_mode
+        argv = [bin, "--auto", name]
+        return run_check_rc(argv) unless check_mode
         messages << "Set alternative to auto for '#{name}'."
       end
+
+      nil
     end
 
     # state: absent - remove the alternative for path when it exists
-    private def remove_alternative(name : String, path : String?, current_alternatives : Hash(String, NamedTuple(priority: Int32)), messages : Array(String), check_mode : Bool) : Nil
-      return unless path && current_alternatives.has_key?(path)
+    private def remove_alternative(bin : String, name : String, path : String?, current_alternatives : Hash(String, Alternative), messages : Array(String), check_mode : Bool) : PluginResult?
+      return nil unless path && current_alternatives.has_key?(path)
 
-      remote_exec("update-alternatives --remove #{shell_quote(name)} #{shell_quote(path)}") unless check_mode
+      argv = [bin, "--remove", name, path]
+      return run_check_rc(argv) unless check_mode
       messages << "Remove alternative '#{path}' from '#{name}'."
+      nil
     end
 
-    private def parse_display(name : String) : {String?, String?, String?, Hash(String, NamedTuple(priority: Int32))}
-      result = remote_exec("update-alternatives --display #{shell_quote(name)}")
-      current_alternatives = {} of String => NamedTuple(priority: Int32)
+    # The update-alternatives absolute path (get_bin_path), resolved once
+    # on the target so every `cmd` real reports names the same binary.
+    private def resolve_update_alternatives : String?
+      return @update_alternatives if @update_alternatives
+      resolved = remote_exec("command -v update-alternatives 2>/dev/null")[:stdout].strip
+      return nil if resolved.empty?
+      @update_alternatives = resolved
+    end
+
+    # run_command(..., check_rc=True) - every update-alternatives call
+    # real makes uses it, so a non-zero rc is basic.py's own failure: msg
+    # is the bare rstripped stderr (never a "Failed to ..." label), and
+    # cmd/rc/stdout/stderr plus the controller-derived *_lines ride
+    # along. `cmd` renders the argv the way _clean_args does - shlex.quote
+    # per token, spaces between; Shell.quote_arg leaves an already-safe
+    # token bare exactly like shlex.quote does.
+    private def run_check_rc(argv : Array(String)) : PluginResult?
+      result = remote_exec(argv.map { |arg| shell_quote(arg) }.join(' '))
+      return nil if result[:exit_code] == 0
+
+      PluginResult.new(changed: false, failed: true, msg: result[:stderr].rstrip,
+        cmd: argv.map { |arg| Shell.quote_arg(arg) }.join(' '), rc: result[:exit_code],
+        stdout: result[:stdout], stdout_lines: result[:stdout].lines.map(&.chomp),
+        stderr: result[:stderr], stderr_lines: result[:stderr].lines.map(&.chomp))
+    end
+
+    private def parse_display(bin : String, name : String) : {String?, String?, String?, Hash(String, Alternative)}
+      result = remote_exec("#{shell_quote(bin)} --display #{shell_quote(name)}")
+      current_alternatives = {} of String => Alternative
       return {nil, nil, nil, current_alternatives} unless result[:exit_code] == 0
 
       output = result[:stdout]
@@ -129,7 +199,7 @@ module Krikri
       end
 
       output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am_blk|
-        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i}
+        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i, family: am_blk[2]?}
       end
 
       {current_mode, current_path, current_link, current_alternatives}
