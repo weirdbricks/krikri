@@ -96,4 +96,78 @@ describe "command/shell failure-path result shape" do
       result["stdout"].as_s.must_equal("shell-ok")
     end
   end
+
+  # A spawn that never started is failed by real's run_command with its
+  # OWN shape, not the module's: the fixed message "Error executing
+  # command.", the OS errno as rc, empty stdout/stderr, and `cmd` set to
+  # the shlex-quoted join of the argv it tried to spawn (a STRING, not
+  # the list a successful run reports). The OSError text only reaches the
+  # [ERROR] block. Found by the kpg30 sweep on a `command:` task whose
+  # cmd: was not a string; live-verified against 2.19.11 for both
+  # modules, e.g. `command: /does/not/exist/anywhere` failing with
+  # {"changed": false, "cmd": "/does/not/exist/anywhere", "msg": "Error
+  # executing command.", "rc": 2, "stderr": "", "stdout": ""}.
+  describe "command with a nonexistent executable" do
+    it "fails with real's run_command spawn shape, not a changed result with the OSError text as stderr" do
+      result = PluginSpecHelper.run("command", {"cmd" => "/does/not/exist/anywhere --version"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Error executing command.")
+      result["rc"].as_i.must_equal(2)
+      result["cmd"].as_s.must_equal("/does/not/exist/anywhere --version")
+      result["stdout"].as_s.must_equal("")
+      result["stderr"].as_s.must_equal("")
+      result["stdout_lines"].as_a.must_be_empty
+      result["stderr_lines"].as_a.must_be_empty
+      # Python's str(OSError) on the bytes argv run_command hands Popen -
+      # this is what the [ERROR] block composes into "Error executing
+      # command: <exception>".
+      result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'/does/not/exist/anywhere'")
+    end
+
+    it "shlex-quotes an argv element that needs it in the reported cmd" do
+      result = PluginSpecHelper.run("command", {"cmd" => "/does/not/exist/anywhere 'a b'"})
+
+      result["cmd"].as_s.must_equal("/does/not/exist/anywhere 'a b'")
+    end
+  end
+
+  describe "shell with a nonexistent executable (run_command's own failure shape)" do
+    it "reports the fixed message, the errno as rc and the shlex-joined shell argv as cmd" do
+      result = PluginSpecHelper.run("shell", {
+        "cmd"        => "echo hi",
+        "executable" => "/nonexistent-krikri-spec-shell-zzz",
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Error executing command.")
+      result["rc"].as_i.must_equal(2)
+      result["cmd"].as_s.must_equal("/nonexistent-krikri-spec-shell-zzz -c 'echo hi'")
+      result["stdout"].as_s.must_equal("")
+      result["stderr"].as_s.must_equal("")
+      result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'/nonexistent-krikri-spec-shell-zzz'")
+    end
+
+    it "reports EACCES (13) with the errno named in the exception for a non-executable shell" do
+      not_executable = File.tempname("krikri-shell-exec-not-exec")
+      File.write(not_executable, "#!/bin/sh\n")
+      File.chmod(not_executable, 0o644)
+      begin
+        result = PluginSpecHelper.run("shell", {
+          "cmd"        => "echo hi",
+          "executable" => not_executable,
+        })
+      ensure
+        File.delete(not_executable)
+      end
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Error executing command.")
+      result["rc"].as_i.must_equal(13)
+      result["exception"].as_s.must_equal("[Errno 13] Permission denied: b'#{not_executable}'")
+    end
+  end
 end

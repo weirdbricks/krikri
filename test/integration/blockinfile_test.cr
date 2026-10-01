@@ -121,4 +121,54 @@ describe "blockinfile plugin" do
     File.delete(path) if File.exists?(path)
     File.delete(backup)
   end
+
+  # An empty block: (real's default) means "remove the block", but the
+  # task is still state: present - and real gates prepend_newline /
+  # append_newline on that alone, not on there being a block to insert.
+  # Folding the two together dropped the blank line they add and
+  # reported ok; real adds it and reports changed with "Block removed"
+  # (live-verified against ansible-core 2.19.11 with a task carrying
+  # only create/marker/prepend_newline/append_newline).
+  it "still pads the file with prepend_newline/append_newline when the block is empty" do
+    path = PluginSpecHelper.tmp_path("blockinfile-empty-block-padding.txt")
+    File.write(path, "key = value\nkpg setting = on\n")
+
+    result = PluginSpecHelper.run("blockinfile", {
+      "path"            => path,
+      "create"          => "true",
+      "marker"          => "# {mark} KPG BLOCK",
+      "marker_begin"    => "BEGIN",
+      "marker_end"      => "END",
+      "prepend_newline" => "true",
+      "append_newline"  => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Block removed")
+    File.read(path).must_equal("key = value\nkpg setting = on\n\n")
+  end
+
+  it "is idempotent on a second run of the empty-block padding case" do
+    path = PluginSpecHelper.tmp_path("blockinfile-empty-block-padding-rerun.txt")
+    File.write(path, "key = value\n")
+
+    PluginSpecHelper.run("blockinfile", {"path" => path, "prepend_newline" => "true"})
+    result = PluginSpecHelper.run("blockinfile", {"path" => path, "prepend_newline" => "true"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("")
+    File.read(path).must_equal("key = value\n\n")
+  end
+
+  it "creates a missing file even with an empty block, reporting File created" do
+    dir = PluginSpecHelper.tmp_path("blockinfile-empty-block-create")
+    FileUtils.rm_rf(dir)
+    path = File.join(dir, "new.txt")
+
+    result = PluginSpecHelper.run("blockinfile", {"path" => path, "create" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("File created")
+    File.read(path).must_equal("")
+  end
 end

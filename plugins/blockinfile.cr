@@ -12,7 +12,9 @@ module Krikri
   #   path (required, aliases: dest, destfile, name - matches real Ansible's
   #     own argument_spec): File to edit
   #   block (alias content): Text to insert between the markers - a missing
-  #     or empty block is treated as state: absent, matching real Ansible
+  #     or empty block removes the block instead (real Ansible's own
+  #     "if present and block:" gate), which is not the same as state:
+  #     absent for the prepend_newline/append_newline padding
   #   state: present (default) or absent
   #   marker: marker line template, {mark} replaced by marker_begin/marker_end
   #   marker_begin / marker_end: default "BEGIN" / "END"
@@ -52,7 +54,13 @@ module Krikri
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       block = @params["block"]? || @params["content"]?
-      state = block.nil? || block.empty? ? "absent" : (@params["state"]? || "present")
+      # Real Ansible keeps `present` (state: present) and the block
+      # separate: an empty/missing block makes it REMOVE the block, but a
+      # state: present task is still "present" for the prepend_newline /
+      # append_newline padding, which is why folding the two together here
+      # silently dropped the blank line those flags add and reported ok
+      # where real reports changed (verified against 2.19.11).
+      state = @params["state"]? || "present"
 
       if error = validate_params
         return error
@@ -113,16 +121,27 @@ module Krikri
     private def apply(path : String, state : String, block : String?, being_created : Bool, check_mode : Bool) : PluginResult
       original_content = File.exists?(path) ? File.read(path) : ""
       marker_begin_line, marker_end_line = marker_lines
-      block_lines = block ? block.rstrip("\n").split("\n") : [] of String
+      # Real Ansible builds its marker-delimited block lines only from a
+      # NON-EMPTY block (`if present and block:`), so the default empty
+      # block: is a removal - Crystal's split would otherwise hand back
+      # one empty line and re-create the markers around it.
+      trimmed_block = block.try(&.rstrip("\n")) || ""
+      block_lines = trimmed_block.empty? ? [] of String : trimmed_block.split("\n")
 
       lines = split_lines(original_content)
-      new_lines, changed = PluginHelpers::BlockEditor.apply(
+      new_lines, _ = PluginHelpers::BlockEditor.apply(
         lines, marker_begin_line, marker_end_line, block_lines, state,
         @params["insertafter"]?, @params["insertbefore"]?,
         append_newline: true?(@params["append_newline"]?),
         prepend_newline: true?(@params["prepend_newline"]?)
       )
       new_content = render_content(new_lines, original_content, being_created, marker_end_line, !block_lines.empty?)
+
+      # Real Ansible compares the whole file byte for byte (`original ==
+      # result`), and a file it had to CREATE always counts as changed -
+      # its `original` is None there, which can never equal the computed
+      # content even when both are empty.
+      changed = new_content != original_content || being_created
 
       backup_file, write_failure = persist(path, new_content, being_created, changed, check_mode)
       return write_failure if write_failure
@@ -147,7 +166,7 @@ module Krikri
       result = PluginResult.new(
         changed: changed,
         failed: false,
-        msg: result_msg(being_created, changed, state),
+        msg: result_msg(being_created, changed, !block_lines.empty?),
         diff: diff,
         include_empty_msg: true
       )
@@ -157,11 +176,14 @@ module Krikri
 
     # A file that had to be created reports "File created" even when the
     # block write happens in the same call - matches real Ansible, verified
-    # against a real `ansible-playbook` run rather than assumed.
-    private def result_msg(being_created : Bool, changed : Bool, state : String) : String
+    # against a real `ansible-playbook` run rather than assumed. Real picks
+    # between the other two messages on whether it had any block lines to
+    # insert (`elif not blocklines: 'Block removed'`), not on the state
+    # value: a state: present task whose block is empty removes too.
+    private def result_msg(being_created : Bool, changed : Bool, block_present : Bool) : String
       return "File created" if being_created && changed
       return "" unless changed
-      state == "absent" ? "Block removed" : "Block inserted"
+      block_present ? "Block inserted" : "Block removed"
     end
 
     private def marker_lines : {String, String}

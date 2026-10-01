@@ -347,8 +347,13 @@ module Krikri
       return {ssh_file, nil} if ssh_file.starts_with?('/')
 
       unless check_mode || remote_dir_exists?(home)
+        # real user.py's ssh_key_gen turns get_ssh_key_path's raise into
+        # (1, '', str(e)) and main() then fails with `fail_json(name=
+        # user.name, msg=err, rc=rc)` - so this failure carries the
+        # account name and rc=1 like every other user.py command failure,
+        # not just the message (live-verified against 2.19.11).
         return {nil, PluginResult.new(changed: false, failed: true,
-          msg: "User #{name} home directory does not exist")}
+          msg: "User #{name} home directory does not exist", name: name, rc: 1)}
       end
       {File.join(home, ssh_file), nil}
     end

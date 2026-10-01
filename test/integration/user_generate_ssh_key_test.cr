@@ -91,4 +91,34 @@ describe "user plugin generate_ssh_key" do
       FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
     end
   end
+
+  # A missing home directory is real user.py's ssh_key_gen failure, and
+  # main() reports it the way it reports every other command failure:
+  # fail_json(name=..., msg=..., rc=1). The account name and rc were
+  # missing from this engine's result, so a `register:`d failure carried
+  # a bare msg (found by the kpg30 sweep on `user: {name: ...,
+  # create_home: false, generate_ssh_key: true}`, live-verified against
+  # 2.19.11). Exercised through an account whose passwd home simply
+  # does not exist (nobody, on Debian/Ubuntu), so no account is created,
+  # modified or removed here.
+  it "fails with the account name and rc when the account's home directory does not exist" do
+    line = `getent passwd`.split("\n").find do |entry|
+      home = entry.split(":")[5]?
+      home && !home.empty? && !File.directory?(home)
+    end
+    skip "no account with a missing home directory on this host" unless line
+    account_name = line.not_nil!.split(":")[0]
+
+    result = PluginSpecHelper.run("user", {
+      "name"             => account_name,
+      "generate_ssh_key" => "true",
+      "ssh_key_type"     => "ed25519",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("User #{account_name} home directory does not exist")
+    result["name"].as_s.must_equal(account_name)
+    result["rc"].as_i.must_equal(1)
+  end
 end

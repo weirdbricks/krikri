@@ -423,32 +423,22 @@ module Krikri
         exit_code = status.exit_code
         ended_at = Time.utc
       rescue ex
-        # Real Ansible's command module never gets here at all - Python's
-        # `subprocess`/`AnsibleModule.run_command` catches ENOENT (a
-        # nonexistent executable) itself and returns a normal (rc, stdout,
-        # stderr) result (rc=2, empty stdout, an error message in stderr)
-        # rather than raising, so a `register:`'d result always has
-        # `.rc`/`.stdout`/`.stderr` populated even when the command fails
-        # to spawn at all. This early return had none of those fields -
-        # only `stderr` - so `failed_when: false` (the idiomatic "probe an
-        # optional binary, don't fail the task" idiom) correctly kept the
-        # TASK from failing, but a later `.stdout`/`.rc` reference on the
-        # same registered variable was genuinely undefined instead of the
-        # empty string/rc=2 real Ansible would have given it. Found via
-        # konstruktoid.docker_rootless's own `command: .../docker version`
-        # (`failed_when: false`, `register: rootless_docker_version`) on
-        # a host where that binary doesn't exist yet - a LATER task's
-        # `when: docker_release not in rootless_docker_version.stdout`
-        # hard-failed with "'rootless_docker_version.stdout' is undefined"
-        # where real Ansible just evaluates `not in ''`.
-        return with_executable_warning(PluginResult.new(
-          changed: true,
-          failed: true,
-          msg: "Failed to execute command: #{ex.message}",
-          stdout: "",
-          stderr: ex.message || "",
-          rc: 2
-        ))
+        # A failed SPAWN never reaches the command module's own result
+        # shape: real Ansible's AnsibleModule.run_command catches the
+        # OSError itself and calls fail_json with its fixed "Error
+        # executing command." message, the errno as `rc`, EMPTY
+        # stdout/stderr and the printable argv as `cmd` - so a
+        # `register:`'d result still has .rc/.stdout/.stderr populated
+        # (see the long note above) and the task is NOT reported changed.
+        # Live-verified against 2.19.11: `command: /bin/does-not-exist`
+        # fails with {"changed": false, "cmd": "/bin/does-not-exist",
+        # "msg": "Error executing command.", "rc": 2, "stderr": "",
+        # "stderr_lines": [], "stdout": "", "stdout_lines": []} while the
+        # [ERROR] block reads "Module failed: Error executing command:
+        # [Errno 2] No such file or directory: b'/bin/does-not-exist'" -
+        # the exception text reaches the block (and only the block) as the
+        # result's `exception` key.
+        return with_executable_warning(spawn_failure_result(ex, cmd_parts, command_name || ""))
       end
 
       # strip_empty_ends (bool, default true): when true, real Ansible
@@ -495,6 +485,62 @@ module Krikri
         delta: python_delta(ended_at - started_at),
         failed_flag: false
       ))
+    end
+
+    # run_command's own OSError branch (module_utils/basic.py): a spawn
+    # that never started fails the module with its fixed message, the
+    # errno as rc, empty stdout/stderr and the printable argv as `cmd`
+    # (its `_clean_args`, a shlex-quoted JOIN - not the argv list the
+    # success path returns). Real's Python names the errno in a separate
+    # `exception` key that only the [ERROR] block composes; krikri's
+    # display layer reads that key and drops it from the dumped result
+    # exactly like real's.
+    private def spawn_failure_result(ex : Exception, argv : Array(String), command_name : String) : PluginResult
+      result = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Error executing command.",
+        cmd: argv.map { |arg| shlex_quote(arg) }.join(' '),
+        stdout: "",
+        stdout_lines: [] of String,
+        stderr: "",
+        stderr_lines: [] of String,
+        rc: spawn_errno(ex)
+      )
+      result.extra["exception"] = JSON::Any.new(spawn_exception_text(ex, command_name))
+      result
+    end
+
+    # Crystal raises a per-errno File::Error subclass out of Process.new
+    # and keeps no numeric errno on the exception; real reports the C
+    # errno as the result's `rc` (and for a non-OSError, 257).
+    private def spawn_errno(ex : Exception) : Int32
+      case ex
+      when File::NotFoundError     then 2
+      when File::AccessDeniedError then 13
+      else                              257
+      end
+    end
+
+    # Python's str() of the OSError Popen raised: "[Errno 2] No such file
+    # or directory: b'64'". run_command hands Popen BYTES, hence the b''
+    # repr; an exception with no such shape is reported verbatim.
+    private def spawn_exception_text(ex : Exception, command_name : String) : String
+      case ex
+      when File::NotFoundError     then "[Errno 2] No such file or directory: b'#{command_name}'"
+      when File::AccessDeniedError then "[Errno 13] Permission denied: b'#{command_name}'"
+      else                              ex.message || command_name
+      end
+    end
+
+    # Python shlex.quote: bare only when every char is in
+    # [\w@%+=:,./-], else single-quoted with the '\'' escape - the shape
+    # run_command's `_clean_args` joins into its failure `cmd`.
+    private def shlex_quote(value : String) : String
+      return "''" if value.empty?
+      return value if value.matches?(/\A[\w@%+=:,.\-\/]+\z/)
+
+      shell_single_quote(value)
     end
 
     # Parse command string into command and arguments, honoring quoted
