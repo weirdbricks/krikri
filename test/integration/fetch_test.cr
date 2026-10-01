@@ -25,7 +25,14 @@ describe "fetch plugin" do
 
     result = PluginSpecHelper.run("fetch", {"src" => src, "dest" => "#{dest_root}/"}, LOCAL_VARS)
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_equal("file already present")
+    # Real's already-present fetch result is {changed, checksum, dest,
+    # failed, file, md5sum} - no msg key at all on either the first or
+    # the second (unchanged) run (live-verified vs 2.19.11 at -v).
+    result["msg"]?.must_be_nil
+    expected_path = File.join(dest_root, "localhost", src)
+    result["dest"].as_s.must_equal(expected_path)
+    result["file"].as_s.must_equal(src)
+    result["checksum"].as_s.wont_be_empty
   ensure
     File.delete(src) if src && File.exists?(src)
     FileUtils.rm_rf(dest_root) if dest_root

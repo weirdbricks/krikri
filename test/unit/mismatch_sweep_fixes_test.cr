@@ -145,16 +145,26 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
     )
   end
 
-  it "file reports the touch OS error like real's OSError str" do
+  it "file reports the touch failure with real's plain msg and path echo" do
     result = PluginSpecHelper.run("file", {
       "path"  => "/tmp/krikri-spec-nope/deep/file.txt",
       "state" => "touch",
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal(
-      "Error, could not touch target: [Errno 2] No such file or directory: b'/tmp/krikri-spec-nope/deep/file.txt'"
-    )
+    # Real's file module fails with fail_json(msg="Error, could not
+    # touch target.", path=path, exception=ex): the RESULT's msg stays
+    # plain and the OSError text rides the display-only exception key
+    # (real composes it into the "[ERROR]: ... could not touch target:
+    # [Errno 2] ..." header from the ErrorSummary chain, not into msg)
+    # - live-verified vs 2.19.11.
+    result["msg"].as_s.must_equal("Error, could not touch target.")
+    result["path"].as_s.must_equal("/tmp/krikri-spec-nope/deep/file.txt")
+    result["exception"].as_s.must_include("[Errno 2] No such file or directory")
+    # The path's parent does not exist, so no stat fields are merged
+    # in (real's add_path_info merges nothing for a missing path).
+    result["mode"]?.must_be_nil
+    result["size"]?.must_be_nil
   end
 
   it "file fails a hard link whose src does not exist with real's wording" do

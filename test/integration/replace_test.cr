@@ -107,16 +107,24 @@ describe "replace plugin" do
     (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o600)
   end
 
-  it "accepts owner/group and reports add_path_info stat fields (add_file_common_args)" do
+  it "accepts owner/group (applied on disk) and reports no stat fields (add_file_common_args)" do
     me = System::User.find_by?(id: LibC.getuid.to_s).try(&.username) || ENV["USER"]? || "root"
     path = fresh_file("owner.conf", "x=1\n")
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^x", "replace" => "y", "owner" => me, "group" => me, "mode" => "0600"})
 
     result["failed"]?.must_be_nil
-    result["owner"].as_s.must_equal(me)
-    result["group"].as_s.must_equal(me)
-    result["mode"].as_s.must_equal("0600")
+    # The attributes are applied to the file, but real's replace result
+    # is only {changed, failed, msg, rc} - it never merges the
+    # add_path_info stat fields nor echoes owner/group/mode
+    # (live-verified vs 2.19.11 at -v). Assert both halves: the
+    # on-disk effect and the absence of the stat keys.
+    (File.info(path).permissions.value & 0o777).must_equal(0o600)
+    result["rc"].as_i64.must_equal(0)
+    result["owner"]?.must_be_nil
+    result["group"]?.must_be_nil
+    result["mode"]?.must_be_nil
+    result["size"]?.must_be_nil
   end
 
   it "restricts substitution to content after the first `after` match" do
@@ -176,14 +184,19 @@ describe "replace plugin" do
     File.read(path).must_equal("gpgcheck=1\n")
   end
 
-  it "creates no backup without backup: yes" do
+  it "creates no backup and reports no backup_file key without backup: yes" do
     path = File.join(replace_dir, "nobackup.conf")
     File.write(path, "gpgcheck=0\n")
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "gpgcheck=0", "replace" => "gpgcheck=1"})
 
     result["changed"].as_bool.must_equal(true)
-    result["backup_file"].as_s.must_be_empty
+    # Real's replace only ever sets backup_file when backup: yes was
+    # given (module_utils/replace.py backs up conditionally, then
+    # exit_json(backup_file=...) only inside that branch) - without it
+    # the key is absent entirely, not empty
+    # (live-verified vs 2.19.11 at -v).
+    result["backup_file"]?.must_be_nil
     Dir[File.join(PluginSpecHelper.tmp_path("replace"), "nobackup.conf*")].size.must_equal(1)
   end
 

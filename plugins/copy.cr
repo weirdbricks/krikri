@@ -268,48 +268,33 @@ module Krikri
 
       # Check if file exists and compare
       if File.exists?(dest)
-        # `checksum:` - a SHA1 the caller (or, in real Ansible, the copy
-        # action plugin on behalf of src) expects the destination to
-        # already hold. When the existing dest's SHA1 matches it, real
-        # Ansible skips the transfer entirely WITHOUT comparing the
-        # content: param against the file (live-verified against
-        # ansible-core 2.19.4: a copy: whose checksum: matches dest
-        # reports changed=false even when content: differs from what's
-        # on disk). Mirrors the identical-content skip below.
-        if given_checksum = @params["checksum"]?.presence
-          if File.exists?(dest) && (sha1_of(dest) == given_checksum)
-            result = PluginResult.new(
-              changed: false,
-              failed: false,
-              msg: "File already exists with matching checksum",
-              dest: dest,
-              checksum: given_checksum
-            )
-            add_path_info(result, dest)
-            return result
-          end
-        end
-
         # force: false means "only create it if it is not there" - real
         # Ansible leaves an existing file completely alone, content and
-        # all. This branch used to ignore `force` entirely (the `src:`
-        # path above has always honoured it), so a `copy:` with
-        # `content:` + `force: false` OVERWROTE an existing file rather
-        # than skipping it. Found live on mrlesmithjr.mdadm, whose
-        # "Ensure mdadm conf file exists" task is exactly
-        # `content: "" / force: false` against the distro's own
-        # /etc/mdadm/mdadm.conf: real ansible-playbook left the 688-byte
-        # file untouched and reported ok, this truncated it to 0 bytes
-        # and reported changed. Real data loss, not just a wrong verdict.
+        # all, and never even computes the dest checksum for the
+        # equal-content shortcut (the action's _execute_remote_stat
+        # gets checksum=force, so a force=false run always takes the
+        # transfer branch and the module's own force check exits first
+        # - live-verified vs 2.19.11 at -v). This branch used to ignore
+        # `force` entirely (the `src:` path above has always honoured
+        # it), so a `copy:` with `content:` + `force: false` OVERWROTE
+        # an existing file rather than skipping it. Found live on
+        # mrlesmithjr.mdadm, whose "Ensure mdadm conf file exists" task
+        # is exactly `content: "" / force: false` against the distro's
+        # own /etc/mdadm/mdadm.conf: real ansible-playbook left the
+        # 688-byte file untouched and reported ok, this truncated it to
+        # 0 bytes and reported changed. Real data loss, not just a
+        # wrong verdict.
         unless true?(@params["force"]?, default: true)
-          result = PluginResult.new(
+          # Real's result here is ONLY {changed, dest, src} - no msg, no
+          # file-common stat fields, no checksum (live-verified vs
+          # 2.19.11 at -v; src is real's random staged tempfile, which
+          # the harness masks). krikri has no equivalent staged path to
+          # echo, so dest alone.
+          return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "File already exists (use force=yes to overwrite)",
             dest: dest
           )
-          add_path_info(result, dest)
-          return result
         end
 
         begin
@@ -317,11 +302,15 @@ module Krikri
           existing_sha1 = Digest::SHA1.hexdigest(existing_content)
 
           if existing_sha1 == content_sha1
-            # Content is identical - reconcile mode/owner/group like the
-            # src: path does, then return. The bare early-return used to
-            # skip attribute reconciliation entirely, so `mode: "0600"`
-            # on an already-0644-content file reported ok forever
-            # (apply_file_attributes below was never reached).
+            # Content is identical - real's copy ACTION plugin short-circuits
+            # here (its local_checksum of the source equals the dest's
+            # checksum) and calls the FILE module for attribute
+            # reconciliation only; the copy module - and its user-checksum
+            # validation with it - never runs. The user's `checksum:`
+            # param is irrelevant on this path (live-verified vs 2.19.11:
+            # an equal-content copy with a matching checksum: registers
+            # the file-module result shape below, not any
+            # "already exists" message).
             #
             # Reconciling an attribute IS a change: real Ansible reports
             # `changed` when an identical-content copy fixes mode/owner/
@@ -391,15 +380,22 @@ module Krikri
       # once the parent genuinely didn't exist yet) for the repro.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
+        # The trailing `checksum` is real's copy ACTION plugin injecting
+        # local_checksum into any module result that lacks one, failed
+        # results included (live-verified vs 2.19.11).
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Destination directory #{dest_dir} does not exist"
+          msg: "Destination directory #{dest_dir} does not exist",
+          checksum: content_sha1
         )
       end
 
-      # Write the file (staged + validated first when validate: is given)
-      if failure = write_with_optional_validate(content, dest)
+      # Write the file (staged + validated first when validate: is given;
+      # content_sha1 rides along because real's copy ACTION plugin injects
+      # `checksum` (its local_checksum) into any module result that lacks
+      # one - failed results included)
+      if failure = write_with_optional_validate(content, dest, content_sha1)
         return failure
       end
 
@@ -541,33 +537,22 @@ module Krikri
       force = true?(@params["force"]?, default: true)
 
       if File.exists?(dest)
-        # `checksum:` skip - see #handle_content_copy's identical block.
-        if given_checksum = @params["checksum"]?.presence
-          if sha1_of(dest) == given_checksum
-            result = PluginResult.new(
-              changed: false,
-              failed: false,
-              msg: "File already exists with matching checksum",
-              dest: dest,
-              checksum: given_checksum
-            )
-            add_path_info(result, dest)
-            return result
-          end
-        end
-
-        unless force
-          result = PluginResult.new(
+        # force: false exits first - real's action never computes the
+        # dest checksum on a force=false run (checksum=force in
+        # _execute_remote_stat), so the equal-content shortcut below
+        # can only fire when force is true (see #handle_content_copy's
+        # note).
+        if changed && !force
+          # Same bare shape as the content-path force=false no-op above
+          # (live-verified vs 2.19.11 at -v).
+          return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "File already exists (use force=yes to overwrite)",
             dest: dest
           )
-          add_path_info(result, dest)
-          return result
         end
 
-        # Compare checksums for idempotency
+        # Compare checksums for idempotency (only on a force=true run)
         begin
           dest_sha1 = native_checksum(dest, "sha1")
 
@@ -610,13 +595,18 @@ module Krikri
       unless changed
         attributes_fixed, failure = apply_extended_attributes(dest)
         return failure if failure
+        # Real's equal-content src path result (the action's
+        # already-correct-hash branch calls the FILE module): dest + path
+        # echo + stat fields, NO checksum key (live-verified vs 2.19.11
+        # at -v; unlike the content path, whose equal result does carry
+        # the action-injected checksum).
         result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
-          dest: dest,
-          checksum: src_sha1
+          dest: dest
         )
         add_path_info(result, dest)
+        result.extra["path"] = JSON::Any.new(dest)
         return result
       end
 
@@ -650,7 +640,8 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Destination directory #{dest_dir} does not exist"
+            msg: "Destination directory #{dest_dir} does not exist",
+            checksum: src_sha1
           )
         end
       end
@@ -659,7 +650,7 @@ module Krikri
       # src_sha1 was already computed above for the idempotency check, so
       # this reads src a second time only on the validate: path).
       if @params["validate"]?
-        if failure = write_with_optional_validate(File.read(src), dest)
+        if failure = write_with_optional_validate(File.read(src), dest, src_sha1)
           return failure
         end
       else
@@ -839,8 +830,13 @@ module Krikri
     # directly to dest as before - this path is unchanged for the
     # overwhelmingly common no-validate: case.
     #
-    # Returns nil on success, or a failed PluginResult.
-    private def write_with_optional_validate(content : String, dest : String) : PluginResult?
+    # Returns nil on success, or a failed PluginResult. The failure shape
+    # is real copy.py's validate site (fail_json(msg="failed to validate",
+    # exit_status=rc, stdout=out, stderr=err)) plus the action plugin's
+    # unconditional `checksum` injection, stdout/stderr unstripped with
+    # their _lines splitters added by _return_formatted (live-verified vs
+    # 2.19.11).
+    private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : PluginResult?
       validate_cmd = @params["validate"]?
       unless validate_cmd
         return atomic_write(content, dest)
@@ -864,12 +860,26 @@ module Krikri
 
       validation = validate_file(temp_file, validate_cmd)
       unless validation[:ok]
-        # Left in place deliberately, same reasoning as template.cr's
-        # identical choice - the rendered/copied content is almost
-        # always what's actually wrong, and this is the only surviving
-        # copy of it once the real dest was never touched.
-        context = extract_error_context(temp_file, validation[:output])
-        return PluginResult.new(changed: false, failed: true, msg: "Validation failed: #{validation[:output]} (content left at #{temp_file} for inspection)#{context}")
+        # Real copy.py: fail_json(msg="failed to validate", exit_status=rc,
+        # stdout=out, stderr=err) - the raw, unstripped streams and the
+        # exit status ride in the result; the real module does NOT keep
+        # the staged content around (do_cleanup_files runs on failure).
+        # stdout_lines/stderr_lines come from _return_formatted's own
+        # splitter.
+        stdout = validation[:stdout]
+        stderr = validation[:stderr]
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "failed to validate",
+          checksum: content_sha1,
+          exit_status: validation[:rc],
+          stdout: stdout,
+          stdout_lines: stdout.empty? ? [] of String : stdout.chomp.split("\n"),
+          stderr: stderr,
+          stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
+        )
+        return result
       end
 
       begin
@@ -882,43 +892,31 @@ module Krikri
       nil
     end
 
-    # Validate file with command - identical to template.cr's own
-    # helper (captures stdout+stderr so a validation failure explains
-    # what's actually wrong, not just that it happened).
-    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
+    # Validate file with command - like template.cr's own helper, but
+    # returns the raw stdout/stderr streams and exit status separately
+    # (real copy.py's validate failure result carries them unmerged and
+    # unstripped).
+    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, rc: Int32, stdout: String, stderr: String)
       cmd = validate_cmd.gsub("%s", shell_single_quote(path))
-      output = IO::Memory.new
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
 
       result = Process.run(
         "/bin/sh",
         ["-c", cmd],
-        output: output,
-        error: output
+        output: out_io,
+        error: err_io
       )
 
-      {ok: result.exit_code == 0, output: output.to_s.strip}
-    end
-
-    # Same context-around-the-cited-line extraction as template.cr's
-    # own helper - see that plugin for the full rationale.
-    private def extract_error_context(path : String, validator_output : String) : String
-      return "" unless match = validator_output.match(/line\s+(\d+):/)
-      line_num = match[1].to_i
-
-      lines = File.read_lines(path)
-      from = Math.max(0, line_num - 3)
-      to = Math.min(lines.size - 1, line_num + 1)
-      return "" if from > to
-
-      context_lines = (from..to).map { |i| "#{i + 1}: #{lines[i]}" }.join("\n")
-      "\n--- context around line #{line_num} ---\n#{context_lines}"
-    rescue
-      ""
+      {ok: result.exit_code == 0, rc: result.exit_code, stdout: out_io.to_s, stderr: err_io.to_s}
     end
 
     # Create backup of file
     private def create_backup(path : String) : String
-      timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
+      # Real Ansible's backup_local uses LOCAL time (time.localtime), not
+      # UTC (live-verified vs 2.19.11: a backup taken at 19:12 EDT is
+      # named ...@19:12:40~, not ...@23:12:40~).
+      timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
       # Real Ansible's backup_local (module_utils/files.py) inserts the
       # process PID between path and timestamp, not a random number:
       # `<path>.<pid>.<yyyy-mm-dd@hh:mm:ss>~`.

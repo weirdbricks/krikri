@@ -292,6 +292,16 @@ module Krikri
       add_symlink_fields(stat_hash, entry_path) if stat_hash["islnk"].as_bool
       add_checksum(stat_hash, entry_path, options.algorithm) if options.get_checksum && stat_hash["isreg"].as_bool
 
+      # Real find's per-file dicts are a REDUCED stat shape - no `exists`
+      # (every listed file exists by construction), no block_size/blocks/
+      # device_type (live-verified vs 2.19.11 at -v; the full shape is
+      # the stat module's own output, which find's docs point at but
+      # do not reproduce).
+      stat_hash.delete("exists")
+      stat_hash.delete("block_size")
+      stat_hash.delete("blocks")
+      stat_hash.delete("device_type")
+
       stat_hash
     end
 

@@ -524,9 +524,16 @@ module Krikri
     # narrow-then-widen, never the reverse. *preserve_dest_mode* is
     # false for staging paths where the temp never inherits the dest's
     # mode today (the /tmp validate: staging that is mv'd in as a new
-    # inode, and temps that are deleted after use).
-    private def staging_temp_mode(dest : String, new_file_base : Int32, preserve_dest_mode : Bool = true) : Int32
-      if (raw_mode = @params["mode"]?.presence) && raw_mode =~ /\A0?[0-7]{3,4}\z/
+    # inode, and temps that are deleted after use). *apply_task_mode*
+    # is false for the module whose real counterpart does NOT pre-apply
+    # the task's numeric mode: at creation time - real's
+    # set_fs_attributes_if_different must see the 0666 & ~umask (or
+    # preserved) creation mode and report the drift itself
+    # (lineinfile's "line added and ownership, perms or SE linux
+    # context changed" msg suffix depends on that post-write drift
+    # being real; live-verified vs 2.19.11).
+    private def staging_temp_mode(dest : String, new_file_base : Int32, preserve_dest_mode : Bool = true, apply_task_mode : Bool = true) : Int32
+      if apply_task_mode && (raw_mode = @params["mode"]?.presence) && raw_mode =~ /\A0?[0-7]{3,4}\z/
         return raw_mode.to_i(8)
       end
 

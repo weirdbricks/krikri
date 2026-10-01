@@ -119,7 +119,13 @@ module Krikri
       unless check_mode
         dir = File.dirname(path)
         Dir.mkdir_p(dir) unless Dir.exists?(dir)
+        # Real creates a missing file via atomic_move at Python's default
+        # 0666 & ~umask - NOT File.write's 0644 default. The task's
+        # mode: is applied afterwards by set_fs_attributes_if_different
+        # and its drift feeds the "and ownership, perms or SE linux
+        # context changed" msg suffix (live-verified vs 2.19.11).
         File.write(path, "")
+        File.chmod(path, 0o666 & ~creation_umask)
       end
 
       {true, nil}
@@ -273,12 +279,17 @@ module Krikri
       temp_file = File.join(File.dirname(path), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY at 0600 and settled to its final mode
-        # (the task's numeric mode:, else the dest's own mode as resolved
-        # by the preservation block below) BEFORE the content lands -
-        # see BasePlugin#create_staging_temp. The old write-first shape
+        # (0666 & ~umask for a new dest - real's atomic_move gives a new
+        # file Python's default 0666 & ~umask and does NOT pre-apply the
+        # task's mode:, which set_fs_attributes_if_different then
+        # applies AFTER the move, reporting the drift as the "and
+        # ownership, perms or SE linux context changed" msg suffix;
+        # live-verified vs 2.19.11 - an existing dest keeps its own
+        # mode the same way) BEFORE the content lands - see
+        # BasePlugin#create_staging_temp. The old write-first shape
         # held the bytes at 0644 & ~umask until the mode preservation
         # below ran after the write.
-        create_staging_temp(temp_file, staging_temp_mode(path, 0o644))
+        create_staging_temp(temp_file, staging_temp_mode(path, 0o666, apply_task_mode: false))
         File.write(temp_file, content, perm: 0o600)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")

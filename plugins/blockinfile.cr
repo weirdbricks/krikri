@@ -139,14 +139,20 @@ module Krikri
       end
       changed = changed || !!attrs_changed
 
-      PluginResult.new(
+      # Real blockinfile's result carries ONLY changed + msg (empty msg
+      # included explicitly on an already-correct re-run) plus a
+      # backup_file only when a backup was actually taken - never a
+      # path echo, never the file-common stat fields (live-verified vs
+      # 2.19.11 at -v).
+      result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: result_msg(being_created, changed, state),
         diff: diff,
-        path: path,
-        backup_file: backup_file
+        include_empty_msg: true
       )
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      result
     end
 
     # A file that had to be created reports "File created" even when the

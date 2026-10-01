@@ -134,10 +134,17 @@ module Krikri
         diff: diff,
         dest: dest,
         checksum: Digest::SHA1.hexdigest(content),
-        md5sum: Digest::MD5.hexdigest(content),
-        backup_file: backup_file
+        md5sum: Digest::MD5.hexdigest(content)
       )
-      add_path_info(result, dest) unless check_mode
+      # Real's result echoes the src: param and carries backup_file only
+      # when a backup was actually taken (live-verified vs 2.19.11 at -v).
+      result.extra["src"] = JSON::Any.new(src)
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
+      # Real's add_path_info runs at module-exit regardless of check
+      # mode - an existing dest's stat fields ride the check-mode
+      # result too (live-verified vs 2.19.11 at -v); a not-yet-existing
+      # dest gets no fields, which add_path_info handles itself.
+      add_path_info(result, dest)
       result
     end
 
@@ -246,7 +253,8 @@ module Krikri
     private def write_assembled(dest : String, content : String, existing : String?) : PluginResult | String
       backup_file = ""
       if existing && true?(@params["backup"]?)
-        backup_file = "#{dest}.#{Process.pid}.#{Time.utc.to_s("%Y-%m-%d@%H:%M:%S")}~"
+        # backup_local stamps LOCAL time (same as copy/template's backups)
+        backup_file = "#{dest}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
         File.write(backup_file, existing)
       end
 
@@ -270,21 +278,25 @@ module Krikri
         # succeeds (creating the file in the cwd), then the creating-
         # branch os.stat(os.path.dirname(b_dest)) stats b'' and fails.
         # SECURITY: created EMPTY at 0600 and settled to its final mode
-        # (0644 & ~umask, narrowed by the task's numeric mode:) before
+        # (0666 & ~umask - real's atomic_move opens the source at
+        # Python's default 0666 and the umask trims it; live-verified
+        # vs 2.19.11: umask 002 -> mode "0664" on the assembled dest -
+        # narrowed by the task's numeric mode:) before
         # the assembled content lands - see BasePlugin#create_staging_temp.
-        create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         File.write(dest, content, perm: 0o600)
         return module_crash_result("[Errno 2] No such file or directory: b''")
       end
 
       # SECURITY: a not-yet-existing dest is created EMPTY at 0600 and
-      # settled to its final mode (0644 & ~umask, narrowed by the task's
-      # numeric mode:) before the assembled content lands - see
-      # BasePlugin#create_staging_temp. An existing dest's mode is
-      # untouched by opening it for writing (and the task's mode:/owner:
-      # are applied to dest after this returns, as before).
+      # settled to its final mode (0666 & ~umask - see the bare-relative
+      # case above for the real-Ansible reading) before the assembled
+      # content lands - see BasePlugin#create_staging_temp. An existing
+      # dest's mode is untouched by opening it for writing (and the
+      # task's mode:/owner: are applied to dest after this returns, as
+      # before).
       unless File.exists?(dest)
-        create_staging_temp(dest, staging_temp_mode(dest, 0o644, preserve_dest_mode: false))
+        create_staging_temp(dest, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
       end
       File.write(dest, content, perm: 0o600)
       backup_file

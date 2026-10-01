@@ -193,8 +193,23 @@ module Krikri
       # only state "absent" (the path is gone by exit time). No checksum
       # here ever - real Ansible's file module result has no checksum
       # field for any state, file or otherwise.
-      add_path_info(result, path)
+      #
+      # Gated for FAILURES: real's add_path_info keys on the RESULT
+      # carrying a path/dest key (basic.py: `if 'path' in kwargs or
+      # 'dest' in kwargs`), and a fail_json(msg=...) without a path=
+      # kwarg - e.g. the touch timestamp parse error - merges nothing
+      # even when the task's own path exists (live-verified vs
+      # 2.19.11: {"changed": false, "msg": ...} exactly). Success
+      # results always carry path/dest in real, so they keep the
+      # unconditional merge.
+      add_path_info(result, path) unless path_less_failure?(result)
       result
+    end
+
+    # A failed result that carries neither path nor dest (see the note in
+    # execute): real merges no stat fields into it.
+    private def path_less_failure?(result : PluginResult) : Bool
+      result.failed? && !result.extra.has_key?("path") && !result.extra.has_key?("dest")
     end
 
     # A path that is PRESENT but resolves to '' must fail like real
@@ -233,8 +248,9 @@ module Krikri
           state: "absent"
         )
       when "touch"
-        # The empty-path touch failure in real Ansible carries no errno
-        # suffix, unlike an existing-path touch failure's oserror_repr text.
+        # Same plain failure wording as any other touch open() failure
+        # (see handle_touch); the empty path can never exist, so
+        # add_path_info merges nothing.
         PluginResult.new(
           changed: false,
           failed: true,
@@ -531,7 +547,9 @@ module Krikri
             return PluginResult.new(
               changed: changed,
               failed: false,
-              msg: ""
+              msg: "",
+              dest: path,
+              src: src
             )
           end
 
@@ -542,7 +560,7 @@ module Krikri
           return PluginResult.new(
             changed: changed,
             failed: false,
-            msg: "Link already points to #{src}",
+            msg: "",
             dest: path,
             src: src
           )
@@ -554,7 +572,9 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: ""
+          msg: "",
+          dest: path,
+          src: src
         )
       end
 
@@ -581,10 +601,13 @@ module Krikri
       # Apply attributes (note: for links, this affects the link itself, not target)
       apply_file_attributes(path)
 
+      # Real's link results carry NO msg on any success path - created,
+      # re-pointed or already-correct alike (live-verified vs 2.19.11 at
+      # -v: {changed, dest, src} + the add_path_info stat fields only).
       PluginResult.new(
         changed: true,
         failed: false,
-        msg: "Symbolic link created",
+        msg: "",
         dest: path,
         src: src
       )
@@ -674,21 +697,24 @@ module Krikri
       nil
     end
 
-    # The already-linked verdict: check mode reports it without the
-    # dest/src echo (nothing was created for a later stat to describe).
+    # The already-linked verdict: real's result echoes dest/src in check
+    # mode too (same result dict as the run path, live-verified vs
+    # 2.19.11 via a registered `debug: msg="{{ h.dest }}"`).
     private def hard_link_existing_result(path : String, src : String) : PluginResult
       if @check_mode
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: ""
+          msg: "",
+          dest: path,
+          src: src
         )
       end
 
       PluginResult.new(
         changed: false,
         failed: false,
-        msg: "Hard link already exists",
+        msg: "",
         dest: path,
         src: src
       )
@@ -713,7 +739,9 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: ""
+          msg: "",
+          dest: path,
+          src: src
         )
       end
 
@@ -750,7 +778,7 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        msg: "Hard link created",
+        msg: "",
         dest: path,
         src: src
       )
@@ -819,24 +847,33 @@ module Krikri
       # umask like real Ansible (umask 002 -> 0664, umask 022 -> 0644).
       # On an EXISTING path the perm arg is ignored by open(2), so a
       # touch never rewrites an existing file's mode.
-      # On failure real Ansible's file module reports the wrapped OS
-      # error itself - "Error, could not touch target: [Errno 2] No such
-      # file or directory: b'<path>'" (os.open/os.utime OSError str, with
-      # the path in Python bytes repr) - not a bare "Failed to create
-      # file" (found via the podman-diff file_edge_cases F1 case).
+      # On failure real Ansible's file module fails with the plain
+      # "Error, could not touch target." plus the path echo
+      # (fail_json(msg=..., path=path)) - no errno suffix on any
+      # open() failure, ENOENT parent or ENOTDIR component alike
+      # (live-verified vs 2.19.11 for both cases; the path doesn't
+      # exist at exit time, so add_path_info merges nothing).
       created = begin
         File.open(path, "w", 0o666) { }
         true
       rescue ex : File::Error
+        # Real's fail_json(path=path, exception=ex): the RESULT's msg
+        # stays plain, but the OSError str rides the (display-only)
+        # `exception` key - real 2.19's error block composes the header
+        # as "<msg>: <exception>" while the dumped result keeps the
+        # bare msg (live-verified vs 2.19.11).
         @last_error = oserror_repr(path, ex)
         false
       end
       unless created
-        return PluginResult.new(
+        result = PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Error, could not touch target: #{@last_error}"
+          msg: "Error, could not touch target.",
+          path: path
         )
+        result.extra["exception"] = JSON::Any.new(@last_error || "")
+        return result
       end
 
       # Apply attributes
@@ -887,7 +924,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "Path already absent",
+          msg: "",
           path: path
         )
       end
@@ -1624,7 +1661,9 @@ module Krikri
     private def parse_touch_timestamp(value : String, format : String) : Time
       fields = {} of String => String
       match = value.match(touch_timestamp_regex(value, format, fields))
-      raise timestamp_format_error(value, format, "time data #{value.inspect} does not match format #{format.inspect}") unless match
+      # Python strptime's own wording quotes both strings in single
+      # quotes (repr of str, not Crystal's double-quoted inspect).
+      raise timestamp_format_error(value, format, "time data '#{value}' does not match format '#{format}'") unless match
 
       captured = 0
       fields.each_key do |key|

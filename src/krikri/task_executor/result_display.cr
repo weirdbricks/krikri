@@ -448,6 +448,22 @@ module Krikri
       origin = error_origin_context(source_task)
       return unless origin
 
+      # A fail_json(exception=ex) result (real 2.19 composes its error
+      # header as "<msg>: <exception str>" from the ErrorSummary chain,
+      # while the dumped result keeps the bare msg and drops the
+      # exception key entirely). Krikri plugins signal this with a
+      # real exception text under the `exception` key - the
+      # "(traceback unavailable)" placeholder base_plugin injects when
+      # no exception was passed is NOT part of the chain in real
+      # (fail_json only builds an ErrorSummary for an actual
+      # exception), so it is ignored here.
+      if (exc = result["exception"]?.try(&.as_s?)) && !exc.empty? &&
+         exc != "(traceback unavailable)"
+        # Real's own _text_utils.concat_message (ported on ErrorBlock)
+        # strips a trailing ". " from the left side - "Error, could not
+        # touch target." + "[Errno 20] ..." collapses to "...target: [Errno 20] ...".
+        msg = ErrorBlock.concat_message(msg, exc)
+      end
       # A plugin whose block text differs from the fatal msg (fetch's slurp
       # failure) hands the block its own text via _ansible_error_detail.
       msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
@@ -933,6 +949,12 @@ module Krikri
           # `failed`/`skipped` only leave the TOP-level result (a registered
           # skipped result printed via debug var: keeps its nested `skipped`)
           next if top_level && (key == "failed" || key == "skipped" || key == "exception")
+          # Real's callback POPS `diff` out of every result before dumping
+          # (it renders as the diff section only, and only in diff mode) -
+          # status-line dumps must never carry it. Registered variables
+          # keep their `diff` key (a check-mode template result registers
+          # "diff": []), and those go through debug_clean_result instead.
+          next if top_level && key == "diff"
           next if key.starts_with?("_ansible_")
           cleaned[key] = clean_for_display(v, false)
         end
@@ -1013,6 +1035,17 @@ module Krikri
     # and starts it immediately after the TASK banner with no leading
     # blank of its own.
     def self.display_diff(diff : JSON::Any) : Nil
+      # lineinfile's diff is a LIST of diff dicts (content entry + a file
+      # attributes entry); an empty list (a no-change run) renders
+      # nothing, like real's callback skipping the empty diff.
+      if (arr = diff.as_a?)
+        arr.each { |entry| display_diff_entry(entry) }
+      else
+        display_diff_entry(diff)
+      end
+    end
+
+    def self.display_diff_entry(diff : JSON::Any) : Nil
       # Content diff (copy, template)
       if diff["before"]? && diff["after"]? && diff["before"].as_s? && diff["after"].as_s?
         display_content_diff(diff)
@@ -1036,30 +1069,59 @@ module Krikri
       puts ""
     end
 
-    # Display attribute diff (for file attributes like mode, owner)
+    # Display attribute diff (for file attributes like mode, owner).
+    # Real's callback renders a DICT diff exactly like a content diff:
+    # both sides are pretty-printed as sorted 4-space-indented JSON and
+    # fed through the unified differ (live-verified vs 2.19.11 --diff:
+    # `--- before` / `+++ after` / `@@ -1,5 +1,5 @@` with the JSON lines
+    # as +/-/context), not a per-key `- key: value` listing.
     def self.display_attribute_diff(diff : JSON::Any) : Nil
-      before = diff["before"].as_h
-      after = diff["after"].as_h
-
       puts "--- before".colorize(:red).bold
       puts "+++ after".colorize(:green).bold
 
-      # Show changes
-      all_keys = (before.keys + after.keys).uniq.sort
-      all_keys.each do |key|
-        before_val = before[key]?
-        after_val = after[key]?
-
-        if before_val && after_val && before_val.to_s != after_val.to_s
-          puts "-  #{key}: \"#{before_val}\"".colorize(:red)
-          puts "+  #{key}: \"#{after_val}\"".colorize(:green)
-        elsif before_val && !after_val
-          puts "-  #{key}: \"#{before_val}\"".colorize(:red)
-        elsif after_val && !before_val
-          puts "+  #{key}: \"#{after_val}\"".colorize(:green)
-        end
-      end
+      show_unified_diff(python_pretty_json(diff["before"]), python_pretty_json(diff["after"]))
       puts ""
+    end
+
+    # Python's json.dumps(obj, sort_keys=True, indent=4): sorted keys,
+    # 4-space indent, ": " separators, trailing newline (real's
+    # difflib-based renderer feeds it both sides with trailing
+    # newlines - no "\ No newline at end of file" markers ever appear).
+    def self.python_pretty_json(value : JSON::Any) : String
+      String.build do |io|
+        pretty_json_write(value, io, 0)
+      end
+    end
+
+    private def self.pretty_json_write(value : JSON::Any, io : IO, depth : Int32) : Nil
+      pad = "    " * (depth + 1)
+      close_pad = "    " * depth
+      case raw = value.raw
+      when Hash
+        io << "{\n"
+        raw.keys.sort.each_with_index do |key, idx|
+          io << pad << key.to_json << ": "
+          pretty_json_write(raw[key], io, depth + 1)
+          io << ",\n" if idx < raw.size - 1
+        end
+        io << "\n" << close_pad << "}"
+      when Array
+        io << "[\n"
+        raw.each_with_index do |item, idx|
+          io << pad
+          pretty_json_write(item, io, depth + 1)
+          io << ",\n" if idx < raw.size - 1
+        end
+        io << "\n" << close_pad << "]"
+      when Nil
+        io << "null"
+      when Bool
+        io << raw.to_s
+      when String
+        io << raw.to_json
+      else
+        io << raw.to_s
+      end
     end
 
     # Show unified diff using system diff command

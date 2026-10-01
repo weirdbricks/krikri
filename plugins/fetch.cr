@@ -129,13 +129,15 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "remote path is a directory, not a file", file: src)
     end
 
+    # Real fetch's results carry NO msg key on either the success or the
+    # already-present path (live-verified vs 2.19.11 at -v).
     private def unchanged_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
-      PluginResult.new(changed: false, failed: false, msg: "file already present", checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src)
+      PluginResult.new(changed: false, failed: false, checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src)
     end
 
     private def success_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
       PluginResult.new(
-        changed: true, failed: false, msg: "OK",
+        changed: true, failed: false,
         dest: dest_path, checksum: remote_checksum,
         md5sum: native_checksum(dest_path, "md5"),
         remote_checksum: remote_checksum, remote_md5sum: nil

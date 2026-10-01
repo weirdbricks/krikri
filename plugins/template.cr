@@ -261,11 +261,23 @@ module Krikri
             diff: diff_data
           )
         else
-          return PluginResult.new(
+          # Real's equal-content check run still executes the module
+          # (the early check-mode return in copy's action plugin only
+          # fires on a checksum MISMATCH), so its result carries the
+          # module's dest/checksum echo like the real run does
+          # (live-verified vs 2.19.11 via a registered result). The
+          # changed branch above is the action-level early return: no
+          # dest there.
+          result = PluginResult.new(
             changed: false,
             failed: false,
-            diff: diff_data
+            diff: diff_data,
+            dest: dest,
+            checksum: content_sha1
           )
+          add_path_info(result, dest)
+          result.extra["path"] = JSON::Any.new(dest)
+          return result
         end
       end
 
@@ -524,8 +536,12 @@ module Krikri
 
     # Create backup of existing file
     private def create_backup(path : String) : String
-      timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
-      backup_path = "#{path}.#{Random.rand(10000..99999)}.#{timestamp}~"
+      # Real Ansible's backup_local (used by the template action's copy
+      # module too) inserts the process PID between path and timestamp
+      # and stamps LOCAL time - not a random number, not UTC
+      # (live-verified vs 2.19.11).
+      timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
+      backup_path = "#{path}.#{Process.pid}.#{timestamp}~"
 
       begin
         File.copy(path, backup_path)

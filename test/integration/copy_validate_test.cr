@@ -59,7 +59,15 @@ describe "copy: with validate:" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(false)
-    output.to_s.must_include("Validation failed")
+    # Real's copy module fails with fail_json(msg="failed to validate",
+    # exit_status=rc, stdout=..., stderr=...) - the wording is
+    # "failed to validate", never "Validation failed"
+    # (live-verified vs 2.19.11 at -v: the fatal dump is exactly
+    # {"changed": false, "checksum": ..., "exit_status": 1,
+    # "msg": "failed to validate", "stderr": "", "stderr_lines": [],
+    # "stdout": "", "stdout_lines": []}).
+    output.to_s.must_include("\"msg\": \"failed to validate\"")
+    output.to_s.must_include("\"exit_status\": 1")
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)

@@ -13,12 +13,18 @@ end
 
 describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/local_follow/remote_src/directory_mode)" do
   describe "checksum:" do
-    # Live-verified against ansible-core 2.19.4: a copy: whose
-    # checksum: param matches the destination's existing SHA1 skips
-    # the transfer entirely WITHOUT comparing content: against the
-    # file - a copy with matching checksum and DIFFERENT content
-    # reports changed=false and leaves the file untouched.
-    it "skips the copy entirely (changed=false) when dest already holds the given checksum, even when content differs" do
+    # Live-verified against ansible-core 2.19.11: `checksum:` states
+    # the checksum the WRITTEN file must have, not a claim about the
+    # destination's current content. Real's copy ACTION plugin only
+    # short-circuits when the SOURCE's own checksum equals the dest's -
+    # with content: and differing content that comparison never
+    # matches, so the copy runs and the MODULE's checksum validation
+    # then fails on the staged file: "Copied file does not match the
+    # expected checksum. Transfer failed.", with the written file's
+    # checksum under "checksum" and the caller's under
+    # "expected_checksum", changed=false, and the existing dest left
+    # untouched (the check happens before the staged file is moved in).
+    it "writes and then fails the checksum validation when content differs from the dest, even though dest holds the given checksum" do
       dest = File.tempname("copy-checksum-skip-dest")
       File.write(dest, "on disk\n")
 
@@ -28,8 +34,11 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
         "checksum" => sha1_of(dest),
       })
 
+      result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(false)
-      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["msg"].as_s.must_equal("Copied file does not match the expected checksum. Transfer failed.")
+      result["checksum"].as_s.must_equal(Digest::SHA1.hexdigest("different\n"))
+      result["expected_checksum"].as_s.must_equal(Digest::SHA1.hexdigest("on disk\n"))
       File.read(dest).must_equal("on disk\n")
     ensure
       File.delete(dest) if dest && File.exists?(dest)

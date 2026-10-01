@@ -92,12 +92,50 @@ MASKS=(
   # content under a random ansible-tmp-<epoch>-<pid>-<random>/.source.txt
   # path that is different on every run by construction, so only that
   # whole key/value pair is masked (krikri has no equivalent staged path
-  # to emit).
-  "s/\"src\": \"[^\"]*ansible-tmp[^\"]*\", //g"
+  # to emit). ansible-local-<pid><random> staged paths (the force=false
+  # copy no-op's src echo) are the same class and covered too.
+  "s/\"src\": \"[^\"]*ansible-(tmp|local)[^\"]*\", //g"
+  "s/, \"src\": \"[^\"]*ansible-(tmp|local)[^\"]*\"//g"
   # Seventh entry: the same mkstemp name when the user gave a CUSTOM prefix
   # (the prefix and suffix are deterministic, only the 8 characters between
   # them are random). Anchored on an Errno message's single-quoted path.
   "s/(\\[Errno [0-9]+\\] [^:]+: '[^']*\/[^'\/]*)[a-z0-9_]{8}(([.]|[^a-z0-9_'\/])[^'\/]*)?'/\\1<RND>\\2'/g"
+  # Eighth entry: copy:/template: backup_file names embed the creating
+  # process's PID and the wall-clock second the backup was made at
+  # (`<dest>.<pid>.<yyyy-mm-dd@hh:mm:ss>~`, ansible.module_utils.
+  # files.backup_local) - both are different on every run by
+  # construction (the two engines are separate processes executed a
+  # moment apart). Only the pid/timestamp digits are masked; the dest
+  # prefix and trailing ~ must still match byte for byte.
+  "s/\\.([0-9]+)\\.([0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9]{2}:[0-9]{2}:[0-9]{2})~/.<PID>.<BACKUP-TIME>~/g"
+  # Ninth entry: a copy:/template: validate: failure's stderr quotes the
+  # STAGED copy of the content the validator ran against - real ansible
+  # stages under ~/.ansible/tmp/ansible-tmp-<random>/.source<suffix>,
+  # krikri under /tmp/.krikri-playbook-<module>-<random>.tmp - both
+  # per-run by construction. Both sides normalize to <STAGED> so the
+  # validator's own message text still compares byte for byte.
+  "s#/[^ \"]*/\\.ansible/tmp/ansible-tmp-[^ \"]*/\\.source(\\.[^ :\"]*)?#<STAGED>#g"
+  "s#/tmp/\\.krikri-playbook-[a-z]+-[0-9a-f]+\\.tmp#<STAGED>#g"
+  # Tenth/eleventh entries: stat/find results carry the file's inode
+  # number and ctime - both are filesystem-state values that differ
+  # whenever the two engines create the same file in sequence (each
+  # engine's run starts by wiping and recreating the work dir, so each
+  # engine stats ITS OWN creation). Not reproducible byte-for-byte by
+  # any engine implementation; only the values are masked, the keys and
+  # every other field must still match.
+  "s/(\"ctime\": )[0-9]+\\.[0-9]+/\1<CTIME>/g"
+  "s/(\"inode\": )[0-9]+/\1<INODE>/g"
+  # Twelfth entry, same class: atime AND mtime. A stat/find result that
+  # computes a checksum READS the file, and the kernel's relatime policy
+  # updates atime on the first read after creation (a fresh file's atime
+  # is its creation-era value, always older than its ctime) - so
+  # whichever engine's process reads first leaves a different atime
+  # behind for the other. mtime is the file's own creation/rewrite
+  # wall-clock second, and each engine's run creates the work files
+  # seconds apart by construction. Values masked, keys and everything
+  # else compared.
+  "s/(\"atime\": )[0-9]+\\.[0-9]+/\1<ATIME>/g"
+  "s/(\"mtime\": )[0-9]+\\.[0-9]+/\1<MTIME>/g"
 )
 
 mask() {
@@ -133,7 +171,7 @@ mask() {
     # different on every real run by construction (krikri has no
     # equivalent staged path to emit). Anchored on ansible-tmp so any
     # other "src" value keeps being compared byte-for-byte.
-    s/^ *"src": "[^"]*ansible-tmp[^"]*",\n//mg;
+    s/^ *"src": "[^"]*ansible-(tmp|local)[^"]*",\n//mg;
     s/^Pipelining is enabled\.\n//mg;
     # Real copy:/template: (action-plugin) result dumps carry an
     # `invocation.module_args` block that embeds the per-run random staged

@@ -192,11 +192,11 @@ module Krikri
 
       if after_pattern || before_pattern
         section_pattern = if after_pattern && before_pattern
-                            "#{after_pattern}(?<subsection>.*?)#{before_pattern}"
+                            "#{after_pattern}(?P<subsection>.*?)#{before_pattern}"
                           elsif after_pattern
-                            "#{after_pattern}(?<subsection>.*)"
+                            "#{after_pattern}(?P<subsection>.*)"
                           else
-                            "(?<subsection>.*)#{before_pattern}"
+                            "(?P<subsection>.*)#{before_pattern}"
                           end
 
         section_regex = begin
@@ -211,10 +211,14 @@ module Krikri
 
         match = section_regex.match(content)
         unless match
+          # Real's no-match exit also carries an `rc: 0` alongside the
+          # msg (the module's run_command convention; live-verified vs
+          # 2.19.11 at -v).
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Pattern for before/after params did not match the given file: #{section_pattern}"
+            msg: "Pattern for before/after params did not match the given file: #{section_pattern}",
+            rc: 0
           )
         end
 
@@ -223,27 +227,16 @@ module Krikri
         section = content.byte_slice(section_start, section_end - section_start)
       end
 
+      # Real counts replacements with re.subn and requires BOTH a
+      # non-zero count and an actually-changed section before calling
+      # it changed (replace.py: `if result[1] > 0 and section !=
+      # result[0]`).
+      match_count = section.scan(regex).size
       new_section = section.gsub(regex, replace)
-      changed = new_section != section
-
-      if @check_mode
-        msg = if changed
-                "Would replace matches in #{path}"
-              else
-                "No matches to replace in #{path}"
-              end
-        result = PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          path: path
-        )
-        add_path_info(result, path)
-        return result
-      end
+      changed = match_count > 0 && new_section != section
 
       backup_file = ""
-      if changed
+      if changed && !@check_mode
         # Real Ansible's backup_local runs before write_changes, so the
         # backup always holds the PRE-substitution content.
         if true?(@params["backup"]?)
@@ -256,22 +249,33 @@ module Krikri
       end
 
       # Apply any requested attribute changes (owner/group/mode), matching
-      # real Ansible which also sets them even on a no-matches run.
-      attr_changed = apply_attributes(path)
+      # real Ansible which also sets them even on a no-matches run
+      # (check mode never writes).
+      attr_changed = @check_mode ? false : apply_attributes(path)
 
-      msg = if changed || attr_changed
-              "Replaced matches in #{path}"
+      # Real's result carries ONLY rc/msg/changed (+diff in diff mode,
+      # +backup_file when a backup was actually taken) - no path echo,
+      # no file-common stat fields. msg is "N replacements made" (the
+      # subn count), "" when nothing changed, with check_file_attrs
+      # appending the ownership/perms suffix when the attributes were
+      # what drifted (live-verified vs 2.19.11 at -v).
+      msg = if changed
+              "#{match_count} replacements made"
             else
-              "No matches to replace in #{path}"
+              ""
             end
+      if attr_changed
+        msg += " and " unless msg.empty?
+        msg += "ownership, perms or SE linux context changed"
+      end
       result = PluginResult.new(
         changed: changed || attr_changed,
         failed: false,
         msg: msg,
-        path: path,
-        backup_file: backup_file
+        include_empty_msg: true,
+        rc: 0
       )
-      add_path_info(result, path)
+      result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       result
     end
 
@@ -385,7 +389,8 @@ module Krikri
     # file-editing module in this codebase reports backup_file the same
     # way.
     private def write_backup(path : String) : String
-      timestamp = Time.utc.to_s("%Y-%m-%d@%H:%M:%S")
+      # backup_local stamps LOCAL time (same as copy/template/assemble).
+      timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
       backup_file = "#{path}.#{Process.pid}.#{timestamp}~"
       File.copy(path, backup_file)
       backup_file
