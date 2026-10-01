@@ -309,4 +309,126 @@ describe "replace plugin" do
                                   "(attr, dest, destfile, name).")
     File.read(path).must_equal("hue\n")
   end
+
+  # The two krikri-playbook-generator round-31 divergences (module
+  # replace) both landed on the same shape of gap: real replace.py runs
+  # its arguments through Python's OWN machinery (bytes.decode for
+  # encoding:, re.sub's replacement-template parser for replace:), and
+  # every wording below is live-verified against ansible-core 2.19.11.
+
+  it "fails with real's module-crash wording on an encoding Python has no codec for" do
+    # real decodes the file's bytes inside to_text(), so an unknown
+    # codec name dies with a LookupError its own `except OSError` does
+    # not catch - the module-crash path, not fail_json. This engine
+    # used to fail with its own "Failed to read <path>: Invalid
+    # encoding: <name>".
+    path = fresh_file("enc_unknown.txt", "value=1\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "=1", "replace" => "=2", "encoding" => "20"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown encoding: 20")
+    result["_ansible_error_detail"].as_s.must_equal("unknown encoding: 20")
+    File.read(path).must_equal("value=1\n")
+  end
+
+  it "accepts Python's codec aliases, which iconv does not take verbatim" do
+    # glibc's iconv rejects "latin-1"/"us-ascii" while CPython's
+    # codecs.lookup() resolves both - so the unknown-codec verdict has
+    # to come from Python's own registry (Krikri::PythonCodecs), not
+    # from iconv. The content is written as raw latin-1 bytes to prove
+    # the read/write round trip.
+    path = File.join(replace_dir, "enc_alias.txt")
+    File.write(path, "caf".to_slice + Bytes[0xe9] + "=1".to_slice)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "=1", "replace" => "=2", "encoding" => "latin-1"})
+
+    result["changed"].as_bool.must_equal(true)
+    bytes = File.read(path).to_slice
+    bytes[3].must_equal(0xe9)
+    bytes[-1].must_equal('2'.ord)
+  end
+
+  it "fails an unsatisfiable group reference even when the regexp matches nothing" do
+    # real re.subn parses the replacement template BEFORE it applies
+    # the pattern, so `replace: '\1 changed'` against a pattern with no
+    # capture groups fails the task (and leaves the file alone) whatever
+    # the file holds. This engine used to write the substitution out
+    # with an empty group instead.
+    path = fresh_file("groupref.txt", "kpg here\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "nomatchatall", "replace" => "\\1 changed"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Unable to process replace due to error: invalid group reference 1 at position 1")
+    File.read(path).must_equal("kpg here\n")
+  end
+
+  it "expands Python's \\g<n> group reference spelling" do
+    # `\g<1>` is Python's unambiguous form of `\1` (a digit right after
+    # a backreference would otherwise start a longer one), and `\g<name>`
+    # resolves against the pattern's own named group.
+    numbered = fresh_file("gref_numbered.txt", "kpg here\n")
+    numbered_result = PluginSpecHelper.run("replace", {"path" => numbered, "regexp" => "(kpg) here", "replace" => "\\g<1>2"})
+
+    numbered_result["changed"].as_bool.must_equal(true)
+    File.read(numbered).must_equal("kpg2\n")
+
+    named = fresh_file("gref_named.txt", "kpg here\n")
+    named_result = PluginSpecHelper.run("replace", {"path" => named, "regexp" => "(?P<word>kpg) here", "replace" => "\\g<word>!"})
+
+    named_result["changed"].as_bool.must_equal(true)
+    File.read(named).must_equal("kpg!\n")
+  end
+
+  it "fails with real's module-crash wording on a group name the pattern does not define" do
+    # The IndexError for an unknown group name escapes replace.py's own
+    # `except re.error`, so it is a module crash rather than a
+    # fail_json - the fatal msg keeps real's "Task failed: Module
+    # failed: " wrapper while the [ERROR] block shows the bare text
+    # (carried in _ansible_error_detail).
+    path = fresh_file("groupname.txt", "kpg here\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(kpg)", "replace" => "\\g<nope>"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown group name 'nope'")
+    result["_ansible_error_detail"].as_s.must_equal("unknown group name 'nope'")
+    File.read(path).must_equal("kpg here\n")
+  end
+
+  it "reports a bad escape in the replacement the way re.sub does" do
+    # re.ESCAPES has no entry for an unknown LETTER, so Python raises
+    # "bad escape \q"; a trailing lone backslash is the tokenizer's own
+    # "bad escape (end of pattern)". Both positions are counted the way
+    # re._parser.Tokenizer#tell counts them.
+    bad_letter = fresh_file("bad_escape.txt", "kpg\n")
+    bad_letter_result = PluginSpecHelper.run("replace", {"path" => bad_letter, "regexp" => "kpg", "replace" => "\\q"})
+
+    bad_letter_result["failed"].as_bool.must_equal(true)
+    bad_letter_result["msg"].as_s.must_equal("Unable to process replace due to error: bad escape \\q at position 0")
+    File.read(bad_letter).must_equal("kpg\n")
+
+    trailing = fresh_file("trailing_backslash.txt", "kpg\n")
+    trailing_result = PluginSpecHelper.run("replace", {"path" => trailing, "regexp" => "kpg", "replace" => "a\\"})
+
+    trailing_result["failed"].as_bool.must_equal(true)
+    trailing_result["msg"].as_s.must_equal("Unable to process replace due to error: bad escape (end of pattern) at position 1")
+    File.read(trailing).must_equal("kpg\n")
+  end
+
+  it "interprets an octal escape as a byte and keeps a non-letter escape literal" do
+    # \101 is the byte 'A'; "\-" has no entry in re.ESCAPES and is not a
+    # letter, so real writes the backslash and the dash through as they
+    # are (only an unknown LETTER is a "bad escape" there).
+    path = fresh_file("octal.txt", "first\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^first", "replace" => "\\101\\t\\-"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("A\t\\-\n")
+  end
 end

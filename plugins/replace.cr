@@ -4,6 +4,7 @@ require "json"
 require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_codecs"
 
 module Krikri
   # Replace Plugin - Replace each regex match in a file with a replacement
@@ -130,8 +131,44 @@ module Krikri
 
       encoding = @params["encoding"]?.presence || "utf-8"
 
-      begin
-        content = File.open(path, "r", encoding: encoding) { |file| file.gets_to_end }
+      # real replace.py decodes the file's bytes with this name inside
+      # to_text(), so a name CPython has no codec for dies with a
+      # LookupError there - which its own `except OSError` does NOT
+      # catch, i.e. the module crash path, reaching the user as real's
+      # "Task failed: Module failed: unknown encoding: 20" (msg and
+      # [ERROR] line live-verified against 2.19.11). Deciding that
+      # verdict from Crystal's own encoding set instead (the old
+      # behavior: any name iconv rejects was reported as "Failed to
+      # read <path>: Invalid encoding: <name>") gets it wrong both
+      # ways - it never matched real's wording, and it failed the task
+      # for every name Python resolves but this host's iconv does not
+      # take verbatim ("latin-1", "cp1252", "us-ascii", ...).
+      unless PythonCodecs.known?(encoding)
+        detail = "unknown encoding: #{encoding}"
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Task failed: Module failed: #{detail}",
+          _ansible_error_detail: detail
+        )
+      end
+      # The spelling iconv converts with, or nil for a codec Python
+      # resolves but no iconv here can - the file's bytes are then read
+      # and written verbatim, which is the same round trip real's
+      # decode/encode pair produces for a single-byte codec.
+      iconv_encoding = PythonCodecs.iconv_name(encoding)
+
+      content = begin
+        if iconv_encoding
+          File.open(path, "r", encoding: iconv_encoding) { |file| file.gets_to_end }
+        else
+          File.read(path)
+        end
+      rescue ArgumentError
+        # iconv has no converter for a codec Python does have on this
+        # host: keep the bytes instead of failing on a name real
+        # accepts.
+        File.read(path)
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -139,22 +176,6 @@ module Krikri
           msg: "Failed to read #{path}: #{ex.message}"
         )
       end
-
-      # Real replace.py feeds the `replace:` string through Python re.sub's
-      # own replacement-template parser, which interprets control escapes
-      # BEFORE any backreference expansion - so in YAML single quotes
-      # '\t' (two literal chars: backslash, t) lands in the file as a REAL
-      # tab byte. Round900159 juju4.harden_apache's apache-security.yml
-      # failed real `apache2ctl -t` on this engine with
-      # `Invalid command '\tOptions'` for exactly this reason: the literal
-      # two-char sequence was written into apache2.conf. Backreference
-      # forms are left byte-for-byte intact for Crystal's own gsub
-      # replacement parser (string.cr scan_backreferences: single-digit
-      # \0-\9 and \k<name>), which must still see them; `\g<name>` (the
-      # Python-only spelling) also passes through untouched. Unrecognized
-      # escapes keep the previous literal pass-through (real Python raises
-      # "bad escape" on unknown letters - not reproduced here on purpose).
-      replace = interpret_re_sub_escapes(@params["replace"]? || "")
 
       # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
       # ^ and $ anchor at every line boundary, not just the start/end of the
@@ -227,6 +248,41 @@ module Krikri
         section = content.byte_slice(section_start, section_end - section_start)
       end
 
+      # Real replace.py feeds the `replace:` string through Python re.sub's
+      # own replacement-template parser, which runs BEFORE the pattern is
+      # ever applied to the content - so a template the pattern cannot
+      # satisfy fails the task even when the pattern matches nothing
+      # ("invalid group reference 1 at position 1" for `regexp: kpg` +
+      # `replace: '\1 changed'`, msg live-verified against 2.19.11,
+      # where the same task succeeded here and rewrote the file). The
+      # parser also interprets the control escapes - so in YAML single
+      # quotes '\t' (two literal chars: backslash, t) lands in the file
+      # as a REAL tab byte; Round900159 juju4.harden_apache's
+      # apache-security.yml failed real `apache2ctl -t` on this engine
+      # with `Invalid command '\tOptions'` for exactly that reason.
+      replace = begin
+        ReplacementTemplate.parse(@params["replace"]? || "", regex.capture_count, ReplacementTemplate.named_groups(pattern))
+      rescue ex : ReplacementTemplate::RegexError
+        # re.error, which replace.py DOES catch and re-raise as a
+        # fail_json of its own.
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Unable to process replace due to error: #{ex.message}"
+        )
+      rescue ex : ReplacementTemplate::CrashError
+        # Anything else the parser raises (IndexError for a group name
+        # the pattern does not define) escapes replace.py's
+        # `except re.error`, so it is a module CRASH, not a fail_json:
+        # "unknown group name 'x'", wrapped as real wraps it.
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Task failed: Module failed: #{ex.message}",
+          _ansible_error_detail: ex.message
+        )
+      end
+
       # Real counts replacements with re.subn and requires BOTH a
       # non-zero count and an actually-changed section before calling
       # it changed (replace.py: `if result[1] > 0 and section !=
@@ -243,7 +299,7 @@ module Krikri
           backup_file = write_backup(path)
         end
 
-        if failure = write_with_optional_validate(path, new_section, section_start, section_end, content, encoding)
+        if failure = write_with_optional_validate(path, new_section, section_start, section_end, content, iconv_encoding)
           return failure
         end
       end
@@ -279,56 +335,281 @@ module Krikri
       result
     end
 
-    # One pass of Python re.sub's replacement-template escape interpretation
-    # (sre_parse.parse_template's ESCAPES subset), applied BEFORE the string
-    # reaches Regex#gsub so both escape processing and backreference
-    # expansion happen in the same order real replace.py gets them for free
-    # from re.sub. A trailing lone backslash and unknown escape pairs are
-    # emitted unchanged, preserving the pre-fix literal behavior.
-    private def interpret_re_sub_escapes(replacement : String) : String
-      return replacement unless replacement.includes?('\\')
+    # CPython's `re` replacement-template parser (re._parser.Tokenizer plus
+    # parse_template), ported so a `replace:` value behaves like the
+    # re.subn call real replace.py makes: the control escapes are
+    # interpreted here, and every group reference is checked against the
+    # pattern's own captures BEFORE the substitution runs - which is why
+    # an unsatisfiable reference fails the task even when the pattern
+    # matched nothing (real-verified against 2.19.11: `regexp: kpg` +
+    # `replace: '\1 changed'` fails with "invalid group reference 1 at
+    # position 1" and the file is left untouched).
+    #
+    # The parser has two failure classes because real's replace.py
+    # handles them differently: everything raised as an re.error is
+    # caught by its own `except re.error` and re-raised through
+    # fail_json ("Unable to process replace due to error: <text>"), while
+    # the IndexError for an undefined group name escapes that handler and
+    # crashes the module with the bare text.
+    private class ReplacementTemplate
+      DIGITS        = "0123456789"
+      OCT_DIGITS    = "01234567"
+      ASCII_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      # sre_parse.MAXGROUPS
+      MAX_GROUPS = 2_147_483_647_i64
 
-      String.build do |buffer|
+      # re.error - the one replace.py catches.
+      class RegexError < Exception
+      end
+
+      # The IndexError a group name the pattern does not define raises:
+      # NOT caught by replace.py, so it kills the module instead.
+      class CrashError < Exception
+      end
+
+      # re._parser.ESCAPES. \0 / \digits (octal and group references) and
+      # \g<...> have their own branches; a non-letter escape with no
+      # entry here ("\\ ", "\\-") stays literal in real too.
+      ESCAPES = {
+        'a' => '\a', 'b' => '\b', 'f' => '\f', 'n' => '\n',
+        'r' => '\r', 't' => '\t', 'v' => '\v', '\\' => '\\',
+      }
+
+      @chars : Array(Char)
+      @index : Int32
+
+      # The token the tokenizer looks at: a single character, or a
+      # backslash plus the character it escapes. nil at end of input.
+      getter token : String?
+
+      def self.parse(source : String, groups : Int32, named_groups : Set(String)) : String
+        new(source).parse(groups, named_groups)
+      end
+
+      # The named capture groups a pattern defines, in the three
+      # spellings Python accepts ((?P<name>), (?<name>), (?'name')).
+      # Scanned off the pattern text because Crystal's Regex exposes the
+      # capture COUNT (Regex#capture_count) but not the names, and the
+      # template parser has to know whether a `\g<name>` reference
+      # exists (real raises IndexError - not fail_json - when it does
+      # not).
+      def self.named_groups(pattern : String) : Set(String)
+        names = Set(String).new
+        chars = pattern.chars
         index = 0
-        while index < replacement.size
-          char = replacement[index]
-          if char != '\\'
-            buffer << char
-            index += 1
-            next
-          end
-
-          next_index = index + 1
-          if next_index >= replacement.size
-            buffer << char
-            break
-          end
-
-          peek = replacement[next_index]
-          # Backreference syntax must survive to Crystal's own gsub parser:
-          # \0-\9 (single digit) and \k<name> are what scan_backreferences
-          # recognizes, and \g<name> is Python's spelling of the same idea.
-          if peek.ascii_number? ||
-             ((peek == 'k' || peek == 'g') &&
-             next_index + 1 < replacement.size && replacement[next_index + 1] == '<')
-            buffer << char << peek
+        in_class = false
+        while index < chars.size
+          char = chars[index]
+          case char
+          when '\\'
             index += 2
             next
+          when '['
+            in_class = true
+          when ']'
+            in_class = false
+          when '('
+            if !in_class && chars[index + 1]? == '?'
+              marker = chars[index + 2]?
+              named = marker == '<' || marker == '\'' || (marker == 'P' && chars[index + 3]? == '<')
+              if named
+                closer = marker == '\'' ? '\'' : '>'
+                name_start = marker == 'P' ? index + 4 : index + 3
+                name_end = name_start
+                while name_end < chars.size && chars[name_end] != closer
+                  name_end += 1
+                end
+                names << chars[name_start...name_end].join if name_end < chars.size
+                index = name_end
+              end
+            end
           end
-
-          case peek
-          when 't'  then buffer << '\t'
-          when 'n'  then buffer << '\n'
-          when 'r'  then buffer << '\r'
-          when 'a'  then buffer << '\a'
-          when 'f'  then buffer << '\f'
-          when 'v'  then buffer << '\v'
-          when '\\' then buffer << '\\'
-          else
-            buffer << char << peek
-          end
-          index += 2
+          index += 1
         end
+        names
+      end
+
+      private def initialize(source : String)
+        @chars = source.chars
+        @index = 0
+        advance
+      end
+
+      def parse(groups : Int32, named_groups : Set(String)) : String
+        String.build do |text|
+          loop do
+            current = take
+            break unless current
+            if current[0] != '\\'
+              text << current
+              next
+            end
+
+            case char = current[1]
+            when 'g' then parse_named_reference(text, groups, named_groups)
+            when '0' then parse_zero_escape(text)
+            else
+              if DIGITS.includes?(char)
+                parse_numbered_reference(text, groups, char)
+              elsif (escaped = ESCAPES[char]?)
+                text << escaped
+              elsif ASCII_LETTERS.includes?(char)
+                raise re_error("bad escape \\#{char}", current.size)
+              else
+                text << current
+              end
+            end
+          end
+        end
+      end
+
+      private def advance : Nil
+        if @index >= @chars.size
+          @token = nil
+          return
+        end
+        start = @index
+        if @chars[start] == '\\'
+          @index += 1
+          if @index >= @chars.size
+            # A lone trailing backslash, reported by the tokenizer
+            # itself (real-verified: `replace: 'a\'` fails with "bad
+            # escape (end of pattern) at position 1").
+            raise RegexError.new("bad escape (end of pattern) at position #{@chars.size - 1}")
+          end
+        end
+        @index += 1
+        @token = @chars[start...@index].join
+      end
+
+      private def take : String?
+        current = @token
+        advance
+        current
+      end
+
+      # Tokenizer#tell: where the pending token starts, minus the
+      # caller's offset - real counts every reported position from there.
+      private def position(offset : Int32 = 0) : Int32
+        (@index - (token.try(&.size) || 0)) - offset
+      end
+
+      private def re_error(message : String, offset : Int32 = 0) : RegexError
+        RegexError.new("#{message} at position #{position(offset)}")
+      end
+
+      # Tokenizer#match: true when the pending token is this one
+      # character (consuming it).
+      private def match(char : Char) : Bool
+        return false unless token == char.to_s
+        advance
+        true
+      end
+
+      # Tokenizer#getuntil.
+      private def getuntil(terminator : Char, label : String) : String
+        result = [] of Char
+        loop do
+          current = take
+          if current.nil?
+            raise re_error("missing #{label}") if result.empty?
+            raise re_error("missing #{terminator}, unterminated name", result.size)
+          end
+          if current[0] == terminator
+            raise re_error("missing #{label}", 1) if result.empty?
+            break
+          end
+          result << current[0]
+        end
+        result.join
+      end
+
+      # \0, \01, \012 - up to three octal digits in total, masked to a
+      # byte exactly as real's `chr(int(this[1:], 8) & 0xff)` is.
+      private def parse_zero_escape(text : String::Builder) : Nil
+        digits = ['0']
+        digits << take.not_nil![0] if digit?(OCT_DIGITS)
+        digits << take.not_nil![0] if digit?(OCT_DIGITS)
+        text << (digits.join.to_i(8) & 0xff).chr
+      end
+
+      # \1 .. \99 - a group reference, unless the digits spell an octal
+      # escape (three octal digits).
+      private def parse_numbered_reference(text : String::Builder, groups : Int32, first : Char) : Nil
+        digits = String.build { |buffer| buffer << first }
+        if digit?(DIGITS)
+          digits = "#{digits}#{take}"
+          if OCT_DIGITS.includes?(first) && OCT_DIGITS.includes?(digits[1]) && digit?(DIGITS)
+            digits = "#{digits}#{take}"
+            value = digits.to_i(8)
+            if value > 0o377
+              raise re_error("octal escape value \\#{digits} outside of range 0-0o377", digits.size + 1)
+            end
+            text << value.chr
+            return
+          end
+        end
+        # Emitted unchanged: Crystal's own gsub replacement parser
+        # expands \0-\9, and reads a digit right after one as literal
+        # text - exactly as Python does once the template is parsed.
+        text << '\\' << digits
+        index = digits.to_i
+        raise re_error("invalid group reference #{index}", digits.size) if index > groups
+      end
+
+      # \g<1> / \g<name> - Python's unambiguous spelling of the same
+      # reference, validated the same way and then rewritten into the
+      # form Crystal's gsub expands (\N, \k<name>).
+      private def parse_named_reference(text : String::Builder, groups : Int32, named_groups : Set(String)) : Nil
+        raise re_error("missing <") unless match('<')
+        name = getuntil('>', "group name")
+
+        if name.chars.all?(&.ascii_number?)
+          # \g<007> is group 7 too (and \g<0> the whole match) - real
+          # parses the digits as an int, leading zeros and all.
+          significant = name.lstrip('0')
+          value = if significant.empty?
+                    0_i64
+                  elsif significant.size > 10
+                    MAX_GROUPS
+                  else
+                    significant.to_i64
+                  end
+          raise re_error("invalid group reference #{significant}", name.size + 1) if value >= MAX_GROUPS
+          raise re_error("invalid group reference #{value}", name.size + 1) if value > groups
+          text << '\\' << value
+          return
+        end
+
+        unless identifier?(name)
+          raise re_error("bad character in group name '#{name}'", name.size + 1)
+        end
+        unless named_groups.includes?(name)
+          raise CrashError.new("unknown group name '#{name}'")
+        end
+        text << "\\k<" << name << '>'
+      end
+
+      # Whether the pending token is this one-character class's member.
+      private def digit?(set : String) : Bool
+        !!token.try { |current| current.size == 1 && set.includes?(current[0]) }
+      end
+
+      # str.isidentifier(), as far as a group name can exercise it: no
+      # leading digit, letters/digits/underscores only. Every non-ASCII
+      # character counts as a letter here - Crystal has no Unicode
+      # category predicates, and the only cases this decides are exotic
+      # group names like `\g<é>`, which real takes to the group-name
+      # lookup (and this too) rather than to the "bad character" error.
+      private def identifier?(name : String) : Bool
+        return false if name.empty?
+        name.each_char.with_index do |char, index|
+          letter = char.ascii_letter? || !char.ascii?
+          digit = char.ascii_number?
+          return false unless letter || digit || char == '_'
+          return false if index.zero? && digit
+        end
+        true
       end
     end
 
@@ -403,7 +684,7 @@ module Krikri
     # file is discarded and the real file is left untouched.
     #
     # Returns nil on success, or a failed PluginResult.
-    private def write_with_optional_validate(path : String, new_section : String, section_start : Int32, section_end : Int32, original_content : String, encoding : String) : PluginResult?
+    private def write_with_optional_validate(path : String, new_section : String, section_start : Int32, section_end : Int32, original_content : String, encoding : String?) : PluginResult?
       validate_cmd = @params["validate"]?
       if validate_cmd && !validate_cmd.includes?("%s")
         return PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}")
@@ -429,7 +710,15 @@ module Krikri
         # itself - same reasoning as lineinfile's own apply_task_mode:
         # false, see staging_temp_mode's block comment).
         create_staging_temp(temp_file, staging_temp_mode(path, 0o644, apply_task_mode: false))
-        File.write(temp_file, new_content, encoding: encoding, perm: 0o600)
+        # A codec Python resolves but this host's iconv cannot converts
+        # nothing in either direction - the content is already the
+        # file's own bytes (see the read path), so write them as they
+        # are instead of encoding them.
+        if encoding
+          File.write(temp_file, new_content, encoding: encoding, perm: 0o600)
+        else
+          File.write(temp_file, new_content, perm: 0o600)
+        end
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
       end
