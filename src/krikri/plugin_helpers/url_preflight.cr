@@ -134,10 +134,26 @@ module Krikri
       end
 
       # The make_context half, in its own order: cafile (its own open),
-      # then set_ciphers, then load_cert_chain.
+      # then set_ciphers, then load_cert_chain. The cipher list is
+      # applied BEFORE the client certificate chain is loaded
+      # (ansible-core 2.19.11's module_utils/urls.py make_context), so a
+      # task carrying BOTH a garbage ciphers: list and a
+      # client_cert:/client_key: that do not exist reports the cipher
+      # failure, not the missing file - live-verified vs 2.19.11 on
+      # get_url with ciphers: [yrsmlh, uajhkq, dygslx] plus
+      # client_cert: /tmp/kpg-work/out3.cfg (absent): "Connection
+      # failure: ('No cipher can be selected.',)", and with the same
+      # missing client_cert but a real cipher name: "Connection failure:
+      # [Errno 2] No such file or directory". Checking the chain first
+      # reported the file error for both (kpg31 sweep sigs 3a256df85682
+      # and 7c51dac085e3, get_url and uri).
       private def self.context_failure(ca_path, ciphers, client_cert, client_key) : Failure?
         if ca_path
           file_error(ca_path).try { |error| return connection_failure(error) }
+        end
+
+        if ciphers && !ciphers.empty? && !ciphers_select_anything?(ciphers)
+          return connection_failure("('No cipher can be selected.',)")
         end
 
         # client_key is only ever read as load_cert_chain's keyfile=, and
@@ -154,9 +170,7 @@ module Krikri
         end
         return chain_error if chain_error
 
-        return nil unless ciphers && !ciphers.empty?
-        return nil if ciphers_select_anything?(ciphers)
-        connection_failure("('No cipher can be selected.',)")
+        nil
       end
 
       # Real Ansible's own missing_required_lib wording (basic.py's

@@ -1207,6 +1207,32 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "reports the cipher failure ahead of a missing client_cert" do
+      # make_context applies ciphers: (set_ciphers) BEFORE it loads the
+      # client certificate chain, so a task carrying both a garbage cipher
+      # list and a client_cert: file that does not exist fails with the
+      # cipher error - live-verified against ansible-core 2.19.11 (get_url
+      # with ciphers: [yrsmlh, uajhkq, dygslx] and a missing
+      # client_cert: reports "Connection failure: ('No cipher can be
+      # selected.',)"; the same missing client_cert with a real cipher
+      # name reports the Errno 2 instead).
+      dest = File.tempname("get-url-spec")
+      missing = PluginSpecHelper.tmp_path("no-such-client-cert-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("get_url", {
+        "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
+        "ciphers" => %(["yrsmlh", "uajhkq", "dygslx"]),
+        "client_cert" => missing, "client_key" => missing,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Connection failure: ('No cipher can be selected.',)")
+      result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
+      result["dest"].as_s.must_equal(dest)
+      result["elapsed"].as_i.must_equal(0)
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "skips the request - and the preflight - for a dest that matches its checksum" do
       # get_url.py only short-circuits on an existing dest when a checksum
       # was given and matches, and that happens before url_get/fetch_url:

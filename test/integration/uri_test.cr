@@ -683,6 +683,22 @@ describe "uri plugin" do
         "Status code was -1 and not [200]: Connection failure: [Errno 21] Is a directory")
     end
 
+    it "reports the cipher failure ahead of a missing client_cert" do
+      # make_context applies ciphers: (set_ciphers) BEFORE it loads the
+      # client certificate chain - live-verified against ansible-core
+      # 2.19.11 (uri with ciphers: [rddook, bbiswl] plus a client_cert:
+      # that does not exist reports the cipher failure, not the Errno 2).
+      missing = PluginSpecHelper.tmp_path("no-such-client-cert-#{Random::Secure.hex(4)}.pem")
+      result = PluginSpecHelper.run("uri", {
+        "url" => "#{URI_BASE}/text", "ciphers" => %(["rddook", "bbiswl"]),
+        "client_cert" => missing,
+      })
+
+      result["msg"].as_s.must_equal(
+        "Status code was -1 and not [200]: Connection failure: ('No cipher can be selected.',)")
+      result["status"].as_i.must_equal(-1)
+    end
+
     it "lets a creates: skip win over the preflight, like real does" do
       # uri.py short-circuits on creates:/removes: BEFORE fetch_url ever
       # builds the context - live-verified with a bogus ciphers list.
