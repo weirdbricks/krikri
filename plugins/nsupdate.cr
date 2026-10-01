@@ -5,6 +5,7 @@ require "socket"
 require "base64"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/nsupdate_message"
+require "../src/krikri/plugin_helpers/socket_connect"
 
 module Krikri
   # nsupdate plugin - a native port of community.general.nsupdate:
@@ -214,7 +215,7 @@ module Krikri
     private def query_wire(server : String, port : Int32, protocol : String, message : Bytes) : (Bytes | PluginResult)
       begin
         if protocol == "tcp"
-          socket = TCPSocket.new(server, port, connect_timeout: @query_timeout.seconds)
+          socket = PluginHelpers::SocketConnect.open(server, port, @query_timeout.seconds)
           socket.read_timeout = @query_timeout.seconds
           socket.write_timeout = @query_timeout.seconds
           begin
@@ -282,13 +283,7 @@ module Krikri
       errno = e.as?(Socket::Error).try(&.os_error).as?(Errno)
       return "(#{e.class.name.split("::").last}): #{e.message}" unless errno
 
-      py_class = case errno
-                 when .econnrefused? then "ConnectionRefusedError"
-                 when .etimedout?    then "TimeoutError"
-                 when .eacces?       then "PermissionError"
-                 else                     "OSError"
-                 end
-      "(#{py_class}): [Errno #{errno.value}] #{String.new(LibC.strerror(errno.value))}"
+      "(#{PluginHelpers::SocketConnect.python_exception_name(errno)}): #{PluginHelpers::SocketConnect.python_error_text(errno)}"
     end
 
     # Sends a message, checks the response id; returns the parsed

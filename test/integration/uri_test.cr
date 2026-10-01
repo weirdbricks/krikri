@@ -201,6 +201,24 @@ describe "uri plugin" do
     result["msg"].as_s.must_match(%r{\AStatus code was -1 and not \[200\]: Request failed: })
   end
 
+  it "names the refused connect with urllib's own errno text" do
+    # Live-verified against ansible-core 2.19.11: a refused connect puts
+    # urllib's URLError str() in the msg. krikri used to report Crystal's
+    # connect wording here ("Error connecting to '127.0.0.1:<port>':
+    # Resource temporarily unavailable"), because Crystal 1.21.1's event
+    # loop raises the live libc errno (EAGAIN) instead of the ECONNREFUSED
+    # the kernel recorded - see PluginHelpers::SocketConnect.
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+    result = PluginSpecHelper.run("uri", {"url" => "http://127.0.0.1:#{closed_port}/"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["status"].as_i.must_equal(-1)
+    result["msg"].as_s.must_equal(
+      "Status code was -1 and not [200]: Request failed: <urlopen error [Errno 111] Connection refused>")
+  end
+
   it "accepts a custom status_code list" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/notfound", "status_code" => "404,410"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)

@@ -38,9 +38,6 @@ and fixed and when.
   `test/unit/ssh_manager_timeout_test.cr`, `test/unit/local_executor_test.cr`), `File.executable?` -> `File::Info.executable?` (`src/krikri/plugin_helpers/facts_gatherer.cr`),
   `::sleep(Float)` -> `::sleep(Time::Span)` (`src/krikri/action_plugins/pause_action_plugin.cr`), `Process::Status#exit_signal` -> `#exit_signal?`
   (`src/krikri/local_executor.cr`). Run a full build and grep `Deprecated` for the complete list; keep `crystal >= 1.20.0` compatibility in mind.
-- **Connection-refused message on `uri`/`get_url` requests** (kpg30 sweep): real says `Request failed: <urlopen error [Errno 111] Connection refused>`;
-  krikri says `Error connecting to '127.0.0.1:1': Resource temporarily unavailable` (EAGAIN, sometimes "Operation now in progress") - a
-  Crystal socket-error mapping issue. The same artifact fails the nsupdate refused-TCP spec (`[Errno 11]` vs `[Errno 111]`).
 - **`get_url` generic download-failure shape** (kpg30 sweep): krikri emits `failed to download <url>: ...` + `status_code: -1`; real emits
   `msg=<fetch_url msg>` + `{url, dest, elapsed}` and reserves `status_code`/`response` for its non-200 branch.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds

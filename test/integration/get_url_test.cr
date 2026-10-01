@@ -4,6 +4,7 @@ require "openssl/digest"
 require "base64"
 require "compress/gzip"
 require "file_utils"
+require "socket"
 
 # A tiny local HTTP server (Crystal stdlib HTTP::Server, no python3
 # dependency) serving fixed content + a redirect, started once for the
@@ -307,6 +308,29 @@ describe "get_url plugin" do
 
     result["failed"].as_bool.must_equal(true)
     File.exists?(dest).must_equal(false)
+  end
+
+  it "names a refused connect with urllib's own errno text" do
+    # Live-verified against ansible-core 2.19.11: the msg for a refused
+    # connect is urllib's URLError str(), "<urlopen error [Errno 111]
+    # Connection refused>". krikri reported Crystal's connect wording
+    # ("Error connecting to '127.0.0.1:<port>': Resource temporarily
+    # unavailable") because Crystal 1.21.1's event loop raises the live
+    # libc errno (EAGAIN) instead of the ECONNREFUSED the kernel recorded
+    # (see PluginHelpers::SocketConnect).
+    dest = File.tempname("get-url-spec")
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+
+    result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:#{closed_port}/x", "dest" => dest})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("<urlopen error [Errno 111] Connection refused>")
+    result["msg"].as_s.wont_include("Resource temporarily unavailable")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
   end
 
   it "follows a redirect" do
