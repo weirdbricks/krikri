@@ -26,7 +26,7 @@ shards:
 
   krikri-jinja:
     git: https://github.com/weirdbricks/krikri-jinja.git
-    version: 0.4.23+git.commit.3c72067edd2bec94c2f79ae21df5ff5acca90991
+    version: 0.4.26+git.commit.a23b0f44cef8897570d2b047c483bf8c09e3a914
 
   krikri-xml:
     git: https://github.com/weirdbricks/krikri-xml.git

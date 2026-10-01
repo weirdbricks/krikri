@@ -34,17 +34,6 @@ and fixed and when.
 
 ## Open gaps
 
-- **groupby's pair shape needs an unpublished `krikri-jinja` tag**: `shard.yml` still pins
-  `krikri-jinja` v0.4.23, but groupby yielding real Jinja2 3.x's `[grouper, list]` pair arrays
-  lives in the sibling checkout's v0.4.25/v0.4.26 commits, which were never pushed (the tag bump
-  was left pending, see e1008b98). A fresh `shards install` therefore gets the old engine, where
-  groups render as `{grouper, list}` objects, and `test/integration/groupby_pair_storage_warning_test.cr`
-  fails on both its rendered-pair assertions - deterministically, run alone included. Fix: push
-  those engine tags, bump the `tag:` in `shard.yml`, `shards update krikri-jinja`, `./build.sh`.
-  (`scripts/minitest.sh` now rebuilds `bin/krikri-playbook` when it is older than `src/`/`lib/`/
-  `plugins/`, so the suite and the binaries its specs spawn can no longer come from different
-  engine revisions - which is what made this look order-dependent rather than simply broken.)
-
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
