@@ -1,6 +1,7 @@
 require "http/client"
 require "uri"
 require "base64"
+require "./socket_connect"
 
 module Krikri
   module PluginHelpers
@@ -81,32 +82,42 @@ module Krikri
         client = build_client(uri, options)
         headers = request_headers(options, auth_attempted)
 
-        client.get(uri.request_target, headers: headers) do |response|
-          challenge_relevant = !auth_attempted && !options.force_basic_auth
-          if challenge_relevant && response.status_code == 401 &&
-             options.username && options.password
-            client.close
-            return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
-          end
+        begin
+          client.get(uri.request_target, headers: headers) do |response|
+            challenge_relevant = !auth_attempted && !options.force_basic_auth
+            if challenge_relevant && response.status_code == 401 &&
+               options.username && options.password
+              client.close
+              return download_with_info(url, dest, options, redirects_left, auth_attempted: true)
+            end
 
-          if response.status.redirection? && (location = response.headers["Location"]?)
-            client.close
-            return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
-          end
+            if response.status.redirection? && (location = response.headers["Location"]?)
+              client.close
+              return download_with_info(resolve_redirect(uri, location), dest, redirect_options(options), redirects_left - 1)
+            end
 
-          unless response.status.success?
-            raise "server returned #{response.status_code} #{response.status.description}"
-          end
+            unless response.status.success?
+              raise "server returned #{response.status_code} #{response.status.description}"
+            end
 
-          # perm 0666 (not Crystal's 0644 default): this staged file
-          # becomes the final dest after the rename, and real Ansible's
-          # atomic_move gives a new dest 0666 & ~umask (umask 002 ->
-          # 0664, umask 022 -> 0644). Ignored when overwriting an
-          # existing file.
-          File.open(dest, "w", 0o666) do |file|
-            IO.copy(response.body_io, file)
+            # perm 0666 (not Crystal's 0644 default): this staged file
+            # becomes the final dest after the rename, and real Ansible's
+            # atomic_move gives a new dest 0666 & ~umask (umask 002 ->
+            # 0664, umask 022 -> 0644). Ignored when overwriting an
+            # existing file.
+            File.open(dest, "w", 0o666) do |file|
+              IO.copy(response.body_io, file)
+            end
+            Result.new(final_url: url, headers: response.headers)
           end
-          Result.new(final_url: url, headers: response.headers)
+        rescue ex : Socket::ConnectError
+          # real get_url's failure msg is urllib's own URLError text
+          # ("Request failed: <urlopen error [Errno 111] Connection
+          # refused>"); Crystal's connect reports the wrong errno for a
+          # refused connect, so rebuild it from a re-probe (see
+          # SocketConnect) and only fall back to Crystal's wording when
+          # even that cannot name the error.
+          raise Exception.new(SocketConnect.urlopen_error_text(uri, ex) || ex.message)
         end
       ensure
         client.try(&.close)

@@ -9,6 +9,7 @@ require "system/user"
 require "system/group"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/url_preflight"
+require "../src/krikri/plugin_helpers/socket_connect"
 
 module Krikri
   # uri plugin (ansible.builtin.uri) - makes an HTTP request (API calls,
@@ -221,6 +222,11 @@ module Krikri
         # failed_when reading the registered result's .content,
         # geerlingguy.node_exporter's "'Metrics' not in
         # metrics_output.content", round 970310, needs exactly that).
+        # What follows "Request failed: " is urllib's own wording: a refused
+        # connect reads "<urlopen error [Errno 111] Connection refused>"
+        # (live-verified against ansible-core 2.19.11), which `request` has
+        # already rebuilt from a re-probe - Crystal's connect reports the
+        # wrong errno for it.
         return failed_request_result(
           "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url)
       end
@@ -375,12 +381,19 @@ module Krikri
         headers["Authorization"] = basic_auth_header(username, password)
       end
 
-      response = client.exec(method, uri.request_target, headers: headers, body: body)
+      response = begin
+        first = client.exec(method, uri.request_target, headers: headers, body: body)
 
-      if username && !forced && response.status_code == 401
-        auth_headers = headers.dup
-        auth_headers["Authorization"] = basic_auth_header(username, password)
-        response = client.exec(method, uri.request_target, headers: auth_headers, body: body)
+        if username && !forced && first.status_code == 401
+          auth_headers = headers.dup
+          auth_headers["Authorization"] = basic_auth_header(username, password)
+          client.exec(method, uri.request_target, headers: auth_headers, body: body)
+        else
+          first
+        end
+      rescue ex : Socket::ConnectError
+        # this hop is the one that failed, so its URL is the one to re-probe
+        raise Exception.new(PluginHelpers::SocketConnect.urlopen_error_text(uri, ex) || ex.message)
       end
 
       if response.status.redirection? && (location = response.headers["Location"]?) && should_follow_redirect?(method)
