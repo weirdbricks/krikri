@@ -202,6 +202,21 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   name. Every other non-string `output_encoding` (int, float, bool, a list with a
   non-string member, a dict, an empty container) matches real exactly, as does
   the falsy fallback to utf-8 and the unknown-codec failure.
+- Which wrong-typed string option `include_role`/`import_role` reports when SEVERAL of
+  `defaults_from`/`handlers_from`/`tasks_from`/`vars_from` are wrong-typed: real picks one by Python set
+  order (the same playbook alternates between runs), so krikri cannot match it. Masked in
+  `scripts/output_parity.sh` and the generator; the message text and type still have to match.
+- A string-list or dict literal given where real's module crashes on the type, on a param the wire flattens:
+  `debconf` with a plain-string-list or dict `value:` (real: `sequence item 3: expected str instance, list
+  found`), and the Python `repr` of an all-string list inside `copy`'s `remote_src` missing-source message.
+  The params wire comma-joins/JSON-ifies these into text indistinguishable from a plain string, so only
+  non-string scalars and lists with a non-string member are reproduced (same class as the `output_encoding`
+  entry above). A `debconf` multiselect list mixing strings and ints raises real's order-dependent
+  `'<' not supported` TypeError first and is not reproduced either.
+- Open, known and not yet fixed (matchable in principle):
+  - `replace:` that also changes owner/group/mode: real's message is `1 replacements made and ownership, perms
+    or SE linux context changed`; krikri says `1 replacements made`.
+  - A registered *failed* `copy:` result keeps `"diff": []` in real; krikri omits the `diff` key there.
 - Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators
