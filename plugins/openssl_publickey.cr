@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/openssl_pkey"
 require "../src/krikri/plugin_helpers/x509_cert_info"
 
 module Krikri
@@ -27,6 +28,8 @@ module Krikri
   # ssh-keygen's own passphrase flags.
   class OpensslPublickeyPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
+
+    Pkey = PluginHelpers::Pkey
 
     # The real module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (the only alias is
@@ -82,7 +85,8 @@ module Krikri
       format = @params["format"]? || "PEM"
       return failure("value of format must be one of: OpenSSH, PEM, got: #{format}") unless ["OpenSSH", "PEM"].includes?(format)
 
-      desired = derive(path, format, privatekey_path, privatekey_content)
+      desired, load_error = derive(path, format, privatekey_path, privatekey_content)
+      return failure(load_error) if load_error
       return failure("Unable to derive a public key from the private key (wrong passphrase?)") unless desired
 
       changed = true?(@params["force"]?) || !File.exists?(path) || !same_key(File.read(path), desired, format)
@@ -160,33 +164,64 @@ module Krikri
       res
     end
 
-    private def derive(path : String, format : String, privatekey_path : String?, privatekey_content : String?) : String?
-      # ssh-keygen needs the key on disk; a content-sourced key is
-      # staged to a temp file first (both formats read from a file).
-      key_file = privatekey_path
-      if key_file.nil?
-        staged = stage(privatekey_content) if privatekey_content
-        return nil unless staged
-        key_file = staged
-      end
+    # Loads the private key through libcrypto (what the real module's
+    # `cryptography` backend does - same library, same failure text) and
+    # derives the public key from it. Returns {desired, failure_message}:
+    # the failure message is byte-for-byte the real module's
+    # OpenSSLBadPassphraseError text when the key cannot be parsed.
+    #
+    # For `format: OpenSSH` the ssh-keygen CLI is still the serializer
+    # (openssh-client ships in every krikri target); the key is loaded
+    # natively FIRST either way, so the parse failures match real before
+    # any CLI is touched.
+    private def derive(path : String, format : String, privatekey_path : String?,
+                       privatekey_content : String?) : {String?, String?}
+      key_text, read_error = source_text(privatekey_path, privatekey_content)
+      return {nil, read_error} if key_text.nil?
 
-      if format == "OpenSSH"
-        args = ["-y", "-f", key_file]
-        args.concat(["-P", @params["privatekey_passphrase"]]) if @params["privatekey_passphrase"]?
-        stdout_io = IO::Memory.new
-        err = IO::Memory.new
-        status = Process.run("ssh-keygen", args, output: stdout_io, error: err)
-        return nil unless status.success?
-        stdout_io.to_s.strip + "\n"
-      else
-        args = ["pkey", "-in", key_file, "-pubout"]
-        args.concat(["-passin", "pass:#{@params["privatekey_passphrase"]}"]) if @params["privatekey_passphrase"]?
-        stdout_io = IO::Memory.new
-        status = Process.run("openssl", args, output: stdout_io)
-        status.success? ? stdout_io.to_s : nil
+      pkey, failure = Pkey.load_checked(key_text, @params["privatekey_passphrase"]?)
+      return {nil, failure.message} if failure
+      return {nil, DERIVE_FAILED} unless pkey
+
+      @fingerprint_der = Pkey.public_der(pkey)
+      begin
+        case format
+        when "OpenSSH"
+          # ssh-keygen needs the key on disk; a content-sourced key is
+          # staged to a temp file first (both formats read from a file).
+          key_file = privatekey_path
+          if key_file.nil?
+            staged = stage(key_text)
+            return {nil, DERIVE_FAILED} unless staged
+            key_file = staged
+          end
+          args = ["-y", "-f", key_file]
+          args.concat(["-P", @params["privatekey_passphrase"]]) if @params["privatekey_passphrase"]?
+          stdout_io = IO::Memory.new
+          err = IO::Memory.new
+          status = Process.run("ssh-keygen", args, output: stdout_io, error: err)
+          return {nil, DERIVE_FAILED} unless status.success?
+          {stdout_io.to_s.strip + "\n", nil}
+        else
+          pem = Pkey.public_pem(pkey)
+          pem ? {String.new(pem), nil} : {nil, DERIVE_FAILED}
+        end
+      ensure
+        Pkey.free_pkey(pkey)
+        cleanup_staged
       end
-    ensure
-      cleanup_staged
+    end
+
+    private DERIVE_FAILED = "Unable to derive a public key from the private key (wrong passphrase?)"
+
+    private def source_text(privatekey_path : String?, privatekey_content : String?) : {String?, String?}
+      return {privatekey_content, nil} if privatekey_content
+      return {nil, "privatekey_path or privatekey_content is required"} unless privatekey_path
+      begin
+        {File.read(privatekey_path), nil}
+      rescue ex
+        {nil, ex.message}
+      end
     end
 
     @staged = [] of String
@@ -239,6 +274,12 @@ module Krikri
       dest
     end
 
+    # The SubjectPublicKeyInfo DER of the loaded private key's public
+    # half - the input the real module hashes for its `fingerprint`
+    # result (set by #derive, real computes it from the PRIVATE key
+    # regardless of the output format).
+    @fingerprint_der : Bytes?
+
     private def result(changed : Bool, path : String, privatekey_path : String?,
                        format : String, backup_file : String?, desired : String?) : PluginResult
       res = PluginResult.new(changed: changed, failed: false, msg: "")
@@ -246,8 +287,8 @@ module Krikri
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["format"] = JSON::Any.new(format)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
-      if spki_der = spki_der_of(desired)
-        res.extra["fingerprint"] = X509CertInfo.fingerprints_any(spki_der)
+      if der = @fingerprint_der
+        res.extra["fingerprint"] = X509CertInfo.fingerprints_any(der)
       end
       if true?(@params["return_content"]?)
         content = if changed
@@ -258,17 +299,6 @@ module Krikri
         res.extra["publickey"] = JSON::Any.new(content) if content
       end
       res
-    end
-
-    private def spki_der_of(pem_or_ssh : String?) : Bytes?
-      return nil unless pem_or_ssh
-      tmp = File.tempname("pubkeyder")
-      File.write(tmp, pem_or_ssh)
-      stdout_io = IO::Memory.new
-      status = Process.run("openssl", ["pkey", "-pubin", "-in", tmp, "-outform", "DER"], output: stdout_io)
-      status.success? ? stdout_io.to_slice : nil
-    ensure
-      File.delete(tmp) if tmp && File.exists?(tmp)
     end
   end
 end

@@ -73,4 +73,27 @@ describe "java_cert plugin" do
     result["msg"].as_s.must_equal("Error executing command.")
     result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'keytool'")
   end
+
+  # kpg35 sweep #101: the real module has NO "pkcs12/content import
+  # requires cert_alias" check - a content import without cert_alias
+  # proceeds to test_keytool, which fails with the run_command OSError
+  # shape before anything alias-related runs. Krikri used to reject the
+  # invocation with its own fabricated message instead.
+  it "reaches the keytool probe (not an alias check) for content without cert_alias" do
+    result = PluginSpecHelper.run("java_cert", {
+      "cert_content"    => "tqdtaa",
+      "cert_port"       => "99",
+      "executable"      => "coacvd",
+      "keystore_create" => "false",
+      "keystore_pass"   => "zhpnnz",
+      "keystore_path"   => "/tmp/kpg-work/out3.cfg",
+      "pkcs12_alias"    => "xrjrcm",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["cmd"].as_s.must_equal("coacvd")
+    result["rc"].as_i.must_equal(2)
+    result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'coacvd'")
+  end
 end

@@ -127,4 +127,116 @@ describe "Krikri::PluginHelpers::Pkey" do
       digest.final.hexstring.size.must_equal(64)
     end
   end
+
+  # load_checked reproduces `cryptography`'s load_pem_private_key failure
+  # semantics - the exact messages the real module's load_privatekey maps
+  # onto its fail_json msg (live-diffed vs real ansible-playbook 2.19.11,
+  # kpg35 sweep #247/#249/#251). The OpenSSLError tuple entries come from
+  # libcrypto's own error queue, so they match real byte-for-byte on the
+  # same libcrypto the target ships.
+  describe "load_checked" do
+    GARBAGE = "hpzbar"
+
+    it "fails garbage content with real's unparsable-key message" do
+      pkey, failure = Krikri::PluginHelpers::Pkey.load_checked(GARBAGE, "vizpow")
+      pkey.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(false)
+      failure.not_nil!.message.must_equal(
+        "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+        "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
+        "[<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>])")
+    end
+
+    it "fails garbage content without a passphrase with the same message" do
+      pkey, failure = Krikri::PluginHelpers::Pkey.load_checked(GARBAGE, nil)
+      pkey.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(false)
+      failure.not_nil!.message.must_include("Wrong passphrase provided for private key, or private key cannot be parsed:")
+      failure.not_nil!.message.must_include("Could not deserialize key data.")
+      failure.not_nil!.message.must_include("<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>")
+    end
+
+    it "reports the passphrase-mismatch branch for a password on an unencrypted key" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", nil).not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, "notused")
+      pkey2.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(true)
+      failure.not_nil!.message.must_equal("Wrong or empty passphrase provided for private key")
+    end
+
+    it "reports the passphrase-mismatch branch for a missing password on an encrypted key" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", "s3cret").not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, nil)
+      pkey2.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(true)
+      failure.not_nil!.message.must_equal("Wrong or empty passphrase provided for private key")
+    end
+
+    it "fails a wrong passphrase with the bad-decrypt error queue" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", "s3cret").not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, "wrong")
+      pkey2.must_be_nil
+      failure.wont_be_nil
+      failure.not_nil!.passphrase_problem.must_equal(false)
+      failure.not_nil!.message.must_equal(
+        "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+        "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
+        "[<OpenSSLError(code=478150756, lib=57, reason=100, reason_text=bad decrypt)>, <OpenSSLError(code=75497573, lib=9, reason=101, reason_text=bad decrypt)>])")
+    end
+
+    it "loads an encrypted key with its correct passphrase" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", "s3cret").not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, "s3cret")
+      failure.must_be_nil
+      pkey2.wont_be_nil
+      Krikri::PluginHelpers::Pkey.info(pkey2.not_nil!).bits.must_equal(2048)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey2.not_nil!)
+    end
+
+    it "loads an unencrypted key with no passphrase" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.serialize_pem(pkey, "RSA", "pkcs1", nil).not_nil!)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pkey2, failure = Krikri::PluginHelpers::Pkey.load_checked(pem, nil)
+      failure.must_be_nil
+      pkey2.wont_be_nil
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey2.not_nil!)
+    end
+  end
+
+  describe "public_pem / load_public" do
+    it "round-trips the SubjectPublicKeyInfo PEM of a private key's public half" do
+      pkey = Krikri::PluginHelpers::Pkey.generate("RSA", 2048, 0).not_nil!
+      pem = String.new(Krikri::PluginHelpers::Pkey.public_pem(pkey).not_nil!)
+      der = Krikri::PluginHelpers::Pkey.public_der(pkey)
+      Krikri::PluginHelpers::Pkey.free_pkey(pkey)
+
+      pem.starts_with?("-----BEGIN PUBLIC KEY-----").must_equal(true)
+      reloaded = Krikri::PluginHelpers::Pkey.load_public(pem)
+      reloaded.wont_be_nil
+      Krikri::PluginHelpers::Pkey.public_der(reloaded.not_nil!).must_equal(der)
+      Krikri::PluginHelpers::Pkey.free_pkey(reloaded.not_nil!)
+    end
+
+    it "returns nil for non-public-key material" do
+      Krikri::PluginHelpers::Pkey.load_public("not a key").must_be_nil
+    end
+  end
 end

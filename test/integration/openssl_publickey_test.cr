@@ -92,4 +92,50 @@ describe "openssl_publickey plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("does not exist")
   end
+
+  # kpg35 sweep #247/#249/#251: the real module loads the key through
+  # `cryptography` (byte-for-byte the message below); krikri used to
+  # shell out to the openssl CLI, which the target container does not
+  # ship. The message is produced natively by the shared Pkey helper
+  # (unit-tested in openssl_pkey_helper_test.cr); this pins the plugin's
+  # own wiring for both the content and the no-passphrase variants.
+  it "fails unparsable privatekey_content with real's exact message" do
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => PluginSpecHelper.tmp_path("garbage.pub"),
+      "privatekey_content"    => "hpzbar",
+      "privatekey_passphrase" => "vizpow",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal(
+      "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+      "('Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters).', " \
+      "[<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>])")
+  end
+
+  it "fails unparsable privatekey_content without a passphrase with the same message" do
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"               => PluginSpecHelper.tmp_path("garbage2.pub"),
+      "privatekey_content" => "ydnbbj",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.starts_with?("Wrong passphrase provided for private key, or private key cannot be parsed:").must_equal(true)
+    result["msg"].as_s.must_include("<OpenSSLError(code=503841036, lib=60, reason=524556, reason_text=unsupported)>")
+  end
+
+  it "fails a passphrase on an unencrypted key with the mismatch message" do
+    key = PluginSpecHelper.tmp_path("plain.key")
+    `openssl genrsa -out #{key} 2048 2>/dev/null`
+
+    result = PluginSpecHelper.run("openssl_publickey", {
+      "path"                  => PluginSpecHelper.tmp_path("mismatch.pub"),
+      "privatekey_path"       => key,
+      "privatekey_passphrase" => "notused",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Wrong or empty passphrase provided for private key")
+  end
 end

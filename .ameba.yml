@@ -43,6 +43,7 @@ Lint/NotNil:
   Excluded:
   - test/integration/*
   - test/unit/python_module_runner_test.cr
+  - test/unit/openssl_pkey_helper_test.cr
   - test/unit/docker_login_test.cr
   - test/unit/mount_facts_test.cr
   - test/unit/homebrew_test.cr

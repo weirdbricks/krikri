@@ -40,4 +40,60 @@ describe "openssl_dhparam backend selection" do
     File.exists?(path).must_equal(true)
     File.read(path).must_include("-----BEGIN DH PARAMETERS-----")
   end
+
+  # kpg35 sweep #216: the explicit `openssl` backend on a host WITHOUT
+  # the openssl CLI used to die with "Error executing process: 'openssl'".
+  # The backend now runs the same libcrypto call the CLI makes, natively,
+  # and reproduces the CLI stderr the real module passes to fail_json
+  # verbatim - including libcrypto's own error line (whose 12-hex prefix
+  # is the printing thread's id, a per-process value; masked in
+  # byte-parity runs). Live-diffed vs real ansible-playbook 2.19.11.
+  it "fails an undersized openssl-backend generate with the CLI's exact stderr" do
+    work = PluginSpecHelper.tmp_path("dhparam-small-cli")
+    Dir.mkdir_p(work)
+    path = File.join(work, "dh.pem")
+
+    result = PluginSpecHelper.run("openssl_dhparam", {
+      "path"                  => path,
+      "size"                  => "61",
+      "select_crypto_backend" => "openssl",
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    File.exists?(path).must_equal(false)
+
+    msg = result["msg"].as_s
+    msg.must_equal("Generating DH parameters, 61 bit long safe prime\n" \
+                   "dhparam: Generating DH key parameters failed\n" \
+                   "#{msg.lines.last}\n")
+    # Everything up to the thread-id prefix is deterministic (same
+    # libcrypto real's CLI links); the prefix itself differs per process.
+    assert_match(
+      /^[0-9A-F]{12}0000:error:0280007E:Diffie-Hellman routines:dh_builtin_genparams:modulus too small:\S*dh_gen\.c:\d+:$/,
+      msg.lines.last)
+  end
+
+  # Idempotency check is native too (PEM parse + DH_bits + DH_check
+  # instead of `openssl dhparam -check -text -noout`): a freshly
+  # generated file must be recognized as already valid on a re-run.
+  it "recognizes a freshly generated file as already valid on a re-run" do
+    work = PluginSpecHelper.tmp_path("dhparam-idempotent")
+    Dir.mkdir_p(work)
+    path = File.join(work, "dh.pem")
+
+    first = PluginSpecHelper.run("openssl_dhparam", {
+      "path"                  => path,
+      "size"                  => "512",
+      "select_crypto_backend" => "cryptography",
+    })
+    first["changed"].as_bool.must_equal(true)
+
+    rerun = PluginSpecHelper.run("openssl_dhparam", {
+      "path"                  => path,
+      "size"                  => "512",
+      "select_crypto_backend" => "openssl",
+    })
+    rerun["changed"].as_bool.must_equal(false)
+    rerun["msg"].as_s.must_equal("DH parameters already valid at #{path}")
+  end
 end

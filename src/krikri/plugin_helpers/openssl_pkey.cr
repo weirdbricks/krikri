@@ -45,6 +45,13 @@ module Krikri
       fun i2d_pubkey = i2d_PUBKEY(Void*, UInt8**) : Int32
       fun i2d_pkcs8_private_key_bio = i2d_PKCS8PrivateKey_bio(LibCrypto::Bio*, Void*, Void*, UInt8*, Int32, Void*, Void*) : Int32
       fun evp_aes_256_cbc = EVP_aes_256_cbc : Void*
+      fun pem_read_bio_pubkey = PEM_read_bio_PUBKEY(LibCrypto::Bio*, Void**, Void*, Void*) : Void*
+      fun pem_write_bio_pubkey = PEM_write_bio_PUBKEY(LibCrypto::Bio*, Void*) : Int32
+      fun err_clear_error = ERR_clear_error : Void
+      fun err_print_errors = ERR_print_errors(LibCrypto::Bio*) : Void
+      fun err_lib_error_string = ERR_lib_error_string(Int32) : LibC::Char*
+      fun err_func_error_string = ERR_func_error_string(UInt64) : LibC::Char*
+      fun err_reason_error_string = ERR_reason_error_string(UInt64) : LibC::Char*
     end
 
     # The operations openssl_privatekey (and any future key-material
@@ -201,6 +208,140 @@ module Krikri
         begin
           pass_ptr = passphrase && !passphrase.empty? ? passphrase.to_slice.to_unsafe.as(Void*) : Pointer(Void).null
           pkey = LibCryptoPkey.pem_read_bio_private_key(bio, nil, nil, pass_ptr)
+          pkey.null? ? nil : pkey
+        ensure
+          LibCrypto.BIO_free(bio)
+        end
+      end
+
+      # The failure message the real module's load_privatekey produces for
+      # an unparsable key: Python's `cryptography` raises ValueError whose
+      # str() is the "(message, [OpenSSLError...])" tuple repr, and the
+      # module prefixes it. The message itself is `cryptography`'s fixed
+      # text; the OpenSSLError entries come from libcrypto's error queue
+      # (same codes real reports, since both link the target's libcrypto).
+      #
+      #   *passphrase_problem* is the module's TypeError branch instead -
+      # "Wrong or empty passphrase provided for private key" - used when
+      # the password/password-less attempt mismatch is the failure itself.
+      record LoadFailure, passphrase_problem : Bool, message : String
+
+      private COULD_NOT_DESERIALIZE = "Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters)."
+
+      # cryptography-semantics private-key load: on failure the returned
+      # LoadFailure.message is byte-for-byte what the real module puts in
+      # fail_json (verified against community.crypto 3.1.1 + the libcrypto
+      # the target ships). On success the caller owns the returned
+      # EVP_PKEY (free_pkey).
+      def load_checked(data : Bytes | String, passphrase : String?) : {Void*?, LoadFailure?}
+        # The encryption-marker check comes FIRST (as `cryptography`'s
+        # PEM handling does): a nil-password PEM_read_bio_PrivateKey on
+        # encrypted material would fall into libcrypto's interactive
+        # passphrase prompt instead of failing cleanly.
+        if passphrase
+          LibCryptoPkey.err_clear_error
+          pkey = read(data, passphrase)
+          encrypted = encrypted_marker?(data)
+          unless pkey.null?
+            # Loaded WITH a password: an unencrypted key loads without one
+            # too, and that mismatch is the real module's TypeError branch
+            # ("Password was given but private key is not encrypted.").
+            return {pkey, nil} if encrypted
+            LibCryptoPkey.err_clear_error
+            plain = read(data, nil)
+            unless plain.null?
+              free_pkey(plain)
+              return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
+            end
+            return {pkey, nil}
+          end
+          failures = drain_error_queue
+
+          unless encrypted
+            LibCryptoPkey.err_clear_error
+            plain = read(data, nil)
+            unless plain.null?
+              free_pkey(plain)
+              return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
+            end
+          end
+          return {nil, LoadFailure.new(false, unparsable_message(failures))}
+        end
+
+        if encrypted_marker?(data)
+          return {nil, LoadFailure.new(true, "Wrong or empty passphrase provided for private key")}
+        end
+
+        LibCryptoPkey.err_clear_error
+        pkey = read(data, nil)
+        return {pkey, nil} unless pkey.null?
+        failures = drain_error_queue
+        {nil, LoadFailure.new(false, unparsable_message(failures))}
+      end
+
+      # Unlike #load, an empty-string passphrase is a GIVEN password (the
+      # real module hands `cryptography` b"") - only nil means none.
+      private def read(data : Bytes | String, passphrase : String?) : Void*?
+        slice = data.is_a?(String) ? data.to_slice : data
+        bio = LibCryptoPkey.bio_new_mem_buf(slice.to_unsafe, slice.size)
+        return Pointer(Void).null if bio.null?
+        begin
+          pass_ptr = passphrase ? passphrase.to_slice.to_unsafe.as(Void*) : Pointer(Void).null
+          pkey = LibCryptoPkey.pem_read_bio_private_key(bio, nil, nil, pass_ptr)
+          pkey.null? ? Pointer(Void).null : pkey
+        ensure
+          LibCrypto.BIO_free(bio)
+        end
+      end
+
+      private def unparsable_message(failures : Array(String)) : String
+        "Wrong passphrase provided for private key, or private key cannot be parsed: " \
+        "('#{COULD_NOT_DESERIALIZE}', [#{failures.join(", ")}])"
+      end
+
+      # The queue entries as `cryptography`'s OpenSSLError reprs. lib and
+      # reason use OpenSSL 3's ERR_GET_LIB/ERR_GET_REASON masks.
+      private def drain_error_queue : Array(String)
+        entries = [] of String
+        loop do
+          code = LibCrypto.err_get_error
+          break if code.zero?
+          lib_n = (code >> 23) & 0x3FF
+          reason = code & 0x7FFFFF
+          reason_text = LibCryptoPkey.err_reason_error_string(code)
+          text = reason_text.null? ? "None" : String.new(reason_text)
+          entries << "<OpenSSLError(code=#{code}, lib=#{lib_n}, reason=#{reason}, reason_text=#{text})>"
+        end
+        entries
+      end
+
+      private def encrypted_marker?(data : Bytes | String) : Bool
+        text = data.is_a?(String) ? data : String.new(data, invalid: :skip)
+        text.includes?("ENCRYPTED PRIVATE KEY") || text.includes?("DEK-Info:") ||
+          text.includes?("Proc-Type: 4,ENCRYPTED")
+      end
+
+      # SubjectPublicKeyInfo PEM of *pkey*'s public half - the bytes the
+      # real module writes for `format: PEM`.
+      def public_pem(pkey : Void*) : Bytes?
+        bio = LibCrypto.BIO_new(LibCryptoPkey.bio_s_mem)
+        return nil if bio.null?
+        begin
+          return nil unless LibCryptoPkey.pem_write_bio_pubkey(bio, pkey) == 1
+          bio_contents(bio)
+        ensure
+          LibCrypto.BIO_free(bio)
+        end
+      end
+
+      # Parses PEM public key material (SubjectPublicKeyInfo) back into an
+      # EVP_PKEY handle the caller owns; nil on any failure.
+      def load_public(data : Bytes | String) : Void*?
+        slice = data.is_a?(String) ? data.to_slice : data
+        bio = LibCryptoPkey.bio_new_mem_buf(slice.to_unsafe, slice.size)
+        return nil if bio.null?
+        begin
+          pkey = LibCryptoPkey.pem_read_bio_pubkey(bio, nil, nil, nil)
           pkey.null? ? nil : pkey
         ensure
           LibCrypto.BIO_free(bio)

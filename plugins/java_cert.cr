@@ -98,9 +98,6 @@ module Krikri
       if path && !cert_alias
         return failed_result("Using local path import from #{keystore_path || "None"} requires alias argument.")
       end
-      if state == "present" && !cert_alias
-        return failed_result("Using pkcs12/content import requires cert_alias argument.")
-      end
 
       # Real main() resolves openssl via get_bin_path('openssl', True)
       # here and then runs test_keytool. The openssl resolution is
@@ -138,7 +135,12 @@ module Krikri
         return PluginResult.new(changed: false, failed: false, msg: "Certificate not present.")
       end
 
-      cert_alias_str = cert_alias.not_nil!
+      # No cert_alias with state=present is what real runs too (its own
+      # command list would carry a None alias); the keystore commands
+      # built here use an empty alias in that case - unreachable in
+      # parity runs anyway, since keytool itself is missing in both
+      # engines' containers and test_keytool above fails first.
+      cert_alias_str = cert_alias || ""
 
       keystore_cert_digest = ""
       if alias_exists
