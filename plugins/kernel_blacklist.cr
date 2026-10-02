@@ -85,8 +85,8 @@ module Krikri
       unless file_existed
         parent = File.dirname(file)
         unless Dir.exists?(parent)
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Module failed with exception: [Errno 2] No such file or directory: '#{file}'")
+          return failed_result(name, state, file,
+            "Module failed with exception: [Errno 2] No such file or directory: '#{file}'")
         end
         File.touch(file)
       end
@@ -103,6 +103,19 @@ module Krikri
         failed: false,
         msg: "",
       )
+    end
+
+    # Real's failure result carries the module's own state surface along
+    # with the message: the resolved filename, the module name, the
+    # requested state, and the output/vars dicts (StateModuleHelper's
+    # output_params under both keys) - live-captured from real
+    # ansible-playbook 2.19.11 in a container where /etc/modprobe.d
+    # doesn't exist yet.
+    private def failed_result(name : String, state : String, file : String, msg : String) : PluginResult
+      output = JSON.parse(%({"filename": #{file.to_json}, "name": #{name.to_json}, "state": #{state.to_json}}))
+      PluginResult.new(changed: false, failed: true, msg: msg,
+        filename: file, name: name, state: state,
+        output: output, vars: output)
     end
   end
 end

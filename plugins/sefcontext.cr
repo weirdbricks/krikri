@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 require "../src/krikri/plugin_helpers/sefcontext_commands"
 
 module Krikri
@@ -56,6 +57,20 @@ module Krikri
     def execute : PluginResult
       if err = validate_arguments
         return err
+      end
+
+      # Real sefcontext.py's import gates (module level, before anything
+      # else): `import selinux` -> missing_required_lib("libselinux-python"),
+      # then `import seobject` -> missing_required_lib("policycoreutils-python").
+      # A target whose python lacks the SELinux bindings fails with
+      # those exact messages before any getenforce/semanage logic runs -
+      # this plugin is native, so it used to sail past to its own
+      # "SELinux is disabled on this host." failure instead.
+      if gate = Krikri.missing_python_library("libselinux-python", "selinux")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
+      if gate = Krikri.missing_python_library("policycoreutils-python", "seobject")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
       end
 
       target = (@params["target"]? || @params["path"]?).not_nil!

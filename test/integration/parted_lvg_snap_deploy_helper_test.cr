@@ -32,7 +32,11 @@ describe "parted plugin" do
     result = PluginSpecHelper.run("parted", {"device" => "/dev/krikri-no-such-disk"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Could not stat device")
+    # Real parted.py has no separate stat check - get_device_info's
+    # parted script fails and real surfaces the wrapper message
+    # (plus rc/out/err), not the parted stderr itself (kpg34).
+    result["msg"].as_s.must_include("Error while getting device information with parted script:")
+    result["rc"].as_i64.must_equal(1)
   end
 end
 
@@ -44,18 +48,20 @@ describe "lvg plugin" do
     result["msg"].as_s.must_include("missing required arguments: vg")
   end
 
-  it "fails when pvs is missing for state=present" do
+  it "fails when pvs is missing for a new volume group" do
     result = PluginSpecHelper.run("lvg", {"vg" => "krikri-nosuch-vg"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("state is present but all of the following are missing: pvs")
+    # Real lvg.py (7.1.0+): pvs_required = present-state AND vg missing
+    # -> "No physical volumes given." - not a required_if error.
+    result["msg"].as_s.must_include("No physical volumes given.")
   end
 
   it "fails on an invalid state" do
     result = PluginSpecHelper.run("lvg", {"vg" => "vg0", "pvs" => "/dev/sdz99", "state" => "bogus"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("value of state must be one of: present, absent, got: bogus")
+    result["msg"].as_s.must_equal("value of state must be one of: absent, present, active, inactive, got: bogus")
   end
 
   it "rejects unsupported parameters like real AnsibleModule" do

@@ -105,6 +105,19 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       state = @params["state"]? || "present"
 
+      # Real main() starts with get_lvm_version() ->
+      # get_bin_path("lvm", required=True) - so a host without the LVM2
+      # tools fails with that exact message before the size grammar,
+      # the VG discovery, or anything else module-level runs. This
+      # plugin previously parsed/validated size and probed the VG first
+      # and reported its own downstream failures ("Bad size
+      # specification of 'X'", "Volume group X does not exist.") on
+      # hosts where real stops at the executable lookup.
+      unless find_required_binary("lvm")
+        return PluginResult.new(changed: false, failed: true,
+          msg: missing_executable_message("lvm"))
+      end
+
       parsed_size, size_error = PluginHelpers::LvolSize.parse(@params["size"]?)
       return failed(size_error.not_nil!) if size_error
 

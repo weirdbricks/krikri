@@ -23,7 +23,10 @@ module Krikri
   # appended, matching the real module's own shlex-lite handling of
   # them.
   class LvgPlugin < BasePlugin
-    private LVG_STATES = %w[present absent]
+    # Real lvg.py's state choices (community.general 7.1.0 added
+    # active/inactive: "The states V(active) and V(inactive) implies
+    # V(present) state"), in declaration order.
+    private LVG_STATES = %w[absent present active inactive]
 
     def execute : PluginResult
       unsupported = @params.keys.reject { |k| k.starts_with?("_") || LVG_SPEC.has_key?(k) }
@@ -44,18 +47,39 @@ module Krikri
           msg: "value of state must be one of: #{LVG_STATES.join(", ")}, got: #{state}")
       end
 
+      # Real required_if: ["reset_pv_uuid", True, ["pvs"]].
+      if true?(@params["reset_pv_uuid"]?) && @params["pvs"]?.nil?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "reset_pv_uuid is True but all of the following are missing: pvs")
+      end
+
       pvs_param = @params["pvs"]?
       pvs = pvs_param.try { |device| device.split(/[\s,]+/).reject(&.empty?) } || [] of String
-      if state == "present" && pvs.empty?
-        return PluginResult.new(changed: false, failed: true,
-          msg: "state is present but all of the following are missing: pvs")
-      end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       force = true?(@params["force"]?)
 
+      # Real main() starts with find_vg() -> get_bin_path("vgs", True),
+      # so a host without the LVM2 tools fails with that exact message
+      # before any VG discovery happens - the previous behavior ran the
+      # vgs probe, treated the failure as "VG does not exist" and
+      # marched on into vgcreate.
+      unless find_required_binary("vgs")
+        return PluginResult.new(changed: false, failed: true,
+          msg: missing_executable_message("vgs"))
+      end
+
+      # Real's "No physical volumes given." fires after find_vg, and
+      # only when the VG doesn't exist yet (pvs_required = present-state
+      # AND this_vg is None) - a state=present call against an existing
+      # VG without pvs is real's grow-to-nothing no-op, not an error.
       discovery = remote_exec("vgs --noheadings -o vg_name,pv_count,vg_size --separator ';' #{Shell.single_quote(vg)} 2>/dev/null")
       vg_exists = discovery[:exit_code] == 0 && !discovery[:stdout].strip.empty?
+
+      if pvs.empty? && !vg_exists && state != "absent"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "No physical volumes given.")
+      end
 
       if state == "absent"
         return absent_vg(vg, vg_exists, force, check_mode)
@@ -65,13 +89,17 @@ module Krikri
     end
 
     private LVG_SPEC = {
-      "vg"         => [] of String,
-      "pvs"        => [] of String,
-      "pesize"     => [] of String,
-      "pv_options" => [] of String,
-      "vg_options" => [] of String,
-      "state"      => [] of String,
-      "force"      => [] of String,
+      "vg"              => [] of String,
+      "pvs"             => [] of String,
+      "pesize"          => [] of String,
+      "pv_options"      => [] of String,
+      "pvresize"        => [] of String,
+      "vg_options"      => [] of String,
+      "state"           => [] of String,
+      "force"           => [] of String,
+      "reset_vg_uuid"   => [] of String,
+      "reset_pv_uuid"   => [] of String,
+      "remove_extra_pvs" => [] of String,
     }
 
     private def absent_vg(vg : String, vg_exists : Bool, force : Bool, check_mode : Bool) : PluginResult

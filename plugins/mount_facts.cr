@@ -304,7 +304,12 @@ module Krikri
       if include_aggregate_null
         dups = mounts_by_source.select { |_src, mnts| mnts.uniq.size != mnts.size }
         unless dups.empty?
-          listed = dups.map { |src, mnts| "#{src} (#{(mnts - mnts.uniq).uniq.join(", ")})" }.join(", ")
+          # Real's wording renders the per-source mount-point list as a
+          # PYTHON list repr (f"{src} ({duplicates})" where duplicates
+          # is the full list for that source, repeats included) - not a
+          # comma join, and not just the repeated entries. Live-verified
+          # against real ansible-playbook 2.19.11 on this host.
+          listed = dups.map { |src, mnts| "#{src} (#{python_list_repr(mnts)})" }.join(", ")
           warnings << "mount_facts: ignoring repeat mounts in the following sources: #{listed}. " \
                       "You can disable this warning by configuring the 'include_aggregate_mounts' option as True or False."
         end
@@ -317,6 +322,11 @@ module Krikri
                   end
 
       {mount_points, aggregate}
+    end
+
+    # Python list repr for the dedup warning: ['a', 'b', 'c'].
+    private def python_list_repr(items : Array(String)) : String
+      "[#{items.map { |item| "'#{item.gsub("\\", "\\\\").gsub("'", "\\'")}'" }.join(", ")}]"
     end
 
     # ----- statvfs / device-uuid / command helpers (all run on target) -----
