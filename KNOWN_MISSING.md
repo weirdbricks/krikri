@@ -36,8 +36,8 @@ and fixed and when.
 
 - **`docker_container` `state: healthy`** (kpg35): accepted with real's choices/wording but runs the plain `started` flow; real additionally waits for the container's
   healthcheck to report healthy (a container with no healthcheck is immediately healthy, which is the only case krikri matches today).
-- **`get_url` success path and conditional GET** (kpg30 sweep): success result lacks real's `msg="OK (<n> bytes)"`/`status_code: 200`; an existing dest with no `force:` always
-  re-downloads where real's conditional GET (304) short-circuits; registered-result key order differs from real engine-wide.
+- **Registered-result key order differs from real engine-wide** (kpg30 sweep): same keys and values, different order - e.g. real's `get_url` success serializes
+  `msg, status_code, changed, checksum_dest, ...` while krikri's `PluginResult` always leads with `changed`; an engine-level serialization-order fix, not per-plugin.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
