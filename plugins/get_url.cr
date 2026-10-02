@@ -65,16 +65,30 @@ module Krikri
       return checksum if checksum.is_a?(PluginResult)
 
       force = true?(@params["force"]?, default: false)
-
-      # Real get_url's pre-download dest-existence check (and its
-      # checksum-based skip) is guarded by `not dest_is_dir`: with a
-      # directory dest the filename isn't knowable before the request, so
-      # the request always happens and idempotency is decided afterward
-      # by comparing the fresh content's SHA1 against whatever already
-      # sits at the final dest path.
+      # Real get_url's conditional-GET state, decided here exactly where
+      # get_url.py decides it (its `if not dest_is_dir and os.path.exists(dest)`
+      # block): `last_mod_time` is dest's mtime and goes out as
+      # If-Modified-Since when no checksum forced a full re-download, and a
+      # checksum MISMATCH (which only reaches this block when it didn't match)
+      # sets force=True for the re-download instead - real's own reasoning:
+      # "the checksum does not match ... last_mod_time may be newer than on
+      # remote", so the fresh request carries cache-control: no-cache rather
+      # than a stale If-Modified-Since.
+      last_mod_time : Time? = nil
       if File.exists?(dest) && !force && !dest_is_dir
         if skip_result = check_existing_dest(dest, checksum)
           return skip_result
+        end
+        if checksum
+          force = true
+        else
+          # Seconds precision, like real's
+          # datetime.fromtimestamp(mtime, timezone.utc).timetuple() feeding
+          # rfc2822_date_string. A 304 answer short-circuits OK in real's
+          # url_get (msg = fetch_url's info['msg'], i.e. urllib's own
+          # "HTTP Error 304: Not Modified"); a 200 falls through to the full
+          # download + SHA1 compare below.
+          last_mod_time = Time.unix(File.info(dest).modification_time.to_unix)
         end
         # Checksum given but doesn't match (or no checksum at all - see
         # check_existing_dest): fall through and re-download, regardless
@@ -117,7 +131,7 @@ module Krikri
         return tmp_error
       end
 
-      download_to_dest(url, dest_param, checksum, dest_is_dir)
+      download_to_dest(url, dest_param, checksum, dest_is_dir, force, last_mod_time)
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
@@ -159,12 +173,13 @@ module Krikri
     # present and a given checksum matches), nil to signal "proceed with
     # download".
     #
-    # With NO checksum given there is never a requestless skip: real
+    # With NO checksum given there is never a requestless skip here: real
     # ansible-core's get_url always performs the HTTP request when dest
-    # exists (a conditional GET keyed on dest's mtime, or a HEAD in check
-    # mode), then decides changed by comparing the freshly fetched
-    # content's SHA1 against the existing dest file's SHA1 - even with no
-    # checksum: param at all. Found as round952314's buluma.fish
+    # exists (a conditional GET keyed on dest's mtime - #execute sets
+    # last_mod_time for it, and a 304 answer short-circuits in
+    # not_modified_result), then decides changed by comparing the freshly
+    # fetched content's SHA1 against the existing dest file's SHA1 - even
+    # with no checksum: param at all. Found as round952314's buluma.fish
     # divergence: its "Add fish repository key" get_url task (no
     # checksum:, no force:, fetching the live keyserver.ubuntu.com
     # lookup) always short-circuited to ok on a warm rerun purely because
@@ -172,10 +187,8 @@ module Krikri
     # Ansible re-requested and - since a dynamic endpoint's response can
     # differ run to run - sometimes reported changed: true. Falling
     # through to download_to_dest's fetch + SHA1 compare reproduces the
-    # same changed flag; the only divergence left is bandwidth (real
-    # Ansible's conditional GET can get an HTTP 304 short body, krikri
-    # always downloads the full content and compares), never the task
-    # result.
+    # same changed flag (and the conditional GET now reproduces real's
+    # 304 short-circuit too).
     #
     # File-common attribute reconciliation on the checksum-match skip
     # path mirrors real Ansible's get_url exactly (live-read against
@@ -230,10 +243,21 @@ module Krikri
       end
     end
 
-    private def download_to_dest(url : String, dest_param : String, checksum : {String, String}?, dest_is_dir = false) : PluginResult
+    private def download_to_dest(
+      url : String,
+      dest_param : String,
+      checksum : {String, String}?,
+      dest_is_dir = false,
+      force = false,
+      last_mod_time : Time? = nil,
+    ) : PluginResult
       tmp_path = staging_path(dest_param)
       info = begin
-        download(url, tmp_path)
+        download(url, tmp_path, force, last_mod_time)
+      rescue ex : PluginHelpers::HTTPDownload::FetchError
+        File.delete(tmp_path) if File.exists?(tmp_path)
+        return not_modified_result(ex.info_msg, url, dest_param) if ex.status_code == 304
+        return fetch_failure_result(ex, url, dest_param)
       rescue ex
         File.delete(tmp_path) if File.exists?(tmp_path)
         return fetch_failure_result(ex, url, dest_param)
@@ -278,23 +302,66 @@ module Krikri
       # module.sha1(dest)), regardless of force: or any checksum: param.
       unchanged = File.exists?(dest) && native_checksum(dest, "sha1") == native_checksum(tmp_path, "sha1")
 
+      # Real get_url's SINGLE exit for a 200 response covers both content
+      # outcomes (get_url.py's tail): checksum_dest is sha1(dest) when the
+      # content matched (changed: false) and unset when the fresh download
+      # replaced it (changed: true); msg and status_code are the same on
+      # both paths - msg = fetch_url's info['msg'], which module_utils/
+      # urls.py builds as "OK (%s bytes)" % the final response's
+      # Content-Length header ("unknown" when the server sent none), and
+      # status_code = info['status'] = 200. Live-verified against
+      # ansible-core 2.19.11: both a fresh download and a force: true
+      # re-download of identical content report
+      # msg="OK (1670 bytes)", status_code=200 (the latter with
+      # changed: false and checksum_dest set), NOT krikri's old
+      # "file already exists and content matches".
+      # checksum_dest is sha1 of the PRE-MOVE dest when one existed (real
+      # computes it right after the destination checks, before the
+      # compare-and-move - so a content-changing re-download reports the
+      # OLD content's sha1, live-verified 2.19.11), and unset when dest
+      # did not exist.
+      checksum_dest = File.exists?(dest) ? native_checksum(dest, "sha1") : nil
+      changed = !unchanged
       if unchanged
         File.delete(tmp_path)
-        attrs_changed, failure = apply_extended_attributes(dest)
-        return failure if failure
-        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"), url: url)
-        add_path_info(result, dest)
-        return result
+      else
+        backup_dest_if_requested(dest)
+        move_into_place(tmp_path, dest)
       end
 
-      backup_dest_if_requested(dest)
-
-      move_into_place(tmp_path, dest)
-
-      _attrs_changed, failure = apply_extended_attributes(dest)
+      attrs_changed, failure = apply_extended_attributes(dest)
       return failure if failure
+      changed = true if attrs_changed
 
-      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"), url: url)
+      # status_code = info['status'] = 200 - except for a file:// source,
+      # where urllib's file handler sets no status at all and real's
+      # final info.get('status', '') serializes as null (live-verified:
+      # msg="OK (1670 bytes)", status_code: null).
+      status_code = info.final_url.starts_with?("file:") ? nil : 200
+      result = PluginResult.new(changed: changed, failed: false,
+        msg: "OK (#{info.headers["Content-Length"]? || "unknown"} bytes)",
+        checksum_dest: checksum_dest, checksum_src: native_checksum(dest, "sha1"),
+        dest: dest, elapsed: 0, url: url, src: tmp_path,
+        md5sum: native_checksum(dest, "md5"), status_code: status_code)
+      add_path_info(result, dest)
+      result
+    end
+
+    # Real url_get's 304 branch (the only status besides 200 it accepts):
+    # the conditional GET answered "not modified", so the existing dest is
+    # already current -
+    #   module.exit_json(url=url, dest=dest, changed=False,
+    #                    msg=info['msg'], status_code=304, elapsed=elapsed)
+    # - where info['msg'] is urllib's own HTTPError str ("HTTP Error 304:
+    # Not Modified", reason phrase from the server). NO checksum_src/
+    # checksum_dest/md5sum/src: no content came back to hash, and this
+    # exit does not spread the module-level result dict. The usual
+    # uid/gid/owner/group/mode/state/size keys still attach (real's
+    # exit_json runs add_path_info on every exit). Live-verified against
+    # ansible-core 2.19.11 over a local http.server.
+    private def not_modified_result(msg : String, url : String, dest : String) : PluginResult
+      result = PluginResult.new(changed: false, failed: false,
+        url: url, dest: dest, msg: msg, status_code: 304, elapsed: 0)
       add_path_info(result, dest)
       result
     end
@@ -575,7 +642,7 @@ module Krikri
       end
     end
 
-    private def download(url : String, tmp_path : String) : PluginHelpers::HTTPDownload::Result
+    private def download(url : String, tmp_path : String, force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Result
       # file:// is a legitimate source for real Ansible's get_url too
       # (urllib's FileHandler): a local mirror, a previously-fetched
       # artifact, an offline install. Found via an ad-hoc CLI comparison
@@ -613,10 +680,19 @@ module Krikri
         File.open(tmp_path, "w", 0o666) do |staged|
           File.open(path) { |src| IO.copy(src, staged) }
         end
-        return PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: HTTP::Headers.new)
+        # urllib's own file handler reports the copied file's size as a
+        # Content-length header, and get_url's success msg is built from
+        # exactly that header ("OK (<n> bytes)") - live-verified against
+        # ansible-core 2.19.11, which for file:// reports
+        # msg="OK (1670 bytes)" with status_code: null (info['status'] is
+        # unset for a local file, and the final exit_json's
+        # info.get('status', '') becomes None).
+        file_headers = HTTP::Headers.new
+        file_headers["Content-Length"] = File.size(path).to_s
+        return PluginHelpers::HTTPDownload::Result.new(final_url: url, headers: file_headers)
       end
 
-      PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options)
+      PluginHelpers::HTTPDownload.download_with_info(url, tmp_path, download_options(force, last_mod_time))
     end
 
     # file:// URL to a local path: nil when the URL isn't a file:// URL
@@ -650,12 +726,12 @@ module Krikri
       false
     end
 
-    private def download_options : PluginHelpers::HTTPDownload::Options
+    private def download_options(force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Options
       PluginHelpers::HTTPDownload::Options.new(
         max_redirects: MAX_REDIRECTS,
         connect_timeout: timeout_span,
         read_timeout: timeout_span,
-        headers: request_headers,
+        headers: request_headers(force, last_mod_time),
         verify_tls: true?(@params["validate_certs"]?, default: true),
         username: @params["url_username"]?,
         password: @params["url_password"]?,
@@ -698,9 +774,21 @@ module Krikri
       end
     end
 
-    private def request_headers : HTTP::Headers
+    private def request_headers(force = false, last_mod_time : Time? = nil) : HTTP::Headers
       headers = HTTP::Headers.new
       headers["User-Agent"] = @params["http_agent"]? || "ansible-httpget"
+
+      # Real fetch_url's cache-control branch (module_utils/urls.py):
+      # a forced request carries "cache-control: no-cache"; an unforced
+      # one whose dest already exists carries If-Modified-Since (dest's
+      # mtime, RFC 1123 with seconds precision, like real's
+      # rfc2822_date_string(timetuple(), 'GMT')). User-supplied headers:
+      # still come after and may override, same order as real.
+      if force
+        headers["Cache-Control"] = "no-cache"
+      elsif time = last_mod_time
+        headers["If-Modified-Since"] = Time::Format::HTTP_DATE.format(time)
+      end
 
       # decompress: false (real get_url's decompress param, default true)
       # suppresses gzip at the REQUEST level, same approach uri.cr uses:
