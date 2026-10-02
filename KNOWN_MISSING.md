@@ -34,6 +34,9 @@ and fixed and when.
 
 ## Open gaps
 
+- **kpg34 sweep leftovers (network/package/crypto modules):** `openssl_pkcs12` prints a `maciter_size` deprecation warning on stderr in a case where real's module crashes
+  on a missing file first (an uncaught exception loses the module's deprecations; krikri emits it at argspec validation); `openssl_privatekey` shells out to the `openssl` CLI, so it
+  fails on a host without it where real generates the key natively with its Python `cryptography` library (a libcrypto FFI backend, as `openssl_dhparam` now has, would close it).
 - **`replace:` leftovers** (kpg31 sweep): PCRE accepts `(?<name>...)`/`(?'name'...)` in `regexp:` where Python `re` rejects it, and a bad `regexp:` reports
   `Invalid regular expression: ...` instead of real's uncaught-`re.error` module crash; non-UTF-8 file bytes under `encoding:` fail the regex (`UTF-8 error`) where
   real decodes with `surrogateescape` and proceeds (also for codecs Python has but this host's iconv lacks, e.g. `utf-7`, `mac_roman`).
