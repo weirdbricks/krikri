@@ -98,6 +98,18 @@ module Krikri
     # re-renders a non-string msg through Python repr for its error
     # blocks).
     property msg_native : JSON::Any?
+    # Optional wire-key order for the serialized result. Real Ansible's
+    # registered result is the module's own dict in ITS insertion order
+    # (exit_json's msg/status_code kwargs first, then the module's result
+    # dict, then add_path_info's stat block) - every module has its own,
+    # while PluginResult's fixed leading keys (changed/exception/failed/
+    # msg/diff) impose one engine-wide shape. When set, #to_json emits the
+    # listed keys first, in the listed order (absent ones skipped), then
+    # every remaining key in its current order; nil keeps the historical
+    # order exactly. Observed programmatically (e.g. `{{ r | to_json }}`,
+    # `{{ r }}` in a debug msg) rather than in the -v dump, which real
+    # sorts alphabetically via _dump_results(sort_keys=True).
+    property key_order : Array(String)?
 
     def initialize(
       changed : Bool,
@@ -107,6 +119,7 @@ module Krikri
       omit_changed : Bool = false,
       include_empty_msg : Bool = false,
       native_msg : JSON::Any? = nil,
+      key_order : Array(String)? = nil,
       **kwargs,
     )
       @changed = changed
@@ -116,6 +129,7 @@ module Krikri
       @omit_changed = omit_changed
       @include_empty_msg = include_empty_msg
       @msg_native = native_msg
+      @key_order = key_order
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
         @extra[key.to_s] = JSON.parse(value.to_json)
@@ -161,7 +175,25 @@ module Krikri
       # command.py-style modules report `failed: false` explicitly on success
       result["failed"] = false if @extra.has_key?("failed_flag") && !@failed
 
-      result.to_json(io)
+      if order = @key_order
+        emit_reordered(result, order, io)
+      else
+        result.to_json(io)
+      end
+    end
+
+    # Serializes *result* with the keys named in *order* first (absent ones
+    # skipped), then every unlisted key in its existing insertion order -
+    # real Ansible's module-dict wire shape (see @key_order's comment).
+    private def emit_reordered(result : Hash(String, JSON::Any::Type), order : Array(String), io : IO) : Nil
+      ordered = Hash(String, JSON::Any::Type).new
+      order.each do |key|
+        ordered[key] = result[key] if result.has_key?(key)
+      end
+      result.each do |key, value|
+        ordered[key] = value unless ordered.has_key?(key)
+      end
+      ordered.to_json(io)
     end
 
     # A non-string `msg` (a YAML list/dict/bool) has to reach the wire
@@ -280,16 +312,16 @@ module Krikri
     protected def find_required_binary(name : String) : String?
       dirs = %($(printf '%s' "$PATH" | tr ':' ' ') #{BIN_EXTRA_DIRS.join(' ')})
       script = <<-SH
-      searched=""
-      found=""
-      for d in #{dirs}; do
-        case ":$searched:" in *":$d:"*) continue ;; esac
-        searched="${searched:+$searched:}$d"
-        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
-      done
-      printf 'searched=%s\n' "$searched"
-      printf 'found=%s\n' "$found"
-      SH
+        searched=""
+        found=""
+        for d in #{dirs}; do
+          case ":$searched:" in *":$d:"*) continue ;; esac
+          searched="${searched:+$searched:}$d"
+          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+        done
+        printf 'searched=%s\n' "$searched"
+        printf 'found=%s\n' "$found"
+        SH
 
       searched = ""
       found = ""

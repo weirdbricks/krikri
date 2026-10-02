@@ -31,6 +31,19 @@ module Krikri
 
     MAX_REDIRECTS = 10
 
+    # Real get_url's serialized result key order (ansible-core 2.19.11,
+    # verified both live - a registered result dumped via the to_json
+    # filter - and in the module source: exit_json's msg/status_code
+    # kwargs lead, then the module-level result dict
+    # (changed, checksum_dest, checksum_src, dest, elapsed, url) in its
+    # own insertion order plus the success-path src/md5sum additions,
+    # then basic.py add_path_info's stat block). Keys krikri's result
+    # doesn't carry on a given path (status_code/elapsed/src on this
+    # tree's success result, backup_file when no backup: was requested)
+    # are simply skipped by the reorder; keys krikri emits that real
+    # doesn't would keep their current relative order at the end.
+    private SUCCESS_KEY_ORDER = %w[msg status_code changed checksum_dest checksum_src dest elapsed url src md5sum backup_file uid gid owner group mode state size]
+
     def execute : PluginResult
       validate_bool_params!
       url = @params["url"]?
@@ -106,7 +119,7 @@ module Krikri
       end
 
       if true?(@params["_ansible_check_mode"]?)
-        result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest)
+        result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest, key_order: SUCCESS_KEY_ORDER)
         add_path_info(result, dest)
         return result
       end
@@ -195,7 +208,7 @@ module Krikri
         return failure if failure
       end
 
-      result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil)
+      result = PluginResult.new(changed: attrs_changed || false, failed: false, msg: attrs_changed ? "file already exists but file attributes changed" : "file already exists", dest: dest, checksum_src: nil, checksum_dest: nil, key_order: SUCCESS_KEY_ORDER)
       add_path_info(result, dest)
       result
     end
@@ -282,7 +295,7 @@ module Krikri
         File.delete(tmp_path)
         attrs_changed, failure = apply_extended_attributes(dest)
         return failure if failure
-        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"), url: url)
+        result = PluginResult.new(changed: attrs_changed, failed: false, msg: "file already exists and content matches", dest: dest, md5sum: native_checksum(dest, "md5"), url: url, key_order: SUCCESS_KEY_ORDER)
         add_path_info(result, dest)
         return result
       end
@@ -294,7 +307,7 @@ module Krikri
       _attrs_changed, failure = apply_extended_attributes(dest)
       return failure if failure
 
-      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"), url: url)
+      result = PluginResult.new(changed: true, failed: false, msg: "OK", dest: dest, checksum_src: native_checksum(dest, "sha1"), checksum_dest: nil, md5sum: native_checksum(dest, "md5"), url: url, key_order: SUCCESS_KEY_ORDER)
       add_path_info(result, dest)
       result
     end
