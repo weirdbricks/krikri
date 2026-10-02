@@ -3,17 +3,21 @@
 require "json"
 require "openssl"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/openssl_pkey"
 
 module Krikri
   # openssl_privatekey plugin (community.crypto.openssl_privatekey) -
   # generates TLS/SSL private keys.
   #
-  # Backed by the `openssl` CLI, the same approach `openssl_dhparam.cr`
-  # already takes here: the real module dropped its own openssl-CLI
-  # backend in favour of Python's `cryptography` library, but the file
-  # formats it produces (PKCS#1/PKCS#8/raw, optionally encrypted) are
-  # standard, so the CLI reproduces them exactly - and there is no
-  # Python runtime on the target to lean on. Every behavior below was
+  # Backed by libcrypto's own EVP keygen/serialization (see
+  # `plugin_helpers/openssl_pkey.cr`): the real module dropped its own
+  # openssl-CLI backend in favour of Python's `cryptography` library, and
+  # this plugin does the equivalent natively - there is no Python runtime
+  # on the target, and the `openssl` CLI binary is absent from minimal
+  # containers, which made every generation die with "Error executing
+  # process: 'openssl': No such file or directory". The file formats it
+  # produces (PKCS#1/PKCS#8/raw, optionally encrypted) are standard.
+  # Every behavior below was
   # differentialed against the real module (community.crypto 3.1.1,
   # ansible-core 2.19.4) rather than read off the docs alone, including
   # the idempotency matrix, which is the part roles actually depend on:
@@ -35,6 +39,12 @@ module Krikri
   # return_content, owner/group/mode, check_mode. select_crypto_backend
   # is accepted and ignored (there is only one backend here).
   class OpensslPrivatekeyPlugin < BasePlugin
+    Pkey = PluginHelpers::Pkey
+    NID_RSA = PluginHelpers::Pkey::NID_RSA
+    NID_DSA = PluginHelpers::Pkey::NID_DSA
+    NID_EC  = PluginHelpers::Pkey::NID_EC
+    TYPE_NIDS = PluginHelpers::Pkey::TYPE_NIDS
+
     # community.crypto names curves per the IANA TLS registry; the
     # openssl CLI wants its own name for exactly one of them
     # (`secp256r1` is `prime256v1` there, and `genpkey` rejects the IANA
@@ -185,11 +195,39 @@ module Krikri
       end
 
       backup_file = backup(path)
-      error = regen ? generate(path, type, size, curve, passphrase, cipher, format) : convert_format(path, type, passphrase, cipher, format)
+      error = regen ? generate(path, type, size, curve, passphrase, format) : convert_format(path, type, passphrase, format)
+      # module.warn rides in the result, so the deprecated-curve warning
+      # real emits at generate_private_key time shows on the failure
+      # result too (fail_json includes the collected warnings).
+      if warning = curve_warning(regen ? curve : nil, type)
+        return attach_warning(failure(error), warning) if error
+        return attach_warning(result(true, path, type, size, curve, backup_file), warning)
+      end
       return failure(error) if error
 
       apply_attrs(path, default_mode: true)
       result(true, path, type, size, curve, backup_file)
+    end
+
+    # The real module's curve table marks these deprecated and warns at
+    # generation time (PrivateKeyBackend.generate_private_key): "Elliptic
+    # curves of type X should not be used for new keys!" - only when a
+    # key is actually generated, never on an idempotent no-change run or
+    # a format conversion.
+    DEPRECATED_CURVES = %w[
+      secp192r1 sect163k1 sect163r2 sect233k1 sect233r1 sect283k1
+      sect283r1 sect409k1 sect409r1 sect571k1 sect571r1
+      brainpoolP256r1 brainpoolP384r1 brainpoolP512r1
+    ]
+
+    private def curve_warning(curve : String?, type : String) : String?
+      return nil unless type == "ECC" && curve && DEPRECATED_CURVES.includes?(curve)
+      "Elliptic curves of type #{curve} should not be used for new keys!"
+    end
+
+    private def attach_warning(res : PluginResult, warning : String) : PluginResult
+      res.extra["warnings"] = JSON.parse([warning].to_json)
+      res
     end
 
     # The "unhandled module exception" result shape real 2.19 produces:
@@ -274,58 +312,44 @@ module Krikri
       enc = encrypted?(path)
       return false if enc && (passphrase.nil? || passphrase.empty?)
       return false if !enc && passphrase && !passphrase.empty?
-      read_key_text(path, passphrase) != nil
+      read_key(path, passphrase) != nil
     end
 
-    private def read_key_text(path : String, passphrase : String?) : String?
-      args = ["pkey", "-in", path, "-noout", "-text"]
-      args.concat(["-passin", "pass:#{passphrase}"]) if passphrase && !passphrase.empty?
-      stdout_io = IO::Memory.new
-      err = IO::Memory.new
-      status = Process.run("openssl", args, output: stdout_io, error: err)
-      status.success? ? stdout_io.to_s : nil
+    private def read_key(path : String, passphrase : String?) : Pointer(Void)?
+      Pkey.load(File.read(path), passphrase)
+    rescue
+      nil
     end
 
     private def size_and_type_match?(path : String, passphrase : String?, type : String,
                                      size : Int32, curve : String?) : Bool
       # A `format: raw` key on disk is bare key material - no PEM, no
-      # DER, nothing for `openssl pkey` to parse and nothing that
-      # records its own type. All that can be checked is that its length
-      # is the one this type produces, which is what the real module
-      # effectively does too (it loads the bytes AS the configured type).
+      # DER, nothing that can be parsed back and nothing that records its
+      # own type. All that can be checked is that its length is the one
+      # this type produces, which is what the real module effectively
+      # does too (it loads the bytes AS the configured type).
       if raw_file?(path)
         return false unless EDWARDS_TYPES.includes?(type)
         return File.size(path) == raw_size(type)
       end
 
-      text = read_key_text(path, passphrase)
-      return false unless text
-
+      pkey = read_key(path, passphrase)
+      return false unless pkey
+      info = Pkey.info(pkey)
+      Pkey.free_pkey(pkey)
       case type
-      when "RSA", "DSA" then rsa_dsa_match?(text, type, size)
-      when "ECC"        then ecc_match?(text, curve)
+      when "RSA"
+        info.base_nid == NID_RSA && info.bits == size
+      when "DSA"
+        info.base_nid == NID_DSA && info.bits == size
+      when "ECC"
+        openssl_curve = CURVE_ALIASES[curve]? || curve
+        info.base_nid == NID_EC && info.curve_sn == openssl_curve
       when "Ed25519", "Ed448", "X25519", "X448"
-        text.upcase.includes?("#{type.upcase} PRIVATE-KEY")
+        info.base_nid == TYPE_NIDS[type]?
       else
         false
       end
-    end
-
-    private def rsa_dsa_match?(text : String, type : String, size : Int32) : Bool
-      return false unless text.includes?("#{type} Private-Key") || text.matches?(/^Private-Key: \(\d+ bit/m)
-      return false if type == "RSA" && text.includes?("DSA")
-      return false if type == "DSA" && !text.includes?("DSA")
-      if match = text.match(/Private-Key: \((\d+) bit/)
-        match[1].to_i == size
-      else
-        false
-      end
-    end
-
-    private def ecc_match?(text : String, curve : String?) : Bool
-      return false unless text.includes?("ASN1 OID") || text.includes?("EC Private-Key")
-      openssl_curve = CURVE_ALIASES[curve]? || curve
-      text.includes?("ASN1 OID: #{openssl_curve}")
     end
 
     # The format a NEW key of this type would be written in when the
@@ -393,13 +417,9 @@ module Krikri
 
     # --- generation ---------------------------------------------------
 
-    private def cipher_flag(cipher : String) : String
-      # `auto` is the real module's default and means "the best
-      # available encryption", which for `cryptography` is AES-256-CBC -
-      # verified against a real module run (`DEK-Info: AES-256-CBC`).
-      return "-aes256" if cipher == "auto" || cipher.empty?
-      "-#{cipher}"
-    end
+    # The "auto" cipher - the only one the real module's cryptography
+    # backend accepts, and the only one this native path ever applies -
+    # is AES-256-CBC, already handled inside the libcrypto helper.
 
     # Every temporary file below is created NEXT TO the destination, not
     # in /tmp: the final step is a rename, which only works within one
@@ -416,84 +436,44 @@ module Krikri
     end
 
     private def generate(path : String, type : String, size : Int32, curve : String?,
-                         passphrase : String?, cipher : String, format : String) : String?
-      raw_key = secure_tempfile(path, "privatekey")
+                         passphrase : String?, format : String) : String?
+      pkey = Pkey.generate(type, size, curve_nid(curve))
+      unless pkey
+        return "value of type must be one of: DSA, ECC, Ed25519, Ed448, RSA, X25519, X448, got: #{type}" unless TYPE_NIDS[type]?
+        return "key generation failed for type #{type}"
+      end
+      tmp = secure_tempfile(path, "privatekey-out")
       begin
-        if error = generate_raw(raw_key, type, size, curve)
+        if error = write_serialized(pkey, tmp, type, passphrase, effective_format(type, format))
           return error
         end
-        serialize(raw_key, path, type, passphrase, cipher, effective_format(type, format))
-      ensure
-        File.delete(raw_key) if File.exists?(raw_key)
-      end
-    end
-
-    private def generate_raw(out_path : String, type : String, size : Int32, curve : String?) : String?
-      case type
-      when "RSA"
-        run_openssl(["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:#{size}", "-out", out_path])
-      when "DSA"
-        # DSA needs its parameters generated first; `genpkey -genparam`
-        # then `genpkey -paramfile` is the CLI equivalent of
-        # `dsa.generate_private_key(key_size=...)`.
-        params = secure_tempfile(out_path, "dsaparam")
-        begin
-          if error = run_openssl(["genpkey", "-genparam", "-algorithm", "DSA",
-                                  "-pkeyopt", "dsa_paramgen_bits:#{size}", "-out", params])
-            return error
-          end
-          run_openssl(["genpkey", "-paramfile", params, "-out", out_path])
-        ensure
-          File.delete(params) if File.exists?(params)
-        end
-      when "ECC"
-        openssl_curve = CURVE_ALIASES[curve]? || curve
-        run_openssl(["genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:#{openssl_curve}", "-out", out_path])
-      when "Ed25519", "Ed448", "X25519", "X448"
-        run_openssl(["genpkey", "-algorithm", type.upcase, "-out", out_path])
-      else
-        "value of type must be one of: DSA, ECC, Ed25519, Ed448, RSA, X25519, X448, got: #{type}"
-      end
-    end
-
-    # Writes *src* (always PKCS#8, as `genpkey` produces) out to *dest*
-    # in the requested format, encrypting when a passphrase is set.
-    private def serialize(src : String, dest : String, type : String, passphrase : String?,
-                          cipher : String, format : String) : String?
-      tmp = secure_tempfile(dest, "privatekey-out")
-      begin
-        args =
-          case format
-          when "pkcs8"
-            ["pkey", "-in", src, "-out", tmp]
-          when "raw"
-            return write_raw(src, dest, type)
-          else
-            # pkcs1 - the traditional per-algorithm serialization. On
-            # OpenSSL 3 `openssl rsa` defaults to PKCS#8 output, so
-            # `-traditional` is required to get "BEGIN RSA PRIVATE KEY"
-            # back; `openssl ec`/`openssl dsa` still default to their
-            # traditional forms and reject the flag.
-            case type
-            when "RSA" then ["rsa", "-in", src, "-traditional", "-out", tmp]
-            when "DSA" then ["dsa", "-in", src, "-out", tmp]
-            when "ECC" then ["ec", "-in", src, "-out", tmp]
-            else            ["pkey", "-in", src, "-out", tmp]
-            end
-          end
-
-        if passphrase && !passphrase.empty?
-          args.concat([cipher_flag(cipher), "-passout", "pass:#{passphrase}"])
-        end
-
-        if error = run_openssl(args)
-          return error
-        end
-        File.rename(tmp, dest)
+        File.rename(tmp, path)
         nil
       ensure
         File.delete(tmp) if File.exists?(tmp)
+        Pkey.free_pkey(pkey)
       end
+    end
+
+    private def curve_nid(curve : String?) : Int32
+      return 0 unless curve
+      openssl_curve = CURVE_ALIASES[curve]? || curve
+      LibCrypto.obj_sn2nid(openssl_curve.to_unsafe)
+    end
+
+    # Writes *pkey* out to *dest* (a pre-created 0600 temporary next to
+    # the destination) in the requested format, encrypting when a
+    # passphrase is set.
+    private def write_serialized(pkey : Pointer(Void), dest : String, type : String,
+                                 passphrase : String?, format : String) : String?
+      if format == "raw"
+        return write_raw(pkey, dest, type)
+      end
+
+      pem = Pkey.serialize_pem(pkey, type, format, passphrase)
+      return "key serialization failed" unless pem
+      File.write(dest, pem)
+      nil
     end
 
     # `format: raw` for the Edwards/montgomery types: the bare key
@@ -501,42 +481,32 @@ module Krikri
     # DER encoding (a fixed-size header followed by the key itself), so
     # slicing that off reproduces `private_bytes(Encoding.Raw)` exactly
     # - verified byte-for-byte against the real module's output.
-    private def write_raw(src : String, dest : String, type : String) : String?
+    private def write_raw(pkey : Pointer(Void), dest : String, type : String) : String?
       return "format: raw is only supported for Ed25519, Ed448, X25519 and X448 keys" unless EDWARDS_TYPES.includes?(type)
 
-      der = IO::Memory.new
-      err = IO::Memory.new
-      status = Process.run("openssl", ["pkey", "-in", src, "-outform", "DER"], output: der, error: err)
-      return "openssl pkey failed: #{err}" unless status.success?
-
-      bytes = der.to_slice
+      der = Pkey.pkcs8_der(pkey)
+      return "key serialization failed" unless der
       size = raw_size(type)
-      return "unexpected DER length #{bytes.size} for a #{type} key" if bytes.size < size
-      File.write(dest, bytes[bytes.size - size, size])
+      return "unexpected DER length #{der.size} for a #{type} key" if der.size < size
+      File.write(dest, der[der.size - size, size])
       nil
     end
 
     private def convert_format(path : String, type : String, passphrase : String?,
-                               cipher : String, format : String) : String?
-      src = secure_tempfile(path, "privatekey-src")
+                               format : String) : String?
+      pkey = read_key(path, passphrase)
+      return "Unable to read the key. The key is protected with a another passphrase / no passphrase or broken." unless pkey
+      tmp = secure_tempfile(path, "privatekey-out")
       begin
-        args = ["pkey", "-in", path, "-out", src]
-        args.concat(["-passin", "pass:#{passphrase}"]) if passphrase && !passphrase.empty?
-        if error = run_openssl(args)
+        if error = write_serialized(pkey, tmp, type, passphrase, effective_format(type, format))
           return error
         end
-        serialize(src, path, type, passphrase, cipher, effective_format(type, format))
+        File.rename(tmp, path)
+        nil
       ensure
-        File.delete(src) if File.exists?(src)
+        File.delete(tmp) if File.exists?(tmp)
+        Pkey.free_pkey(pkey)
       end
-    end
-
-    private def run_openssl(args : Array(String)) : String?
-      stdout_io = IO::Memory.new
-      err = IO::Memory.new
-      status = Process.run("openssl", args, output: stdout_io, error: err)
-      return nil if status.success?
-      "openssl #{args.first} failed: #{err.to_s.strip}"
     end
 
     # --- reporting ----------------------------------------------------
@@ -551,16 +521,12 @@ module Krikri
       # the algorithm; the real module returns no fingerprint here either.
       return nil if raw_file?(path)
 
-      args = ["pkey", "-in", path, "-pubout", "-outform", "DER"]
-      if (passphrase = @params["passphrase"]?) && !passphrase.empty?
-        args.concat(["-passin", "pass:#{passphrase}"])
-      end
-      stdout_io = IO::Memory.new
-      err = IO::Memory.new
-      status = Process.run("openssl", args, output: stdout_io, error: err)
-      return nil unless status.success?
+      loaded = read_key(path, @params["passphrase"]?)
+      return nil unless loaded
+      der = Pkey.public_der(loaded)
+      Pkey.free_pkey(loaded)
+      return nil unless der
 
-      der = stdout_io.to_slice
       result = {} of String => JSON::Any
       {
         "md5"      => "MD5",
@@ -585,8 +551,8 @@ module Krikri
       # cannot produce them; Python's hashlib is asked for 32 bytes of
       # output, which `openssl dgst -xoflen 32` reproduces byte for byte
       # (verified against the real module's own shake_128/shake_256).
-      # Silently skipped where the CLI is too old to know -xoflen rather
-      # than failing the task over a reporting field.
+      # Silently skipped where the CLI is absent or too old to know
+      # -xoflen rather than failing the task over a reporting field.
       {"shake_128" => "shake128", "shake_256" => "shake256"}.each do |name, algorithm|
         if hex = shake_digest(der, algorithm)
           result[name] = JSON::Any.new(hex)
@@ -594,8 +560,6 @@ module Krikri
       end
 
       result.empty? ? nil : result
-    rescue
-      nil
     end
 
     private def shake_digest(data : Bytes, algorithm : String) : String?

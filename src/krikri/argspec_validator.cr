@@ -86,8 +86,9 @@ module Krikri
     # Params the sweep environment's collections mark removed_in_version:
     # passing one deprecates at module bootstrap (the general
     # "Param 'x' is deprecated. ... removed from collection 'C' version N"
-    # wording), on stderr, whatever the validation outcome. Extended as
-    # the corpus surfaces more of them.
+    # wording) - but only when the module's run actually returns
+    # (normally or via fail_json): see validate's deprecation gate.
+    # Extended as the corpus surfaces more of them.
     private REMOVED_PARAM_DEPRECATIONS = {
       "community.crypto.openssl_pkcs12" => {"maciter_size" => "4.0.0"},
     }
@@ -192,24 +193,65 @@ module Krikri
       return nil unless entry
       return nil if entry["no_validate"]?
 
-      # A removed_in_version-marked param the task passed (the real
-      # module's own bootstrap deprecates it during _handle_params -
-      # BEFORE every other check, and the warning reaches stderr whatever
-      # the validation outcome is, including the unsupported-params and
-      # mutually-exclusive failures; live-verified vs 2.19.11 with
-      # openssl_pkcs12's maciter_size).
-      if removed = REMOVED_PARAM_DEPRECATIONS[module_name]?
-        removed.each do |param, version|
-          next unless params.has_key?(param)
-          collection = module_name.split(".")[0...-1].join(".")
-          Krikri::ResultDisplay.emit_core_deprecation(
-            "Param '#{param}' is deprecated. See the module docs for more information. " \
-            "This feature will be removed from collection '#{collection}' version #{version}.")
-        end
-      end
+      outcome = validate_spec_entry(action_name, module_name, entry, params, vars_context)
 
-      if failure = action_plugin_required_params(module_name, params)
+      # A removed_in_version-marked param the task passed deprecates at
+      # the real module's own bootstrap (_handle_params). The warning
+      # travels in the module RESULT, so whether it reaches stderr
+      # mirrors how the module run ends: a module-level spec failure IS
+      # real's AnsibleModule fail_json exit (unsupported parameters,
+      # mutually exclusive, ...) and shows the deprecation; an
+      # action-plugin-level failure, a skip or an unreachable never run
+      # the module, so they print nothing; and an uncaught module
+      # exception drops it - real's crash wrapper builds its result
+      # without the collected deprecations (all live-verified vs 2.19.11
+      # with openssl_pkcs12's maciter_size). Module-level failures emit
+      # right here (the module has "run" - bootstrap and all - and
+      # fail_json'd); a passing validation defers to the module's actual
+      # outcome, which only the result's display point knows:
+      # ResultDisplay.consume_pending_module_deprecations.
+      removed = removed_deprecation_texts(module_name, params)
+      if failure = outcome.failure
+        if !failure.action_level? && !removed.empty?
+          removed.each { |text| Krikri::ResultDisplay.emit_core_deprecation(text) }
+        end
         return failure
+      end
+      unless outcome.deferred || removed.empty?
+        Krikri::ResultDisplay.stash_pending_module_deprecations(module_name, removed)
+      end
+      nil
+    end
+
+    private record SpecOutcome, failure : Failure?, deferred : Bool
+
+    # The text of the removed_in_version deprecations the task's params
+    # trigger, in table order (empty when none).
+    private def removed_deprecation_texts(module_name : String, params : Hash(String, String)) : Array(String)
+      return [] of String unless removed = REMOVED_PARAM_DEPRECATIONS[module_name]?
+      collection = module_name.split(".")[0...-1].join(".")
+      removed.compact_map do |param, version|
+        next nil unless params.has_key?(param)
+        "Param '#{param}' is deprecated. See the module docs for more information. " \
+        "This feature will be removed from collection '#{collection}' version #{version}."
+      end
+    end
+
+    # The spec-check tail of validate (everything but the removed-param
+    # gate): failure is the first spec error in real's check order, nil
+    # when the params pass. deferred is real's "the action plugin settled
+    # the outcome itself" exits, where the module may not run at all - a
+    # passing-but-deferred validation must not pre-arm the removed-param
+    # deprecation.
+    private def validate_spec_entry(
+      action_name : String,
+      module_name : String,
+      entry : JSON::Any,
+      params : Hash(String, String),
+      vars_context : Hash(String, JSON::Any),
+    ) : SpecOutcome
+      if failure = action_plugin_required_params(module_name, params)
+        return SpecOutcome.new(failure, false)
       end
 
       # Custom callable spec types (assert's str_or_list_of_str) reject a
@@ -222,22 +264,22 @@ module Krikri
       params = prepare_module_params(module_name, params, entry)
 
       outcome = action_plugin_preflight(module_name, params, entry, non_string_natives, non_string_lists, vars_context)
-      return outcome.failure if outcome.failure
-      return nil if outcome.defer?
+      return SpecOutcome.new(outcome.failure, false) if outcome.failure
+      return SpecOutcome.new(nil, true) if outcome.defer?
 
       if failure = action_plugin_option_failures(module_name, params, non_string_natives, non_string_lists)
-        return failure
+        return SpecOutcome.new(failure, false)
       end
 
       # unarchive's action plugin checks that dest is an existing directory
       # (AnsibleActionFail) before the module ever validates its arguments;
       # a dest that is not a directory here defers to the plugin's own failure.
-      return nil if defers_to_unarchive_action?(module_name, params)
+      return SpecOutcome.new(nil, false) if defers_to_unarchive_action?(module_name, params)
 
       print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
-      return nil unless entry
+      return SpecOutcome.new(nil, false) unless entry
 
-      validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists)
+      SpecOutcome.new(validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists), false)
     end
 
     # What the action-plugin checks that run BEFORE module argument

@@ -92,8 +92,8 @@ module Krikri
     # removed_in_version warning, or a result's `_ansible_core_deprecations`
     # entry) on stderr - deduped per distinct text, with the one-time
     # "can be disabled" hint before the first one. Also called directly
-    # from the argspec validator (a removed param deprecates on stderr
-    # whatever the validation outcome is).
+    # from the argspec validator (a removed param deprecates when the
+    # module's run returns - see validate's deprecation gate).
     def self.emit_core_deprecation(text : String) : Nil
       line = "[DEPRECATION WARNING]: #{text}"
       return unless @@deprecation_texts.add?(line)
@@ -102,6 +102,55 @@ module Krikri
         STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
       end
       STDERR.puts line.colorize(:light_magenta)
+    end
+
+    # Removed-param deprecations whose stderr printing is deferred until
+    # the module's actual outcome is known (stashed by the argspec
+    # validator when validation passes - see its deprecation gate): real
+    # carries the deprecation in the module RESULT, so an uncaught module
+    # exception drops it while a normal or fail_json return shows it.
+    # Keyed by module name; consumed (or dropped) at the result's display
+    # point, the one place every task outcome passes through.
+    @@pending_module_deprecations = Hash(String, Array(String)).new
+
+    def self.stash_pending_module_deprecations(module_name : String, texts : Array(String)) : Nil
+      return if texts.empty?
+      held = @@pending_module_deprecations[module_name]?
+      if held
+        texts.each { |text| held << text unless held.includes?(text) }
+      else
+        @@pending_module_deprecations[module_name] = texts.dup
+      end
+    end
+
+    # Emits the stashed removed-param deprecations for this module unless
+    # the result says the module never ran (skip, unreachable, connection
+    # failure) or died with an uncaught exception (real's crash wrapper
+    # drops the collected deprecations - live-verified vs 2.19.11 with
+    # openssl_pkcs12's maciter_size). Consumes the stash either way.
+    def self.consume_pending_module_deprecations(result : JSON::Any, module_name : String?) : Nil
+      return if module_name.nil?
+      pending = @@pending_module_deprecations.delete(module_name)
+      return unless pending
+      top = result.as_h?
+      return if top.nil?
+      return if top["skipped"]?.try(&.as_bool?)
+      return if top["unreachable"]?.try(&.as_bool?)
+      return if top["_connection_failure"]?.try(&.as_bool?)
+      return if module_crash_result?(result)
+      pending.each { |text| emit_core_deprecation(text) }
+    end
+
+    # The result shape of an uncaught module exception (the plugins'
+    # module_crash_result/unhandled_error mimicry): real's module wrapper
+    # builds that result WITHOUT the deprecations the module bootstrap
+    # collected, so `_ansible_core_deprecations` riding on it must not be
+    # displayed (live-verified vs 2.19.11 with openssl_pkcs12's
+    # maciter_size: the crash shows no [DEPRECATION WARNING] while the
+    # same params' fail_json and success results do).
+    def self.module_crash_result?(result : JSON::Any) : Bool
+      return false unless Krikri.result_failed_flag(result)
+      (result["msg"]?.try(&.as_s?) || "").starts_with?("Task failed: Module failed: ")
     end
 
     # Display task result with appropriate formatting.
@@ -119,6 +168,12 @@ module Krikri
     end
 
     private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
+      # A validation-passed removed-param deprecation waits for this
+      # result to learn whether real's module run would have shown it
+      # (normal/fail_json return) or dropped it (uncaught crash, skip,
+      # unreachable) - emit it before anything else this result prints.
+      consume_pending_module_deprecations(result, module_name)
+
       # delegate_to: renders the host line as real Ansible does:
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
@@ -147,9 +202,14 @@ module Krikri
       # back (second one silent). The marker itself is engine-internal
       # (stripped below, like the `_ansible_*` register strip) - the
       # result's real `deprecations` list stays untouched for register.
-      result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
-        text = deprecation.as_s? || deprecation.to_s
-        emit_core_deprecation(text)
+      # An uncaught module exception's result is the one shape that shows
+      # nothing: real's crash wrapper rebuilds the result without the
+      # collected deprecations (see module_crash_result?).
+      unless module_crash_result?(result)
+        result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
+          text = deprecation.as_s? || deprecation.to_s
+          emit_core_deprecation(text)
+        end
       end
 
       # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
