@@ -19,15 +19,21 @@ module Krikri
   #     when none is given, stored in the result's
   #     `release`/`new_release` return values so follow-up tasks can
   #     reference it via the registered variable
-  #   - state=unfinished: removes a release dir only if it is NOT
-  #     pointed at by `current` (real's unfinished-cleanup semantics;
-  #     an absent release dir is a no-op)
-  #   - state=clean: removes all release dirs except the newest
-  #     keep_releases (real's same rule; releases are sorted
-  #     lexically, which for the timestamp names is chronological)
-  #   - state=finalize: points `current` symlink at the release (or at
-  #     shared when release is empty - real's behavior), creating the
-  #     symlink atomically via ln -sfn
+  #   - state=clean: real main()'s three-step flow: remove_unfinished_link
+  #     (<path>/<release>.<unfinished_filename>), remove_unfinished_builds
+  #     (a bare os.listdir on releases_path - it CRASHES with the raw
+  #     OSError when the tree was never created by state=present, the
+  #     kpg35 #30 divergence), then cleanup (ctime-descending, the
+  #     `release` param reserved, and NO protection of the `current`
+  #     target - live-verified: real happily deletes the release
+  #     `current` points at and leaves the symlink dangling)
+  #   - state=finalize: remove_unfinished_file (drop the marker inside
+  #     the release dir), create_link (points `current` symlink at the
+  #     release atomically via ln -sfn), then - when the `clean` param
+  #     is set, its default - the full state=clean branch; the
+  #     listdir-crash fires AFTER the symlink is created (live-verified:
+  #     a fresh-tree finalize leaves the dangling `current` behind and
+  #     then fails on the missing releases dir)
   #   - state=absent: removes the whole <path> tree, and publishes
   #     ansible_facts.deploy_helper as an empty LIST (real main()'s own
   #     "destroy the facts" sentinel - not a dict)
@@ -44,7 +50,10 @@ module Krikri
   # ignored, matching real's behavior of treating it as always
   # "create".
   class DeployHelperPlugin < BasePlugin
-    private DEPLOY_STATES = %w[finalize absent clean present query unfinished]
+    # Real argument_spec order (live-verified: "value of state must be
+    # one of: present, absent, clean, finalize, query, got: X"). Real
+    # has no "unfinished" state.
+    private DEPLOY_STATES = %w[present absent clean finalize query]
 
     private def resolve_deploy_paths(path : String) : Tuple(String, String, String)
       {
@@ -79,18 +88,24 @@ module Krikri
       keep_releases = @params["keep_releases"]?.try(&.to_i?) || 5
       release = @params["release"]?
       check_mode = true?(@params["_ansible_check_mode"]?)
+      clean_param = true?(@params["clean"]?, default: true)
+
+      # Real required_if=[("state", "finalize", ["release"])].
+      if state == "finalize" && !release
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is finalize but all of the following are missing: release")
+      end
 
       case state
       when "absent"
-        return absent_path(path, check_mode)
+        absent_path(path, check_mode)
       when "present"
         present(path, releases_path, shared_path, current_path, release, check_mode)
-      when "unfinished"
-        unfinished(releases_path, current_path, release, check_mode)
       when "clean"
-        clean(releases_path, current_path, keep_releases, check_mode)
+        clean(path, releases_path, release, keep_releases, check_mode)
       when "finalize"
-        do_finalize(current_path, release, shared_path, releases_path, check_mode)
+        do_finalize(path, current_path, release, shared_path, releases_path, clean_param,
+          keep_releases, check_mode)
       else # query
         query(path, releases_path, shared_path, current_path, release)
       end
@@ -161,76 +176,186 @@ module Krikri
         ansible_facts: {"deploy_helper" => facts})
     end
 
-    # Removes a release dir only when it is not the one `current`
-    # points at - real's unfinished-cleanup semantics (used to clean
-    # up a failed deploy before retrying).
-    private def unfinished(releases_path : String, current_path : String, release : String?, check_mode : Bool) : PluginResult
-      unless release
-        return PluginResult.new(changed: false, failed: true,
-          msg: "state is unfinished but all of the following are missing: release")
+    # Real remove_unfinished_link(path): deletes the
+    # <path>/<release>.<unfinished_filename> file when it exists. Real's
+    # own guard (`if not check_mode and os.path.exists`) skips the whole
+    # step in check mode, so a check-mode clean/finalize never counts it.
+    private def remove_unfinished_link(path : String, release : String?,
+                                       unfinished_filename : String, check_mode : Bool) : Int32
+      return 0 unless release && !release.empty? && !check_mode
+      tmp_link = "#{path}/#{release}.#{unfinished_filename}"
+      if remote_exec("test -e #{Shell.single_quote(tmp_link)}")[:exit_code] == 0
+        remote_exec("rm -f #{Shell.single_quote(tmp_link)}")
+        1
+      else
+        0
       end
-
-      release_path = "#{releases_path}/#{release}"
-      exists = remote_exec("test -d #{Shell.single_quote(release_path)}")
-      return PluginResult.new(changed: false, failed: false, msg: "") unless exists[:exit_code] == 0
-
-      target = current_target(current_path)
-      return PluginResult.new(changed: false, failed: true, msg: target) if target.is_a?(String)
-      if target == release_path
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Refusing to remove unfinished release #{release}: it is the current release")
-      end
-
-      return PluginResult.new(changed: true, failed: false,
-        msg: "unfinished release #{release} would be removed") if check_mode
-
-      result = remote_exec("rm -rf #{Shell.single_quote(release_path)}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "failed to remove #{release_path}: #{result[:stderr].strip}")
-      end
-      PluginResult.new(changed: true, failed: false, msg: "")
     end
 
-    # Keeps the newest keep_releases release dirs (plus whatever
-    # `current` points at, matching real's protect-the-current-release
-    # rule) and removes the rest.
-    private def clean(releases_path : String, current_path : String, keep_releases : Int32, check_mode : Bool) : PluginResult
-      listing = remote_exec("ls -1 #{Shell.single_quote(releases_path)} 2>/dev/null")
-      releases = listing[:exit_code] == 0 ? listing[:stdout].lines.map(&.strip).reject(&.empty?) : [] of String
-      return PluginResult.new(changed: false, failed: false, msg: "") if releases.size <= keep_releases
+    # Real remove_unfinished_builds(releases_path): a bare os.listdir -
+    # it raises the raw OSError when releases_path doesn't exist or
+    # isn't a directory (live-verified against 2.19.11: state=clean on a
+    # tree never created by state=present crashes the module with
+    # "[Errno 2] No such file or directory: '<releases_path>'"; a FILE
+    # at releases_path gives "[Errno 20] Not a directory"). Release dirs
+    # containing the unfinished marker file are removed wholesale.
+    private def remove_unfinished_builds(releases_path : String, unfinished_filename : String,
+                                         check_mode : Bool) : {changes: Int32, failure: PluginResult?}
+      found = listdir_entries(releases_path)
+      return {changes: 0, failure: found} if found.is_a?(PluginResult)
 
-      target = current_target(current_path)
-      return PluginResult.new(changed: false, failed: true, msg: target) if target.is_a?(String)
-
-      # Sorted lexically ascending; the newest are the last N. The
-      # current release is always kept even when old.
-      sorted = releases.sort
-      to_remove = sorted[0...sorted.size - keep_releases].reject { |release| "#{releases_path}/#{release}" == target }
-
-      return PluginResult.new(changed: true, failed: false,
-        msg: "#{to_remove.size} old releases would be removed") if check_mode || to_remove.empty?
-
-      args = to_remove.map { |release| Shell.single_quote("#{releases_path}/#{release}") }.join(' ')
-      result = remote_exec("rm -rf #{args}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "failed to remove old releases: #{result[:stderr].strip}")
+      changes = 0
+      found.each do |entry|
+        marker = "#{releases_path}/#{entry}/#{unfinished_filename}"
+        next unless remote_exec("test -f #{Shell.single_quote(marker)}")[:exit_code] == 0
+        if check_mode
+          changes += 1
+        else
+          result = delete_path("#{releases_path}/#{entry}")
+          return {changes: 0, failure: result} if result.is_a?(PluginResult)
+          changes += result
+        end
       end
-      PluginResult.new(changed: true, failed: false,
-        msg: "#{to_remove.size} old releases removed")
+      {changes: changes, failure: nil}
     end
 
-    # Points the `current` symlink at the release dir (or at shared
-    # when release is empty - real's documented behavior for
-    # finalize's "no release given" case).
-    private def do_finalize(current_path : String, release : String?, shared_path : String,
-                            releases_path : String, check_mode : Bool) : PluginResult
-      target = if release && !release.empty?
-                 "#{releases_path}/#{release}"
-               else
-                 shared_path
-               end
+    # Real cleanup(releases_path, reserve_version): releases are
+    # re-listed as directories only, the `release` param (new_release)
+    # is reserved out of the candidates, and the remainder is sorted by
+    # ctime DESCENDING with everything past keep_releases deleted - NO
+    # protection of the `current` symlink's target (live-verified: real
+    # deletes the release `current` points at and leaves the symlink
+    # dangling). Check mode counts without deleting.
+    private def cleanup_releases(releases_path : String, release : String?,
+                                 keep_releases : Int32, check_mode : Bool) : {changes: Int32, failure: PluginResult?}
+      unless remote_exec("test -e #{Shell.single_quote(releases_path)} || test -L #{Shell.single_quote(releases_path)}")[:exit_code] == 0
+        return {changes: 0, failure: nil}
+      end
+
+      probe = remote_exec("find #{Shell.single_quote(releases_path)} -mindepth 1 -maxdepth 1 " \
+                          "\\( -type d -o \\( -type l -xtype d \\) \\) -printf '%C@\\t%f\\n' 2>/dev/null")
+      dirs = probe[:stdout].strip.empty? ? [] of Tuple(Int64, String) : probe[:stdout].strip.lines.compact_map do |line|
+        parts = line.split("\t", 2)
+        next nil unless parts.size == 2 && (t = parts[0].to_f?)
+        {t.to_i64, parts[1]}
+      end
+      dirs.reject! { |dir| dir[1] == release } if release
+      return {changes: 0, failure: nil} if dirs.size <= keep_releases
+      return {changes: dirs.size - keep_releases, failure: nil} if check_mode
+
+      # Newest first. Crystal's sort is not stable, but real's Python
+      # sort on equal ctimes is listdir-order-dependent anyway, so ties
+      # are unmatchable by construction.
+      newest_first = dirs.sort { |a, b| b[0] <=> a[0] }
+      changes = 0
+      newest_first[keep_releases..].each do |(_, name)|
+        result = delete_path("#{releases_path}/#{name}")
+        return {changes: 0, failure: result} if result.is_a?(PluginResult)
+        changes += result
+      end
+      {changes: changes, failure: nil}
+    end
+
+    # os.listdir's raw OSError shapes, surfaced through the module-crash
+    # wrapper exactly like an uncaught module exception (the live-verified
+    # wording: both the [ERROR] block and the fatal dump carry the full
+    # "Task failed: Module failed: <OSError>" chain).
+    private def listdir_entries(dir : String) : Array(String) | PluginResult
+      unless remote_exec("test -e #{Shell.single_quote(dir)}")[:exit_code] == 0
+        return os_crash("[Errno 2] No such file or directory: '#{dir}'")
+      end
+      unless remote_exec("test -d #{Shell.single_quote(dir)}")[:exit_code] == 0
+        return os_crash("[Errno 20] Not a directory: '#{dir}'")
+      end
+      listing = remote_exec("ls -1A #{Shell.single_quote(dir)} 2>/dev/null")
+      listing[:exit_code] == 0 ? listing[:stdout].lines.map(&.strip).reject(&.empty?) : [] of String
+    end
+
+    # The full chain goes into the fatal dump's msg; the [ERROR] block
+    # gets the bare OSError via the detail key (the block builder wraps
+    # it with the same "Task failed: Module failed: " chain, producing
+    # the live-verified #30 shape in both places).
+    private def os_crash(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+    end
+
+    # Real delete_path(): 0 when the path is already gone (lexists),
+    # fail_json when it exists but is not a directory, else rmtree (1).
+    private def delete_path(path : String) : Int32 | PluginResult
+      unless remote_exec("test -e #{Shell.single_quote(path)} || test -L #{Shell.single_quote(path)}")[:exit_code] == 0
+        return 0
+      end
+      unless remote_exec("test -d #{Shell.single_quote(path)}")[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "#{path} exists but is not a directory")
+      end
+      result = remote_exec("rm -rf #{Shell.single_quote(path)}")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "rmtree failed: #{result[:stderr].strip}")
+      end
+      1
+    end
+
+    # Real main()'s state=clean flow, in order: remove_unfinished_link
+    # (the <path>/<release>.<unfinished_filename> file),
+    # remove_unfinished_builds (release dirs carrying the unfinished
+    # marker - and the bare-os.listdir crash when releases_path is
+    # missing), then cleanup (ctime-descending deletion past
+    # keep_releases with the `release` param reserved).
+    private def clean(path : String, releases_path : String, release : String?,
+                      keep_releases : Int32, check_mode : Bool) : PluginResult
+      unfinished_filename = @params["unfinished_filename"]? || "DEPLOY_UNFINISHED"
+
+      step = run_clean_branch(path, releases_path, release, keep_releases,
+        unfinished_filename, check_mode)
+      if failure = step[:failure]
+        return failure
+      end
+
+      PluginResult.new(changed: step[:changes] > 0, failed: false, msg: "")
+    end
+
+    # The state=clean branch real main() runs for BOTH state=clean and
+    # (when the `clean` param is set) state=finalize, in order:
+    # remove_unfinished_link, remove_unfinished_builds, cleanup.
+    private def run_clean_branch(path : String, releases_path : String, release : String?,
+                                 keep_releases : Int32, unfinished_filename : String,
+                                 check_mode : Bool) : {changes: Int32, failure: PluginResult?}
+      changes = remove_unfinished_link(path, release, unfinished_filename, check_mode)
+
+      step = remove_unfinished_builds(releases_path, unfinished_filename, check_mode)
+      return step if step[:failure]
+
+      step = cleanup_releases(releases_path, release, keep_releases, check_mode)
+      return step if step[:failure]
+
+      {changes: changes + step[:changes], failure: nil}
+    end
+
+    # Real main()'s state=finalize flow, in order: the keep_releases>0
+    # guard, remove_unfinished_file (drop the DEPLOY_UNFINISHED marker
+    # inside the release dir; the lexists probe runs before the
+    # check-mode branch, so it counts as a change even in check mode),
+    # create_link (point `current` at the release - or at shared when
+    # release is empty, real's documented no-release behavior), then -
+    # when the `clean` param is set, its default - the full state=clean
+    # branch. The listdir crash fires AFTER the symlink is created
+    # (live-verified: a fresh-tree finalize leaves the dangling `current`
+    # symlink behind and then fails on the missing releases dir).
+    private def do_finalize(path : String, current_path : String, release : String?,
+                            shared_path : String, releases_path : String, clean_param : Bool,
+                            keep_releases : Int32, check_mode : Bool) : PluginResult
+      if keep_releases <= 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "'keep_releases' should be at least 1")
+      end
+
+      unfinished_filename = @params["unfinished_filename"]? || "DEPLOY_UNFINISHED"
+      changes = remove_unfinished_file(releases_path, release, unfinished_filename, check_mode)
+
+      target = release && !release.empty? ? "#{releases_path}/#{release}" : shared_path
 
       # Real create_link(): a `current` that is a symlink is compared by
       # normalized realpath against the source's; anything else is
@@ -242,29 +367,75 @@ module Krikri
       # '<new_release_path>' -> '<current_path>'"). This plugin used to
       # pre-check `test -d` on the release and fail its own "release
       # path ... does not exist" instead.
+      link = create_link(target, current_path, check_mode)
+      if failure = link[:failure]
+        return failure
+      end
+
+      changes += 1 if link[:changed]
+
+      if clean_param
+        step = run_clean_branch(path, releases_path, release, keep_releases,
+          unfinished_filename, check_mode)
+        if failure = step[:failure]
+          return failure
+        end
+        changes += step[:changes]
+      end
+
+      msg = if link[:already]
+              "current already points at #{target}"
+            elsif check_mode
+              "current would be pointed at #{target}"
+            else
+              "current points at #{target}"
+            end
+      PluginResult.new(changed: changes > 0, failed: false, msg: msg)
+    end
+
+    # Real remove_unfinished_file(new_release_path): drops the
+    # DEPLOY_UNFINISHED marker inside the release dir when present. The
+    # lexists probe runs before the check-mode branch, so the marker
+    # counts as a change even in check mode.
+    private def remove_unfinished_file(releases_path : String, release : String?,
+                                       unfinished_filename : String, check_mode : Bool) : Int32
+      return 0 unless release && !release.empty?
+      marker = "#{releases_path}/#{release}/#{unfinished_filename}"
+      if remote_exec("test -e #{Shell.single_quote(marker)}")[:exit_code] == 0
+        remote_exec("rm -f #{Shell.single_quote(marker)}") unless check_mode
+        1
+      else
+        0
+      end
+    end
+
+    # Real create_link(source, link_name), split out of do_finalize for
+    # readability. Returns {changed, already, failure}: `changed` when a
+    # fresh symlink was (or, in check mode, would be) created,
+    # `already` when current already points at the target (real counts
+    # no change and CONTINUES into the clean branch - old releases can
+    # still be removed, making the task changed=true), `failure` when
+    # real's own raises fire (a dangling source on the re-link path, or
+    # the raw os.symlink OSError when the link's parent dir is missing).
+    private def create_link(target : String, current_path : String,
+                            check_mode : Bool) : {changed: Bool, already: Bool, failure: PluginResult?}
       is_link = remote_exec("test -L #{Shell.single_quote(current_path)}")[:exit_code] == 0
       if is_link
         norm_link = remote_exec("readlink -f #{Shell.single_quote(current_path)} 2>/dev/null")[:stdout].strip
         norm_source = remote_exec("readlink -f #{Shell.single_quote(target)} 2>/dev/null")[:stdout].strip
-        if !norm_link.empty? && norm_link == norm_source
-          return PluginResult.new(changed: false, failed: false,
-            msg: "current already points at #{target}")
-        end
-
-        return PluginResult.new(changed: true, failed: false,
-          msg: "current would be pointed at #{target}") if check_mode
+        return {changed: false, already: true, failure: nil} if !norm_link.empty? && norm_link == norm_source
+        return {changed: true, already: false, failure: nil} if check_mode
 
         # Real: a lexists check on the source before the atomic
         # tmp-symlink + rename (the previous krikri flow never failed
         # for a dangling source).
         unless remote_exec("test -e #{Shell.single_quote(target)} || test -L #{Shell.single_quote(target)}")[:exit_code] == 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "the symlink target #{target} doesn't exists")
+          return {changed: false, already: false, failure: PluginResult.new(changed: false, failed: true,
+            msg: "the symlink target #{target} doesn't exists")}
         end
+      elsif check_mode
+        return {changed: true, already: false, failure: nil}
       else
-        return PluginResult.new(changed: true, failed: false,
-          msg: "current would be pointed at #{target}") if check_mode
-
         unless remote_exec("test -d #{Shell.single_quote(File.dirname(current_path))}")[:exit_code] == 0
           # Real's module never fail_json's here - the os.symlink raises
           # straight through to the module-crash wrapper: the wire msg
@@ -272,19 +443,17 @@ module Krikri
           # (live-verified) while the [ERROR] block shows the bare
           # OSError - the replace.cr module-crash shape.
           detail = "[Errno 2] No such file or directory: '#{target}' -> '#{current_path}'"
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Task failed: Module failed: #{detail}",
-            _ansible_error_detail: detail)
+          return {changed: false, already: false, failure: PluginResult.new(changed: false, failed: true,
+            msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)}
         end
       end
 
       result = remote_exec("ln -sfn #{Shell.single_quote(target)} #{Shell.single_quote(current_path)}")
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "failed to update current symlink: #{result[:stderr].strip}")
+        return {changed: false, already: false, failure: PluginResult.new(changed: false, failed: true,
+          msg: "failed to update current symlink: #{result[:stderr].strip}")}
       end
-      PluginResult.new(changed: true, failed: false,
-        msg: "current points at #{target}")
+      {changed: true, already: false, failure: nil}
     end
 
     # Mirrors real gather_facts(): publishes the fact dict that real
@@ -341,15 +510,6 @@ module Krikri
       # as a directory listing, not published).
       PluginResult.new(changed: false, failed: false, msg: "",
         ansible_facts: {"deploy_helper" => facts})
-    end
-
-    # Resolves where the `current` symlink points (nil when it doesn't
-    # exist yet), or an error message string when the probe fails.
-    private def current_target(current_path : String) : String? | String
-      result = remote_exec("readlink #{Shell.single_quote(current_path)} 2>/dev/null")
-      return nil unless result[:exit_code] == 0
-      out = result[:stdout].strip
-      out.empty? ? nil : out
     end
   end
 end

@@ -17,7 +17,7 @@ module Krikri
   # command-construction half - every shape there is cross-checked
   # against real setfacl 2.3.2 output.
   class AclPlugin < BasePlugin
-    ETYPES = %w[user group mask other]
+    ETYPES = %w[group mask other user]
 
     # run_acl's check_rc=True semantics: a nonzero exit fails the task
     # (getfacl/setfacl missing, filesystem without ACL support, invalid

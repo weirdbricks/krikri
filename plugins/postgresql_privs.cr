@@ -358,10 +358,19 @@ module Krikri
         target_roles, schema, login_db)
     end
 
+    # Real argument_spec wording and choices order (live-verified against
+    # 2.19.11: "value of type must be one of: table, sequence, function,
+    # procedure, database, schema, language, tablespace, group,
+    # default_privs, foreign_data_wrapper, foreign_server, type,
+    # parameter, got: X"; state's choices are ["present", "absent"]).
+    # Raised messages surface verbatim as the result's bare msg through
+    # execute's rescue, which the [ERROR] block wraps with real's
+    # "Task failed: Module failed:" chain like every argspec failure.
+    private VALID_TYPES = %w[table sequence function procedure database schema language tablespace group default_privs foreign_data_wrapper foreign_server type parameter]
+
     private def validate_type_and_state!(type : String, state : String) : Nil
-      valid_types = PluginHelpers::PostgresqlAcl::PRIV_LETTERS.keys + ["group", "default_privs"]
-      raise "type must be one of #{valid_types.join(", ")}, got '#{type}'" unless valid_types.includes?(type)
-      raise "state must be 'present' or 'absent', got '#{state}'" unless state == "present" || state == "absent"
+      raise "value of type must be one of: #{VALID_TYPES.join(", ")}, got: #{type}" unless VALID_TYPES.includes?(type)
+      raise "value of state must be one of: present, absent, got: #{state}" unless state == "present" || state == "absent"
     end
 
     private def build_resolved_params(

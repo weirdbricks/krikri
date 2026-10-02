@@ -29,7 +29,7 @@ module Krikri
   # list or a comma-separated string; krikri flattens task params to
   # strings, so the string forms are what arrive here).
   class SnapPlugin < BasePlugin
-    private SNAP_STATES = %w[present absent enabled disabled]
+    private SNAP_STATES = %w[absent present enabled disabled]
 
     def execute : PluginResult
       name_param = @params["name"]?

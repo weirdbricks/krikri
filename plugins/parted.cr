@@ -30,13 +30,19 @@ module Krikri
   #     passes it as the mkpart filesystem-type argument; on GPT it is
   #     the partition NAME argument, matching real's handling
   class PartedPlugin < BasePlugin
-    private PARTED_STATES = %w[present absent info]
+    # Real argument_spec's deterministic orders (live-verified wording
+    # against 2.19.11: "value of state must be one of: absent, info,
+    # present, got: X"; "value of unit must be one of: B, KB, MB, GB, TB,
+    # KiB, MiB, GiB, TiB, s, %, cyl, chs, compact, got: X" - real's
+    # units_si + units_iec + ["s", "%", "cyl", "chs", "compact"]; it
+    # accepts neither the bare "b" nor "kB"/"kKiB").
+    private PARTED_STATES = %w[absent info present]
 
     private PARTED_FLAGS = %w[boot lba bootable cyl align hidden swap lvm raid thinp esp diag cp legacy_boot]
 
     private PARTED_LABELS = %w[aix amiga bsd dvh gpt loop mac msdos pc98 sun]
 
-    private PARTED_UNITS = %w[s B b kB KB kKiB KiB MB MiB GB GiB TB TiB % cyl chs compact]
+    private PARTED_UNITS = %w[B KB MB GB TB KiB MiB GiB TiB s % cyl chs compact]
 
     def execute : PluginResult
       device = @params["device"]?
