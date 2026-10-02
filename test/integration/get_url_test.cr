@@ -1234,6 +1234,47 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "serializes the success result in real get_url's key order (changed: true)" do
+    # Real ansible-core 2.19.11's registered get_url result runs
+    # msg, status_code, changed, checksum_dest, checksum_src, dest,
+    # elapsed, url, src, md5sum, then add_path_info's stat block -
+    # verified live via `{{ g | to_json }}` on a registered get_url
+    # task (the -v dump sorts alphabetically, so the order is only
+    # observable programmatically). krikri's wire result previously
+    # led with its fixed `changed` header instead.
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result.as_h.keys.must_equal([
+      "msg", "status_code", "changed", "checksum_dest", "checksum_src", "dest",
+      "elapsed", "url", "src", "md5sum", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "serializes the unchanged (content-matches) result in real get_url's key order" do
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "msg", "status_code", "changed", "checksum_dest", "checksum_src", "dest",
+      "elapsed", "url", "src", "md5sum", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "is idempotent on a second file:// run (changed: false without force)" do
     src = File.tempname("get-url-spec-src")
     dest = File.tempname("get-url-spec")
