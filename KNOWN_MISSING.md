@@ -34,6 +34,8 @@ and fixed and when.
 
 ## Open gaps
 
+- **`docker_container` `state: healthy`** (kpg35): accepted with real's choices/wording but runs the plain `started` flow; real additionally waits for the container's
+  healthcheck to report healthy (a container with no healthcheck is immediately healthy, which is the only case krikri matches today).
 - **Pending re-sweep of the kpg34 modules** (2026-10-02): the 32 modules first swept in kpg34 (seed 34: `apache2_module`, `async_status`, `deploy_helper`, `easy_install`,
   `filesystem`, `firewalld`, `gem`, `git_config`, `java_cert`, `kernel_blacklist`, `lvg`, `lvol`, `make`, `maven_artifact`, `mount_facts`, `npm`, `openssh_keypair`,
   `openssl_csr`/`dhparam`/`privatekey`/`publickey`/`pkcs12`, `x509_certificate`, `get_certificate`, `package`, `parted`, `pause`, `ping`, `ufw`, `sefcontext`,
@@ -147,6 +149,13 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 - Values that are random per real run: temp file/dir names, the order of string sets (`union`/`intersect`/...
   on lists of strings) and the order of several invalid options in one error message. Integer set order
   *is* reproduced.
+- `community.general.filesystem`'s `value of fstype must be one of: ...` choices list: real builds it from
+  a Python set of strings (`fstypes = set(FILESYSTEMS.keys()) - ...`, then `choices=list(fstypes)`), so the
+  order is randomized per real process by string-hash randomization - five consecutive real 2.19.11 runs
+  with the same bad `fstype` each printed a different order (verified live, kpg35 sweep #53). Unmatchable
+  by design; krikri's list is the same fixed membership its argspec table captured, and the generator
+  masks the list (the `FSTYPE-SET-ORDER` mask in the generator's masks.cr) the same way it masks
+  `Valid booleans include:`.
 - `-vvv` module-execution mechanics lines are not emulated (`<host> Attempting python interpreter
   discovery.`, `<host> ESTABLISH LOCAL CONNECTION ...`, the `<host> EXEC`/`<host> PUT` shell commands,
   `Using module file ...`, `Pipelining is enabled.`) - krikri has no Python interpreter, no module files

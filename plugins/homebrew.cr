@@ -27,7 +27,7 @@ module Krikri
       state = normalize_state(@params["state"]? || "present")
       unless state
         return PluginResult.new(changed: false, failed: true,
-          msg: "value of state must be one of: present, installed, latest, upgraded, head, linked, unlinked, absent, removed, uninstalled, got #{@params["state"]?}")
+          msg: "value of state must be one of: present, installed, latest, upgraded, head, linked, unlinked, absent, removed, uninstalled, got: #{@params["state"]?}")
       end
 
       brew_path = find_brew(path)

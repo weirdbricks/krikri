@@ -215,8 +215,21 @@ module Krikri
         ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: false, check_mode: check_mode)
       when "stopped"
         ensure_stopped(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, check_mode)
+      when "healthy"
+        # Real state=healthy: started plus a wait for the container's
+        # health status, where a container with NO healthcheck is
+        # immediately treated as healthy (real module.py's own "None
+        # means that no health check enabled; simply treat this as
+        # 'healthy'"). krikri does not poll health status yet, so the
+        # started flow (the healthy outcome for the no-healthcheck case)
+        # is what runs; a healthcheck-enabled container's wait-for-
+        # healthy remains unimplemented.
+        ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode)
       else
-        PluginResult.new(changed: false, failed: true, msg: "state must be one of: started, stopped, present, absent - got '#{state}'")
+        # Real argspec wording and choices order (live-verified against
+        # 2.19.11 with state: bogus).
+        PluginResult.new(changed: false, failed: true,
+          msg: "value of state must be one of: absent, present, healthy, started, stopped, got: #{state}")
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")

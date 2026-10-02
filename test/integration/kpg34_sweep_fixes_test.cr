@@ -47,7 +47,7 @@ describe "parted plugin - get_bin_path ordering (kpg34)" do
     result = PluginSpecHelper.run("parted",
       {"device" => "/dev/krikri-no-such-disk", "state" => "bogus"})
 
-    result["msg"].as_s.must_equal("value of state must be one of: present, absent, info, got: bogus")
+    result["msg"].as_s.must_equal("value of state must be one of: absent, info, present, got: bogus")
   end
 
   it "reports real's get_device_info script failure when parted exists but the device does not" do
@@ -314,14 +314,14 @@ describe "deploy_helper plugin - finalize without the release tree (kpg34)" do
     root = PluginSpecHelper.tmp_path("kpg34-deploy-finalize")
 
     result = PluginSpecHelper.run("deploy_helper", {
-      "mode"                 => "0644",
-      "owner"                => "root",
-      "path"                 => root,
-      "releases_path"        => "zilrji",
-      "shared_path"          => "/tmp/kpg34-no-such-shared",
-      "state"                => "finalize",
-      "unfinished_filename"  => "wppgti",
-      "release"              => "ljthig",
+      "mode"                => "0644",
+      "owner"               => "root",
+      "path"                => root,
+      "releases_path"       => "zilrji",
+      "shared_path"         => "/tmp/kpg34-no-such-shared",
+      "state"               => "finalize",
+      "unfinished_filename" => "wppgti",
+      "release"             => "ljthig",
     })
 
     result["failed"].as_bool.must_equal(true)

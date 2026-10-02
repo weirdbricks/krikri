@@ -18,7 +18,7 @@ describe "parted plugin" do
     result = PluginSpecHelper.run("parted", {"device" => "/dev/sdz99", "state" => "bogus"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("value of state must be one of: present, absent, info, got: bogus")
+    result["msg"].as_s.must_equal("value of state must be one of: absent, info, present, got: bogus")
   end
 
   it "fails on an invalid unit" do
@@ -84,7 +84,7 @@ describe "snap plugin" do
     result = PluginSpecHelper.run("snap", {"name" => "hello-world", "state" => "bogus"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("value of state must be one of: present, absent, enabled, disabled, got: bogus")
+    result["msg"].as_s.must_equal("value of state must be one of: absent, present, enabled, disabled, got: bogus")
   end
 
   it "fails when the snap binary is missing" do
@@ -107,14 +107,15 @@ describe "deploy_helper plugin" do
     result = PluginSpecHelper.run("deploy_helper", {"path" => "/tmp/krikri-deploy-test", "state" => "bogus"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("value of state must be one of: finalize, absent, clean, present, query, unfinished, got: bogus")
+    # Real argument_spec order (live-verified against 2.19.11).
+    result["msg"].as_s.must_equal("value of state must be one of: present, absent, clean, finalize, query, got: bogus")
   end
 
-  it "fails when release is missing for state=unfinished" do
+  it "rejects the unfinished state real's choices check rejects" do
     result = PluginSpecHelper.run("deploy_helper", {"path" => "/tmp/krikri-deploy-test", "state" => "unfinished"})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("state is unfinished but all of the following are missing: release")
+    result["msg"].as_s.must_equal("value of state must be one of: present, absent, clean, finalize, query, got: unfinished")
   end
 
   it "query publishes no top-level releases list for a nonexistent tree" do
@@ -211,11 +212,13 @@ describe "deploy_helper plugin" do
     end
 
     it "state=finalize and state=clean publish no ansible_facts" do
+      root = PluginSpecHelper.tmp_path("krikri-deploy-facts")
+      Dir.mkdir_p(File.join(root, "releases", "r1"))
+
       finalize = PluginSpecHelper.run("deploy_helper",
-        {"path" => "/tmp/krikri-deploy-facts-finalize", "state" => "finalize",
-         "release" => "20260919000003"})
+        {"path" => root, "state" => "finalize", "release" => "r1"})
       clean = PluginSpecHelper.run("deploy_helper",
-        {"path" => "/tmp/krikri-deploy-facts-clean", "state" => "clean"})
+        {"path" => root, "state" => "clean"})
 
       finalize["ansible_facts"]?.must_be_nil
       clean["ansible_facts"]?.must_be_nil

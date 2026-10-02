@@ -30,7 +30,7 @@ module Krikri
       state = @params["state"]? || "present"
       unless state == "present" || state == "latest"
         return PluginResult.new(changed: false, failed: true,
-          msg: "value of state must be one of: present, latest, got #{state}")
+          msg: "value of state must be one of: present, latest, got: #{state}")
       end
       virtualenv = @params["virtualenv"]?.presence
       site_packages = true?(@params["virtualenv_site_packages"]?)

@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "../../src/krikri/shell"
 require "../../src/krikri/plugin_helpers/homebrew"
 require "json"
 
