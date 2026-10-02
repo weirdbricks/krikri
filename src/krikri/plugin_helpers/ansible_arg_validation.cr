@@ -40,6 +40,16 @@ module Krikri
                "<class 'str'> cannot be converted to an int")
       end
 
+      # Live-verified against ansible-core 2.19.11 (community.docker
+      # docker_container's healthy_wait_timeout: bogus): note the bare
+      # "is of type str" in the first position - 2.19 dropped the
+      # <class ...> repr there that the int wording above still carries.
+      def float_type_error(param : String, raw : String) : PluginResult
+        PluginResult.new(changed: false, failed: true,
+          msg: "argument '#{param}' is of type str and we were unable to convert to float: " \
+               "<class 'str'> cannot be converted to a float")
+      end
+
       def choices_error(param : String, allowed : Array(String), value : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "value of #{param} must be one of: #{allowed.join(", ")}, got: #{value}")

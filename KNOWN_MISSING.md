@@ -34,8 +34,6 @@ and fixed and when.
 
 ## Open gaps
 
-- **`docker_container` `state: healthy`** (kpg35): accepted with real's choices/wording but runs the plain `started` flow; real additionally waits for the container's
-  healthcheck to report healthy (a container with no healthcheck is immediately healthy, which is the only case krikri matches today).
 - **Registered-result key order differs from real engine-wide** (kpg30 sweep): same keys and values, different order - e.g. real's `get_url` success serializes
   `msg, status_code, changed, checksum_dest, ...` while krikri's `PluginResult` always leads with `changed`; an engine-level serialization-order fix, not per-plugin.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds

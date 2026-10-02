@@ -8,6 +8,7 @@ require "../src/krikri/plugin_helpers/docker_ports"
 require "../src/krikri/plugin_helpers/docker_client"
 require "../src/krikri/plugin_helpers/docker_healthcheck"
 require "../src/krikri/plugin_helpers/docker_resources"
+require "../src/krikri/plugin_helpers/docker_health_wait"
 
 module Krikri
   # Docker container plugin - creates/starts/stops/removes a container.
@@ -24,7 +25,23 @@ module Krikri
   #   needs to be created or recreated (verified against real
   #   ansible-playbook: state: stopped/absent on an already-existing
   #   container needs no image: at all, same as here)
-  # - state: started (default) / stopped / present / absent
+  # - state: started (default) / stopped / present / absent / healthy
+  #   - healthy: the started flow plus a wait for the container's
+  #     healthcheck to report healthy (see
+  #     PluginHelpers::DockerHealthWait's doc comment for the exact
+  #     wait/poll/failure semantics mirrored from real's
+  #     wait_for_state). A container with no healthcheck is
+  #     immediately healthy. On wait success the result carries the
+  #     final inspect output as `container:` (real replaces its
+  #     module facts with the last inspect result); on wait failure
+  #     (timeout / vanished container) the same `container:` key
+  #     carries the last inspect result and the task fails with
+  #     real's wording.
+  # - healthy_wait_timeout: float, default 300 - seconds to wait for
+  #   the healthcheck to report healthy under state: healthy (real's
+  #   own param; <= 0 means wait forever). Type-validated on every
+  #   state like real's argspec (a non-numeric value fails the task
+  #   even with state: started/stopped).
   # - command: shell command to run (plain string, naively whitespace-split -
   #   same documented limitation as ansible.builtin.command's own cmd:)
   # - entrypoint: same treatment as command:
@@ -162,6 +179,8 @@ module Krikri
   # `container_default_behavior:`, `api_version:` (see
   # PluginHelpers::DockerClient).
   class DockerContainerPlugin < BasePlugin
+    include PluginHelpers::AnsibleArgValidation
+
     record RequestedNetwork,
       name : String,
       aliases : Array(String)?,
@@ -187,6 +206,13 @@ module Krikri
 
       state = @params["state"]? || "started"
       check_mode = true?(@params["_ansible_check_mode"]?)
+
+      # healthy_wait_timeout is type-validated for EVERY state (real's
+      # argspec validation runs before any module logic - live-verified:
+      # state: stopped + healthy_wait_timeout: bogus fails in real too).
+      healthy_timeout = parse_healthy_wait_timeout
+      return healthy_timeout if healthy_timeout.is_a?(PluginResult)
+      healthy_max_wait = healthy_timeout.as(Float64?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
@@ -216,15 +242,15 @@ module Krikri
       when "stopped"
         ensure_stopped(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, check_mode)
       when "healthy"
-        # Real state=healthy: started plus a wait for the container's
-        # health status, where a container with NO healthcheck is
-        # immediately treated as healthy (real module.py's own "None
-        # means that no health check enabled; simply treat this as
-        # 'healthy'"). krikri does not poll health status yet, so the
-        # started flow (the healthy outcome for the no-healthcheck case)
-        # is what runs; a healthcheck-enabled container's wait-for-
-        # healthy remains unimplemented.
-        ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode)
+        # Real state=healthy: the started flow, then (outside check
+        # mode) a wait for the container's health status - real's
+        # wait_for_state with wait_states=['starting', 'unhealthy'],
+        # complete_states=['healthy', None], max_wait=
+        # healthy_wait_timeout (a container with NO healthcheck is
+        # immediately healthy; 'unhealthy' is a wait state, not an
+        # immediate failure). The wait loop itself lives in
+        # PluginHelpers::DockerHealthWait.
+        wait_for_healthy_result(api, name, ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode), healthy_max_wait, check_mode)
       else
         # Real argspec wording and choices order (live-verified against
         # 2.19.11 with state: bogus).
@@ -235,6 +261,17 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
+
+    # Parses healthy_wait_timeout (float, default 300; <= 0 means wait
+    # forever - real module.py's own convention). Non-numeric values
+    # fail with real's argspec conversion wording (live-verified).
+    # Returns Float64? on success or a failed PluginResult on invalid input.
+    private def parse_healthy_wait_timeout : Float64? | PluginResult
+      raw = @params["healthy_wait_timeout"]? || return 300.0
+      parsed = raw.to_f64?
+      return float_type_error("healthy_wait_timeout", raw) unless parsed
+      parsed <= 0 ? nil : parsed
     end
 
     private def recreate_needed?(
@@ -313,6 +350,64 @@ module Krikri
 
     private def started_suffix(start : Bool) : String
       start ? " and started" : ""
+    end
+
+    # state=healthy's wait phase. Real passes the container id it
+    # already holds from its present() flow into wait_for_state; here
+    # the id is re-derived from a name lookup (the ensure_present
+    # result doesn't carry it). If the container vanished in that
+    # window (real cannot hit this - it never re-looks-up by name),
+    # the lookup falls back to real's own vanished-container failure
+    # wording, with the name standing in for the id it would have
+    # used. Skipped in check mode and when the started flow already
+    # failed, matching real (`state == 'healthy' and not check_mode`).
+    private def wait_for_healthy_result(
+      api : Docr::API, name : String, base : PluginResult,
+      max_wait : Float64?, check_mode : Bool,
+    ) : PluginResult
+      return base if check_mode || base.failed?
+
+      container = find_container(api, name)
+      unless container
+        return failed_wait_result(
+          %(Encontered vanished container while waiting for container "#{name}"), nil)
+      end
+      container_id = container.id
+
+      client = api.client
+      inspect_fn = PluginHelpers::DockerHealthWait::InspectFn.new do
+        # Raw GET rather than api.containers.inspect: real's wait loop
+        # carries the FULL raw inspect dict into the result's
+        # `container:` key, and docr's typed ContainerInspectResponse
+        # drops fields real keeps (same reason as the
+        # network-connect/image-exists raw-HTTP escape hatches above).
+        body = client.call("GET", "/containers/#{container_id}/json") { |response| response.body_io.gets_to_end }
+        JSON.parse(body)
+      rescue ex : Docr::Errors::DockerAPIError
+        # Real's get_container_by_id: NotFound => None (the vanished
+        # container failure), any other inspect error =>
+        # "Error inspecting container: <error>".
+        next nil if ex.status_code == 404
+        raise PluginHelpers::DockerHealthWait::Failure.new("Error inspecting container: #{ex.message}")
+      end
+      sleep_fn = PluginHelpers::DockerHealthWait::SleepFn.new { |delay| sleep(delay) }
+
+      begin
+        final_inspect = PluginHelpers::DockerHealthWait.wait_for_healthy(container_id, max_wait, inspect_fn, sleep_fn)
+      rescue ex : PluginHelpers::DockerHealthWait::Failure
+        return failed_wait_result(ex.message || "container health check failed", ex.container_json)
+      end
+
+      # Real replaces self.facts with the wait's final inspect result,
+      # which is what lands in the module result's `container:` key.
+      base.extra["container"] = final_inspect
+      base
+    end
+
+    private def failed_wait_result(msg : String, container_json : JSON::Any?) : PluginResult
+      result = PluginResult.new(changed: false, failed: true, msg: msg)
+      result.extra["container"] = container_json if container_json
+      result
     end
 
     # Shared by both ensure_present and ensure_stopped: create the
