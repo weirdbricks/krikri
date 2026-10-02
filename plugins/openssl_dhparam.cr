@@ -5,6 +5,22 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 
 module Krikri
+  # Minimal libcrypto bindings for native DH parameter generation (the
+  # cryptography-library backend's own primitive - the plugin binary
+  # already links libcrypto through Crystal's OpenSSL bindings). The BIO
+  # functions live in Crystal's own LibCrypto; only BIO_s_mem and the DH/
+  # PEM writer are missing from it.
+  @[Link("crypto")]
+  lib LibCryptoPki
+    type DH = Void*
+
+    fun dh_new = DH_new : DH*
+    fun dh_free = DH_free(DH*) : Void
+    fun dh_generate_parameters_ex = DH_generate_parameters_ex(DH*, Int32, Int32, Void*) : Int32
+    fun bio_s_mem = BIO_s_mem : LibCrypto::BioMethod*
+    fun pem_write_bio_dhparams = PEM_write_bio_DHparams(LibCrypto::Bio*, DH*) : Int32
+  end
+
   # openssl_dhparam plugin (community.crypto.openssl_dhparam) - generates
   # OpenSSL Diffie-Hellman parameters. Ported from the real module's
   # `openssl` backend (shells to the `openssl dhparam` binary) - the
@@ -61,6 +77,24 @@ module Krikri
         return remove(path, check_mode)
       end
 
+      # Real backend selection (state=present): auto prefers the
+      # cryptography library, then the openssl binary, then fails; an
+      # explicit cryptography backend asserts the library version. The
+      # cryptography backend's generate is what surfaces the "DH
+      # key_size must be at least 512 bits" ValueError for undersized
+      # params - as an UNHANDLED module exception (the fatal msg carries
+      # the full "Task failed: Module failed: " chain, live-verified vs
+      # 2.19.11).
+      backend = @params["select_crypto_backend"]? || "auto"
+      can_use_cryptography = cryptography_available?
+      can_use_openssl = binary_available?("openssl")
+      if backend == "auto"
+        backend = can_use_cryptography ? "cryptography" : (can_use_openssl ? "openssl" : "auto")
+        if backend == "auto"
+          return unhandled_error("Cannot detect either the required Python library cryptography (>= #{MIN_CRYPTOGRAPHY_VERSION}) or the OpenSSL binary openssl")
+        end
+      end
+
       valid = !force && File.exists?(path) && params_valid?(path, size)
 
       if valid
@@ -70,7 +104,85 @@ module Krikri
 
       return PluginResult.new(changed: true, failed: false, msg: "Would generate DH parameters at #{path} (check mode)", size: size, filename: path) if check_mode
 
+      if backend == "cryptography"
+        # cryptography's dh.generate_parameters raises ValueError for
+        # key_size < 512; real's module body doesn't catch it, so the
+        # msg carries the full unhandled-exception chain.
+        return unhandled_error("DH key_size must be at least 512 bits") if size < 512
+        return generate_native(path, size)
+      end
+
       generate(path, size)
+    end
+
+    MIN_CRYPTOGRAPHY_VERSION = "3.3"
+
+    # The "unhandled module exception" result shape real 2.19 produces:
+    # the fatal msg carries the full "Task failed: Module failed: <exc>"
+    # chain while the error block shows the bare exception text.
+    private def unhandled_error(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+    end
+
+    # cryptography's dh.generate_parameters equivalent, natively through
+    # libcrypto (the openssl CLI's own library): PKCS#3 params, generator
+    # 2, PEM-encoded - byte-compatible with both real backends' output.
+    private def generate_native(path : String, size : Int32) : PluginResult
+      dh = LibCryptoPki.dh_new
+      raise "DH_new failed" if dh.null?
+      rc = LibCryptoPki.dh_generate_parameters_ex(dh, size, 2, nil)
+      if rc != 1
+        LibCryptoPki.dh_free(dh)
+        return PluginResult.new(changed: false, failed: true, msg: "DH key generation failed")
+      end
+
+      bio = LibCrypto.BIO_new(LibCryptoPki.bio_s_mem)
+      raise "BIO_new failed" if bio.null?
+      begin
+        rc = LibCryptoPki.pem_write_bio_dhparams(bio, dh)
+        if rc != 1
+          return PluginResult.new(changed: false, failed: true, msg: "DH key generation failed")
+        end
+        ptr = Pointer(UInt8).null
+        len = LibCrypto.BIO_ctrl(bio, BIO_CTRL_INFO, 0, pointerof(ptr))
+        pem = String.new(ptr, len)
+      ensure
+        LibCrypto.BIO_free(bio)
+        LibCryptoPki.dh_free(dh)
+      end
+
+      tmp = File.tempname("dhparam", dir: File.dirname(path))
+      File.write(tmp, pem, perm: 0o600)
+      begin
+        backup(path)
+        File.rename(tmp, path)
+      ensure
+        File.delete(tmp) if File.exists?(tmp)
+      end
+      apply_attrs(path)
+      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", size: size, filename: path)
+    end
+
+    BIO_CTRL_INFO = 3
+
+    private def cryptography_available? : Bool
+      min_tuple = MIN_CRYPTOGRAPHY_VERSION.split('.').map(&.to_i).join(", ")
+      ["python3", "python"].each do |interpreter|
+        next unless Process.find_executable(interpreter)
+        probe = "import cryptography\n" \
+                "parts = cryptography.__version__.split('.')\n" \
+                "print('yes' if (int(parts[0]), int(parts[1])) >= (#{min_tuple}) else 'no')"
+        io = IO::Memory.new
+        status = Process.run(interpreter, {"-c", probe}, output: io, error: Process::Redirect::Close)
+        next unless status.success?
+        return io.to_s.strip == "yes"
+      end
+      false
+    end
+
+    private def binary_available?(name : String) : Bool
+      !!Process.find_executable(name)
     end
 
     # Real AnsibleModule validation order (ArgumentSpecValidator.validate):

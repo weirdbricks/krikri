@@ -3,7 +3,9 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/get_bin_path"
 require "../src/krikri/plugin_helpers/java_cert_command"
+require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # java_cert plugin - a native port of community.general.java_cert
@@ -100,11 +102,23 @@ module Krikri
         return failed_result("Using pkcs12/content import requires cert_alias argument.")
       end
 
-      openssl_bin = find_openssl
-      return failed_result("Failed to find required executable openssl in the paths.") unless openssl_bin
-
+      # Real main() resolves openssl via get_bin_path('openssl', True)
+      # here and then runs test_keytool. The openssl resolution is
+      # DEFERRED to first use (the digest computation below): real only
+      # ever USES the binary after the keytool probe, so on a host
+      # without keytool the keytool failure is what surfaces - in exact
+      # real order, only when openssl itself is missing does the bin
+      # lookup failure come first. Deferring keeps that ordering honest
+      # in both directions.
+      #
+      # Real test_keytool: module.run_command([executable], check_rc=True)
+      # - the exec failure shape (rc=errno, "Error executing command." +
+      # the [Errno] exception text), NOT a get_bin_path wording.
+      if failure = PluginHelpers::RunCommandFailure.exec_check(executable)
+        return PluginHelpers::RunCommandFailure.exec_failure(executable, failure[0], failure[1], executable)
+      end
       keytool_check = remote_exec(executable)
-      return failed_result("Failed to find required executable #{executable} in the paths.") unless keytool_check[:exit_code] == 0
+      return PluginHelpers::RunCommandFailure.nonzero_exit(executable, keytool_check[:exit_code], keytool_check[:stdout], keytool_check[:stderr]) unless keytool_check[:exit_code] == 0
 
       if !keystore_create && !keystore_path.nil? && !remote_file_exists?(keystore_path.not_nil!)
         return PluginResult.new(changed: false, failed: true,
@@ -128,9 +142,11 @@ module Krikri
 
       keystore_cert_digest = ""
       if alias_exists
+        openssl_bin = require_openssl
+        return openssl_bin if openssl_bin.is_a?(PluginResult)
         old_tmp = File.tempname("java-cert-old")
         File.write(old_tmp, alias_exists_output)
-        digest = x509_digest(openssl_bin, old_tmp)
+        digest = x509_digest(openssl_bin.as(String), old_tmp)
         File.delete(old_tmp) rescue nil
         return digest if digest.is_a?(PluginResult)
         keystore_cert_digest = digest.as(String)
@@ -138,6 +154,8 @@ module Krikri
 
       new_tmp = File.tempname("java-cert-new")
       cleanup = true
+      openssl_bin = require_openssl
+      return openssl_bin if openssl_bin.is_a?(PluginResult)
       begin
         if pkcs12_path
           export = remote_exec(PluginHelpers::JavaCertCommand.with_stdin(
@@ -163,7 +181,7 @@ module Krikri
           File.write(new_tmp, fetch[:stdout])
         end
 
-        new_digest = x509_digest(openssl_bin, new_tmp)
+        new_digest = x509_digest(openssl_bin.as(String), new_tmp)
         return new_digest if new_digest.is_a?(PluginResult)
 
         if keystore_cert_digest != new_digest
@@ -305,12 +323,29 @@ module Krikri
       end
     end
 
-    private def find_openssl : String?
-      # `command -v` would be argv-split by LocalExecutor (a shell
-      # builtin with no shell metacharacters in the string) - probe
-      # with a real openssl invocation instead.
-      result = remote_exec("openssl version >/dev/null 2>&1")
-      result[:exit_code] == 0 ? "openssl" : nil
+    EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
+    @searched_paths = ""
+
+    # Deferred get_bin_path('openssl', True): the resolved binary path,
+    # or the failure result real's own bin lookup produces.
+    private def require_openssl : (String | PluginResult)
+      script = <<-SH
+        found=""
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+          if [ -z "$found" ] && [ -x "$d/openssl" ]; then found="$d/openssl"; fi
+        done
+        printf '%s\n%s' "$found" "$searched"
+        SH
+
+      result = remote_exec(script)
+      found, _, searched = result[:stdout].to_s.partition("\n")
+      found = found.strip
+      searched = searched.strip
+      @searched_paths = searched
+      return found unless found.empty?
+      failed_result(PluginHelpers::RunCommandFailure.bin_path_missing("openssl", @searched_paths))
     end
 
     private def failed_result(msg : String) : PluginResult

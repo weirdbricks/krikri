@@ -91,6 +91,10 @@ Lint/NotNil:
 Metrics/CyclomaticComplexity:
   Excluded:
   - plugins/acl.cr
+  - plugins/gem.cr
+  - plugins/npm.cr
+  - plugins/openssl_dhparam.cr
+  - plugins/openssl_pkcs12.cr
   - src/krikri/lookups/lookup_dispatch.cr
   - src/krikri/lookups/lookup_first_found.cr
   - plugins/apt.cr

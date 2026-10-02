@@ -44,6 +44,33 @@ module Krikri
   class MavenArtifactPlugin < BasePlugin
     DEFAULT_REPOSITORY_URL = "https://repo1.maven.org/maven2"
 
+    # The interpreter real's module would run under (the discovered one):
+    # the first existing python3/python, resolved to its realpath the way
+    # interpreter discovery reports it (/usr/bin/python3.13-style).
+    private def target_python : String?
+      %w[python3 python].each do |interpreter|
+        next unless Process.find_executable(interpreter)
+        io = IO::Memory.new
+        status = Process.run(interpreter, {"-c", "import os, sys; print(os.path.realpath(sys.executable))"},
+          output: io, error: Process::Redirect::Close)
+        return io.to_s.strip if status.success?
+      end
+      nil
+    end
+
+    private def python_lib_available?(python : String, module_name : String) : Bool
+      io = IO::Memory.new
+      Process.run(python, {"-c", "import #{module_name}"}, output: io, error: Process::Redirect::Close).success?
+    end
+
+    # ansible.module_utils.basic.missing_required_lib's exact boilerplate.
+    private def missing_required_lib_msg(library : String, python : String) : String
+      "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
+      "Please read the module documentation and install it in the appropriate location. " \
+      "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+      "please consult the documentation on ansible_python_interpreter"
+    end
+
     def execute : PluginResult
       group_id = @params["group_id"]?
       artifact_id = @params["artifact_id"]?
@@ -62,8 +89,6 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "parameters are mutually exclusive: version|version_by_spec")
       end
-      return PluginResult.new(changed: false, failed: true,
-        msg: "The spec version #{version_by_spec} is not supported! ") if version_by_spec
 
       classifier = @params["classifier"]? || ""
       extension = @params["extension"]? || "jar"
@@ -79,11 +104,33 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "value of checksum_alg must be one of: md5, sha1, got: #{checksum_alg}") unless ["md5", "sha1"].includes?(checksum_alg)
 
+      # Real's import-time dependency checks run right after the
+      # argument_spec validation and before anything else in main()
+      # (live-verified vs 2.19.11 in the no-network container: the lxml
+      # import failure beats version_by_spec spec parsing, the
+      # repository URL handling and every download attempt). The
+      # missing_required_lib boilerplate carries the hostname and the
+      # interpreter real would run under (its sys.executable).
+      if python = target_python
+        unless python_lib_available?(python, "lxml")
+          return PluginResult.new(changed: false, failed: true, msg: missing_required_lib_msg("lxml", python))
+        end
+        if version_by_spec && !python_lib_available?(python, "semantic_version")
+          return PluginResult.new(changed: false, failed: true, msg: missing_required_lib_msg("semantic_version", python))
+        end
+      end
+
       if repository_url.starts_with?("s3://")
         return PluginResult.new(changed: false, failed: true,
           msg: "s3:// repository URLs are not supported by this implementation")
       end
       local = repository_url.starts_with?("file://")
+
+      # Real's Artifact() constructor ValueError (version_by_spec specs it
+      # cannot parse) runs AFTER the import-time library checks and the
+      # s3/boto gate.
+      return PluginResult.new(changed: false, failed: true,
+        msg: "The spec version #{version_by_spec} is not supported! ") if version_by_spec
 
       if !version && !version_by_spec
         version = "latest"

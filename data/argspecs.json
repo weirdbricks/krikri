@@ -10952,13 +10952,6 @@
     [
      "name"
     ]
-   ],
-   [
-    "global",
-    false,
-    [
-     "path"
-    ]
    ]
   ],
   "required_one_of": [],

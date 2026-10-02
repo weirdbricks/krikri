@@ -67,6 +67,10 @@ describe "java_cert plugin" do
     skip "keytool is installed on this host" if system("command -v keytool >/dev/null")
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("keytool")
+    # Real test_keytool: module.run_command([executable], check_rc=True) -
+    # the run_command OSError shape (live-verified vs 2.19.11): msg
+    # "Error executing command.", the [Errno] text under exception.
+    result["msg"].as_s.must_equal("Error executing command.")
+    result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'keytool'")
   end
 end

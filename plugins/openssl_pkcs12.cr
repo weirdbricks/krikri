@@ -6,6 +6,25 @@ require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/pem_bundle"
 
 module Krikri
+  # Minimal libcrypto bindings for native PKCS#12 parsing (the parse
+  # action's own primitive - the plugin binary already links libcrypto
+  # through Crystal's OpenSSL bindings). X509_free/OPENSSL_sk_num/
+  # OPENSSL_sk_value are already declared in Crystal's own LibCrypto
+  # (reused from there - redeclaring them under a different Crystal
+  # name is a "fun redefinition" error since the clash keys on the C
+  # symbol name).
+  @[Link("crypto")]
+  lib LibCryptoPkcs12
+    fun d2i_pkcs12_bio = d2i_PKCS12_bio(LibCrypto::Bio*, Void**) : Void*
+    fun pkcs12_free = PKCS12_free(Void*) : Void
+    fun pkcs12_parse = PKCS12_parse(Void*, UInt8*, Void**, Void**, Void**) : Int32
+    fun pem_write_bio_private_key = PEM_write_bio_PrivateKey(LibCrypto::Bio*, Void*, Void*, UInt8*, Int32, Void*, Void*) : Int32
+    fun pem_write_bio_x509 = PEM_write_bio_X509(LibCrypto::Bio*, Void*) : Int32
+    fun evp_pkey_free = EVP_PKEY_free(Void*) : Void
+    fun bio_new_file = BIO_new_file(UInt8*, UInt8*) : LibCrypto::Bio*
+    fun bio_s_mem = BIO_s_mem : LibCrypto::BioMethod*
+  end
+
   # openssl_pkcs12 plugin (community.crypto.openssl_pkcs12) - bundles a
   # private key and its certificate into a PKCS#12 archive (`action:
   # export`), and converts one back into a PEM bundle (`action: parse`).
@@ -70,8 +89,46 @@ module Krikri
     }
 
     def execute : PluginResult
+      result = run_execute
+      # Real's argument spec marks maciter_size removed in
+      # community.crypto 4.0.0 - passing it emits a controller-side
+      # deprecation warning alongside ANY result (including failures),
+      # live-verified vs 2.19.11.
+      if @params["maciter_size"]? && (deprecation = MACITER_DEPRECATION)
+        marker = result.extra["_ansible_core_deprecations"]?
+        list = marker.try(&.as_a?) || [] of JSON::Any
+        list << JSON::Any.new(deprecation)
+        result.extra["_ansible_core_deprecations"] = JSON::Any.new(list)
+      end
+      result
+    end
+
+    MACITER_DEPRECATION = "Param 'maciter_size' is deprecated. See the module docs for more information. This feature will be removed from collection 'community.crypto' version 4.0.0."
+
+    private def run_execute : PluginResult
       if err = validate_arguments
         return err
+      end
+
+      # Real's backend constructor (select_backend runs BEFORE the
+      # base_dir check and the state dispatch) eagerly reads every
+      # provided file input - certificate, then private key, then the
+      # other certificates - and a missing file surfaces as the
+      # UNHANDLED OSError chain ("Task failed: Module failed: [Errno 2]
+      # ..."), in every state and even in check mode (live-verified vs
+      # 2.19.11 with state=absent).
+      if (cert_path = @params["certificate_path"]?) && !File.exists?(expand_tilde(cert_path))
+        return unhandled_error("[Errno 2] No such file or directory: '#{expand_tilde(cert_path)}'")
+      end
+      if (key_path = @params["privatekey_path"]?) && !File.exists?(expand_tilde(key_path))
+        return unhandled_error("[Errno 2] No such file or directory: '#{expand_tilde(key_path)}'")
+      end
+      if @params["other_certificates"]? && !@params["other_certificates_content"]?
+        other_certificates([] of String).each do |other|
+          unless File.exists?(other)
+            return unhandled_error("[Errno 2] No such file or directory: '#{other}'")
+          end
+        end
       end
 
       temp_files = [] of String
@@ -87,6 +144,14 @@ module Krikri
       ensure
         temp_files.each { |file| File.delete(file) rescue nil }
       end
+    end
+
+    # The "unhandled module exception" result shape real 2.19 produces:
+    # the fatal msg carries the full "Task failed: Module failed: <exc>"
+    # chain while the error block shows the bare exception text.
+    private def unhandled_error(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
     end
 
     private def execute_parse(path : String, check_mode : Bool) : PluginResult
@@ -226,12 +291,82 @@ module Krikri
     # content PEM-normalized (the real module compares its own
     # re-serialized PEM dump against the file's bytes, so both engines
     # settle on the same second-run "ok" and the same src-change rewrite).
+    # Native PKCS#12 parse through libcrypto (real's own primitive, the
+    # cryptography library's load_key_and_certificates): the private key
+    # PEM (PKCS#8) followed by the certificate and every additional
+    # certificate. Returns nil when the data cannot be deserialized -
+    # real's exact fail_json text for that is "Could not deserialize
+    # PKCS12 data".
+    private def native_pkcs12_dump(path : String) : String?
+      bio = LibCryptoPkcs12.bio_new_file(path, "rb")
+      return nil unless bio
+      begin
+        p12 = LibCryptoPkcs12.d2i_pkcs12_bio(bio, Pointer(Pointer(Void)).null)
+        return nil unless p12
+        pkey = Pointer(Void).null
+        cert = Pointer(Void).null
+        ca = Pointer(Void).null
+        rc = LibCryptoPkcs12.pkcs12_parse(p12, passphrase, pointerof(pkey), pointerof(cert), pointerof(ca))
+        LibCryptoPkcs12.pkcs12_free(p12)
+        return nil unless rc == 1
+
+        String.build do |io|
+          mem = LibCrypto.BIO_new(LibCryptoPkcs12.bio_s_mem)
+          begin
+            # The mem BIO keeps one contiguous buffer that never shrinks
+            # (BIO_reset only rewinds the write pointer, it does not
+            # truncate) - so each PEM writer's contribution is read as
+            # "bytes beyond what earlier writers already produced",
+            # tracked by offset.
+            written = 0
+            if pkey && !pkey.null?
+              LibCryptoPkcs12.pem_write_bio_private_key(mem, pkey, nil, nil, 0, nil, nil)
+              written = bio_append_since(mem, written, io)
+            end
+            if cert && !cert.null?
+              LibCryptoPkcs12.pem_write_bio_x509(mem, cert)
+              written = bio_append_since(mem, written, io)
+            end
+            if ca && !ca.null?
+              (0...LibCrypto.sk_num(ca)).each do |idx|
+                member = LibCrypto.sk_value(ca, idx)
+                next if member.null?
+                LibCryptoPkcs12.pem_write_bio_x509(mem, member)
+                written = bio_append_since(mem, written, io)
+              end
+            end
+          ensure
+            LibCrypto.BIO_free(mem)
+            LibCryptoPkcs12.evp_pkey_free(pkey) if pkey && !pkey.null?
+            LibCrypto.x509_free(cert.as(LibCrypto::X509)) if cert && !cert.null?
+            if ca && !ca.null?
+              (0...LibCrypto.sk_num(ca)).each do |idx|
+                member = LibCrypto.sk_value(ca, idx)
+                LibCrypto.x509_free(member.as(LibCrypto::X509)) unless member.null?
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # BIO_CTRL_INFO (3) on a mem BIO returns the whole buffer: the data
+    # pointer and its total length. The bytes beyond *written* are the
+    # contribution of the PEM writer that just ran.
+    private def bio_append_since(mem, written : Int32, io : IO) : Int32
+      ptr = Pointer(UInt8).null
+      total = LibCrypto.BIO_ctrl(mem, 3, 0, pointerof(ptr))
+      return written unless total > written && ptr
+      io << String.new(ptr + written, total - written)
+      total.to_i32
+    end
+
     private def parse_action(path : String, src : String, check_mode : Bool) : PluginResult
       base_dir = File.dirname(path)
       return failure("The directory #{base_dir} does not exist or the file is not a directory") unless Dir.exists?(base_dir)
 
-      desired = key_first_bundle(dump_pkcs12(src))
-      return failure("openssl pkcs12 failed: unable to read #{src} (wrong passphrase?)") unless desired
+      desired = key_first_bundle(native_pkcs12_dump(src))
+      return failure("Could not deserialize PKCS12 data") unless desired
 
       changed = true?(@params["force"]?) || !File.exists?(path) ||
                 normalize_pem(File.read(path)) != normalize_pem(desired)

@@ -168,12 +168,48 @@ module Krikri
                           curve : String?, passphrase : String?, cipher : String, format : String) : PluginResult
       return result(true, path, type, size, curve, nil) if true?(@params["_ansible_check_mode"]?)
 
+      if regen
+        # The cryptography library's own generate-time ValueErrors - real's
+        # module body doesn't catch them, so the msg carries the full
+        # unhandled-exception chain (live-verified vs 2.19.11 with
+        # size: 96).
+        if detail = key_size_error(type, size)
+          return unhandled_error(detail)
+        end
+      end
+      # Real serializes AFTER generating; a non-"auto" cipher with a
+      # passphrase fails there with this exact fail_json msg (bare, no
+      # chain prefix).
+      if (passphrase && !passphrase.empty?) && !cipher.empty? && cipher != "auto"
+        return failure("Cryptography backend can only use \"auto\" for cipher option.")
+      end
+
       backup_file = backup(path)
       error = regen ? generate(path, type, size, curve, passphrase, cipher, format) : convert_format(path, type, passphrase, cipher, format)
       return failure(error) if error
 
       apply_attrs(path, default_mode: true)
       result(true, path, type, size, curve, backup_file)
+    end
+
+    # The "unhandled module exception" result shape real 2.19 produces:
+    # the fatal msg carries the full "Task failed: Module failed: <exc>"
+    # chain while the error block shows the bare exception text.
+    private def unhandled_error(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true,
+        msg: "Task failed: Module failed: #{detail}", _ansible_error_detail: detail)
+    end
+
+    # cryptography's generate_private_key size guards (its own ValueError
+    # texts - RSA and DSA differ).
+    private def key_size_error(type : String, size : Int32) : String?
+      case type
+      when "RSA"
+        return "key_size must be at least 1024-bits." if size < 1024
+      when "DSA"
+        return "Key size must be 1024, 2048, 3072, or 4096 bits." unless [1024, 2048, 3072, 4096].includes?(size)
+      end
+      nil
     end
 
     private def failure(msg : String) : PluginResult

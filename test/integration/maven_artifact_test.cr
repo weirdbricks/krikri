@@ -62,7 +62,13 @@ describe "maven_artifact plugin" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("not supported")
+    # Real main()'s import-time dependency checks run BEFORE the
+    # Artifact() spec parsing - on a host without semantic_version (this
+    # one), version_by_spec fails with missing_required_lib's
+    # semantic_version boilerplate, never reaching the "not supported"
+    # limitation message (live-verified vs 2.19.11 ordering).
+    result["msg"].as_s.must_include(
+      "Failed to import the required Python library (semantic_version) on ")
   end
 
   it "fails explicitly on s3:// repository URLs (deliberate limitation)" do

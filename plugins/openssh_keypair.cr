@@ -60,10 +60,12 @@ module Krikri
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      return remove(path, pub_path, check_mode) if state == "absent"
-
       type = @params["type"]? || "rsa"
 
+      # Real backend __init__ order (KeypairBackend): _get_size first,
+      # THEN _validate_path - both run for EVERY state, BEFORE the
+      # absent branch (live-verified vs 2.19.11: state=absent with an
+      # undersized size still fails the size validation).
       size_result = resolve_size(type, @params["size"]?.try(&.to_i))
       return size_result if size_result.is_a?(PluginResult)
       size = size_result
@@ -71,6 +73,15 @@ module Krikri
       if path_err = validate_path(path)
         return path_err
       end
+
+      # Real select_backend + the backend constructors' own checks: the
+      # opensshbin backend rejects any private_key_format other than
+      # "auto"; the cryptography backend rejects rsa1.
+      if backend_err = resolve_backend(type)
+        return backend_err
+      end
+
+      return remove(path, pub_path, check_mode) if state == "absent"
 
       ensure_present(path, pub_path, type, size, check_mode)
     end
@@ -135,6 +146,83 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Unable to read the key. The key is protected with a passphrase or broken. Will not proceed. To force regeneration, call the module with `regenerate` set to `full_idempotence` or `always`, or with `force=true`.")
     end
 
+    COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION = "3.3"
+
+    # Real select_backend + the two backend constructors' own param
+    # checks, in real order. backend=auto picks opensshbin whenever the
+    # ssh-keygen binary exists and no passphrase was given, then falls
+    # back to the cryptography library; explicit backends fail with
+    # their own availability messages.
+    private def resolve_backend(type : String) : PluginResult?
+      backend = @params["backend"]? || "auto"
+      passphrase = @params["passphrase"]?
+      can_use_opensshbin = !!Process.find_executable("ssh-keygen")
+      can_use_cryptography = cryptography_available?
+
+      if backend == "auto"
+        if can_use_opensshbin && !passphrase
+          backend = "opensshbin"
+        elsif can_use_cryptography
+          backend = "cryptography"
+        else
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Cannot find either the OpenSSH binary in the PATH or cryptography >= #{COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION} installed on this system")
+        end
+      end
+
+      if backend == "opensshbin"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Cannot find the OpenSSH binary in the PATH") unless can_use_opensshbin
+        if (@params["private_key_format"]? || "auto") != "auto"
+          return PluginResult.new(changed: false, failed: true,
+            msg: "'auto' is the only valid option for 'private_key_format' when 'backend' is not 'cryptography'")
+        end
+        return nil
+      end
+
+      unless can_use_cryptography
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to import the required Python library (cryptography >= #{COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION}) on #{System.hostname}'s Python #{python_interpreter}. " \
+               "Please read the module documentation and install it in the appropriate location. " \
+               "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
+               "please consult the documentation on ansible_python_interpreter")
+      end
+      if type == "rsa1"
+        return PluginResult.new(changed: false, failed: true,
+          msg: "RSA1 keys are not supported by the cryptography backend")
+      end
+      nil
+    end
+
+    # The cryptography library's availability, probed through the
+    # target's python3 (the same way real imports it). Only consulted
+    # when the opensshbin path is unavailable - matches real's
+    # can_use_cryptography short-circuit in select_backend.
+    private def cryptography_available? : Bool
+      ["python3", "python"].each do |interpreter|
+        next unless Process.find_executable(interpreter)
+        probe = "import cryptography\n" \
+                "from cryptography.hazmat.primitives.serialization import Encoding\n" \
+                "parts = cryptography.__version__.split('.')\n" \
+                "print('yes' if (int(parts[0]), int(parts[1])) >= (3, 3) else 'no')"
+        io = IO::Memory.new
+        status = Process.run(interpreter, {"-c", probe}, output: io, error: Process::Redirect::Close)
+        next unless status.success?
+        return io.to_s.strip == "yes"
+      end
+      false
+    end
+
+    private def python_interpreter : String
+      ["python3", "python"].each do |interpreter|
+        next unless Process.find_executable(interpreter)
+        io = IO::Memory.new
+        status = Process.run(interpreter, {"-c", "import os, sys; print(os.path.realpath(sys.executable))"}, output: io, error: Process::Redirect::Close)
+        return io.to_s.strip if status.success?
+      end
+      "python3"
+    end
+
     private def validate_path(path : String) : PluginResult?
       base_dir = File.dirname(path)
       unless Dir.exists?(base_dir)
@@ -152,7 +240,9 @@ module Krikri
       case type
       when "rsa", "rsa1"
         size = requested || 4096
-        return PluginResult.new(changed: false, failed: true, msg: "For RSA keys, the minimum size is 1024 bits and the default is 4096 bits.") if size < 1024
+        if size < 1024
+          return PluginResult.new(changed: false, failed: true, msg: "For RSA keys, the minimum size is 1024 bits and the default is 4096 bits. Attempting to use bit lengths under 1024 will cause the module to fail.")
+        end
         size
       when "dsa"
         size = requested || 1024
@@ -160,7 +250,9 @@ module Krikri
         size
       when "ecdsa"
         size = requested || 256
-        return PluginResult.new(changed: false, failed: true, msg: "For ECDSA keys, size must be one of 256, 384 or 521 bits.") unless [256, 384, 521].includes?(size)
+        if !([256, 384, 521].includes?(size))
+          return PluginResult.new(changed: false, failed: true, msg: "For ECDSA keys, size determines the key length by selecting from one of three elliptic curve sizes: 256, 384 or 521 bits. Attempting to use bit lengths other than these three values for ECDSA keys will cause the module to fail.")
+        end
         size
       else # ed25519 - user size is ignored
         256

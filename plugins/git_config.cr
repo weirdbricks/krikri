@@ -35,6 +35,7 @@ module Krikri
 
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
     @searched_paths = ""
+    @git_path = "git"
 
     def execute : PluginResult
       if error = validate_and_locate_git
@@ -79,10 +80,11 @@ module Krikri
         return error
       end
 
-      unless find_binary("git")
+      unless found = find_binary("git")
         return PluginResult.new(changed: false, failed: true,
           msg: PluginHelpers::GetBinPath.missing_executable_error("git", @searched_paths))
       end
+      @git_path = found
       nil
     end
 
@@ -162,7 +164,11 @@ module Krikri
     end
 
     private def build_base_args(effective_scope : String) : Array(String)
-      base_args = ["git", "config", "--includes"]
+      # Real's get_bin_path resolved the binary to an absolute path
+      # before any command ran, and its failure results carry the RESOLVED
+      # args - so the array-typed cmd field shows "/usr/bin/git", not the
+      # bare name.
+      base_args = [@git_path, "config", "--includes"]
       if effective_scope == "file"
         base_args << "-f" << @params["file"].as(String)
       else
@@ -172,11 +178,16 @@ module Krikri
     end
 
     private def read_current_values(base_args : Array(String), cwd : String, name : String) : {Array(String), Bool, PluginResult?}
-      list_cmd = (base_args + ["--get-all", name]).map { |arg| shell_quote(arg) }.join(" ")
+      list_args = base_args + ["--get-all", name]
+      list_cmd = list_args.map { |arg| shell_quote(arg) }.join(" ")
       list_result = remote_exec("cd #{shell_quote(cwd)} && #{list_cmd}")
 
       if list_result[:exit_code] >= 2
-        return {[] of String, false, PluginResult.new(changed: false, failed: true, msg: list_result[:stderr])}
+        # Real: fail_json(rc=rc, msg=err, cmd=' '.join(list_args)) - the
+        # LIST failure's cmd is a space-joined STRING (vs the set
+        # failure's array, below).
+        return {[] of String, false, PluginResult.new(changed: false, failed: true,
+          msg: list_result[:stderr], cmd: list_args.join(' '), rc: list_result[:exit_code])}
       end
 
       old_values = list_result[:stdout].rstrip.split('\n').reject(&.empty?)
@@ -194,7 +205,11 @@ module Krikri
 
       set_result = remote_exec("cd #{shell_quote(cwd)} && #{set_cmd}")
       unless set_result[:stderr].empty?
-        return PluginResult.new(changed: false, failed: true, msg: set_result[:stderr])
+        # Real: fail_json(rc=rc, msg=err, cmd=set_args) - the SET failure's
+        # cmd is the raw args LIST (rendered as a JSON array in the
+        # result), unlike the list-command failure's joined string.
+        return PluginResult.new(changed: false, failed: true, msg: set_result[:stderr],
+          cmd: set_args, rc: set_result[:exit_code])
       end
 
       PluginResult.new(changed: true, failed: false, msg: "setting changed")
@@ -214,7 +229,9 @@ module Krikri
         SH
 
       result = remote_exec(script)
-      found, _, searched = result[:stdout].to_s.strip.partition("\n")
+      found, _, searched = result[:stdout].to_s.partition("\n")
+      found = found.strip
+      searched = searched.strip
       @searched_paths = searched
       found.empty? ? nil : found
     end

@@ -290,6 +290,40 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("dictionary requested, could not parse JSON or key=value")
   end
 
+  # Options with elements=dict but NO suboptions (openssl_csr's
+  # subject_ordered) escape the no_log walk and fail later, in the types
+  # pass - wrapped as "Elements value for option ..." - which still beats
+  # required_together (both are AnsibleModule init checks; live-diffed vs
+  # 2.19.11: subject_ordered ["str", "str"] plus a half-filled
+  # required_together pair fails with the Elements message).
+  it "fails a suboption-less dict-elements option with the Elements wrapper (beats required_together)" do
+    failure = Krikri::ArgspecValidator.validate(
+      "openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "subject_ordered" => %(["kfscvy", "odrplk"]),
+       "authority_cert_serial_number" => "24"}, vars)
+    failure.wont_be_nil
+    failure.as(Failure).msg.must_equal(
+      "Elements value for option 'subject_ordered' is of type str and we were unable to convert to dict: " \
+      "dictionary requested, could not parse JSON or key=value")
+  end
+
+  it "reports an int element of a dict-elements option with the class-converted wording" do
+    failure = Krikri::ArgspecValidator.validate(
+      "openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "subject_ordered" => %([24])}, vars)
+    failure.as(Failure).msg.must_equal(
+      "Elements value for option 'subject_ordered' is of type int and we were unable to convert to dict: " \
+      "<class 'int'> cannot be converted to a dict")
+  end
+
+  it "lets key=value string elements of a suboption-less dict-elements option through" do
+    failure = Krikri::ArgspecValidator.validate(
+      "openssl_csr", "community.crypto.openssl_csr",
+      {"path" => "/tmp/x", "subject_ordered" => %(["country_name=DE"]),
+       "authority_cert_serial_number" => "24"}, vars)
+    failure.as(Failure).msg.must_equal("parameters are required together: authority_cert_issuer, authority_cert_serial_number")
+  end
+
   it "fails assemble's missing src/dest at the action level, not the module spec" do
     # Real's assemble action plugin checks src/dest presence before the
     # remote_src staging and before the module validates anything
@@ -710,11 +744,11 @@ describe Krikri::ArgspecValidator do
 
     it "names the templated Python class of a non-mapping form-multipart body" do
       {
-        "asgaub"                               => "_AnsibleTaggedStr",
-        "true"                                 => "bool",
-        Krikri::NON_STRING_PARAM_PREFIX + "5"  => "_AnsibleTaggedInt",
+        "asgaub"                                => "_AnsibleTaggedStr",
+        "true"                                  => "bool",
+        Krikri::NON_STRING_PARAM_PREFIX + "5"   => "_AnsibleTaggedInt",
         Krikri::NON_STRING_PARAM_PREFIX + "1.5" => "_AnsibleTaggedFloat",
-        %(["1", "2"])                          => "_AnsibleTaggedList",
+        %(["1", "2"])                           => "_AnsibleTaggedList",
       }.each do |body, class_name|
         failure = Krikri::ArgspecValidator.validate(
           "uri", "ansible.builtin.uri",

@@ -83,6 +83,15 @@ module Krikri
 
     @@table : Hash(String, JSON::Any)? = nil
 
+    # Params the sweep environment's collections mark removed_in_version:
+    # passing one deprecates at module bootstrap (the general
+    # "Param 'x' is deprecated. ... removed from collection 'C' version N"
+    # wording), on stderr, whatever the validation outcome. Extended as
+    # the corpus surfaces more of them.
+    private REMOVED_PARAM_DEPRECATIONS = {
+      "community.crypto.openssl_pkcs12" => {"maciter_size" => "4.0.0"},
+    }
+
     private def table : Hash(String, JSON::Any)
       @@table ||= JSON.parse({{ read_file("#{__DIR__}/../../data/argspecs.json") }}).as_h
     end
@@ -182,6 +191,22 @@ module Krikri
       entry = table[module_name]?
       return nil unless entry
       return nil if entry["no_validate"]?
+
+      # A removed_in_version-marked param the task passed (the real
+      # module's own bootstrap deprecates it during _handle_params -
+      # BEFORE every other check, and the warning reaches stderr whatever
+      # the validation outcome is, including the unsupported-params and
+      # mutually-exclusive failures; live-verified vs 2.19.11 with
+      # openssl_pkcs12's maciter_size).
+      if removed = REMOVED_PARAM_DEPRECATIONS[module_name]?
+        removed.each do |param, version|
+          next unless params.has_key?(param)
+          collection = module_name.split(".")[0...-1].join(".")
+          Krikri::ResultDisplay.emit_core_deprecation(
+            "Param '#{param}' is deprecated. See the module docs for more information. " \
+            "This feature will be removed from collection '#{collection}' version #{version}.")
+        end
+      end
 
       if failure = action_plugin_required_params(module_name, params)
         return failure
@@ -1312,19 +1337,56 @@ module Krikri
     end
 
     # Real's check_type_list runs the elements= checker on every element
-    # inline; only elements=int is strict enough to ever fail here (str/
-    # path/raw elements coerce leniently), so only that one is mirrored.
-    # The first failing element's error wins, wrapped as "Elements value
-    # for option ..." instead of "argument ..." (live-verified vs
-    # 2.19.11: uri status_code [200, abc] / [1.5] / [null] / [[1]]).
+    # inline; only int and dict elements are strict enough to ever fail
+    # here (str/path/raw elements coerce leniently), so only those two
+    # are mirrored. The first failing element's error wins, wrapped as
+    # "Elements value for option ..." instead of "argument ..." (live-
+    # verified vs 2.19.11: uri status_code [200, abc] / [1.5] / [null] /
+    # [[1]]; openssl_csr subject_ordered [str, str] against
+    # elements=dict - which beats required_together, both being
+    # AnsibleModule init checks).
     private def elements_type_error(name : String, spec : JSON::Any, raw : String, native : JSON::Any?, native_list : JSON::Any?) : String?
-      return nil unless spec["elements"]?.try(&.as_s?) == "int"
-      element_values(raw, native, native_list).each do |element|
-        if msg = int_element_error(name, element)
-          return msg
+      case spec["elements"]?.try(&.as_s?)
+      when "int"
+        element_values(raw, native, native_list).each do |element|
+          if msg = int_element_error(name, element)
+            return msg
+          end
+        end
+      when "dict"
+        element_values(raw, native, native_list).each do |element|
+          if msg = dict_element_error(name, element)
+            return msg
+          end
         end
       end
       nil
+    end
+
+    # One element against the dict checker (real's check_type_dict): a
+    # dict passes, a string goes through the JSON/key=value conversion
+    # (each failure its own wording), anything else fails with its
+    # Python class ("<class 'int'> cannot be converted to a dict").
+    private def dict_element_error(name : String, element : JSON::Any) : String?
+      case raw = element.raw
+      when Hash(String, JSON::Any)
+        nil
+      when String
+        if msg = check_type_dict_error(raw)
+          return "Elements value for option '#{name}' is of type str and we were unable to convert to dict: #{msg}"
+        end
+        nil
+      else
+        kind = case raw
+               when Int64, Int32 then "int"
+               when Float64      then "float"
+               when Bool         then "bool"
+               when Nil          then "NoneType"
+               else                   "list"
+               end
+        "Elements value for option '#{name}' is of type #{kind} and we were unable to convert to dict: " \
+        "<class '#{kind}'> cannot be converted to a dict"
+      end
     end
 
     # The list real's check_type_list would hand to the element checker:

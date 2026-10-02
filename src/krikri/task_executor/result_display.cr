@@ -88,6 +88,22 @@ module Krikri
     @@deprecation_texts = Set(String).new
     @@deprecation_hint_seen = false
 
+    # One core-side param deprecation (the module bootstrap's
+    # removed_in_version warning, or a result's `_ansible_core_deprecations`
+    # entry) on stderr - deduped per distinct text, with the one-time
+    # "can be disabled" hint before the first one. Also called directly
+    # from the argspec validator (a removed param deprecates on stderr
+    # whatever the validation outcome is).
+    def self.emit_core_deprecation(text : String) : Nil
+      line = "[DEPRECATION WARNING]: #{text}"
+      return unless @@deprecation_texts.add?(line)
+      unless @@deprecation_hint_seen
+        @@deprecation_hint_seen = true
+        STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
+      end
+      STDERR.puts line.colorize(:light_magenta)
+    end
+
     # Display task result with appropriate formatting.
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
@@ -133,13 +149,7 @@ module Krikri
       # result's real `deprecations` list stays untouched for register.
       result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
         text = deprecation.as_s? || deprecation.to_s
-        line = "[DEPRECATION WARNING]: #{text}"
-        next unless @@deprecation_texts.add?(line)
-        unless @@deprecation_hint_seen
-          @@deprecation_hint_seen = true
-          STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.".colorize(:light_magenta)
-        end
-        STDERR.puts line.colorize(:light_magenta)
+        emit_core_deprecation(text)
       end
 
       # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on

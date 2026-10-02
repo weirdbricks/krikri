@@ -2,6 +2,8 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/get_bin_path"
+require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # Npm plugin - manages Node.js packages via npm. Compatible with (a
@@ -26,6 +28,32 @@ module Krikri
   # isn't already in the installed set; `state: absent` only uninstalls
   # if it IS.
   class NpmPlugin < BasePlugin
+    EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
+    @searched_paths = ""
+    @npm_path = "npm"
+
+    # get_bin_path on the target: $PATH plus the sbin dirs real appends
+    # when missing from PATH. Returns the first executable hit (absolute),
+    # else nil; leaves the searched list in @searched_paths.
+    private def find_binary(name : String) : String?
+      script = <<-SH
+        found=""
+        searched=""
+        for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+          case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
+          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+        done
+        printf '%s\n%s' "$found" "$searched"
+        SH
+
+      result = remote_exec(script)
+      found, _, searched = result[:stdout].to_s.partition("\n")
+      found = found.strip
+      searched = searched.strip
+      @searched_paths = searched
+      found.empty? ? nil : found
+    end
+
     def execute : PluginResult
       name = @params["name"]?
       state = @params["state"]? || "present"
@@ -35,69 +63,78 @@ module Krikri
       end
 
       # Real Ansible's npm module resolves the executable via
-      # `module.get_bin_path(npm_path, True)`, which raises "Failed to
-      # find required executable ... in paths: ..." and fails the task
-      # outright when npm isn't installed - `list()` below never even
-      # gets a chance to be wrong about it. Missing here before: `npm
-      # list`'s own shell command just failed silently (bad exit code,
-      # empty/garbage stdout), and #collect_installed's "malformed
-      # output -> treat as nothing installed" fallback (a deliberate,
-      # documented no-op-read-failure convention for THAT case) turned
-      # a genuinely missing npm binary into an empty `missing` set,
-      # which #handle_present's `missing.empty?` then read as "Package
-      # already installed" - a false-positive success reporting nothing
-      # was ever actually checked or installed. `which` (not `command
-      # -v`, whose own no-op is a SHELL BUILTIN - `remote_exec`'s local-
-      # connection path shells out directly, without a shell, for any
-      # command string with no metacharacters, so "command -v npm"
-      # tried to execve a real file literally named "command", which
-      # doesn't exist, and failed regardless of whether npm itself was
-      # actually present; `which` is a real external binary, so it
-      # works identically whether local_connection? routes through a
-      # real shell or execve's it directly) resolves both a bare name
-      # and an absolute `executable:` override identically to how the
-      # shell itself will later resolve `npm_binary` in #run_npm's own
-      # command string.
+      # `module.get_bin_path("npm", True)` inside the Npm() constructor -
+      # AFTER the required_if checks (validate_npm_args above), BEFORE any
+      # command runs - failing "Failed to find required executable ... in
+      # paths: ..." when npm isn't installed. An `executable:` override
+      # runs through `kwargs["executable"].split(" ")` - but only VERBATIM
+      # when it is a path: CmdRunner RE-RESOLVES a bare name through
+      # get_bin_path (live-verified vs 2.19.11: a bare nonexistent name
+      # fails with the get_bin_path wording, not the OSError shape). A
+      # missing/unexecutable PATH override surfaces the raw run_command
+      # OSError shape from the FIRST command (the list probe), with
+      # rc=errno and the space-joined command string (podman-diff
+      # npm_edge_cases N7).
       global = true?(@params["global"]?)
       path = @params["path"]?
 
-      bin = npm_binary
-      if (exe = @params["executable"]?) && exe.includes?("/")
-        # Real npm runs an `executable:` PATH VERBATIM (community.general
-        # npm: `kwargs["executable"].split(" ")` bypasses get_bin_path;
-        # CmdRunner only re-resolves a bare name) - so a missing path
-        # surfaces as the raw OSError from run_command, failed with
-        # rc=errno and the command string (podman-diff npm_edge_cases
-        # N7), NOT the get_bin_path wording. The `which` pre-check
-        # below stays for the bare-name/default case only.
-        check = remote_exec("test -e #{Process.quote(exe)}")
-        if check[:exit_code] != 0
+      if exe = @params["executable"]?
+        exe_parts = exe.split(' ').reject(&.empty?)
+        unless exe_parts[0].includes?("/")
+          found = find_binary(exe_parts[0])
           return PluginResult.new(changed: false, failed: true,
-            msg: "[Errno 2] No such file or directory: b'#{exe}'",
-            rc: 2, cmd: "#{exe} list --json --long#{global ? " --global" : ""}")
+            msg: PluginHelpers::GetBinPath.missing_executable_error(exe_parts[0], @searched_paths)) unless found
+          @npm_path = found
+          exe_parts = [found]
         end
       else
-        check = remote_exec("which #{Process.quote(bin)}")
-        if check[:exit_code] != 0
-          return PluginResult.new(changed: false, failed: true,
-            msg: "Failed to find required executable \"#{bin}\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-        end
+        found = find_binary("npm")
+        return PluginResult.new(changed: false, failed: true,
+          msg: PluginHelpers::GetBinPath.missing_executable_error("npm", @searched_paths)) unless found
+        @npm_path = found
+        exe_parts = [found]
       end
 
       version = @params["version"]?
       name_version = version ? "#{name}@#{version}" : name
 
+      # Real _exec: a given `path` is created when missing (os.makedirs)
+      # and fails with "path {path} is not a directory" when it exists as
+      # something else; it is passed to run_command as cwd.
       if path && !remote_dir_exists?(path)
         remote_exec("mkdir -p #{Process.quote(path)}")
       end
+      if path && remote_file_exists?(path) && !remote_dir_exists?(path)
+        return PluginResult.new(changed: false, failed: true, msg: "path #{path} is not a directory")
+      end
 
-      installed, missing = list(name, name_version, global, path)
+      # The first command real runs is the exec's failure surface: with
+      # ci=true real runs `npm ci` DIRECTLY (main()'s ci branch never
+      # lists), for every other state it's the list probe (check_rc=False,
+      # so only an exec-start failure kills the task here) - a missing or
+      # unexecutable `executable:` path surfaces run_command's OSError
+      # shape with rc=errno and the space-joined FIRST command string.
+      ci = true?(@params["ci"]?)
+      first_args = ci ? build_args(["ci"], name_version, global, mutating: true) : build_args(["list", "--json", "--long"], nil, global, mutating: false)
+      if failure = PluginHelpers::RunCommandFailure.exec_check(exe_parts[0])
+        return PluginHelpers::RunCommandFailure.exec_failure(exe_parts[0], failure[0], failure[1], (exe_parts + first_args).join(' '))
+      end
+
+      if ci
+        # Real main(): the ci branch runs `npm ci` unconditionally and
+        # exits changed=true (no list, no installed-set check).
+        result = run_npm(exe_parts, ["ci"], name_version, global, path)
+        return failure(exe_parts, result, ["ci"]) unless result[:exit_code] == 0
+        return PluginResult.new(changed: true, failed: false)
+      end
+
+      installed, missing = list(exe_parts, name, name_version, global, path)
 
       case state
       when "absent"
-        handle_absent(name, name_version, global, path, installed)
+        handle_absent(exe_parts, name, name_version, global, path, installed)
       else
-        handle_present(name_version, global, path, missing)
+        handle_present(exe_parts, name_version, global, path, missing)
       end
     end
 
@@ -105,35 +142,35 @@ module Krikri
     # nil when the arguments are valid.
     private def validate_npm_args(state : String, name : String?) : PluginResult?
       # Real Ansible's own arg-spec requires `name:` when `state:
-      # absent` (uninstalling with no target makes no sense) - `state:
-      # present`/`latest` with no name installs from the local
-      # package.json in `path`/cwd, matching plain `npm install`.
-      # Both messages are real's own required_if wording (community.general
-      # npm argument_spec: `required_if=[("state", "absent", ["name"]),
-      # ("global", False, ["path"])]` - "<option> is <value> but all of
-      # the following are missing: <missing>").
+      # absent` (uninstalling with no target makes no sense) - the sweep
+      # environment's community.general (11.2.1, Debian trixie's ansible
+      # package) keeps that as required_if wording, and its `path` check
+      # is a module-level explicit one (NOT required_if): "path must be
+      # specified when not using global", fired right after arg-spec
+      # validation, BEFORE the npm binary is even looked up (live-verified
+      # vs the sweep container's module source, general 11.2.1).
       return PluginResult.new(changed: false, failed: true, msg: "state is absent but all of the following are missing: name") if state == "absent" && !name
 
       global = true?(@params["global"]?)
       path = @params["path"]?
-      return PluginResult.new(changed: false, failed: true, msg: "global is False but all of the following are missing: path") if !global && !path
+      return PluginResult.new(changed: false, failed: true, msg: "path must be specified when not using global") if !global && !path
 
       nil
     end
 
     # state: absent - uninstall the named package when it is installed
-    private def handle_absent(name : String?, name_version : String?, global : Bool, path : String?, installed : Array(String)) : PluginResult
+    private def handle_absent(exe_parts : Array(String), name : String?, name_version : String?, global : Bool, path : String?, installed : Array(String)) : PluginResult
       return PluginResult.new(changed: false, failed: true, msg: "name is required") unless name
       unless installed.includes?(name)
         return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
       end
-      result = run_npm(["uninstall"], name_version, global, path)
-      return failure(result) unless result[:exit_code] == 0
+      result = run_npm(exe_parts, ["uninstall"], name_version, global, path)
+      return failure(exe_parts, result, ["uninstall"]) unless result[:exit_code] == 0
       PluginResult.new(changed: true, failed: false, msg: "Package removed", stdout: result[:stdout])
     end
 
     # state: present (or latest) - install when anything is missing
-    private def handle_present(name_version : String?, global : Bool, path : String?, missing : Array(String)) : PluginResult
+    private def handle_present(exe_parts : Array(String), name_version : String?, global : Bool, path : String?, missing : Array(String)) : PluginResult
       # Real Ansible's own `state: present` branch checks `if missing:`
       # alone - it does NOT require a name_version to be given at all.
       # Gating this short-circuit on `name_version &&` (previously)
@@ -147,21 +184,25 @@ module Krikri
       if missing.empty?
         return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
       end
-      result = run_npm(["install"], name_version, global, path)
-      return failure(result) unless result[:exit_code] == 0
+      result = run_npm(exe_parts, ["install"], name_version, global, path)
+      return failure(exe_parts, result, ["install"]) unless result[:exit_code] == 0
       PluginResult.new(changed: true, failed: false, msg: "Package installed", stdout: result[:stdout])
     end
 
-    private def failure(result) : PluginResult
-      PluginResult.new(changed: false, failed: true, msg: "npm command failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+    # Real _exec with check_rc=True: a started-but-failed command fails
+    # with msg=stderr.rstrip() plus cmd/rc/stdout/stderr.
+    private def failure(exe_parts : Array(String), result, args : Array(String)) : PluginResult
+      PluginHelpers::RunCommandFailure.nonzero_exit(
+        (exe_parts + args).join(' '), result[:exit_code], result[:stdout], result[:stderr]
+      )
     end
 
     private def npm_binary : String
-      @params["executable"]? || "npm"
+      @params["executable"]? || @npm_path
     end
 
-    private def list(name : String?, name_version : String?, global : Bool, path : String?) : {Array(String), Array(String)}
-      result = run_npm(["list", "--json", "--long"], nil, global, path, mutating: false)
+    private def list(exe_parts : Array(String), name : String?, name_version : String?, global : Bool, path : String?) : {Array(String), Array(String)}
+      result = run_npm(exe_parts, ["list", "--json", "--long"], nil, global, path, mutating: false)
       installed = [] of String
       missing = [] of String
 
@@ -201,25 +242,53 @@ module Krikri
       end
     end
 
-    private def run_npm(subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      args = subcommand.dup
-      args << "--global" if global
-      append_npm_args(args, mutating, name_version)
+    # Real CmdRunner arg order (community.general npm.py's
+    # "exec_args global_ production ignore_scripts unsafe_perm
+    # name_version registry no_optional no_bin_links force"), with
+    # production gated to install/update/ci commands. Exec failure
+    # (missing/unexecutable binary) surfaces before anything runs as
+    # run_command's OSError shape with the SPACE-JOINED raw args as cmd
+    # (real's _clean_args - no shell quoting).
+    private def run_npm(exe_parts : Array(String), subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      args = build_args(subcommand, name_version, global, mutating)
 
       cmd = "#{Process.quote(npm_binary)} #{args.map { |arg| Process.quote(arg) }.join(' ')}"
       cmd = "cd #{Process.quote(expand_tilde(path))} && #{cmd}" if path
       remote_exec(cmd)
     end
 
-    # Append the mutating-mode flags, registry override and package name
-    private def append_npm_args(args : Array(String), mutating : Bool, name_version : String?) : Nil
-      args << "--production" if mutating && true?(@params["production"]?)
-      args << "--ignore-scripts" if mutating && true?(@params["ignore_scripts"]?)
-      args << "--unsafe-perm" if mutating && true?(@params["unsafe_perm"]?)
-      if registry = @params["registry"]?
-        args << "--registry" << registry
+    # The flag sequence real's CmdRunner composes, in its own order
+    # ("exec_args global_ production ignore_scripts unsafe_perm
+    # name_version registry no_optional no_bin_links force"), with
+    # production gated to install/update/ci commands.
+    private def build_args(subcommand : Array(String), name_version : String?, global : Bool, mutating : Bool) : Array(String)
+      args = subcommand.dup
+      args << "--global" if global
+      if mutating
+        args << "--production" if true?(@params["production"]?) && subcommand.any? { |arg| ["install", "update", "ci"].includes?(arg) }
+        args << "--ignore-scripts" if true?(@params["ignore_scripts"]?)
+        args << "--unsafe-perm" if true?(@params["unsafe_perm"]?)
+        args << name_version if name_version
+        if registry = @params["registry"]?
+          args << "--registry" << registry
+        end
+        args << "--no-optional" if true?(@params["no_optional"]?)
+        args << "--no-bin-links" if true?(@params["no_bin_links"]?)
+        args << "--force" if true?(@params["force"]?)
+      else
+        # The list probe still carries the truthy-only flags and the
+        # registry override (real passes the full param set through
+        # CmdRunner for list too) - but never the package name.
+        args << "--ignore-scripts" if true?(@params["ignore_scripts"]?)
+        args << "--unsafe-perm" if true?(@params["unsafe_perm"]?)
+        if registry = @params["registry"]?
+          args << "--registry" << registry
+        end
+        args << "--no-optional" if true?(@params["no_optional"]?)
+        args << "--no-bin-links" if true?(@params["no_bin_links"]?)
+        args << "--force" if true?(@params["force"]?)
       end
-      args << name_version if name_version
+      args
     end
   end
 end

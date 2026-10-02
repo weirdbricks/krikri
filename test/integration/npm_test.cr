@@ -19,9 +19,11 @@ describe "npm plugin" do
     result = PluginSpecHelper.run("npm", {"name" => "left-pad"})
 
     result["failed"].as_bool.must_equal(true)
-    # Real community.general.npm's own required_if wording:
-    # ("global", False, ["path"]).
-    result["msg"].as_s.must_equal("global is False but all of the following are missing: path")
+    # The sweep environment's community.general (11.2.1, Debian trixie's
+    # ansible package) checks path as a module-level explicit check in
+    # main(), right after arg-spec validation (the 13.x required_if
+    # wording is NOT what the sweep's real container runs).
+    result["msg"].as_s.must_equal("path must be specified when not using global")
   end
 
   it "fails with a clear message when name is missing for state: absent" do
@@ -50,17 +52,21 @@ describe "npm plugin" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal(
-      "Failed to find required executable \"krikri-spec-nonexistent-npm-binary\" in paths: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    # The searched-paths tail is the target's own $PATH (plus the sbin
+    # dirs real appends when missing) - env-dependent; pin the wording
+    # and the name.
+    result["msg"].as_s.must_include(
+      "Failed to find required executable \"krikri-spec-nonexistent-npm-binary\" in paths: ")
   end
 
-  it "fails an executable: PATH override with the raw OSError wording, not the get_bin_path wording" do
+  it "fails an executable: PATH override with the OSError shape, not the get_bin_path wording" do
     # Real npm runs an `executable:` path VERBATIM (bypasses
     # get_bin_path; CmdRunner only re-resolves a bare name), so a
-    # missing path surfaces as the raw OSError from run_command -
-    # podman-diff npm_edge_cases N7: msg "[Errno 2] No such file or
-    # directory: b'/nonexistent-krikri-npm'", rc 2, cmd echoing the
-    # list command.
+    # missing path surfaces as run_command's OSError shape from the
+    # FIRST command (the list probe) - live-verified vs 2.19.11: msg
+    # "Error executing command.", rc 2, the [Errno] exception text
+    # composing the display chain, cmd echoing the space-joined list
+    # command (podman-diff npm_edge_cases N7).
     result = PluginSpecHelper.run("npm", {
       "name"       => "left-pad",
       "global"     => "true",
@@ -68,8 +74,9 @@ describe "npm plugin" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("[Errno 2] No such file or directory: b'/nonexistent-krikri-npm'")
+    result["msg"].as_s.must_equal("Error executing command.")
     result["rc"].as_i.must_equal(2)
     result["cmd"].as_s.must_equal("/nonexistent-krikri-npm list --json --long --global")
+    result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'/nonexistent-krikri-npm'")
   end
 end
