@@ -431,4 +431,176 @@ describe "replace plugin" do
     result["changed"].as_bool.must_equal(true)
     File.read(path).must_equal("A\t\\-\n")
   end
+
+  # The kpg31-sweep "replace: leftovers" trio: real compiles the regexp
+  # (and the composed before/after pattern) with Python's own re OUTSIDE
+  # its `except re.error`, so every rejection below is an uncaught
+  # re.error - the module-crash wrapper, live-verified vs 2.19.11 for
+  # each wording.
+
+  it "rejects the PCRE (?<name>...) group spelling like real's Python re" do
+    # Python only takes (?P<name>...); PCRE2 also accepts (?<name>...),
+    # which this engine used to compile and RUN where real fails.
+    path = fresh_file("named_angle.txt", "bar baz\nbar\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(?<foo>bar)", "replace" => "BAZ"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown extension ?<f at position 1")
+    File.read(path).must_equal("bar baz\nbar\n")
+  end
+
+  it "rejects the PCRE (?'name'...) single-quote group spelling like real's Python re" do
+    path = fresh_file("named_quote.txt", "bar baz\nbar\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(?'foo'bar)", "replace" => "BAZ"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unknown extension ?' at position 1")
+    File.read(path).must_equal("bar baz\nbar\n")
+  end
+
+  it "still accepts Python's own (?P<name>...) spelling" do
+    path = fresh_file("named_p.txt", "bar baz\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(?P<w>bar)", "replace" => "\\g<w>!"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("bar! baz\n")
+  end
+
+  it "reproduces real's uncaught re.error module crash for a bad regexp" do
+    # Position 10 is Python's own accounting: the index of the
+    # unterminated '(' - not PCRE2's end-of-pattern offset.
+    path = fresh_file("bad_regexp.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "unmatched (", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: missing ), unterminated subpattern at position 10")
+    File.read(path).must_equal("hello world\n")
+  end
+
+  it "reports a bad after: pattern through the crash wrapper, compiled before the regexp" do
+    # real compiles the composed section pattern first, so a bad after:
+    # crashes before the regexp is ever looked at; position 10 counts
+    # into the COMPOSED pattern (after + (?P<subsection>...)). The
+    # innermost unterminated '(' is the one the user wrote.
+    path = fresh_file("bad_after.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "after" => "unmatched (", "regexp" => "x", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: missing ), unterminated subpattern at position 10")
+    File.read(path).must_equal("hello world\n")
+  end
+
+  it "reports an unbalanced closing parenthesis like real" do
+    path = fresh_file("stray_paren.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "x)", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: unbalanced parenthesis at position 1")
+  end
+
+  it "reports a trailing lone backslash in the pattern like real" do
+    path = fresh_file("trailing_bs.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "a\\", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: bad escape (end of pattern) at position 1")
+  end
+
+  it "rejects PCRE-only escapes Python's re rejects (bad escape backslash-z)" do
+    # \z is PCRE's absolute end anchor; Python's re has no \z in 3.13
+    # (only \Z), so real crashes where this engine used to match
+    # happily.
+    path = fresh_file("bs_z.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "world\\z", "replace" => "WORLD"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("Task failed: Module failed: bad escape \\z at position 5")
+    File.read(path).must_equal("hello world\n")
+  end
+
+  it "rejects PCRE's \\x{...} brace form Python's re does not take" do
+    path = fresh_file("brace_x.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "\\x{41}", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: incomplete escape \\x at position 0")
+  end
+
+  it "accepts Python's \\uhhhh escape spelling where PCRE2 has none" do
+    # Python re supports \uhhhh (and \Uhhhhhhhh); PCRE2 does not, so
+    # the pattern is rewritten to PCRE2's \x{...} before compiling -
+    # real replaces here, and this engine used to die on the PCRE2
+    # "does not support \u" error.
+    path = File.join(replace_dir, "unicode_escape.txt")
+    File.write(path, "café = 1\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "caf\\u00e9", "replace" => "CAFE"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("CAFE = 1\n")
+  end
+
+  it "reports an incomplete \\u escape the way Python's re does" do
+    path = fresh_file("incomplete_u.txt", "hello world\n")
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "\\u12z", "replace" => "X"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Task failed: Module failed: incomplete escape \\u12 at position 0")
+  end
+
+  it "decodes non-UTF-8 bytes with surrogateescape semantics under the default encoding" do
+    # real decodes the file's bytes with errors="surrogateescape", so a
+    # latin-1 byte inside a utf-8-decoded file becomes one surrogate
+    # character and the substitution proceeds; the byte round-trips on
+    # write. This engine used to abort with a PCRE "UTF-8 error" the
+    # moment the regex touched the decoded bytes.
+    path = File.join(replace_dir, "surrogate_latin1.txt")
+    File.write(path, "caf".to_slice + Bytes[0xe9] + " done\nnext line\n".to_slice)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "done$", "replace" => "DONE"})
+
+    result["changed"].as_bool.must_equal(true)
+    bytes = File.read(path).to_slice
+    bytes[3].must_equal(0xe9)
+    String.new(bytes).must_equal("caf\xE9 DONE\nnext line\n")
+  end
+
+  it "matches one undecodable byte with . like real's surrogate does" do
+    path = File.join(replace_dir, "surrogate_dot.txt")
+    File.write(path, "caf".to_slice + Bytes[0xe9] + " done\n".to_slice)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "caf. done", "replace" => "CAFE DONE"})
+
+    result["changed"].as_bool.must_equal(true)
+    String.new(File.read(path).to_slice).must_equal("CAFE DONE\n")
+  end
+
+  it "keeps the byte round trip for a codec iconv cannot convert (mac_roman)" do
+    # mac_roman is in Python's codec registry but has no iconv
+    # converter here: the bytes are read raw and the substitution still
+    # proceeds (real decodes through the real codec; for an untouched
+    # high byte the file's bytes come out identical either way).
+    path = File.join(replace_dir, "mac_roman.txt")
+    File.write(path, "caf".to_slice + Bytes[0xe9] + "=1".to_slice)
+
+    result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "=1", "replace" => "=2", "encoding" => "mac_roman"})
+
+    result["changed"].as_bool.must_equal(true)
+    bytes = File.read(path).to_slice
+    bytes[3].must_equal(0xe9)
+    bytes[-1].must_equal('2'.ord)
+  end
 end

@@ -36,9 +36,6 @@ and fixed and when.
 
 - **`docker_container` `state: healthy`** (kpg35): accepted with real's choices/wording but runs the plain `started` flow; real additionally waits for the container's
   healthcheck to report healthy (a container with no healthcheck is immediately healthy, which is the only case krikri matches today).
-- **`replace:` leftovers** (kpg31 sweep): PCRE accepts `(?<name>...)`/`(?'name'...)` in `regexp:` where Python `re` rejects it, and a bad `regexp:` reports
-  `Invalid regular expression: ...` instead of real's uncaught-`re.error` module crash; non-UTF-8 file bytes under `encoding:` fail the regex (`UTF-8 error`) where
-  real decodes with `surrogateescape` and proceeds (also for codecs Python has but this host's iconv lacks, e.g. `utf-7`, `mac_roman`).
 - **`get_url` success path and conditional GET** (kpg30 sweep): success result lacks real's `msg="OK (<n> bytes)"`/`status_code: 200`; an existing dest with no `force:` always
   re-downloads where real's conditional GET (304) short-circuits; registered-result key order differs from real engine-wide.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
@@ -497,6 +494,35 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
+### `replace:` pattern syntax is checked by a targeted Python-re scanner, not a full re._parser port
+
+`ansible.builtin.replace` compiles `regexp:`/`after:`/`before:` with Python's own `re` module, outside
+its `except re.error` - so a pattern Python rejects kills the module ("Task failed: Module failed:
+<re.error text>"). PCRE2 (krikri's engine) accepts a superset of Python's syntax, so krikri runs a
+left-to-right Python-re scanner over each pattern first (plugins/replace.cr, `PythonPattern`) and
+translates PCRE2 compile errors to Python's wording/position where the mapping is exact. Covered with
+real-verified messages: the PCRE group-name spellings `(?<name>...)`/`(?'name'...)` and every other
+extension char Python rejects (`(?R)`, `(?&`, `(?|`, `(?1`, ...), the inline-flag section rules,
+PCRE-only escapes (`\e`, `\z`, `\K`, `\h`, `\G`, `\C`, `\c`, `\o`, `\p`, `\Q`, `\x{...}`) with the
+class-context rules for `\A`/`\B`/`\Z`/`\g`, and `\uXXXX`/`\Uhhhhhhhh` (Python accepts, PCRE2 does
+not - rewritten to PCRE2's `\x{...}`). Deliberately left unchecked (they surface with PCRE2's wording
+inside the same crash wrapper, or accept where real rejects, and are too rare in roles to justify a
+full re._parser port):
+
+- `\N{...}` character names (real resolves them against the Unicode name DB; PCRE2 rejects the syntax,
+  so such patterns fail either way - wording differs, and a *valid* name still fails here);
+- `\8`/`\9` group-reference semantics (Python counts groups, PCRE2 errors);
+- `(?P=name)` resolution and `(?P<>`-shape name errors;
+- Python's semantic inline-flag checks (`(?iLmsxua)`'s "cannot use 'L' flag with a str pattern",
+  `a`/`u` negation, global-flags placement);
+- character-class ranges over escapes (`[\d-e]`).
+
+The surrogateescape twin for undecodable bytes under `encoding:` is the private-use codepoint
+U+F780+(byte-0x80) rather than Python's U+DC80+(byte-0x80), because PCRE2 aborts a match whose subject
+holds raw surrogates; one undecodable byte is one character to the regex either way and the byte
+round-trips on write. The collision risk is the one real carries itself (a file legitimately
+containing the mapped codepoint), just in a different range.
+
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported
