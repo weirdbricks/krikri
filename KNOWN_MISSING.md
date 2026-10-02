@@ -34,6 +34,12 @@ and fixed and when.
 
 ## Open gaps
 
+- **Pending re-sweep of the kpg34 modules** (2026-10-02): the 32 modules first swept in kpg34 (seed 34: `apache2_module`, `async_status`, `deploy_helper`, `easy_install`,
+  `filesystem`, `firewalld`, `gem`, `git_config`, `java_cert`, `kernel_blacklist`, `lvg`, `lvol`, `make`, `maven_artifact`, `mount_facts`, `npm`, `openssh_keypair`,
+  `openssl_csr`/`dhparam`/`privatekey`/`publickey`/`pkcs12`, `x509_certificate`, `get_certificate`, `package`, `parted`, `pause`, `ping`, `ufw`, `sefcontext`,
+  `seport`, `selinux`) have been fixed (0.9.1419-0.9.1421) but not re-swept. Run a fresh seed over the same list (generator: `generate --modules <list> --seed N
+  --count 12 --chaos-percentage 3 --run-on-podman --keep-going`, ~1.5-2h) to confirm the fixes and find the next layer; the kpg30-kpg33 module sets were already
+  re-swept clean. Also still untouched by any sweep: the remaining implemented plugins not in the kpg30-kpg34 lists.
 - **`replace:` leftovers** (kpg31 sweep): PCRE accepts `(?<name>...)`/`(?'name'...)` in `regexp:` where Python `re` rejects it, and a bad `regexp:` reports
   `Invalid regular expression: ...` instead of real's uncaught-`re.error` module crash; non-UTF-8 file bytes under `encoding:` fail the regex (`UTF-8 error`) where
   real decodes with `surrogateescape` and proceeds (also for codecs Python has but this host's iconv lacks, e.g. `utf-7`, `mac_roman`).
