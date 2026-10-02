@@ -126,6 +126,19 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of state must be one of: absent, disabled, enabled, present, got: #{state}")
       end
 
+      # Real firewalld.py's first module-level act is
+      # FirewallTransaction.sanity_check() - the firewall Python
+      # library's import gate (module_utils/firewalld.py: the import
+      # block sets import_failure=True, sanity_check turns that into
+      # missing_required_lib('firewall') + the version suffix). It
+      # runs BEFORE the offline/permanent validation and the zone
+      # resolution, so a target without the python3-firewall bindings
+      # fails with that exact message regardless of anything else.
+      if gate = Krikri.missing_python_library("firewall", "firewall.config")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "#{gate[:msg]}. Version 0.2.11 or newer required (0.3.9 or newer for offline operations)")
+      end
+
       zone = resolve_zone
       unless zone
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: zone (and no default zone could be determined)")

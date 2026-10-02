@@ -93,7 +93,29 @@ module Krikri
       full_command = command.map { |part| shlex_quote(part) }.join(' ')
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      query_result = remote_exec("cd #{shell_quote(chdir)} && #{full_command} -q")
+      # An explicit `make:` param is used verbatim - real make.py never
+      # existence-checks it, so the failure surfaces at run_command's
+      # spawn of the -q check: basic.py's OSError handler does
+      # fail_json(rc=errno, stdout='', stderr='', msg="Error executing
+      # command.", cmd=..., exception=ex) - the [ERROR] header composes
+      # "<msg>: <exception>" while the dumped result keeps the bare msg
+      # (live-verified against real ansible-playbook 2.19.11:
+      # `make: /tmp/kpg-work/out2.txt` with no such file).
+      if @params["make"]?.presence && !File.exists?(make_bin)
+        return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
+          rc: 2, cmd: "#{full_command} -q", stdout: "", stderr: "",
+          stdout_lines: [] of String, stderr_lines: [] of String,
+          exception: "[Errno 2] No such file or directory: b'#{make_bin}'")
+      end
+
+      # Real run_command(cwd=chdir) drops an invalid cwd entirely
+      # (ignore_invalid_cwd=True default: only a real directory is
+      # passed to the subprocess) - the command then runs in the
+      # current directory instead of failing like this plugin's old
+      # `cd <chdir> && ...` shell wrapper did.
+      chdir_part = Dir.exists?(chdir) ? "cd #{shell_quote(chdir)} && " : ""
+
+      query_result = remote_exec("#{chdir_part}#{full_command} -q")
       needs_rebuild = query_result[:exit_code] != 0
 
       # Real reports NO msg anywhere - just stdout/stderr (sanitized
@@ -104,7 +126,7 @@ module Krikri
 
       return PluginResult.new(changed: false, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command) unless needs_rebuild
 
-      result = remote_exec("cd #{shell_quote(chdir)} && #{full_command}")
+      result = remote_exec("#{chdir_part}#{full_command}")
       unless result[:exit_code] == 0
         # real run_command(check_rc=True): fail_json(rc, stdout, stderr,
         # msg=the sanitized stderr itself - no "make failed:" prefix).

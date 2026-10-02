@@ -70,8 +70,15 @@ module Krikri
     end
 
     private def not_found_result(jid : String) : PluginResult
+      # Real's result also carries the results_file path (the job file
+      # that doesn't exist) plus empty stdout/stderr pairs with their
+      # _lines companions - live-captured from real ansible-playbook
+      # 2.19.11 against a never-started jid.
       PluginResult.new(changed: false, failed: true, msg: "could not find job",
-        ansible_job_id: jid, started: true, finished: true)
+        ansible_job_id: jid, started: true, finished: true,
+        results_file: AsyncJobs.status_path(jid),
+        stdout: "", stdout_lines: [] of String,
+        stderr: "", stderr_lines: [] of String)
     end
 
     private def cleanup_result(jid : String) : PluginResult

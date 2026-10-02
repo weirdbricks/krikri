@@ -15,8 +15,8 @@ module Krikri
   # `resizefs:`/`uuid:` are not implemented (real module's own resize/
   # UUID-reset paths per fstype) - same class of documented, narrow
   # scope cut as this repo's other RHEL/FreeBSD-only module gaps.
-  # `ufs` (FreeBSD-only) is likewise not in the accepted choices and
-  # not in FSTYPE_COMMANDS for the same reason.
+  # `ufs` IS in the accepted choices (real filesystem.py's FILESYSTEMS
+  # has UFS with MKFS=newfs) but creating one only works on FreeBSD.
   class FilesystemPlugin < BasePlugin
     PARAM_ALIASES = {
       "device" => "dev",
@@ -42,6 +42,7 @@ module Krikri
       "vfat"     => {["mkfs.vfat"], [] of String, "vfat"},
       "swap"     => {["mkswap"], ["-f"], "swap"},
       "lvm"      => {["pvcreate"], ["-f"], "LVM2_member"},
+      "ufs"      => {["newfs"], [] of String, "ufs"},
     }
 
     def initialize(config : JSON::Any)

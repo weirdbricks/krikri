@@ -264,6 +264,44 @@ module Krikri
       %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
     end
 
+    # Directories searched beyond $PATH by real Ansible's get_bin_path
+    # (module_utils/common/process.py): PATH first, then /sbin,
+    # /usr/sbin, /usr/local/sbin.
+    private BIN_EXTRA_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
+
+    @bin_searched_paths = ""
+
+    # Shell-probed get_bin_path(required=True) equivalent, working for
+    # both local and SSH connections (the plugin process's own PATH can
+    # differ from the remote shell's). Records the directories actually
+    # searched in @bin_searched_paths for the failure message, and
+    # returns the resolved absolute path (or nil when nothing
+    # executable is found anywhere).
+    protected def find_required_binary(name : String) : String?
+      dirs = %($(printf '%s' "$PATH" | tr ':' ' ') #{BIN_EXTRA_DIRS.join(' ')})
+      script = <<-SH
+      searched=""
+      found=""
+      for d in #{dirs}; do
+        case ":$searched:" in *":$d:"*) continue ;; esac
+        searched="${searched:+$searched:}$d"
+        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+      done
+      printf 'searched=%s\n' "$searched"
+      printf 'found=%s\n' "$found"
+      SH
+
+      searched = ""
+      found = ""
+      remote_exec(script)[:stdout].to_s.each_line do |line|
+        key, _, value = line.strip.partition("=")
+        searched = value if key == "searched"
+        found = value if key == "found"
+      end
+      @bin_searched_paths = searched
+      found.empty? ? nil : found
+    end
+
     # Python str(timedelta) for a sub-day span: H:MM:SS.ffffff
     protected def python_delta(span : Time::Span) : String
       total_us = span.total_microseconds.to_i64

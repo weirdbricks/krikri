@@ -59,12 +59,23 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       number, part_start, part_end, label, fs_type, flags = resolve_partition_params
 
-      # state: info - real runs print and returns the parsed output.
-      if state == "info"
-        return info_result(device, unit)
+      # Real parted.py resolves the parted binary at main() start
+      # (get_bin_path("parted", True)) - AFTER the AnsibleModule init
+      # validations above, but BEFORE the state:info branch, the device
+      # stat, and everything else. A host without parted fails the task
+      # with that exact message no matter what state was requested.
+      parted_path = find_required_binary("parted")
+      unless parted_path
+        return PluginResult.new(changed: false, failed: true,
+          msg: missing_executable_message("parted"))
       end
 
-      current = stat_and_read(device, unit)
+      # state: info - real runs print and returns the parsed output.
+      if state == "info"
+        return info_result(device, unit, parted_path)
+      end
+
+      current = stat_and_read(device, unit, parted_path)
       return current if current.is_a?(PluginResult)
 
       if state == "absent"
@@ -100,28 +111,21 @@ module Krikri
       nil
     end
 
-    private def info_result(device : String, unit : String) : PluginResult
-      result = read_partitions(device, unit)
-      if result.is_a?(String)
-        return PluginResult.new(changed: false, failed: true, msg: result)
-      end
+    private def info_result(device : String, unit : String, parted_path : String) : PluginResult
+      result = read_partitions(device, unit, parted_path)
+      return result if result.is_a?(PluginResult)
       PluginResult.new(changed: false, failed: false,
         msg: "Current partitions on device:\n#{device}",
         other: JSON.parse(%({"partitions": #{result.to_json}})))
     end
 
-    # Real parted.py runs `parted -s <device> print` early to check
-    # the device exists; a missing/unreadable device fails with
-    # "Error: Could not stat device <dev> - No such file or directory."
-    private def stat_and_read(device : String, unit : String) : Array(Hash(String, String)) | PluginResult
-      device_exists = remote_exec("test -e #{Shell.single_quote(device)}")
-      unless device_exists[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Error: Could not stat device #{device} - No such file or directory.")
-      end
-
-      current = read_partitions(device, unit)
-      return PluginResult.new(changed: false, failed: true, msg: current) if current.is_a?(String)
+    # Real parted.py has NO separate device-existence check: get_device_info
+    # runs the parted script (`parted -s -m <device> -- unit <unit> print`)
+    # and, on a non-zero exit that is not an "unrecognised disk label"
+    # complaint, fails with that exact wrapper message plus rc/out/err.
+    private def stat_and_read(device : String, unit : String, parted_path : String) : Array(Hash(String, String)) | PluginResult
+      current = read_partitions(device, unit, parted_path)
+      return current if current.is_a?(PluginResult)
       current
     end
 
@@ -129,11 +133,21 @@ module Krikri
     # -m output: line 1 is the disk header (dev:size:label:...),
     # subsequent lines are partitions numbered by field 0
     # (number:start:end:size:fs:flags...). Returns an array of
-    # {"number", "start", "end", "size", "fs", "flags"} hashes, or an
-    # error message string on failure.
-    private def read_partitions(device : String, unit : String) : Array(Hash(String, String)) | String
-      result = remote_exec("parted -s #{Shell.single_quote(device)} -m unit #{Shell.single_quote(unit)} print 2>/dev/null")
-      return "Error: parted failed on #{device}: #{result[:stderr].strip}" unless result[:exit_code] == 0
+    # {"number", "start", "end", "size", "fs", "flags"} hashes, or a
+    # failed PluginResult carrying real's get_device_info failure shape
+    # (wrapper msg plus rc/out/err) when the script itself fails.
+    private def read_partitions(device : String, unit : String, parted_path : String) : Array(Hash(String, String)) | PluginResult
+      # Real get_device_info passes an ARGV list to run_command and its
+      # failure message ' '.joins that list verbatim - no shell quoting
+      # in the echoed script (live-verified). The shell invocation still
+      # quotes; the message shows the raw join.
+      argv = [parted_path, "-s", "-m", device, "--", "unit", unit, "print"]
+      result = remote_exec(argv.map { |arg| Shell.single_quote(arg) }.join(' '))
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error while getting device information with parted script: '#{argv.join(' ')}'",
+          rc: result[:exit_code], out: result[:stdout].to_s, err: result[:stderr].to_s)
+      end
 
       partitions = [] of Hash(String, String)
       result[:stdout].each_line do |line|

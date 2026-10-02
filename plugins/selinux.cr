@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 require "../src/krikri/plugin_helpers/selinux_config"
 
 module Krikri
@@ -37,6 +38,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: err)
       end
       state = state.not_nil!
+
+      # Real selinux.py's first act in main() is the libselinux-python
+      # import gate (HAS_SELINUX -> fail_json(msg=missing_required_lib(
+      # 'libselinux-python'), exception=SELINUX_IMP_ERR)) - BEFORE the
+      # config-file check, so a target whose python cannot import the
+      # selinux bindings fails with that message no matter what
+      # configfile: says. This plugin needs no python bindings, so it
+      # used to carry on to its own "Unable to find file" failure
+      # instead.
+      if gate = Krikri.missing_python_library("libselinux-python", "selinux")
+        return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
+      end
 
       # Real ansible.posix.selinux ALWAYS fails when the config file is
       # missing - unconditionally, regardless of distro - confirmed

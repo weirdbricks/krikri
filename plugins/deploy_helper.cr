@@ -48,10 +48,18 @@ module Krikri
 
     private def resolve_deploy_paths(path : String) : Tuple(String, String, String)
       {
-        @params["releases_path"]? || "#{path}/releases",
-        @params["shared_path"]? || "#{path}/shared",
-        @params["current_path"]? || "#{path}/current",
+        deploy_path_join(path, @params["releases_path"]? || "releases"),
+        deploy_path_join(path, @params["shared_path"]? || "shared"),
+        deploy_path_join(path, @params["current_path"]? || "current"),
       }
+    end
+
+    # os.path.join(path, sub): a relative sub hangs off the project
+    # path (real gather_facts() joins every one of the three paths onto
+    # it), an absolute one is used verbatim.
+    private def deploy_path_join(path : String, sub : String) : String
+      return sub if sub.starts_with?('/')
+      "#{path.rstrip('/')}/#{sub}"
     end
 
     def execute : PluginResult
@@ -224,21 +232,51 @@ module Krikri
                  shared_path
                end
 
-      exists = remote_exec("test -d #{Shell.single_quote(target)}")
-      unless exists[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "release path #{target} does not exist")
-      end
+      # Real create_link(): a `current` that is a symlink is compared by
+      # normalized realpath against the source's; anything else is
+      # created fresh with os.symlink. Real never pre-checks that the
+      # release exists - a missing release dir only surfaces when the
+      # symlink itself can't be created, i.e. when the link's parent
+      # directory is missing too, as the raw OSError text of that
+      # os.symlink (live-captured: "[Errno 2] No such file or directory:
+      # '<new_release_path>' -> '<current_path>'"). This plugin used to
+      # pre-check `test -d` on the release and fail its own "release
+      # path ... does not exist" instead.
+      is_link = remote_exec("test -L #{Shell.single_quote(current_path)}")[:exit_code] == 0
+      if is_link
+        norm_link = remote_exec("readlink -f #{Shell.single_quote(current_path)} 2>/dev/null")[:stdout].strip
+        norm_source = remote_exec("readlink -f #{Shell.single_quote(target)} 2>/dev/null")[:stdout].strip
+        if !norm_link.empty? && norm_link == norm_source
+          return PluginResult.new(changed: false, failed: false,
+            msg: "current already points at #{target}")
+        end
 
-      existing = current_target(current_path)
-      return PluginResult.new(changed: false, failed: true, msg: existing) if existing.is_a?(String)
-      if existing == target
-        return PluginResult.new(changed: false, failed: false,
-          msg: "current already points at #{target}")
-      end
+        return PluginResult.new(changed: true, failed: false,
+          msg: "current would be pointed at #{target}") if check_mode
 
-      return PluginResult.new(changed: true, failed: false,
-        msg: "current would be pointed at #{target}") if check_mode
+        # Real: a lexists check on the source before the atomic
+        # tmp-symlink + rename (the previous krikri flow never failed
+        # for a dangling source).
+        unless remote_exec("test -e #{Shell.single_quote(target)} || test -L #{Shell.single_quote(target)}")[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "the symlink target #{target} doesn't exists")
+        end
+      else
+        return PluginResult.new(changed: true, failed: false,
+          msg: "current would be pointed at #{target}") if check_mode
+
+        unless remote_exec("test -d #{Shell.single_quote(File.dirname(current_path))}")[:exit_code] == 0
+          # Real's module never fail_json's here - the os.symlink raises
+          # straight through to the module-crash wrapper: the wire msg
+          # is the full "Task failed: Module failed: <OSError>" chain
+          # (live-verified) while the [ERROR] block shows the bare
+          # OSError - the replace.cr module-crash shape.
+          detail = "[Errno 2] No such file or directory: '#{target}' -> '#{current_path}'"
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Task failed: Module failed: #{detail}",
+            _ansible_error_detail: detail)
+        end
+      end
 
       result = remote_exec("ln -sfn #{Shell.single_quote(target)} #{Shell.single_quote(current_path)}")
       unless result[:exit_code] == 0
