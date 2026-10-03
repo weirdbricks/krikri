@@ -44,7 +44,8 @@ a failure run.
 
 ## Roles and the module -> role map
 
-All run as root on a fresh Ubuntu 22.04 Atlantic.net VM.
+All run as root on a fresh Atlantic.net VM - Ubuntu 22.04 for the first
+five roles, Rocky Linux 9 for `kop_rocky` (see its row).
 
 | Role | Modules probed | Notes |
 |---|---|---|
@@ -53,6 +54,7 @@ All run as root on a fresh Ubuntu 22.04 Atlantic.net VM.
 | `kop_firewall` | `community.general.ufw` | installs ufw via apt; forces `state: disabled` first and never `state: enabled`, so SSH can't be locked out; only adds/deletes an allow rule for 8080/tcp |
 | `kop_storage` | `community.general.lvg`, `community.general.lvol`, `community.general.parted`, `community.general.zfs`, `ansible.builtin.mount` (tmpfs mount/unmount only) | loop devices from sparse files under `/var/tmp` created and detached by the role; zfs probes a *dataset* on a `zpool create`d pool (`community.general.zfs` does not create pools) |
 | `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.general.java_cert`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode, delegated to the host itself (`delegate_to: inventory_hostname`) so rsync reads and writes on the host and never needs the controller; subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) and default-jdk-headless are installed via apt first |
+| `kop_rocky` | `ansible.posix.selinux`, `ansible.posix.seboolean`, `community.general.sefcontext`, `community.general.seport`, `ansible.posix.firewalld` | Rocky Linux 9 only (needs a real SELinux/firewalld host; see `queue_rocky.txt`). SELinux is never set to `disabled` and never switched to `enforcing` from permissive - the `state: enforcing` probe and the cleanup restore only run when the host booted enforcing (`getenforce` guard via helper + `set_fact` + `when:`). firewalld is started first, the ssh service and the default zone are never touched, and every added rule (http service, 8789/tcp port, rich rule) is removed again; sefcontext/seport use throwaway paths (`/srv/kop_web(/.*)?`) and port 8789/tcp on `http_port_t` |
 | *(not probed)* | `community.general.snap`, `community.general.homebrew` | **deliberately skipped**: installing snapd via apt is slow and flaky in a fresh-VM round, and homebrew is macOS-only. Not worth the round time for a key-order probe. |
 
 Note that several of these modules live in collections
@@ -88,6 +90,24 @@ bin/krikri-role-tester run testing/keyorder_probes/queue.txt \
 The `local:` queue form and the `keyorder` subcommand are being added to
 `../krikri-role-tester`; see its README there.
 
+### Rocky Linux 9 round (`kop_rocky`)
+
+`kop_rocky` needs an SELinux/firewalld-capable RHEL-family host, so it gets
+its own queue file, `queue_rocky.txt`, with an explicit backend/OS suffix on
+the line (the rest of this directory targets Ubuntu):
+
+```
+local:$KRIKRI_ROOT/testing/keyorder_probes/kop_rocky atlantic rocky
+```
+
+Run it the same way, with `--os rocky`:
+
+```
+bin/krikri-role-tester run testing/keyorder_probes/queue_rocky.txt \
+  --backend atlantic --os rocky --atlantic-hosts N \
+  --results-dir ~/scratch/krt-results --round-start <N>
+```
+
 ## Local validation status
 
 Validated locally on the dev laptop (no root, no real kernel):
@@ -100,6 +120,18 @@ Validated locally on the dev laptop (no root, no real kernel):
   `.ansible-lint` applies; the deliberate per-probe `ignore_errors` is
   skipped there) - pass, only the intentional `ufw_fail` bogus-rule probe
   warns.
+
+`kop_rocky` (Rocky-only) was validated with the same three static checks
+(`--syntax-check`/`--list-tasks` over `syntax_check.yml` on both engines,
+with matching task lists, and `ansible-lint` - pass). It has **no local
+smoke coverage at all**: every module it probes needs a real kernel with
+SELinux and/or firewalld running (rootless containers can't do either), so
+all of its probes are untested-locally and the Atlantic.net Rocky round is
+their first real run:
+
+- `selinux`/`seboolean`/`sefcontext`/`seport` - libselinux/libsemanage
+  userspace plus a real SELinux-enabled kernel.
+- `firewalld` - the firewalld daemon and its D-Bus API (`python3-firewall`).
 
 Smoke-tested in a rootless podman `ubuntu:22.04` container as root with
 `ansible_connection=local` (`smoke_wrapper.yml` + `smoke_inside.sh`, run
@@ -130,7 +162,7 @@ what the Atlantic.net round provides):
 ## Files
 
 - `kop_*/tasks/main.yml` - the probe roles.
-- `roles/` - symlinks to the five roles (both ansible-playbook and
+- `roles/` - symlinks to the six roles (both ansible-playbook and
   krikri-playbook resolve roles next to the playbook, so the wrapper
   playbooks need no `ANSIBLE_ROLES_PATH`).
 - `syntax_check.yml` - wrapper for `--syntax-check`/`--list-tasks` over all
@@ -139,3 +171,5 @@ what the Atlantic.net round provides):
   the container-safe roles (containers named `km-probes-*`, removed after
   the run).
 - `queue.txt` - the five `local:` queue lines for `krikri-role-tester run`.
+- `queue_rocky.txt` - the `local:` queue line for the Rocky Linux 9
+  `kop_rocky` round (backend/OS suffix: `atlantic rocky`).

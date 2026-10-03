@@ -1,0 +1,524 @@
+---
+# Key-order probes for the SELinux/firewalld RHEL-family modules:
+# ansible.posix.selinux, ansible.posix.seboolean,
+# community.general.sefcontext, community.general.seport and
+# ansible.posix.firewalld. Needs a real Rocky Linux 9 VM with working
+# SELinux and firewalld; cannot be smoke-tested in a rootless container.
+#
+# Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+#
+# Safety: SELinux is never set to disabled and never switched to enforcing
+# from permissive (the enforcing probe and the restore only run when the
+# host booted enforcing); firewalld is never disabled, the ssh service and
+# the default zone are never touched, and every added rule is removed again.
+
+- name: Install SELinux/firewalld probe prerequisites
+  ansible.builtin.dnf:
+    name:
+      - python3-libselinux
+      - python3-libsemanage
+      - policycoreutils-python-utils
+      - firewalld
+      - python3-firewall
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report selinux_helper_packages
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_helper_packages|{{ r | to_json }}"
+
+- name: Read current SELinux mode (getenforce)
+  ansible.builtin.command: getenforce
+  register: kop_getenforce
+  changed_when: false
+  ignore_errors: true
+
+- name: Report selinux_helper_getenforce
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_helper_getenforce|{{ kop_getenforce | to_json }}"
+
+- name: Record SELinux mode facts for the probe guards
+  ansible.builtin.set_fact:
+    kop_selinux_mode: "{{ (kop_getenforce.stdout | default('') | trim) }}"
+    kop_selinux_enforcing: "{{ (kop_getenforce.stdout | default('') | trim) == 'Enforcing' }}"
+    kop_selinux_ready: "{{ (kop_getenforce.stdout | default('') | trim) == 'Enforcing' or (kop_getenforce.stdout | default('') | trim) == 'Permissive' }}"
+
+- name: Set SELinux to enforcing (ok, only when booted enforcing)
+  ansible.posix.selinux:
+    state: enforcing
+    policy: targeted
+  register: r
+  when: kop_selinux_enforcing
+  ignore_errors: true
+
+- name: Report selinux_enforcing
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_enforcing|{{ r | to_json }}"
+  when: kop_selinux_enforcing
+
+- name: Set SELinux to permissive (changed when booted enforcing)
+  ansible.posix.selinux:
+    state: permissive
+    policy: targeted
+  register: r
+  when: kop_selinux_ready
+  ignore_errors: true
+
+- name: Report selinux_permissive
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_permissive|{{ r | to_json }}"
+  when: kop_selinux_ready
+
+- name: Set SELinux to permissive again (ok)
+  ansible.posix.selinux:
+    state: permissive
+    policy: targeted
+  register: r
+  when: kop_selinux_ready
+  ignore_errors: true
+
+- name: Report selinux_permissive_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_permissive_again|{{ r | to_json }}"
+  when: kop_selinux_ready
+
+- name: Invoke selinux with an invalid state value (failure)
+  ansible.posix.selinux:
+    state: kop_bogus_state
+    policy: targeted
+  register: r
+  when: kop_selinux_ready
+  ignore_errors: true
+
+- name: Report selinux_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_fail|{{ r | to_json }}"
+  when: kop_selinux_ready
+
+- name: Restore SELinux to enforcing (cleanup, only when booted enforcing)
+  ansible.posix.selinux:
+    state: enforcing
+    policy: targeted
+  register: r
+  when: kop_selinux_enforcing
+  ignore_errors: true
+
+- name: Report selinux_helper_restore_enforcing
+  ansible.builtin.debug:
+    msg: "KEYORDER|selinux_helper_restore_enforcing|{{ r | to_json }}"
+  when: kop_selinux_enforcing
+
+- name: Set seboolean httpd_can_network_connect on persistently (changed)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: true
+    persistent: true
+  register: r
+  ignore_errors: true
+
+- name: Report seboolean_on
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_on|{{ r | to_json }}"
+
+- name: Set seboolean httpd_can_network_connect on again (ok)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: true
+    persistent: true
+  register: r
+  ignore_errors: true
+
+- name: Report seboolean_on_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_on_again|{{ r | to_json }}"
+
+- name: Set seboolean httpd_can_network_connect off in check mode (changed)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: false
+    persistent: true
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report seboolean_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_check|{{ r | to_json }}"
+
+- name: Invoke seboolean with an unknown boolean (failure)
+  ansible.posix.seboolean:
+    name: kop_nosuch_boolean
+    state: true
+    persistent: true
+  register: r
+  ignore_errors: true
+
+- name: Report seboolean_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_fail|{{ r | to_json }}"
+
+- name: Set seboolean httpd_can_network_connect off persistently (changed)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: false
+    persistent: true
+  register: r
+  ignore_errors: true
+
+- name: Report seboolean_off
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_off|{{ r | to_json }}"
+
+- name: Set seboolean httpd_can_network_connect off again (ok)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: false
+    persistent: true
+  register: r
+  ignore_errors: true
+
+- name: Report seboolean_off_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|seboolean_off_again|{{ r | to_json }}"
+
+- name: Add file-context rule for /srv/kop_web (changed)
+  community.general.sefcontext:
+    target: "/srv/kop_web(/.*)?"
+    setype: httpd_sys_content_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report sefcontext_add
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_add|{{ r | to_json }}"
+
+- name: Add same file-context rule again (ok)
+  community.general.sefcontext:
+    target: "/srv/kop_web(/.*)?"
+    setype: httpd_sys_content_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report sefcontext_add_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_add_again|{{ r | to_json }}"
+
+- name: Add file-context rule for /srv/kop_web2 in check mode (changed)
+  community.general.sefcontext:
+    target: "/srv/kop_web2(/.*)?"
+    setype: httpd_sys_content_t
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report sefcontext_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_check|{{ r | to_json }}"
+
+- name: Add file-context rule with an unknown type (failure)
+  community.general.sefcontext:
+    target: "/srv/kop_webfail(/.*)?"
+    setype: kop_nosuchtype_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report sefcontext_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_fail|{{ r | to_json }}"
+
+- name: Remove file-context rule for /srv/kop_web (changed)
+  community.general.sefcontext:
+    target: "/srv/kop_web(/.*)?"
+    setype: httpd_sys_content_t
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report sefcontext_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_remove|{{ r | to_json }}"
+
+- name: Remove same file-context rule again (ok)
+  community.general.sefcontext:
+    target: "/srv/kop_web(/.*)?"
+    setype: httpd_sys_content_t
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report sefcontext_remove_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|sefcontext_remove_again|{{ r | to_json }}"
+
+- name: Assign port 8789/tcp to http_port_t (changed)
+  community.general.seport:
+    ports: 8789
+    proto: tcp
+    setype: http_port_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report seport_add
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_add|{{ r | to_json }}"
+
+- name: Assign port 8789/tcp to http_port_t again (ok)
+  community.general.seport:
+    ports: 8789
+    proto: tcp
+    setype: http_port_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report seport_add_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_add_again|{{ r | to_json }}"
+
+- name: Assign port 8790/tcp to http_port_t in check mode (changed)
+  community.general.seport:
+    ports: 8790
+    proto: tcp
+    setype: http_port_t
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report seport_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_check|{{ r | to_json }}"
+
+- name: Assign port to an unknown SELinux type (failure)
+  community.general.seport:
+    ports: 8791
+    proto: tcp
+    setype: kop_nosuchport_t
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report seport_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_fail|{{ r | to_json }}"
+
+- name: Unassign port 8789/tcp (changed)
+  community.general.seport:
+    ports: 8789
+    proto: tcp
+    setype: http_port_t
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report seport_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_remove|{{ r | to_json }}"
+
+- name: Unassign port 8789/tcp again (ok)
+  community.general.seport:
+    ports: 8789
+    proto: tcp
+    setype: http_port_t
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report seport_remove_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|seport_remove_again|{{ r | to_json }}"
+
+- name: Ensure firewalld is started and enabled (helper)
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_helper_service
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_helper_service|{{ r | to_json }}"
+
+- name: Enable http service in public zone permanently and immediately (changed)
+  ansible.posix.firewalld:
+    service: http
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_service_enable
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_service_enable|{{ r | to_json }}"
+
+- name: Enable http service in public zone again (ok)
+  ansible.posix.firewalld:
+    service: http
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_service_enable_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_service_enable_again|{{ r | to_json }}"
+
+- name: Enable https service in check mode (changed)
+  ansible.posix.firewalld:
+    service: https
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report firewalld_service_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_service_check|{{ r | to_json }}"
+
+- name: Enable port 8789/tcp in public zone permanently and immediately (changed)
+  ansible.posix.firewalld:
+    port: 8789/tcp
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_port_enable
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_port_enable|{{ r | to_json }}"
+
+- name: Enable port 8789/tcp in public zone again (ok)
+  ansible.posix.firewalld:
+    port: 8789/tcp
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_port_enable_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_port_enable_again|{{ r | to_json }}"
+
+- name: Disable port 8789/tcp in public zone (changed)
+  ansible.posix.firewalld:
+    port: 8789/tcp
+    zone: public
+    permanent: true
+    immediate: true
+    state: disabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_port_disable
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_port_disable|{{ r | to_json }}"
+
+- name: Disable port 8789/tcp in public zone again (ok)
+  ansible.posix.firewalld:
+    port: 8789/tcp
+    zone: public
+    permanent: true
+    immediate: true
+    state: disabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_port_disable_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_port_disable_again|{{ r | to_json }}"
+
+- name: Enable rich rule for 192.0.2.10 permanently and immediately (changed)
+  ansible.posix.firewalld:
+    rich_rule: 'rule family=ipv4 source address=192.0.2.10 accept'
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_rich_rule_enable
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_rich_rule_enable|{{ r | to_json }}"
+
+- name: Enable rich rule again (ok)
+  ansible.posix.firewalld:
+    rich_rule: 'rule family=ipv4 source address=192.0.2.10 accept'
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_rich_rule_enable_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_rich_rule_enable_again|{{ r | to_json }}"
+
+- name: Disable rich rule for 192.0.2.10 (changed)
+  ansible.posix.firewalld:
+    rich_rule: 'rule family=ipv4 source address=192.0.2.10 accept'
+    permanent: true
+    immediate: true
+    state: disabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_rich_rule_disable
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_rich_rule_disable|{{ r | to_json }}"
+
+- name: Invoke firewalld with an unknown service (failure)
+  ansible.posix.firewalld:
+    service: kop_nosuch_svc
+    permanent: true
+    immediate: true
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report firewalld_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|firewalld_fail|{{ r | to_json }}"
+
+- name: Cleanup guard - ensure http service is disabled again
+  ansible.posix.firewalld:
+    service: http
+    permanent: true
+    immediate: true
+    state: disabled
+  ignore_errors: true
+
+- name: Cleanup guard - ensure rich rule is absent
+  ansible.posix.firewalld:
+    rich_rule: 'rule family=ipv4 source address=192.0.2.10 accept'
+    permanent: true
+    immediate: true
+    state: absent
+  ignore_errors: true
+
+- name: Cleanup guard - ensure file-context rules are absent
+  community.general.sefcontext:
+    target: "{{ item }}"
+    setype: httpd_sys_content_t
+    state: absent
+  loop:
+    - "/srv/kop_web(/.*)?"
+    - "/srv/kop_webfail(/.*)?"
+  ignore_errors: true
