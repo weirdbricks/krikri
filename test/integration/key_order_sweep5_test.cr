@@ -68,7 +68,7 @@ describe "filesystem plugin result key order" do
   it "serializes a fresh create as just changed (real: changed)" do
     dev = unique_tmp("fs-dev")
     File.write(dev, "")
-    File.open(dev, "w") { |f| f.truncate(20 * 1024 * 1024) }
+    File.open(dev, "w") { |file| file.truncate(20 * 1024 * 1024) }
 
     result = PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
 
@@ -80,7 +80,7 @@ describe "filesystem plugin result key order" do
   it "serializes an already-correct fs as just changed (real: changed)" do
     dev = unique_tmp("fs-dev")
     File.write(dev, "")
-    File.open(dev, "w") { |f| f.truncate(20 * 1024 * 1024) }
+    File.open(dev, "w") { |file| file.truncate(20 * 1024 * 1024) }
     PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
 
     result = PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
