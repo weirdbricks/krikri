@@ -66,7 +66,7 @@ describe "postgresql_privs against a real PostgreSQL server at 127.0.0.1:15432" 
       "objs"  => "public",
       "role"  => "peering-manager",
     })
-    grant["failed"]?.must_be_nil
+    falsey?(grant["failed"]?.try(&.as_bool)).must_equal(true) # real registers failed: false
     grant["changed"].as_bool.must_equal(true)
 
     # Idempotent repeat.
@@ -77,7 +77,7 @@ describe "postgresql_privs against a real PostgreSQL server at 127.0.0.1:15432" 
       "objs"  => "public",
       "role"  => "peering-manager",
     })
-    repeat["failed"]?.must_be_nil
+    falsey?(repeat["failed"]?.try(&.as_bool)).must_equal(true)
     repeat["changed"].as_bool.must_equal(false)
 
     # nspacl is array text, so the quoted role name is itself escaped with
@@ -112,7 +112,7 @@ describe "postgresql_privs against a real PostgreSQL server at 127.0.0.1:15432" 
       "objs"  => "public",
       "role"  => %q(ro"le-x),
     })
-    grant["failed"]?.must_be_nil
+    falsey?(grant["failed"]?.try(&.as_bool)).must_equal(true) # real registers failed: false
     grant["changed"].as_bool.must_equal(true)
 
     # The stored ACL entry proves the GRANT ran against the one intended
