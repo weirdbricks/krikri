@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1442`.**
+**Currently at `0.9.1443`.**
 
 ## Open gaps
 
@@ -40,7 +40,7 @@ and fixed and when.
   (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
   their plugin files). What is still unpinned, by how it can be verified:
   - *Doable on the dev box with rootless podman (a throwaway container runs the service or distro; both
-    engines run against it):* `mysql_*`, `postgresql_*` (in progress), `docker_*`/`podman_image`
+    engines run against it):* `docker_*`/`podman_image`
     (local runtime), the rpm family inside a Fedora container (`dnf`/`dnf5`/`yum`/`*_versionlock`,
     `gem`/`rpm_key` success paths - no `gem`/`rpm` on the dev box).
   - *Needs a real host with root and a real kernel - verify on Atlantic.net via `krikri-role-tester`
@@ -54,13 +54,19 @@ and fixed and when.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
     `nsupdate`, `rabbitmq_*`.
-- **FAILED-result key order is only fixed for plugin-path failures** (`command`/`shell`, `slurp`,
-  `lineinfile`, `blockinfile`, `replace`, `wait_for` and any plain `fail_json(msg=...)`: real registers
-  `failed, msg, changed, exception`). Argspec-validation and action-level failures (`copy`, `file`,
-  `stat`, `assert`, `fail`, `template`, `unarchive`) still register `changed, failed, msg` with no
-  `exception`, and real's order differs per module (`assert`: `failed, evaluated_to, assertion, msg,
-  changed, exception`; `template`/`copy`: `failed, msg, exception, changed`; `unarchive`: `failed,
-  exception, msg, changed`).
+- **FAILED-result key order is fixed for plugin-path and argspec-validation failures, not for action-level
+  ones.** Fixed (real registers `failed, msg, changed, exception`): `command`/`shell`, `slurp`, `lineinfile`,
+  `blockinfile`, `replace`, `wait_for`, `file`/`stat` bad-parameter errors and any plain
+  `fail_json(msg=...)`. Still `changed, failed, msg` (no `exception`) because they fail through action
+  plugins, with a different order per module in real: `fail`: `failed, msg, changed, exception`; `assert`:
+  `failed, evaluated_to, assertion, msg, changed, exception`; `copy`/`template`: `failed, msg, exception,
+  changed`; `unarchive`: `failed, exception, msg, changed`.
+- **`postgresql_privs`, `postgresql_query`, and `mysql_db`/`mysql_info`/`mysql_query`/`mysql_user` results
+  have a different KEY SET than real** (not just a different order): e.g. real's `mysql_db` adds `db`,
+  `db_list`, `executed_commands`; `mysql_info` ~11 server keys; `mysql_query` `execution_time_ms`;
+  `mysql_user` `user`/`password_changed`/`attributes`; `postgresql_privs` `queries`; `postgresql_query`
+  `execution_time_ms` (verified live on mysql:8.4 / postgres:17 containers). `postgresql_db`/`postgresql_user`
+  and `mysql_variables` already match.
 - **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;
   `archive` lacks `expanded_exclude_paths`; `git_config`'s write path lacks real's `diff`;
   `get_certificate` returns the full `X509CertInfo` key set where real returns ten (extras trail);

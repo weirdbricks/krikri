@@ -194,8 +194,10 @@ describe "deb822_repository param coverage" do
       "_ansible_check_mode" => "true",
     })
 
-    msg = result["msg"].as_s
-    msg.must_include("Param-Audit-Slug.sources")
-    msg.wont_include("Param Audit Slug")
+    # Real's result carries no msg; the slug shows up in the echoed dest
+    # path (live-verified 2.19.11: repo, changed, dest, key_filename, failed).
+    dest = result["dest"].as_s
+    dest.must_include("Param-Audit-Slug.sources")
+    dest.wont_include("Param Audit Slug")
   end
 end
