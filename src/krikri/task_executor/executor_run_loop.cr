@@ -1965,8 +1965,49 @@ module Krikri
         become_user
       )
 
+      result = shape_raw_result(task, result)
       result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+
+    # raw: is aliased to the shell plugin binary, whose result carries
+    # command-style keys (cmd/start/end/delta, an empty msg) real's raw
+    # action never returns. Real's raw result is
+    # {rc, stdout, stdout_lines, stderr, stderr_lines, changed, failed}
+    # plus msg/exception on a non-zero rc (live-verified 2.19.11).
+    # Internal `_ansible_*` keys the failure renderer needs are kept,
+    # after the real keys.
+    private def shape_raw_result(task : Task, result : JSON::Any) : JSON::Any
+      return result unless RAW_MODULES.includes?(task.action_name || task.module_name)
+      hash = result.as_h? || return result
+      failed = hash["failed"]?.try(&.as_bool?) || false
+      # raw: does not support check mode: real's executor skips it with the
+      # bare {skipped, failed, changed} shape.
+      if hash["skipped"]?.try(&.as_bool?)
+        return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      end
+      shaped = {} of String => JSON::Any
+      %w[rc stdout stdout_lines stderr stderr_lines changed failed].each do |key|
+        shaped[key] = hash[key] if hash.has_key?(key)
+      end
+      shaped["changed"] = JSON::Any.new(true) unless hash.has_key?("changed") && failed
+      shaped["failed"] = JSON::Any.new(failed)
+      if failed
+        %w[msg exception].each { |key| shaped[key] = hash[key] if hash.has_key?(key) }
+        # raw is an ACTION plugin in real: its failure renders as
+        # "Task failed: Action failed: <msg>", not "Module failed:".
+        if msg = hash["msg"]?.try(&.as_s?)
+          shaped["_ansible_action_level"] = JSON::Any.new(true)
+          shaped["_ansible_error_detail"] = JSON::Any.new("Action failed: #{msg}")
+        end
+      end
+      dropped = %w[cmd start end delta msg exception]
+      hash.each do |key, value|
+        shaped[key] = value unless shaped.has_key?(key) || dropped.includes?(key)
+      end
+      JSON::Any.new(shaped)
     end
 
     # Modules whose registered per-item results (loop `results[]`) carry

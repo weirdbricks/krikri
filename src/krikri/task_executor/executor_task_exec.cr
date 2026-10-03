@@ -437,20 +437,24 @@ module Krikri
         Process.exit(1)
       end
 
-      group_names = key.split(",").map(&.strip).reject(&.empty?)
-      parent_names = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?)) || [] of String
+      # Real's group_by.py: the key is ONE group name (spaces become `-`,
+      # never split on commas) and parents defaults to ["all"]; its
+      # result is exactly {changed, add_group, parent_groups} (the strategy
+      # then flips changed to true when the group or host membership is
+      # new). The registered result carries no msg/groups keys.
+      group_name = key.gsub(' ', '-')
+      explicit_parents = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?))
+      parent_names = (explicit_parents || ["all"]).map(&.gsub(' ', '-'))
 
       changed = false
-      group_names.each do |group_name|
-        group = inventory.get_or_create_group(group_name)
-        unless group.hosts.has_key?(host.name)
-          group.add_host(host)
-          changed = true
-        end
-        parent_names.each { |parent_name| inventory.get_or_create_group(parent_name).add_child(group_name) }
+      group = inventory.get_or_create_group(group_name)
+      unless group.hosts.has_key?(host.name)
+        group.add_host(host)
+        changed = true
       end
+      explicit_parents.try &.each { |parent_name| inventory.get_or_create_group(parent_name.gsub(' ', '-')).add_child(group_name) }
 
-      JSON.parse({"changed" => changed, "failed" => false, "msg" => "", "groups" => group_names}.to_json)
+      JSON.parse({"changed" => changed, "add_group" => group_name, "parent_groups" => parent_names, "failed" => false}.to_json)
     end
 
     # set_stats: - same "no uploaded plugin binary" category as
