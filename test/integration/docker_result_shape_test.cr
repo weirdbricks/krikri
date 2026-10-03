@@ -250,3 +250,59 @@ describe "docker result shape: docker_image" do
     result["msg"].as_s.must_equal("Cannot find the image krikri-kp-dk-nope:9 locally.")
   end
 end
+
+# A throwaway config file under the spec scratch space - these specs never
+# touch the machine's real ~/.docker/config.json.
+def docker_login_config : String
+  path = PluginSpecHelper.tmp_path("krikri-kp-dk-login-config.json")
+  File.write(path, %({"auths": {"https://registry-1.docker.io/v1/": {"auth": "a3Jpa3JyaTpib2d1cw=="}}}))
+  path
+end
+
+describe "docker result shape: docker_login" do
+  serial!
+
+  # real: {"changed": false, "login_result": {}, "failed": false} - real
+  # deletes its `actions` list before exit_json, so nothing but changed
+  # and login_result survives (and no msg at all).
+  it "matches real's logout key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    config_path = docker_login_config
+    result = PluginSpecHelper.run("docker_login", {
+      "registry_url" => "https://registry-1.docker.io/v1/", "state" => "absent",
+      "config_path" => config_path, "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["changed", "login_result", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["login_result"].as_h.empty?.must_equal(true)
+    result.as_h.has_key?("msg").must_equal(false)
+    # the credentials really are gone
+    JSON.parse(File.read(config_path))["auths"].as_h.empty?.must_equal(true)
+  end
+
+  it "matches real's already-logged-out key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    config_path = docker_login_config
+    PluginSpecHelper.run("docker_login", {
+      "registry_url" => "https://registry-1.docker.io/v1/", "state" => "absent",
+      "config_path" => config_path, "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result = PluginSpecHelper.run("docker_login", {
+      "registry_url" => "https://registry-1.docker.io/v1/", "state" => "absent",
+      "config_path" => config_path, "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["changed", "login_result", "failed"])
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "matches real's bad-credentials failure key set and order" do
+    result = PluginSpecHelper.run("docker_login", {
+      "registry_url" => "https://registry-1.docker.io/v1/",
+      "username" => "krikri", "password" => "bogus",
+      "docker_host" => "unix:///nonexistent/krikri-kp-dk-no-such-#{Process.pid}.sock",
+    })
+    docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Logging into https://registry-1.docker.io/v1/ for user krikri failed - ")
+  end
+end
