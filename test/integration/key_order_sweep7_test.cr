@@ -100,6 +100,106 @@ describe "make plugin result key order (sweep7)" do
   end
 end
 
+describe "package plugin result key order (sweep7)" do
+  # Real 2.19.11's package: action plugin delegates to apt on this host,
+  # so the registered shape IS apt's. Live-verified (unprivileged:
+  # unchanged paths + check mode, whose --simulate runs need no root):
+  # unchanged present = changed, cache_updated, cache_update_time; bare
+  # absent no-op = changed; check-mode install/remove = changed, stdout,
+  # stderr, diff, cache_updated, cache_update_time, stdout_lines,
+  # stderr_lines. The real (mutating) install/remove paths need root and
+  # carry NO pin.
+  it "registers an unchanged present as changed, cache_updated, cache_update_time" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: present installed
+            ansible.builtin.package:
+              name: bash
+              state: present
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "cache_updated", "cache_update_time", "failed"])
+  end
+
+  it "registers an absent no-op as just changed" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: absent missing
+            ansible.builtin.package:
+              name: krikri-sweep7-nonexistent-pkg
+              state: absent
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "failed"])
+  end
+
+  it "registers a check-mode install as the --simulate shape" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: check install
+            ansible.builtin.package:
+              name: cowsay
+              state: present
+            check_mode: true
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines", "failed"])
+  end
+
+  it "registers a check-mode remove as the --simulate shape too" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: check remove
+            ansible.builtin.package:
+              name: 7zip
+              state: absent
+            check_mode: true
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines", "failed"])
+  end
+end
+
 describe "npm plugin result key order (sweep7)" do
   # Real 2.19.11 community.general npm has a SINGLE exit -
   # exit_json(changed=changed) - so every success shape registers just
