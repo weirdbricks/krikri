@@ -4,17 +4,22 @@ require "json"
 require "../src/krikri/base_plugin"
 
 module Krikri
-  # lvg plugin - creates, extends, or removes LVM volume groups via
-  # vgcreate/vgextend/vgremove, a native port of community.general.lvg
-  # (companion to this repo's existing lvol/filesystem plugins).
+  # lvg plugin - creates, extends, shrinks, or removes LVM volume groups
+  # via pvcreate/vgcreate/vgextend/vgreduce/vgremove, a native port of
+  # community.general.lvg (companion to this repo's existing
+  # lvol/filesystem plugins).
   #
   # Implemented against real lvg.py's control flow:
-  #   - discovery via `vgs --noheadings -o vg_name,pv_count,vg_size
-  #     --separator ; <vg>` (same -o list real uses)
-  #   - create via vgcreate (or vgextend when the VG exists but a
-  #     requested PV is missing from it - real's grow-only semantics;
-  #     shrinking is not supported by the real module either)
-  #   - remove via vgremove -f (force required, same as real)
+  #   - discovery via `vgs --noheadings -o vg_name,pv_count,lv_count
+  #     --separator ';' <vg>` (real's own -o list, so lv_count is
+  #     available for the absent-state refusal)
+  #   - on an existing VG: real's PV diff - requested PVs missing from
+  #     the VG get pvcreate -f + vgextend; VG PVs not in the request get
+  #     `vgreduce --force` (unless remove_extra_pvs=false), with real's
+  #     "Unable to extend/reduce ..." fail_json messages
+  #   - remove via vgremove --force, but only when the VG holds no
+  #     logical volumes or force=true - otherwise real's exact
+  #     "Refuse to remove non-empty volume group ..." failure
   #   - check mode: discovery runs for real, mutating commands are not
   #     run (changed verdict still reported)
   #
@@ -73,8 +78,18 @@ module Krikri
       # only when the VG doesn't exist yet (pvs_required = present-state
       # AND this_vg is None) - a state=present call against an existing
       # VG without pvs is real's grow-to-nothing no-op, not an error.
-      discovery = remote_exec("vgs --noheadings -o vg_name,pv_count,vg_size --separator ';' #{Shell.single_quote(vg)} 2>/dev/null")
-      vg_exists = discovery[:exit_code] == 0 && !discovery[:stdout].strip.empty?
+      discovery = remote_exec("vgs --noheadings -o vg_name,pv_count,lv_count --separator ';' #{Shell.single_quote(vg)} 2>/dev/null")
+      vg_exists = false
+      lv_count = 0
+      if discovery[:exit_code] == 0
+        discovery[:stdout].each_line do |line|
+          parts = line.strip.split(';')
+          next unless parts.size >= 3 && parts[0] == vg
+          vg_exists = true
+          lv_count = parts[2].to_i? || 0
+          break
+        end
+      end
 
       if pvs.empty? && !vg_exists && state != "absent"
         return PluginResult.new(changed: false, failed: true,
@@ -85,7 +100,9 @@ module Krikri
       # command runs (lvg.py: os.path.realpath on each entry, then
       # os.path.exists -> "Device {dev} not found."), which is the failure
       # the kop_storage lvg_fail probe captures: real never reaches
-      # vgcreate with a nonexistent PV.
+      # vgcreate with a nonexistent PV. The resolved (realpath'd) names
+      # are what real feeds to every later command and comparison.
+      resolved_pvs = [] of String
       if state != "absent"
         pvs.each do |device|
           resolved = remote_exec("readlink -f -- #{Shell.single_quote(device)}")[:stdout].strip
@@ -95,14 +112,15 @@ module Krikri
             return PluginResult.new(changed: false, failed: true,
               msg: "Device #{resolved} not found.")
           end
+          resolved_pvs << resolved
         end
       end
 
       if state == "absent"
-        return absent_vg(vg, vg_exists, force, check_mode)
+        return absent_vg(vg, vg_exists, lv_count, force, check_mode)
       end
 
-      present_vg(vg, pvs, vg_exists, check_mode)
+      present_vg(vg, resolved_pvs, vg_exists, check_mode)
     end
 
     private LVG_SPEC = {
@@ -119,7 +137,7 @@ module Krikri
       "remove_extra_pvs" => [] of String,
     }
 
-    private def absent_vg(vg : String, vg_exists : Bool, force : Bool, check_mode : Bool) : PluginResult
+    private def absent_vg(vg : String, vg_exists : Bool, lv_count : Int32, force : Bool, check_mode : Bool) : PluginResult
       # Every real lvg exit is `module.exit_json(changed=...)` - the
       # module never passes msg on a success path, so the registered
       # result is [changed, failed] (round 992003 kop_storage lvg_create/
@@ -127,7 +145,19 @@ module Krikri
       return PluginResult.new(changed: false, failed: false) unless vg_exists
       return PluginResult.new(changed: true, failed: false) if check_mode
 
-      result = remote_exec("vgremove #{force ? "-f" : ""} #{Shell.single_quote(vg)}")
+      # Real refuses to remove a VG that still holds logical volumes
+      # unless force=true (round 993003 cold cleanup: kop_vg still
+      # contained kop_lv, so real failed the cleanup task with real's
+      # exact refusal message while krikri marched into vgremove and
+      # surfaced the interactive-prompt rc/err instead).
+      unless lv_count == 0 || force
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Refuse to remove non-empty volume group #{vg} without force=true")
+      end
+
+      # Real always passes --force here (its own command list hardcodes
+      # it), whether or not the force parameter was set.
+      result = remote_exec("vgremove --force #{Shell.single_quote(vg)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed to remove volume group #{vg}",
@@ -142,50 +172,113 @@ module Krikri
     # rule for lvg's rc/err-carrying failures).
     private LVG_FAIL_KEY_ORDER = %w[rc err failed msg changed exception]
 
-    private def present_vg(vg : String, pvs : Array(String), vg_exists : Bool, check_mode : Bool) : PluginResult
+    private def present_vg(vg : String, pvs : Array(String), vg_exists : Bool, check_mode : Bool) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       pesize = @params["pesize"]? || "4"
       vg_options = @params["vg_options"]?.try(&.split) || [] of String
+      pv_options = @params["pv_options"]?.try(&.split) || [] of String
+      remove_extra_pvs = true?(@params["remove_extra_pvs"]?, default: true)
 
-      # Which of the requested PVs are already part of the VG (if it
-      # exists) - real lvg.py parses `pvs --noheadings -o
-      # pv_name,vg_name` for this. Missing PVs in an existing VG mean
-      # a vgextend; a nonexistent VG means vgcreate with all PVs.
-      if vg_exists
-        missing = missing_pvs(vg, pvs)
-        return missing if missing.is_a?(PluginResult)
+      # Real lvg.py runs the pvs probe for EVERY present-state call
+      # (before the VG-exists branch), using it both for the used_pvs
+      # gate and - when the VG exists - for the requested-vs-current PV
+      # diff that drives vgextend/vgreduce.
+      parsed = pv_entries
+      return parsed if parsed.is_a?(PluginResult)
 
-        if missing.empty?
-          return PluginResult.new(changed: false, failed: false)
-        end
+      # Real's used_pvs gate: a requested PV that already belongs to a
+      # DIFFERENT volume group fails before any command runs.
+      used = parsed.select { |entry| pvs.includes?(entry[:name]) && !entry[:vg_name].empty? && entry[:vg_name] != vg }
+      unless used.empty?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Device #{used[0][:name]} is already in #{used[0][:vg_name]} volume group.")
+      end
+
+      unless vg_exists
         return PluginResult.new(changed: true, failed: false) if check_mode
 
-        result = remote_exec("vgextend #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{missing.map { |device| Shell.single_quote(device) }.join(' ')}")
+        # Real creates each PV first (pvcreate -f, honoring pv_options)
+        # before vgcreate - the old krikri path skipped pvcreate entirely
+        # and relied on vgcreate succeeding anyway.
+        pvs.each do |device|
+          result = remote_exec("pvcreate #{pv_options.map { |option| Shell.single_quote(option) }.join(' ')} -f #{Shell.single_quote(device)}")
+          unless result[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Creating physical volume '#{device}' failed",
+              rc: result[:exit_code], err: result[:stderr],
+              key_order: LVG_FAIL_KEY_ORDER)
+          end
+        end
+
+        result = remote_exec("vgcreate #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} -s #{Shell.single_quote(pesize)} #{Shell.single_quote(vg)} #{pvs.map { |device| Shell.single_quote(device) }.join(' ')}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true,
-            msg: "Unable to extend #{vg} by #{missing.join(" ")}.",
+            msg: "Creating volume group '#{vg}' failed",
             rc: result[:exit_code], err: result[:stderr],
             key_order: LVG_FAIL_KEY_ORDER)
         end
         return PluginResult.new(changed: true, failed: false)
       end
 
+      # Real's PV-diff on an existing VG: PVs in the VG but not requested
+      # get vgreduce'd (unless remove_extra_pvs=false), requested PVs not
+      # in the VG get pvcreate -f + vgextend. Adds run before removes.
+      # This is what makes a warm rerun against a stale VG fail exactly
+      # like real (round 993003: the leaked VG's old PV reduced ->
+      # "still in use", instead of krikri's silent changed:true).
+      current_devs = parsed.select { |entry| entry[:vg_name] == vg }.map { |entry| realpath(entry[:name]) }
+      devs_to_remove = remove_extra_pvs ? current_devs.reject { |device| pvs.includes?(device) } : [] of String
+      devs_to_add = pvs.reject { |device| current_devs.includes?(device) }
+
+      return PluginResult.new(changed: false, failed: false) if devs_to_add.empty? && devs_to_remove.empty?
       return PluginResult.new(changed: true, failed: false) if check_mode
 
-      result = remote_exec("vgcreate -s #{Shell.single_quote(pesize)} #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{pvs.map { |device| Shell.single_quote(device) }.join(' ')}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Creating volume group '#{vg}' failed",
-          rc: result[:exit_code], err: result[:stderr],
-          key_order: LVG_FAIL_KEY_ORDER)
+      unless devs_to_add.empty?
+        devs_to_add.each do |device|
+          result = remote_exec("pvcreate #{pv_options.map { |option| Shell.single_quote(option) }.join(' ')} -f #{Shell.single_quote(device)}")
+          unless result[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Creating physical volume '#{device}' failed",
+              rc: result[:exit_code], err: result[:stderr],
+              key_order: LVG_FAIL_KEY_ORDER)
+          end
+        end
+
+        result = remote_exec("vgextend #{Shell.single_quote(vg)} #{devs_to_add.map { |device| Shell.single_quote(device) }.join(' ')}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Unable to extend #{vg} by #{devs_to_add.join(" ")}.",
+            rc: result[:exit_code], err: result[:stderr],
+            key_order: LVG_FAIL_KEY_ORDER)
+        end
       end
+
+      unless devs_to_remove.empty?
+        result = remote_exec("vgreduce --force #{Shell.single_quote(vg)} #{devs_to_remove.map { |device| Shell.single_quote(device) }.join(' ')}")
+        unless result[:exit_code] == 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Unable to reduce #{vg} by #{devs_to_remove.join(" ")}.",
+            rc: result[:exit_code], err: result[:stderr],
+            key_order: LVG_FAIL_KEY_ORDER)
+        end
+      end
+
       PluginResult.new(changed: true, failed: false)
     end
 
-    # Returns the requested PVs not currently in the VG, or a failed
-    # PluginResult when the pvs probe itself fails (real: fail_json
-    # "Failed executing pvs command." with the rc/err kwargs).
-    private def missing_pvs(vg : String, pvs : Array(String)) : Array(String) | PluginResult
-      result = remote_exec("pvs --noheadings -o pv_name,vg_name 2>/dev/null")
+    # os.path.realpath via readlink -f, falling back to the input when
+    # readlink cannot resolve it (matches the pre-existing device-existence
+    # check's handling).
+    private def realpath(device : String) : String
+      resolved = remote_exec("readlink -f -- #{Shell.single_quote(device)}")[:stdout].strip
+      resolved.empty? ? device : resolved
+    end
+
+    # Parses `pvs --noheadings -o pv_name,vg_name --separator ';'` into
+    # {name, vg_name} entries, or a failed PluginResult when the probe
+    # itself fails (real: fail_json "Failed executing pvs command." with
+    # the rc/err kwargs).
+    private def pv_entries : Array(NamedTuple(name: String, vg_name: String)) | PluginResult
+      result = remote_exec("pvs --noheadings -o pv_name,vg_name --separator ';'")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "Failed executing pvs command.",
@@ -193,13 +286,13 @@ module Krikri
           key_order: LVG_FAIL_KEY_ORDER)
       end
 
-      in_vg = Set(String).new
+      entries = [] of NamedTuple(name: String, vg_name: String)
       result[:stdout].each_line do |line|
-        fields = line.split
-        next unless fields.size >= 2
-        in_vg << fields[0] if fields[1] == vg
+        parts = line.strip.split(';')
+        next unless parts.size >= 2
+        entries << {name: parts[0], vg_name: parts[1]}
       end
-      pvs.reject { |device| in_vg.includes?(device) }
+      entries
     end
   end
 end
