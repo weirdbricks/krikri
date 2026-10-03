@@ -173,3 +173,49 @@ describe "shell plugin" do
     File.delete(marker) if marker && File.exists?(marker)
   end
 end
+
+# Real ansible-core 2.19.11's registered shell result runs changed,
+# stdout, stderr, rc, cmd, start, end, delta, msg, stdout_lines,
+# stderr_lines, (ansible_facts,) failed - live-verified via
+# `{{ r | to_json }}` on a registered shell: task (the -v dump sorts
+# alphabetically, so the order is only observable programmatically).
+# The check-mode variant inserts `skipped` between msg and
+# stdout_lines, and the creates: skip path keeps the same order with
+# null start/end/delta (all live-verified). krikri emits failed: false
+# on the executed-success path only (failed_flag), so the skip/check
+# pins below stop at stderr_lines - real also appends failed: false
+# there.
+describe "shell plugin result key order" do
+  it "serializes the executed-success result in real shell's key order" do
+    result = PluginSpecHelper.run("shell", {"cmd" => "echo hello"})
+
+    result.as_h.keys.must_equal([
+      "changed", "stdout", "stderr", "rc", "cmd", "start", "end", "delta",
+      "msg", "stdout_lines", "stderr_lines", "failed",
+    ])
+  end
+
+  it "serializes the creates-skip result in real shell's key order" do
+    marker = PluginSpecHelper.tmp_path("shell_order_creates")
+    File.write(marker, "x")
+
+    result = PluginSpecHelper.run("shell", {"cmd" => "echo hello", "creates" => marker})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "changed", "stdout", "stderr", "rc", "cmd", "start", "end", "delta",
+      "msg", "stdout_lines", "stderr_lines",
+    ])
+  ensure
+    File.delete(marker) if marker && File.exists?(marker)
+  end
+
+  it "serializes the check-mode result in real shell's key order (skipped after msg)" do
+    result = PluginSpecHelper.run("shell", {"cmd" => "echo hello", "_ansible_check_mode" => "true"})
+
+    result.as_h.keys.must_equal([
+      "changed", "stdout", "stderr", "rc", "cmd", "start", "end", "delta",
+      "msg", "skipped", "stdout_lines", "stderr_lines",
+    ])
+  end
+end

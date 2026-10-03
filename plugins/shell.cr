@@ -43,6 +43,19 @@ module Krikri
 
     include PluginHelpers::AnsibleArgValidation
 
+    # Real ansible-core 2.19.11's registered command/shell result key
+    # order - live-verified via `{{ r | to_json }}` on a registered
+    # shell: task (the -v dump sorts alphabetically, so the order is
+    # only observable programmatically). Same module dict as command's
+    # (see command.cr's SUCCESS_KEY_ORDER comment): changed/stdout/
+    # stderr/rc/cmd/start/end/delta/msg, then stdout_lines/stderr_lines,
+    # failed: false last, with `skipped` inserted between msg and
+    # stdout_lines on the check-mode variant (live-verified both shapes,
+    # plus the creates:/removes: skip path with null start/end/delta -
+    # shell's `cmd` is the command STRING where command's is the argv
+    # LIST, same position either way).
+    private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
+
     # Real shell module's own argspec - which IS command.py's (bookworm
     # ansible-core 2.14, the harness reference): the shell module is
     # command.py with _uses_shell=True, and its unsupported-parameters
@@ -190,7 +203,8 @@ module Krikri
             stderr_lines: [] of String,
             start: nil,
             end: nil,
-            delta: nil
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
           )
         end
       end
@@ -214,7 +228,8 @@ module Krikri
             stderr_lines: [] of String,
             start: nil,
             end: nil,
-            delta: nil
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
           )
         end
       end
@@ -249,7 +264,8 @@ module Krikri
           stderr_lines: [] of String,
           start: nil,
           end: nil,
-          delta: nil
+          delta: nil,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -417,7 +433,11 @@ module Krikri
         end: Time.utc.to_s("%F %H:%M:%S.%6N"),
         delta: python_delta(Time.utc - started_at),
         failed_flag: false,
-        diff: diff_data
+        diff: diff_data,
+        # Success paths only - a non-zero rc is a failure result (real's
+        # failed shape is handled separately); nil keeps the historical
+        # order there.
+        key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : nil
       )
     end
 

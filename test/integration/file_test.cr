@@ -772,3 +772,85 @@ describe "file plugin" do
     end
   end
 end
+
+# Real ansible-core 2.19.11's registered file result key order -
+# live-verified via `{{ r | to_json }}` on registered file: tasks (the
+# -v dump sorts alphabetically, so the order is only observable
+# programmatically). The module's ensure_* helpers build their dict as
+# path|dest, changed (, diff - only under --diff), then add_path_info
+# merges uid/gid/owner/group/mode/state/size and _return_formatted
+# appends failed: false. krikri emits no `failed` key on success
+# results, so the pins below stop at the last stat field. The two
+# order shapes that differ live: state=absent's module dict echoes
+# state before add_path_info runs (a Python dict assignment keeps the
+# existing key's position, so state lands BEFORE uid there), while
+# every other state gets state appended after mode.
+describe "file plugin result key order" do
+  it "serializes a created directory in real file's key order" do
+    path = tmp_path("file-order-dir")
+
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "path", "changed", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    FileUtils.rm_rf(path) if path && Dir.exists?(path)
+  end
+
+  it "serializes a touched file under dest in real file's key order" do
+    path = tmp_path("file-order-touch")
+
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "dest", "changed", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "serializes a created symbolic link in real file's key order" do
+    target = tmp_path("file-order-link-target")
+    File.write(target, "x")
+    link = tmp_path("file-order-link")
+
+    result = PluginSpecHelper.run("file", {"src" => target, "dest" => link, "state" => "link"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "dest", "src", "changed", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(link) if link && File.exists?(link)
+    File.delete(target) if target && File.exists?(target)
+  end
+
+  it "serializes a removed path in real file's key order" do
+    path = tmp_path("file-order-absent")
+    File.write(path, "x")
+
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["path", "changed", "state"])
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "serializes a state=absent check-mode run on an existing path with state BEFORE uid" do
+    path = tmp_path("file-order-absent-check")
+    File.write(path, "x")
+
+    result = PluginSpecHelper.run("file", {"path" => path, "state" => "absent", "_ansible_check_mode" => "true"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "path", "changed", "state", "uid", "gid", "owner", "group", "mode", "size",
+    ])
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+end

@@ -20,6 +20,32 @@ module Krikri
   # this plugin it is never vault-armored, so decrypt: is still accepted
   # and ignored here.
   class CopyPlugin < BasePlugin
+    # Real ansible-core 2.19.11's registered copy result key orders -
+    # live-verified via `{{ r | to_json }}` on registered copy: tasks
+    # (the -v dump sorts alphabetically, so the order is only observable
+    # programmatically). Real's changed-path result runs diff, dest, src,
+    # md5sum, checksum, changed (, backup_file), then the add_path_info
+    # stat block and failed: false last - verified on both the content:
+    # and src: paths (identical order), with backup: true (backup_file
+    # right after changed), and on the directory-copy path (whose real
+    # result is bare dest/src/changed, no stat block). `src` and
+    # `md5sum` are listed for real's shape; krikri's wire result omits
+    # them (no staged-tempfile path to echo), and emit_reordered skips
+    # absent keys. The equal-content and check-mode would-not-change
+    # paths dispatch real's FILE module (the copy action's
+    # already-correct-hash branch), whose result runs diff, path,
+    # changed, the stat block, then the action-injected checksum and
+    # dest - a different order, hence its own constant.
+    private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
+    private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
+    # force: false against an existing dest: real's result is ONLY
+    # {dest, src, changed} (live-verified) - dest leads.
+    private NOOP_KEY_ORDER = %w[dest src changed failed]
+    # check-mode would-change: real's action-level result is
+    # {diff: [], changed: true} (live-verified, src and content paths
+    # alike).
+    private CHECK_KEY_ORDER = %w[diff changed failed]
+
     # ansible.builtin.copy's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.copy). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -304,7 +330,8 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: false,
-            dest: dest
+            dest: dest,
+            key_order: NOOP_KEY_ORDER
           )
         end
 
@@ -340,7 +367,8 @@ module Krikri
               changed: attributes_fixed,
               failed: false,
               dest: dest,
-              checksum: content_sha1
+              checksum: content_sha1,
+              key_order: UNCHANGED_KEY_ORDER
             )
             add_path_info(result, dest)
             result.extra["path"] = JSON::Any.new(dest)
@@ -374,7 +402,8 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          diff: diff_data
+          diff: diff_data,
+          key_order: CHECK_KEY_ORDER
         )
       end
 
@@ -420,7 +449,8 @@ module Krikri
         diff: diff_data,
         dest: dest,
         checksum: content_sha1,
-        md5sum: content_md5
+        md5sum: content_md5,
+        key_order: CHANGED_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       add_path_info(result, dest)
@@ -449,7 +479,8 @@ module Krikri
             changed: false,
             failed: false,
             dest: dest,
-            checksum: @params["__precomputed_checksum"]?.presence || ""
+            checksum: @params["__precomputed_checksum"]?.presence || "",
+            key_order: UNCHANGED_KEY_ORDER
           )
           add_path_info(result, dest)
           return result
@@ -461,7 +492,8 @@ module Krikri
           changed: attributes_fixed,
           failed: false,
           dest: dest,
-          checksum: @params["__precomputed_checksum"]? || ""
+          checksum: @params["__precomputed_checksum"]? || "",
+          key_order: UNCHANGED_KEY_ORDER
         )
         add_path_info(result, dest)
         result.extra["path"] = JSON::Any.new(dest)
@@ -559,7 +591,8 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: false,
-            dest: dest
+            dest: dest,
+            key_order: NOOP_KEY_ORDER
           )
         end
 
@@ -581,16 +614,17 @@ module Krikri
         result = PluginResult.new(
           changed: changed,
           failed: false,
-          msg: ""
+          msg: "",
+          # A would-CHANGE check result is real Ansible's copy ACTION
+          # PLUGIN's own bare `changed: true` (no dest, no stat fields).
+          # A would-NOT-change one falls through to the file module (the
+          # action's "already correct hash" branch), whose result carries
+          # dest/path, the SHA1 checksum (added by the action's
+          # `if not module_return.get('checksum')` fill-in), and the
+          # add_path_info stat fields - all live-verified against
+          # ansible-core 2.19.4.
+          key_order: changed ? CHECK_KEY_ORDER : UNCHANGED_KEY_ORDER
         )
-        # A would-CHANGE check result is real Ansible's copy ACTION
-        # PLUGIN's own bare `changed: true` (no dest, no stat fields).
-        # A would-NOT-change one falls through to the file module (the
-        # action's "already correct hash" branch), whose result carries
-        # dest/path, the SHA1 checksum (added by the action's
-        # `if not module_return.get('checksum')` fill-in), and the
-        # add_path_info stat fields - all live-verified against
-        # ansible-core 2.19.4.
         unless changed
           result.extra["dest"] = JSON::Any.new(dest)
           result.extra["checksum"] = JSON::Any.new(src_sha1)
@@ -614,7 +648,8 @@ module Krikri
         result = PluginResult.new(
           changed: attributes_fixed,
           failed: false,
-          dest: dest
+          dest: dest,
+          key_order: UNCHANGED_KEY_ORDER
         )
         add_path_info(result, dest)
         result.extra["path"] = JSON::Any.new(dest)
@@ -678,7 +713,8 @@ module Krikri
         changed: true,
         failed: false,
         dest: dest,
-        checksum: src_sha1
+        checksum: src_sha1,
+        key_order: CHANGED_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       add_path_info(result, dest)
@@ -815,7 +851,8 @@ module Krikri
         changed: changed,
         failed: false,
         msg: changed ? "Directory copied successfully" : "Directory already up to date",
-        dest: dest_root
+        dest: dest_root,
+        key_order: CHANGED_KEY_ORDER
       )
       # Real Ansible's add_path_info runs over the directory-copy result
       # too (dest is an existing directory at exit time) - stat fields

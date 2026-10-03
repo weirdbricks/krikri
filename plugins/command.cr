@@ -37,6 +37,23 @@ module Krikri
   # ansible-playbook strips it, so real playbooks are routinely written
   # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
+    # Real ansible-core 2.19.11's registered command/shell result key
+    # order - live-verified via `{{ r | to_json }}` on a registered
+    # command: task (the -v dump sorts alphabetically, so the order is
+    # only observable programmatically). The module builds its result
+    # dict as changed/stdout/stderr/rc/cmd/start/end/delta/msg
+    # (command.py initializes r['msg'] = ''), then derives
+    # stdout_lines/stderr_lines, and _return_formatted appends failed:
+    # false last; the check-mode variant inserts `skipped` between msg
+    # and stdout_lines (live-verified both shapes). The same order held
+    # on the creates:/removes: skip paths (start/end/delta null) and on
+    # the shell variant (cmd a string there). krikri's success result
+    # passes failed_flag: false, so its `failed` lands at the listed
+    # tail position; real's `ansible_facts`/`warnings` keys have no
+    # krikri equivalent (warnings, when the executable: warning fires,
+    # is listed last to match real's position after failed).
+    private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
+
     # ansible.builtin.command's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.command). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -205,7 +222,8 @@ module Krikri
             stderr_lines: [] of String,
             start: nil,
             end: nil,
-            delta: nil
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
           ))
         end
       end
@@ -229,7 +247,8 @@ module Krikri
             stderr_lines: [] of String,
             start: nil,
             end: nil,
-            delta: nil
+            delta: nil,
+            key_order: SUCCESS_KEY_ORDER
           ))
         end
       end
@@ -267,7 +286,8 @@ module Krikri
           stderr_lines: [] of String,
           start: nil,
           end: nil,
-          delta: nil
+          delta: nil,
+          key_order: SUCCESS_KEY_ORDER
         ))
       end
 
@@ -483,7 +503,11 @@ module Krikri
         start: started_at.to_s("%F %H:%M:%S.%6N"),
         end: ended_at.to_s("%F %H:%M:%S.%6N"),
         delta: python_delta(ended_at - started_at),
-        failed_flag: false
+        failed_flag: false,
+        # Success paths only - a non-zero rc is a failure result (real's
+        # failed shape is handled separately); nil keeps the historical
+        # order there.
+        key_order: exit_code == 0 ? SUCCESS_KEY_ORDER : nil
       ))
     end
 
