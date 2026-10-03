@@ -246,7 +246,7 @@ module Krikri
       # ExpressionEvaluator's own literal-array/dict builders need the
       # same treatment separately: the two evaluators share no
       # implementation, so this bug class has to be fixed once in each
-      # (see CLAUDE.md). Only containers are touched here - a bare
+      # (see AGENTS.md). Only containers are touched here - a bare
       # scalar `omit` must survive intact this far, since that is what
       # tells the caller to drop a whole parameter.
       def self.elide_omitted(value : JSON::Any) : JSON::Any

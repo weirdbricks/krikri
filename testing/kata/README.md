@@ -125,7 +125,7 @@ target ansible_host=10.99.1.2 ansible_user=root ansible_ssh_private_key_file=<pa
 ```
 
 A pair (one host per engine) is the same shape as the Atlantic.net
-workflow in the repo's `CLAUDE.md`, so a round can run locally.
+workflow in the repo's `AGENTS.md`, so a round can run locally.
 
 ## Gotchas, all of them hit for real
 

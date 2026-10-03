@@ -1,6 +1,6 @@
 # Round: 120 new-Galaxy-author roles, kata pairs (discovery phase notes)
 
-Do not fix yet - collecting per CLAUDE.md workflow. One-line diagnosis per divergence.
+Do not fix yet - collecting per AGENTS.md workflow. One-line diagnosis per divergence.
 
 **Status update (2026-09-10): all four confirmed divergences below were already
 fixed on this branch after the round was recorded. Do not re-fix.**

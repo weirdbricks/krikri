@@ -22,7 +22,7 @@ require "../../src/krikri/krikri_jinja_filters"
 #      for the test spellings that path can reach.
 #
 # This project's whole bug history is the two engines DIVERGING (see
-# CLAUDE.md: they share no implementation, so every fix lands twice). This
+# AGENTS.md: they share no implementation, so every fix lands twice). This
 # file turns a future divergence on any of these registrations - or a new
 # resolution path that resolves one of them differently - into a failing
 # test here instead of a benchmark round.

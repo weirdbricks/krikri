@@ -46,7 +46,7 @@ module Krikri
   # own version here would make EVERY such min-version check fail
   # unconditionally, a worse outcome than picking one fixed real version.
   # 2.19.11 matches the exact ansible-core release this project's own
-  # benchmark rounds compare against (see CLAUDE.md/ROLES_TESTED.md).
+  # benchmark rounds compare against (see AGENTS.md/ROLES_TESTED.md).
   ANSIBLE_VERSION_MAGIC_VAR = JSON.parse(%({
     "full": "2.19.11", "major": 2, "minor": 19, "revision": 11, "string": "2.19.11"
   }))

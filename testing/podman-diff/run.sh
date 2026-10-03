@@ -4,7 +4,7 @@
 # krikri-playbook (container B), both via ansible_connection=local
 # inside their own throwaway podman container, and diffs the debug
 # output lines so a single divergent case is visible without needing
-# a full Atlantic.net round. See krikri/CLAUDE.md's "podman run
+# a full Atlantic.net round. See krikri/AGENTS.md's "podman run
 # --systemd=always ... remains sufficient" note - this is that
 # replacement, scoped to module-level edge cases rather than full
 # Galaxy roles.

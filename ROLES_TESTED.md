@@ -9,7 +9,7 @@ or already-clean roles as if they were new.
 Every newly tested role gets its own row (not bundled into a shared
 "role / role / role" line) with cold/warm timings for both engines where
 the run produced a real timing (rc=0 or a genuine both-fail past setup) -
-see `CLAUDE.md`'s benchmark-round workflow. Rows predating that convention
+see `AGENTS.md`'s benchmark-round workflow. Rows predating that convention
 may be bundled and/or missing timings; not backfilled.
 
 ## Benchmark: 10 random verified-clean roles, fresh host pair each
@@ -1482,7 +1482,7 @@ role itself, not krikri-playbook).
 
 ### Round 199: 60-role marathon, fresh host pair per role (40 ubuntu + 20 rocky), idempotency-verified
 
-First round using CLAUDE.md's revised "fresh host pair per round" guidance (previously a pair was reused for a handful of roles). Also the round that found the bodsch.* author's collection (`bodsch.core`/`bodsch.systemd`) custom-module/filter scope cut applies well beyond the two previously-documented roles - confirmed on 8 more. 2 real krikri-playbook bugs found and fixed (0.9.642, 0.9.643); 1 more found and documented not fixed. Full per-role timing and verdicts below.
+First round using AGENTS.md's revised "fresh host pair per round" guidance (previously a pair was reused for a handful of roles). Also the round that found the bodsch.* author's collection (`bodsch.core`/`bodsch.systemd`) custom-module/filter scope cut applies well beyond the two previously-documented roles - confirmed on 8 more. 2 real krikri-playbook bugs found and fixed (0.9.642, 0.9.643); 1 more found and documented not fixed. Full per-role timing and verdicts below.
 
 | bodsch.chrony | ubuntu | ⚠️ both fail rc=4 for DIFFERENT reasons (role's own wrong `bodsch.core.journalctl` FQCN trips real ansible; crystal skips the role-private `library/chrony.py` custom module per the documented no-arbitrary-Python scope cut, then fails downstream on the resulting undefined var) |
 | bodsch.postfix | ubuntu | ✅ clean, identical (ok=8 changed=0 failed=1 skipped=2 both, role-side bug both hit identically) |
@@ -1612,7 +1612,7 @@ First round using CLAUDE.md's revised "fresh host pair per round" guidance (prev
 
 ### Round 201: first parallel-batch round (4 concurrent pairs, one per role, 8 of the 10-server Atlantic.net account's slots)
 
-First live test of the new parallel batch-phase workflow in CLAUDE.md (up to 4 concurrent host pairs instead of one at a time). 4 of the first 4 role picks (`geerlingguy.rsyslog`, `.gunicorn`, `.tailscale`, `.grafana`) turned out to be Galaxy-404 despite not being in this file's tested list - a reminder that "not in ROLES_TESTED.md" doesn't confirm a role still exists; verify with an exact Galaxy API name filter (`/api/v1/roles/?owner__username=X&name=Y`) before provisioning, not by absence from this table alone. Replaced with 2 Galaxy-verified roles. No engine bugs confirmed and fixed this round - one finding (kubelet idempotency on the kubernetes role) could not be conclusively reproduced in isolation and is documented in KNOWN_MISSING.md instead of fixed blind.
+First live test of the new parallel batch-phase workflow in AGENTS.md (up to 4 concurrent host pairs instead of one at a time). 4 of the first 4 role picks (`geerlingguy.rsyslog`, `.gunicorn`, `.tailscale`, `.grafana`) turned out to be Galaxy-404 despite not being in this file's tested list - a reminder that "not in ROLES_TESTED.md" doesn't confirm a role still exists; verify with an exact Galaxy API name filter (`/api/v1/roles/?owner__username=X&name=Y`) before provisioning, not by absence from this table alone. Replaced with 2 Galaxy-verified roles. No engine bugs confirmed and fixed this round - one finding (kubelet idempotency on the kubernetes role) could not be conclusively reproduced in isolation and is documented in KNOWN_MISSING.md instead of fixed blind.
 
 | geerlingguy.rsyslog | ubuntu | ❌ untestable - not on Ansible Galaxy (404), same class as `.mongodb`/`.consul`/`.golang` |
 | geerlingguy.gunicorn | ubuntu | ❌ untestable - not on Ansible Galaxy (404) |

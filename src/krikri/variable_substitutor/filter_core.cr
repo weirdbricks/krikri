@@ -20,7 +20,7 @@ module Krikri
     # Functions are pure and take plain Crystal types; each evaluator's
     # filter registration converts its own value/argument representation
     # to these and wraps the result. NOT a full merge of the two
-    # evaluators (see CLAUDE.md's two-evaluators note) - only the
+    # evaluators (see AGENTS.md's two-evaluators note) - only the
     # filter-logic cores that were already algorithmically identical.
     module FilterCore
       # The process-wide compiled-regex cache lives HERE now (FilterCore

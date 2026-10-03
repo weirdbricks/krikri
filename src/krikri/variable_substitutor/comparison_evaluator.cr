@@ -236,7 +236,7 @@ module Krikri
         # bare `{{ }}` `dict[var]` lookup) was fixed - this is a
         # THIRD independent evaluator with its own copy of the same
         # root cause, exactly the "found and fixed independently,
-        # repeatedly" pattern this codebase's own CLAUDE.md warns about.
+        # repeatedly" pattern this codebase's own AGENTS.md warns about.
         if expr.includes?("|") || expr.starts_with?('(') || expr.includes?("~") || expr.includes?("[")
           rendered = ExpressionEvaluator.new(@vars).evaluate(expr)
           parsed = Krikri.parse_json_or_python_literal(rendered)

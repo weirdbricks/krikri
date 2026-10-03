@@ -12,7 +12,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # templates every nested string value at every level, strictly).
 #
 # Both of this codebase's independent evaluators were reachable (see
-# CLAUDE.md): the hand-rolled FilterEngine path via
+# AGENTS.md): the hand-rolled FilterEngine path via
 # ExpressionEvaluator's filter-chain head re-render, and the vendored
 # Crinja path via JinjaRenderer's own context conversion - both
 # converge on rerender_nested_templates/rerender_string_value, which

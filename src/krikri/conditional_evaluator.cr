@@ -997,7 +997,7 @@ module Krikri
         # bool(<its content>) - a non-empty string is truthy regardless
         # of what its text reads like - never the result of re-evaluating
         # that text as a live expression (the recursive re-templating bug
-        # class this codebase's own CLAUDE.md flags as recurring). Found
+        # class this codebase's own AGENTS.md flags as recurring). Found
         # via crazikPL.logging's legacy double-quoted operand (round
         # 72000): `when: (("'rsyslog_elks' in group_names") or
         # rsyslog_use_remote)` - the inner operand is a string LITERAL
@@ -1534,7 +1534,7 @@ module Krikri
       # at a name set nowhere is undefined, not defined - the same
       # distinction `JinjaRenderer.convert_var` draws for the Crinja
       # side (see its comment for the full case). This evaluator is
-      # independent of that one (see CLAUDE.md - the two Jinja
+      # independent of that one (see AGENTS.md - the two Jinja
       # evaluators share no implementation, so this bug class has to be
       # found and fixed once in each), so `when: phpmyadmin_mysql_
       # password is defined` answered True here even after the Crinja

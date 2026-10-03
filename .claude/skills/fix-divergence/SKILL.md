@@ -7,7 +7,7 @@ description: Investigate and fix a DIVERGENT role from a krikri-role-tester roun
 
 This is steps 3-5 ("Triage" / "Fix phase" / "Confirm phase") of the
 real-host benchmark-round workflow in
-`/home/labros/git_work/krikri/CLAUDE.md` — read that section first. One
+`/home/labros/git_work/krikri/AGENTS.md` — read that section first. One
 invocation of this skill handles ONE divergent role. For N divergent roles,
 run N of these — capped at 2 concurrently (see step 2).
 
@@ -18,7 +18,7 @@ roles hitting the same missing module is one fix, not two), and separate
 "genuinely unimplemented module" / "broken upstream role" / "shared
 external-service-unreachable" from an actual behavioral difference between
 the two engines. Plenty of "bugs" turn out to be one of the first three —
-CLAUDE.md says so explicitly. If a fork/subagent already did this triage
+AGENTS.md says so explicitly. If a fork/subagent already did this triage
 pass and handed you a specific role + evidence path, skip straight to step 1.
 
 ## 1. Set up an isolated worktree
@@ -179,7 +179,7 @@ Then clean up: `git worktree remove <path> --force`,
 Once ALL roles from a round's triage are either fixed or dispositioned
 (missing module / broken upstream / not-yet-root-caused), update
 `KNOWN_MISSING.md` and `ROLES_TESTED.md` together in one commit — not one
-commit per role. See CLAUDE.md's own note on this: `ROLES_TESTED.md`'s
+commit per role. See AGENTS.md's own note on this: `ROLES_TESTED.md`'s
 row for an already-documented divergent role updates from "not yet
 root-caused" to the actual root cause + fix version, and
 `KNOWN_MISSING.md` gets a summary narrative with the closed open-gap

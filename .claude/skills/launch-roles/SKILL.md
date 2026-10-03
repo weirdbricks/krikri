@@ -6,7 +6,7 @@ description: Run a full krikri-role-tester round end-to-end against real Ansible
 # Launch roles (krikri-role-tester full round)
 
 Drives an entire real-host benchmark round in
-`/home/labros/git_work/krikri/CLAUDE.md`'s workflow: batch → monitor → triage
+`/home/labros/git_work/krikri/AGENTS.md`'s workflow: batch → monitor → triage
 → fix dispatch → validate/land → confirm → docs sync. Steps 1-7 are the
 "batch phase" — no engine code changes during those. Steps 8 onward
 (triage/fix/confirm) do change code, by design — that's the point of a full
@@ -225,7 +225,7 @@ round_end=$((round_start + total - 1))  # same derivation as step 7
 bin/krikri-role-tester report ~/scratch/krt-results --round-start "$round_start" --round-end "$round_end"
 ```
 
-Then, per `CLAUDE.md`'s triage step:
+Then, per `AGENTS.md`'s triage step:
 
 - Dedupe the divergences — if two or more roles hit the same root cause,
   that's one fix to make, not two.
@@ -260,7 +260,7 @@ Claude is the dispatcher, not a bystander, for each root cause:
    launch the next one only once a running slot frees up.
 
 Fix/confirm phases (steps 4-5 of the benchmark-round workflow in
-`CLAUDE.md`) still apply per fix — this step just means dispatch starts
+`AGENTS.md`) still apply per fix — this step just means dispatch starts
 immediately after triage instead of waiting for the user to say "go ahead."
 
 ## 10. Validate every completed Crush job
@@ -273,7 +273,7 @@ this validation**:
    version bump present (`src/krikri/version.cr`), plugin
    three-place-registration if a plugin was touched, and a regression test
    added where practical (or a stated reason in the intended commit message
-   if not, per `CLAUDE.md`).
+   if not, per `AGENTS.md`).
 2. Run `scripts/minitest.sh -- -p 4` (full suite) and `./build.sh` — both must pass clean
    before anything is trusted.
 3. If validation finds real problems, push back and fix by hand rather than
@@ -291,7 +291,7 @@ need its `VERSION`/`KNOWN_MISSING.md` bump renumbered by hand).
 
 Passing `scripts/minitest.sh`/`./build.sh` proves the fix doesn't regress anything
 covered by unit tests — it does **not** prove the original divergence is
-actually gone. Per `CLAUDE.md`'s confirm phase, after a fix for a role is
+actually gone. Per `AGENTS.md`'s confirm phase, after a fix for a role is
 merged to `main`:
 
 1. Build a fresh queue file containing **only the role(s) that diverged
@@ -309,7 +309,7 @@ otherwise mask whether an earlier one actually worked.
 ## 12. Sync round docs
 
 Once every dispatched fix is merged and confirmed, update the round's
-tracking docs together in one commit (per `CLAUDE.md`'s "Docs that must stay
+tracking docs together in one commit (per `AGENTS.md`'s "Docs that must stay
 in sync"):
 
 - **`KNOWN_MISSING.md`**: add this round's narrative entry (newest first,

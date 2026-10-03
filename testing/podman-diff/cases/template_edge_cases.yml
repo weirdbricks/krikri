@@ -1,5 +1,5 @@
 # template module failure-path edge cases, esp. the "recursive
-# re-templating" bug class called out in CLAUDE.md: a variable whose
+# re-templating" bug class called out in AGENTS.md: a variable whose
 # own value is itself unrendered Jinja must NOT get re-rendered when
 # substituted - both the hand-rolled evaluator and Crinja have
 # independently regressed on this before.

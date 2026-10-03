@@ -121,7 +121,7 @@ describe "nested undefined chains" do
   describe "ConditionalEvaluator agrees with the Crinja side" do
     include RaisesAssertion
     # The two Jinja evaluators in this codebase share no implementation
-    # (see CLAUDE.md), so this same bug class has to be fixed - and
+    # (see AGENTS.md), so this same bug class has to be fixed - and
     # regression-tested - independently in each.
     it "treats an unresolvable chain as undefined for when: is defined" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}

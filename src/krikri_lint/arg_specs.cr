@@ -7,7 +7,7 @@ module Krikri
     # params against per-module argument specs, mirroring Ansible's
     # argspec validation messages. Only core (ansible.builtin) modules
     # get specs here - community modules are outside krikri's coverage
-    # bar (see CLAUDE.md), and upstream's choices ordering is unstable
+    # bar (see AGENTS.md), and upstream's choices ordering is unstable
     # between runs anyway (Python hash randomization).
     module ArgSpecs
       record Spec,

@@ -3,7 +3,7 @@ require "../../src/krikri/differential_fuzz/generator"
 require "../../src/krikri/differential_fuzz/runner"
 
 # Permanent differential-regression spec for the two coexisting Jinja
-# evaluators (see CLAUDE.md): the hand-rolled ExpressionEvaluator and the
+# evaluators (see AGENTS.md): the hand-rolled ExpressionEvaluator and the
 # krikri-jinja engine (via JinjaRenderer#evaluate_value!). The full
 # exploratory sweep lives in bin/differential_fuzz (--seed/--count/--shrink);
 # this spec runs a small fixed-seed slice, fast and deterministic, so any

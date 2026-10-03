@@ -3,7 +3,7 @@ name: Auto Tag Release
 # Runs daily. Reads the current VERSION from src/krikri/version.cr and
 # pushes a matching v<VERSION> tag ONLY if that tag doesn't already
 # exist - which, since this project bumps VERSION with every commit
-# that changes engine/plugin behavior (see CLAUDE.md), is exactly
+# that changes engine/plugin behavior (see AGENTS.md), is exactly
 # "there's new code since the last release". Pushing the tag alone is
 # NOT enough to release: a push made with this workflow's own
 # GITHUB_TOKEN never triggers release.yml (GitHub ignores events

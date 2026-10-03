@@ -141,7 +141,7 @@ describe "undefined value reaching a filter is strict" do
   end
 
   # The Crinja side (real `.j2` files) had the identical bug
-  # independently, per this repo's own CLAUDE.md warning: its dict2items
+  # independently, per this repo's own AGENTS.md warning: its dict2items
   # returned an empty list for an undefined input, so the template task
   # rendered "[]" and reported changed instead of failing.
   it "fails a .j2 template rendering an undefined var through dict2items" do
