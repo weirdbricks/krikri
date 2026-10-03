@@ -55,7 +55,11 @@ private def run_play(tasks : Array(String)) : {Bool, String}
   body.concat(tasks)
   File.write(playbook, body.join("\n") + "\n")
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, input: IO::Memory.new)
+  # One real pipe for both streams (2>&1 in the shell): Process.run with
+  # the same IO for output and error copies them through two pipes on
+  # separate fibers, so the relative order of the two streams - which the
+  # banner-ordering assertion below depends on - flips under load.
+  status = Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, playbook], output: output, input: IO::Memory.new)
   {status.success?, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
