@@ -67,8 +67,18 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Unable to slurp file: #{src}: #{ex.message}")
       end
 
-      PluginResult.new(changed: false, failed: false, msg: "", content: Base64.strict_encode(bytes), source: src, encoding: "base64")
+      # Real slurp's registered result runs content, source, encoding,
+      # failed, changed - `changed` LAST and `failed: false` explicitly
+      # present (live-verified vs 2.19.11 via `{{ r | to_json }}` on a
+      # registered slurp: task; check mode keeps the same order). The
+      # failed_flag opt-in makes the success result carry failed: false
+      # so the reorder can place it before changed - without it the
+      # executor's missing-failed backfill would append failed AFTER
+      # changed, real's exact opposite.
+      PluginResult.new(changed: false, failed: false, msg: "", content: Base64.strict_encode(bytes), source: src, encoding: "base64", failed_flag: false, key_order: SUCCESS_KEY_ORDER)
     end
+
+    private SUCCESS_KEY_ORDER = %w[content source encoding failed changed]
   end
 end
 

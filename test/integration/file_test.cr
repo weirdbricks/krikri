@@ -786,6 +786,26 @@ end
 # existing key's position, so state lands BEFORE uid there), while
 # every other state gets state appended after mode.
 describe "file plugin result key order" do
+  it "serializes a mode change on an existing file with no msg key" do
+    path = tmp_path("file-order-mode-change")
+    File.write(path, "x\n")
+
+    result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0600"})
+
+    result["changed"].as_bool.must_equal(true)
+    # Real's file module carries NO msg key on any success path -
+    # attribute updates included (live-verified vs 2.19.11: a mode
+    # change on an existing file serializes as path, changed, the stat
+    # block, failed). The old "File attributes updated" msg must stay
+    # gone.
+    result.as_h.has_key?("msg").must_equal(false)
+    result.as_h.keys.must_equal([
+      "path", "changed", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
   it "serializes a created directory in real file's key order" do
     path = tmp_path("file-order-dir")
 

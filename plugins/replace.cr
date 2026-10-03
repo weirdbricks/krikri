@@ -261,7 +261,8 @@ module Krikri
             changed: false,
             failed: false,
             msg: "Pattern for before/after params did not match the given file: #{section_pattern}",
-            rc: 0
+            rc: 0,
+            key_order: SUCCESS_KEY_ORDER
           )
         end
 
@@ -379,11 +380,21 @@ module Krikri
         failed: false,
         msg: msg,
         include_empty_msg: true,
-        rc: 0
+        rc: 0,
+        key_order: SUCCESS_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       result
     end
+
+    # Real ansible.builtin.replace's registered-result key order
+    # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
+    # replace: tasks): rc leads, then backup_file only when a backup was
+    # taken, then msg (empty string included on a no-matches run), then
+    # changed, failed. Identical on changed, unchanged, no-match and
+    # check-mode runs; no diff key outside --diff mode, no path echo, no
+    # stat fields.
+    private SUCCESS_KEY_ORDER = %w[rc backup_file msg changed failed]
 
     # The module-crash wrapper: real's executor renders an exception that
     # escapes the module (a bad re.compile of regexp:/after:/before:, an

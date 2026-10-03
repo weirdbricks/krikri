@@ -29,13 +29,14 @@ module Krikri
     # and src: paths (identical order), with backup: true (backup_file
     # right after changed), and on the directory-copy path (whose real
     # result is bare dest/src/changed, no stat block). `src` and
-    # `md5sum` are listed for real's shape; krikri's wire result omits
-    # them (no staged-tempfile path to echo), and emit_reordered skips
-    # absent keys. The equal-content and check-mode would-not-change
-    # paths dispatch real's FILE module (the copy action's
-    # already-correct-hash branch), whose result runs diff, path,
-    # changed, the stat block, then the action-injected checksum and
-    # dest - a different order, hence its own constant.
+    # `md5sum` ride the changed results too (live-verified vs 2.19.11):
+    # real's src is its staged tempfile path - the content path echoes
+    # krikri's own staging temp, the src path echoes the source path
+    # itself - and md5sum is the source content's MD5. The equal-content
+    # and check-mode would-not-change paths dispatch real's FILE module
+    # (the copy action's already-correct-hash branch), whose result runs
+    # diff, path, changed, the stat block, then the action-injected
+    # checksum and dest - a different order, hence its own constant.
     private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
     private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
     # force: false against an existing dest: real's result is ONLY
@@ -324,13 +325,31 @@ module Krikri
         unless true?(@params["force"]?, default: true)
           # Real's result here is ONLY {changed, dest, src} - no msg, no
           # file-common stat fields, no checksum (live-verified vs
-          # 2.19.11 at -v; src is real's random staged tempfile, which
-          # the harness masks). krikri has no equivalent staged path to
-          # echo, so dest alone.
+          # 2.19.11 at -v; src is real's random staged tempfile - the
+          # action always stages the content before the module's force
+          # check exits, so krikri stages-and-deletes one temp of its own
+          # to echo).
+          temp = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
+          begin
+            create_staging_temp(temp, 0o600)
+            File.write(temp, content, perm: 0o600)
+          rescue File::Error
+            # The echo is best-effort: real's src is a random staged path
+            # no consumer can match anyway, so a staging failure just
+            # leaves the key off rather than failing a would-be no-op.
+            return PluginResult.new(
+              changed: false,
+              failed: false,
+              dest: dest,
+              key_order: NOOP_KEY_ORDER
+            )
+          end
+          File.delete(temp) if File.exists?(temp)
           return PluginResult.new(
             changed: false,
             failed: false,
             dest: dest,
+            src: temp,
             key_order: NOOP_KEY_ORDER
           )
         end
@@ -435,9 +454,10 @@ module Krikri
       # content_sha1 rides along because real's copy ACTION plugin injects
       # `checksum` (its local_checksum) into any module result that lacks
       # one - failed results included)
-      if failure = write_with_optional_validate(content, dest, content_sha1)
-        return failure
-      end
+      write = write_with_optional_validate(content, dest, content_sha1)
+      write_failure = write[:failure]
+      return write_failure if write_failure
+      staged = write[:staged]
 
       # Set file permissions if requested
       _attrs_fixed, failure = apply_extended_attributes(dest)
@@ -448,6 +468,10 @@ module Krikri
         failed: false,
         diff: diff_data,
         dest: dest,
+        # Real's src is the action's staged content tempfile (.source.txt,
+        # live-verified) - krikri's own staging temp is the same thing: a
+        # now-renamed-away path that held exactly these bytes.
+        src: staged || dest,
         checksum: content_sha1,
         md5sum: content_md5,
         key_order: CHANGED_KEY_ORDER
@@ -566,7 +590,7 @@ module Krikri
       # algorithm; MD5 for the backwards-compat `md5sum:` field).
       begin
         src_sha1 = native_checksum(src, "sha1")
-        _src_md5 = native_checksum(src, "md5")
+        src_md5 = native_checksum(src, "md5")
       rescue ex
         return PluginResult.new(
           changed: false,
@@ -586,12 +610,16 @@ module Krikri
         # can only fire when force is true (see #handle_content_copy's
         # note).
         if changed && !force
-          # Same bare shape as the content-path force=false no-op above
-          # (live-verified vs 2.19.11 at -v).
+          # Real's result here is ONLY {dest, src, changed} - no msg, no
+          # file-common stat fields, no checksum, no diff (live-verified
+          # vs 2.19.11 at -v; src is the user's own src: path for a src
+          # copy, and the action's staged content tempfile for a content
+          # copy - the registered-result capture shows the raw dict).
           return PluginResult.new(
             changed: false,
             failed: false,
             dest: dest,
+            src: src,
             key_order: NOOP_KEY_ORDER
           )
         end
@@ -694,15 +722,19 @@ module Krikri
 
       # Copy the file (staged + validated first when validate: is given -
       # src_sha1 was already computed above for the idempotency check, so
-      # this reads src a second time only on the validate: path).
+      # this reads src a second time only on the validate: path). The
+      # staged temp path is not echoed here: on the src path real's
+      # registered result echoes the user's own src: path (see the
+      # src: below), unlike the content path whose src IS the staging
+      # temp.
       if @params["validate"]?
-        if failure = write_with_optional_validate(File.read(src), dest, src_sha1)
-          return failure
-        end
+        write = write_with_optional_validate(File.read(src), dest, src_sha1)
+        write_failure = write[:failure]
+        return write_failure if write_failure
       else
-        if failure = atomic_write(File.read(src), dest)
-          return failure
-        end
+        write = atomic_write(File.read(src), dest)
+        write_failure = write[:failure]
+        return write_failure if write_failure
       end
 
       # Set ownership and permissions
@@ -713,7 +745,13 @@ module Krikri
         changed: true,
         failed: false,
         dest: dest,
+        # Real's src here is the action's staged .source.txt tempfile
+        # path (live-verified) - krikri echoes the source path it
+        # actually copied from, which is the same thing on the
+        # remote_src path and the user's own path locally.
+        src: src,
         checksum: src_sha1,
+        md5sum: src_md5,
         key_order: CHANGED_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
@@ -884,7 +922,13 @@ module Krikri
     # unconditional `checksum` injection, stdout/stderr unstripped with
     # their _lines splitters added by _return_formatted (live-verified vs
     # 2.19.11).
-    private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : PluginResult?
+    # Writes content to dest (staging through a temp file for the
+    # result's `src` echo - real's src is its own staged tempfile, so the
+    # success result needs the temp path the bytes actually travelled
+    # through). Returns {failure: PluginResult?, staged: String?} -
+    # failure is set on error, staged is the temp path the content was
+    # written to (always set on success).
+    private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : {failure: PluginResult?, staged: String?}
       validate_cmd = @params["validate"]?
       unless validate_cmd
         return atomic_write(content, dest)
@@ -903,7 +947,7 @@ module Krikri
         create_staging_temp(temp_file, staging_temp_mode(dest, 0o666, preserve_dest_mode: false))
         File.write(temp_file, content, perm: 0o600)
       rescue ex
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
       end
 
       validation = validate_file(temp_file, validate_cmd)
@@ -927,17 +971,17 @@ module Krikri
           stderr: stderr,
           stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
         )
-        return result
+        return {failure: result, staged: nil}
       end
 
       begin
         FileUtils.mv(temp_file, dest)
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
       end
 
-      nil
+      {failure: nil, staged: temp_file}
     end
 
     # Validate file with command - like template.cr's own helper, but
@@ -1106,7 +1150,7 @@ module Krikri
     # only ever runs when the rename actually fails.
     #
     # Returns nil on success, or a failed PluginResult.
-    private def atomic_write(content : String, dest : String) : PluginResult?
+    private def atomic_write(content : String, dest : String) : {failure: PluginResult?, staged: String?}
       temp_file = File.join(File.dirname(dest), ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: the temp is created EMPTY at 0600 and settled to its
@@ -1139,20 +1183,21 @@ module Krikri
         # wide.
         File.write(temp_file, content, perm: 0o600)
       rescue ex
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}")
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to write temporary file: #{ex.message}"), staged: nil}
       end
 
       if given_checksum = @params["checksum"]?.presence
         actual = sha1_of(temp_file)
         unless actual == given_checksum
           File.delete(temp_file) if File.exists?(temp_file)
-          return PluginResult.new(
+          failure = PluginResult.new(
             changed: false,
             failed: true,
             msg: "Copied file does not match the expected checksum. Transfer failed.",
             checksum: actual,
             expected_checksum: given_checksum
           )
+          return {failure: failure, staged: nil}
         end
       end
 
@@ -1161,12 +1206,13 @@ module Krikri
       rescue ex
         File.delete(temp_file) if File.exists?(temp_file)
         if true?(@params["unsafe_writes"]?)
-          return unsafe_write_fallback(content, dest)
+          failure = unsafe_write_fallback(content, dest)
+          return {failure: failure, staged: nil}
         end
-        return PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}")
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "Failed to move file to destination: #{ex.message}"), staged: nil}
       end
 
-      nil
+      {failure: nil, staged: temp_file}
     end
 
     # unsafe_writes: the non-atomic fallback - write dest directly, in
