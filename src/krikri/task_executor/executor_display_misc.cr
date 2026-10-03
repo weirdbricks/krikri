@@ -183,17 +183,22 @@ module Krikri
       poll = task.poll_seconds || 10
       if poll <= 0
         # Real ansible-core 2.19.11's fire-and-forget registered shape
-        # (live-verified by dumping the registered var): ansible_job_id,
-        # changed=true, failed=false, finished=false, results_file,
-        # started=true - booleans, and NO "msg" (the old "Job started:
-        # <jid>" msg key is not something real produces).
+        # (live-verified by dumping the registered var keys AND values):
+        # failed, started, finished, ansible_job_id, results_file,
+        # changed - booleans (failed: false, started: true,
+        # finished: false, changed: true), NO "msg" (real's own
+        # async_wrapper end() dict carries none; the old "Job started:
+        # <jid>" msg key is not something real's LOCAL shape produces).
+        # Real's registered result also carries ansible_facts + warnings
+        # from interpreter discovery on that first module contact - no
+        # krikri equivalent, a known set gap.
         return JSON.parse({
-          "ansible_job_id" => jid,
-          "changed"        => true,
           "failed"         => false,
-          "finished"       => false,
-          "results_file"   => AsyncJobs.status_path(jid),
           "started"        => true,
+          "finished"       => false,
+          "ansible_job_id" => jid,
+          "results_file"   => AsyncJobs.status_path(jid),
+          "changed"        => true,
         }.to_json)
       end
 
@@ -201,7 +206,9 @@ module Krikri
       loop do
         sleep poll.seconds
         if status = AsyncJobs.read_status(jid)
-          return status if AsyncJobs.finished?(status)
+          if AsyncJobs.finished?(status)
+            return async_status_wrapped_result(jid, status)
+          end
         end
         break if Time.instant >= deadline
       end
@@ -212,6 +219,33 @@ module Krikri
         "msg"            => "async task did not complete within #{task.async_seconds} seconds",
         "ansible_job_id" => jid,
       }.to_json)
+    end
+
+    # Real's poll>0 final registered shape (live-verified via
+    # `{{ r.keys() | list | to_json }}` on a registered poll: 5 command
+    # job): the async_status ACTION plugin's base dict - started,
+    # finished, stdout, stderr, stdout_lines, stderr_lines,
+    # ansible_job_id, results_file (ansible/plugins/action/async_status.py
+    # initializes it, then coerces started/finished to booleans) - merged
+    # with the job file's module result the way its merge_hash does:
+    # duplicate keys keep their base position with the file's value, the
+    # module's own keys append in file order (for a command job: changed,
+    # rc, cmd, start, end, delta, msg, failed).
+    private def async_status_wrapped_result(jid : String, status : JSON::Any) : JSON::Any
+      merged = JSON.parse({
+        "started"        => true,
+        "finished"       => true,
+        "stdout"         => "",
+        "stderr"         => "",
+        "stdout_lines"   => [] of String,
+        "stderr_lines"   => [] of String,
+        "ansible_job_id" => jid,
+        "results_file"   => AsyncJobs.status_path(jid),
+      }.to_json).as_h
+      status.as_h.each do |key, value|
+        merged[key] = value
+      end
+      JSON::Any.new(merged)
     end
 
     # The remote-connection half of async: - see execute_async's own

@@ -168,9 +168,20 @@ if ARGV[0]? == "__async_run"
   # added below, so a shallow copy is equivalent to the round trip, and
   # the round trip's cost scales with the module's whole output.
   result_hash = result.as_h.dup
-  # Real ansible-core 2.19.11 (live-verified by dumping the registered
-  # var of a poll>0 async task): finished is the JSON boolean true, not
-  # the integer 1.
+  # Real ansible-core 2.19.11's finished poll read renders as the JSON
+  # boolean true, not the integer 1 (live-verified).
+  #
+  # File layout mirrors real's async_wrapper: the module's own result dict
+  # with ansible_job_id APPENDED (async_wrapper.py sets
+  # result['ansible_job_id'] = jid after parsing the module output, so it
+  # lands after the module's last key), and finished as the final key
+  # (real adds it on read-back in async_status's module; here it doubles
+  # as AsyncJobs.finished?'s completion marker). The registered poll>0
+  # order this feeds - started, finished, stdout, stderr, stdout_lines,
+  # stderr_lines, ansible_job_id, results_file, changed, rc, cmd, start,
+  # end, delta, msg, failed for a command job - is live-verified and
+  # assembled by the poll loop's wrap (executor_display_misc.cr).
+  result_hash["ansible_job_id"] = JSON::Any.new(File.basename(status_path))
   result_hash["finished"] = JSON::Any.new(true)
 
   tmp_path = "#{status_path}.tmp"
