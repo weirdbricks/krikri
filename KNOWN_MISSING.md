@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1443`.**
+**Currently at `0.9.1444`.**
 
 ## Open gaps
 
@@ -61,12 +61,18 @@ and fixed and when.
   plugins, with a different order per module in real: `fail`: `failed, msg, changed, exception`; `assert`:
   `failed, evaluated_to, assertion, msg, changed, exception`; `copy`/`template`: `failed, msg, exception,
   changed`; `unarchive`: `failed, exception, msg, changed`.
-- **`postgresql_privs`, `postgresql_query`, and `mysql_db`/`mysql_info`/`mysql_query`/`mysql_user` results
-  have a different KEY SET than real** (not just a different order): e.g. real's `mysql_db` adds `db`,
-  `db_list`, `executed_commands`; `mysql_info` ~11 server keys; `mysql_query` `execution_time_ms`;
-  `mysql_user` `user`/`password_changed`/`attributes`; `postgresql_privs` `queries`; `postgresql_query`
-  `execution_time_ms` (verified live on mysql:8.4 / postgres:17 containers). `postgresql_db`/`postgresql_user`
-  and `mysql_variables` already match.
+- **`postgresql_privs`/`postgresql_query` results have a different KEY SET than real** (real's `postgresql_privs`
+  adds `queries`; `postgresql_query` adds `execution_time_ms`) - a fix is in progress. `postgresql_db`,
+  `postgresql_user`, `mysql_db`, `mysql_query`, `mysql_user` and `mysql_variables` now match real
+  (live-verified on postgres:17 / mysql:8.4 containers).
+- **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP is
+  not implemented (needs an RSA public-key exchange): the first TCP connection to a fresh MySQL 8 server whose
+  auth cache is empty fails ("full authentication over plain TCP needs an RSA public-key exchange"); real's
+  PyMySQL does the exchange and warms the cache, after which krikri connects. (2) `mysql_info` ignores a
+  `filter:` given as a YAML list and returns every key where real returns only the filtered ones; `exclude_fields:`
+  is not implemented; `connector_name`/`connector_version` are `"Unknown"`; `users`/`users_info` omit
+  `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
+  `mysql_native_password` plugin no longer exists there).
 - **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;
   `archive` lacks `expanded_exclude_paths`; `git_config`'s write path lacks real's `diff`;
   `get_certificate` returns the full `X509CertInfo` key set where real returns ten (extras trail);
