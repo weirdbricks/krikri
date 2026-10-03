@@ -57,6 +57,48 @@ describe "modprobe plugin result key order" do
   end
 end
 
+describe "mount plugin result key order" do
+  # state=absent against a throwaway fstab needs no real mount (the
+  # present/remounted variants need a working mount(2), which the
+  # unprivileged test host and rootless container both deny - those
+  # were pinned from the live-verified absent shape, real's single
+  # exit_json(changed=changed, **args)).
+  it "serializes an absent fstab-entry removal as real's args order (verified live for state=absent)" do
+    fstab = unique_tmp("mount-order-fstab")
+    path = unique_tmp("mount-order-path")
+    File.write(fstab, "tmpfs #{path} tmpfs defaults 0 0\n")
+
+    result = PluginSpecHelper.run("mount", {
+      "path"   => path,
+      "src"    => "tmpfs",
+      "fstype" => "tmpfs",
+      "state"  => "absent",
+      "fstab"  => fstab,
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
+      "deprecations", "_ansible_core_deprecations",
+    ])
+
+    result2 = PluginSpecHelper.run("mount", {
+      "path"   => path,
+      "src"    => "tmpfs",
+      "fstype" => "tmpfs",
+      "state"  => "absent",
+      "fstab"  => fstab,
+    })
+    result2["changed"].as_bool.must_equal(false)
+    result2.as_h.keys.must_equal([
+      "changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype",
+      "deprecations", "_ansible_core_deprecations",
+    ])
+  ensure
+    File.delete(fstab) if fstab && File.exists?(fstab)
+  end
+end
+
 describe "locale_gen plugin result key order" do
   # The already-generated path needs no mutation (locale-gen itself is
   # root-only), so this pin is testable unprivileged; the changed and
