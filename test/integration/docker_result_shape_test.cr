@@ -127,3 +127,41 @@ describe "docker result shape: docker_network" do
     result["msg"].as_s.must_include("An unexpected Docker error occurred:")
   end
 end
+describe "docker result shape: docker_network_info" do
+  serial!
+
+  # real: {"changed": false, "exists": false, "network": null, "failed": false}
+  # (exit_json kwargs changed=, exists=, network=; no msg at all)
+  it "matches real's not-found key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    result = PluginSpecHelper.run("docker_network_info",
+      {"name" => "krikri-kp-dk-shape-ni-absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+    docker_shape_keys(result).must_equal(["changed", "exists", "network", "failed"])
+    result["changed"].as_bool.must_equal(false)
+    result["exists"].as_bool.must_equal(false)
+    result["network"].raw.must_be_nil
+    # no msg key on a successful info result
+    result.as_h.has_key?("msg").must_equal(false)
+  end
+
+  it "matches real's found key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-ni"
+    PluginSpecHelper.run("docker_network", docker_shape_params(name))
+    result = PluginSpecHelper.run("docker_network_info",
+      {"name" => name, "docker_host" => DOCKER_RESULT_SHAPE_SOCKET})
+    docker_shape_keys(result).must_equal(["changed", "exists", "network", "failed"])
+    result["exists"].as_bool.must_equal(true)
+    result["network"]["Name"].as_s.must_equal(name)
+    result.as_h.has_key?("msg").must_equal(false)
+
+    PluginSpecHelper.run("docker_network", docker_shape_params(name, {"state" => "absent"}))
+  end
+
+  it "matches real's failure key set and order" do
+    result = PluginSpecHelper.run("docker_network_info", {} of String => String)
+    docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("missing required arguments: name")
+  end
+end
