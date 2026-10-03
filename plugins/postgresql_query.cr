@@ -48,11 +48,15 @@ module Krikri
   # alias). The deprecated host/port/login/unix_socket names are not in
   # the spec and get rejected like any other unsupported param.
   #
-  # Returns: query_result (the LAST statement's full result set as an
-  # array of column->value dicts, matching real Ansible - one entry per
-  # row, [] for a statement that produces no rows), query_all_results
-  # (one row-list per statement), query_list, rowcount (total
-  # produced/affected rows), query, statusmessage.
+  # Returns, in real Ansible's own key order: changed, query (the LAST
+  # statement, mogrify'd), query_list, statusmessage, query_result (the
+  # LAST statement's full result set as an array of column->value dicts,
+  # matching real Ansible - one entry per row, {} for a statement that
+  # produces no rows), query_all_results (one row-list per statement),
+  # rowcount (total produced/affected rows), execution_time_ms (per
+  # statement), and the controller-backfilled failed: false. No msg on
+  # success. Live-verified against real ansible-core 2.19.11 +
+  # community.postgresql 4.2.0.
   #
   # Divergence, deliberate: statusmessage is synthesized from the
   # statement's leading keyword + affected-row count ("INSERT 0 1" /
@@ -65,11 +69,12 @@ module Krikri
 
     private record RunOutcome,
       last_sql : String,
-      last_result : Array(Hash(String, JSON::Any)),
+      last_result : JSON::Any,
       all_results : Array(JSON::Any),
       rowcount : Int64,
       statusmessage : String,
-      changed : Bool
+      changed : Bool,
+      execution_times_ms : Array(Float64)
 
     # The real module's merged argument_spec (postgres_common_
     # argument_spec + postgresql_query's own update) in declaration
@@ -99,6 +104,18 @@ module Krikri
     INT_PARAMS  = {"login_port"}
     BOOL_PARAMS = {"autocommit", "trust_input"}
     SSL_MODES   = %w[allow disable prefer require verify-ca verify-full]
+
+    # Real Ansible's kw dict in its own insertion order
+    # (exit_json(changed, query, query_list, statusmessage, query_result,
+    # query_all_results, rowcount, execution_time_ms)), with `failed: false`
+    # backfilled by the controller after the module's kwargs - hence its
+    # position. No msg: real exits with none on success.
+    # Live-verified against real ansible-core 2.19.11 + community.postgresql
+    # 4.2.0.
+    SUCCESS_KEY_ORDER = %w[
+      changed query query_list statusmessage query_result query_all_results
+      rowcount execution_time_ms failed
+    ]
 
     def execute : PluginResult
       if err = validate_arguments
@@ -152,13 +169,15 @@ module Krikri
         return PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
       end
 
-      res = PluginResult.new(changed: outcome.changed, failed: false, msg: outcome.statusmessage)
+      res = PluginResult.new(changed: outcome.changed, failed: false,
+        failed_flag: true, key_order: SUCCESS_KEY_ORDER)
       res.extra["query"] = JSON::Any.new(outcome.last_sql)
       res.extra["query_list"] = JSON::Any.new(queries.map { |sql| JSON::Any.new(sql) })
-      res.extra["query_result"] = JSON::Any.new(outcome.last_result.map { |row| JSON::Any.new(row) })
+      res.extra["statusmessage"] = JSON::Any.new(outcome.statusmessage)
+      res.extra["query_result"] = outcome.last_result
       res.extra["query_all_results"] = JSON::Any.new(outcome.all_results)
       res.extra["rowcount"] = JSON::Any.new(outcome.rowcount)
-      res.extra["statusmessage"] = JSON::Any.new(outcome.statusmessage)
+      res.extra["execution_time_ms"] = JSON::Any.new(outcome.execution_times_ms.map { |elapsed| JSON::Any.new(elapsed) })
       res
     end
 
@@ -208,30 +227,39 @@ module Krikri
       run_set_search_path(conn, search_path)
 
       all_results = [] of JSON::Any
-      last_result = [] of Hash(String, JSON::Any)
+      last_result = JSON::Any.new([] of JSON::Any)
       last_sql = ""
       rowcount = 0i64
       statusmessage = ""
       changed = false
+      execution_times_ms = [] of Float64
 
       queries.each do |sql|
         expanded_sql, binds = resolve_binds(sql, positional, named)
         last_sql = expanded_sql
+        started = Time.monotonic
         rows, affected, tag = run_statement(conn, expanded_sql, binds)
+        execution_times_ms << (Time.monotonic - started).total_milliseconds
         rowcount += affected
         statusmessage = tag
-        all_results << JSON::Any.new(rows.map { |row| JSON::Any.new(row) })
+        # Real Ansible renders a statement that produced no rows as an
+        # EMPTY DICT, not an empty list (its own fetch loop leaves
+        # query_result == [] and it then replaces that with {}), so both
+        # the per-statement entry in query_all_results and the final
+        # query_result are {} for DDL - not [].
+        rendered = rows.empty? ? JSON::Any.new({} of String => JSON::Any) : JSON::Any.new(rows.map { |row| JSON::Any.new(row) })
+        all_results << rendered
         # Real Ansible's query_result is the LAST statement's whole
         # result set (one dict per row) - not just its first row, which
         # silently dropped every row after the first on a multi-row
         # SELECT.
-        last_result = rows
+        last_result = rendered
         changed = true if PluginHelpers::PostgresqlQueryHeuristics.changed?(
                             PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(expanded_sql), affected
                           )
       end
 
-      RunOutcome.new(last_sql, last_result, all_results, rowcount, statusmessage, changed)
+      RunOutcome.new(last_sql, last_result, all_results, rowcount, statusmessage, changed, execution_times_ms)
     end
 
     private def run_set_search_path(conn : DB::Database, search_path : String?) : Nil
@@ -276,7 +304,62 @@ module Krikri
 
       result = conn.exec(sql, args: args)
       affected = result.rows_affected
-      {[] of Hash(String, JSON::Any), affected, "#{keyword} #{affected}"}
+      {[] of Hash(String, JSON::Any), affected, ddl_command_tag(sql, affected)}
+    end
+
+    # PostgreSQL's own command tag for a non-row-returning statement,
+    # which psycopg2 surfaces as cursor.statusmessage and the real
+    # module reports verbatim. crystal-pg does not surface the raw tag,
+    # so it is rebuilt from the statement text:
+    #   - INSERT/UPDATE/DELETE carry an affected-row count ("INSERT 0 1",
+    #     "UPDATE 1", "DELETE 2"), which is exactly what the real
+    #     module's changed: rule parses.
+    #   - everything else is "<VERB> <OBJECT>" ("CREATE TABLE",
+    #     "DROP SCHEMA", "ALTER VIEW", ...) or the bare verb ("SET",
+    #     "GRANT", "RESET"). The object word is the first SQL word after
+    #     the verb that names an object kind, skipping the modifiers
+    #     PostgreSQL itself drops from the tag ("CREATE TEMP TABLE" ->
+    #     "CREATE TABLE", "DROP MATERIALIZED VIEW" -> "DROP MATERIALIZED
+    #     VIEW", "CREATE OR REPLACE VIEW" -> "CREATE VIEW").
+    # Verified against a real PostgreSQL 17 server for CREATE/DROP/ALTER
+    # on TABLE/VIEW/SCHEMA/SEQUENCE/INDEX/EXTENSION/MATERIALIZED VIEW,
+    # plus TRUNCATE (tagged "TRUNCATE TABLE"), SET, RESET, GRANT, BEGIN,
+    # COMMIT and ANALYZE.
+    private def ddl_command_tag(sql : String, affected : Int64) : String
+      case (keyword = PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(sql).upcase)
+      when "INSERT" then "INSERT 0 #{affected}"
+      when "UPDATE", "DELETE" then "#{keyword} #{affected}"
+      when "TRUNCATE" then "TRUNCATE TABLE"
+      else
+        object = object_word_after_verb(sql)
+        object ? "#{keyword} #{object}" : keyword
+      end
+    end
+
+    OBJECT_KIND_WORDS = %w[
+      TABLE TABLES VIEW SEQUENCE SCHEMA INDEX DATABASE EXTENSION FUNCTION
+      PROCEDURE TYPE DOMAIN ROLE POLICY TRIGGER RULE MATERIALIZED
+    ]
+
+    private def object_word_after_verb(sql : String) : String?
+      words = sql.scan(/[A-Za-z_][A-Za-z_0-9]*/).map { |match| match[0] }.to_a
+      return nil if words.size < 2
+
+      # "CREATE MATERIALIZED VIEW" keeps both modifiers; "CREATE TEMP
+      # TABLE" / "CREATE UNLOGGED TABLE" / "CREATE OR REPLACE VIEW" keep
+      # none of them - so keep MATERIALIZED, drop the per-session and
+      # OR REPLACE noise.
+      tail = words[1..]
+      modifiers = [] of String
+      tail.each do |word|
+        up = word.upcase
+        break if OBJECT_KIND_WORDS.includes?(up)
+        modifiers << up if %w[MATERIALIZED TEMP TEMPORARY UNLOGGED].includes?(up)
+        break if up == "OR"
+      end
+      object = tail.find { |word| OBJECT_KIND_WORDS.includes?(word.upcase) }
+      return nil unless object
+      "#{modifiers.join(" ")} #{object.upcase}".strip
     end
 
     # crystal-pg's bare read returns the decoder's native type (Nil,
