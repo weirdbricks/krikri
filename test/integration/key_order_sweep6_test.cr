@@ -150,6 +150,66 @@ describe "openssl_dhparam plugin result key order" do
   end
 end
 
+# A PKCS#12 export needs a certificate alongside the key; make a
+# throwaway self-signed one with the openssl CLI (same as the live
+# verification play did).
+private def self_signed_cert(dir : String, key : String) : String
+  cert = File.join(dir, "cert.pem")
+  status = Process.run("openssl", ["req", "-x509", "-new", "-key", key,
+    "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
+  status.success?.must_equal(true)
+  cert
+end
+
+describe "openssl_pkcs12 plugin result key order" do
+  it "serializes a fresh export as filename-privatekey_path-changed-mode" do
+    dir = PluginSpecHelper.tmp_path("ko-p12-1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    cert = self_signed_cert(dir, key)
+    result = PluginSpecHelper.run("openssl_pkcs12", {
+      "path"             => File.join(dir, "chain.p12"),
+      "privatekey_path"  => key,
+      "certificate_path" => cert,
+      "friendly_name"    => "test",
+      "action"           => "export",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "filename", "privatekey_path", "changed", "mode",
+    ])
+  end
+
+  it "keeps the same order on an idempotent unchanged rerun" do
+    dir = PluginSpecHelper.tmp_path("ko-p12-2")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    cert = self_signed_cert(dir, key)
+    PluginSpecHelper.run("openssl_pkcs12", {
+      "path"             => File.join(dir, "chain.p12"),
+      "privatekey_path"  => key,
+      "certificate_path" => cert,
+      "friendly_name"    => "test",
+      "action"           => "export",
+    })
+    result = PluginSpecHelper.run("openssl_pkcs12", {
+      "path"             => File.join(dir, "chain.p12"),
+      "privatekey_path"  => key,
+      "certificate_path" => cert,
+      "friendly_name"    => "test",
+      "action"           => "export",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "filename", "privatekey_path", "changed",
+    ])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")
