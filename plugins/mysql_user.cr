@@ -80,12 +80,14 @@ module Krikri
     @password_changed : JSON::Any? = JSON::Any.new(false)
 
     def execute : PluginResult
-      # Real Ansible's `name:` param has a deprecated `aliases: [user]`
-      # - same bug class fixed for postgresql_db/postgresql_user in
-      # round 43 (robertdebock.postgres): a real playbook writing
-      # `user: bob` (the alias) got "missing required argument: name"
-      # no matter what `user:` was set to.
-      name = @params["name"]? || @params["user"]?
+      # Real's `name:` param has NO `user:` alias (verified against the
+      # installed ansible.mysql 5.2.0 module source, which
+      # community.mysql's plugin_routing redirects to: real rejects
+      # `user:` with "Unsupported parameters for (mysql_user) module:
+      # user"). That rejection happens in real's argument-spec check,
+      # which krikri runs controller-side before this plugin is ever
+      # reached; keep the plugin itself reading the canonical name only.
+      name = @params["name"]?
       unless name
         # Real AnsibleModule's own required-arguments failure is plural
         # "arguments" even for a single missing param (same wording the

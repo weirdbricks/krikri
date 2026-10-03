@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "socket"
 
 # Regression spec for the ad-hoc CLI sweep (2026-09-13): a brand-new create
 # used to report "Updated user X@H" - real community.mysql.mysql_user says

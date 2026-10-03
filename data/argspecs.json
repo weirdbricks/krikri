@@ -12493,6 +12493,10 @@
     "type": "bool",
     "default": null
    },
+   "session_vars": {
+    "type": "list",
+    "elements": "dict"
+   },
    "query": {
     "type": "raw",
     "required": true
@@ -12574,9 +12578,6 @@
     "default": null
    },
    "name": {
-    "aliases": [
-     "user"
-    ],
     "type": "str",
     "required": true
    },
