@@ -81,6 +81,23 @@ module Krikri
           msg: "No physical volumes given.")
       end
 
+      # Real checks every requested PV device for existence BEFORE any LVM
+      # command runs (lvg.py: os.path.realpath on each entry, then
+      # os.path.exists -> "Device {dev} not found."), which is the failure
+      # the kop_storage lvg_fail probe captures: real never reaches
+      # vgcreate with a nonexistent PV.
+      if state != "absent"
+        pvs.each do |device|
+          resolved = remote_exec("readlink -f -- #{Shell.single_quote(device)}")[:stdout].strip
+          resolved = device if resolved.empty?
+          found = remote_exec("[ -e #{Shell.single_quote(resolved)} ]")
+          unless found[:exit_code] == 0
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Device #{resolved} not found.")
+          end
+        end
+      end
+
       if state == "absent"
         return absent_vg(vg, vg_exists, force, check_mode)
       end
@@ -103,18 +120,27 @@ module Krikri
     }
 
     private def absent_vg(vg : String, vg_exists : Bool, force : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "") unless vg_exists
-      return PluginResult.new(changed: true, failed: false,
-        msg: "Volume group #{vg} would be removed") if check_mode
+      # Every real lvg exit is `module.exit_json(changed=...)` - the
+      # module never passes msg on a success path, so the registered
+      # result is [changed, failed] (round 992003 kop_storage lvg_create/
+      # lvg_exists captures).
+      return PluginResult.new(changed: false, failed: false) unless vg_exists
+      return PluginResult.new(changed: true, failed: false) if check_mode
 
       result = remote_exec("vgremove #{force ? "-f" : ""} #{Shell.single_quote(vg)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to remove volume group #{vg}: #{result[:stderr].strip}")
+          msg: "Failed to remove volume group #{vg}",
+          rc: result[:exit_code], err: result[:stderr],
+          key_order: LVG_FAIL_KEY_ORDER)
       end
-      PluginResult.new(changed: true, failed: false,
-        msg: "Volume group #{vg} removed")
+      PluginResult.new(changed: true, failed: false)
     end
+
+    # real's fail_json kwargs (rc, err) lead the registered result, then
+    # failed/msg/changed/exception (round 992003 lvol_fail capture; same
+    # rule for lvg's rc/err-carrying failures).
+    private LVG_FAIL_KEY_ORDER = %w[rc err failed msg changed exception]
 
     private def present_vg(vg : String, pvs : Array(String), vg_exists : Bool, check_mode : Bool) : PluginResult
       pesize = @params["pesize"]? || "4"
@@ -126,41 +152,46 @@ module Krikri
       # a vgextend; a nonexistent VG means vgcreate with all PVs.
       if vg_exists
         missing = missing_pvs(vg, pvs)
-        return PluginResult.new(changed: false, failed: true, msg: missing) if missing.is_a?(String)
+        return missing if missing.is_a?(PluginResult)
 
         if missing.empty?
-          return PluginResult.new(changed: false, failed: false,
-            msg: "Volume group #{vg} already exists")
+          return PluginResult.new(changed: false, failed: false)
         end
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Volume group #{vg} would be extended") if check_mode
+        return PluginResult.new(changed: true, failed: false) if check_mode
 
         result = remote_exec("vgextend #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{missing.map { |device| Shell.single_quote(device) }.join(' ')}")
         unless result[:exit_code] == 0
           return PluginResult.new(changed: false, failed: true,
-            msg: "Failed to extend volume group #{vg}: #{result[:stderr].strip}")
+            msg: "Unable to extend #{vg} by #{missing.join(" ")}.",
+            rc: result[:exit_code], err: result[:stderr],
+            key_order: LVG_FAIL_KEY_ORDER)
         end
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Volume group #{vg} extended")
+        return PluginResult.new(changed: true, failed: false)
       end
 
-      return PluginResult.new(changed: true, failed: false,
-        msg: "Volume group #{vg} would be created") if check_mode
+      return PluginResult.new(changed: true, failed: false) if check_mode
 
       result = remote_exec("vgcreate -s #{Shell.single_quote(pesize)} #{vg_options.map { |option| Shell.single_quote(option) }.join(' ')} #{Shell.single_quote(vg)} #{pvs.map { |device| Shell.single_quote(device) }.join(' ')}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to create volume group #{vg}: #{result[:stderr].strip}")
+          msg: "Creating volume group '#{vg}' failed",
+          rc: result[:exit_code], err: result[:stderr],
+          key_order: LVG_FAIL_KEY_ORDER)
       end
-      PluginResult.new(changed: true, failed: false,
-        msg: "Volume group #{vg} created")
+      PluginResult.new(changed: true, failed: false)
     end
 
-    # Returns the requested PVs not currently in the VG, or an error
-    # message string when the pvs probe itself fails.
-    private def missing_pvs(vg : String, pvs : Array(String)) : Array(String) | String
+    # Returns the requested PVs not currently in the VG, or a failed
+    # PluginResult when the pvs probe itself fails (real: fail_json
+    # "Failed executing pvs command." with the rc/err kwargs).
+    private def missing_pvs(vg : String, pvs : Array(String)) : Array(String) | PluginResult
       result = remote_exec("pvs --noheadings -o pv_name,vg_name 2>/dev/null")
-      return "Failed to query existing PVs: #{result[:stderr].strip}" unless result[:exit_code] == 0
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed executing pvs command.",
+          rc: result[:exit_code], err: result[:stderr],
+          key_order: LVG_FAIL_KEY_ORDER)
+      end
 
       in_vg = Set(String).new
       result[:stdout].each_line do |line|

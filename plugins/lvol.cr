@@ -134,12 +134,12 @@ module Krikri
       resizefs = true?(@params["resizefs"]?)
 
       vgs_result = remote_exec(vgs_command(vg, parsed_size.try(&.units_flag) || "m"))
-      return absent_vg_result(vg, state) if vgs_result[:exit_code] != 0
+      return absent_vg_result(vg, state, vgs_result) if vgs_result[:exit_code] != 0
       this_vg = parse_vgs(vgs_result[:stdout])
       return failed("Volume group #{vg} does not exist.") if this_vg.empty?
 
       lvs_result = remote_exec(lvs_command(vg, parsed_size.try(&.units_flag) || "m"))
-      return absent_vg_result(vg, state) if lvs_result[:exit_code] != 0
+      return absent_vg_result(vg, state, lvs_result) if lvs_result[:exit_code] != 0
       lvs = parse_lvs(lvs_result[:stdout])
 
       # check_lv mirrors real module: the name looked up in lvs output
@@ -165,7 +165,6 @@ module Krikri
       this_lv = lvs.find { |test| test[:name] == check_lv || test[:name] == check_lv.split('/')[-1] }
 
       changed = false
-      msg = ""
 
       if this_lv.nil?
         if state == "present"
@@ -179,8 +178,13 @@ module Krikri
             return failed("No size given.")
           end
 
-          return PluginResult.new(changed: true, failed: false,
-            msg: "Would create #{lv || thinpool}") if check_mode
+          # Real's check-mode create runs `lvcreate --test` and falls
+          # through to the final exit_json(changed=changed, msg=msg)
+          # with the (empty) msg variable - the registered shape is
+          # [changed, msg, failed] with msg "", not a "Would create"
+          # invention (round 992003 lvol_create capture).
+          return PluginResult.new(changed: true, failed: false, msg: "",
+            include_empty_msg: true, key_order: %w[changed msg]) if check_mode
 
           if thinpool && lv && parsed_size.not_nil!.opt == "l"
             return failed("Thin volume sizing with percentage not supported.")
@@ -188,47 +192,112 @@ module Krikri
 
           cmd = build_create_command(vg, lv, thinpool, snapshot, parsed_size.not_nil!, opts, pvs)
           create_result = remote_exec(cmd)
-          return failed("Creating logical volume '#{lv}' failed: #{create_result[:stderr]}") if create_result[:exit_code] != 0
+          if create_result[:exit_code] != 0
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Creating logical volume '#{lv}' failed",
+              rc: create_result[:exit_code], err: create_result[:stderr],
+              key_order: %w[rc err failed msg changed exception])
+          end
 
           changed = true
         end
       elsif state == "absent"
         return failed("Sorry, no removal of logical volume #{this_lv[:name]} without force=true.") unless force
 
+        # Real's check-mode removal runs `lvremove --test` and exits
+        # exit_json(changed=True) - no msg key (lvol.py's absent branch).
         return PluginResult.new(changed: true, failed: false,
-          msg: "Would remove #{this_lv[:name]}") if check_mode
+          key_order: %w[changed]) if check_mode
 
         remove_result = remote_exec("lvremove --force #{shell_quote("#{vg}/#{this_lv[:name]}")}")
-        return failed("Failed to remove logical volume #{lv}: #{remove_result[:stderr]}") if remove_result[:exit_code] != 0
+        if remove_result[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to remove logical volume #{lv}",
+            rc: remove_result[:exit_code], err: remove_result[:stderr],
+            key_order: %w[rc err failed msg changed exception])
+        end
 
-        return PluginResult.new(changed: true, failed: false, msg: "")
+        return PluginResult.new(changed: true, failed: false, key_order: %w[changed])
       elsif !parsed_size
         # no size change requested; fall through to activation handling
       else
         resized = resize(this_vg.first, this_lv, lv, parsed_size.not_nil!, opts, pvs,
           force, shrink, resizefs, check_mode)
-        return failed(resized[:msg] || "resize failed") if resized[:failed]
+        # Real's resize failure carries the rc/err run_command kwargs,
+        # which lead the registered result ahead of failed/msg
+        # (round 992003 lvol_fail: [rc, err, failed, msg, changed,
+        # exception], msg "Unable to resize kop_lv to 1G").
+        if resized[:failed]
+          if (rc = resized[:rc])
+            return PluginResult.new(changed: false, failed: true,
+              msg: resized[:msg],
+              rc: rc, err: resized[:err],
+              key_order: resized[:out] ? %w[rc err out failed msg changed exception] : %w[rc err failed msg changed exception])
+          end
+          return failed(resized[:msg])
+        end
+        case resized[:early]
+        when :matches
+          # Real's convergent no-op exit: exit_json(changed=False,
+          # vg=vg, lv=this_lv["name"], size=this_lv["size"]) - no msg.
+          return PluginResult.new(changed: false, failed: false,
+            vg: vg, lv: this_lv[:name], size: this_lv[:size],
+            key_order: LVOL_LV_KEY_ORDER)
+        when :not_larger
+          return PluginResult.new(changed: false, failed: false,
+            vg: vg, lv: this_lv[:name], size: this_lv[:size],
+            msg: "Original size is larger than requested size",
+            err: resized[:err],
+            key_order: %w[changed vg lv size msg err])
+        end
         changed = true if resized[:changed_flag]
-        msg = resized[:msg] || ""
       end
 
       if this_lv && !check_mode
         lvchange_flag = active ? "-ay" : "-an"
         change_result = remote_exec("lvchange #{lvchange_flag} #{shell_quote("#{vg}/#{this_lv[:name]}")}")
-        return failed("Failed to #{active ? "activate" : "deactivate"} logical volume #{lv}: #{change_result[:stderr]}") if change_result[:exit_code] != 0
-
+        if change_result[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Failed to #{active ? "activate" : "deactivate"} logical volume #{lv}",
+            rc: change_result[:exit_code], err: change_result[:stderr],
+            key_order: %w[rc err failed msg changed exception])
+        end
         changed = ((this_lv[:active] != active) || changed)
       elsif this_lv
         changed = ((this_lv[:active] != active) || changed)
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: msg, vg: vg, lv: lv || thinpool)
+      if this_lv
+        # Real's this_lv-exists exit (lvol.py's lvchange section, both
+        # the active and inactive branches):
+        # exit_json(changed=..., vg=vg, lv=this_lv["name"],
+        # size=this_lv["size"]) - no msg key at all, not even in check
+        # mode (round 992003 lvol_exists/lvol_check captures), and
+        # size is the CURRENT LV size as a JSON float (64.0).
+        PluginResult.new(changed: changed, failed: false,
+          vg: vg, lv: this_lv[:name], size: this_lv[:size],
+          key_order: LVOL_LV_KEY_ORDER)
+      else
+        # Real's create-path exit is the final
+        # exit_json(changed=changed, msg=msg) with the empty msg
+        # variable passed explicitly - the key exists even when empty
+        # (round 992003 lvol_create), and carries no vg/lv/size.
+        PluginResult.new(changed: changed, failed: false, msg: "",
+          include_empty_msg: true, key_order: %w[changed msg])
+      end
     end
+
+    # The registered key order for every lvol exit that reaches the
+    # lvchange tail with this_lv present.
+    private LVOL_LV_KEY_ORDER = %w[changed vg lv size]
 
     # The two resize branches of real main() (percent-based and
     # absolute-based), collapsed: both compute the requested size, pick
     # lvextend or lvreduce, and append the same command tail. Returns a
-    # named tuple {changed_flag, failed, msg}.
+    # named tuple {changed_flag, failed, msg, rc, err, out, early} -
+    # rc/err/out carry real's fail_json kwargs on a command failure and
+    # early marks real's early exit_json branches (:matches,
+    # :not_larger) that bypass the lvchange tail.
     private def resize(
       vg_info : NamedTuple(name: String, size: Float64, free: Float64, ext_size: Float64),
       this_lv : NamedTuple(name: String, size: Float64, active: Bool, thinpool: Bool, thinvol: Bool),
@@ -259,61 +328,78 @@ module Krikri
           if size_free <= 0 || size_free < (size_requested - this_lv[:size])
             return {changed_flag: false, failed: true,
                     msg: "Logical Volume #{this_lv[:name]} could not be extended. Not enough free space left " \
-                         "(#{size_requested - this_lv[:size]}m required / #{size_free}m available)"}
+                         "(#{size_requested - this_lv[:size]}m required / #{size_free}m available)",
+                    rc: nil, err: nil, out: nil, early: nil}
           end
-          return resize_run("lvextend", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
+          return resize_run(lv, "lvextend", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
         elsif shrink && this_lv[:size] > size_requested + vg_info[:ext_size]
           return {changed_flag: false, failed: true,
-                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_requested < 1
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted.",
+                  rc: nil, err: nil, out: nil, early: nil} if size_requested < 1
           return {changed_flag: false, failed: true,
-                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true"} unless force
-          return resize_run("lvreduce --force", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true",
+                  rc: nil, err: nil, out: nil, early: nil} unless force
+          return resize_run(lv, "lvreduce --force", size_requested, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
         end
       else
         size_val = parsed.value.to_f64
         if size_val > this_lv[:size] || parsed.operator == "+"
-          return resize_run("lvextend", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
+          return resize_run(lv, "lvextend", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, false)
         elsif shrink && (size_val < this_lv[:size] || parsed.operator == "-")
           return {changed_flag: false, failed: true,
-                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted."} if size_val == 0
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} to 0 permitted.",
+                  rc: nil, err: nil, out: nil, early: nil} if size_val == 0
           return {changed_flag: false, failed: true,
-                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true."} unless force
-          return resize_run("lvreduce --force", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
+                  msg: "Sorry, no shrinking of #{this_lv[:name]} without force=true.",
+                  rc: nil, err: nil, out: nil, early: nil} unless force
+          return resize_run(lv, "lvreduce --force", size_val, parsed, lv_path, opts, pvs, resizefs, check_mode, true)
         end
       end
 
-      {changed_flag: false, failed: false, msg: ""}
+      {changed_flag: false, failed: false, msg: "", rc: nil, err: nil, out: nil, early: nil}
     end
 
     private def resize_run(
-      tool : String, size_requested : Float64, parsed : PluginHelpers::LvolSize::Parsed,
+      lv_param : String?, tool : String, size_requested : Float64, parsed : PluginHelpers::LvolSize::Parsed,
       lv_path : String, opts : Array(String), pvs : Array(String),
       resizefs : Bool, check_mode : Bool, shrinking : Bool,
     )
-      return {changed_flag: true, failed: false, msg: "Would resize #{lv_path}"} if check_mode
+      return {changed_flag: true, failed: false, msg: "Would resize #{lv_path}",
+              rc: nil, err: nil, out: nil, early: nil} if check_mode
 
       resizefs_flag = resizefs ? " --resizefs" : ""
       operator = parsed.operator ? parsed.operator : ""
       cmd = "#{tool}#{resizefs_flag} -#{parsed.opt} #{operator}#{parsed.value}#{parsed.value_unit} " \
             "#{opts.join(' ')} #{shell_quote(lv_path)} #{pvs.join(' ')}".split(' ', remove_empty: true).join(' ')
       result = remote_exec(cmd)
-      if result[:exit_code] != 0
+      out = result[:stdout]
+      err = result[:stderr]
+      # Real's own failure wording: fail_json(msg="Unable to resize {lv}
+      # to {size}{unit}", rc=rc, err=err) - the param lv name, the
+      # requested size WITHOUT the operator, and the raw stderr as err
+      # (round 992003 lvol_fail). The COW branch adds the out kwarg.
+      unable = "Unable to resize #{lv_param || lv_path.split('/')[-1]} to #{parsed.value}#{parsed.value_unit}"
+      if out.includes?("Reached maximum COW size")
+        return {changed_flag: false, failed: true, msg: unable,
+                rc: result[:exit_code], err: err, out: out, early: nil}
+      elsif result[:exit_code] != 0
         # Real module's own convergent-no-op exits: lvm sometimes refuses
         # with these messages when the request lands on the current size
         # (common with --resizefs) - reported as changed: false, not a
         # failure.
-        out = result[:stdout]
-        err = result[:stderr]
         if out.includes?("matches existing size") || err.includes?("matches existing size")
-          return {changed_flag: false, failed: false, msg: ""}
+          return {changed_flag: false, failed: false, msg: "",
+                  rc: nil, err: nil, out: nil, early: :matches}
         elsif out.includes?("not larger than existing size") || err.includes?("not larger than existing size")
-          return {changed_flag: false, failed: false, msg: "Original size is larger than requested size"}
+          return {changed_flag: false, failed: false, msg: "Original size is larger than requested size",
+                  rc: result[:exit_code], err: err, out: nil, early: :not_larger}
         end
-        return {changed_flag: false, failed: true,
-                msg: "Unable to resize #{lv_path}: #{err}"}
+        return {changed_flag: false, failed: true, msg: unable,
+                rc: result[:exit_code], err: err, out: nil, early: nil}
       end
 
-      {changed_flag: true, failed: false, msg: "Volume #{lv_path} resized"}
+      {changed_flag: true, failed: false, msg: "Volume #{lv_path} resized",
+       rc: nil, err: nil, out: nil, early: nil}
     end
 
     private def build_create_command(
@@ -388,7 +474,7 @@ module Krikri
       [] of String
     end
 
-    private def absent_vg_result(vg : String, state : String) : PluginResult
+    private def absent_vg_result(vg : String, state : String, probe : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
       if state == "absent"
         # Real module: state=absent against a missing VG exits ok with
         # changed=false and NO msg (live-verified via the podman-diff
@@ -396,7 +482,13 @@ module Krikri
         # exist." msg was this engine's own invention there).
         PluginResult.new(changed: false, failed: false)
       else
-        failed("Volume group #{vg} does not exist.")
+        # Real's present-state failure carries the vgs run_command
+        # result as rc/err kwargs, which lead the registered result
+        # (lvol.py: fail_json(msg=..., rc=rc, err=err)).
+        PluginResult.new(changed: false, failed: true,
+          msg: "Volume group #{vg} does not exist.",
+          rc: probe[:exit_code], err: probe[:stderr],
+          key_order: %w[rc err failed msg changed exception])
       end
     end
 
