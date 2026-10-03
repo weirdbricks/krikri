@@ -197,10 +197,22 @@ module Krikri
     # `pg_roles`) both need an open DB connection, so that final
     # resolution happens in #execute after connecting, not here.
     record ResolvedParams,
-      type : String, state : String, privs : Array(String), roles_raw : Array(String),
+      type : String, state : String, privs : Array(String), privs_raw : Array(String),
+      roles_raw : Array(String),
       objs : Array(String), all_in_schema : Bool, schema : String, login_db : String,
       check_mode : Bool, grant_option : Bool?, session_role : String?, fail_on_role : Bool,
       target_roles : Array(String)
+
+    # Real Ansible's exit_json(changed=..., queries=executed_queries):
+    # `failed: false` is backfilled by the controller after the module's
+    # own kwargs, and there is no msg. Live-verified against real
+    # ansible-core 2.19.11 + community.postgresql 4.2.0.
+    SUCCESS_KEY_ORDER = %w[changed queries failed]
+
+    private def privs_result(changed : Bool, queries : Array(String)) : PluginResult
+      PluginResult.new(changed: changed, failed: false, failed_flag: true,
+        queries: queries.map { |query| JSON::Any.new(query) }, key_order: SUCCESS_KEY_ORDER)
+    end
 
     def execute : PluginResult
       begin
@@ -237,10 +249,10 @@ module Krikri
     # and applies the grants - split out of #execute to keep its own
     # branch count down (ameba's cyclomatic-complexity budget).
     private def run_grants(database : DB::Database, p : ResolvedParams) : PluginResult
-      objs = p.all_in_schema ? all_objs_in_schema(database, p.type, p.schema) : p.objs
+      raw_objs = p.all_in_schema ? all_objs_in_schema(database, p.type, p.schema) : p.objs
 
       objs = begin
-        canonical_routines(database, p, objs)
+        canonical_routines(database, p, raw_objs)
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: ex.message || "could not resolve routine")
       end
@@ -250,7 +262,10 @@ module Krikri
       rescue ex
         return PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid role")
       end
-      return PluginResult.new(changed: false, failed: false, msg: "No valid roles provided, nothing to do") if roles.empty?
+      return privs_result(false, [] of String) if roles.empty?
+      return privs_result(false, [] of String) if raw_objs.empty?
+
+      queries = built_queries(p, raw_objs, roles)
 
       changed = if p.type == "default_privs"
                   apply_all_default_privs(database, p, roles)
@@ -259,7 +274,129 @@ module Krikri
                 else
                   apply_all_grants(database, p.type, objs, p.schema, roles, p.privs, p.state, p.grant_option, p.check_mode)
                 end
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Privileges updated" : "Privileges already up to date")
+      privs_result(changed, queries)
+    end
+
+    # Real Ansible's own QueryBuilder, reproduced verbatim: the single
+    # GRANT/REVOKE statement (or ALTER DEFAULT PRIVILEGES pair) it builds
+    # from the module params and appends to executed_queries, joined by
+    # newlines into ONE list entry. Live-verified against real
+    # ansible-core 2.19.11 + community.postgresql 4.2.0 for table,
+    # sequence, schema, database, type, function, group, default_privs
+    # and ALL_IN_SCHEMA, grant/revoke, with and without objs.
+    #
+    # Note it reports the statement it BUILDS, not the statement it ends
+    # up needing: real always issues the full requested GRANT (its
+    # `changed` comes from diffing the ACL before/after), so `queries` is
+    # non-empty even when nothing changed. The SQL actually executed here
+    # is the computed delta (#apply_grants), but both converge to the same
+    # database state, and `queries` reports real's shape.
+    #
+    # privs order: real builds a Python frozenset, so its own privilege
+    # order is arbitrary (it differs between two runs of the same task);
+    # the user's declared order is used here instead, which is identical
+    # for every single-privilege request and otherwise as valid SQL.
+    private def built_queries(p : ResolvedParams, objs : Array(String), roles : Array(String)) : Array(String)
+      for_whom = roles.map { |role| query_grantee(role) }.join(",")
+      lines = if p.type == "default_privs"
+                default_priv_lines(p, for_whom)
+              elsif p.state == "absent"
+                ["REVOKE #{set_what(p, objs)} FROM #{for_whom};"]
+              else
+                present_lines(p, objs, for_whom)
+              end
+      [lines.join("\n")]
+    end
+
+    # Real Ansible quotes implicit roles (PUBLIC, CURRENT_USER,
+    # SESSION_USER, CURRENT_ROLE) as bare uppercase keywords - lowercase
+    # quoted forms resolve to the same role but are not what real emits.
+    private def query_grantee(role : String) : String
+      IMPLICIT_ROLES.includes?(role.upcase) ? role.upcase : quote_ident(role)
+    end
+
+    # The `<privs> ON <objtype> <objs>` fragment - real's own wording,
+    # including its `privs: ALL` pass-through (ALL stays ALL rather than
+    # being expanded to the individual privilege letters).
+    private def set_what(p : ResolvedParams, objs : Array(String)) : String
+      return p.privs_raw.join(",") if p.type == "default_privs"
+      return objs.map { |obj| quote_ident(obj) }.join(",") if p.type == "group"
+
+      obj_clause = if p.all_in_schema
+                     "#{ALL_IN_SCHEMA_CLAUSES[p.type]} #{quote_ident(p.schema)}"
+                   else
+                     "#{p.type.gsub('_', ' ')} #{obj_ids(p, objs).join(",")}"
+                   end
+      "#{p.privs_raw.join(",").gsub('_', ' ')} ON #{obj_clause}"
+    end
+
+    ALL_IN_SCHEMA_CLAUSES = {
+      "table" => "ALL TABLES IN SCHEMA", "sequence" => "ALL SEQUENCES IN SCHEMA",
+      "function" => "ALL FUNCTIONS IN SCHEMA", "procedure" => "ALL PROCEDURES IN SCHEMA",
+    }
+
+    IMPLICIT_ROLES = {"PUBLIC", "CURRENT_USER", "SESSION_USER", "CURRENT_ROLE"}
+
+    # obj_ids: real quotes each object itself and then prefixes the schema
+    # qualifier where the object type lives in one - applied to raw user
+    # input (not the canonicalized signature #canonical_routines produces),
+    # exactly as real does, since real never canonicalizes either.
+    private def obj_ids(p : ResolvedParams, objs : Array(String)) : Array(String)
+      if ROUTINE_TYPES.includes?(p.type)
+        objs.map do |obj|
+          name, args = obj.split('(', 2)
+          "#{quote_ident(p.schema)}.#{quote_ident(name)}(#{args}"
+        end
+      elsif TYPES_WITH_SCHEMA.includes?(p.type)
+        objs.map { |obj| "#{quote_ident(p.schema)}.#{quote_identifier(obj, "table")}" }
+      else
+        objs.map { |obj| quote_ident(obj) }
+      end
+    end
+
+    # state: present, non-default_privs - real's GRANT, followed by the
+    # grant/admin option handling: grant_option true appends WITH GRANT
+    # OPTION (WITH ADMIN OPTION for group), false appends a plain ';' plus
+    # a REVOKE ... OPTION FOR line, and an unset option just ';'.
+    private def present_lines(p : ResolvedParams, objs : Array(String), for_whom : String) : Array(String)
+      what = set_what(p, objs)
+      lines = [] of String
+
+      case p.grant_option
+      when true
+        option = p.type == "group" ? " WITH ADMIN OPTION;" : " WITH GRANT OPTION;"
+        lines << "GRANT #{what} TO #{for_whom}#{option}"
+      when false
+        lines << "GRANT #{what} TO #{for_whom};"
+        option_for = p.type == "group" ? "ADMIN" : "GRANT"
+        lines << "REVOKE #{option_for} OPTION FOR #{what} FROM #{for_whom};"
+      else
+        lines << "GRANT #{what} TO #{for_whom};"
+      end
+
+      lines
+    end
+
+    # type: default_privs - REVOKE ALL on every class followed by GRANT,
+    # joined by newlines into the single queries entry.
+    private def default_priv_lines(p : ResolvedParams, for_whom : String) : Array(String)
+      classes = p.state == "absent" ? ABSENT_DEFAULT_CLASSES : p.objs
+      for_role = p.target_roles.empty? ? "" : " FOR ROLE #{p.target_roles.map { |role| quote_ident(role) }.join(",")}"
+      in_schema = " IN SCHEMA #{quote_ident(p.schema)}"
+      prefix = "ALTER DEFAULT PRIVILEGES#{for_role}#{in_schema}"
+
+      if p.state == "absent"
+        return classes.map { |cls| "#{prefix} REVOKE ALL ON #{cls} FROM #{for_whom};" }
+      end
+
+      what = p.privs_raw.join(",")
+      lines = classes.map { |cls| "#{prefix} REVOKE ALL ON #{cls} FROM #{for_whom};" }
+      classes.each do |cls|
+        granted = "#{prefix} GRANT #{what} ON #{cls} TO #{for_whom}"
+        granted += p.grant_option ? " WITH GRANT OPTION;" : ";"
+        lines << granted
+      end
+      lines
     end
 
     # Routine references are canonicalized once, up front, into the
@@ -346,6 +483,11 @@ module Krikri
       raise "roles is required" unless roles_param
 
       privs = resolve_privs_for(type, privs_param)
+      privs_raw = if privs_param
+                    privs_param.split(',').map(&.strip.upcase).reject(&.empty?)
+                  else
+                    [] of String
+                  end
 
       login_db = @params["login_db"]? || @params["db"]? || @params["database"]? || "postgres"
       schema = @params["schema"]? || "public"
@@ -354,7 +496,7 @@ module Krikri
 
       objs, all_in_schema = resolve_objs!(type, login_db)
 
-      build_resolved_params(type, state, privs, roles_raw, objs, all_in_schema,
+      build_resolved_params(type, state, privs, privs_raw, roles_raw, objs, all_in_schema,
         target_roles, schema, login_db)
     end
 
@@ -374,12 +516,14 @@ module Krikri
     end
 
     private def build_resolved_params(
-      type : String, state : String, privs : Array(String), roles_raw : Array(String),
+      type : String, state : String, privs : Array(String), privs_raw : Array(String),
+      roles_raw : Array(String),
       objs : Array(String), all_in_schema : Bool, target_roles : Array(String),
       schema : String, login_db : String,
     ) : ResolvedParams
       ResolvedParams.new(
-        type: type, state: state, privs: privs, roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
+        type: type, state: state, privs: privs, privs_raw: privs_raw,
+        roles_raw: roles_raw, objs: objs, all_in_schema: all_in_schema,
         target_roles: target_roles,
         schema: schema, login_db: login_db, check_mode: true?(@params["_ansible_check_mode"]?),
         grant_option: @params["grant_option"]?.try { |v| true?(v) },

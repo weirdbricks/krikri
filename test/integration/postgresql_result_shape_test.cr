@@ -194,4 +194,208 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     result["queries"].as_a.map(&.as_s).must_equal(["CREATE USER \"shape_u7\" "])
     PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u7", "state" => "absent"}))
   end
+
+  # ---- postgresql_privs -------------------------------------------------
+  #
+  # Real Ansible builds ONE statement from the module params (its own
+  # QueryBuilder), appends it to executed_queries and reports the whole
+  # list under `queries` - unconditionally, whether or not it ended up
+  # changing anything (its `changed` comes from diffing the ACL before and
+  # after it ran). Live-verified against real ansible-core 2.19.11 +
+  # community.postgresql 4.2.0.
+
+  private PRIVS_SETUP_SQL = [
+      {"shape_pg_privs_role", "CREATE ROLE"},
+      {"shape_pg_privs_mem", "CREATE ROLE"},
+      {"shape_pg_privs_grp", "CREATE ROLE"},
+      {"shape_pg_privs_owner", "CREATE ROLE"},
+    ]
+
+  private def privs_reset : Nil
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP TABLE IF EXISTS shape_pg_t1"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP SCHEMA IF EXISTS shape_pg_sc CASCADE"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP SEQUENCE IF EXISTS shape_pg_s1"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP TYPE IF EXISTS shape_pg_ty"}))
+    PRIVS_SETUP_SQL.each do |name, verb|
+      PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP OWNED BY #{name} CASCADE"}))
+      PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP ROLE IF EXISTS #{name}"}))
+      PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "#{verb} #{name}"}))
+    end
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "CREATE TABLE shape_pg_t1 (id int)"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "CREATE SCHEMA shape_pg_sc"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "CREATE SEQUENCE shape_pg_s1"}))
+    PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "CREATE TYPE shape_pg_ty AS (a int)"}))
+  end
+
+  private def privs_result_for(params : Hash(String, String)) : JSON::Any
+    PluginSpecHelper.run("postgresql_privs", SHAPE_LOGIN.merge(params))
+  end
+
+  it "postgresql_privs grant registers changed/queries/failed and no msg" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO \"shape_pg_privs_role\";"])
+    result["failed"].as_bool.must_equal(false)
+    result["msg"]?.try(&.as_s).must_be_nil
+  end
+
+  it "postgresql_privs revoke registers the REVOKE statement" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                      "roles" => "shape_pg_privs_role", "privs" => "SELECT"})
+    result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT", "state" => "absent"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["REVOKE SELECT ON table \"public\".\"shape_pg_t1\" FROM \"shape_pg_privs_role\";"])
+  end
+
+  it "postgresql_privs unchanged still reports the full GRANT it built" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    params = {"type" => "table", "objs" => "shape_pg_t1",
+              "roles" => "shape_pg_privs_role", "privs" => "SELECT"}
+    privs_result_for(params)
+    result = privs_result_for(params)
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(false)
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO \"shape_pg_privs_role\";"])
+  end
+
+  it "postgresql_privs check mode reports the same GRANT with no execution" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT",
+                               "_ansible_check_mode" => "true"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO \"shape_pg_privs_role\";"])
+  end
+
+  it "postgresql_privs sequence/schema/type/database spell their own object kind" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    seq = privs_result_for({"type" => "sequence", "objs" => "shape_pg_s1",
+                            "roles" => "shape_pg_privs_role", "privs" => "SELECT"})
+    seq["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON sequence \"public\".\"shape_pg_s1\" TO \"shape_pg_privs_role\";"])
+
+    sch = privs_result_for({"type" => "schema", "objs" => "shape_pg_sc",
+                            "roles" => "shape_pg_privs_role", "privs" => "CREATE"})
+    sch["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT CREATE ON schema \"shape_pg_sc\" TO \"shape_pg_privs_role\";"])
+
+    ty = privs_result_for({"type" => "type", "objs" => "shape_pg_ty",
+                           "roles" => "shape_pg_privs_role", "privs" => "USAGE"})
+    ty["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT USAGE ON type \"public\".\"shape_pg_ty\" TO \"shape_pg_privs_role\";"])
+
+    db = privs_result_for({"type" => "database", "objs" => "postgres",
+                           "roles" => "shape_pg_privs_role", "privs" => "CREATE"})
+    db["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT CREATE ON database \"postgres\" TO \"shape_pg_privs_role\";"])
+  end
+
+  it "postgresql_privs all_in_schema uses real's ALL TABLES IN SCHEMA clause" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "table", "objs" => "ALL_IN_SCHEMA",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON ALL TABLES IN SCHEMA \"public\" TO \"shape_pg_privs_role\";"])
+  end
+
+  it "postgresql_privs group emits GRANT role TO member" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "group", "objs" => "shape_pg_privs_grp",
+                               "roles" => "shape_pg_privs_mem"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT \"shape_pg_privs_grp\" TO \"shape_pg_privs_mem\";"])
+
+    with_admin = privs_result_for({"type" => "group", "objs" => "shape_pg_privs_grp",
+                                   "roles" => "shape_pg_privs_mem", "grant_option" => "true"})
+    with_admin["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT \"shape_pg_privs_grp\" TO \"shape_pg_privs_mem\" WITH ADMIN OPTION;"])
+
+    revoked = privs_result_for({"type" => "group", "objs" => "shape_pg_privs_grp",
+                                "roles" => "shape_pg_privs_mem", "state" => "absent"})
+    revoked["queries"].as_a.map(&.as_s).must_equal(
+      ["REVOKE \"shape_pg_privs_grp\" FROM \"shape_pg_privs_mem\";"])
+  end
+
+  it "postgresql_privs grant_option false adds real's REVOKE GRANT OPTION FOR line" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT",
+                               "grant_option" => "true"})
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO \"shape_pg_privs_role\" WITH GRANT OPTION;"])
+
+    stripped = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                                 "roles" => "shape_pg_privs_role", "privs" => "SELECT",
+                                 "grant_option" => "false"})
+    stripped["queries"].as_a.map(&.as_s).must_equal([
+      "GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO \"shape_pg_privs_role\";\n" \
+      "REVOKE GRANT OPTION FOR SELECT ON table \"public\".\"shape_pg_t1\" FROM \"shape_pg_privs_role\";",
+    ])
+  end
+
+  it "postgresql_privs default_privs pairs REVOKE ALL with GRANT in one entry" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "default_privs", "objs" => "TABLES",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["queries"].as_a.map(&.as_s).must_equal([
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" REVOKE ALL ON TABLES FROM \"shape_pg_privs_role\";\n" \
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" GRANT SELECT ON TABLES TO \"shape_pg_privs_role\";",
+    ])
+
+    absent = privs_result_for({"type" => "default_privs", "objs" => "TABLES",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT", "state" => "absent"})
+    absent["queries"].as_a.map(&.as_s).must_equal([
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" REVOKE ALL ON TABLES FROM \"shape_pg_privs_role\";\n" \
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" REVOKE ALL ON FUNCTIONS FROM \"shape_pg_privs_role\";\n" \
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" REVOKE ALL ON SEQUENCES FROM \"shape_pg_privs_role\";\n" \
+      "ALTER DEFAULT PRIVILEGES IN SCHEMA \"public\" REVOKE ALL ON TYPES FROM \"shape_pg_privs_role\";",
+    ])
+  end
+
+  it "postgresql_privs default_privs target_roles adds real's FOR ROLE clause" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "default_privs", "objs" => "TABLES",
+                               "roles" => "shape_pg_privs_role", "privs" => "SELECT",
+                               "target_roles" => "shape_pg_privs_owner"})
+    result["queries"].as_a.map(&.as_s).must_equal([
+      "ALTER DEFAULT PRIVILEGES FOR ROLE \"shape_pg_privs_owner\" IN SCHEMA \"public\" " \
+      "REVOKE ALL ON TABLES FROM \"shape_pg_privs_role\";\n" \
+      "ALTER DEFAULT PRIVILEGES FOR ROLE \"shape_pg_privs_owner\" IN SCHEMA \"public\" " \
+      "GRANT SELECT ON TABLES TO \"shape_pg_privs_role\";",
+    ])
+  end
+
+  it "postgresql_privs PUBLIC grantee stays an unquoted uppercase keyword" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    privs_reset
+    result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
+                               "roles" => "PUBLIC", "privs" => "SELECT"})
+    shape_keys(result).must_equal(["changed", "queries", "failed"])
+    result["queries"].as_a.map(&.as_s).must_equal(
+      ["GRANT SELECT ON table \"public\".\"shape_pg_t1\" TO PUBLIC;"])
+  end
 end
