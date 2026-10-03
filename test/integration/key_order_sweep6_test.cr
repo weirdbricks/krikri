@@ -76,3 +76,35 @@ describe "openssl_privatekey_info plugin result key order" do
     ])
   end
 end
+
+describe "openssl_publickey plugin result key order" do
+  it "serializes a fresh derivation as privatekey-filename-format-changed-fingerprint" do
+    dir = PluginSpecHelper.tmp_path("ko-pub1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    result = PluginSpecHelper.run("openssl_publickey",
+      {"path" => File.join(dir, "pub.pem"), "privatekey_path" => key})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "privatekey", "filename", "format", "changed", "fingerprint",
+    ])
+  end
+
+  it "keeps the same order on an idempotent unchanged rerun" do
+    dir = PluginSpecHelper.tmp_path("ko-pub2")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    PluginSpecHelper.run("openssl_publickey",
+      {"path" => File.join(dir, "pub.pem"), "privatekey_path" => key})
+    result = PluginSpecHelper.run("openssl_publickey",
+      {"path" => File.join(dir, "pub.pem"), "privatekey_path" => key})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "privatekey", "filename", "format", "changed", "fingerprint",
+    ])
+  end
+end
