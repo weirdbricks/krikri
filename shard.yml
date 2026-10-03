@@ -16,7 +16,7 @@ dependencies:
     commit: c90ea8d6a0c5eb9f842ac0da098a1718ecca66ca
   mysql:
     github: weirdbricks/crystal-mysql
-    tag: crystal-ansible-0.9.340
+    tag: crystal-ansible-0.9.341
   pg:
     github: will/crystal-pg
     version: 0.30.0

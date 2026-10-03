@@ -38,7 +38,7 @@ shards:
 
   mysql:
     git: https://github.com/weirdbricks/crystal-mysql.git
-    version: 0.17.0+git.commit.a91a592e518e856b44f94fbe95c1842dae8819ec
+    version: 0.17.0+git.commit.6262d0f5ce2be82182b8c356d90b2fb9303d059d
 
   pg:
     git: https://github.com/will/crystal-pg.git
