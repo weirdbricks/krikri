@@ -135,7 +135,11 @@ module Krikri
       @key_order = key_order
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
-        @extra[key.to_s] = JSON.parse(value.to_json)
+        # A JSON::Any the plugin built itself is kept as-is: round-tripping
+        # it through to_json/JSON.parse re-parses every number as Int64 and
+        # raised "Arithmetic overflow" on a legitimate unsigned value (a
+        # MySQL global variable of 18446744073709551615).
+        @extra[key.to_s] = value.is_a?(JSON::Any) ? value : JSON.parse(value.to_json)
       end
     end
 

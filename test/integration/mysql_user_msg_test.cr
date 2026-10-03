@@ -3,8 +3,12 @@ require "../minitest_helper"
 # Regression spec for the ad-hoc CLI sweep (2026-09-13): a brand-new create
 # used to report "Updated user X@H" - real community.mysql.mysql_user says
 # "User added" when the account genuinely didn't exist (its own user_add
-# branch), which is also what its check_mode wording ("would be created")
-# always implied. Update/idempotent wording is unchanged. Needs a real
+# branch) - and, live-verified against real 2.19.11 + community.mysql
+# 5.0.2 on MySQL 8.4, the wording real also uses in check mode. The
+# update/idempotent wording ("User updated" / "User unchanged") and the
+# absent wording ("User deleted" / "User doesn't exist") match real too;
+# see mysql_result_shape_test.cr for the registered-result shape.
+# Needs a real
 # MySQL/MariaDB server, same convention as the other live-server specs.
 private HOST = "127.0.0.1"
 private PORT = 13306

@@ -33,23 +33,13 @@ require "socket"
 # module's own result dict; krikri dispatches the module directly and
 # does not carry it.
 #
-# The other four mysql plugins of this sweep got no pin, for a reason
-# that is NOT about ordering - krikri's result dict is missing keys real's
-# has, which key_order cannot conjure:
-# - mysql_db: real registers db, db_list and executed_commands (the last
-#   absent in check mode, where only changed, db, db_list, failed
-#   appear); krikri registers none of the three.
-# - mysql_info: real registers server_engine, connector_name,
-#   connector_version, databases, global_status, engines, users,
-#   users_info, master_status, slave_hosts and slave_status alongside the
-#   version/settings krikri does emit; krikri fills in only those two.
-# - mysql_query: real registers execution_time_ms, which krikri does not
-#   emit at all.
-# - mysql_user: real registers user, password_changed and attributes;
-#   krikri registers only changed/msg/failed.
-# On the keys they DO share, those four already emit them in real's
-# relative order today, so no pin was added rather than pinning an order
-# over a divergent key set.
+# The other four mysql plugins of this sweep got no pin HERE because
+# their key sets diverged at the time - key_order cannot conjure a key
+# the plugin never emits. mysql_db, mysql_query and mysql_user have since
+# been brought onto real's key sets; their pins (and the values behind
+# them) live in mysql_result_shape_test.cr. mysql_info still emits only
+# version and settings where real registers a dozen more, so it is still
+# unpinned.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

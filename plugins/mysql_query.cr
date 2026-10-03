@@ -87,6 +87,10 @@ module Krikri
   class MysqlQueryPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
+    # Live-verified 2.19.11 + community.mysql 5.0.2: the module's own
+    # exit_json kwargs, in its own order (no `msg` on success).
+    private SUCCESS_KEY_ORDER = %w[changed executed_queries query_result rowcount execution_time_ms failed]
+
     DML_QUERY_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "REPLACE"}
     DDL_QUERY_KEYWORDS = {"CREATE", "DROP", "ALTER", "RENAME", "TRUNCATE"}
     # len("TRUNCATE") - real slices q.lstrip()[0:max_keyword_len].upper()
@@ -149,10 +153,12 @@ module Krikri
       query_results = [] of JSON::Any
       rowcounts = [] of JSON::Any
       executed_queries = [] of JSON::Any
+      execution_times = [] of JSON::Any
       changed = false
 
       DB.open(uri) do |connection|
         statements.each do |stmt|
+          started = Time.monotonic
           if read_statement?(stmt)
             rows, count = run_read(connection, stmt)
             query_results << rows
@@ -165,16 +171,24 @@ module Krikri
             changed = dml_or_ddl_changed?(stmt, changed, count)
           end
           executed_queries << JSON::Any.new(stmt)
+          # Real times each statement's round trip in milliseconds,
+          # rounded to 4 decimal places, and reports the list as
+          # `execution_time_ms`.
+          execution_times << JSON::Any.new(((Time.monotonic - started).total_seconds * 1000).round(4))
         end
       end
 
+      # Real's exit_json passes no `msg` at all on success, and leads
+      # with `changed` - live-verified 2.19.11 + community.mysql 5.0.2.
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: "#{statements.size} statement(s) executed",
+        executed_queries: executed_queries,
         query_result: query_results,
         rowcount: rowcounts,
-        executed_queries: executed_queries
+        execution_time_ms: execution_times,
+        failed_flag: true,
+        key_order: SUCCESS_KEY_ORDER
       )
     rescue ex : DB::ConnectionRefused
       PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")

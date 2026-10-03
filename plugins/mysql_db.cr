@@ -86,14 +86,24 @@ module Krikri
   # straight through and surfaces as whatever error the server itself
   # returns; dump/import's own `--default-character-set=`.
   class MysqlDbPlugin < BasePlugin
+    # Real 2.19.11's exit_json for present/absent (live-verified with
+    # community.mysql 5.0.2, `{{ r | to_json }}`, MySQL 8.4):
+    # changed, db, db_list, executed_commands, failed - with no `msg` key
+    # at all on those paths. `executed_commands` is absent in check mode
+    # (real returns a different exit_json before ever touching the
+    # executed_commands list). Dump/import lead with msg instead.
+    private SUCCESS_KEY_ORDER = %w[changed db db_list executed_commands msg failed]
+
+    private CHECK_KEY_ORDER = %w[changed db db_list failed]
+
     def execute : PluginResult
       # Real Ansible's `name:` param has `aliases: [db]` - same bug
       # class fixed for postgresql_db/postgresql_user in round 43
       # (robertdebock.postgres): a real playbook writing `db: mydb`
       # (the alias) got "missing required argument: name" no matter
       # what `db:` was set to.
-      name = @params["name"]? || @params["db"]?
-      unless name
+      raw_name = @params["name"]? || @params["db"]?
+      unless raw_name
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
       end
 
@@ -101,8 +111,22 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
 
       if state == "dump" || state == "import"
-        return run_dump_or_import(state, name)
+        return run_dump_or_import(state, raw_name.to_s)
       end
+
+      # Real Ansible's `name:` is `type='list', elements='str'` - a YAML
+      # scalar and a list both work, and a multi-name run reports BOTH
+      # shapes (`db` is the names joined by a space, `db_list` the list
+      # itself). An empty name exits early, changed: false, with the raw
+      # value and an empty db_list.
+      db_list = normalize_db_list(raw_name)
+      if db_list.empty?
+        return PluginResult.new(changed: false, failed: false, db: JSON::Any.new([] of JSON::Any),
+          db_list: JSON::Any.new([] of JSON::Any), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
+      end
+      db_name = db_list.join(" ")
+      json_db = JSON::Any.new(db_name)
+      json_db_list = json_strings(db_list)
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -114,13 +138,13 @@ module Krikri
       )
 
       DB.open(uri) do |dbcon|
-        exists = dbcon.query_all("SHOW DATABASES", as: String).includes?(name)
+        existing = dbcon.query_all("SHOW DATABASES", as: String)
 
         case state
         when "present"
-          ensure_present(dbcon, name, exists, check_mode)
+          ensure_present(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
         when "absent"
-          ensure_absent(dbcon, name, exists, check_mode)
+          ensure_absent(dbcon, db_list, db_name, existing, json_db, json_db_list, check_mode)
         else
           PluginResult.new(changed: false, failed: true, msg: "state must be 'present' or 'absent', got '#{state}'")
         end
@@ -131,9 +155,18 @@ module Krikri
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
-    private def ensure_present(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Database #{name} already exists") if exists
-      return PluginResult.new(changed: true, failed: false, msg: "Database #{name} would be created") if check_mode
+    private def ensure_present(
+      db : DB::Database, db_list : Array(String), db_name : String, existing : Array(String),
+      json_db : JSON::Any, json_db_list : JSON::Any, check_mode : Bool,
+    ) : PluginResult
+      missing = db_list.reject { |each| existing.includes?(each) }
+      return PluginResult.new(changed: !missing.empty?, failed: false, db: json_db, db_list: json_db_list,
+        failed_flag: true, key_order: CHECK_KEY_ORDER) if check_mode
+
+      if missing.empty?
+        return PluginResult.new(changed: false, failed: false, db: json_db, db_list: json_db_list,
+          executed_commands: json_strings(Array(String).new), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
+      end
 
       encoding = @params["encoding"]?
       collation = @params["collation"]?
@@ -148,16 +181,60 @@ module Krikri
         str << " COLLATE " << quote_str(collation) if collation
       end
 
-      db.exec "CREATE DATABASE #{quote_ident(name)}#{clause}"
-      PluginResult.new(changed: true, failed: false, msg: "Created database #{name}")
+      executed = missing.map do |each|
+        # Real Ansible reports the statement as its driver *mogrified* it,
+        # i.e. the CREATE DATABASE line with the parameters interpolated -
+        # exactly the text this plugin sends.
+        statement = "CREATE DATABASE #{quote_ident(each)}#{clause}"
+        db.exec statement
+        statement
+      end
+
+      PluginResult.new(changed: true, failed: false, db: json_db, db_list: json_db_list,
+        executed_commands: json_strings(executed), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
     end
 
-    private def ensure_absent(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Database already absent") unless exists
-      return PluginResult.new(changed: true, failed: false, msg: "Database #{name} would be removed") if check_mode
+    private def ensure_absent(
+      db : DB::Database, db_list : Array(String), db_name : String, existing : Array(String),
+      json_db : JSON::Any, json_db_list : JSON::Any, check_mode : Bool,
+    ) : PluginResult
+      present = db_list.select { |each| existing.includes?(each) }
+      return PluginResult.new(changed: !present.empty?, failed: false, db: json_db, db_list: json_db_list,
+        failed_flag: true, key_order: CHECK_KEY_ORDER) if check_mode
 
-      db.exec "DROP DATABASE #{quote_ident(name)}"
-      PluginResult.new(changed: true, failed: false, msg: "Removed database #{name}")
+      if present.empty?
+        return PluginResult.new(changed: false, failed: false, db: json_db, db_list: json_db_list,
+          executed_commands: json_strings(Array(String).new), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
+      end
+
+      executed = present.map do |each|
+        statement = "DROP DATABASE #{quote_ident(each)}"
+        db.exec statement
+        statement
+      end
+
+      PluginResult.new(changed: true, failed: false, db: json_db, db_list: json_db_list,
+        executed_commands: json_strings(executed), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
+    end
+
+    # Real Ansible's `name:` is a list; krikri's param channel hands a YAML
+    # list over as its JSON encoding (the same convention mysql_query's
+    # own `query:` parsing follows), so decode that shape here.
+    # Real Ansible's `name:` accepts a scalar or a list; either way it
+    # arrives here as a list of names.
+    private def normalize_db_list(raw) : Array(String)
+      return raw.as_a.map(&.to_s) if raw.is_a?(Array)
+      parse_name_list(raw.to_s) || [raw.to_s]
+    end
+
+    private def parse_name_list(raw : String) : Array(String)?
+      stripped = raw.strip
+      return nil unless stripped.starts_with?('[')
+      Array(String).from_json(stripped) rescue nil
+    end
+
+    private def json_strings(list : Array(String)) : JSON::Any
+      JSON::Any.new(list.map { |item| JSON::Any.new(item) })
     end
 
     private def run_dump_or_import(state : String, name : String) : PluginResult
@@ -193,7 +270,11 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
 
       write_target(target, result[:stdout])
-      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+      # dump/import lead with msg in real's own exit_json (and carry the
+      # shell command it ran in executed_commands, which this plugin's
+      # native-codec path does not build as a single string).
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
+        key_order: SUCCESS_KEY_ORDER)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write dump to #{target}: #{ex.message}")
     end
@@ -211,7 +292,11 @@ module Krikri
       File.delete?(sql_path) if sql_path != target
 
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+      # dump/import lead with msg in real's own exit_json (and carry the
+      # shell command it ran in executed_commands, which this plugin's
+      # native-codec path does not build as a single string).
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
+        key_order: SUCCESS_KEY_ORDER)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to import #{target}: #{ex.message}")
     end
