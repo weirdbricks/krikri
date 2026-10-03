@@ -133,8 +133,14 @@ module Krikri
       changed = diversion_after != diversion_before
 
       if diversion_after == diversion_wanted
-        PluginResult.new(changed: changed, failed: false, msg: messages.join("\n"),
-          diversion: diversion_after, commands: [main_command], messages: messages)
+        # Real dpkg_divert.py's success exit:
+        # module.exit_json(changed=changed, diversion=diversion,
+        # commands=commands, messages=messages, diff=diff) - no msg on
+        # the success path (diff is {} outside --diff mode; live-verified
+        # against real 2.19.11 in the podman container).
+        PluginResult.new(changed: changed, failed: false,
+          diversion: diversion_after, commands: [main_command], messages: messages,
+          key_order: ["changed", "diversion", "commands", "messages", "diff"])
       else
         PluginResult.new(changed: changed, failed: true,
           msg: "Unexpected error: see stdout and stderr for details.")

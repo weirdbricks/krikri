@@ -40,6 +40,17 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "dpkg_divert plugin result key order" do
+  it "serializes an unmodified absence as changed-diversion-commands-messages (real: changed, diversion, commands, messages, diff)" do
+    skip "no dpkg-divert on this machine" unless File.exists?("/usr/bin/dpkg-divert") || File.exists?("/usr/sbin/dpkg-divert")
+
+    result = PluginSpecHelper.run("dpkg_divert", {"path" => "/etc/hostname", "state" => "absent"})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "diversion", "commands", "messages"])
+  end
+end
+
 describe "dpkg_selections plugin result key order" do
   it "serializes an already-set selection as changed-before-after (real: changed, before, after)" do
     result = PluginSpecHelper.run("dpkg_selections", {"name" => "bash", "selection" => "install"})
