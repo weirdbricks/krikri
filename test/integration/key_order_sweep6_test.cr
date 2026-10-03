@@ -157,7 +157,7 @@ end
 private def self_signed_cert(dir : String, key : String) : String
   cert = File.join(dir, "cert.pem")
   status = Process.run("openssl", ["req", "-x509", "-new", "-key", key,
-    "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
+                                   "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
   status.success?.must_equal(true)
   cert
 end
@@ -361,7 +361,7 @@ describe "get_certificate plugin result key order" do
     PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
     cert = File.join(dir, "cert.pem")
     status = Process.run("openssl", ["req", "-x509", "-new", "-key", key,
-      "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
+                                     "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
     status.success?.must_equal(true)
 
     # Local TLS endpoint serving that cert (mirrors the live-verification
@@ -406,7 +406,7 @@ describe "get_certificate plugin result key order" do
       # get_certificate carries only the ten keys below and trails the
       # extras after them), so pin the real-ordered PREFIX.
       keys = result.as_h.keys
-      keys.size >= 10
+      raise "expected at least 10 keys, got #{keys.size}" unless keys.size >= 10
       keys[0, 10].must_equal([
         "changed", "cert", "subject", "expired", "issuer", "not_after",
         "not_before", "serial_number", "signature_algorithm", "version",
@@ -424,9 +424,9 @@ describe "openssl_csr plugin result key order" do
     key = File.join(dir, "key.pem")
     PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
     result = PluginSpecHelper.run("openssl_csr", {
-      "path"           => File.join(dir, "req.csr"),
+      "path"            => File.join(dir, "req.csr"),
       "privatekey_path" => key,
-      "common_name"    => "test.example.com",
+      "common_name"     => "test.example.com",
     })
 
     result.as_h.keys.must_equal([
