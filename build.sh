@@ -15,6 +15,45 @@ PLUGINS_DIR="$OUTPUT_DIR/plugins"
 CACHE_ROOT=".crystal-build-cache"
 BUILD_MODE="debug"
 STATIC=false
+FORCE=false
+STATIC_PODMAN=false
+
+# Stamp file recording what the binaries in $OUTPUT_DIR were last built
+# as (build mode + static/dynamic linkage + crystal version) - see the
+# binary_linkage/stamp comments below for why mtime checks alone can't
+# answer "was this binary linked the way this run asks for".
+STAMP_FILE="$OUTPUT_DIR/.build-stamp"
+
+# binary_linkage: print "yes" if the given ELF binary is statically
+# linked, "no" if dynamically linked, "" if file(1) is unavailable or
+# its output is unrecognized. Callers must treat "" as "can't tell -
+# trust the stamp", never as a mismatch on its own.
+binary_linkage() {
+    command -v file &> /dev/null || { echo ""; return; }
+    local out
+    out=$(file -b "$1" 2>/dev/null) || { echo ""; return; }
+    case "$out" in
+        *"statically linked"*|*"static-pie linked"*) echo "yes" ;;
+        *"dynamically linked"*) echo "no" ;;
+        *) echo "" ;;
+    esac
+}
+
+# stamp_flavor: the flavor= line of the stamp file (empty if absent).
+stamp_flavor() {
+    sed -n 's/^flavor=//p' "$STAMP_FILE" 2>/dev/null
+}
+
+# write_stamp: record the flavor this run leaves bin/ in. Called only
+# on fully successful builds (and for the no-stamp backfill) - every
+# failure path exits before it, so a partially rebuilt bin/ never
+# poisons the stamp.
+write_stamp() {
+    {
+        echo "flavor=$REQUESTED_FLAVOR"
+        echo "crystal=$CRYSTAL_VERSION_TAG"
+    } > "$STAMP_FILE"
+}
 
 # GNU vs BSD coreutils/binutils: macOS ships BSD stat/strip, which take
 # different flags than the GNU ones Linux uses. --strip-unneeded and
@@ -50,6 +89,14 @@ while [[ $# -gt 0 ]]; do
             STATIC=true
             shift
             ;;
+        --force)
+            FORCE=true
+            shift
+            ;;
+        --static-podman)
+            STATIC_PODMAN=true
+            shift
+            ;;
         --clean)
             echo -e "${YELLOW}🧹 Cleaning build artifacts...${NC}"
             rm -rf "$OUTPUT_DIR" "$CACHE_ROOT"
@@ -72,14 +119,31 @@ while [[ $# -gt 0 ]]; do
             echo "             backtraces in crash / test-failure output)"
             echo "  --static   Statically link (passes --static to the compiler). Needs the"
             echo "             musl/Alpine toolchain (e.g. the crystallang/crystal:*-alpine"
-            echo "             image) plus static dev libs (pcre2-static, openssl-libs-static,"
-            echo "             bzip2-static, zlib-static) - glibc doesn't support fully static"
-            echo "             linking the same way. Produces a binary with no runtime libc"
-            echo "             version dependency, for distributing across arbitrary Linux hosts."
+            echo "             image) plus Alpine's static dev libs:"
+            echo "               pcre2-dev pcre2-static openssl-dev openssl-libs-static"
+            echo "               zlib-static bzip2-static xz-static yaml-static"
+            echo "               libxml2-static gmp-dev gmp-static libevent-static"
+            echo "             (gmp-static is required: Alpine's gmp-dev ships no libgmp.a"
+            echo "             and the link fails with 'cannot find -lgmp' without it -"
+            echo "             Crystal's Big* types link libgmp). glibc doesn't support"
+            echo "             fully static linking the same way. Produces a binary with no"
+            echo "             runtime libc version dependency, for distributing across"
+            echo "             arbitrary Linux hosts."
+            echo "  --force    Ignore all up-to-date checks; rebuild the main executables"
+            echo "             and every plugin unconditionally"
+            echo "  --static-podman  Perform the static release build the easy way: run this"
+            echo "             same script inside docker.io/crystallang/crystal:1.21.1-alpine"
+            echo "             via podman (repo mounted at /work, a persistent Crystal cache"
+            echo "             at ~/.cache/krikri-static mounted at /cache), installing the"
+            echo "             Alpine static libs above first. Implies --release --static,"
+            echo "             and adds --force when the stamp says bin/ isn't static."
             echo "  --clean    Remove build artifacts"
             echo ""
             echo "Environment:"
             echo "  BUILD_PARALLELISM  Max concurrent crystal builds (default: min(nproc, 8))"
+            echo "  CRYSTAL_CACHE_DIR  Base dir for the per-target compiler caches"
+            echo "                     (default: .crystal-build-cache in the repo; set it"
+            echo "                     to keep container-build caches out of the repo)"
             echo ""
             echo "  --help     Show this help message"
             echo ""
@@ -87,6 +151,8 @@ while [[ $# -gt 0 ]]; do
             echo "  $0              # Build in debug mode (default)"
             echo "  $0 --release    # Build in release mode (optimized + stripped)"
             echo "  $0 --release --static  # Static release build (needs Alpine toolchain)"
+            echo "  $0 --static-podman     # Same, via podman in the Alpine Crystal image"
+            echo "  $0 --force      # Rebuild everything, ignoring up-to-date checks"
             echo "  $0 --clean      # Clean build artifacts"
             exit 0
             ;;
@@ -111,6 +177,45 @@ if [ ! -f "krikri-playbook.cr" ]; then
     echo -e "${BLUE}  ./build.sh${NC}"
     echo ""
     exit 1
+fi
+
+# --static-podman: hand the whole build to the Alpine Crystal container.
+# Runs here, after the project-root check (the mount below must be the
+# repo root) but before the host Crystal check - the point of this flag
+# is that the HOST doesn't need a usable static-link toolchain, only
+# podman. Rootless podman maps the container's root to the invoking
+# user, so the files the inner build writes into the mount stay owned
+# by the user, not root.
+if [ "$STATIC_PODMAN" = true ]; then
+    if ! command -v podman &> /dev/null; then
+        echo -e "${RED}❌ podman not found!${NC}"
+        exit 1
+    fi
+    # Persistent cache dir on real disk, NOT /tmp (small tmpfs).
+    STATIC_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/krikri-static"
+    mkdir -p "$STATIC_CACHE_DIR"
+    # The inner run is always a static release build. If bin/ currently
+    # holds non-static binaries (stamp absent, stamp flavor different, or
+    # file(1) disagreeing with the stamp), the inner mtime checks would
+    # wrongly call them up to date - pass --force so everything is
+    # relinked statically.
+    INNER_ARGS="--release --static"
+    if [ "$FORCE" = true ] \
+        || [ "$(stamp_flavor)" != "release-static" ] \
+        || { [ "$(binary_linkage "$OUTPUT_DIR/krikri-playbook")" = "no" ]; }; then
+        INNER_ARGS="$INNER_ARGS --force"
+    fi
+    PODMAN_IMAGE="docker.io/crystallang/crystal:1.21.1-alpine"
+    # gmp-static is required: Alpine's gmp-dev ships no libgmp.a and the
+    # link fails with 'cannot find -lgmp' without it (Crystal's Big*
+    # types link libgmp).
+    CONTAINER_SH="apk add --no-cache bash pcre2-dev pcre2-static openssl-dev openssl-libs-static zlib-static bzip2-static xz-static yaml-static libxml2-static gmp-dev gmp-static libevent-static && ./build.sh $INNER_ARGS"
+    # Outer shell must be busybox sh - the bare Alpine Crystal image
+    # ships no bash; `apk add bash` below installs it for build.sh
+    # itself (which needs bashisms and runs via its own shebang).
+    PODMAN_CMD=(podman run --rm -v "$PWD":/work:Z -w /work -v "$STATIC_CACHE_DIR":/cache -e CRYSTAL_CACHE_DIR=/cache "$PODMAN_IMAGE" sh -c "$CONTAINER_SH")
+    echo -e "${BLUE}🐳 Running:${NC} ${PODMAN_CMD[*]}"
+    exec "${PODMAN_CMD[@]}"
 fi
 
 # Check for Crystal
@@ -177,6 +282,15 @@ if [ "$STATIC" = true ]; then
 fi
 echo ""
 
+# The flavor this run asks for, as recorded in the stamp file.
+STATIC_WORD="dynamic"
+WANT_STATIC_LINKAGE="no"
+if [ "$STATIC" = true ]; then
+    STATIC_WORD="static"
+    WANT_STATIC_LINKAGE="yes"
+fi
+REQUESTED_FLAVOR="$BUILD_MODE-$STATIC_WORD"
+
 # Parallel build cap. The three main executables, the fat plugin
 # binary and the standalone plugins are mutually independent
 # `crystal build` invocations, so stale ones run concurrently - but
@@ -207,9 +321,12 @@ fi
 # in one worktree) is still a user error, same as it always was.
 # Wiped by --clean, and wiped per-target after any failed build so an
 # interrupted/corrupt cache self-heals instead of poisoning the next
-# run.
+# run. An ambient CRYSTAL_CACHE_DIR (e.g. /cache inside the
+# --static-podman container) becomes the base the per-target dirs live
+# under; unset, the repo-local $CACHE_ROOT is used as before.
 CRYSTAL_VERSION_TAG=$(crystal --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)
-CACHE_DIR_ROOT="$CACHE_ROOT/$BUILD_MODE${STATIC:+-static}${CRYSTAL_VERSION_TAG:+-crystal-$CRYSTAL_VERSION_TAG}"
+CACHE_PARENT="${CRYSTAL_CACHE_DIR:-$CACHE_ROOT}"
+CACHE_DIR_ROOT="$CACHE_PARENT/$BUILD_MODE${STATIC:+-static}${CRYSTAL_VERSION_TAG:+-crystal-$CRYSTAL_VERSION_TAG}"
 mkdir -p "$CACHE_DIR_ROOT"
 
 # Shared scratch dir for the whole run: per-build failure output is
@@ -335,15 +452,70 @@ binary_build_flavor() {
     "$binary" --version 2>/dev/null | awk '/^Build: /{print $2; exit}'
 }
 
-echo -e "${YELLOW}🔨 Building main executable...${NC}"
-
 MAIN_BINARY="$OUTPUT_DIR/krikri-playbook"
 MAIN_SOURCE="krikri-playbook.cr"
+
+# Stamp/linkage staleness: the mtime checks below only answer "is this
+# binary older than its sources", and the per-binary --version check
+# only covers the debug/release mode - neither notices that bin/ was
+# last LINKED differently from what this run asks for. Found live:
+# bin/ held dynamic glibc-2.41 binaries, `./build.sh --release --static`
+# in an Alpine container reported success while rebuilding nothing, and
+# those dynamic binaries were then uploaded to Ubuntu 22.04 hosts where
+# they failed with "GLIBC_2.38 not found". The stamp file records the
+# flavor of the last successful build; when it differs from the
+# requested one (or file(1) disagrees with it about the main binary's
+# linkage), EVERYTHING is rebuilt - a stale flavor on one binary means
+# they all come from the other build. --force skips the checks entirely.
+FORCE_ALL=false
+REBUILD_REASON=""
+if [ "$FORCE" = true ]; then
+    FORCE_ALL=true
+    REBUILD_REASON="--force requested"
+elif [ ! -f "$STAMP_FILE" ]; then
+    if [ -f "$MAIN_BINARY" ] && [ "$(binary_build_flavor "$MAIN_BINARY")" = "$BUILD_MODE" ]; then
+        # First run after the stamp check existed, but the main binary
+        # already agrees with the requested mode: reconstruct the stamp
+        # from the binary instead of forcing a one-time full rebuild.
+        # Linkage comes from file(1); if file(1) can't tell, trust the
+        # (absent) stamp's silence and don't rebuild either.
+        linkage=$(binary_linkage "$MAIN_BINARY")
+        if [ -z "$linkage" ] || [ "$linkage" = "$WANT_STATIC_LINKAGE" ]; then
+            write_stamp
+        else
+            FORCE_ALL=true
+            REBUILD_REASON="no stamp and bin/ is ${linkage}-linked, $STATIC_WORD was requested"
+        fi
+    fi
+    # No stamp and no matching main binary: nothing to preserve - the
+    # per-binary checks below build everything, and the stamp is only
+    # written on a fully successful build.
+else
+    stamp=$(stamp_flavor)
+    if [ "$stamp" != "$REQUESTED_FLAVOR" ]; then
+        FORCE_ALL=true
+        REBUILD_REASON="bin/ was built as '$stamp', '$REQUESTED_FLAVOR' requested"
+    else
+        linkage=$(binary_linkage "$MAIN_BINARY")
+        if [ -n "$linkage" ] && [ "$linkage" != "$WANT_STATIC_LINKAGE" ]; then
+            FORCE_ALL=true
+            REBUILD_REASON="binaries are ${linkage}-linked but $STATIC_WORD was requested"
+        fi
+    fi
+fi
+if [ "$FORCE_ALL" = true ]; then
+    echo -e "${YELLOW}♻  Rebuilding everything: $REBUILD_REASON${NC}"
+    echo ""
+fi
+
+echo -e "${YELLOW}🔨 Building main executable...${NC}"
 
 # Check if main executable needs rebuilding
 NEEDS_BUILD=false
 
-if [ ! -f "$MAIN_BINARY" ]; then
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$MAIN_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$MAIN_SOURCE" -nt "$MAIN_BINARY" ]; then
     NEEDS_BUILD=true
@@ -378,7 +550,9 @@ ADHOC_SOURCE="krikri.cr"
 
 NEEDS_BUILD=false
 
-if [ ! -f "$ADHOC_BINARY" ]; then
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$ADHOC_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$ADHOC_SOURCE" -nt "$ADHOC_BINARY" ]; then
     NEEDS_BUILD=true
@@ -405,7 +579,9 @@ LINT_SOURCE="krikri-lint.cr"
 
 NEEDS_BUILD=false
 
-if [ ! -f "$LINT_BINARY" ]; then
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$LINT_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$LINT_SOURCE" -nt "$LINT_BINARY" ]; then
     NEEDS_BUILD=true
@@ -434,7 +610,9 @@ FUZZ_SOURCE="differential_fuzz.cr"
 
 NEEDS_BUILD=false
 
-if [ ! -f "$FUZZ_BINARY" ]; then
+if [ "$FORCE_ALL" = true ]; then
+    NEEDS_BUILD=true
+elif [ ! -f "$FUZZ_BINARY" ]; then
     NEEDS_BUILD=true
 elif [ "$FUZZ_SOURCE" -nt "$FUZZ_BINARY" ]; then
     NEEDS_BUILD=true
@@ -541,7 +719,9 @@ build_fat_plugin() {
     local generated="plugins/.fat_plugin_generated.cr"
 
     local needs_build=false
-    if [ ! -f "$fat_binary" ]; then
+    if [ "$FORCE_ALL" = true ]; then
+        needs_build=true
+    elif [ ! -f "$fat_binary" ]; then
         needs_build=true
     else
         for plugin in "${FAT_PLUGINS[@]}"; do
@@ -779,7 +959,9 @@ for plugin in "${STANDALONE_PLUGINS[@]}"; do
         # Check if rebuild is needed
         NEEDS_BUILD=false
 
-        if [ ! -f "$BINARY" ]; then
+        if [ "$FORCE_ALL" = true ]; then
+            NEEDS_BUILD=true
+        elif [ ! -f "$BINARY" ]; then
             # Binary doesn't exist
             NEEDS_BUILD=true
         elif [ "$SOURCE" -nt "$BINARY" ]; then
@@ -917,6 +1099,11 @@ else
     echo -e "${GREEN}✅ All $PLUGIN_COUNT plugins up to date${NC}"
 fi
 echo ""
+
+# Record the flavor this run left bin/ in - see the stamp/linkage
+# comment above the main-executable staleness checks. Only reached on
+# a fully successful build; every failure path exits before this.
+write_stamp
 
 # Summary
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
