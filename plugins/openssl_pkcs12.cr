@@ -51,6 +51,17 @@ module Krikri
   class OpensslPkcs12Plugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps and the module source (dump()
+    # builds filename/privatekey_path/backup_file/pkcs12, then the shared
+    # exit adds changed, then mode only on the regenerated path when the
+    # file exists - real's converged/check-mode/absent results carry no
+    # mode). ansible_facts is controller-added; warnings trails last.
+    SUCCESS_KEY_ORDER = %w[
+      filename privatekey_path backup_file pkcs12 changed mode ansible_facts
+      failed warnings
+    ]
+
     # The real module's argument_spec (declaration order) plus the
     # file-common args its add_file_common_args=True injects (the only
     # alias is attributes->attr; friendly_name's alias is on the module
@@ -390,7 +401,7 @@ module Krikri
     end
 
     private def result_parse(changed : Bool, path : String, src : String, backup_file : String? = nil) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
@@ -495,7 +506,7 @@ module Krikri
         backup_file = backup(path)
         File.delete(path)
       end
-      res = PluginResult.new(changed: exists, failed: false, msg: "")
+      res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
@@ -629,10 +640,14 @@ module Krikri
 
     private def result(changed : Bool, path : String, privatekey_path : String,
                        backup_file : String?) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["privatekey_path"] = JSON::Any.new(privatekey_path)
-      res.extra["mode"] = JSON::Any.new(@params["mode"]? || "0400")
+      # Real only carries `mode` on the paths that fall through to its
+      # shared final block - i.e. when changed (a fresh/forced export, or
+      # an attribute-only change). Its converged exit and check-mode exit
+      # happen BEFORE that block, so unchanged results carry no mode.
+      res.extra["mode"] = JSON::Any.new(@params["mode"]? || "0400") if changed
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       if true?(@params["return_content"]?) && File.exists?(path)
         res.extra["pkcs12"] = JSON::Any.new(Base64.strict_encode(File.read(path)))

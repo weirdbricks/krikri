@@ -46,6 +46,18 @@ module Krikri
       "get_certificate_chain" => [] of String,
     }
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps against a local TLS server:
+    # changed leads, cert follows, then the parsed info keys, then
+    # verified_chain/unverified_chain (only with
+    # get_certificate_chain). ansible_facts is controller-added,
+    # warnings trails last.
+    SUCCESS_KEY_ORDER = %w[
+      changed cert subject expired extensions issuer not_after not_before
+      serial_number signature_algorithm version verified_chain
+      unverified_chain ansible_facts failed warnings
+    ]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -88,7 +100,7 @@ module Krikri
       info = X509CertInfo.parse(cert_pem)
       return failure("Unable to parse the retrieved certificate") unless info
 
-      res = PluginResult.new(changed: false, failed: false, msg: "")
+      res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       info.each do |key, value|
         res.extra[key] = value
       end

@@ -31,6 +31,17 @@ module Krikri
 
     Pkey = PluginHelpers::Pkey
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
+    # unchanged, check-mode and state=absent runs. Variant positions
+    # confirmed live: backup_file after fingerprint, publickey (with
+    # return_content) after backup_file, before diff; ansible_facts is
+    # controller-added and warnings trails last.
+    SUCCESS_KEY_ORDER = %w[
+      privatekey filename format changed fingerprint backup_file publickey
+      diff ansible_facts failed warnings
+    ]
+
     # The real module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (the only alias is
     # attributes->attr).
@@ -158,7 +169,7 @@ module Krikri
         backup_file = backup(path)
         File.delete(path)
       end
-      res = PluginResult.new(changed: exists, failed: false, msg: "")
+      res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
@@ -282,7 +293,7 @@ module Krikri
 
     private def result(changed : Bool, path : String, privatekey_path : String?,
                        format : String, backup_file : String?, desired : String?) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["privatekey"] = JSON::Any.new(privatekey_path) if privatekey_path
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["format"] = JSON::Any.new(format)
