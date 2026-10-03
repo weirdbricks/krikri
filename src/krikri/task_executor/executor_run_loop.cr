@@ -1536,7 +1536,9 @@ module Krikri
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
           end
-          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
+          result_json = JSON.parse(failed.to_json)
+          Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
         # debug:/assert:/fail:/set_fact:/pause: - the action plugin
@@ -1871,7 +1873,9 @@ module Krikri
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
           end
-          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
+          result_json = JSON.parse(failed.to_json)
+          Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
         if final = action_result.final_result

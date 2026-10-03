@@ -1,6 +1,35 @@
 require "json"
 
 module Krikri
+  # Real ansible-core 2.19.11's REGISTERED key order for a FAILED
+  # action-level result, live-verified per action with `{{ r | to_json }}`
+  # under `ignore_errors: true` (real's registered dict keeps the module
+  # action's own insertion order - these orders genuinely differ per
+  # action, so each builder picks its own). The order travels with the
+  # result as the private `_ansible_key_order` marker key (stripped at
+  # register, like every other `_ansible_*` key) and is applied by
+  # TaskExecutor#register_result, which is also where the missing
+  # `exception: "(traceback unavailable)"` key is backfilled.
+  FAILED_KEY_ORDER_DEFAULT = ["failed", "msg", "changed", "exception"]
+  # copy/template (a missing controller-side src) and add_host's own
+  # AnsibleActionFail: exception sits between msg and changed.
+  FAILED_KEY_ORDER_MSG_FIRST = ["failed", "msg", "exception", "changed"]
+  # unarchive, set_fact and the task-arg finalization failure: exception
+  # leads, right after failed.
+  FAILED_KEY_ORDER_EXCEPTION_FIRST = ["failed", "exception", "msg", "changed"]
+  # assert: its own condition keys sit between failed and msg.
+  FAILED_KEY_ORDER_ASSERT = ["failed", "evaluated_to", "assertion", "msg", "changed", "exception"]
+  # include_vars: the action's own keys lead, and the wrapped msg comes
+  # last (real keeps it after changed/exception).
+  FAILED_KEY_ORDER_INCLUDE_VARS = ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
+
+  # Tags *result* with the real key order its registered FAILED form must
+  # carry; see FAILED_KEY_ORDER_DEFAULT.
+  def self.mark_failed_key_order(result : JSON::Any, order : Array(String)) : JSON::Any
+    result.as_h["_ansible_key_order"] = JSON::Any.new(order.map { |key| JSON::Any.new(key) })
+    result
+  end
+
   # Base class for Action Plugins
   # Action plugins run on the CONTROLLER (local machine) before the module runs on remote
   # They process inputs, read files, render templates, etc.

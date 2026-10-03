@@ -156,9 +156,12 @@ module Krikri
       # "has no attribute" error real Ansible raises.
       result["changed"] = @changed unless @omit_changed
       # fail_json adds exception: "(traceback unavailable)" in 2.19 (seen only
-      # through a registered result - the display drops it); controller-side
-      # action failures (omit_changed / _ansible_action_level) never carry it
-      result["exception"] = "(traceback unavailable)" if @failed && !@omit_changed && !@extra.has_key?("_ansible_action_level")
+      # through a registered result - the display drops it). Every failed
+      # result carries it, controller-side action failures included - their
+      # registered key ORDER differs, which PluginResult#key_order (or the
+      # _ansible_key_order marker TaskExecutor#register_result applies)
+      # covers, not its presence.
+      result["exception"] = "(traceback unavailable)" if @failed
       # Real Ansible's module protocol (module_utils/basic.py) only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all

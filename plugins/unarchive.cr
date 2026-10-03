@@ -173,7 +173,11 @@ module Krikri
       if error = validate_src_and_dest(src, dest)
         # real: AnsibleActionFail in the controller-side action plugin - a bare
         # "Task failed: <msg>" block with no "Module failed." segment
-        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true)
+        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
+          # Real's unarchive action-failure order (unarchive.cr's plugin
+          # binary does not link base_action_plugin.cr, so the shared
+          # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
+          key_order: ["failed", "exception", "msg", "changed"])
       end
 
       # Real AnsibleModule validates bool-typed params at module setup -

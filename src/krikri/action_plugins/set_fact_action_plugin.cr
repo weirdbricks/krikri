@@ -26,7 +26,8 @@ module Krikri
       # chain brief: "Task failed: " + the conversion error.
       if raw = @params["cacheable"]?
         if error = strict_boolean_error(cacheable_native(raw))
-          return ActionResult.final(ActionResult.plugin_result_json(false, true, "Task failed: #{error}"))
+          return ActionResult.final(Krikri.mark_failed_key_order(
+            ActionResult.plugin_result_json(false, true, "Task failed: #{error}"), FAILED_KEY_ORDER_EXCEPTION_FIRST))
         end
       end
 
@@ -45,7 +46,8 @@ module Krikri
         # cause segment then points at the key's own Origin with real's
         # help text - see ResultDisplay's emit path).
         unless valid_variable_name?(key)
-          return ActionResult.final(ActionResult.plugin_result_json(false, true, "Task failed: Invalid variable name '#{key}'."))
+          return ActionResult.final(Krikri.mark_failed_key_order(
+            ActionResult.plugin_result_json(false, true, "Task failed: Invalid variable name '#{key}'."), FAILED_KEY_ORDER_EXCEPTION_FIRST))
         end
         facts[key] = coerce(value)
       end
@@ -53,7 +55,8 @@ module Krikri
       if facts.empty?
         # real: AnsibleActionFail - a result-CONTRIBUTING action failure,
         # so the fatal msg carries NO "Task failed: " prefix.
-        return ActionResult.final(ActionResult.plugin_result_json(false, true, "No key/value pairs provided, at least one is required for this action to succeed"))
+        return ActionResult.final(Krikri.mark_failed_key_order(
+          ActionResult.plugin_result_json(false, true, "No key/value pairs provided, at least one is required for this action to succeed"), FAILED_KEY_ORDER_EXCEPTION_FIRST))
       end
 
       extra = {"ansible_facts" => JSON::Any.new(facts)}

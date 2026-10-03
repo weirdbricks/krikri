@@ -378,13 +378,15 @@ module Krikri
         # shape include_vars's own failed results render through (see
         # ResultDisplay's _ansible_action_level + _ansible_error_detail
         # handling).
-        return JSON.parse({
-          "changed"               => false,
-          "failed"                => true,
-          "msg"                   => "the 'key' param is required when using group_by",
-          "_ansible_action_level" => true,
-          "_ansible_error_detail" => "Action failed: the 'key' param is required when using group_by",
-        }.to_json)
+        failure = {
+          "changed"               => JSON::Any.new(false),
+          "failed"                => JSON::Any.new(true),
+          "msg"                   => JSON::Any.new("the 'key' param is required when using group_by"),
+          "_ansible_action_level" => JSON::Any.new(true),
+          "_ansible_error_detail" => JSON::Any.new("Action failed: the 'key' param is required when using group_by"),
+        } of String => JSON::Any
+        Krikri.mark_failed_key_order(JSON::Any.new(failure), FAILED_KEY_ORDER_DEFAULT)
+        return JSON.parse(failure.to_json)
       end
 
       inventory = @inventory
@@ -1066,11 +1068,13 @@ module Krikri
     # absolute one carries none (real's absolute lookup branch never
     # populates one).
     private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
     end
 
     # copy:'s controller-side src: miss on a LOCAL connection: real
@@ -1078,11 +1082,13 @@ module Krikri
     # error: " prefix itself, WITHOUT the "Task failed: " prefix the
     # remote-host variant above carries (both live-verified).
     private def controller_missing_copy_local_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Unexpected AnsibleActionFail error: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
     end
 
     # copy:'s decrypt: param (real Ansible default true): only an
@@ -1401,11 +1407,13 @@ module Krikri
     # run of the same role. A relative src carries the full Searched-in
     # list (live-verified against 2.19.11); an absolute one none.
     private def controller_missing_unarchive_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_EXCEPTION_FIRST)
+      result
     end
 
     private def unarchive_candidates(task : Task, src : String) : Array(String)
@@ -2021,12 +2029,12 @@ module Krikri
       end
 
       if effective_name.nil? || effective_name == Krikri::NONE_SENTINEL
-        return JSON.parse({
+        return Krikri.mark_failed_key_order(JSON.parse({
           "changed"               => false,
           "failed"                => true,
           "msg"                   => "name, host or hostname needs to be provided",
           "_ansible_action_level" => true,
-        }.to_json)
+        }.to_json), FAILED_KEY_ORDER_MSG_FIRST)
       end
 
       {"groupname", "groups", "group"}.each do |group_key|
@@ -2036,14 +2044,14 @@ module Krikri
         end
         if Krikri.non_string_scalar(raw)
           next unless Krikri.python_param_truthy?(raw)
-          return JSON.parse({
+          return Krikri.mark_failed_key_order(JSON.parse({
             "changed"               => false,
             "failed"                => true,
             "msg"                   => "Groups must be specified as a list.",
             "_ansible_action_level" => true,
             "_ansible_error_detail" => "Groups must be specified as a list.",
             "_ansible_fail_param"   => group_key,
-          }.to_json)
+          }.to_json), FAILED_KEY_ORDER_MSG_FIRST)
         end
         if bare = list_member_attribute_crash(raw, "strip")
           return literal_crash_result(bare)
@@ -2314,6 +2322,7 @@ module Krikri
       # this must stay out of the loop aggregation path in
       # executor_loops.cr.
       result_hash = result.as_h.dup
+      apply_failed_key_order(result_hash)
       # Capture the pause opt-out marker BEFORE the _ansible_* strip below
       # removes it (see with_command_lines_augmented's comment).
       omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
@@ -2329,6 +2338,32 @@ module Krikri
       UnsafeValues.mark_value(registered)
       VarSubstitutor.add_resolved_var_name(host.name, register_name)
       @hv_generation += 1
+    end
+
+    # Applies the real key order a controller-side action failure's
+    # REGISTERED result carries (see Krikri::FAILED_KEY_ORDER_DEFAULT):
+    # the order the action's builder marked the result with, plus the
+    # `exception: "(traceback unavailable)"` key real's fail_json adds on
+    # every failure - including these, which krikri's own result builders
+    # left out. Applied here, at the single point every registered result
+    # passes through, so no individual builder has to know the rule.
+    private def apply_failed_key_order(hash : Hash(String, JSON::Any)) : Nil
+      order = hash["_ansible_key_order"]?.try(&.as_a) || return
+      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception")
+      # A result whose display shape omits `changed` (debug:'s own
+      # fatalization failure) but whose registered shape carries it - see
+      # the `_ansible_register_changed` marker.
+      if hash.delete("_ansible_register_changed")
+        hash["changed"] = JSON::Any.new(false)
+      end
+      ordered = Hash(String, JSON::Any).new
+      order.each do |entry|
+        key = entry.as_s?
+        ordered[key] = hash[key] if key && hash.has_key?(key)
+      end
+      hash.each { |key, value| ordered[key] = value unless ordered.has_key?(key) }
+      hash.clear
+      ordered.each { |key, value| hash[key] = value }
     end
 
     # Run all notified handlers

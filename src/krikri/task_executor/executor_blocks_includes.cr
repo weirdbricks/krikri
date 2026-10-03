@@ -1232,6 +1232,7 @@ module Krikri
         h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
         h["_ansible_action_level"] = JSON::Any.new(true)
         h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
       elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
         detail = if message.starts_with?("include_vars: file not found: ")
@@ -1255,6 +1256,7 @@ module Krikri
         h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
         h["_ansible_action_level"] = JSON::Any.new(true)
         h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
       else
         key = free_form_call?(task) ? "_raw_params" : "file"

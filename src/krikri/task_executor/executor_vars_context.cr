@@ -1876,10 +1876,20 @@ module Krikri
     # set_fact/assert/add_host/group_by/include_vars/pause/stat/ping/debug.
     private def finalization_failure_json(ex : Exception, task : Task) : JSON::Any
       h = Hash(String, JSON::Any).new
-      h["changed"] = JSON::Any.new(false) unless finalization_module_name(task) == "ansible.builtin.debug"
+      unless finalization_module_name(task) == "ansible.builtin.debug"
+        h["changed"] = JSON::Any.new(false)
+      else
+        # real's debug fatal DUMP carries msg alone, but the REGISTERED
+        # result does carry changed: false (live-verified vs 2.19.11:
+        # `debug: msg: "{{ undefined }}" | ignore_errors | register` ->
+        # {"failed": true, "exception": ..., "msg": ..., "changed":
+        # false}) - so the key is dropped for the dump and backfilled at
+        # register time instead.
+        h["_ansible_register_changed"] = JSON::Any.new(false)
+      end
       h["failed"] = JSON::Any.new(true)
       h["msg"] = JSON::Any.new(finalize_args_failure_message(ex, task))
-      JSON::Any.new(h)
+      Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_EXCEPTION_FIRST)
     end
 
     # command/shell/script/raw written free-form (`command: echo {{ x }}`, also
