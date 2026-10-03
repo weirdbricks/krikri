@@ -83,7 +83,11 @@ describe "mysql_variables plugin argument validation" do
       "_ansible_check_mode" => "true",
     })
 
-    result["failed"]?.must_be_nil
+    # Real's controller-side check-mode skip result carries an explicit
+    # `failed: false` (skipped, msg, failed, changed - pinned in
+    # key_order_sweep9_test.cr), so krikri emits one too rather than
+    # leaving the key for the executor to backfill after `changed`.
+    result["failed"].as_bool.must_equal(false)
     result["changed"].as_bool.must_equal(false)
     result["skipped"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("remote module (community.mysql.mysql_variables) does not support check mode")

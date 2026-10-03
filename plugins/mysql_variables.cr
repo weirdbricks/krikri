@@ -37,6 +37,30 @@ module Krikri
   class MysqlVariablesPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
+    # Real 2.19.11's exit_json for a variable change leads with msg
+    # (live-verified: msg, changed, queries, failed); its "already set"
+    # no-op is msg, changed, failed. Key order live-verified against
+    # real ansible-playbook 2.19.11 with community.mysql 5.0.2 (via
+    # ansible.mysql), `{{ r | to_json }}` on a MySQL 8.4 server.
+    private SUCCESS_KEY_ORDER = %w[msg changed queries failed]
+
+    # Read-only form (no `value:`) never passes changed to exit_json, so
+    # the controller backfills BOTH failed and changed after the module
+    # dict - msg, failed, changed. `failed_flag` makes krikri's own
+    # `failed: false` land in that same slot rather than being backfilled
+    # by the executor after `changed`.
+    private READ_KEY_ORDER = %w[msg failed changed]
+
+    # The module declares no check-mode support, so the controller
+    # short-circuits with skipped, msg, failed, changed.
+    private SKIP_KEY_ORDER = %w[skipped msg failed changed]
+
+    # The module's own fail_json for an unknown variable name passes
+    # changed=False explicitly, so it leads - unlike the arg-spec and
+    # connection failures, which are plain fail_json and keep the
+    # default failed, msg, changed, exception order.
+    private UNKNOWN_VARIABLE_KEY_ORDER = %w[changed failed msg exception]
+
     # The real module's merged argument_spec (mysql_common_argument_spec
     # + mysql_variables' own update) in declaration order.
     SPEC = {
@@ -68,7 +92,8 @@ module Krikri
       if check_mode
         invoked = @params["_module_name"]? || "community.mysql.mysql_variables"
         return PluginResult.new(changed: false, failed: false,
-          msg: "remote module (#{invoked}) does not support check mode", skipped: true)
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          failed_flag: true, key_order: SKIP_KEY_ORDER)
       end
 
       variable = @params["variable"]
@@ -93,9 +118,9 @@ module Krikri
       DB.open(uri) do |connection|
         current = read_variable(connection, variable)
         return PluginResult.new(changed: false, failed: true,
-          msg: "Variable not available \"#{variable}\"") unless current
+          msg: "Variable not available \"#{variable}\"", key_order: UNKNOWN_VARIABLE_KEY_ORDER) unless current
 
-        return PluginResult.new(changed: false, failed: false, msg: current) unless value
+        return PluginResult.new(changed: false, failed: false, msg: current, failed_flag: true, key_order: READ_KEY_ORDER) unless value
 
         typed_wanted = PluginHelpers::MysqlVariables.typed_value(value)
         typed_current = PluginHelpers::MysqlVariables.typed_value(current)
@@ -105,14 +130,14 @@ module Krikri
 
         if PluginHelpers::MysqlVariables.values_equal?(typed_wanted, typed_current)
           return PluginResult.new(changed: false, failed: false,
-            msg: "Variable is already set to requested value.")
+            msg: "Variable is already set to requested value.", key_order: SUCCESS_KEY_ORDER)
         end
 
         statement = PluginHelpers::MysqlVariables.set_statement(variable, typed_wanted, mode)
         connection.exec(statement)
         PluginResult.new(changed: true, failed: false,
           msg: "Variable change succeeded prev_value=#{typed_current}",
-          queries: [statement])
+          queries: [statement], key_order: SUCCESS_KEY_ORDER)
       end
     rescue ex : DB::ConnectionRefused
       PluginResult.new(changed: false, failed: true, msg: "unable to connect to database, check login_user and login_password are correct or login_unix_socket password is empty: #{ex.message}")
