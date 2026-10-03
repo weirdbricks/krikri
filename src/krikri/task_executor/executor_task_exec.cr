@@ -2162,18 +2162,22 @@ module Krikri
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
 
-      result = {
-        "changed" => JSON::Any.new(false),
-        "failed"  => JSON::Any.new(true),
-        "msg"     => JSON::Any.new(failure.msg),
-      } of String => JSON::Any
-      result.delete("changed") if failure.omit_changed?
+      # Real's fail_json shape for an argument-spec rejection, live-verified
+      # vs ansible-core 2.19.11: the module's own kwargs lead (a copy
+      # module's always-present diff:[], then failed+msg), then the
+      # controller backfills changed, then exception
+      # ("(traceback unavailable)") - the same order PluginResult's own
+      # failed_default_order emits. Built in that order here rather than
+      # insertion-ordered by assignment.
+      result = {} of String => JSON::Any
       # copy's module-level failure keeps real's always-present "diff" key
       # (an empty LIST): a registered failed copy shows "diff": [] for the
       # argspec case too (live-verified vs 2.19.11) - the plugin's own
       # post-processing adds it to every copy result that reaches the
       # module binary, so the controller-simulated ones need it here.
       result["diff"] = JSON::Any.new([] of JSON::Any) if task.module_name == "ansible.builtin.copy" && !action_level_only
+      result["failed"] = JSON::Any.new(true)
+      result["msg"] = JSON::Any.new(failure.msg)
       # copy/template: real's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
       # the fatal dump carries "checksum" for these two modules - but
@@ -2192,6 +2196,13 @@ module Krikri
         if checksum = argspec_source_checksum(params)
           result["checksum"] = JSON::Any.new(checksum)
         end
+      end
+      # A controller-side failure with no changed key at all (the
+      # omit_changed shape) skips the backfill entirely - see
+      # PluginResult#omit_changed.
+      unless failure.omit_changed?
+        result["changed"] = JSON::Any.new(false)
+        result["exception"] = JSON::Any.new("(traceback unavailable)")
       end
       JSON.parse(result.to_json)
     end
