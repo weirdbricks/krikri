@@ -22,6 +22,23 @@ module Krikri
   class X509CertificateInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dump on a self-signed cert: absent
+    # extension/detail keys are simply skipped by the reorder. The
+    # executor backfills failed/changed after the plugin JSON; real puts
+    # failed before changed, warnings last.
+    SUCCESS_KEY_ORDER = %w[
+      signature_algorithm subject subject_ordered issuer issuer_ordered
+      version key_usage key_usage_critical extended_key_usage
+      extended_key_usage_critical basic_constraints basic_constraints_critical
+      ocsp_must_staple ocsp_must_staple_critical subject_alt_name
+      subject_alt_name_critical not_before not_after expired public_key
+      public_key_type public_key_data public_key_fingerprints fingerprints
+      subject_key_identifier authority_key_identifier authority_cert_issuer
+      authority_cert_serial_number serial_number extensions_by_oid ocsp_uri
+      issuer_uri valid_at failed changed warnings
+    ]
+
     # The real module's argument_spec - no file-common args (no
     # add_file_common_args), no aliases.
     SPEC = {
@@ -60,7 +77,7 @@ module Krikri
       info = X509CertInfo.parse(cert_pem)
       return failure("Unable to parse the certificate") unless info
 
-      res = PluginResult.new(changed: false, failed: false, msg: "")
+      res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       info.each do |key, value|
         res.extra[key] = value
       end

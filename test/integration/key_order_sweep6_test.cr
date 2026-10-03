@@ -289,6 +289,42 @@ describe "x509_certificate plugin result key order" do
   end
 end
 
+describe "x509_certificate_info plugin result key order" do
+  it "serializes a certificate read in real's info order" do
+    dir = PluginSpecHelper.tmp_path("ko-x509i-1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    csr = File.join(dir, "req.csr")
+    PluginSpecHelper.run("openssl_csr", {
+      "path"            => csr,
+      "privatekey_path" => key,
+      "common_name"     => "test.example.com",
+    })
+    PluginSpecHelper.run("x509_certificate", {
+      "path"            => File.join(dir, "cert.pem"),
+      "privatekey_path" => key,
+      "csr_path"        => csr,
+      "provider"        => "selfsigned",
+    })
+    result = PluginSpecHelper.run("x509_certificate_info",
+      {"path" => File.join(dir, "cert.pem")})
+
+    # The cert krikri's selfsigned provider issues from this CSR carries
+    # subjectAltName (the CSR's CN-derived SAN) and no basicConstraints,
+    # so those two appear in place of the basic_constraints pair the
+    # live-verified dump had - same list, absent keys skipped.
+    result.as_h.keys.must_equal([
+      "signature_algorithm", "subject", "subject_ordered", "issuer",
+      "issuer_ordered", "version", "subject_alt_name",
+      "subject_alt_name_critical", "not_before", "not_after", "expired",
+      "public_key", "public_key_type", "public_key_data",
+      "public_key_fingerprints", "fingerprints", "subject_key_identifier",
+      "serial_number", "changed",
+    ])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")
