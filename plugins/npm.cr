@@ -162,11 +162,15 @@ module Krikri
     private def handle_absent(exe_parts : Array(String), name : String?, name_version : String?, global : Bool, path : String?, installed : Array(String)) : PluginResult
       return PluginResult.new(changed: false, failed: true, msg: "name is required") unless name
       unless installed.includes?(name)
-        return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
+        return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
       result = run_npm(exe_parts, ["uninstall"], name_version, global, path)
       return failure(exe_parts, result, ["uninstall"]) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: "Package removed", stdout: result[:stdout])
+      # Real 2.19.11 (live-verified + module source): npm.py has ONE
+      # exit - exit_json(changed=changed) - so success results carry no
+      # msg/stdout at all (the "Package removed"/"already absent" msgs
+      # were this plugin's own borrow).
+      PluginResult.new(changed: true, failed: false, key_order: %w[changed])
     end
 
     # state: present (or latest) - install when anything is missing
@@ -182,11 +186,11 @@ module Krikri
       # never actually converging even when every dependency was
       # already correctly installed.
       if missing.empty?
-        return PluginResult.new(changed: false, failed: false, msg: "Package already installed")
+        return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
       result = run_npm(exe_parts, ["install"], name_version, global, path)
       return failure(exe_parts, result, ["install"]) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: "Package installed", stdout: result[:stdout])
+      PluginResult.new(changed: true, failed: false, key_order: %w[changed])
     end
 
     # Real _exec with check_rc=True: a started-but-failed command fails

@@ -100,6 +100,38 @@ describe "make plugin result key order (sweep7)" do
   end
 end
 
+describe "npm plugin result key order (sweep7)" do
+  # Real 2.19.11 community.general npm has a SINGLE exit -
+  # exit_json(changed=changed) - so every success shape registers just
+  # changed (no msg/stdout; the "Package ..."-style msgs were krikri's
+  # own borrow, now dropped). Live-verified with the offline-safe
+  # state=absent-on-not-installed case.
+  it "registers an absent no-op as just changed" do
+    dir = unique_tmp("npm-order")
+    FileUtils.mkdir_p(dir)
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: absent no-op
+            community.general.npm:
+              path: #{dir}
+              name: krikri-sweep7-nonexistent-pkg
+              state: absent
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "failed"])
+  end
+end
+
 describe "htpasswd plugin result key order (sweep7)" do
   # Real 2.19.11 community.general htpasswd exit_json's (msg=...,
   # changed=...) with NO path key in the result - live-verified create
