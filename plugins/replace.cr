@@ -125,7 +125,11 @@ module Krikri
           changed: false,
           failed: true,
           msg: "Path #{path} does not exist !",
-          rc: 257
+          rc: 257,
+          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc,
+          # failed, msg, changed, exception (live-verified against
+          # 2.19.11, same module_utils pattern as lineinfile's failure)
+          key_order: %w[rc failed msg changed exception]
         )
       end
 

@@ -165,7 +165,11 @@ module Krikri
       PluginResult.new(
         changed: false, failed: true,
         msg: @params["msg"]? || "Timeout when waiting for #{host}:#{port} to drain",
-        elapsed: (Time.instant - started).total_seconds.to_i
+        elapsed: (Time.instant - started).total_seconds.to_i,
+        # real's fail_json puts the elapsed kwarg first: elapsed, failed,
+        # msg, changed, exception (live-verified against 2.19.11 on the
+        # port-timeout path, same kwargs shape here)
+        key_order: %w[elapsed failed msg changed exception]
       )
     end
 
@@ -189,7 +193,11 @@ module Krikri
       PluginResult.new(
         changed: false, failed: true,
         msg: @params["msg"]? || timeout_message(port, path),
-        elapsed: (Time.instant - started).total_seconds.to_i
+        elapsed: (Time.instant - started).total_seconds.to_i,
+        # real's fail_json puts the elapsed kwarg first: elapsed, failed,
+        # msg, changed, exception (live-verified against 2.19.11:
+        # "Timeout when waiting for 127.0.0.1:59999")
+        key_order: %w[elapsed failed msg changed exception]
       )
     end
 

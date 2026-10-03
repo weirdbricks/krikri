@@ -106,7 +106,10 @@ module Krikri
     # msg/diff) impose one engine-wide shape. When set, #to_json emits the
     # listed keys first, in the listed order (absent ones skipped), then
     # every remaining key in its current order; nil keeps the historical
-    # order exactly. Observed programmatically (e.g. `{{ r | to_json }}`,
+    # order on SUCCESS results, while a FAILED result without a key_order
+    # takes real's plain fail_json order (failed, msg, then extras, then
+    # changed, then exception - see #to_json). Observed programmatically
+    # (e.g. `{{ r | to_json }}`,
     # `{{ r }}` in a debug msg) rather than in the -v dump, which real
     # sorts alphabetically via _dump_results(sort_keys=True).
     property key_order : Array(String)?
@@ -177,6 +180,23 @@ module Krikri
 
       if order = @key_order
         emit_reordered(result, order, io)
+      elsif @failed
+        # Default FAILED order - real's fail_json shape, live-verified
+        # across seven plugins' plain failures (slurp missing file, stat
+        # unsupported parameter, file bad state, fail:, service missing
+        # service, getent unknown database, mount unmkdirable path - all
+        # register exactly failed, msg, changed, exception). Modules that
+        # pass extra kwargs to fail_json keep them positioned by the
+        # kwargs-first rule (rc/elapsed/cmd lead), which needs per-plugin
+        # key_order; the default here only covers the plain shape.
+        failed_order = ["failed", "msg", "diff"]
+        result.each_key do |key|
+          next if key.in?("failed", "msg", "diff", "changed", "exception")
+          failed_order << key
+        end
+        failed_order << "changed"
+        failed_order << "exception"
+        emit_reordered(result, failed_order, io)
       else
         result.to_json(io)
       end

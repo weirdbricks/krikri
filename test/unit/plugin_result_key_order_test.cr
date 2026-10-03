@@ -61,6 +61,22 @@ describe "PluginResult#key_order" do
     ])
   end
 
+  it "emits real's plain fail_json order by default for a failed result without key_order" do
+    # live-verified against 2.19.11 across slurp/stat/file/fail/service/
+    # getent/mount plain failures: failed, msg, changed, exception
+    result = Krikri::PluginResult.new(changed: false, failed: true, msg: "boom", url: "http://h/f")
+    JSON.parse(result.to_json).as_h.keys.must_equal([
+      "failed", "msg", "url", "changed", "exception",
+    ])
+  end
+
+  it "keeps extras ahead of the trailing changed/exception in the default failed order" do
+    result = Krikri::PluginResult.new(changed: false, failed: true, msg: "boom", rc: 257, elapsed: 1)
+    JSON.parse(result.to_json).as_h.keys.must_equal([
+      "failed", "msg", "rc", "elapsed", "changed", "exception",
+    ])
+  end
+
   it "keeps native-msg and diff results reorderable" do
     native = JSON.parse("42")
     diff = JSON.parse(%({"before": "a", "after": "b"}))

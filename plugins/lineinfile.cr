@@ -113,7 +113,10 @@ module Krikri
       return {false, nil} if File.exists?(path)
 
       unless create
-        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257)}
+        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257,
+          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
+          # msg, changed, exception (live-verified against 2.19.11)
+          key_order: %w[rc failed msg changed exception])}
       end
 
       unless check_mode

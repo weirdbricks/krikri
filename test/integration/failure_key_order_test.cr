@@ -11,9 +11,24 @@ require "../minitest_helper"
 # moved: real runs the module dict (changed/stdout/stderr/rc/cmd/start/
 # end/delta), then fail_json's failed/msg, then the derived
 # stdout_lines/stderr_lines, then the controller-appended exception -
-# see plugins/command.cr's FAILED_KEY_ORDER. The generic failed order
-# for plain fail_json results lives in the later describes (PluginResult's
-# default failure emission).
+# see plugins/command.cr's FAILED_KEY_ORDER.
+#
+# Plain fail_json results (no extra kwargs) register as failed, msg,
+# changed, exception - live-verified across slurp (missing file), stat
+# (unsupported parameter), file (bad state), fail:, service (missing
+# service), getent (unknown database) and mount (unmkdirable path);
+# that order is PluginResult's default failed emission now. Modules
+# passing extra fail_json kwargs keep them kwargs-FIRST (real's
+# fail_json merges failed/msg after the kwargs dict): lineinfile/
+# blockinfile/replace's fail_json(rc=257, ...) registers rc, failed,
+# msg, changed, exception, and wait_for's timeout registers elapsed,
+# failed, msg, changed, exception - all live-verified per module.
+#
+# Real failures that do NOT route through a module fail_json (the
+# controller-side "Task failed:/AnsibleActionFail" shapes - copy's
+# failed, msg, exception, changed; uri's file:// failed, changed,
+# exception, msg) carry their own pinned key_order or action-level
+# shape and are not covered here.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -73,5 +88,143 @@ describe "command/shell failed-result key order" do
               dest: KRIKRI_DUMP_PATH
       YAML
     keys.must_equal(%w[changed stdout stderr rc cmd start end delta failed msg stdout_lines stderr_lines exception])
+  end
+end
+
+describe "plain fail_json registered key order (default failed emission)" do
+  it "registers a slurp failure as failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: slurp it
+            ansible.builtin.slurp:
+              src: /nonexistent/krikri-fk-file
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[failed msg changed exception])
+  end
+
+  it "registers a service failure for a missing service as failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: start it
+            ansible.builtin.service:
+              name: krikri-fk-nosuchsvc
+              state: started
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[failed msg changed exception])
+  end
+end
+
+describe "rc-257 missing-file failure key order" do
+  it "registers a lineinfile failure on a missing path as rc, failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: line it
+            ansible.builtin.lineinfile:
+              path: /nonexistent-krikri-fk-dir/f
+              line: hello
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[rc failed msg changed exception])
+  end
+
+  it "registers a blockinfile failure on a missing path as rc, failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: block it
+            ansible.builtin.blockinfile:
+              path: /nonexistent-krikri-fk-dir/f
+              block: x
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[rc failed msg changed exception])
+  end
+
+  it "registers a replace failure on a missing path as rc, failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: replace it
+            ansible.builtin.replace:
+              path: /nonexistent-krikri-fk-dir/f
+              regexp: a
+              replace: b
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[rc failed msg changed exception])
+  end
+end
+
+describe "wait_for timeout registered key order" do
+  it "registers a port timeout as elapsed, failed, msg, changed, exception" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: wait for it
+            ansible.builtin.wait_for:
+              port: 59999
+              timeout: 1
+            register: r
+            ignore_errors: true
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+      YAML
+    keys.must_equal(%w[elapsed failed msg changed exception])
   end
 end
