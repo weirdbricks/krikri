@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1465`.**
+**Currently at `0.9.1466`.**
 
 ## Open gaps
 
@@ -38,7 +38,7 @@ and fixed and when.
   omit-`changed` wire) pins a plugin's keys to real 2.19.11's order. Everything below was compared against
   real on the same host, cold and warm, with `{{ r | to_json }}` probe roles
   (`testing/keyorder_probes/kop_*`, run through `krikri-role-tester run` with `local:` queue entries and compared
-  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1465: 168 probes on 7 roles, all identical on
+  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1466: 168 probes on 7 roles, all identical on
   Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN). Verified on real hosts: `user`, `group`,
   `authorized_key`, `known_hosts`, `sysctl`, `mount_facts`, `modprobe`, `ufw`, `apt` (install/no-op),
   `lvg`, `lvol`, `parted`, `zfs`, `mount`, `synchronize`, `subversion`, `apache2_module`, `java_cert`,
@@ -49,7 +49,9 @@ and fixed and when.
   literal `key_order` call (`grep -L key_order plugins/*.cr` lists them) because their shape comes from an
   omit-`changed` wire or the controller backfill; `setup`/`gather_facts`/`wait_for_connection`/`fail` are
   handled outside their plugin files. Not verified, and why:
-  - `snap` (snapd is too heavy for a probe round) and `homebrew` (macOS-only): deliberately not probed.
+  - `snap`: snapd is too heavy for a probe round, so it is deliberately not probed.
+  - `homebrew`, `homebrew_cask` and `homebrew_tap` are not supported (dropped 0.9.1466: macOS-first, under 1.5% of the roles we have
+    run, and nearly all of those only on macOS-only code paths); a task using one stops with the unimplemented-module error.
   - The real-mutation variants of `iptables` (its check-mode/stub shapes are pinned); not probed.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,

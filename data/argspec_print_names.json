@@ -2405,19 +2405,6 @@
   "supported": null,
   "unsupported": null
  },
- "community.general.homebrew|community.general.homebrew": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "Unsupported parameters for (community.general.homebrew) module: zznope. Supported parameters include: force_formula, install_options, name, path, state, update_homebrew, upgrade_all, upgrade_options (formula, options, package, pkg, upgrade)."
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (community.general.homebrew) module: zznope. Supported parameters include: force_formula, install_options, name, path, state, update_homebrew, upgrade_all, upgrade_options (formula, options, package, pkg, upgrade).",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
  "community.general.htpasswd|community.general.htpasswd": {
   "dump": {
    "ansible_facts": {

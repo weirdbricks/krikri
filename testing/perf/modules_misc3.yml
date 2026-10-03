@@ -8,7 +8,7 @@
 # divergence is directly comparable by running the same playbook
 # through real ansible-playbook and krikri-playbook side by side:
 #   mysql_user, mysql_variables, postgresql_user, postgresql_privs,
-#   maven_artifact, subversion, homebrew, rabbitmq_plugin,
+#   maven_artifact, subversion, rabbitmq_plugin,
 #   rabbitmq_user, virt_net
 #
 # Safety contract, same conventions as the sibling playbooks:
@@ -43,10 +43,7 @@
 #   commons-io jar from Maven Central behind a connectivity probe and
 #   re-asserts it (checksum-idempotent); subversion works entirely on
 #   a run-scoped local svnadmin repo via file:// URLs;
-#   homebrew only re-asserts an ALREADY-installed formula (state=present
-#   on a formula found via `brew list --formula`, so both engines take
-#   the identical idempotent no-install path - nothing is installed or
-#   removed); rabbitmq_plugin enables the stock rabbitmq_management
+#   rabbitmq_plugin enables the stock rabbitmq_management
 #   plugin idempotently when it is already enabled, and enables+disables
 #   it (restoring the found state) when it is not;
 #   rabbitmq_user creates and removes a run-scoped throwaway user;
@@ -179,12 +176,6 @@
       failed_when: false
       changed_when: false
 
-    - name: Probe brew
-      ansible.builtin.command: which brew
-      register: mm3_brew_probe
-      failed_when: false
-      changed_when: false
-
     - name: Probe rabbitmqctl
       ansible.builtin.command: which rabbitmqctl
       register: mm3_rmq_probe
@@ -242,11 +233,6 @@
       ansible.builtin.debug:
         msg: "skipping subversion section: svn/svnadmin absent"
       when: mm3_svn_probe.rc != 0 or mm3_svnadmin_probe.rc != 0
-
-    - name: Notice homebrew section skipped
-      ansible.builtin.debug:
-        msg: "skipping homebrew section: brew absent (not a Homebrew system)"
-      when: mm3_brew_probe.rc != 0
 
     - name: Notice rabbitmq_plugin/rabbitmq_user section skipped
       ansible.builtin.debug:
@@ -625,44 +611,6 @@
           - mm3_svn_checkout_again.changed == false
           - mm3_svn_payload.stdout is search('svn payload = ' ~ mm3_run_id)
       when: mm3_svn_probe.rc == 0 and mm3_svnadmin_probe.rc == 0
-
-    # ---------------------------------------------------------------
-    # homebrew: brew only (macOS/Linuxbrew). Will skip cleanly on both
-    # a plain Ubuntu and a plain Rocky container. When brew IS present,
-    # the exercise is zero-mutation: state=present re-assert on a
-    # formula already found via `brew list --formula`, which must be
-    # idempotent (changed=false) in both engines - nothing is
-    # installed or removed.
-    # ---------------------------------------------------------------
-    - name: List installed brew formulas
-      ansible.builtin.command: brew list --formula
-      register: mm3_brew_list
-      changed_when: false
-      failed_when: false
-      when: mm3_brew_probe.rc == 0
-
-    - name: Notice homebrew exercise skipped (no formulas installed)
-      ansible.builtin.debug:
-        msg: "skipping homebrew exercise: brew present but no formulas installed to re-assert"
-      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length == 0)
-
-    - name: Re-assert first installed brew formula present
-      community.general.homebrew:
-        name: "{{ mm3_brew_list.stdout_lines | first }}"
-        state: present
-      register: mm3_brew_present
-      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
-
-    - name: Debug homebrew re-assert result
-      ansible.builtin.debug:
-        msg: "homebrew {{ mm3_brew_list.stdout_lines | first }} state=present: changed={{ mm3_brew_present.changed }} (false when already installed)"
-      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
-
-    - name: Check homebrew re-assert was idempotent
-      ansible.builtin.assert:
-        that:
-          - mm3_brew_present.changed == false
-      when: mm3_brew_probe.rc == 0 and (mm3_brew_list.stdout_lines | default([]) | length > 0)
 
     # ---------------------------------------------------------------
     # rabbitmq_plugin: rabbitmqctl + rabbitmq-plugins + a working

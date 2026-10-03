@@ -1,7 +1,7 @@
 ---
 # Key-order probes for synchronize, subversion, apache2_module, java_cert.
-# snap and homebrew are deliberately NOT probed here (see README.md: snapd
-# install is too slow/heavy for a probe round and homebrew is macOS-only).
+# snap is deliberately NOT probed here (see README.md: snapd install is
+# too slow/heavy for a probe round).
 # Convention: every probed task registers r and is followed by a debug
 # emitting "KEYORDER|<module>_<case>|<registered result as json>".
 # ignore_errors everywhere so failure shapes are captured without aborting

@@ -311,10 +311,6 @@ module Krikri
       # round 300037 calls it). No state param in the real module - an
       # omitted/null release IS the unset.
       "community.general.rhsm_release",
-      # homebrew (0.9.940): macOS/Linuxbrew package management (geerlingguy
-      # .mas round 300047 hard-stopped on it). Runs wherever brew is
-      # installed - the plugin's executable search fails cleanly elsewhere.
-      "community.general.homebrew",
       # easy_install (0.9.941): legacy Python library installs via
       # easy_install, virtualenv support included (cchurch.virtualenv
       # round 300033 calls it). install-only by nature - the real module

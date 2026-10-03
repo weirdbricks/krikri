@@ -46,7 +46,6 @@ Lint/NotNil:
   - test/unit/openssl_pkey_helper_test.cr
   - test/unit/docker_login_test.cr
   - test/unit/mount_facts_test.cr
-  - test/unit/homebrew_test.cr
   - test/unit/facts_gatherer_test.cr
   - test/unit/x509_csr_info_test.cr
   - test/unit/jinja_var_resolver_test.cr
@@ -116,7 +115,6 @@ Metrics/CyclomaticComplexity:
   - plugins/get_url.cr
   - plugins/getent.cr
   - plugins/git.cr
-  - plugins/homebrew.cr
   - plugins/java_cert.cr
   - plugins/lineinfile.cr
   - plugins/locale_gen.cr
