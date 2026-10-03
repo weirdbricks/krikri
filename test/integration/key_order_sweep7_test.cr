@@ -36,6 +36,70 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "make plugin result key order (sweep7)" do
+  # Real community.general make 2.19.11 exit_json's
+  # (changed, failed=False, stdout, stderr, target, targets, params,
+  # chdir, file, jobs, command) - failed EXPLICITLY second, raw params
+  # echoed back (null when absent). Live-verified changed and unchanged
+  # against a Makefile whose target depends on a created file.
+  it "registers a fresh build as changed, failed, stdout, stderr, target, targets, params, chdir, file, jobs, command" do
+    dir = unique_tmp("make-order")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "Makefile"), "all: marker.txt\n\nmarker.txt:\n\ttouch marker.txt\n")
+
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: build it
+            community.general.make:
+              chdir: #{dir}
+              target: all
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "failed", "stdout", "stderr", "target", "targets", "params", "chdir", "file", "jobs", "command", "stdout_lines", "stderr_lines"])
+  end
+
+  it "registers an up-to-date rerun in the same order" do
+    dir = unique_tmp("make-order-unchanged")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "Makefile"), "all: marker.txt\n\nmarker.txt:\n\ttouch marker.txt\n")
+
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: build it
+            community.general.make:
+              chdir: #{dir}
+              target: all
+            register: r1
+          - name: rebuild
+            community.general.make:
+              chdir: #{dir}
+              target: all
+            register: r2
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r2 | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["changed", "failed", "stdout", "stderr", "target", "targets", "params", "chdir", "file", "jobs", "command", "stdout_lines", "stderr_lines"])
+  end
+end
+
 describe "script plugin result key order (sweep7)" do
   # Real 2.19.11's script ACTION plugin builds its own result dict
   # (rc, stdout, stdout_lines, stderr, stderr_lines, changed) around the
