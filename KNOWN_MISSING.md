@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1440`.**
+**Currently at `0.9.1441`.**
 
 ## Open gaps
 
@@ -38,8 +38,8 @@ and fixed and when.
   pins a plugin's keys to real 2.19.11's order (live-verified with `{{ r | to_json }}` dumps on both
   engines); a plugin without it emits krikri's historical `changed`-first shape. Still unpinned
   (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
-  their plugin files): `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`/`iptables`,
-  `dnf`/`dnf5`/`yum`/`yum_repository`/`apt_repository`/`deb822_repository`/`*_versionlock`, `synchronize`,
+  their plugin files): `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
+  `dnf`/`dnf5`/`yum`/`*_versionlock`, `synchronize`,
   `subversion`, `user`/`group`/`authorized_key`/`known_hosts` (need root, or real's param-echo order
   depends on the invocation), `lvg`/`lvol`/`parted`/`zfs`/`virt_net`/`mount_facts`, `snap`/`homebrew`/
   `easy_install`/`maven_artifact`/`java_cert` (no JDK here), and the service-backed families
