@@ -36,16 +36,24 @@ and fixed and when.
 
 - **Registered-result key order is verified per plugin, not engine-wide.** `PluginResult#key_order`
   pins a plugin's keys to real 2.19.11's order (live-verified with `{{ r | to_json }}` dumps on both
-  engines); a plugin without it emits krikri's historical `changed`-first shape. Still unpinned
+  engines); a plugin without it emits krikri's historical `changed`-first shape
   (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
-  their plugin files): `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
-  `dnf`/`dnf5`/`yum`/`*_versionlock`, `synchronize`,
-  `subversion`, `user`/`group`/`authorized_key`/`known_hosts` (need root, or real's param-echo order
-  depends on the invocation), `lvg`/`lvol`/`parted`/`zfs`/`virt_net`/`mount_facts`, `snap`/`homebrew`/
-  `easy_install`/`maven_artifact`/`java_cert` (no JDK here), and the service-backed families
-  (`docker_*`, `podman_image`, `mysql_*`, `postgresql_*`, `rabbitmq_*`, `ec2_*`/`iam_user_info`,
-  `ovirt_auth`, `redhat_subscription`/`rhsm_*`, `nsupdate`, `apache2_module`, `openssl_csr_info`).
-  `gem` and `rpm_key` success orders could not be re-checked (no `gem`/`rpm` on the dev box).
+  their plugin files). What is still unpinned, by how it can be verified:
+  - *Doable on the dev box with rootless podman (a throwaway container runs the service or distro; both
+    engines run against it):* `mysql_*`, `postgresql_*` (in progress), `docker_*`/`podman_image`
+    (local runtime), the rpm family inside a Fedora container (`dnf`/`dnf5`/`yum`/`*_versionlock`,
+    `gem`/`rpm_key` success paths - no `gem`/`rpm` on the dev box).
+  - *Needs a real host with root and a real kernel - verify on Atlantic.net via `krikri-role-tester`
+    (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
+    `user`/`group`/`authorized_key`/`known_hosts` (real's `authorized_key` param-echo order also depends
+    on the invocation), `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
+    `lvg`/`lvol`/`parted`/`zfs`, `virt_net`, `mount_facts`, the real-mutation variants of
+    `mount`/`modprobe`/`iptables` (their check-mode/stub shapes are already pinned), `synchronize`,
+    `subversion`, `snap`/`homebrew`/`easy_install`/`maven_artifact`/`java_cert` (needs a JDK/keytool),
+    `apache2_module`, `openssl_csr_info`.
+  - *Needs an external account or appliance neither engine can reach from either host (not a gap to
+    close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
+    `nsupdate`, `rabbitmq_*`.
 - **FAILED-result key order is only fixed for plugin-path failures** (`command`/`shell`, `slurp`,
   `lineinfile`, `blockinfile`, `replace`, `wait_for` and any plain `fail_json(msg=...)`: real registers
   `failed, msg, changed, exception`). Argspec-validation and action-level failures (`copy`, `file`,
