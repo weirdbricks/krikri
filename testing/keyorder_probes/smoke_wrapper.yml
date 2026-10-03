@@ -1,0 +1,15 @@
+---
+# Smoke wrapper for the roles that can run inside a rootless podman
+# ubuntu:22.04 container as root with ansible_connection=local. Run with:
+#   podman run --rm --name km-probes-smoke \
+#     -v <this dir>:/probes:Z -w /probes ubuntu:22.04 \
+#     bash /probes/smoke_inside.sh
+# Kernel-dependent roles (kop_kernel, kop_firewall, kop_storage) are NOT
+# smoke-tested this way; see README.md.
+- name: Smoke test container-runnable keyorder probe roles
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  roles:
+    - role: kop_accounts
+    - role: kop_pkg_misc

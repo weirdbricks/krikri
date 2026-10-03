@@ -1,0 +1,6 @@
+# Keyorder probe roles deliberately use ignore_errors on every probed task
+# so a failure shape is captured without aborting the remaining probes.
+# Lint this directory from here so this config is picked up:
+#   cd testing/keyorder_probes && ansible-lint kop_*
+skip_list:
+  - ignore-errors

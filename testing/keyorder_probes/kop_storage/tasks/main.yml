@@ -1,0 +1,409 @@
+---
+# Key-order probes for lvg, lvol, parted, zfs, mount.
+# Storage backing devices are loop devices over sparse files under /var/tmp,
+# created by this role and torn down in an `always:` block so a mid-role
+# failure still cleans up. Convention: every probed task registers r and is
+# followed by a debug emitting
+# "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+
+- name: Storage probes with guaranteed cleanup
+  block:
+    - name: Ensure lvm2 is installed
+      ansible.builtin.apt:
+        name: lvm2
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      register: r
+      ignore_errors: true
+
+    - name: Report lvg_helper_install
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvg_helper_install|{{ r | to_json }}"
+
+    - name: Ensure parted is installed
+      ansible.builtin.apt:
+        name: parted
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report parted_helper_install
+      ansible.builtin.debug:
+        msg: "KEYORDER|parted_helper_install|{{ r | to_json }}"
+
+    - name: Ensure zfsutils-linux is installed
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report zfs_helper_install
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_helper_install|{{ r | to_json }}"
+
+    - name: Create sparse backing file for LVM
+      ansible.builtin.command:
+        cmd: truncate -s 200M /var/tmp/kop_d1.img
+        creates: /var/tmp/kop_d1.img
+      register: r
+      changed_when: false
+      ignore_errors: true
+
+    - name: Create sparse backing file for parted
+      ansible.builtin.command:
+        cmd: truncate -s 200M /var/tmp/kop_d2.img
+        creates: /var/tmp/kop_d2.img
+      register: r
+      changed_when: false
+      ignore_errors: true
+
+    - name: Create sparse backing file for zfs
+      ansible.builtin.command:
+        cmd: truncate -s 256M /var/tmp/kop_d3.img
+        creates: /var/tmp/kop_d3.img
+      register: r
+      changed_when: false
+      ignore_errors: true
+
+    - name: Attach loop device for LVM
+      ansible.builtin.command:
+        cmd: losetup -f --show /var/tmp/kop_d1.img
+      register: kop_loop1_res
+      changed_when: true
+      ignore_errors: true
+
+    - name: Attach loop device for parted
+      ansible.builtin.command:
+        cmd: losetup -f --show /var/tmp/kop_d2.img
+      register: kop_loop2_res
+      changed_when: true
+      ignore_errors: true
+
+    - name: Attach loop device for zfs
+      ansible.builtin.command:
+        cmd: losetup -f --show /var/tmp/kop_d3.img
+      register: kop_loop3_res
+      changed_when: true
+      ignore_errors: true
+
+    - name: Remember LVM loop device
+      ansible.builtin.set_fact:
+        kop_loop1: "{{ kop_loop1_res.stdout | default('') }}"
+
+    - name: Remember parted loop device
+      ansible.builtin.set_fact:
+        kop_loop2: "{{ kop_loop2_res.stdout | default('') }}"
+
+    - name: Remember zfs loop device
+      ansible.builtin.set_fact:
+        kop_loop3: "{{ kop_loop3_res.stdout | default('') }}"
+
+    - name: Create VG kop_vg (changed)
+      community.general.lvg:
+        vg: kop_vg
+        pvs: "{{ kop_loop1 | default('') }}"
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvg_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvg_create|{{ r | to_json }}"
+
+    - name: Create VG kop_vg again (ok)
+      community.general.lvg:
+        vg: kop_vg
+        pvs: "{{ kop_loop1 | default('') }}"
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvg_exists
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvg_exists|{{ r | to_json }}"
+
+    - name: Create VG kop_vg with a nonexistent PV (failure)
+      community.general.lvg:
+        vg: kop_vgfail
+        pvs: /var/tmp/kop_nosuch_pv.img
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvg_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvg_fail|{{ r | to_json }}"
+
+    - name: Create LV kop_lv (changed)
+      community.general.lvol:
+        vg: kop_vg
+        lv: kop_lv
+        size: 64M
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvol_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvol_create|{{ r | to_json }}"
+
+    - name: Create LV kop_lv again (ok)
+      community.general.lvol:
+        vg: kop_vg
+        lv: kop_lv
+        size: 64M
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvol_exists
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvol_exists|{{ r | to_json }}"
+
+    - name: Resize LV kop_lv in check mode (changed)
+      community.general.lvol:
+        vg: kop_vg
+        lv: kop_lv
+        size: 128M
+        state: present
+      register: r
+      check_mode: true
+      ignore_errors: true
+
+    - name: Report lvol_check
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvol_check|{{ r | to_json }}"
+
+    - name: Resize LV kop_lv beyond VG size (failure)
+      community.general.lvol:
+        vg: kop_vg
+        lv: kop_lv
+        size: 1G
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report lvol_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|lvol_fail|{{ r | to_json }}"
+
+    - name: Create partition on loop device (changed)
+      community.general.parted:
+        device: "{{ kop_loop2 | default('/var/tmp/kop_nosuch.img') }}"
+        number: 1
+        state: present
+        label: msdos
+      register: r
+      ignore_errors: true
+
+    - name: Report parted_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|parted_create|{{ r | to_json }}"
+
+    - name: Create same partition again (ok)
+      community.general.parted:
+        device: "{{ kop_loop2 | default('/var/tmp/kop_nosuch.img') }}"
+        number: 1
+        state: present
+        label: msdos
+      register: r
+      ignore_errors: true
+
+    - name: Report parted_exists
+      ansible.builtin.debug:
+        msg: "KEYORDER|parted_exists|{{ r | to_json }}"
+
+    - name: Partition a nonexistent device (failure)
+      community.general.parted:
+        device: /var/tmp/kop_nosuch.img
+        number: 1
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report parted_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|parted_fail|{{ r | to_json }}"
+
+    - name: Create zpool koppool on loop device
+      ansible.builtin.command:
+        cmd: "zpool create -f koppool {{ kop_loop3 | default('/var/tmp/kop_nosuch.img') }}"
+        creates: /koppool
+      register: r
+      changed_when: false
+      ignore_errors: true
+
+    - name: Report zfs_helper_zpool_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_helper_zpool_create|{{ r | to_json }}"
+
+    - name: Create ZFS dataset koppool/kopfs (changed)
+      community.general.zfs:
+        name: koppool/kopfs
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report zfs_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_create|{{ r | to_json }}"
+
+    - name: Create ZFS dataset koppool/kopfs again (ok)
+      community.general.zfs:
+        name: koppool/kopfs
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report zfs_exists
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_exists|{{ r | to_json }}"
+
+    - name: Create ZFS dataset koppool/kopfs2 in check mode (changed)
+      community.general.zfs:
+        name: koppool/kopfs2
+        state: present
+      register: r
+      check_mode: true
+      ignore_errors: true
+
+    - name: Report zfs_check
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_check|{{ r | to_json }}"
+
+    - name: Create ZFS dataset with an invalid property (failure)
+      community.general.zfs:
+        name: koppool/kopfail
+        state: present
+        extra_zfs_properties:
+          kop_bogus_property: "1"
+      register: r
+      ignore_errors: true
+
+    - name: Report zfs_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|zfs_fail|{{ r | to_json }}"
+
+    - name: Mount tmpfs at /var/tmp/kop_mnt (changed)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mnt
+        src: tmpfs
+        fstype: tmpfs
+        opts: size=16m
+        state: mounted
+      register: r
+      ignore_errors: true
+
+    - name: Report mount_tmpfs
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_tmpfs|{{ r | to_json }}"
+
+    - name: Mount tmpfs at /var/tmp/kop_mnt again (ok)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mnt
+        src: tmpfs
+        fstype: tmpfs
+        opts: size=16m
+        state: mounted
+      register: r
+      ignore_errors: true
+
+    - name: Report mount_exists
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_exists|{{ r | to_json }}"
+
+    - name: Mount tmpfs at /var/tmp/kop_mnt2 in check mode (changed)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mnt2
+        src: tmpfs
+        fstype: tmpfs
+        opts: size=16m
+        state: mounted
+      register: r
+      check_mode: true
+      ignore_errors: true
+
+    - name: Report mount_check
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_check|{{ r | to_json }}"
+
+    - name: Unmount /var/tmp/kop_mnt (changed, keeps fstab entry)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mnt
+        state: unmounted
+      register: r
+      ignore_errors: true
+
+    - name: Report mount_unmounted
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_unmounted|{{ r | to_json }}"
+
+    - name: Unmount /var/tmp/kop_mnt again (ok)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mnt
+        state: unmounted
+      register: r
+      ignore_errors: true
+
+    - name: Report mount_unmounted_again
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_unmounted_again|{{ r | to_json }}"
+
+    - name: Mount a nonexistent ext4 source (failure)
+      ansible.posix.mount:
+        path: /var/tmp/kop_mntfail
+        src: /var/tmp/kop_nosuch_source
+        fstype: ext4
+        state: mounted
+      register: r
+      ignore_errors: true
+
+    - name: Report mount_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|mount_fail|{{ r | to_json }}"
+
+  always:
+    - name: Cleanup mount probe mountpoints and fstab entries
+      ansible.posix.mount:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/tmp/kop_mnt
+        - /var/tmp/kop_mnt2
+        - /var/tmp/kop_mntfail
+      ignore_errors: true
+
+    - name: Destroy the zpool
+      ansible.builtin.command:
+        cmd: zpool destroy koppool
+      changed_when: true
+      ignore_errors: true
+
+    - name: Remove VG kop_vg
+      community.general.lvg:
+        vg: kop_vg
+        state: absent
+      ignore_errors: true
+
+    - name: Detach loop devices
+      ansible.builtin.shell: "losetup -d {{ item | default('') }} || true"
+      loop:
+        - "{{ kop_loop1 | default('') }}"
+        - "{{ kop_loop2 | default('') }}"
+        - "{{ kop_loop3 | default('') }}"
+      changed_when: true
+      ignore_errors: true
+
+    - name: Remove sparse backing files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/tmp/kop_d1.img
+        - /var/tmp/kop_d2.img
+        - /var/tmp/kop_d3.img
+      ignore_errors: true

@@ -1,0 +1,282 @@
+---
+# Key-order probes for user/group/authorized_key/known_hosts.
+# Every probed task registers r and is followed by a debug emitting
+# "KEYORDER|<module>_<case>|<registered result as json>". ignore_errors is
+# set on every probed task so a failure shape is captured without aborting
+# the remaining probes. All names are kop_-prefixed and every case cleans up
+# after itself so the role is safe to run twice (cold + warm).
+
+- name: Create user kop_u1 (changed)
+  ansible.builtin.user:
+    name: kop_u1
+    state: present
+    shell: /bin/bash
+  register: r
+  ignore_errors: true
+
+- name: Report user_create
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_create|{{ r | to_json }}"
+
+- name: Create user kop_u1 again (ok)
+  ansible.builtin.user:
+    name: kop_u1
+    state: present
+    shell: /bin/bash
+  register: r
+  ignore_errors: true
+
+- name: Report user_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_exists|{{ r | to_json }}"
+
+- name: Change user kop_u1 shell (changed)
+  ansible.builtin.user:
+    name: kop_u1
+    state: present
+    shell: /bin/sh
+  register: r
+  ignore_errors: true
+
+- name: Report user_modify
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_modify|{{ r | to_json }}"
+
+- name: Create user kop_u2 in check mode (changed)
+  ansible.builtin.user:
+    name: kop_u2
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report user_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_check|{{ r | to_json }}"
+
+- name: Create user kop_ufail with nonexistent group (failure)
+  ansible.builtin.user:
+    name: kop_ufail
+    state: present
+    group: kop_nosuchgroup
+  register: r
+  ignore_errors: true
+
+- name: Report user_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_fail|{{ r | to_json }}"
+
+- name: Remove user kop_u1 (changed)
+  ansible.builtin.user:
+    name: kop_u1
+    state: absent
+    remove: true
+  register: r
+  ignore_errors: true
+
+- name: Report user_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_remove|{{ r | to_json }}"
+
+- name: Remove user kop_u1 again (ok)
+  ansible.builtin.user:
+    name: kop_u1
+    state: absent
+    remove: true
+  register: r
+  ignore_errors: true
+
+- name: Report user_absent_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|user_absent_again|{{ r | to_json }}"
+
+- name: Create group kop_g1 (changed)
+  ansible.builtin.group:
+    name: kop_g1
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report group_create
+  ansible.builtin.debug:
+    msg: "KEYORDER|group_create|{{ r | to_json }}"
+
+- name: Create group kop_g1 again (ok)
+  ansible.builtin.group:
+    name: kop_g1
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report group_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|group_exists|{{ r | to_json }}"
+
+- name: Create group kop_g2 in check mode (changed)
+  ansible.builtin.group:
+    name: kop_g2
+    state: present
+    gid: 4455
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report group_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|group_check|{{ r | to_json }}"
+
+- name: Create group kop_gdup with already-used gid 0 (failure)
+  ansible.builtin.group:
+    name: kop_gdup
+    state: present
+    gid: 0
+  register: r
+  ignore_errors: true
+
+- name: Report group_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|group_fail|{{ r | to_json }}"
+
+- name: Remove group kop_g1 (changed)
+  ansible.builtin.group:
+    name: kop_g1
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report group_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|group_remove|{{ r | to_json }}"
+
+- name: Helper user for authorized_key probes
+  ansible.builtin.user:
+    name: kop_ak
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report authorized_key_helper_user
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_helper_user|{{ r | to_json }}"
+
+- name: Add authorized key to kop_ak (changed)
+  ansible.posix.authorized_key:
+    user: kop_ak
+    key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report authorized_key_add
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_add|{{ r | to_json }}"
+
+- name: Add same authorized key again (ok)
+  ansible.posix.authorized_key:
+    user: kop_ak
+    key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report authorized_key_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_exists|{{ r | to_json }}"
+
+- name: Add second authorized key in check mode (changed)
+  ansible.posix.authorized_key:
+    user: kop_ak
+    key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe-2"
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report authorized_key_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_check|{{ r | to_json }}"
+
+- name: Add authorized key with garbage key material (failure)
+  ansible.posix.authorized_key:
+    user: kop_ak
+    key: "not-a-real-ssh-key"
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report authorized_key_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_fail|{{ r | to_json }}"
+
+- name: Remove authorized key from kop_ak (changed)
+  ansible.posix.authorized_key:
+    user: kop_ak
+    key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report authorized_key_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|authorized_key_remove|{{ r | to_json }}"
+
+- name: Ensure ~/.ssh exists for known_hosts probes
+  ansible.builtin.shell: mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  changed_when: false
+  ignore_errors: true
+
+- name: Add known_hosts entry (changed)
+  ansible.builtin.known_hosts:
+    name: "[127.0.0.1]:2222"
+    key: "[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report known_hosts_add
+  ansible.builtin.debug:
+    msg: "KEYORDER|known_hosts_add|{{ r | to_json }}"
+
+- name: Add same known_hosts entry again (ok)
+  ansible.builtin.known_hosts:
+    name: "[127.0.0.1]:2222"
+    key: "[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report known_hosts_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|known_hosts_exists|{{ r | to_json }}"
+
+- name: Add second known_hosts entry in check mode (changed)
+  ansible.builtin.known_hosts:
+    name: "[127.0.0.1]:2223"
+    key: "[127.0.0.1]:2223 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report known_hosts_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|known_hosts_check|{{ r | to_json }}"
+
+- name: Remove known_hosts entry (changed)
+  ansible.builtin.known_hosts:
+    name: "[127.0.0.1]:2222"
+    key: "[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAjE8AR5R9C8miX+d4Ga0Rfy3wp6EURLLRKE9UiP4Yp1 kop-probe"
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report known_hosts_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|known_hosts_remove|{{ r | to_json }}"
+
+- name: Cleanup helper user kop_ak
+  ansible.builtin.user:
+    name: kop_ak
+    state: absent
+    remove: true
+  ignore_errors: true

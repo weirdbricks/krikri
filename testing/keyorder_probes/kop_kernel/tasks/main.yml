@@ -1,0 +1,145 @@
+---
+# Key-order probes for sysctl, mount_facts, modprobe.
+# Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+
+- name: Set vm.swappiness to 10 (changed)
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "10"
+    state: present
+    reload: true
+  register: r
+  ignore_errors: true
+
+- name: Report sysctl_set
+  ansible.builtin.debug:
+    msg: "KEYORDER|sysctl_set|{{ r | to_json }}"
+
+- name: Set vm.swappiness to 10 again (ok)
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "10"
+    state: present
+    reload: true
+  register: r
+  ignore_errors: true
+
+- name: Report sysctl_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|sysctl_exists|{{ r | to_json }}"
+
+- name: Set vm.swappiness to 12 in check mode (changed)
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "12"
+    state: present
+    reload: true
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report sysctl_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|sysctl_check|{{ r | to_json }}"
+
+- name: Set a nonexistent sysctl key (failure)
+  ansible.posix.sysctl:
+    name: vm.kop_not_a_real_sysctl_key
+    value: "1"
+    state: present
+    reload: true
+  register: r
+  ignore_errors: true
+
+- name: Report sysctl_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|sysctl_fail|{{ r | to_json }}"
+
+- name: Gather mount facts (read-only)
+  ansible.builtin.mount_facts:
+  register: r
+  ignore_errors: true
+
+- name: Report mount_facts_all
+  ansible.builtin.debug:
+    msg: "KEYORDER|mount_facts_all|{{ r | to_json }}"
+
+- name: Gather mount facts in check mode (read-only)
+  ansible.builtin.mount_facts:
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report mount_facts_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|mount_facts_check|{{ r | to_json }}"
+
+- name: Load dummy module (changed)
+  community.general.modprobe:
+    name: dummy
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report modprobe_load
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_load|{{ r | to_json }}"
+
+- name: Load dummy module again (ok)
+  community.general.modprobe:
+    name: dummy
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report modprobe_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_exists|{{ r | to_json }}"
+
+- name: Unload dummy module in check mode (changed)
+  community.general.modprobe:
+    name: dummy
+    state: absent
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report modprobe_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_check|{{ r | to_json }}"
+
+- name: Unload dummy module (changed)
+  community.general.modprobe:
+    name: dummy
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report modprobe_unload
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_unload|{{ r | to_json }}"
+
+- name: Unload dummy module again (ok)
+  community.general.modprobe:
+    name: dummy
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report modprobe_absent_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_absent_again|{{ r | to_json }}"
+
+- name: Load a nonexistent module (failure)
+  community.general.modprobe:
+    name: kop_no_such_module
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report modprobe_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|modprobe_fail|{{ r | to_json }}"
