@@ -162,7 +162,7 @@ module Krikri
     # nesting) - used by every final-result action plugin
     # (action_plugins/*.cr) so each one only needs to name its own extra
     # fields, not re-derive this shape.
-    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil) : JSON::Any
+    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil, include_empty_msg : Bool = false) : JSON::Any
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
       # Unlike a module's own wire result (PluginResult#to_json), these
@@ -171,9 +171,13 @@ module Krikri
       # pass has no second look at them - so failed/changed are carried
       # unconditionally, exactly like a registered var sees. msg follows
       # the module rule: only present when the action actually passed one
-      # (real set_fact/add_host results carry no msg at all).
+      # (real set_fact/add_host results carry no msg at all). The
+      # include_empty_msg opt-out mirrors the module wire's
+      # include_empty_msg (real fail_json/exit_json always emit the msg
+      # key when the caller passed one, even as "") for the actions whose
+      # real module did exactly that (synchronize).
       h["failed"] = JSON::Any.new(failed)
-      h["msg"] = JSON::Any.new(msg) unless msg.empty?
+      h["msg"] = JSON::Any.new(msg) unless msg.empty? && !include_empty_msg
       extra.each { |k, v| h[k] = v }
       # Same wire-key reorder PluginResult#key_order gives module results
       # (see its comment): when *key_order* is set, the listed keys emit

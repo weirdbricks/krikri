@@ -1,5 +1,6 @@
 require "json"
 require "process"
+require "../shell"
 
 module Krikri
   # The rsync-invocation core of ansible.posix.synchronize, shared by both
@@ -149,6 +150,23 @@ module Krikri
         parts[-1] = Shell.quote_arg(parts[-1])
       end
       parts.join(" ")
+    end
+
+    # Real module: `if '/' not in rsync: rsync = get_bin_path(rsync,
+    # required=True)` - the reported cmd carries the RESOLVED path
+    # (/usr/bin/rsync), not the bare name. Runs wherever the module
+    # itself runs: controller-side in the action plugin's local-rsync
+    # branches, on the host in the standalone module binary.
+    def self.resolve_bin_path(name : String) : String
+      return name if name.includes?('/')
+      if path = ENV["PATH"]?
+        path.split(':').each do |dir|
+          next if dir.empty?
+          candidate = File.join(dir, name)
+          return candidate if File.file?(candidate) && File::Info.executable?(candidate)
+        end
+      end
+      name
     end
 
     def self.run(argv : Array(String)) : RsyncResult

@@ -40,10 +40,7 @@ module Krikri
       dest_port = resolve_dest_port
 
       argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
-      # Real module: `if '/' not in rsync: rsync = get_bin_path(rsync,
-      # required=True)` - the reported cmd carries the RESOLVED path
-      # (/usr/bin/rsync), not the bare name.
-      argv[0] = resolve_bin_path(argv[0])
+      argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])
       result = SynchronizeRsync.run(argv)
       cmd_str = SynchronizeRsync.cmd_string(argv)
 
@@ -63,23 +60,6 @@ module Krikri
         include_empty_msg: true, rc: 0, cmd: cmd_str,
         stdout_lines: out_clean.lines,
         key_order: SUCCESS_KEY_ORDER)
-    end
-
-    # module_utils/common/process.py get_bin_path for a bare name: scan
-    # PATH for an executable file; a path containing '/' is used as-is.
-    # Falls back to the bare name when nothing executable is found (the
-    # rsync spawn then fails with its own error, like real's missing
-    # binary would surface through the run itself).
-    private def resolve_bin_path(name : String) : String
-      return name if name.includes?('/')
-      if path = ENV["PATH"]?
-        path.split(':').each do |dir|
-          next if dir.empty?
-          candidate = File.join(dir, name)
-          return candidate if File.file?(candidate) && File.executable?(candidate)
-        end
-      end
-      name
     end
 
     private def resolve_dest_port : Int32?

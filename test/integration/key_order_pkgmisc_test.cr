@@ -25,14 +25,11 @@ require "../../src/krikri/action_plugin_manager"
 #   process before any command runs - there the whole engine child gets
 #   the shim PATH (per-child Process.run env, parallel-safe).
 #
-# KNOWN DIVERGENCE (reported, not fixed here - see the synchronize
-# describe): on the delegate_to-same-host path with a LOCAL connection,
-# krikri's action plugin still runs rsync controller-side and registers
-# [changed, failed, ...] while real dispatched the module (real's
-# dest_is_local case runs _execute_module regardless of connection
-# type), so real's registered order is [changed, msg, rc, cmd,
-# stdout_lines, failed]. The synchronize probes below pin REAL's orders
-# and fail until that is aligned.
+# The synchronize action plugin's controller-side final results register
+# real's module shapes: success [changed, msg, rc, cmd, stdout_lines,
+# failed] (empty msg kept, cmd carrying the resolved rsync path), failure
+# [rc, cmd, failed, msg, changed, exception] - the probes below pin
+# those captured orders.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -615,13 +612,6 @@ end
 describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host)" do
   @sync_tmp : String? = nil
 
-  # KNOWN DIVERGENCE (reported, not fixed): with a LOCAL connection the
-  # action plugin runs rsync controller-side, so its registered shape is
-  # [changed, failed, ...] (real dispatched the module on the delegate -
-  # real's dest_is_local path runs _execute_module regardless of the
-  # connection type - giving [changed, msg, rc, cmd, stdout_lines,
-  # failed], the captured order pinned below). These specs pin REAL's
-  # captured orders and fail until the action plugin matches.
   it "registers the push as [changed, msg, rc, cmd, stdout_lines, failed]" do
     skip("no rsync binary") unless tool_available?("rsync")
 
@@ -641,7 +631,16 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
     cmd.wont_include("--rsh")
     cmd.wont_include("-S none")
     cmd.wont_include(" -i ")
-    dump["stdout_lines"].as_a.map(&.as_s).must_equal(["cd+++++++++ ./", ">f+++++++++ a"])
+    # rsync >= 3.2.7 prints its own "created directory <dst>" line on
+    # STDOUT when the destination dir is missing (its guard gained
+    # `|| stdout_format_has_i` next to INFO_GTE(NAME); the real host's
+    # rsync 3.2.3 printed it only at -v, so the capture carries no such
+    # line). The probe keeps dst missing like the real role does, so the
+    # version artifact is filtered here instead of papered over by
+    # pre-creating dst (which would also drop the cd+++++++++ ./ line
+    # the capture does carry).
+    lines = dump["stdout_lines"].as_a.map(&.as_s).reject(&.starts_with?("created directory "))
+    lines.must_equal(["cd+++++++++ ./", ">f+++++++++ a"])
     dump["failed"].as_bool.must_equal(false)
   end
 
@@ -682,7 +681,10 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
   # check mode -> push a nonexistent source), delegate_to:
   # "{{ inventory_hostname }}" like every probe task. The check probe
   # runs after two real pushes, so its dry run finds nothing to change -
-  # exactly like the capture.
+  # exactly like the capture. dst is NOT pre-created: the real probe
+  # role only creates src (tasks/main.yml has no dst task), and the
+  # captured cd+++++++++ ./ itemize line is rsync CREATING dst - a
+  # pre-created dst would drop that line entirely.
   private def run_synchronize_probes : Hash(String, JSON::Any)
     tmp = PluginSpecHelper.tmp_path("synchronize")
     @sync_tmp = tmp

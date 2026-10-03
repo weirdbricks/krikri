@@ -47,19 +47,38 @@ module Krikri
   # roles actually write apart from that one: no delegate_to:, delegate_to:
   # localhost, and delegate_to: the task's own host.
   class SynchronizeActionPlugin < ActionPlugin
+    # Real module success shape: exit_json(changed=, msg=, rc=, cmd=,
+    # stdout_lines=) then the controller backfills failed: false last.
+    # The empty msg is kept (the real module passes msg=out_clean
+    # explicitly, and exit_json emits the key even as "").
+    SUCCESS_KEY_ORDER = ["changed", "msg", "rc", "cmd", "stdout_lines", "failed"]
+    # Real failure shape: fail_json(msg=err, rc=rc, cmd=cmdstr) -
+    # fail_json's kwargs dict leads (rc, cmd), then failed/msg, and the
+    # controller appends changed then exception: registered as [rc, cmd,
+    # failed, msg, changed, exception] (exception backfilled at register
+    # via the _ansible_key_order marker - see
+    # TaskExecutor#apply_failed_key_order).
+    FAILURE_KEY_ORDER = ["rc", "cmd", "failed", "msg", "changed"]
+    # Real module fail_json(msg="...") with no other kwargs: failed/msg
+    # lead (fail_json's dict(failed=True, msg=msg) update), then the
+    # controller's changed/exception backfill.
+    PARAM_FAILURE_KEY_ORDER = ["failed", "msg", "changed"]
+
     # Real's up-front parameter checks (both ends set, mode push|pull), as
     # a final failed result; nil when the params are valid.
     private def invalid_params_result(src_param, dest_param, mode : String) : ActionResult?
       if !src_param || !dest_param || src_param.empty? || dest_param.empty?
-        return ActionResult.final(ActionResult.plugin_result_json(
-          false, true, "synchronize requires both src and dest parameters are set"
-        ))
+        return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+          false, true, "synchronize requires both src and dest parameters are set",
+          key_order: PARAM_FAILURE_KEY_ORDER
+        ), PARAM_FAILURE_KEY_ORDER))
       end
       return if ["push", "pull"].includes?(mode)
 
-      ActionResult.final(ActionResult.plugin_result_json(
-        false, true, "mode must be 'push' or 'pull', got '#{mode}'"
-      ))
+      ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+        false, true, "mode must be 'push' or 'pull', got '#{mode}'",
+        key_order: PARAM_FAILURE_KEY_ORDER
+      ), PARAM_FAILURE_KEY_ORDER))
     end
 
     def execute : ActionResult
@@ -144,17 +163,26 @@ module Krikri
 
     # Shared tail: run the rsync argv and translate its outcome into the
     # task's final result (both the delegated-to-controller path and the
-    # endpoint-on-@host path end here).
+    # endpoint-on-@host path end here). Same result shape the module
+    # binary produces (plugins/synchronize.cr), because real runs the
+    # module here too and registers ITS result: exit_json/fail_json's key
+    # order plus the controller's failed/changed/exception backfill.
     private def finish(argv : Array(String)) : ActionResult
+      # Real module: `if '/' not in rsync: rsync = get_bin_path(rsync,
+      # required=True)` - the reported cmd carries the RESOLVED path
+      # (/usr/bin/rsync), not the bare name, on success and failure alike.
+      argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])
       result = SynchronizeRsync.run(argv)
-      cmd_str = result.command.join(" ")
+      cmd_str = SynchronizeRsync.cmd_string(argv)
 
       unless result.rc == 0
-        msg = result.error.empty? ? result.output : result.error
-        return ActionResult.final(ActionResult.plugin_result_json(false, true, msg, {
+        # Real: fail_json(msg=err, rc=rc, cmd=cmdstr) - msg is the raw
+        # stderr even when empty (fail_json always passes msg).
+        failure = ActionResult.plugin_result_json(false, true, result.error, {
           "rc"  => JSON::Any.new(result.rc.to_i64),
           "cmd" => JSON::Any.new(cmd_str),
-        }))
+        }, key_order: FAILURE_KEY_ORDER, include_empty_msg: true)
+        return ActionResult.final(Krikri.mark_failed_key_order(failure, FAILURE_KEY_ORDER))
       end
 
       changed = SynchronizeRsync.changed?(result.output, !SynchronizeRsync.parse_list(@params["link_dest"]?).empty?)
@@ -164,7 +192,7 @@ module Krikri
         "rc"           => JSON::Any.new(0_i64),
         "cmd"          => JSON::Any.new(cmd_str),
         "stdout_lines" => JSON::Any.new(out_clean.lines.map { |line| JSON::Any.new(line) }),
-      }))
+      }, key_order: SUCCESS_KEY_ORDER, include_empty_msg: true))
     end
 
     # Real Ansible's C.LOCALHOST set - the addresses that mean "this same
