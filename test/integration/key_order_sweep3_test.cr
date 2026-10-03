@@ -99,6 +99,31 @@ describe "mount plugin result key order" do
   end
 end
 
+describe "apt plugin result key order" do
+  # Unprivileged-testable apt paths only: the bare no-op ok (nothing to
+  # remove) and the check-mode cache-update claim (needs python3-apt on
+  # the host to pass real's check-mode refusal). The install/remove/
+  # upgrade/deb orders were live-verified identical in the podman
+  # container.
+  it "serializes the nothing-to-remove absent ok in real's bare-changed-relative order" do
+    result = PluginSpecHelper.run("apt", {"name" => "krikri-not-a-package-xyz", "state" => "absent"})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "msg", "cache_updated"])
+  end
+
+  it "serializes a check-mode cache-update claim in real's cache-keys order" do
+    result = PluginSpecHelper.run("apt", {
+      "update_cache"        => "yes",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed", "cache_updated", "msg", "stdout"])
+  end
+end
+
 describe "locale_gen plugin result key order" do
   # The already-generated path needs no mutation (locale-gen itself is
   # root-only), so this pin is testable unprivileged; the changed and

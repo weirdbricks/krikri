@@ -635,11 +635,17 @@ module Krikri
       unless name_param
         if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
+          # Real apt.py: a cache-update-only invocation exits
+          # exit_json(changed=updated_cache, cache_updated=...,
+          # cache_update_time=...); one with an upgrade requested flows
+          # through upgrade()'s msg/stdout/stderr/diff shape
+          # (live-verified against real 2.19.11).
           return PluginResult.new(
             changed: changed,
             failed: false,
             msg: msg,
-            stdout: upgrade_stdout
+            stdout: upgrade_stdout,
+            key_order: upgrade_requested ? ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"] : ["changed", "cache_updated", "cache_update_time"]
           )
         else
           # Bookworm's apt.py (the harness reference) has NO
@@ -649,9 +655,12 @@ module Krikri
           # podman-diff apt_edge_cases A10/A14 cases). The previous
           # "Missing required parameter: name (unless using
           # update_cache)" failure was this engine's own invention.
+          # Real apt.py: exit_json(changed=False) - the bare
+          # no-name/no-operations ok.
           return PluginResult.new(
             changed: false,
-            failed: false
+            failed: false,
+            key_order: ["changed"]
           )
         end
       end
@@ -675,19 +684,28 @@ module Krikri
       if packages.empty?
         if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
+          # Real apt.py: a cache-update-only invocation exits
+          # exit_json(changed=updated_cache, cache_updated=...,
+          # cache_update_time=...); one with an upgrade requested flows
+          # through upgrade()'s msg/stdout/stderr/diff shape
+          # (live-verified against real 2.19.11).
           return PluginResult.new(
             changed: changed,
             failed: false,
             msg: msg,
-            stdout: upgrade_stdout
+            stdout: upgrade_stdout,
+            key_order: upgrade_requested ? ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"] : ["changed", "cache_updated", "cache_update_time"]
           )
         else
           # Same no-name-ok behavior for the empty-name-list case (see
           # the branch above) - real Ansible's install()/remove() no-ops
           # exit_json with nothing to say, not a "Nothing to do" msg.
+          # Real apt.py: exit_json(changed=False) - the bare
+          # no-name/no-operations ok.
           return PluginResult.new(
             changed: false,
-            failed: false
+            failed: false,
+            key_order: ["changed"]
           )
         end
       end
@@ -976,12 +994,16 @@ module Krikri
       if pkg_name && pkg_version
         check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
         if check_result[:exit_code] == 0 && installed_version(check_result[:stdout]) == pkg_version
-          return PluginResult.new(changed: false, failed: false, msg: "#{pkg_name} already at version #{pkg_version}")
+          # Real apt.py's install_deb path: exit_json(changed=...,
+          # stdout=out, stderr=err, diff=diff) on every deb success
+          # (live-verified against real 2.19.11; the controller appends
+          # stdout_lines/stderr_lines).
+          return PluginResult.new(changed: false, failed: false, msg: "#{pkg_name} already at version #{pkg_version}", key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
         end
       end
 
       if @check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would install #{path}")
+        return PluginResult.new(changed: true, failed: false, msg: "Would install #{path}", key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
       end
 
       # `apt-get install` of a .deb contends for the dpkg lock - wrap
@@ -999,7 +1021,7 @@ module Krikri
         )
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Installed #{pkg_name || path}", stdout: install_result[:stdout])
+      PluginResult.new(changed: true, failed: false, msg: "Installed #{pkg_name || path}", stdout: install_result[:stdout], key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
     end
 
     # Handle installing packages. build_dep: is real apt.py's
@@ -1173,12 +1195,19 @@ module Krikri
       # package auto-created a cluster). Without it, that `when:` failed
       # outright ("object of type 'dict' has no attribute 'stdout'")
       # instead of evaluating the condition like real Ansible does.
+      # Real apt.py's install-path exit: exit_json(**retvals) with
+      # retvals = {changed, stdout, stderr, diff} + cache_updated/
+      # cache_update_time (live-verified against real 2.19.11 via a
+      # registered {{ r | to_json }} dump in the podman container; the
+      # unchanged and check-mode exits are the cache-keys-only shape,
+      # and the controller appends stdout_lines/stderr_lines).
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg,
         stdout: install_stdout,
-        stderr: install_stderr
+        stderr: install_stderr,
+        key_order: ["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"]
       )
     end
 
@@ -1248,10 +1277,15 @@ module Krikri
         msg += " (check mode)"
       end
 
+      # Real apt.py's remove(): exit_json(changed=True, stdout=out,
+      # stderr=err, diff=diff) after a real removal, or the bare
+      # exit_json(changed=False) no-op (live-verified against real
+      # 2.19.11; the controller appends stdout_lines/stderr_lines).
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg
+        msg: msg,
+        key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
       )
     end
 
@@ -1290,11 +1324,15 @@ module Krikri
       # doesn't false-match at an inner offset.
       was_upgraded = !result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
       messages << result[:stdout]
+      # Real apt.py's upgrade(): exit_json(changed=True, msg=out,
+      # stdout=out, stderr=err, diff=diff) or its APT_GET_ZERO no-effect
+      # exit without diff (live-verified against real 2.19.11).
       PluginResult.new(
         changed: was_upgraded,
         failed: false,
         msg: messages.join(", "),
-        stdout: result[:stdout]
+        stdout: result[:stdout],
+        key_order: ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
       )
     end
 
@@ -1403,10 +1441,15 @@ module Krikri
         msg += " (check mode)"
       end
 
+      # Real apt.py's state=latest flows through install() (its retvals
+      # shape - live-verified against real 2.19.11: changed installs
+      # carry stdout/stderr/diff + the cache keys, unchanged reruns the
+      # cache keys only).
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg
+        msg: msg,
+        key_order: ["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"]
       )
     end
 
