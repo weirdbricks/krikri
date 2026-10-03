@@ -53,6 +53,9 @@ module Krikri
     # definition: was written to) - compose_base_args/capture_cmd need it
     # after the definition/proj_src mutual-exclusion logic ran.
     @project_src = ""
+    # The probed Compose version, kept for the two places real gates
+    # behavior on it (list_containers_raw's --no-trunc on >= 2.23).
+    @compose_version = ""
 
     # The real module's DOCKER_STATUS_WORKING - the only statuses that
     # ever flip changed to true (plus image-layer pull progress below).
@@ -62,6 +65,15 @@ module Krikri
     # `Container x <msg>` (the real parser swaps them when the third
     # token isn't a known status).
     KNOWN_STATUSES = WORKING_STATUSES + %w[Started Healthy Exited Restarted Running Created Stopped Killed Removed Recreated Pulled Built Error Waiting]
+    # Real's own registered key order for a successful run
+    # (ComposeManager#run: cmd_up/down/restart/stop fills changed,
+    # actions, stdout, stderr; run then adds containers and images;
+    # cleanup_result drops an empty stdout/stderr). Live-verified
+    # against 2.19.11 + community.docker 5.2.1.
+    SUCCESS_KEY_ORDER = %w[changed actions stdout stderr containers images failed]
+    # update_failed adds these on top of the update_result keys.
+    FAILED_KEY_ORDER = %w[changed actions stdout stderr failed msg cmd rc]
+
     # The real module's DOCKER_PULL_PROGRESS_WORKING - image-layer
     # progress lines that count as changes.
     PULL_PROGRESS_WORKING = %w[Pulling fs layer Waiting Downloading Verifying Checksum Extracting Working]
@@ -103,15 +115,28 @@ module Krikri
         return err
       end
 
-      if state == "present"
-        run_up(check_mode, pull, build, recreate)
-      elsif state == "absent"
-        run_down(check_mode)
-      elsif state == "stopped"
-        run_stop(check_mode, pull, build, recreate)
-      else
-        run_command(restart_cmd(check_mode), ignore_pulls: false, ignore_builds: false, check_mode: check_mode)
-      end
+      result = if state == "present"
+                 run_up(check_mode, pull, build, recreate)
+               elsif state == "absent"
+                 run_down(check_mode)
+               elsif state == "stopped"
+                 run_stop(check_mode, pull, build, recreate)
+               else
+                 run_command(restart_cmd(check_mode), ignore_pulls: false, ignore_builds: false, check_mode: check_mode)
+               end
+
+      # Real's ComposeManager#run finishes every non-failing path with
+      # `result["containers"] = self.list_containers()` and
+      # `result["images"] = self.list_images()`, then cleanup_result()
+      # drops an empty stdout/stderr. Live-verified key-for-key against
+      # 2.19.11 + community.docker 5.2.1.
+      return result if result.failed?
+      result.extra["containers"] = list_containers unless check_mode
+      result.extra["images"] = list_images unless check_mode
+      result.key_order = SUCCESS_KEY_ORDER
+      result.extra.delete("stdout") if result.extra["stdout"]?.try(&.as_s) == ""
+      result.extra.delete("stderr") if result.extra["stderr"]?.try(&.as_s) == ""
+      result
     end
 
     # The real module's argspec choices - each param validated against
@@ -281,6 +306,7 @@ module Krikri
       parsed = JSON.parse(result[:stdout].strip) rescue nil
       return nil unless parsed && parsed.as_h?
       version = parsed["version"]?.try(&.as_s?).try(&.lchop("v"))
+      @compose_version = version.to_s
       return nil unless version && version != "dev" && compose_version_lt(version, "2.18.0")
       PluginResult.new(changed: false, failed: true,
         msg: "Docker CLI #{base_cli} has the compose plugin with version #{version}; need version 2.18.0 or later")
@@ -403,15 +429,128 @@ module Krikri
       result = remote_exec(capture_cmd(cmd_args))
       events = parse_events(result[:stderr])
 
+      # Real's update_result sets changed/actions/stdout/stderr on the
+      # result dict (that insertion order is what real registers), and
+      # update_failed then adds failed/msg/cmd/rc on top of it.
+      final = PluginResult.new(changed: has_changes?(events, ignore_pulls, ignore_builds), failed: false, failed_flag: false)
+      final.key_order = SUCCESS_KEY_ORDER
+      final.extra["actions"] = extract_actions(events)
+      final.extra["stdout"] = JSON::Any.new(result[:stdout])
+      final.extra["stderr"] = JSON::Any.new(result[:stderr])
+
       if result[:exit_code] != 0
-        errors = events.select { |e| e.status == "Error" }
-        msg = errors.empty? ? "Return code #{result[:exit_code]} is non-zero" : errors.map { |e| "#{e.id}: #{e.msg}" }.join("\n")
-        return PluginResult.new(changed: false, failed: true, msg: msg)
+        msg = failure_msg(events, result[:exit_code])
+        failed = PluginResult.new(changed: final.changed?, failed: true, msg: msg)
+        failed.key_order = FAILED_KEY_ORDER
+        failed.extra["actions"] = final.extra["actions"]
+        failed.extra["cmd"] = JSON::Any.new(capture_cmd(cmd_args))
+        failed.extra["stdout"] = JSON::Any.new(result[:stdout])
+        failed.extra["stderr"] = JSON::Any.new(result[:stderr])
+        failed.extra["rc"] = JSON::Any.new(result[:exit_code])
+        return failed
       end
 
-      changed = has_changes?(events, ignore_pulls, ignore_builds)
-      PluginResult.new(changed: changed, failed: false,
-        msg: changed ? "Project #{project_label} changed" : "Project #{project_label} unchanged")
+      final
+    end
+
+    # Real's update_failed msg: one "Error when processing <type> <id>: "
+    # line per error event, "General error: " for an unknown event with no
+    # id, or the bare non-zero return code when no error event parsed.
+    private def failure_msg(events : Array(Event), rc : Int32) : String
+      errors = events.select { |e| e.status == "Error" }.map do |event|
+        prefix = if event.type == "Unknown"
+                   event.id.empty? ? "General error: " : "Error when processing #{event.id}: "
+                 else
+                   "Error when processing #{event.type.downcase} #{event.id}: "
+                 end
+        prefix + (event.msg || event.status.to_s)
+      end
+      errors.empty? ? "Return code #{rc} is non-zero" : errors.join("\n")
+    end
+
+    # Real's extract_actions: every event whose status is a WORKING one
+    # (plus deduplicated image-layer pull progress) as
+    # {what, id, status}.
+    private def extract_actions(events : Array(Event)) : JSON::Any
+      actions = [] of JSON::Any
+      pull_actions = Set({String, String}).new
+      events.each do |event|
+        if event.type == "ImageLayer" && PULL_PROGRESS_WORKING.includes?(event.status.to_s)
+          key = {event.id, event.status.to_s}
+          unless pull_actions.includes?(key)
+            pull_actions.add(key)
+            actions << action_json(event)
+          end
+        end
+        if event.type != "ImageLayer" && WORKING_STATUSES.includes?(event.status.to_s)
+          actions << action_json(event)
+        end
+      end
+      JSON::Any.new(actions)
+    end
+
+    # Real's ResourceType is lowercase ("container", "network",
+    # "image-layer", ...) whatever the text event line capitalized.
+    private def action_json(event : Event) : JSON::Any
+      JSON::Any.new({"what" => JSON::Any.new(event.type.downcase.gsub("imagelayer", "image-layer")), "id" => JSON::Any.new(event.id),
+                     "status" => JSON::Any.new(event.status.to_s)})
+    end
+
+    # Real's list_containers: `compose ps --format json --all`, with
+    # Labels split on commas into a dict and Names/Networks split into
+    # lists (Publishers defaulted to a list).
+    private def list_containers : JSON::Any
+      entries = compose_json_array("ps --format json --all").map do |entry|
+        next entry unless entry.as_h?
+        container = entry.as_h.dup
+        if labels = container["Labels"]?.try(&.as_s?)
+          dict = Hash(String, JSON::Any).new
+          labels.split(',').each do |part|
+            key, value = part.split('=', 2)
+            dict[key] = JSON::Any.new(value || "")
+          end
+          container["Labels"] = JSON::Any.new(dict)
+        end
+        container["Names"] = json_string_array((container["Names"]?.try(&.as_s?) || container["Name"]?.try(&.as_s?) || "").split(','))
+        container["Networks"] = json_string_array((container["Networks"]?.try(&.as_s?) || "").split(','))
+        container["Publishers"] = JSON::Any.new([] of JSON::Any) unless container["Publishers"]?.try(&.raw).is_a?(Array)
+        JSON::Any.new(container)
+      end
+      JSON::Any.new(entries)
+    end
+
+    private def json_string_array(items : Array(String)) : JSON::Any
+      JSON::Any.new(items.map { |item| JSON::Any.new(item) })
+    end
+
+    # Real's list_images: `compose images --format json` (a JSON array,
+    # or a dict keyed by image ID on Compose >= 2.37).
+    private def list_images : JSON::Any
+      entries = compose_json_array("images --format json")
+      JSON::Any.new(entries)
+    end
+
+    # Runs one `compose <args>` and decodes its JSON stdout - the CLI
+    # prints one JSON object per line.
+    private def compose_json_array(args : String) : Array(JSON::Any)
+      result = remote_exec("cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{args}")
+      return [] of JSON::Any if result[:exit_code] != 0
+      decoded = [] of JSON::Any
+      result[:stdout].strip.lines.reject(&.empty?).each do |line|
+        next unless line.strip.starts_with?("{") || line.strip.starts_with?("[")
+        (parsed = JSON.parse(line) rescue nil) && decoded << parsed
+      end
+      decoded.flat_map do |parsed|
+        case parsed.raw
+        when Array then parsed.as_a
+        when Hash
+          # Compose >= 2.37 returns images as {id: {...}}.
+          values = parsed.as_h.values
+          values.any?(&.as_h?) ? values : [parsed]
+        else
+          [parsed]
+        end
+      end
     end
 
     private def project_label : String
@@ -453,6 +592,11 @@ module Krikri
     # with version X; need version 2.18.0 or later). Skipped (nil error)
     # when the probe itself fails - the real command will surface its own
     # error in that case.
+    private def compose_version_at_least?(other : String) : Bool
+      return false if @compose_version.empty?
+      !compose_version_lt(@compose_version, other)
+    end
+
     private def compose_version_lt(a : String, b : String) : Bool
       a_parts = parse_version(a)
       b_parts = parse_version(b)

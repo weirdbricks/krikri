@@ -406,3 +406,42 @@ describe "docker result shape: docker_container" do
     remove_krikri_kp_dk_container(name)
   end
 end
+
+# The same registered-result SHAPE, reached through a list-valued
+# `command:` (real's ansible-type `raw` option passes a YAML list to the
+# daemon as the argv list) - the check_mode create action's Cmd must be
+# the argv list itself, element for element, spaces included.
+# Live-verified against 2.19.11 + community.docker 5.2.1 on the dk2
+# podman socket; skips when it is not up.
+DOCKER_SHAPE_CMD_SOCKET      = "unix:///tmp/krikri-kp-dk2.sock"
+DOCKER_SHAPE_CMD_SOCKET_PATH = "/tmp/krikri-kp-dk2.sock"
+
+describe "docker result shape: docker_container list command" do
+  serial!
+
+  it "matches real's create key set and order for a list command" do
+    skip("no Docker-API socket at #{DOCKER_SHAPE_CMD_SOCKET_PATH}") unless File.exists?(DOCKER_SHAPE_CMD_SOCKET_PATH)
+    name = "krikri-kp-dk2-shape-cmd"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run_raw("docker_container",
+      {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+       "command" => JSON::Any.new("[\"sh\", \"-c\", \"echo hello world\"]"),
+       "docker_host" => JSON::Any.new(DOCKER_SHAPE_CMD_SOCKET)})
+    docker_shape_keys(result).must_equal(["changed", "container", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["container"]["Config"]["Cmd"].as_a.map(&.as_s).must_equal(["sh", "-c", "echo hello world"])
+    remove_krikri_kp_dk_container(name)
+  end
+
+  it "records real's argv list in the check_mode create action" do
+    skip("no Docker-API socket at #{DOCKER_SHAPE_CMD_SOCKET_PATH}") unless File.exists?(DOCKER_SHAPE_CMD_SOCKET_PATH)
+    result = PluginSpecHelper.run_raw("docker_container",
+      {"name" => JSON::Any.new("krikri-kp-dk2-shape-cmd-cm"), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+       "command" => JSON::Any.new("[\"sh\", \"-c\", \"echo hello world\"]"),
+       "docker_host" => JSON::Any.new(DOCKER_SHAPE_CMD_SOCKET),
+       "_ansible_check_mode" => JSON::Any.new(true)})
+    docker_shape_keys(result).must_equal(["changed", "actions", "failed"])
+    result["actions"].as_a[0]["create_parameters"]["Cmd"].as_a.map(&.as_s)
+      .must_equal(["sh", "-c", "echo hello world"])
+  end
+end
