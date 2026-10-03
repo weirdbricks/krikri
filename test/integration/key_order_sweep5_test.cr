@@ -169,3 +169,42 @@ describe "pam_limits plugin result key order" do
     result.as_h.keys.must_equal(["changed", "msg", "diff"])
   end
 end
+
+describe "pamd plugin result key order" do
+  # Real pamd's success result is {changed, change_count, backupdest}
+  # with backupdest ALWAYS present (empty string when no backup) and no
+  # msg key - live-verified 2.19.11 against a temp path dir (updated
+  # change + idempotent re-run).
+  it "serializes a rule update as changed-change_count-backupdest (real: changed, change_count, backupdest)" do
+    dir = unique_tmp("pamdir")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "krservice"), "auth required pam_unix.so\naccount required pam_unix.so\n")
+
+    result = PluginSpecHelper.run("pamd", {
+      "name" => "krservice", "path" => dir, "type" => "auth", "control" => "required",
+      "module_path" => "pam_unix.so", "module_arguments" => "nullok", "state" => "updated",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["change_count"].as_i.must_equal(1)
+    result["backupdest"].as_s.must_equal("")
+    result.as_h.keys.must_equal(["changed", "change_count", "backupdest"])
+  end
+
+  it "serializes an idempotent re-run as changed-change_count-backupdest (real: changed, change_count, backupdest)" do
+    dir = unique_tmp("pamdir")
+    Dir.mkdir_p(dir)
+    File.write(File.join(dir, "krservice"), "auth required pam_unix.so nullok\naccount required pam_unix.so\n")
+
+    result = PluginSpecHelper.run("pamd", {
+      "name" => "krservice", "path" => dir, "type" => "auth", "control" => "required",
+      "module_path" => "pam_unix.so", "module_arguments" => "nullok", "state" => "updated",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["change_count"].as_i.must_equal(0)
+    result.as_h.keys.must_equal(["changed", "change_count", "backupdest"])
+  end
+end

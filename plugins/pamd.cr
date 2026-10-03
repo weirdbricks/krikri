@@ -137,7 +137,8 @@ module Krikri
       # Real community.general.pamd's success result is exactly
       # {changed, change_count, backupdest} - verified live against real
       # ansible (community.general 13.3.0 ad-hoc CLI comparison,
-      # privileged podman container, 2026-09-13) - with no msg at all:
+      # privileged podman container, 2026-09-13; re-verified 2.19.11
+      # unprivileged against a temp path dir) - with no msg at all:
       # an idempotent no-op (rule matched, already had the desired
       # value) and a genuine no-such-rule case are BOTH
       # `changed: false, change_count: 0` (change_count counts rules
@@ -146,14 +147,17 @@ module Krikri
       # no-such-rule case, and the "Updated N rule(s)" msg was invented
       # too. backupdest is the backup file path (empty string when
       # backup: yes wasn't given or nothing changed - the backup is
-      # only taken when the file is actually about to be written).
+      # only taken when the file is actually about to be written). Real
+      # ALWAYS carries backupdest (empty string when no backup) - the
+      # key is never omitted.
       backupdest = ""
       if changes > 0 && !check_mode
         backupdest = backup(path)
         write(path, lines)
       end
 
-      PluginResult.new(changed: changes > 0, failed: false, msg: "", change_count: changes, backupdest: backupdest)
+      PluginResult.new(changed: changes > 0, failed: false, msg: "", change_count: changes, backupdest: backupdest,
+        key_order: ["changed", "change_count", "backupdest"])
     end
 
     # Real AnsibleModule setup surface, in the validator's errors[0]
