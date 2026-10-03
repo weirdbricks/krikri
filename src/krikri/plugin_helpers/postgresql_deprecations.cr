@@ -48,6 +48,41 @@ module Krikri
         "db"          => "login_db",
       }
 
+      # The warning real's AnsibleModule emits (via self.warn(), which
+      # both prints `[WARNING]: <text>` on stderr and appends to the
+      # result's `warnings` list) when a community.postgresql module is
+      # asked to connect without naming a database, so psycopg2 falls
+      # back to the connection default.
+      #
+      # Live-verified against real ansible-core 2.19.11 +
+      # community.postgresql 4.2.0, per module:
+      # - postgresql_query: warns, on success AND on failure (the
+      #   fail_json "unable to connect to database: ..." result carries
+      #   it too, last key after `exception`). Its `db:` alias counts
+      #   as a database name, so it does NOT warn then.
+      # - postgresql_db / postgresql_user: NEVER warn - their own
+      #   `db`/`name` param is the database they manage and their login
+      #   database is a documented default; real's result has no
+      #   `warnings` key at all when login_db is absent.
+      # - postgresql_privs: real REQUIRES login_db ("missing required
+      #   arguments: login_db"), so the warning can never fire there.
+      DEFAULT_DB_WARNING = "Database name has not been passed, used default database to connect to."
+
+      # Adds DEFAULT_DB_WARNING to `result.extra["warnings"]` when the
+      # task named no database at all (neither `login_db` nor the `db`
+      # alias). Call BEFORE PostgresqlDeprecations.finalize so the
+      # registered result orders the two lists as real does:
+      # ..., failed, warnings, deprecations.
+      def self.add_default_db_warning(result : PluginResult, params : Hash(String, String)) : PluginResult
+        return result if params.has_key?("login_db") || params.has_key?("db")
+
+        existing = result.extra["warnings"]?.try(&.as_a?)
+        texts = existing ? existing.map(&.as_s) : [] of String
+        texts << DEFAULT_DB_WARNING unless texts.includes?(DEFAULT_DB_WARNING)
+        result.extra["warnings"] = JSON::Any.new(texts.map { |text| JSON::Any.new(text) })
+        result
+      end
+
       # Adds the deprecations a task's params trigger to an otherwise
       # finished PluginResult. `db_alias:` is false for postgresql_db,
       # whose own `db` param (the database it manages, aliased `name`)

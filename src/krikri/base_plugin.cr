@@ -205,11 +205,18 @@ module Krikri
     private def failed_default_order(result : Hash(String, JSON::Any::Type)) : Array(String)
       order = ["failed", "msg", "diff"]
       result.each_key do |key|
-        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations")
+        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
         order << key
       end
       order << "changed"
       order << "exception"
+      # real's AnsibleModule collects self.warn() texts into the
+      # result's `warnings` list, and the controller appends that list
+      # to the module's own dict LAST - after `exception`, before the
+      # `deprecations` it appends after it (live-verified vs 2.19.11
+      # with community.postgresql's no-database warning on a failing
+      # task).
+      order << "warnings" if result.has_key?("warnings")
       # real's controller appends the deprecations it collected to the
       # module's result dict LAST, whatever the module itself exited
       # with (live-verified vs 2.19.11 with community.postgresql's

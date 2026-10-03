@@ -60,8 +60,9 @@ private CONN_LOGIN = {
 private REFUSED_MSG = "unable to connect to database: connection to server at \"127.0.0.1\", port 59999 failed: Connection refused\n" \
                       "\tIs the server running on that host and accepting TCP/IP connections?\n"
 
-private def assert_conn_failure(result : JSON::Any, msg : String, with_db_alias : Bool = false)
+private def assert_conn_failure(result : JSON::Any, msg : String, with_db_alias : Bool = false, with_db_warning : Bool = false)
   expected = ["failed", "msg", "changed", "exception"]
+  expected << "warnings" if with_db_warning
   expected << "deprecations" if with_db_alias
   # The controller strips the `_ansible_*` engine markers before
   # register (see TaskExecutor#register_result), so compare the
@@ -81,7 +82,7 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
   it "postgresql_query refused port reports libpq's connection-refused text" do
     result = PluginSpecHelper.run("postgresql_query",
       CONN_LOGIN.merge({"login_port" => "59999", "query" => "SELECT 1"}))
-    assert_conn_failure(result, REFUSED_MSG)
+    assert_conn_failure(result, REFUSED_MSG, with_db_warning: true)
   end
 
   it "postgresql_db refused port reports libpq's connection-refused text" do
@@ -110,7 +111,7 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
       {"login_unix_socket" => "/nonexistent/sockdir", "login_user" => "postgres", "query" => "SELECT 1"})
     assert_conn_failure(result,
       "unable to connect to database: connection to server on socket \"/nonexistent/sockdir/.s.PGSQL.5432\" failed: No such file or directory\n" \
-      "\tIs the server running locally and accepting connections on that socket?\n")
+      "\tIs the server running locally and accepting connections on that socket?\n", with_db_warning: true)
   end
 
   it "postgresql_query wrong password reports the server's own FATAL text" do

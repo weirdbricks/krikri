@@ -124,6 +124,11 @@ module Krikri
     # (both on stderr and in the registered result's trailing
     # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
     def finalize_result(result : PluginResult) : PluginResult
+      # postgresql_query is the one community.postgresql module that
+      # warns when it connects without a database (its result then
+      # carries `warnings`, the last key before `deprecations`) - see
+      # PluginHelpers::PostgresqlDeprecations.
+      result = PluginHelpers::PostgresqlDeprecations.add_default_db_warning(result, @params)
       PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: true)
     end
 
