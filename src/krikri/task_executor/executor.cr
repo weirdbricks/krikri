@@ -245,9 +245,6 @@ module Krikri
     # wins - matching include_vars sitting below set_fact in real
     # Ansible's precedence ladder.
     @included_vars : Hash(String, Hash(String, JSON::Any))
-    # Real's Display deduplicates warnings globally; the include_vars
-    # null-file lookup warning fires once per run, not once per host.
-    @include_vars_null_warned = false
     # Per host, per task: the result already fetched via a batch's single
     # SSH round trip (nil = that task's when: was false, already handled
     # - see `execute_batch_group`), consumed lazily as the task-major

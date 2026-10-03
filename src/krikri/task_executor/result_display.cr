@@ -666,17 +666,20 @@ module Krikri
       return nil unless path && task.source_line > 0 && File.file?(path)
 
       lines = File.read_lines(path)
-      needle = "#{key}:"
+      # A QUOTED key carries its colon AFTER the closing quote
+      # (`"bad-name": 1`), so a bare "<key>:" needle never matches it -
+      # real still points its per-key Origin at the opening quote, and at
+      # the same column as the bare form (live-verified vs 2.19.11: both
+      # `bad-name: 1` and `"bad-name": 1` give column 9 on an
+      # 8-space-indented line). Match whichever spelling occurs first.
+      needles = {"\"#{key}\":", "'#{key}':", "#{key}:"}
       ((task.source_line - 1)...lines.size).each do |idx|
         line = lines[idx]
-        at = line.index(needle)
+        at = needles.compact_map { |needle| line.index(needle) }.min?
         next unless at
-        prefix = line[0...at]
-        # only a mapping key: nothing but whitespace/quotes before it
-        stripped = prefix.strip
-        next unless stripped.empty? || (stripped.size == 1 && {"'", '"'}.includes?(stripped))
-        column = stripped.empty? ? at + 1 : at
-        return ErrorBlock.origin_context(path, idx + 1, column)
+        # only a mapping key: nothing but whitespace before it
+        next unless line[0...at].strip.empty?
+        return ErrorBlock.origin_context(path, idx + 1, at + 1)
       end
       nil
     end
