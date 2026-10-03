@@ -4521,6 +4521,17 @@ module Krikri
             # prefixed - they stay raw template text for the executor's own
             # whole-span structural evaluation, which owns their type.
             params[key.to_s] = fact_literal_wire_value(value)
+          elsif (module_name == "ansible.mysql.mysql_db" || module_name == "community.mysql.mysql_db") && key.to_s == "name" && value.as_a?
+            # `name:` is `type='list', elements='str'` in real Ansible's
+            # mysql_db (a multi-database run is a single task), so the
+            # generic comma-join would fuse the names into one string -
+            # and real's own result echoes BOTH shapes (`db`, the names
+            # joined by a space, and `db_list`, the list itself).
+            # JSON-encoded here; MysqlDbPlugin#parse_name_list decodes it
+            # back into an Array(String) on the plugin side, the same
+            # wire mysql_query's own `query:` list uses.
+            names = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = names.to_json
           elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") && key.to_s == "query" && value.as_a?
             # `query:` as a list of independent SQL statements (dev-sec
             # mysql_hardening's own "Ensure that there are no users

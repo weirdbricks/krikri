@@ -1,0 +1,213 @@
+require "../minitest_helper"
+
+require "socket"
+
+# Registered-result SHAPE (keys, values and wire order) for the
+# community.mysql plugins, pinned to real ansible-playbook 2.19.11 with
+# community.mysql 5.0.2 against a real MySQL 8.4 server, observed through
+# `{{ r | to_json }}` on a registered task (the -v dump sorts
+# alphabetically, so the order is only observable programmatically - see
+# key_order_sweep9_test.cr for the general method). Real's registered
+# result also carries `deprecations` after `failed` - that is the
+# collection-version redirect community.mysql -> ansible.mysql emitted by
+# the collection loader, not part of the module's own result dict, so it
+# is not asserted here.
+#
+# These specs assert VALUES too, not just the key set: real echoes the
+# `name:`/`user:` parameter back and reports the exact SQL statement(s) it
+# executed (`executed_commands`/`executed_queries`), so a plugin that
+# emits the right keys with plausible-but-different content is still
+# caught here.
+#
+# The throwaway MySQL container everything below was verified against:
+#   podman run -d --name krikri-kp-mysql -e MYSQL_ROOT_PASSWORD=krikri \
+#     -p 127.0.0.1:33306:3306 docker.io/library/mysql:8.4
+# Every spec skips when it isn't running.
+
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+
+private MYSQL_HOST = "127.0.0.1"
+private MYSQL_PORT = 33306
+
+private def mysql_reachable? : Bool
+  sock = TCPSocket.new(MYSQL_HOST, MYSQL_PORT, connect_timeout: 1)
+  sock.close
+  true
+rescue
+  false
+end
+
+# The login_* block, with every line after the first carrying *indent*
+# spaces - the indentation the surrounding YAML text uses for the
+# module's params, so the block survives #task_body's re-anchoring. The
+# first line carries none, so it drops straight into an interpolated
+# heredoc as "#{mysql_login_args(12)}" at whatever indent it already has.
+private def mysql_login_args(indent : Int32 = 0) : String
+  [
+    "login_host: #{MYSQL_HOST}",
+    "login_port: #{MYSQL_PORT}",
+    "login_user: root",
+    "login_password: krikri",
+  ].join("\n" + " " * indent)
+end
+
+# Runs a play whose last task copies `{{ r | to_json }}` into a file,
+# then returns the parsed dump (writing it through copy: avoids the
+# display layer's JSON escaping entirely). `setup:` runs first as a
+# separate play, for the pre-run that has to put the server in the state
+# the spec then asserts on.
+private def registered_dump(tasks : String, setup : String? = nil) : JSON::Any
+  run_play(setup) if setup
+  dump = PluginSpecHelper.tmp_path("mysql-shape-dump.json")
+  playbook = File.tempname("mysql-result-shape", ".yml")
+  File.write(playbook, "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" +
+                       tasks + "    - name: dump\n      ansible.builtin.copy:\n        dest: #{dump}\n" +
+                       "        content: |-\n          {{ r | to_json }}\n")
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status.success?.must_equal(true, output.to_s[-800..]? || output.to_s)
+  JSON.parse(File.read(dump))
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+private def run_play(yaml : String) : Nil
+  playbook = File.tempname("mysql-result-shape-setup", ".yml")
+  File.write(playbook, yaml)
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status.success?.must_equal(true, output.to_s[-800..]? || output.to_s)
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+# A play that only drops the databases these specs create, so each spec
+# starts from the same known state regardless of minitest's randomized
+# order or an interrupted earlier run.
+private def drop_dbs_play(*names : String) : String
+  drop = names.map { |db| "          - \"drop database if exists `#{db}`\"" }.join("\n")
+  "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
+  "    - name: drop\n      community.mysql.mysql_query:\n        query:\n#{drop}\n" \
+  "        #{mysql_login_args(8)}\n"
+end
+
+# A play that creates one database, for a spec that needs the server to
+# start out already in that state.
+private def create_db_play(name : String) : String
+  "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
+  "    - name: create\n      community.mysql.mysql_db:\n        name: #{name}\n        state: present\n" \
+  "        #{mysql_login_args(8)}\n"
+end
+
+# Re-anchors an indented heredoc body (which arrives indented by an
+# arbitrary common amount) to the 4 spaces a `tasks:` list item needs.
+private def task_body(text : String) : String
+  lines = text.lines.reject(&.strip.empty?)
+  common = lines.min_of { |line| line.size - line.lstrip.size }
+  lines.map { |line| "    " + line.byte_slice(common, line.bytesize) + "\n" }.join
+end
+
+describe "mysql_db plugin result shape" do
+  # Real's exit_json for present/absent carries no `msg` key at all, and
+  # reports `executed_commands` as the mogrified statement it ran.
+  it "registers a create as changed, db, db_list, executed_commands, failed" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    run_play(drop_dbs_play("shape_db1"))
+    dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db1"))
+            - name: create
+              community.mysql.mysql_db:
+                name: shape_db1
+                state: present
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump["changed"].as_bool.must_equal(true)
+    dump["db"].as_s.must_equal("shape_db1")
+    dump["db_list"].as_a.map(&.as_s).must_equal(["shape_db1"])
+    dump["executed_commands"].as_a.map(&.as_s).must_equal(["CREATE DATABASE `shape_db1`"])
+  end
+
+  # The idempotent no-op still reports `executed_commands`, as an empty
+  # list (real only ever leaves the key out in check mode).
+  it "registers the already-present no-op with an empty executed_commands" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), create_db_play("shape_db2"))
+            - name: create
+              community.mysql.mysql_db:
+                name: shape_db2
+                state: present
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump["changed"].as_bool.must_equal(false)
+    dump["executed_commands"].as_a.size.must_equal(0)
+  end
+
+  # Real returns a DIFFERENT exit_json in check mode, before
+  # `executed_commands` is ever populated - so the key is absent there
+  # even on a run that would have changed something.
+  it "registers a check-mode create without executed_commands" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db3"))
+            - name: create
+              community.mysql.mysql_db:
+                name: shape_db3
+                state: present
+                #{mysql_login_args(12)}
+              register: r
+              check_mode: true
+    YAML
+    dump.as_h.keys.must_equal(%w[changed db db_list failed])
+    dump["changed"].as_bool.must_equal(true)
+  end
+
+  it "registers a drop as changed, db, db_list, executed_commands, failed" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db4"))
+            - name: create
+              community.mysql.mysql_db:
+                name: shape_db4
+                state: present
+                #{mysql_login_args(12)}
+            - name: drop
+              community.mysql.mysql_db:
+                name: shape_db4
+                state: absent
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump["changed"].as_bool.must_equal(true)
+    dump["executed_commands"].as_a.map(&.as_s).must_equal(["DROP DATABASE `shape_db4`"])
+  end
+
+  # Real's `name:` is a list: `db` is the names joined by a space and
+  # `db_list` the list itself, and one statement is reported per created
+  # database - with `encoding:`/`collation:` reaching the statement as
+  # the quoted string literals real binds them as.
+  it "registers a multi-name create with both name shapes and one statement per database" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), drop_dbs_play("shape_db5", "shape_db6"))
+            - name: create
+              community.mysql.mysql_db:
+                name:
+                  - shape_db5
+                  - shape_db6
+                state: present
+                encoding: utf8mb4
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump["db"].as_s.must_equal("shape_db5 shape_db6")
+    dump["db_list"].as_a.map(&.as_s).must_equal(%w[shape_db5 shape_db6])
+    dump["executed_commands"].as_a.map(&.as_s).must_equal([
+      "CREATE DATABASE `shape_db5` CHARACTER SET 'utf8mb4'",
+      "CREATE DATABASE `shape_db6` CHARACTER SET 'utf8mb4'",
+    ])
+  end
+end
