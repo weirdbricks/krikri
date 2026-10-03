@@ -1,0 +1,458 @@
+---
+# Key-order probes for synchronize, subversion, apache2_module, java_cert.
+# snap and homebrew are deliberately NOT probed here (see README.md: snapd
+# install is too slow/heavy for a probe round and homebrew is macOS-only).
+# Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+
+- name: Create synchronize source dir on the target host
+  ansible.builtin.file:
+    path: /var/tmp/kop_sync_src
+    state: directory
+    mode: "0755"
+
+- name: Drop payload into synchronize source on the target host
+  ansible.builtin.copy:
+    content: "kop-probe-payload\n"
+    dest: /var/tmp/kop_sync_src/a
+    mode: "0644"
+  ignore_errors: true
+
+- name: Create synchronize source dir on the controller (push mode reads it there)
+  ansible.builtin.file:
+    path: /var/tmp/kop_sync_src
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: Drop payload into synchronize source on the controller
+  ansible.builtin.copy:
+    content: "kop-probe-payload\n"
+    dest: /var/tmp/kop_sync_src/a
+    mode: "0644"
+  delegate_to: localhost
+  ignore_errors: true
+
+- name: Push /var/tmp/kop_sync_src to /var/tmp/kop_sync_dst (changed)
+  ansible.posix.synchronize:
+    src: /var/tmp/kop_sync_src/
+    dest: /var/tmp/kop_sync_dst/
+    mode: push
+  register: r
+  ignore_errors: true
+
+- name: Report synchronize_push
+  ansible.builtin.debug:
+    msg: "KEYORDER|synchronize_push|{{ r | to_json }}"
+
+- name: Push same source again (ok)
+  ansible.posix.synchronize:
+    src: /var/tmp/kop_sync_src/
+    dest: /var/tmp/kop_sync_dst/
+    mode: push
+  register: r
+  ignore_errors: true
+
+- name: Report synchronize_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|synchronize_exists|{{ r | to_json }}"
+
+- name: Push in check mode (changed)
+  ansible.posix.synchronize:
+    src: /var/tmp/kop_sync_src/
+    dest: /var/tmp/kop_sync_dst/
+    mode: push
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report synchronize_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|synchronize_check|{{ r | to_json }}"
+
+- name: Push a nonexistent source (failure)
+  ansible.posix.synchronize:
+    src: /var/tmp/kop_nosuch_src/
+    dest: /var/tmp/kop_sync_dst/
+    mode: push
+  register: r
+  ignore_errors: true
+
+- name: Report synchronize_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|synchronize_fail|{{ r | to_json }}"
+
+- name: Ensure subversion is installed
+  ansible.builtin.apt:
+    name: subversion
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report subversion_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_helper_install|{{ r | to_json }}"
+
+- name: Create local svn repository
+  ansible.builtin.command:
+    cmd: svnadmin create /var/tmp/kop_svnrepo
+    creates: /var/tmp/kop_svnrepo/format
+  register: r
+  changed_when: false
+  ignore_errors: true
+
+- name: Report subversion_helper_repo
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_helper_repo|{{ r | to_json }}"
+
+- name: Checkout local svn repository (changed)
+  ansible.builtin.subversion:
+    repo: file:///var/tmp/kop_svnrepo
+    dest: /var/tmp/kop_wc
+  register: r
+  ignore_errors: true
+
+- name: Report subversion_checkout
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_checkout|{{ r | to_json }}"
+
+- name: Checkout local svn repository again (ok)
+  ansible.builtin.subversion:
+    repo: file:///var/tmp/kop_svnrepo
+    dest: /var/tmp/kop_wc
+  register: r
+  ignore_errors: true
+
+- name: Report subversion_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_exists|{{ r | to_json }}"
+
+- name: Checkout to a second working copy in check mode (changed)
+  ansible.builtin.subversion:
+    repo: file:///var/tmp/kop_svnrepo
+    dest: /var/tmp/kop_wc2
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report subversion_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_check|{{ r | to_json }}"
+
+- name: Checkout a nonexistent repository (failure)
+  ansible.builtin.subversion:
+    repo: file:///var/tmp/kop_nosuchrepo
+    dest: /var/tmp/kop_wc3
+  register: r
+  ignore_errors: true
+
+- name: Report subversion_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|subversion_fail|{{ r | to_json }}"
+
+- name: Ensure apache2 is installed
+  ansible.builtin.apt:
+    name: apache2
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_helper_install|{{ r | to_json }}"
+
+- name: Enable headers module (changed)
+  community.general.apache2_module:
+    name: headers
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_enable
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_enable|{{ r | to_json }}"
+
+- name: Enable headers module again (ok)
+  community.general.apache2_module:
+    name: headers
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_exists|{{ r | to_json }}"
+
+- name: Enable rewrite module (changed)
+  community.general.apache2_module:
+    name: rewrite
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_enable_rewrite
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_enable_rewrite|{{ r | to_json }}"
+
+- name: Enable proxy_http module in check mode (changed)
+  community.general.apache2_module:
+    name: proxy_http
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report apache2_module_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_check|{{ r | to_json }}"
+
+- name: Disable rewrite module (changed)
+  community.general.apache2_module:
+    name: rewrite
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_disable
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_disable|{{ r | to_json }}"
+
+- name: Disable rewrite module again (ok)
+  community.general.apache2_module:
+    name: rewrite
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_disable_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_disable_again|{{ r | to_json }}"
+
+- name: Enable a nonexistent module (failure)
+  community.general.apache2_module:
+    name: kop_bogus_module
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report apache2_module_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|apache2_module_fail|{{ r | to_json }}"
+
+- name: Ensure default-jdk-headless is installed (provides keytool)
+  ansible.builtin.apt:
+    name: default-jdk-headless
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report java_cert_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_helper_install|{{ r | to_json }}"
+
+- name: Generate a self-signed certificate
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -newkey rsa:2048 -nodes
+      -keyout /var/tmp/kop_cert.key -out /var/tmp/kop_cert.pem
+      -days 2 -subj "/CN=kop-probe"
+    creates: /var/tmp/kop_cert.pem
+  register: r
+  changed_when: false
+  ignore_errors: true
+
+- name: Report java_cert_helper_cert
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_helper_cert|{{ r | to_json }}"
+
+- name: Import certificate into a fresh keystore (changed)
+  community.general.java_cert:
+    cert_path: /var/tmp/kop_cert.pem
+    keystore_path: /var/tmp/kop_ks.jks
+    keystore_pass: kopKeystorePass1
+    keystore_create: true
+    cert_alias: kopcert
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report java_cert_import
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_import|{{ r | to_json }}"
+
+- name: Import same certificate again (ok)
+  community.general.java_cert:
+    cert_path: /var/tmp/kop_cert.pem
+    keystore_path: /var/tmp/kop_ks.jks
+    keystore_pass: kopKeystorePass1
+    keystore_create: true
+    cert_alias: kopcert
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report java_cert_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_exists|{{ r | to_json }}"
+
+- name: Import second alias in check mode (changed)
+  community.general.java_cert:
+    cert_path: /var/tmp/kop_cert.pem
+    keystore_path: /var/tmp/kop_ks.jks
+    keystore_pass: kopKeystorePass1
+    keystore_create: true
+    cert_alias: kopcert2
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report java_cert_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_check|{{ r | to_json }}"
+
+- name: Remove certificate from keystore (changed)
+  community.general.java_cert:
+    cert_path: /var/tmp/kop_cert.pem
+    keystore_path: /var/tmp/kop_ks.jks
+    keystore_pass: kopKeystorePass1
+    cert_alias: kopcert
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report java_cert_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_remove|{{ r | to_json }}"
+
+- name: Import a nonexistent certificate (failure)
+  community.general.java_cert:
+    cert_path: /var/tmp/kop_nosuch.pem
+    keystore_path: /var/tmp/kop_ks.jks
+    keystore_pass: kopKeystorePass1
+    keystore_create: true
+    cert_alias: kopfail
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report java_cert_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|java_cert_fail|{{ r | to_json }}"
+
+- name: Generate a private key for the CSR probe
+  ansible.builtin.command:
+    cmd: >
+      openssl genrsa -out /var/tmp/kop_csr.key 2048
+    creates: /var/tmp/kop_csr.key
+  register: r
+  changed_when: false
+  ignore_errors: true
+
+- name: Report openssl_csr_info_helper_key
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_helper_key|{{ r | to_json }}"
+
+- name: Generate a CSR to query
+  community.crypto.openssl_csr:
+    path: /var/tmp/kop_probe.csr
+    privatekey_path: /var/tmp/kop_csr.key
+    subject:
+      CN: kop-probe
+    use_common_name_for_san: false
+  register: r
+  ignore_errors: true
+
+- name: Report openssl_csr_info_helper_csr
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_helper_csr|{{ r | to_json }}"
+
+- name: Query the generated CSR (ok)
+  community.crypto.openssl_csr_info:
+    path: /var/tmp/kop_probe.csr
+  register: r
+  ignore_errors: true
+
+- name: Report openssl_csr_info_query
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_query|{{ r | to_json }}"
+
+- name: Query the generated CSR again (ok)
+  community.crypto.openssl_csr_info:
+    path: /var/tmp/kop_probe.csr
+  register: r
+  ignore_errors: true
+
+- name: Report openssl_csr_info_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_exists|{{ r | to_json }}"
+
+- name: Query the generated CSR in check mode (ok)
+  community.crypto.openssl_csr_info:
+    path: /var/tmp/kop_probe.csr
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report openssl_csr_info_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_check|{{ r | to_json }}"
+
+- name: Query a nonexistent CSR (failure)
+  community.crypto.openssl_csr_info:
+    path: /var/tmp/kop_nosuch.csr
+  register: r
+  ignore_errors: true
+
+- name: Report openssl_csr_info_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|openssl_csr_info_fail|{{ r | to_json }}"
+
+- name: Cleanup synchronize dirs on the target host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/tmp/kop_sync_src
+    - /var/tmp/kop_sync_dst
+
+- name: Cleanup synchronize source dir on the controller
+  ansible.builtin.file:
+    path: /var/tmp/kop_sync_src
+    state: absent
+  delegate_to: localhost
+
+- name: Cleanup svn repository and working copies
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/tmp/kop_svnrepo
+    - /var/tmp/kop_wc
+    - /var/tmp/kop_wc2
+    - /var/tmp/kop_wc3
+
+- name: Disable headers module again (cleanup)
+  community.general.apache2_module:
+    name: headers
+    state: absent
+  ignore_errors: true
+
+- name: Cleanup certificate and keystore files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/tmp/kop_cert.key
+    - /var/tmp/kop_cert.pem
+    - /var/tmp/kop_ks.jks
+    - /var/tmp/kop_csr.key
+    - /var/tmp/kop_probe.csr

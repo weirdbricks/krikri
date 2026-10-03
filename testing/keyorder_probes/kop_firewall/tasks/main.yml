@@ -1,0 +1,110 @@
+---
+# Key-order probes for ufw. Never enables the firewall (no `state: enabled`)
+# so SSH cannot be locked out; rules are added and removed while ufw stays
+# inactive. Convention: every probed task registers r and is followed by a
+# debug emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+
+- name: Ensure ufw is installed
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_helper_install|{{ r | to_json }}"
+
+- name: Ensure ufw stays disabled (guard, ok when already inactive)
+  community.general.ufw:
+    state: disabled
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_disabled
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_disabled|{{ r | to_json }}"
+
+- name: Add allow rule for 8080/tcp (changed)
+  community.general.ufw:
+    rule: allow
+    port: "8080"
+    proto: tcp
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_rule_allow
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_rule_allow|{{ r | to_json }}"
+
+- name: Add same allow rule again (ok)
+  community.general.ufw:
+    rule: allow
+    port: "8080"
+    proto: tcp
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_rule_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_rule_exists|{{ r | to_json }}"
+
+- name: Add allow rule for 8081/tcp in check mode (changed)
+  community.general.ufw:
+    rule: allow
+    port: "8081"
+    proto: tcp
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report ufw_rule_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_rule_check|{{ r | to_json }}"
+
+- name: Delete allow rule for 8080/tcp (changed)
+  community.general.ufw:
+    rule: allow
+    port: "8080"
+    proto: tcp
+    delete: true
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_rule_delete
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_rule_delete|{{ r | to_json }}"
+
+- name: Delete same allow rule again (ok)
+  community.general.ufw:
+    rule: allow
+    port: "8080"
+    proto: tcp
+    delete: true
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_rule_delete_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_rule_delete_again|{{ r | to_json }}"
+
+- name: Invoke ufw with an invalid rule value (failure)
+  community.general.ufw:
+    rule: kop_bogus_rule
+    port: "8082"
+    proto: tcp
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_fail|{{ r | to_json }}"
+
+- name: Ensure ufw is disabled again (cleanup guard)
+  community.general.ufw:
+    state: disabled
+  ignore_errors: true

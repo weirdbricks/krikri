@@ -1,0 +1,16 @@
+---
+# Syntax-check wrapper for the keyorder probe roles. Not a real playbook;
+# used only for `ansible-playbook --syntax-check` / `--list-tasks` and for
+# krikri-playbook parse checks, e.g.:
+#   ANSIBLE_ROLES_PATH=testing/keyorder_probes ansible-playbook \
+#     -i localhost, --syntax-check testing/keyorder_probes/syntax_check.yml
+- name: Syntax check all keyorder probe roles
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  roles:
+    - role: kop_accounts
+    - role: kop_kernel
+    - role: kop_firewall
+    - role: kop_storage
+    - role: kop_pkg_misc
