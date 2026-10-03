@@ -57,3 +57,57 @@ describe "modprobe plugin result key order (sweep5)" do
     result.as_h.keys.must_equal(["changed", "name", "params", "state"])
   end
 end
+
+describe "filesystem plugin result key order" do
+  # Real filesystem.py's success exits are exit_json(changed=changed)
+  # with no msg key (create/already-same-fs/wipefs/absent-no-fs), and
+  # state=absent on a missing dev exits exit_json(msg=msg) whose module
+  # dict carries only msg before the controller-backfilled changed.
+  # All verified against a file-backed fake device (mkfs.ext4 accepts a
+  # regular file), live 2.19.11.
+  it "serializes a fresh create as just changed (real: changed)" do
+    dev = unique_tmp("fs-dev")
+    File.write(dev, "")
+    File.open(dev, "w") { |f| f.truncate(20 * 1024 * 1024) }
+
+    result = PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed"])
+  end
+
+  it "serializes an already-correct fs as just changed (real: changed)" do
+    dev = unique_tmp("fs-dev")
+    File.write(dev, "")
+    File.open(dev, "w") { |f| f.truncate(20 * 1024 * 1024) }
+    PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
+
+    result = PluginSpecHelper.run("filesystem", {"dev" => dev, "fstype" => "ext4", "state" => "present"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed"])
+  end
+
+  it "serializes state=absent without an fs as just changed (real: changed)" do
+    dev = unique_tmp("fs-dev")
+    File.write(dev, "")
+
+    result = PluginSpecHelper.run("filesystem", {"dev" => dev, "state" => "absent"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed"])
+  end
+
+  it "serializes state=absent on a missing dev as msg-then-changed (real: msg, changed)" do
+    dev = unique_tmp("fs-missing")
+
+    result = PluginSpecHelper.run("filesystem", {"dev" => dev, "state" => "absent"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["msg"].as_s.includes?("not found").must_equal(true)
+    result.as_h.keys.must_equal(["msg", "changed"])
+  end
+end
