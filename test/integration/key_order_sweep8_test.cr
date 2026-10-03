@@ -319,3 +319,43 @@ describe "gem plugin result key order (sweep8)" do
     end
   end
 end
+describe "apt_repository plugin result key order (sweep8)" do
+  # Real 2.19.11 apt_repository.py has a single success exit
+  # exit_json(changed=changed, repo=repo, sources_added=...,
+  # sources_removed=..., state=state, diff=diff) - no msg, and `diff`
+  # is always present (its source builds diff = [] and only appends
+  # under _diff), so the registered order is the same on both the
+  # present and absent paths. Live-verified on this host in check mode
+  # (unprivileged; the mutating /etc/apt write needs root but shares
+  # this one exit). The "Would add repository (check mode)" /
+  # "Already ..." msgs were krikri's own - dropped, npm-style.
+
+  private APT_PLAY = <<-YAML
+    - name: repro
+      hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: apt task
+          ansible.builtin.apt_repository:
+            repo: "deb [arch=amd64] https://example.invalid/krikri stable main"
+            STATE_LINE
+          check_mode: true
+          register: r
+        - name: dump
+          ansible.builtin.copy:
+            content: |-
+              {{ r | to_json }}
+            dest: KRIKRI_DUMP_PATH
+    YAML
+
+  it "registers an absent no-op as changed, repo, sources_added, sources_removed, state, diff" do
+    keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: absent"))
+    keys.must_equal(%w[changed repo sources_added sources_removed state diff failed])
+  end
+
+  it "registers a check-mode add in the same shape" do
+    keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: present"))
+    keys.must_equal(%w[changed repo sources_added sources_removed state diff failed])
+  end
+end

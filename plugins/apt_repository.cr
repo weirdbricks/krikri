@@ -223,16 +223,28 @@ module Krikri
     # about to happen - not already present, not check_mode - so a PPA's
     # key-fetch network calls only ever run when real Ansible's own
     # equivalent would too.
+    # Real ansible-core 2.19.11 apt_repository exits with a single
+    # `exit_json(changed=changed, repo=repo, sources_added=...,
+    # sources_removed=..., state=state, diff=diff)` (live-verified in
+    # check mode via register + to_json): no msg, and `diff` is ALWAYS
+    # present - an empty JSON array unless diff mode asked for entries
+    # (its source builds `diff = []` and only appends under _diff).
+    private APT_REPO_ORDER = %w[changed repo sources_added sources_removed state diff]
+
+    private def empty_diff_list : JSON::Any
+      JSON::Any.new(Array(JSON::Any).new)
+    end
+
     private def add(normalized : String, update_cache : Bool, check_mode : Bool, filename_source : String? = nil, & : -> PluginResult?) : PluginResult
       if find_source(normalized)
-        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "present", sources_added: [] of String, sources_removed: [] of String)
+        return PluginResult.new(changed: false, failed: false, repo: normalized, state: "present", sources_added: [] of String, sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
       end
 
       target = target_file(normalized, filename_source || normalized)
       target_had_sources = file_has_sources?(target)
 
       if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would add repository (check mode)", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
+        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
       end
 
       if error = yield
@@ -286,7 +298,7 @@ module Krikri
         end
       end
 
-      result = PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String)
+      result = PluginResult.new(changed: true, failed: false, repo: normalized, state: "present", sources_added: target_had_sources ? [] of String : [target], sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
       result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
       result
     end
@@ -294,14 +306,14 @@ module Krikri
     private def remove(normalized : String, update_cache : Bool, check_mode : Bool) : PluginResult
       file = find_source(normalized)
       unless file
-        return PluginResult.new(changed: false, failed: false, msg: "", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: [] of String)
+        return PluginResult.new(changed: false, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
       end
 
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
       file_would_lose_sources = remaining_lines.none? { |line| valid_source_line?(line) }
 
       if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would remove repository (check mode)", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String)
+        return PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
       end
 
       File.write(file, remaining_lines.empty? ? "" : remaining_lines.join('\n') + "\n")
@@ -320,7 +332,7 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "", repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String)
+      PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
     end
 
     # Real apt_repository computes sources_added/sources_removed as the
