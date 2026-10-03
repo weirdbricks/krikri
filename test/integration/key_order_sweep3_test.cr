@@ -40,6 +40,27 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "dpkg_selections plugin result key order" do
+  it "serializes an already-set selection as changed-before-after (real: changed, before, after)" do
+    result = PluginSpecHelper.run("dpkg_selections", {"name" => "bash", "selection" => "install"})
+
+    result["changed"].as_bool.must_equal(false)
+    result["before"].as_s.must_equal("install")
+    result.as_h.keys.must_equal(["changed", "before", "after"])
+  end
+
+  it "serializes a check-mode selection claim as changed-before-after" do
+    result = PluginSpecHelper.run("dpkg_selections", {
+      "name"                => "bash",
+      "selection"           => "hold",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed", "before", "after"])
+  end
+end
+
 describe "debconf plugin result key order" do
   it "serializes an already-set question as changed-msg (real: changed, msg, current)" do
     result = PluginSpecHelper.run("debconf", {
