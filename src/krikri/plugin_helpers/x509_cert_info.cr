@@ -1,5 +1,6 @@
 require "json"
 require "openssl/digest"
+require "base64"
 
 module Krikri
   # Shared X.509 certificate parsing for the community.crypto info
@@ -19,10 +20,10 @@ module Krikri
   # (key usage, extended key usage, basic constraints), which openssl
   # does not do, so parsed entries are sorted here.
   #
-  # Deliberately not implemented (nothing in the role corpus reads them):
-  # `extensions_by_oid` (the DER-encoded value of every extension - needs
-  # an ASN.1 decoder this tree does not carry). The field is omitted from
-  # the result rather than emitted empty, and noted in KNOWN_MISSING.md.
+  # Deliberately not implemented: `extensions_by_oid` for CERTIFICATES
+  # (the DER-encoded value of every extension). For CSR parsing it IS
+  # implemented - see parse_extensions_by_oid - so openssl_csr_info's
+  # result carries the full real key set.
   module X509CertInfo
     # hashlib.algorithms_guaranteed minus the two SHAKE XOFs, which
     # OpenSSL exposes only with a caller-chosen output length and
@@ -214,6 +215,153 @@ module Krikri
       ensure
         File.delete(pem_file) if File.exists?(pem_file)
       end
+    end
+
+    # The real csr_info get_info()'s own key order (community.crypto's
+    # module_backends/csr_info.py CSRInfoRetrieval.get_info) - the
+    # controller backfills failed/changed after these.
+    CSR_INFO_KEY_ORDER = %w[
+      subject subject_ordered key_usage key_usage_critical
+      extended_key_usage extended_key_usage_critical basic_constraints
+      basic_constraints_critical ocsp_must_staple ocsp_must_staple_critical
+      subject_alt_name subject_alt_name_critical name_constraints_permitted
+      name_constraints_excluded name_constraints_critical public_key
+      public_key_type public_key_data public_key_fingerprints
+      subject_key_identifier authority_key_identifier authority_cert_issuer
+      authority_cert_serial_number extensions_by_oid signature_valid
+    ]
+
+    # parse_csr's output reordered into the real get_info() order, with
+    # extensions_by_oid added - the shape both openssl_csr_info (as the
+    # task result) and openssl_csr (as its diff's before/after payload)
+    # must reproduce.
+    def self.csr_info_ordered(csr_pem : String) : Hash(String, JSON::Any)?
+      info = parse_csr(csr_pem)
+      return nil unless info
+      info["extensions_by_oid"] = JSON::Any.new(parse_extensions_by_oid(csr_pem))
+      ordered = {} of String => JSON::Any
+      CSR_INFO_KEY_ORDER.each do |key|
+        ordered[key] = info[key] if info.has_key?(key)
+      end
+      info.each { |k, v| ordered[k] = v unless ordered.has_key?(k) }
+      ordered
+    end
+
+    # The real module's extensions_by_oid:
+    # cryptography_get_extensions_from_csr - {dotted_oid: {"critical":
+    # bool, "value": base64(DER of the extension value)}}. The extension
+    # value DER is exactly the content of each extension entry's
+    # extnValue OCTET STRING, which `openssl asn1parse` prints verbatim
+    # as a [HEX DUMP]. asn1parse only names known OIDs symbolically, so a
+    # name table covers the standard X509v3 extensions and an already
+    # dotted OBJECT passes through; names outside the table are skipped
+    # (an unknown key would be wrong, a missing one merely incomplete).
+    # Non-extension PKCS#9 request attributes (challengePassword etc.)
+    # have the same SEQUENCE{OBJECT,OCTET STRING} shape - their OIDs are
+    # excluded explicitly.
+    EXTENSION_OID_NAMES = {
+      "X509v3 Subject Alternative Name"    => "2.5.29.17",
+      "X509v3 Issuer Alternative Name"     => "2.5.29.18",
+      "X509v3 Basic Constraints"           => "2.5.29.19",
+      "X509v3 Key Usage"                   => "2.5.29.15",
+      "X509v3 Extended Key Usage"          => "2.5.29.37",
+      "X509v3 Subject Key Identifier"      => "2.5.29.14",
+      "X509v3 Authority Key Identifier"    => "2.5.29.35",
+      "X509v3 CRL Distribution Points"     => "2.5.29.31",
+      "X509v3 Freshest CRL"                => "2.5.29.46",
+      "X509v3 Authority Information Access" => "1.3.6.1.5.5.7.1.1",
+      "X509v3 Subject Information Access"  => "1.3.6.1.5.5.7.1.11",
+      "X509v3 Name Constraints"            => "2.5.29.30",
+      "X509v3 Policy Constraints"          => "2.5.29.36",
+      "X509v3 Certificate Policies"        => "2.5.29.32",
+      "X509v3 Policy Mappings"             => "2.5.29.33",
+      "X509v3 Inhibit Any-Policy"          => "2.5.29.54",
+      "X509v3 CRL Number"                  => "2.5.29.20",
+      "X509v3 Reason Code"                 => "2.5.29.21",
+      "X509v3 Invalidity Date"             => "2.5.29.24",
+      "OCSP No Check"                      => "1.3.6.1.5.5.7.48.1.5",
+      "TLS Feature"                        => "1.3.6.1.5.5.7.1.24",
+      "X509v3 Signed Certificate Timestamp" => "1.3.6.1.4.1.11129.2.4.2",
+      "X509v3 Certificate Type"            => "2.16.840.1.113730.1.1",
+      "X509v3 Netscape Cert Type"          => "2.16.840.1.113730.1.1",
+      "X509v3 S/MIME Capabilities"         => "1.2.840.113549.1.9.15",
+    }
+
+    # Request attributes that share the extension shape but are not
+    # X.509 extensions.
+    NON_EXTENSION_OIDS = [
+      "1.2.840.113549.1.9.7",  # challengePassword
+      "1.2.840.113549.1.9.9",  # extensionRequest
+      "1.2.840.113549.1.9.14", # extensionRequest (older spelling)
+      "1.2.840.113549.1.9.3",  # contentType
+      "1.2.840.113549.1.9.4",  # messageDigest
+      "1.2.840.113549.1.9.26", # unstructuredName (pkcs9)
+    ]
+
+    def self.parse_extensions_by_oid(csr_pem : String) : Hash(String, JSON::Any)
+      pem_file = File.tempname("csrext")
+      File.write(pem_file, csr_pem)
+      begin
+        text = run_openssl(["asn1parse", "-in", pem_file]) || ""
+      ensure
+        File.delete(pem_file) if File.exists?(pem_file)
+      end
+
+      result = {} of String => JSON::Any
+      last_oid : String? = nil
+      last_oid_depth = -1
+      critical = false
+      text.each_line do |line|
+        # "  348:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30..."
+        md = line.match(/\A\s*(\d+):d=(\d+)\s+hl=\d+\s+l=\s*(\d+)\s+(prim|cons):\s*([A-Z0-9 ]+?)\s*(?::(.*))?\s*\z/)
+        next unless md
+        depth = md[2].to_i
+        kind = md[4]
+        type = md[5].strip
+        value = md[6]?
+        if kind == "prim" && type == "OBJECT"
+          last_oid = value.try(&.strip)
+          last_oid_depth = depth
+          critical = false
+        elsif kind == "prim" && type == "BOOLEAN" && depth == last_oid_depth + 1
+          # a non-DEFAULT TRUE boolean prints ":255"
+          critical = value.try(&.strip) == "255"
+        elsif kind == "prim" && type == "OCTET STRING" && depth == last_oid_depth + 1 &&
+              (hex = value.try { |v| v.starts_with?("[HEX DUMP]:") ? v["[HEX DUMP]:".size..] : nil })
+          if oid = resolve_extension_oid(last_oid)
+            der = slice_from_hex(hex)
+            result[oid] = JSON::Any.new({
+              "critical" => JSON::Any.new(critical),
+              "value"    => JSON::Any.new(Base64.strict_encode(der)),
+            }.to_h { |k, v| {k, v} })
+          end
+          last_oid = nil
+          critical = false
+        elsif kind == "cons"
+          # entering a nested structure invalidates a dangling OBJECT only
+          # if it went past the sibling depth the octet string would sit at
+          last_oid = nil if depth > last_oid_depth + 1
+        end
+      end
+      result
+    rescue
+      {} of String => JSON::Any
+    end
+
+    private def self.resolve_extension_oid(raw : String?) : String?
+      return nil unless raw
+      return nil if NON_EXTENSION_OIDS.includes?(raw)
+      return raw if raw =~ /\A\d+(\.\d+)+\z/
+      EXTENSION_OID_NAMES[raw]?
+    end
+
+    private def self.slice_from_hex(hex : String) : Bytes
+      cleaned = hex.strip
+      bytes = Bytes.new(cleaned.size // 2)
+      bytes.size.times do |i|
+        bytes[i] = cleaned[i * 2, 2].to_u8(16)
+      end
+      bytes
     end
 
     # `openssl req -verify` exits 0 and prints "verify OK" exactly when

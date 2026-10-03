@@ -174,7 +174,7 @@ describe "apache2_module plugin" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Failed to run a2enmod for module does_not_exist")
+    result["msg"].as_s.must_include("Failed to set module does_not_exist to enabled:")
     result["rc"].as_i.must_equal(1)
   end
 

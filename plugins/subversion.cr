@@ -85,10 +85,14 @@ module Krikri
       # spawned, so a bad `executable:` loses to it.
       svn = @params["executable"]?.presence
       if svn.nil?
-        unless remote_exec("command -v svn >/dev/null 2>&1")[:exit_code] == 0
+        # Real: module.get_bin_path('svn', required=True) - the RESOLVED
+        # path (/usr/bin/svn) is what every reported `cmd` carries, not
+        # the bare name.
+        probe = remote_exec("command -v svn 2>/dev/null")
+        if probe[:exit_code] != 0 || probe[:stdout].strip.empty?
           return PluginResult.new(changed: false, failed: true, msg: missing_executable_message("svn"))
         end
-        svn = "svn"
+        svn = probe[:stdout].strip.split("\n").first
         # The default lookup already proved this binary is on PATH and
         # executable - real's Popen can spawn it, so no per-operation
         # probe is needed for it.
@@ -284,6 +288,11 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
         cmd: reported_cmd(argv), rc: errno, stdout: "", stdout_lines: [] of String,
         stderr: "", stderr_lines: [] of String,
+        # real: fail_json(rc=errno, stdout='', stderr='', msg=..., cmd=...,
+        # exception=ex) - kwargs lead in call order, failed/msg follow, the
+        # controller appends the *_lines splits, then changed, then exception.
+        key_order: ["rc", "stdout", "stderr", "cmd", "failed", "msg",
+                    "stdout_lines", "stderr_lines", "changed", "exception"],
         _ansible_error_detail: "Error executing command: [Errno #{errno}] #{reason}: b'#{path}'")
     end
 
@@ -296,7 +305,12 @@ module Krikri
         include_empty_msg: true,
         cmd: reported_cmd(argv), rc: rc,
         stdout: stdout, stdout_lines: stdout.lines.map(&.chomp),
-        stderr: stderr, stderr_lines: stderr.lines.map(&.chomp))
+        stderr: stderr, stderr_lines: stderr.lines.map(&.chomp),
+        # real: fail_json(cmd=clean_args, rc=, stdout=, stderr=, msg=)
+        # - kwargs lead, failed/msg follow, the controller appends the
+        # *_lines splits, then changed, then exception.
+        key_order: ["cmd", "rc", "stdout", "stderr", "failed", "msg",
+                    "stdout_lines", "stderr_lines", "changed", "exception"])
     end
 
     # The `cmd` string real reports for an argv: basic.py's _clean_args

@@ -16,11 +16,11 @@ module Krikri
   # file) or content (PEM text), exactly one of the two, matching the
   # real module's required_one_of plus mutually_exclusive pair.
   #
-  # Known divergence, deliberate: extensions_by_oid,
-  # subject_key_identifier, authority_key_identifier and the
-  # name_constraints_* fields are not returned (they need an ASN.1
-  # decoder this tree does not carry) - same cut as
-  # x509_certificate_info's extensions_by_oid.
+  # Known divergence, deliberate: public_key_data's modulus/exponent
+  # beyond Int64 go out as their decimal strings (this engine's result
+  # world is JSON::Any, Int64 at widest - see X509CertInfo#json_int).
+  # Everything else - including extensions_by_oid (see
+  # X509CertInfo.parse_extensions_by_oid) - follows the real module.
   class OpensslCsrInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
@@ -46,8 +46,15 @@ module Krikri
       end
 
       if path
-        return failure("Unable to read the file #{path}") unless File::Info.readable?(path)
-        raw = File.read(path)
+        raw = begin
+          File.read(path)
+        rescue e : File::NotFoundError
+          return read_failure(path, 2, "No such file or directory")
+        rescue e : File::AccessDeniedError
+          return read_failure(path, 13, "Permission denied")
+        rescue e : File::Error
+          return read_failure(path, nil, nil)
+        end
       else
         raw = content || ""
       end
@@ -58,14 +65,32 @@ module Krikri
       end
       return failure("Unable to parse the certificate request") unless csr_pem
 
-      info = X509CertInfo.parse_csr(csr_pem)
+      info = X509CertInfo.csr_info_ordered(csr_pem)
       return failure("Unable to parse the certificate request") unless info
 
-      res = PluginResult.new(changed: false, failed: false, msg: "")
+      # Real get_info() returns ONLY the info keys - no changed/msg on the
+      # wire; the controller backfills failed: false and changed: false
+      # after them, in that order.
+      res = PluginResult.new(changed: false, failed: false, omit_changed: true,
+        key_order: X509CertInfo::CSR_INFO_KEY_ORDER)
       info.each do |key, value|
         res.extra[key] = value
       end
       res
+    end
+
+    # Real: `except (IOError, OSError) as e:
+    # module.fail_json(msg=f"Error while reading CSR file from disk: {e}")`
+    # - e is the Python OSError repr, e.g. "[Errno 2] No such file or
+    # directory: '/path/to/csr'".
+    private def read_failure(path : String, errno : Int32?, reason : String?) : PluginResult
+      detail =
+        if errno && reason
+          "[Errno #{errno}] #{reason}: '#{path}'"
+        else
+          "[Errno 21] Is a directory: '#{path}'"
+        end
+      failure("Error while reading CSR file from disk: #{detail}")
     end
 
     # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
