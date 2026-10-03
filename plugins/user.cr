@@ -118,6 +118,36 @@ module Krikri
   # fails, on a value that doesn't look hashed - this plugin passes
   # `password:` straight through either way).
   class UserPlugin < BasePlugin
+    # Registered-result key order (live-verified vs ansible-core 2.19.11 on
+    # Ubuntu 22.04, round 992000 + local container replay of every probe):
+    # user.py main() builds result = {name, state} first, then the per-path
+    # params (create: system/create_home; modify: append/move_home; both
+    # BEFORE the password echo), then changed, then stdout/stderr from the
+    # useradd/usermod call, then the resolved user facts (uid, group,
+    # comment, home, shell), then groups/ssh-key fields. The *_lines keys
+    # are appended by the ACTION plugin after every module key, and the
+    # executor backfills failed last. Real success results carry NO msg.
+    USER_CREATE_ORDER = ["name", "state", "system", "create_home", "password", "changed",
+                         "stdout", "stderr", "uid", "group", "comment", "home", "shell",
+                         "groups", "ssh_fingerprint", "ssh_key_file", "ssh_public_key",
+                         "stdout_lines", "stderr_lines"]
+    USER_MODIFY_ORDER = ["name", "state", "append", "move_home", "password", "changed",
+                         "stdout", "stderr", "uid", "group", "comment", "home", "shell",
+                         "groups", "ssh_fingerprint", "ssh_key_file", "ssh_public_key",
+                         "stdout_lines", "stderr_lines"]
+    # state=absent after a real removal: name/state, force/remove (only
+    # when an account was actually removed), changed, then the userdel
+    # out/err, then the action-plugin *_lines.
+    USER_ABSENT_REMOVED_ORDER = ["name", "state", "force", "remove", "changed",
+                                 "stdout", "stderr", "stdout_lines", "stderr_lines"]
+    USER_ABSENT_ORDER = ["name", "state", "changed"]
+    # check-mode early exit_json(changed=True) - nothing else (create of a
+    # missing user, removal of an existing one).
+    USER_CHECK_ONLY_ORDER = ["changed"]
+    # fail_json(name=self.name, msg=err, rc=rc): the kwargs lead in call
+    # order, then the fail_json backfill (failed, msg), changed, exception.
+    USER_CMD_FAIL_ORDER = ["name", "rc", "failed", "msg", "changed", "exception"]
+
     # ansible.builtin.user's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.user). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -220,12 +250,15 @@ module Krikri
         # Real Ansible echoes name/state (with changed: false) even for
         # an account that doesn't exist - its main() sets both
         # unconditionally before the state branches run.
-        absent = PluginResult.new(changed: false, failed: false, msg: "User already absent")
+        absent = PluginResult.new(changed: false, failed: false, key_order: USER_ABSENT_ORDER)
         attach_user_identity(absent, name, "absent")
         return absent
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would remove user (check mode)") if check_mode
+      # Real exits with bare exit_json(changed=True) in check mode - before
+      # force/remove and any echo: the registered shape is just [changed,
+      # failed] (main()'s name/state never make it into the early exit).
+      return PluginResult.new(changed: true, failed: false, key_order: USER_CHECK_ONLY_ORDER) if check_mode
 
       args = PluginHelpers::UserState.userdel_args(name, true?(@params["remove"]?))
       result = remote_exec("#{local? ? "luserdel" : "userdel"} #{args.join(" ")}")
@@ -236,15 +269,28 @@ module Krikri
       # echoed always, plus force/remove only when an existing account
       # was actually removed (live-verified result shape: no uid/home/
       # shell after a userdel - the account no longer exists to look up).
-      removed = PluginResult.new(changed: true, failed: false, msg: "User removed")
+      # The userdel out/err ride along when non-empty (real: `if out:` /
+      # `if err:`), with the *_lines keys alongside (the executor's
+      # central augmentation overwrites them in place, keeping position).
+      removed = PluginResult.new(changed: true, failed: false, key_order: USER_ABSENT_REMOVED_ORDER)
       attach_user_identity(removed, name, "absent")
       removed.extra["force"] = JSON::Any.new(true?(@params["force"]?))
       removed.extra["remove"] = JSON::Any.new(true?(@params["remove"]?))
+      attach_command_output(removed, result[:stdout], result[:stderr])
       removed
     end
 
     private def ensure_present(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
       state = @params["state"]? || "present"
+      # Real user.py's create branch exits with bare exit_json(changed=True)
+      # in check mode BEFORE anything else runs - no name/state echo, no
+      # facts, no ageing/ssh-key tail (registered shape: [changed, failed]).
+      # The modify branch has no such early exit (modify_user is check-mode
+      # aware) and registers the full shape below.
+      if current.nil? && check_mode
+        return PluginResult.new(changed: true, failed: false, key_order: USER_CHECK_ONLY_ORDER)
+      end
+
       base = current ? modify(name, current, check_mode) : create(name, check_mode)
       return base if base.failed?
 
@@ -273,9 +319,10 @@ module Krikri
       result = PluginResult.new(
         changed: combine_changed?(base, ageing, ssh_key),
         failed: false,
-        msg: combine_msg(base, ageing, ssh_key)
+        key_order: current ? USER_MODIFY_ORDER : USER_CREATE_ORDER
       )
       attach_user_facts(result, facts) if facts
+      attach_command_output(result, base.extra["stdout"]?.try(&.as_s) || "", base.extra["stderr"]?.try(&.as_s) || "")
 
       # Real ansible-core user.py's own result keys beyond the resolved
       # identity (verified against its main() result assembly and live
@@ -313,9 +360,21 @@ module Krikri
       base.changed? || (ageing.try(&.changed?) || false) || (ssh_key.try(&.changed?) || false)
     end
 
-    private def combine_msg(base : PluginResult, ageing : PluginResult?, ssh_key : PluginResult?) : String
-      return ssh_key.msg if ssh_key && ssh_key.changed?
-      ageing && ageing.changed? ? ageing.msg : base.msg
+    # Real user.py: `if out: result['stdout'] = out` / `if err: result['stderr']
+    # = err` - the raw useradd/usermod/userdel output rides the result only
+    # when non-empty, with the paired *_lines key alongside (the executor's
+    # central command-lines augmentation overwrites the value in place,
+    # keeping the position real's action plugin gives it: after every
+    # module key, before the executor's failed backfill).
+    private def attach_command_output(result : PluginResult, stdout : String, stderr : String) : Nil
+      if !stdout.empty?
+        result.extra["stdout"] = JSON::Any.new(stdout)
+        result.extra["stdout_lines"] = JSON::Any.new(stdout.lines.to_a.map { |entry| JSON::Any.new(entry) })
+      end
+      if !stderr.empty?
+        result.extra["stderr"] = JSON::Any.new(stderr)
+        result.extra["stderr_lines"] = JSON::Any.new(stderr.lines.to_a.map { |entry| JSON::Any.new(entry) })
+      end
     end
 
     # generate_ssh_key: + friends - real ansible-core user.py's own
@@ -353,7 +412,7 @@ module Krikri
         # account name and rc=1 like every other user.py command failure,
         # not just the message (live-verified against 2.19.11).
         return {nil, PluginResult.new(changed: false, failed: true,
-          msg: "User #{name} home directory does not exist", name: name, rc: 1)}
+          msg: "User #{name} home directory does not exist", name: name, rc: 1, key_order: USER_CMD_FAIL_ORDER)}
       end
       {File.join(home, ssh_file), nil}
     end
@@ -478,7 +537,18 @@ module Krikri
     end
 
     private def create(name : String, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: true, failed: false, msg: "Would create user (check mode)") if check_mode
+      # Real user.py's create_user checks a given group: BEFORE useradd
+      # runs and fails with a PLAIN fail_json(msg=...) - no name/rc echo
+      # (live-verified: round 992000's user_fail registers [failed, msg,
+      # changed, exception] with msg "Group kop_nosuchgroup does not
+      # exist"). The check-mode bare-exit for a missing account already
+      # happened in #ensure_present, matching real's main() ordering.
+      if group = @params["group"]?.presence
+        unless group_exists?(group)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Group #{group} does not exist")
+        end
+      end
 
       local = local?
       create_home = wants_create_home?
@@ -527,6 +597,8 @@ module Krikri
       result = remote_exec("#{local ? "luseradd" : "useradd"} #{args.join(" ")}")
       return command_failure("create user", result) unless result[:exit_code] == 0
       invalidate_shadow_cache
+      created = PluginResult.new(changed: true, failed: false)
+      attach_raw_command_output(created, result[:stdout], result[:stderr])
 
       # Real Ansible's local-path tail (create_user_useradd's post-
       # luseradd block): expiry via a separate lchage (luseradd has no
@@ -546,10 +618,20 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "User created")
+      created
     end
 
     private def modify(name : String, current : PluginHelpers::UserState::User, check_mode : Bool) : PluginResult
+      # Real user.py's modify_user_usermod checks a given group: BEFORE
+      # any flag/idempotency logic - a nonexistent group fails the task
+      # even when nothing else would change (and in check mode too).
+      if group = @params["group"]?.presence
+        unless group_exists?(group)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Group #{group} does not exist")
+        end
+      end
+
       local = local?
       flags = PluginHelpers::UserState.usermod_flags(
         current,
@@ -588,15 +670,18 @@ module Krikri
       new_home = home_needing_creation(current)
 
       if flags.empty? && !new_home && local_group_cmds.empty? && local_expiry_days.nil?
-        return PluginResult.new(changed: false, failed: false, msg: "User already up to date")
+        return PluginResult.new(changed: false, failed: false)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would modify user (check mode)") if check_mode
+      return PluginResult.new(changed: true, failed: false) if check_mode
 
+      modified : PluginResult? = nil
       unless flags.empty?
         result = remote_exec("#{local ? "lusermod" : "usermod"} #{flags.join(" ")} #{shell_single_quote(name)}")
         return command_failure("modify user", result) unless result[:exit_code] == 0
         invalidate_shadow_cache
+        modified = PluginResult.new(changed: true, failed: false)
+        attach_raw_command_output(modified, result[:stdout], result[:stderr])
       end
 
       # Real Ansible's modify_user_usermod local-path tail: expiry via
@@ -618,7 +703,7 @@ module Krikri
         return home_result if home_result.failed?
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "User modified")
+      modified || PluginResult.new(changed: true, failed: false)
     end
 
     # `groups:`/`append:` on an EXISTING user - found benchmarking
@@ -878,10 +963,22 @@ module Krikri
       flags.map_with_index { |flag, i| i > 0 && flags[i - 1] == "-p" ? shell_single_quote(flag) : flag }
     end
 
+    # Raw stdout/stderr carrier on the intermediate create/modify result -
+    # #ensure_present re-attaches these (with the paired *_lines keys) to
+    # the merged result via #attach_command_output.
+    private def attach_raw_command_output(result : PluginResult, stdout : String, stderr : String) : Nil
+      result.extra["stdout"] = JSON::Any.new(stdout) unless stdout.empty?
+      result.extra["stderr"] = JSON::Any.new(stderr) unless stderr.empty?
+    end
+
     private def command_failure(action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
       # real user.py: fail_json(name=self.name, msg=err, rc=rc) - the raw
-      # stderr as msg (no "Failed to ..." prefix), plus name and rc.
-      PluginResult.new(changed: false, failed: true, msg: result[:stderr], name: @params["name"]?, rc: result[:exit_code])
+      # stderr as msg (no "Failed to ..." prefix), plus name and rc; the
+      # registered key order puts the fail_json kwargs first (name, rc,
+      # live-verified vs 2.19.11: useradd UID-0 failure registers [name,
+      # rc, failed, msg, changed, exception]).
+      PluginResult.new(changed: false, failed: true, msg: result[:stderr],
+        name: @params["name"]?, rc: result[:exit_code], key_order: USER_CMD_FAIL_ORDER)
     end
 
     private def missing_param(name : String) : PluginResult

@@ -50,7 +50,29 @@ module Krikri
   #
   # Real Ansible returns name/state always, and gid/system whenever the
   # group exists after the task - attached to the result here the same way.
+  #
+  # Registered-result key order (live-verified vs ansible-core 2.19.11 on
+  # Ubuntu 22.04, round 992000 + local container replay): group.py builds
+  # result = {name, state} first, then changed (after the branch), then
+  # system/gid from the post-task group_info - so every exists-after path
+  # registers [name, state, changed, system, gid, failed], while the
+  # check-mode create of a missing group exits early with just
+  # exit_json(changed=True) -> [changed, failed], and the absent path
+  # never carries system/gid at all. Command failures fail_json(name=,
+  # msg=) and register [name, failed, msg, changed, exception] - the name
+  # kwarg LEADS, before failed/msg (real's fail_json kwargs-first rule).
   class GroupPlugin < BasePlugin
+    # group_exists-after-task result: name/state, then changed, then the
+    # group_info fields (system first, gid last).
+    GROUP_EXISTS_ORDER = ["name", "state", "changed", "system", "gid"]
+    # state=absent result: name/state/changed only - no system/gid.
+    GROUP_ABSENT_ORDER = ["name", "state", "changed"]
+    # check-mode early exit_json(changed=True) - nothing else.
+    GROUP_CHECK_ONLY_ORDER = ["changed"]
+    # fail_json(name=group.name, msg=err): the kwargs lead, then the
+    # fail_json backfill (failed, msg), then changed, then exception.
+    GROUP_FAIL_ORDER = ["name", "failed", "msg", "changed", "exception"]
+
     # ansible.builtin.group's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.group). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -162,9 +184,18 @@ module Krikri
     end
 
     private def ensure_absent(name : String, current : PluginHelpers::GroupState::Group?, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Group already absent") unless current
+      unless current
+        # Real group.py echoes name/state with changed: false even for a
+        # group that doesn't exist (its main() sets both before the state
+        # branches run); no msg on success.
+        absent = PluginResult.new(changed: false, failed: false, key_order: GROUP_ABSENT_ORDER)
+        attach_identity(absent, name, "absent")
+        return absent
+      end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would remove group (check mode)") if check_mode
+      # Real exits with bare exit_json(changed=True) in check mode - no
+      # name/state echo at all (registered shape: [changed, failed]).
+      return PluginResult.new(changed: true, failed: false, key_order: GROUP_CHECK_ONLY_ORDER) if check_mode
 
       # force is delete-only (see class comment) - groupdel's -f, never
       # anything on the add/mod path; force+local already failed above.
@@ -174,7 +205,9 @@ module Krikri
       result = remote_exec("#{local? ? "lgroupdel" : "groupdel"} #{args.join(" ")}")
       return command_failure(name, "remove group", result) unless result[:exit_code] == 0
 
-      PluginResult.new(changed: true, failed: false, msg: "Group removed")
+      removed = PluginResult.new(changed: true, failed: false, key_order: GROUP_ABSENT_ORDER)
+      attach_identity(removed, name, "absent")
+      removed
     end
 
     private def ensure_present(name : String, current : PluginHelpers::GroupState::Group?, check_mode : Bool) : PluginResult
@@ -183,7 +216,9 @@ module Krikri
       non_unique = true?(@params["non_unique"]?)
 
       unless current
-        return PluginResult.new(changed: true, failed: false, msg: "Would create group (check mode)") if check_mode
+        # Real exits with bare exit_json(changed=True) in check mode - the
+        # create branch early-outs before anything else runs.
+        return PluginResult.new(changed: true, failed: false, key_order: GROUP_CHECK_ONLY_ORDER) if check_mode
 
         if conflict = local_gid_conflict(name, gid)
           return conflict
@@ -194,17 +229,21 @@ module Krikri
         result = remote_exec("#{local? ? "lgroupadd" : "groupadd"} #{args.join(" ")}")
         return command_failure(name, "create group", result) unless result[:exit_code] == 0
 
-        return attach_facts(PluginResult.new(changed: true, failed: false, msg: "Group created"),
+        return attach_facts(PluginResult.new(changed: true, failed: false, key_order: GROUP_EXISTS_ORDER),
           name, state: "present", lookup_facts: true)
       end
 
       flags = PluginHelpers::GroupState.groupmod_flags(current, gid, non_unique)
       if flags.empty?
-        return attach_facts(PluginResult.new(changed: false, failed: false, msg: "Group already up to date"),
+        return attach_facts(PluginResult.new(changed: false, failed: false, key_order: GROUP_EXISTS_ORDER),
           name, state: "present", facts: current)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would modify group (check mode)") if check_mode
+      # Check mode with an actual change: real's group_mod returns rc=0
+      # without running groupmod - the full exists-after shape with the
+      # requested change reported.
+      return attach_facts(PluginResult.new(changed: true, failed: false, key_order: GROUP_EXISTS_ORDER),
+        name, state: "present", facts: current) if check_mode
 
       if conflict = local_gid_conflict(name, gid)
         return conflict
@@ -213,8 +252,13 @@ module Krikri
       result = remote_exec("#{local? ? "lgroupmod" : "groupmod"} #{flags.join(" ")} #{shell_single_quote(name)}")
       return command_failure(name, "modify group", result) unless result[:exit_code] == 0
 
-      attach_facts(PluginResult.new(changed: true, failed: false, msg: "Group modified"),
+      attach_facts(PluginResult.new(changed: true, failed: false, key_order: GROUP_EXISTS_ORDER),
         name, state: "present", lookup_facts: true)
+    end
+
+    private def attach_identity(result : PluginResult, name : String, state : String) : Nil
+      result.extra["name"] = JSON.parse(name.to_json)
+      result.extra["state"] = JSON.parse(state.to_json)
     end
 
     # Real Ansible's result shape: name/state always, gid/system whenever
@@ -241,7 +285,7 @@ module Krikri
     # name echo. No "Failed to <action>: " prefix, no stdout fallback:
     # real passes err (stderr) only, even when it is empty.
     private def command_failure(name : String, action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
-      failure = PluginResult.new(changed: false, failed: true, msg: result[:stderr])
+      failure = PluginResult.new(changed: false, failed: true, msg: result[:stderr], key_order: GROUP_FAIL_ORDER)
       failure.extra["name"] = JSON.parse(name.to_json)
       failure
     end

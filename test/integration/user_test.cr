@@ -62,33 +62,54 @@ describe "user plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
+  # Real check-mode modify of an existing user registers the full shape:
+  # modify_user is check-mode aware and returns rc=0 for a would-be
+  # change, so the result carries name/state, the modify-path params,
+  # changed, and the resolved facts (live-verified vs 2.19.11:
+  # [name, state, append, move_home, changed, uid, group, comment, home,
+  # shell, failed]).
   it "reports it would modify an existing user when an attribute differs (check mode, no real change)" do
     result = PluginSpecHelper.run("user", {"name" => "root", "shell" => "/bin/totally-fake-shell", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("check mode")
+    result["name"].as_s.must_equal("root")
+    result["append"].as_bool.must_equal(false)
+    result["move_home"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["name", "state", "append", "move_home", "changed", "uid", "group", "comment", "home", "shell"])
     `getent passwd root`.split(":")[6].strip.wont_equal("/bin/totally-fake-shell")
   end
 
+  # Real user.py's check-mode create branch exits with bare
+  # exit_json(changed=True) before anything else runs - the registered
+  # shape is just [changed, failed], no name/state/system/create_home
+  # echo (live-verified vs 2.19.11, round 992000's user_check probe:
+  # {"changed": true, "failed": false}).
   it "reports it would create a user that does not exist yet (check mode, no real creation)" do
     result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("check mode")
+    result.as_h.keys.must_equal(["changed"])
     `getent passwd #{NONEXISTENT_USER}`.strip.must_be_empty
   end
 
+  # Real user.py echoes name/state with changed: false for an account
+  # that doesn't exist - no msg key (live-verified: [name, state,
+  # changed, failed]).
   it "reports no change when removing a user that already doesn't exist (state=absent is a genuine no-op, safe even without check mode)" do
     result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_include("already absent")
+    result["name"].as_s.must_equal(NONEXISTENT_USER)
+    result["state"].as_s.must_equal("absent")
+    result.as_h.keys.must_equal(["name", "state", "changed"])
   end
 
   it "reports it would remove an existing user (check mode, no real removal)" do
     result = PluginSpecHelper.run("user", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
+    # Real's check-mode absent branch exits with bare exit_json(changed=True).
+    result.as_h.keys.must_equal(["changed"])
     `getent passwd root`.strip.wont_be_empty
   end
 
@@ -114,14 +135,17 @@ describe "user plugin" do
     result["groups"].as_s.must_equal("root")
   end
 
-  it "echoes the create-path system/create_home flags for a not-yet-existing user (check mode)" do
+  # Real user.py only echoes system/create_home on the create path AFTER
+  # it actually ran (a check-mode create of a missing user exits bare
+  # changed before ever reaching that echo) - verified live vs 2.19.11
+  # with a real state=present run in the round 992000 capture:
+  # [name, state, system, create_home, changed, uid, ...].
+  it "echoes the create-path system/create_home flags only on a real create, not in check mode" do
     result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "_ansible_check_mode" => "true"})
 
-    result["state"].as_s.must_equal("present")
-    result["system"].as_bool.must_equal(false)
-    result["create_home"].as_bool.must_equal(true)
-    result["append"]?.must_be_nil
-    result["move_home"]?.must_be_nil
+    result.as_h.keys.must_equal(["changed"])
+    result["system"]?.must_be_nil
+    result["create_home"]?.must_be_nil
   end
 
   it "masks a given password as NOT_LOGGING_PASSWORD" do
@@ -136,6 +160,8 @@ describe "user plugin" do
     result = PluginSpecHelper.run("user", {"name" => NONEXISTENT_USER, "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_include("already absent")
+    result["name"].as_s.must_equal(NONEXISTENT_USER)
+    result["state"].as_s.must_equal("absent")
+    result.as_h.keys.must_equal(["name", "state", "changed"])
   end
 end
