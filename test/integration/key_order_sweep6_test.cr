@@ -210,6 +210,85 @@ describe "openssl_pkcs12 plugin result key order" do
   end
 end
 
+describe "x509_certificate plugin result key order" do
+  it "serializes a fresh selfsigned generation with the cert details after csr" do
+    dir = PluginSpecHelper.tmp_path("ko-x509-1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    csr = File.join(dir, "req.csr")
+    PluginSpecHelper.run("openssl_csr", {
+      "path"            => csr,
+      "privatekey_path" => key,
+      "common_name"     => "test.example.com",
+    })
+    result = PluginSpecHelper.run("x509_certificate", {
+      "path"            => File.join(dir, "cert.pem"),
+      "privatekey_path" => key,
+      "csr_path"        => csr,
+      "provider"        => "selfsigned",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "privatekey", "csr", "notBefore", "notAfter", "serial_number",
+      "changed", "filename",
+    ])
+  end
+
+  it "keeps the same order on an idempotent unchanged rerun" do
+    dir = PluginSpecHelper.tmp_path("ko-x509-2")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    csr = File.join(dir, "req.csr")
+    PluginSpecHelper.run("openssl_csr", {
+      "path"            => csr,
+      "privatekey_path" => key,
+      "common_name"     => "test.example.com",
+    })
+    params = {
+      "path"            => File.join(dir, "cert.pem"),
+      "privatekey_path" => key,
+      "csr_path"        => csr,
+      "provider"        => "selfsigned",
+    }
+    PluginSpecHelper.run("x509_certificate", params)
+    result = PluginSpecHelper.run("x509_certificate", params)
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "privatekey", "csr", "notBefore", "notAfter", "serial_number",
+      "changed", "filename",
+    ])
+  end
+
+  it "serializes a state=absent removal changed-first" do
+    dir = PluginSpecHelper.tmp_path("ko-x509-3")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    csr = File.join(dir, "req.csr")
+    PluginSpecHelper.run("openssl_csr", {
+      "path"            => csr,
+      "privatekey_path" => key,
+      "common_name"     => "test.example.com",
+    })
+    PluginSpecHelper.run("x509_certificate", {
+      "path"            => File.join(dir, "cert.pem"),
+      "privatekey_path" => key,
+      "csr_path"        => csr,
+      "provider"        => "selfsigned",
+    })
+    result = PluginSpecHelper.run("x509_certificate", {
+      "path" => File.join(dir, "cert.pem"), "state" => "absent",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed", "filename"])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")

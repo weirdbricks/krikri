@@ -91,6 +91,19 @@ module Krikri
       "unsafe_writes"                            => [] of String,
     }
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps. Present and absent build their
+    # results differently, so they get separate orders: present is
+    # dump()-first (privatekey/csr, then the certificate details diff/
+    # notBefore/notAfter/serial_number, changed, filename, backup_file),
+    # absent leads with changed. certificate only appears with
+    # return_content; ansible_facts is controller-added, warnings trails.
+    PRESENT_KEY_ORDER = %w[
+      privatekey csr certificate diff notBefore notAfter serial_number
+      changed filename backup_file ansible_facts failed warnings
+    ]
+    ABSENT_KEY_ORDER = %w[changed filename privatekey csr backup_file failed warnings]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -247,7 +260,7 @@ module Krikri
         backup_file = backup(path)
         File.delete(path)
       end
-      res = PluginResult.new(changed: exists, failed: false, msg: "")
+      res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: ABSENT_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
@@ -493,7 +506,7 @@ module Krikri
 
     private def result(changed : Bool, path : String, privatekey_path : String?,
                        csr_path : String, backup_file : String?) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: PRESENT_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["privatekey"] = JSON::Any.new(privatekey_path) if privatekey_path
       res.extra["csr"] = JSON::Any.new(csr_path)
