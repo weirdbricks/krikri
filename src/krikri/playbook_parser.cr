@@ -4447,6 +4447,12 @@ module Krikri
       end
     end
 
+    # docker_container's list-typed options (`command`, `entrypoint`,
+    # `volumes`, `ports`) travel JSON-encoded rather than on the generic
+    # comma-joined wire, because a comma inside one element (or a space,
+    # for command) is meaningful there - see #parse_module_params.
+    DOCKER_CONTAINER_LIST_PARAMS = {"community.docker.docker_container", "docker_container"}
+
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
 
@@ -4556,6 +4562,20 @@ module Krikri
             # Array(String) on the plugin side.
             entries = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = entries.to_json
+          elsif DOCKER_CONTAINER_LIST_PARAMS.includes?(module_name) &&
+                {"command", "entrypoint", "volumes", "ports"}.includes?(key.to_s) && value.as_a?
+            # community.docker's docker_container takes `command` as an
+            # ansible-type `raw` option (a list reaches the daemon as
+            # the argv list verbatim; `entrypoint`, `volumes` and
+            # `ports` are list-typed too) - the generic comma-joined
+            # Array wire below would fuse `command: [sh, -c, "echo hello
+            # world"]` into one string and then, plugin-side, into ONE
+            # argv element (live-verified vs 2.19.11 + community.docker
+            # 5.2.1: real runs it, krikri failed to exec "sleep,30").
+            # JSON-encoded here; DockerContainerPlugin's own
+            # #literal_list_param decodes it back into an Array(String).
+            docker_list_items = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = docker_list_items.to_json
           elsif RAW_COMMAND_MODULES.includes?(module_name) && key.to_s == "argv" && value.as_a?
             # `argv:` (command:'s list form, real Ansible's own way to
             # avoid shell quoting entirely) has the identical comma-

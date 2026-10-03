@@ -42,9 +42,20 @@ module Krikri
   #   own param; <= 0 means wait forever). Type-validated on every
   #   state like real's argspec (a non-numeric value fails the task
   #   even with state: started/stopped).
-  # - command: shell command to run (plain string, naively whitespace-split -
-  #   same documented limitation as ansible.builtin.command's own cmd:)
-  # - entrypoint: same treatment as command:
+  # - command: container command. Real's option is `type: raw` (see
+  #   community.docker's `OPTION_COMMAND`, ansible_type="raw") with
+  #   `command_handling: correct` as the default: a YAML LIST is passed
+  #   to the daemon as the argv list verbatim (spaces inside one element
+  #   included), a STRING is POSIX-shell-split (Python `shlex.split`).
+  #   The parser JSON-encodes a literal YAML list (see
+  #   playbook_parser's docker_container list branch), so a leading `[`
+  #   here means a real list; anything else is split the way real splits
+  #   a string.
+  # - entrypoint: same, except real's option is a plain
+  #   `type: list, elements: str` - a STRING is turned into a list by
+  #   Ansible's own comma-separated conversion (NOT shell-split), which
+  #   is why `entrypoint: /bin/sh -c` stays one argv element (verified
+  #   live against 2.19.11 + community.docker 5.2.1).
   # - env: dict of environment variables
   # - labels: dict of labels
   # - ports: comma-separated list of docker_ports.cr-syntax mappings
@@ -234,7 +245,7 @@ module Krikri
       return absent_shape(api, name, existing, check_mode) if state == "absent"
 
       image_ref = @params["image"]?
-      command = @params["command"]?.try(&.split(/\s+/).reject(&.empty?))
+      command = parse_command
       pull = true?(@params["pull"]?, default: true)
       recreate_requested = true?(@params["recreate"]?)
 
@@ -377,7 +388,7 @@ module Krikri
     # stdio flags krikri itself sets on every create.
     private def create_parameters(name : String) : JSON::Any
       params = {
-        "Cmd"          => JSON::Any.new((@params["command"]? || "").split(/\s+/).reject(&.empty?).map { |arg| JSON::Any.new(arg) }),
+        "Cmd"          => JSON::Any.new((parse_command || [] of String).map { |arg| JSON::Any.new(arg) }),
         "AttachStdout" => JSON::Any.new(true),
         "AttachStderr" => JSON::Any.new(true),
         "AttachStdin"  => JSON::Any.new(false),
@@ -649,7 +660,12 @@ module Krikri
       end
 
       if command
-        return false unless existing.command == command.join(" ")
+        # real compares `command` as a LIST (`Option` value_type="list",
+        # comparison strict) against the container's own Config.Cmd -
+        # not as a joined string, which would misread an element
+        # containing a space as several.
+        actual = api.containers.inspect(existing.id).config.try(&.cmd) || [] of String
+        return false unless actual == command
       end
 
       return true unless extra_fields_given?
@@ -717,7 +733,7 @@ module Krikri
       mode = comparison_mode("entrypoint", "strict")
       return true if mode == "ignore"
 
-      requested = entrypoint.split(/\s+/).reject(&.empty?)
+      requested = parse_entrypoint || [] of String
       actual = config.entrypoint || [] of String
       mode == "strict" ? actual == requested : requested.all? { |e| actual.includes?(e) }
     end
@@ -745,12 +761,12 @@ module Krikri
     end
 
     private def volumes_match?(host_config : Docr::Types::HostConfig) : Bool
-      volumes = @params["volumes"]?
-      return true unless volumes
+      requested = parse_volumes(@params["volumes"]?)
+      return true unless requested
       mode = comparison_mode("volumes", "allow_more_present")
       return true if mode == "ignore"
 
-      requested = volumes.split(',').map(&.strip).reject(&.empty?).to_set
+      requested = parse_volumes(@params["volumes"]?).try(&.to_set) || Set(String).new
       actual = (host_config.binds || [] of String).to_set
       mode == "strict" ? actual == requested : requested.subset_of?(actual)
     end
@@ -1104,8 +1120,8 @@ module Krikri
     end
 
     private def build_container_config(image_ref : String) : Docr::Types::CreateContainerConfig
-      command = @params["command"]?.try(&.split(/\s+/).reject(&.empty?))
-      entrypoint = @params["entrypoint"]?.try(&.split(/\s+/).reject(&.empty?))
+      command = parse_command
+      entrypoint = parse_entrypoint
       env = @params["env"]?.try { |json| Hash(String, String).from_json(json).map { |k, v| "#{k}=#{v}" } }
       labels = @params["labels"]?.try { |json| Hash(String, String).from_json(json) }
 
@@ -1114,7 +1130,7 @@ module Krikri
       restart_policy_name = @params["restart_policy"]?
       restart_policy = restart_policy_name ? Docr::Types::RestartPolicy.new(name: restart_policy_name) : nil
 
-      volumes = @params["volumes"]?.try(&.split(',').map(&.strip).reject(&.empty?))
+      volumes = parse_volumes(@params["volumes"]?)
 
       healthcheck = @params["healthcheck"]?.try { |json| built_healthcheck(json) }
 
@@ -1173,7 +1189,7 @@ module Krikri
       exposed_ports = Hash(String, Hash(String, String)).new
       port_bindings = Hash(String, Array(Docr::Types::PortBinding)).new
 
-      entries = @params["ports"]?.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
+      entries = parse_port_entries
       entries.each do |entry|
         mapping = PluginHelpers::DockerPorts.parse(entry)
         key = "#{mapping.container_port}/#{mapping.proto}"
@@ -1184,6 +1200,57 @@ module Krikri
       end
 
       {exposed_ports, port_bindings}
+    end
+
+    # A literal YAML LIST param arrives JSON-encoded (see
+    # playbook_parser's docker_container list branch) - a leading `[`
+    # therefore means a real list, whose elements are passed to the
+    # daemon verbatim (an element containing a comma or a space is ONE
+    # element, where the comma-joined wire every other module's list
+    # param travels on would have split it). Anything else is the
+    # comma-separated form real's own Ansible-side list conversion
+    # produces for a string param.
+    private def literal_list_param(raw : String) : Array(String)?
+      return nil unless raw.starts_with?('[')
+      parsed = JSON.parse(raw) rescue nil
+      return nil unless (items = parsed.try(&.as_a?))
+      items.map { |item| item.as_s? || item.raw.to_s }
+    end
+
+    # real's `command`: a list verbatim, a string shell-split
+    # (community.docker's `_preprocess_command` under its default
+    # `command_handling: correct`).
+    private def parse_command : Array(String)?
+      raw = @params["command"]?
+      return nil unless raw
+      literal_list_param(raw) || Krikri::Shell.shlex_split(raw)
+    end
+
+    # real's `entrypoint`: a list verbatim; a string is turned into a
+    # one-element list by Ansible's own comma-separated list conversion -
+    # deliberately NOT shell-split, which is why `entrypoint: /bin/sh -c`
+    # stays a single (failing) argv element in real too
+    # (live-verified: `entrypoint: ["/bin/sh", "-c"]` runs, the string
+    # form makes the daemon look for a file literally named
+    # "/bin/sh -c").
+    private def parse_entrypoint : Array(String)?
+      raw = @params["entrypoint"]?
+      return nil unless raw
+      return literal_list_param(raw) if raw.starts_with?('[')
+      return [] of String if raw.empty?
+      raw.split(',').map(&.strip).reject(&.empty?)
+    end
+
+    # real's `volumes`: a list verbatim, a string comma-split.
+    private def parse_volumes(raw : String?) : Array(String)?
+      return nil unless raw
+      literal_list_param(raw) || raw.split(',').map(&.strip).reject(&.empty?)
+    end
+
+    private def parse_port_entries : Array(String)
+      raw = @params["ports"]?
+      return [] of String unless raw
+      (literal_list_param(raw) || raw.split(',').map(&.strip)).reject(&.empty?)
     end
   end
 end
