@@ -44,7 +44,7 @@ private def run_registered_dump(yaml : String) : Array(String)
   File.write(playbook, yaml.gsub("KRIKRI_DUMP_PATH", dump))
   output = IO::Memory.new
   status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
-  status.success?.must_equal(true)
+  status.success?.must_equal(true, output.to_s[-800..]? || output.to_s)
   JSON.parse(File.read(dump)).as_h.keys
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -219,6 +219,103 @@ describe "rpm_key plugin result key order (sweep8)" do
       YAML
 
       keys.must_equal(["changed", "failed"])
+    end
+  end
+end
+
+describe "gem plugin result key order (sweep8)" do
+  # Real community.general gem.py builds every success result as
+  # name, state, version (only when requested), changed and exits with
+  # exit_json(**result) - no msg/stdout. Live-verified in a Fedora 41
+  # container (changed install, unchanged rerun, check mode all register
+  # exactly {name, state, changed, failed}). krikri's success paths now
+  # echo name/state (+ version when requested) and dropped the borrowed
+  # "Gem installed"/"already ..." msgs and the raw gem stdout.
+  serial!
+
+  GEM_SHIM = <<-'SH'
+    #!/bin/sh
+    DB="${KRIKRI_FAKE_GEM_DB:?}"
+    case "$1" in
+      --version) echo "RubyGems 3.5.0"; exit 0;;
+      list) grep -q "^ko-gem " "$DB" 2>/dev/null && echo "ko-gem (1.0)"; exit 0;;
+      install) echo "ko-gem (1.0)" >> "$DB"; exit 0;;
+      uninstall) sed -i '/^ko-gem /d' "$DB" 2>/dev/null; exit 0;;
+    esac
+    exit 0
+    SH
+
+  private def with_gem_shim(&)
+    bin_dir = File.tempname("krikri-sweep8-gem")
+    Dir.mkdir_p(bin_dir)
+    gem = File.join(bin_dir, "gem")
+    File.write(gem, GEM_SHIM)
+    File.chmod(gem, 0o755)
+    db = File.tempname("krikri-sweep8-gem-db")
+    File.delete(db) if File.exists?(db)
+    previous_path = ENV["PATH"]?
+    previous_db = ENV["KRIKRI_FAKE_GEM_DB"]?
+    ENV["PATH"] = "#{bin_dir}:#{ENV["PATH"]?}"
+    ENV["KRIKRI_FAKE_GEM_DB"] = db
+    begin
+      yield db
+    ensure
+      previous_path ? (ENV["PATH"] = previous_path) : ENV.delete("PATH")
+      previous_db ? (ENV["KRIKRI_FAKE_GEM_DB"] = previous_db) : ENV.delete("KRIKRI_FAKE_GEM_DB")
+      FileUtils.rm_r(bin_dir)
+      File.delete(db) if File.exists?(db)
+    end
+  end
+
+  private GEM_PLAY = <<-YAML
+    - name: repro
+      hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: gem task
+          community.general.gem:
+            name: ko-gem
+            VERSION_LINE
+          register: r
+        - name: dump
+          ansible.builtin.copy:
+            content: |-
+              {{ r | to_json }}
+            dest: KRIKRI_DUMP_PATH
+    YAML
+
+  it "registers a fresh install as name, state, changed" do
+    with_gem_shim do
+      keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
+      keys.must_equal(["name", "state", "changed", "failed"])
+    end
+  end
+
+  it "registers an already-installed rerun in the same shape" do
+    with_gem_shim do |db|
+      run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
+      File.exists?(db).must_equal(true)
+      keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", ""))
+      keys.must_equal(["name", "state", "changed", "failed"])
+    end
+  end
+
+  it "echoes version between state and changed when version is requested" do
+    with_gem_shim do
+      keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "version: \"1.0\""))
+      keys.must_equal(["name", "state", "version", "changed", "failed"])
+    end
+  end
+
+  it "registers an absent no-op and a removal in the same shape" do
+    with_gem_shim do |db|
+      keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "").sub("gem task", "gem absent no-op").sub("name: ko-gem", "name: ko-gem\n        state: absent"))
+      keys.must_equal(["name", "state", "changed", "failed"])
+
+      File.write(db, "ko-gem (1.0)\n")
+      keys = run_registered_dump(GEM_PLAY.sub("VERSION_LINE", "").sub("gem task", "gem removal").sub("name: ko-gem", "name: ko-gem\n        state: absent"))
+      keys.must_equal(["name", "state", "changed", "failed"])
     end
   end
 end

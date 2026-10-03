@@ -216,7 +216,7 @@ module Krikri
 
     private def install(executable : String?, name : String, version : String?, force : Bool) : PluginResult
       unless force
-        return PluginResult.new(changed: false, failed: false, msg: "Gem already installed") if installed?(executable, name, version)
+        return gem_success(false, name, version) if installed?(executable, name, version)
       end
 
       user_install = @params["user_install"]?.nil? || true?(@params["user_install"]?)
@@ -233,11 +233,11 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to install gem: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Gem installed", stdout: result[:stdout])
+      gem_success(true, name, version)
     end
 
     private def remove(executable : String?, name : String, version : String?) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Gem already absent") unless installed?(executable, name, version)
+      return gem_success(false, name, version) unless installed?(executable, name, version)
 
       result = remote_exec(PluginHelpers::GemCommand.uninstall_command(gem_binary(executable), name, version, true?(@params["norc"]?)))
 
@@ -245,7 +245,28 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall gem: #{result[:stderr]}")
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Gem removed")
+      gem_success(true, name, version)
+    end
+
+    # Real community.general gem.py builds every success result as
+    # result["name"], result["state"], result["version"] (only when a
+    # version was requested) then result["changed"], and exits with
+    # exit_json(**result) - no msg, no stdout (the "Gem installed"/
+    # "already installed" texts and the raw gem output were krikri's own
+    # borrows; dropped, npm-style). Live-verified in a Fedora 41
+    # container for the changed install, the unchanged rerun and check
+    # mode (all register exactly {name, state, changed, failed}); the
+    # version-echo position is from module source (result["version"]
+    # only when truthy).
+    private def gem_success(changed : Bool, name : String, version : String?) : PluginResult
+      state = @params["state"]? || "present"
+      if version
+        PluginResult.new(changed: changed, failed: false, name: name, state: state, version: version,
+          key_order: %w[name state version changed])
+      else
+        PluginResult.new(changed: changed, failed: false, name: name, state: state,
+          key_order: %w[name state changed])
+      end
     end
 
     # The binary name for command building: a resolved absolute path when
