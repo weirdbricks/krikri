@@ -115,7 +115,7 @@ module Krikri
         apply_state(state, dbcon, name, exists, true?(@params["_ansible_check_mode"]?))
       end
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
+      PluginHelpers::DbErrors.pg_connection_failed(ex, @params)
     rescue ex : PQ::PQError
       PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
     end

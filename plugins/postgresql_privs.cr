@@ -239,7 +239,7 @@ module Krikri
         run_grants(database, p)
       end
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
+      PluginHelpers::DbErrors.pg_connection_failed(ex, @params)
     rescue ex : PQ::PQError
       PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
     end

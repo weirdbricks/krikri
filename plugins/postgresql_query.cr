@@ -165,7 +165,7 @@ module Krikri
           end
         end
       rescue ex : DB::ConnectionRefused
-        return PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
+        return PluginHelpers::DbErrors.pg_connection_failed(ex, @params)
       rescue ex : PQ::PQError
         return PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
       end

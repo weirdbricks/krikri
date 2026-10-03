@@ -72,6 +72,122 @@ module Krikri
         uri.to_s
       end
 
+      # The connection target a params hash resolves to, for
+      # diagnostics that have to name the server the plugin actually
+      # dialed (libpq's connection-error text quotes the host/port or
+      # the socket path verbatim). Applies the same defaults
+      # #build_uri does: an absent host means a Unix socket in
+      # DEFAULT_UNIX_SOCKET_DIR, an absent port means 5432.
+      def self.effective_target(params : Hash(String, String)) : {host: String?, port: String, unix_socket: String?}
+        login = resolve_login_params(params)
+        host = login[:host]
+        {
+          host:        host,
+          port:        login[:port] || "5432",
+          unix_socket: login[:unix_socket] || (DEFAULT_UNIX_SOCKET_DIR unless host),
+        }
+      end
+
+      # libpq's own connection-error wording, which is what real
+      # (psycopg2 -> libpq) embeds in community.postgresql's
+      # "unable to connect to database: %s" fail_json. Live-verified
+      # against real ansible-core 2.19.11 + community.postgresql 4.2.0
+      # for every case reproduced below:
+      #
+      # - TCP, nothing listening (ECONNREFUSED):
+      #     connection to server at "127.0.0.1", port 59999 failed: Connection refused\n
+      #     \tIs the server running on that host and accepting TCP/IP connections?\n
+      # - Unix socket, socket file/dir missing (ENOENT):
+      #     connection to server on socket "/nonexistent/sockdir/.s.PGSQL.5432" failed: No such file or directory\n
+      #     \tIs the server running locally and accepting connections on that socket?\n
+      # - server answered and rejected us (its ErrorResponse carries
+      #   the text, so the server-side severity is rebuilt as
+      #   "<severity>:  <message>\n", and NO hint line follows):
+      #     connection to server at "127.0.0.1", port 35433 failed: FATAL:  password authentication failed for user "postgres"\n
+      #     connection to server at "127.0.0.1", port 35433 failed: FATAL:  database "nosuchdb" does not exist\n
+      # - unresolvable host (libpq's own DNS wording, no hint line):
+      #     could not translate host name "nosuchhost.invalid" to address: Name or service not known\n
+      #
+      # Reproducible vs not: the strerror text above is derived from
+      # the exception CLASS Crystal raises (Socket::ConnectError is
+      # raised only for ECONNREFUSED, Socket::Addrinfo::Error only for
+      # a failed lookup) rather than from its message, because
+      # Crystal's message for a refused connect misreports the errno
+      # ("Resource temporarily unavailable"). What krikri CANNOT
+      # reproduce: a temporary resolver failure, which libpq renders
+      # with gai_strerror's "Temporary failure in name resolution"
+      # (Crystal's Socket::Addrinfo::Error carries no gai code, so
+      # krikri prints the EAI_NONAME wording instead), and any
+      # strerror string from a non-glibc libc (libpq prints the
+      # system's own, locale-dependent strings).
+      def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}) : String
+        case cause = unwrap(ex.cause)
+        when PQ::PQError
+          # crystal-pg reports the server's ErrorResponse fields by
+          # protocol-symbol name; the severity libpq prints ahead of
+          # the message is :severity (a connect-time rejection is
+          # always FATAL).
+          severity = cause.field_message(:severity) || "FATAL"
+          "#{target_prefix(target)} failed: #{severity}:  #{cause.message}\n"
+        when Socket::Addrinfo::Error
+          "could not translate host name \"#{target[:host]}\" to address: Name or service not known\n"
+        when IO::Error
+          "#{target_prefix(target)} failed: #{connect_strerror(cause, target)}\n\t#{hint(target)}\n"
+        else
+          "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
+        end
+      end
+
+      # crystal-pg wraps every connect-stage failure in a
+      # PQ::ConnectionError whose cause is the socket-layer exception
+      # that actually failed (or, for a server-side rejection, raises
+      # PQ::PQError directly), so the diagnostic wants the innermost
+      # exception - but only through PQ::ConnectionError, never
+      # through a PQError's own chain.
+      private def self.unwrap(ex : Exception?) : Exception?
+        return nil unless ex
+        return ex.cause if ex.is_a?(PQ::ConnectionError)
+        ex
+      end
+
+      private def self.target_prefix(target : {host: String?, port: String, unix_socket: String?}) : String
+        if unix_socket = target[:unix_socket]
+          "connection to server on socket \"#{unix_socket}/.s.PGSQL.#{target[:port]}\""
+        else
+          "connection to server at \"#{target[:host]}\", port #{target[:port]}"
+        end
+      end
+
+      private def self.hint(target : {host: String?, port: String, unix_socket: String?}) : String
+        if target[:unix_socket]
+          "Is the server running locally and accepting connections on that socket?"
+        else
+          "Is the server running on that host and accepting TCP/IP connections?"
+        end
+      end
+
+      # strerror(3) text for the socket-layer failure Crystal reports,
+      # as a plain string (libpq prints strerror's output verbatim).
+      private def self.connect_strerror(cause : IO::Error, target : {host: String?, port: String, unix_socket: String?}) : String
+        if cause.is_a?(Socket::ConnectError)
+          if unix_socket = target[:unix_socket]
+            # A missing socket directory is ENOENT; a present one with
+            # no listening socket is ECONNREFUSED. Crystal raises
+            # Socket::ConnectError for both, so the directory's
+            # existence decides which one this was.
+            if Dir.exists?(unix_socket)
+              "Connection refused"
+            else
+              "No such file or directory"
+            end
+          else
+            "Connection refused"
+          end
+        else
+          cause.message || "Connection refused"
+        end
+      end
+
       # Resolves the login_host:/login_port:/login_user:/
       # login_unix_socket: params from a plugin's raw `@params`,
       # falling back to each one's real-Ansible deprecated alias
