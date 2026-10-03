@@ -303,7 +303,9 @@ describe "make plugin - unspawnable explicit make binary (kpg34)" do
       "target" => "krikri-no-such-target",
     })
 
-    result["failed"]?.must_be_nil
+    # Real's make module carries failed: false explicitly (second key,
+    # right after changed - live-verified 2.19.11).
+    result["failed"].as_bool.must_equal(false)
     result["changed"].as_bool.must_equal(false)
     result["command"].as_s.must_equal("/bin/true krikri-no-such-target")
   end
