@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1456`.**
+**Currently at `0.9.1457`.**
 
 ## Open gaps
 
@@ -85,14 +85,10 @@ and fixed and when.
   the fields krikri itself sends where real also records defaulted options; `docker_container`'s list options
   (`command`, `entrypoint`, `volumes`, `ports`) have their own JSON wire in the parser (other modules' YAML lists use
   the generic comma-joined wire - a list element containing a comma is ambiguous there).
-- **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP: the
-  RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
-  `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
-  krikri's `shard.yml` still pins the old driver and the first TCP connection to a fresh MySQL 8 server fails until
-  the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours `exclude_fields:` and
+- **MySQL driver gaps found while verifying:** (1) `mysql_info` now honours `exclude_fields:` and
   `filter:` as a YAML list (literal or passed through a variable/templated dict), comma string and `!name` exclusions and warns like real for an unknown element; still open:
   `connector_name`/`connector_version` are `"Unknown"` (real reports its Python driver, `pymysql`/its version; krikri has none); `users`/`users_info` omit
-  `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
+  `authentication_string`. (2) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
   `mysql_native_password` plugin no longer exists there).
 - **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;
   `archive` lacks `expanded_exclude_paths`; `git_config`'s write path lacks real's `diff`;

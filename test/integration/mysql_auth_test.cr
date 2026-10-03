@@ -15,7 +15,7 @@ require "socket"
 # mask a broken full-auth implementation.
 #
 # The throwaway container:
-#   podman run -d --name krikri-kp-mysql -e MYSQL_ROOT_PASSWORD=krikri \
+#   podman run -d --name krikri-kp-mysql -e MYSQL_ROOT_PASSWORD=krikri \   (any name works)
 #     -p 127.0.0.1:33306:3306 docker.io/library/mysql:8.4
 # Every spec skips when it isn't running.
 
@@ -48,9 +48,19 @@ end
 # the fast path. Uses the container's own client - the host's mysql CLI
 # cannot authenticate to a MySQL 8.4 server with caching_sha2_password.
 private def flush_auth_cache : Nil
+  # Find the container by the port it publishes (not by a fixed name), so any
+  # throwaway MySQL 8.4 container serving 127.0.0.1:#{MYSQL_PORT} works. (podman's
+  # `ps --filter publish=` does not exist, so read the Ports column.)
+  names = IO::Memory.new
+  Process.run("podman", ["ps", "--format", "{{.Names}}\t{{.Ports}}"],
+    output: names, error: Process::Redirect::Close)
+  container = names.to_s.lines.compact_map do |line|
+    name, ports = line.split('\t', 2)
+    name if ports && ports.includes?(":#{MYSQL_PORT}->")
+  end.first? || raise "no podman container publishes port #{MYSQL_PORT} - cannot FLUSH PRIVILEGES"
   output = IO::Memory.new
   status = Process.run("podman",
-    ["exec", "krikri-kp-mysql", "mysql", "-uroot", "-pkrikri", "-e", "FLUSH PRIVILEGES"],
+    ["exec", container, "mysql", "-uroot", "-pkrikri", "-e", "FLUSH PRIVILEGES"],
     output: output, error: output)
   raise "FLUSH PRIVILEGES failed: #{output}" unless status.success?
 end
