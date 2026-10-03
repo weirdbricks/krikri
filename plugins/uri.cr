@@ -172,6 +172,10 @@ module Krikri
       end
 
       start = Time.instant
+      # Cookies accumulate across the whole redirect chain (real's
+      # HTTPCookieProcessor feeds every hop's response into one jar),
+      # collected in response order - see #response_cookies.
+      cookie_acc = [] of {String, String}
       # Real uri.py: when dest is already a regular FILE (checked on the
       # ORIGINAL dest, before any directory-filename resolution), the
       # file's mtime goes to fetch_url as last_mod_time and comes out as
@@ -204,7 +208,7 @@ module Krikri
         return preflight_failure_result(failure, url, status_codes)
       end
       begin
-        status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
+        status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time, cookie_acc: cookie_acc)
       rescue ex
         # A scheme real's urllib has no handler for never reaches uri.py's
         # resp assembly - urlopen raises URLError("unknown url type: X")
@@ -321,6 +325,24 @@ module Krikri
 
       result.extra["elapsed"] = JSON::Any.new(elapsed)
       apply_response_extras(result, headers, body, redirected)
+      # Real fetch_url (module_utils/urls.py) parses the cookie jar into
+      # the result on every response urllib returns normally: cookies
+      # (name -> value dict) and cookies_string ("name=value; name2=value2"),
+      # both ALWAYS present - empty dict/"" when no Set-Cookie came back.
+      # Live-verified against ansible-core 2.19.11: values are kept raw
+      # (a quoted value stays quoted in both keys), response order is
+      # kept, and the two keys land between the transmogrified response
+      # headers and msg. The HTTPError leg of fetch_url (any status
+      # urllib raises for: 4xx/5xx and 304) never populates the jar
+      # keys, so a failed or 304 result carries neither - hence the
+      # status guard (a sub-400 status NOT in status_code still gets
+      # them, exactly like real's fail_json(**uresp) path).
+      if status < 400 && status != 304
+        cookie_dict = {} of String => JSON::Any
+        cookie_acc.each { |(name, value)| cookie_dict[name] = JSON::Any.new(value) }
+        result.extra["cookies_string"] = JSON::Any.new(cookie_dict.map { |name, value| "#{name}=#{value}" }.join("; "))
+        result.extra["cookies"] = JSON::Any.new(cookie_dict)
+      end
       # Real's registered uri success order (live-verified vs 2.19.11 via
       # `{{ r | to_json }}`): content (only with return_content -
       # exit_json's leading kwarg), redirected, url, status, then EVERY
@@ -335,6 +357,8 @@ module Krikri
         order << "content" if result.extra.has_key?("content")
         order += ["redirected", "url", "status"]
         headers.each { |name, _| order << name.gsub("-", "_").downcase }
+        order << "cookies_string" if result.extra.has_key?("cookies_string")
+        order << "cookies" if result.extra.has_key?("cookies")
         order += ["msg", "elapsed", "changed"]
         order << "path" if result.extra.has_key?("path")
         order << "json" if result.extra.has_key?("json")
@@ -414,7 +438,7 @@ module Krikri
     # a real version, producing a download URL that 404'd. The 6th
     # element is the response's reason phrase (real failure msgs embed
     # it, see #execute).
-    private def request(url : String, method : String, username : String? = nil, password : String = "", src_body : String? = nil, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false, last_mod_time : Time? = nil) : {Int32, HTTP::Headers, String, Bool, String, String}
+    private def request(url : String, method : String, username : String? = nil, password : String = "", src_body : String? = nil, redirects_left : Int32 = MAX_REDIRECTS, redirected : Bool = false, last_mod_time : Time? = nil, cookie_acc : Array(Tuple(String, String))? = nil) : {Int32, HTTP::Headers, String, Bool, String, String}
       raise "too many redirects" if redirects_left < 0
 
       uri = URI.parse(url)
@@ -449,13 +473,35 @@ module Krikri
         raise Exception.new(PluginHelpers::SocketConnect.urlopen_error_text(uri, ex) || ex.message)
       end
 
+      cookie_acc.try(&.concat(response_cookies(response.headers)))
+
       if response.status.redirection? && (location = response.headers["Location"]?) && should_follow_redirect?(method)
-        return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true, last_mod_time)
+        return request(resolve_redirect(uri, location), redirect_method(method, response.status_code), username, password, src_body, redirects_left - 1, true, last_mod_time, cookie_acc)
       end
 
       {response.status_code, response.headers, response.body, redirected, url, response.status_message || ""}
     ensure
       client.try(&.close)
+    end
+
+    # The name/value pairs of every Set-Cookie header of one response, in
+    # header order - the cookie text before the first ';' is "name=value".
+    # Values are kept byte-raw like real's cookiejar (a quoted value stays
+    # quoted in both cookies and cookies_string, live-verified vs 2.19.11);
+    # header lines without a '=' (or an empty name) are skipped.
+    private def response_cookies(headers : HTTP::Headers) : Array(Tuple(String, String))
+      cookie_values = [] of String
+      headers.each do |name, values|
+        cookie_values.concat(values) if name.downcase == "set-cookie"
+      end
+      cookie_values.compact_map do |header_value|
+        pair = header_value.split(';', 2)[0]
+        eq = pair.index('=')
+        next if eq.nil? || eq == 0
+        name = pair[0...eq].strip
+        next if name.empty?
+        {name, pair[(eq + 1)..].strip}
+      end
     end
 
     private def basic_auth_header(username : String, password : String) : String

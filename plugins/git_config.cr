@@ -77,9 +77,15 @@ module Krikri
       noop = already_converged?(unset, has_out, old_values, value, add_mode)
       return noop if noop
 
-      return PluginResult.new(changed: true, failed: false, msg: "setting changed (check mode)", key_order: CHANGED_KEY_ORDER) if check_mode
+      # Real assembles set_args and the diff dict before the check-mode
+      # branch (the check-mode path exits with the SAME diff, it only
+      # skips the run_command) - so both exits below carry it.
+      set_args = build_set_args(base_args, name, value, unset, add_mode)
+      diff = build_diff(set_args, old_values, value, unset, add_mode)
 
-      apply_setting(base_args, cwd, name, value, unset, add_mode)
+      return PluginResult.new(changed: true, failed: false, msg: "setting changed (check mode)", diff: diff, key_order: CHANGED_KEY_ORDER) if check_mode
+
+      apply_setting(set_args, cwd, diff)
     end
 
     # get_bin_path('git', required=True) runs right after module
@@ -203,13 +209,53 @@ module Krikri
       {old_values, !list_result[:stdout].empty?, nil}
     end
 
-    private def apply_setting(base_args : Array(String), cwd : String, name : String, value : String, unset : Bool, add_mode : String) : PluginResult
+    # Real's write-path set_args: the resolved-git base args, then
+    # --unset-all name, or --{add_mode} name value.
+    private def build_set_args(base_args : Array(String), name : String, value : String, unset : Bool, add_mode : String) : Array(String)
       set_args = base_args.dup
       if unset
         set_args << "--unset-all" << name
       else
         set_args << "--#{add_mode}" << name << value
       end
+      set_args
+    end
+
+    # Real's exit_json(diff=dict(before_header/after_header/
+    # " ".join(set_args), before/after=build_diff_value(...))): the value
+    # builder turns an empty list into "\n", a single value into
+    # "value\n", and several values into the list itself. after_values
+    # never re-reads git: unset wipes, add appends to the just-read
+    # old_values, replace-all replaces.
+    private def build_diff(set_args : Array(String), old_values : Array(String), value : String, unset : Bool, add_mode : String) : JSON::Any
+      after_values = if unset
+                       [] of String
+                     elsif add_mode == "add"
+                       old_values + [value]
+                     else
+                       [value]
+                     end
+      header = set_args.join(' ')
+      JSON.parse({
+        "before_header" => header,
+        "before"        => diff_value(old_values),
+        "after_header"  => header,
+        "after"         => diff_value(after_values),
+      }.to_json)
+    end
+
+    private def diff_value(values : Array(String)) : JSON::Any
+      case values.size
+      when 0
+        JSON::Any.new("\n")
+      when 1
+        JSON::Any.new("#{values[0]}\n")
+      else
+        JSON::Any.new(values.map { |entry| JSON::Any.new(entry) })
+      end
+    end
+
+    private def apply_setting(set_args : Array(String), cwd : String, diff : JSON::Any) : PluginResult
       set_cmd = set_args.map { |arg| shell_quote(arg) }.join(" ")
 
       set_result = remote_exec("cd #{shell_quote(cwd)} && #{set_cmd}")
@@ -221,7 +267,7 @@ module Krikri
           cmd: set_args, rc: set_result[:exit_code])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "setting changed", key_order: CHANGED_KEY_ORDER)
+      PluginResult.new(changed: true, failed: false, msg: "setting changed", diff: diff, key_order: CHANGED_KEY_ORDER)
     end
 
     private def find_binary(name : String) : String?

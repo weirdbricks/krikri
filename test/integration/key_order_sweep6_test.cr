@@ -402,15 +402,21 @@ describe "get_certificate plugin result key order" do
 
       result = PluginSpecHelper.run("get_certificate",
         {"host" => "127.0.0.1", "port" => port.to_s})
-      # krikri reuses the full X509CertInfo.parse key set (real
-      # get_certificate carries only the ten keys below and trails the
-      # extras after them), so pin the real-ordered PREFIX.
+      # krikri used to merge the full X509CertInfo.parse key set in; it
+      # now passes only the parsed-info keys real's result dict carries,
+      # so the registered result is exactly the ten keys below plus the
+      # controller-added ansible_facts/warnings tails.
       keys = result.as_h.keys
-      raise "expected at least 10 keys, got #{keys.size}" unless keys.size >= 10
-      keys[0, 10].must_equal([
+      keys.must_equal([
         "changed", "cert", "subject", "expired", "issuer", "not_after",
         "not_before", "serial_number", "signature_algorithm", "version",
       ])
+      x509_only_keys = %w[fingerprints public_key_fingerprints public_key public_key_type
+        public_key_data key_usage subject_alt_name basic_constraints
+        extended_key_usage ocsp_must_staple subject_key_identifier
+        authority_key_identifier signature_valid subject_ordered
+        issuer_ordered]
+      (keys & x509_only_keys).must_equal([] of String)
     ensure
       proc.terminate(graceful: false) rescue nil
     end
@@ -450,7 +456,7 @@ describe "xml plugin result key order" do
 end
 
 describe "git_config plugin result key order" do
-  it "serializes a setting change as msg-changed" do
+  it "serializes a setting change as msg-diff-changed with real's diff shape" do
     dir = PluginSpecHelper.tmp_path("ko-gitcfg-1")
     FileUtils.mkdir_p(dir)
     result = PluginSpecHelper.run("git_config", {
@@ -461,7 +467,16 @@ describe "git_config plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["msg", "changed"])
+    result.as_h.keys.must_equal(["msg", "diff", "changed"])
+    # Real's diff: both headers are " ".join(set_args) (the resolved git
+    # path leading), before/after run through build_diff_value (empty ->
+    # "\n", single -> "value\n"). Live-verified vs community.general
+    # git_config against ansible-core 2.19.11.
+    result["diff"].as_h["before_header"].as_s.must_equal(result["diff"].as_h["after_header"].as_s)
+    result["diff"].as_h["before_header"].as_s.includes?(
+      "git config --includes -f #{File.join(dir, "gitconfig")} --replace-all user.name Test User").must_equal(true)
+    result["diff"].as_h["before"].as_s.must_equal("\n")
+    result["diff"].as_h["after"].as_s.must_equal("Test User\n")
   end
 
   it "serializes a converged no-op as changed-msg with the empty msg key kept" do
@@ -498,7 +513,9 @@ describe "git_config plugin result key order" do
     })
 
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["msg", "changed"])
+    result.as_h.keys.must_equal(["msg", "diff", "changed"])
+    result["diff"].as_h["before"].as_s.must_equal("Test User\n")
+    result["diff"].as_h["after"].as_s.must_equal("\n")
   end
 end
 

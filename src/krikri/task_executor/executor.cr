@@ -133,6 +133,20 @@ module Krikri
     @hostvars_cache_generation = -1
     @groups_cache : Hash(String, JSON::Any)? = nil
     @groups_cache_generation = -1
+
+    # An `add_host:` action mutated the shared Inventory directly (the
+    # action plugin holds no executor reference), so - unlike every other
+    # mutation site below - it cannot bump @hv_generation itself. Called
+    # from the three ActionPluginManager.execute_action dispatch sites
+    # after a successful action: without this the hostvars/groups caches
+    # stay stale for the REST of the play and `hostvars['<new host>']`
+    # reads "undefined" where real Ansible exposes the host immediately
+    # (verified live vs 2.19.11: a same-play `hostvars['dyn1']` read
+    # after add_host resolves with the full magic-var entry).
+    def bump_hv_generation_for_add_host(module_name : String) : Nil
+      @hv_generation += 1 if module_name.in?("add_host", "ansible.builtin.add_host")
+    end
+
     # SUGGESTED_PERFORMANCE_IMPROVEMENTS.md item #1: #build_vars_context
     # rebuilds its ENTIRE ~150-entry context from scratch on every single
     # (task, host) pair - most of that work is re-merging inputs that are

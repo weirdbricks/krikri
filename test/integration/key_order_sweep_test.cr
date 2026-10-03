@@ -286,7 +286,7 @@ describe "unarchive plugin result key order" do
 end
 
 describe "archive plugin result key order" do
-  it "serializes a create as archived, dest, dest_state, changed, arcroot, missing, expanded_paths, then the stat block" do
+  it "serializes a create as archived, dest, dest_state, changed, arcroot, missing, expanded_paths, expanded_exclude_paths, then the stat block" do
     work = unique_tmp("archive-order")
     Dir.mkdir_p(File.join(work, "srcdir"))
     File.write(File.join(work, "srcdir", "a.txt"), "one\n")
@@ -296,8 +296,9 @@ describe "archive plugin result key order" do
     result["changed"].as_bool.must_equal(true)
     result.as_h.keys.must_equal([
       "archived", "dest", "dest_state", "changed", "arcroot", "missing", "expanded_paths",
-      "uid", "gid", "owner", "group", "mode", "state", "size",
+      "expanded_exclude_paths", "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
+    result["expanded_exclude_paths"].as_a.size.must_equal(0)
   ensure
     FileUtils.rm_r(work) if work && Dir.exists?(work)
   end
@@ -313,7 +314,7 @@ describe "archive plugin result key order" do
     result["changed"].as_bool.must_equal(false)
     result.as_h.keys.must_equal([
       "archived", "dest", "dest_state", "changed", "arcroot", "missing", "expanded_paths",
-      "uid", "gid", "owner", "group", "mode", "state", "size",
+      "expanded_exclude_paths", "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
   ensure
     FileUtils.rm_r(work) if work && Dir.exists?(work)

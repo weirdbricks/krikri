@@ -756,6 +756,23 @@ module Krikri
         # ansible-core 2.19.11).
         @set_facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         entry["inventory_hostname"] = JSON::Any.new(other_host.name)
+        # Real Ansible's hostvars view carries the play magic variables on
+        # EVERY host's entry (verified live against ansible-core 2.19.11:
+        # an add_host-created host's entry holds inventory_hostname_short,
+        # group_names, groups, playbook_dir, inventory_dir, inventory_file,
+        # ansible_version, ansible_check_mode/diff_mode, ansible_forks,
+        # ansible_play_name, ansible_inventory_sources, ansible_run_tags,
+        # ansible_skip_tags, ansible_verbosity, ansible_play_hosts_all/
+        # ansible_play_hosts/play_hosts alongside its own vars). This
+        # engine's entries historically carried only inventory_hostname +
+        # the host's own vars - reads through hostvars fell back to the
+        # READING host's scope for everything else (HostvarsContext), so a
+        # cross-host read of a PER-HOST magic var (group_names most
+        # prominently) silently returned the reading host's value. The
+        # add_host path diverged hardest (the new host's groups are
+        # invisible to every other host's hostvars read) and is the slice
+        # enriched here; ordinary inventory hosts keep the fallback.
+        enrich_add_host_entry(entry, other_host) if other_host.from_add_host?
         # No synthesized ansible_host here: real Ansible's hostvars magic
         # view carries ONLY actually-defined vars (inventory + facts +
         # registered), and `{{ ansible_host }}` falls back to the
@@ -801,6 +818,43 @@ module Krikri
       @hostvars_cache = result
       @hostvars_cache_generation = @hv_generation
       result
+    end
+
+    # Adds the play magic variables to an add_host-created host's hostvars
+    # entry, mirroring what build_vars_context lays on every CURRENT host
+    # (the same sources, so the two can never disagree): the per-host
+    # ones from the entry host itself (inventory_hostname_short,
+    # group_names), the play-scoped ones from this executor's state and
+    # RunOptions. ansible_playbook_python and ansible_config_file are NOT
+    # synthesized (this engine defines neither anywhere - fabricating a
+    # python path would be worse than the absence), and ansible_facts
+    # only ever appears when facts were actually gathered for the host,
+    # both matching the entry conventions above.
+    private def enrich_add_host_entry(entry : Hash(String, JSON::Any), host : Host) : Nil
+      entry["inventory_hostname_short"] = JSON::Any.new(host.name.split('.').first)
+      if inv = @inventory
+        entry["group_names"] = JSON::Any.new(inv.groups_for(host.name).map { |name| JSON::Any.new(name) })
+      end
+      entry["groups"] = JSON::Any.new(build_groups)
+      # Real's entry carries the ansible_facts dict form too - an empty
+      # dict when no facts were ever gathered for the host (live-verified
+      # vs 2.19.11), the gathered dict otherwise.
+      entry["ansible_facts"] = JSON::Any.new(@facts[host.name]? ? facts_dict_for(host.name) : Hash(String, JSON::Any).new)
+      apply_path_magic_vars(entry)
+      entry["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
+      entry["ansible_check_mode"] = JSON::Any.new(@check_mode)
+      entry["ansible_diff_mode"] = JSON::Any.new(@diff_mode)
+      entry["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
+      entry["ansible_play_name"] = JSON::Any.new(Krikri::RunOptions.play_name)
+      entry["ansible_inventory_sources"] = JSON::Any.new(Krikri::RunOptions.inventory_sources.map { |source| JSON::Any.new(source) })
+      run_tags = Krikri::RunOptions.run_tags
+      entry["ansible_run_tags"] = JSON::Any.new((run_tags.empty? ? ["all"] : run_tags).map { |tag| JSON::Any.new(tag) })
+      entry["ansible_skip_tags"] = JSON::Any.new(Krikri::RunOptions.skip_tags.map { |tag| JSON::Any.new(tag) })
+      entry["ansible_forks"] = JSON::Any.new((Krikri::RunOptions.forks || 5).to_i64)
+      play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
+      entry["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
+      entry["ansible_play_hosts"] = JSON::Any.new(play_host_names)
+      entry["play_hosts"] = JSON::Any.new(play_host_names)
     end
 
     # A task-level vars: value can itself be a template referencing other

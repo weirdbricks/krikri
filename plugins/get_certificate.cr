@@ -58,6 +58,17 @@ module Krikri
       unverified_chain ansible_facts failed warnings
     ]
 
+    # The parsed-info keys real's result dict actually carries
+    # (get_certificate.py's own result assembly). X509CertInfo.parse
+    # serves the wider x509_certificate_info vocabulary too
+    # (fingerprints, public_key*, key_usage, subject_alt_name, ...);
+    # merging all of it gave get_certificate's result a dozen keys real
+    # never returns - only these pass through.
+    RESULT_INFO_KEYS = %w[
+      subject expired extensions issuer not_after not_before
+      serial_number signature_algorithm version
+    ]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -102,6 +113,7 @@ module Krikri
 
       res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       info.each do |key, value|
+        next unless RESULT_INFO_KEYS.includes?(key)
         res.extra[key] = value
       end
       res.extra["cert"] = JSON::Any.new(cert_pem)

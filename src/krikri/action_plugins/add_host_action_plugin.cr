@@ -51,6 +51,7 @@ module Krikri
       end
 
       host = inventory.hosts[name]? || Host.new(name)
+      host.from_add_host = true
       @params.each do |key, value|
         next if SPECIAL_PARAMS.includes?(key)
         # The executor injects control params (_verbosity, _ansible_*) into

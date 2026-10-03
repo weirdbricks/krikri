@@ -1541,6 +1541,8 @@ module Krikri
           return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
+        bump_hv_generation_for_add_host(task.module_name)
+
         # debug:/assert:/fail:/set_fact:/pause: - the action plugin
         # already computed the whole task result on the controller (see
         # ActionResult#final_result's own comment). No module upload/
@@ -1877,6 +1879,8 @@ module Krikri
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
           return apply_changed_failed_when(task, result_json, vars_context, host)
         end
+
+        bump_hv_generation_for_add_host(task.module_name)
 
         if final = action_result.final_result
           return apply_changed_failed_when(task, final, vars_context, host)

@@ -138,7 +138,7 @@ module Krikri
           expanded_exclude_paths: expanded_excludes.join(", "))
       end
 
-      return absent_result(dest, missing, expanded_paths) if found_paths.empty?
+      return absent_result(dest, missing, expanded_paths, expanded_excludes) if found_paths.empty?
 
       single_compress = single_file_compress?(force_archive, format, candidate_paths, found_paths)
 
@@ -164,7 +164,7 @@ module Krikri
       root = PluginHelpers::ArchivePaths.common_path(candidate_paths)
       members = single_compress ? found_paths : collect_members(found_paths, root, exclusion_patterns)
 
-      build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, remove)
+      build_and_finalize(dest, format, single_compress, root, members, found_paths, missing, expanded_paths, expanded_excludes, remove)
     end
 
     private def split_csv_values(value : String) : Array(String)
@@ -175,7 +175,10 @@ module Krikri
       split_csv_values(@params[key]? || "")
     end
 
-    private def absent_result(dest : String?, missing : Array(String), expanded_paths : Array(String)) : PluginResult
+    private def absent_result(dest : String?, missing : Array(String), expanded_paths : Array(String), expanded_exclude_paths : Array(String)) : PluginResult
+      # Real's single result property dict, exit_json(**archive.result):
+      # archived, dest, dest_state, changed, arcroot, missing,
+      # expanded_paths, expanded_exclude_paths (absent keys skip).
       PluginResult.new(
         changed: false,
         failed: false,
@@ -184,7 +187,9 @@ module Krikri
         dest_state: "absent",
         archived: [] of String,
         missing: missing,
-        expanded_paths: expanded_paths
+        expanded_paths: expanded_paths,
+        expanded_exclude_paths: expanded_exclude_paths,
+        key_order: %w[archived dest dest_state changed arcroot missing expanded_paths expanded_exclude_paths]
       )
     end
 
@@ -286,6 +291,7 @@ module Krikri
       found_paths : Array(String),
       missing : Array(String),
       expanded_paths : Array(String),
+      expanded_exclude_paths : Array(String),
       remove : Bool,
     ) : PluginResult
       tmp_dest = "#{dest}.krikri-playbook-tmp-#{Random::Secure.hex(6)}"
@@ -327,7 +333,6 @@ module Krikri
       # live-verified vs 2.19.11 via `{{ r | to_json }}` for both the
       # create and the already-archived rerun (check mode drops the stat
       # block; the same order list covers it since absent keys skip).
-      # expanded_exclude_paths is absent here and skipped.
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -337,6 +342,7 @@ module Krikri
         archived: archived,
         missing: missing,
         expanded_paths: expanded_paths,
+        expanded_exclude_paths: expanded_exclude_paths,
         arcroot: root,
         size: stat_fields[:size],
         uid: stat_fields[:uid],

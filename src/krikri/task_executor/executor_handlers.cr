@@ -732,6 +732,8 @@ module Krikri
           return result_json
         end
 
+        bump_hv_generation_for_add_host(handler.module_name)
+
         if final = action_result.final_result
           result = apply_changed_failed_when(handler, final, vars_context, host)
           if register_name = handler.register
