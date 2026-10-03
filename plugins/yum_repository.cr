@@ -225,15 +225,26 @@ module Krikri
       File.exists?(path) ? File.read(path) : ""
     end
 
+    # Real ansible-core 2.19.11 yum_repository exits with a single
+    # `exit_json(changed=changed, repo=name, state=state, diff=diff)`
+    # (live-verified, check mode, register + to_json): the diff is a
+    # {before_header, before, after_header, after} dict built from the
+    # configparser dump UNCONDITIONALLY - not diff-mode-gated - so the
+    # registered shape is [changed, repo, state, diff, failed] on both
+    # the changed and unchanged paths. No msg key (the "" msg here was
+    # krikri's own; an exit_json never carries one).
+    private YUM_REPO_ORDER = %w[changed repo state diff]
+
     private def remove_repo(name : String, path : String) : PluginResult
       current = read_current(path)
       unless current.includes?("[#{name}]")
-        return PluginResult.new(changed: false, failed: false, msg: "", repo: name, state: "absent")
+        return PluginResult.new(changed: false, failed: false, repo: name, state: "absent",
+          diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
       end
 
-      diff = generate_unified_diff(current, "", path, path) if @diff_mode
       File.delete?(path)
-      PluginResult.new(changed: true, failed: false, msg: "", diff: diff, repo: name, state: "absent")
+      PluginResult.new(changed: true, failed: false, repo: name, state: "absent",
+        diff: generate_unified_diff(current, "", path, path), key_order: YUM_REPO_ORDER)
     end
 
     private def write_repo(name : String, description : String, path : String) : PluginResult
@@ -246,13 +257,13 @@ module Krikri
       changed = merged != current
 
       if changed
-        diff = generate_unified_diff(current, merged, path, path) if @diff_mode
         Dir.mkdir_p(File.dirname(path))
         write_file(path, merged)
         apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "", diff: diff, repo: name, state: "present")
+      PluginResult.new(changed: changed, failed: false, repo: name, state: "present",
+        diff: generate_unified_diff(current, merged, path, path), key_order: YUM_REPO_ORDER)
     end
 
     # Real Ansible's own yum_repository runs Python's configparser over

@@ -166,9 +166,9 @@ describe "rpm_key plugin result key order (sweep8)" do
                   {{ r | to_json }}
                 dest: KRIKRI_DUMP_PATH
       YAML
-      run_registered_dump(play)
+      run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
       File.exists?(db).must_equal(true)
-      keys = run_registered_dump(play)
+      keys = run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
       keys.must_equal(["changed", "failed"])
     end
   end
@@ -357,5 +357,70 @@ describe "apt_repository plugin result key order (sweep8)" do
   it "registers a check-mode add in the same shape" do
     keys = run_registered_dump(APT_PLAY.sub("STATE_LINE", "state: present"))
     keys.must_equal(%w[changed repo sources_added sources_removed state diff failed])
+  end
+end
+describe "yum_repository plugin result key order (sweep8)" do
+  # Real 2.19.11 yum_repository.py exits with a single
+  # exit_json(changed=changed, repo=name, state=state, diff=diff), and
+  # its diff is the {before_header, before, after_header, after} dict
+  # built from the configparser dump UNCONDITIONALLY - not gated on diff
+  # mode - so the order is the same on the changed, unchanged and
+  # removal paths. No msg key. Live-verified twice: in a Fedora 41
+  # container against the real /etc/yum.repos.d, and unprivileged on
+  # this host via reposdir: pointed at a temp dir (both engines need no
+  # yum/dnf to run the module, only the reposdir to exist).
+
+  private YUM_PLAY = <<-YAML
+    - name: repro
+      hosts: localhost
+      gather_facts: false
+      connection: local
+      vars:
+        ko_reposdir: KRIKRI_REPOSDIR
+      tasks:
+        - name: yum task
+          ansible.builtin.yum_repository:
+            name: "ko-repo"
+            description: "probe"
+            baseurl: "http://example.invalid/ko"
+            reposdir: "{{ ko_reposdir }}"
+            # STATE_SLOT
+          register: r
+        - name: dump
+          ansible.builtin.copy:
+            content: |-
+              {{ r | to_json }}
+            dest: KRIKRI_DUMP_PATH
+    YAML
+
+  private def with_reposdir(&)
+    dir = File.tempname("krikri-sweep8-yum")
+    Dir.mkdir_p(dir)
+    yield dir
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "registers a fresh add as changed, repo, state, diff" do
+    with_reposdir do |dir|
+      keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).gsub("            # STATE_SLOT\n", ""))
+      keys.must_equal(%w[changed repo state diff failed])
+    end
+  end
+
+  it "registers an unchanged rerun in the same shape" do
+    with_reposdir do |dir|
+      play = YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir)
+      run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
+      keys = run_registered_dump(play.gsub("            # STATE_SLOT\n", ""))
+      keys.must_equal(%w[changed repo state diff failed])
+    end
+  end
+
+  it "registers an already-absent no-op in the same shape" do
+    with_reposdir do |dir|
+      keys = run_registered_dump(YUM_PLAY.gsub("KRIKRI_REPOSDIR", dir).sub("            # STATE_SLOT", "state: absent"))
+      keys.must_equal(%w[changed repo state diff failed])
+    end
   end
 end
