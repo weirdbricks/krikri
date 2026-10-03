@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_deprecations"
 require "../src/krikri/plugin_helpers/postgresql_acl"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
@@ -214,6 +215,14 @@ module Krikri
         queries: queries.map { |query| JSON::Any.new(query) }, key_order: SUCCESS_KEY_ORDER)
     end
 
+    # community.postgresql's shared connection spec still ACCEPTS its
+    # deprecated aliases, and real warns about each one the task uses
+    # (both on stderr and in the registered result's trailing
+    # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
+    def finalize_result(result : PluginResult) : PluginResult
+      PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: true)
+    end
+
     def execute : PluginResult
       begin
         p = resolve_params!
@@ -239,7 +248,7 @@ module Krikri
         run_grants(database, p)
       end
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
+      PluginHelpers::DbErrors.pg_connection_failed(ex, @params)
     rescue ex : PQ::PQError
       PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
     end
