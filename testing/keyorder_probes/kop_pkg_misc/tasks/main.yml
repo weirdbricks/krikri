@@ -20,19 +20,11 @@
     mode: "0644"
   ignore_errors: true
 
-- name: Create synchronize source dir on the controller (push mode reads it there)
-  ansible.builtin.file:
-    path: /var/tmp/kop_sync_src
-    state: directory
-    mode: "0755"
-  delegate_to: localhost
-
-- name: Drop payload into synchronize source on the controller
-  ansible.builtin.copy:
-    content: "kop-probe-payload\n"
-    dest: /var/tmp/kop_sync_src/a
-    mode: "0644"
-  delegate_to: localhost
+- name: Install rsync (synchronize needs it on the host)
+  ansible.builtin.apt:
+    name: rsync
+    state: present
+    update_cache: true
   ignore_errors: true
 
 - name: Push /var/tmp/kop_sync_src to /var/tmp/kop_sync_dst (changed)
@@ -40,6 +32,7 @@
     src: /var/tmp/kop_sync_src/
     dest: /var/tmp/kop_sync_dst/
     mode: push
+  delegate_to: "{{ inventory_hostname }}"
   register: r
   ignore_errors: true
 
@@ -52,6 +45,7 @@
     src: /var/tmp/kop_sync_src/
     dest: /var/tmp/kop_sync_dst/
     mode: push
+  delegate_to: "{{ inventory_hostname }}"
   register: r
   ignore_errors: true
 
@@ -64,6 +58,7 @@
     src: /var/tmp/kop_sync_src/
     dest: /var/tmp/kop_sync_dst/
     mode: push
+  delegate_to: "{{ inventory_hostname }}"
   register: r
   check_mode: true
   ignore_errors: true
@@ -77,6 +72,7 @@
     src: /var/tmp/kop_nosuch_src/
     dest: /var/tmp/kop_sync_dst/
     mode: push
+  delegate_to: "{{ inventory_hostname }}"
   register: r
   ignore_errors: true
 
@@ -423,12 +419,6 @@
   loop:
     - /var/tmp/kop_sync_src
     - /var/tmp/kop_sync_dst
-
-- name: Cleanup synchronize source dir on the controller
-  ansible.builtin.file:
-    path: /var/tmp/kop_sync_src
-    state: absent
-  delegate_to: localhost
 
 - name: Cleanup svn repository and working copies
   ansible.builtin.file:

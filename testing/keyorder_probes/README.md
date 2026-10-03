@@ -52,7 +52,7 @@ All run as root on a fresh Ubuntu 22.04 Atlantic.net VM.
 | `kop_kernel` | `ansible.posix.sysctl` (vm.swappiness only, `reload: true`, no `sysctl_file`), `ansible.builtin.mount_facts` (read-only), `community.general.modprobe` (`dummy` module) | if `dummy` is unavailable on the kernel, `modprobe_load`/`modprobe_exists` fail and are captured as-is (the module itself is still exercised) |
 | `kop_firewall` | `community.general.ufw` | installs ufw via apt; forces `state: disabled` first and never `state: enabled`, so SSH can't be locked out; only adds/deletes an allow rule for 8080/tcp |
 | `kop_storage` | `community.general.lvg`, `community.general.lvol`, `community.general.parted`, `community.general.zfs`, `ansible.builtin.mount` (tmpfs mount/unmount only) | loop devices from sparse files under `/var/tmp` created and detached by the role; zfs probes a *dataset* on a `zpool create`d pool (`community.general.zfs` does not create pools) |
-| `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.general.java_cert`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode (source is materialised on both the target host and the controller so push-mode rsync finds it); subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) and default-jdk-headless are installed via apt first |
+| `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.general.java_cert`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode, delegated to the host itself (`delegate_to: inventory_hostname`) so rsync reads and writes on the host and never needs the controller; subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) and default-jdk-headless are installed via apt first |
 | *(not probed)* | `community.general.snap`, `community.general.homebrew` | **deliberately skipped**: installing snapd via apt is slow and flaky in a fresh-VM round, and homebrew is macOS-only. Not worth the round time for a key-order probe. |
 
 Note that several of these modules live in collections
@@ -114,8 +114,7 @@ KEYORDER set both runs (`ignored=8` = the deliberate failure probes):
   container-safe; the role creates `~/.ssh` first because a bare container
   root has none).
 - `kop_pkg_misc` in full: synchronize (rsync local-to-local, source
-  materialised on both host and controller because push-mode rsync reads
-  the source on the controller), subversion (local svnadmin repo),
+  delegated to the host itself, so rsync runs entirely on the host), subversion (local svnadmin repo),
   apache2_module, java_cert (default-jdk-headless + self-signed cert),
   openssl_csr_info.
 
