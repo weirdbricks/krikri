@@ -85,7 +85,6 @@ describe "user plugin generate_ssh_key" do
       })
 
       result["changed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_include("check mode")
       File.exists?(key_path).must_equal(false)
     ensure
       FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)

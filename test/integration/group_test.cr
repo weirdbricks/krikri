@@ -22,29 +22,47 @@ describe "group plugin" do
     result = PluginSpecHelper.run("group", {"name" => "root", "gid" => "999999", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("check mode")
+    # Real shape (live-verified vs 2.19.11: check-mode group_mod returns
+    # rc=0 without running groupmod): the full exists-after shape with the
+    # requested change reported - name/state, changed, then system/gid.
+    result["name"].as_s.must_equal("root")
+    result["state"].as_s.must_equal("present")
+    result["system"].as_bool.must_equal(false)
+    result["gid"].as_i?.must_equal(`getent group root`.split(":")[2].strip.to_i)
+    result.as_h.keys.must_equal(["name", "state", "changed", "system", "gid"])
     `getent group root`.split(":")[2].strip.wont_equal("999999")
   end
 
+  # Real group.py's check-mode create branch exits with bare
+  # exit_json(changed=True) before anything else runs - the registered
+  # shape is just [changed, failed] (live-verified vs 2.19.11, round
+  # 992000's group_check probe: {"changed": true, "failed": false}).
   it "reports it would create a group that does not exist yet (check mode, no real creation)" do
     result = PluginSpecHelper.run("group", {"name" => NONEXISTENT_GROUP, "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("check mode")
+    result.as_h.keys.must_equal(["changed"])
     `getent group #{NONEXISTENT_GROUP}`.strip.must_be_empty
   end
 
+  # Real group.py echoes name/state with changed: false for a group that
+  # doesn't exist - no msg key (live-verified: [name, state, changed,
+  # failed]).
   it "reports no change when removing a group that already doesn't exist (state=absent is a genuine no-op, safe even without check mode)" do
     result = PluginSpecHelper.run("group", {"name" => NONEXISTENT_GROUP, "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_include("already absent")
+    result["name"].as_s.must_equal(NONEXISTENT_GROUP)
+    result["state"].as_s.must_equal("absent")
+    result.as_h.keys.must_equal(["name", "state", "changed"])
   end
 
   it "reports it would remove an existing group (check mode, no real removal)" do
     result = PluginSpecHelper.run("group", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
+    # Real's check-mode absent branch exits with bare exit_json(changed=True).
+    result.as_h.keys.must_equal(["changed"])
     `getent group root`.strip.wont_be_empty
   end
 

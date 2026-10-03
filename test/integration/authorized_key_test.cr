@@ -51,7 +51,13 @@ describe "authorized_key plugin" do
 
     result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
 
-    result["changed"].as_bool.must_equal(false)
+    # Real module sets NO changed at all on the idempotent path
+    # (enforce_state only sets params['changed']=True on the do_write
+    # paths); the executor backfills failed-then-changed, which is why
+    # real's registered shape there ends [..., keyfile, failed, changed]
+    # (live-verified vs 2.19.11, round 992000's authorized_key_exists).
+    result.as_h.has_key?("changed").must_equal(false)
+    result["keyfile"].as_s.must_equal(path)
   end
 
   it "rewrites the line when only the trailing comment differs (real Ansible compares the comment as part of the key tuple)" do

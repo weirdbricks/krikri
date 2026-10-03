@@ -22,6 +22,31 @@ module Krikri
   #     user's home-directory default (the user's NSS home + /.ssh/authorized_keys)
   #   manage_dir (optional, default yes): create ~/.ssh (mode 0700) if missing
   class AuthorizedKeyPlugin < BasePlugin
+    # Registered key order of the echoed params dict: real's module.params
+    # dict starts from the CONTROLLER-SORTED task args (the module-args
+    # handoff is serialized with sort_keys, so explicitly-passed params
+    # echo alphabetically), then the not-passed params in a fixed order
+    # (live-verified vs ansible.posix 2.2.2 / ansible-core 2.19.11 with
+    # four different explicit-param subsets, incl. round 992000's
+    # user+key+state probes: key, state, user, manage_dir, exclusive,
+    # validate_certs, follow, path, key_options, comment). keyfile (the
+    # resolved path) follows, then changed; the executor backfills failed
+    # last. The stat block add_path_info appends (uid, gid, owner, group,
+    # mode, size, with `state` overwritten to the file's kind) lands after
+    # changed, exactly like real, since those keys are unlisted here.
+    AK_PARAM_DEFAULT_ORDER = ["manage_dir", "state", "exclusive", "validate_certs",
+                              "follow", "path", "key_options", "comment"]
+
+    private def result_key_order : Array(String)
+      given = @params.keys.select { |k| !k.starts_with?("_ansible_") }.sort!
+      order = given.dup
+      AK_PARAM_DEFAULT_ORDER.each do |key|
+        order << key unless given.includes?(key)
+      end
+      order << "keyfile" << "changed"
+      order
+    end
+
     # The real module's own VALID_SSH2_KEY_TYPES allowlist (ansible.posix
     # authorized_key's parsekey): a new-key line is valid iff one of its
     # whitespace-separated tokens is exactly one of these.
@@ -124,8 +149,6 @@ module Krikri
         return error
       end
 
-      result = PluginResult.new(changed: changed, failed: false, msg: "")
-
       # Real Ansible's own module returns its ENTIRE module.params dict
       # (enforce_state mutates `params` in place and main() does
       # `exit_json(**results)`), with `keyfile` (the resolved keyfile
@@ -134,6 +157,19 @@ module Krikri
       # exclusive/validate_certs/follow) or absent (comment/key_options/
       # path come through as JSON null). Verified live against
       # ansible.posix.authorized_key 2.1.0 / ansible-core 2.19.
+      #
+      # Registered key order (live-verified vs ansible-core 2.19.11 +
+      # ansible.posix 2.2.2, round 992000 + local container replay): the
+      # params dict's own order - key, state, user, manage_dir, exclusive,
+      # validate_certs, follow, path, key_options, comment - then keyfile,
+      # then changed (only set on the do_write paths), and the executor's
+      # failed backfill last. On the already-in-state/idempotent path the
+      # module sets NO changed at all, so the executor backfills failed
+      # BEFORE changed: that probe registers [..., keyfile, failed,
+      # changed] - reproduced by omitting `changed` from the wire result
+      # here (the executor's backfill order is failed-then-changed).
+      result = PluginResult.new(changed: changed, failed: false, key_order: result_key_order,
+        omit_changed: !changed)
       result.extra["user"] = json_string(@params["user"]?)
       result.extra["key"] = JSON::Any.new(key.as(String))
       result.extra["path"] = json_string(@params["path"]?)
