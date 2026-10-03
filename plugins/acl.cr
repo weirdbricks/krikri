@@ -141,7 +141,11 @@ module Krikri
         PluginHelpers::AclCommand.build_command("get", path, follow, default, recursive, recalculate_mask, use_nfsv4_acls)
       )
 
-      PluginResult.new(changed: changed, failed: false, msg: msg, acl: acl)
+      # Real ansible.posix.acl: module.exit_json(changed=changed, msg=msg,
+      # acl=acl) - live-verified against real 2.19.11 via a registered
+      # {{ r | to_json }} dump in the podman container (changed, unchanged,
+      # query and check-mode runs all identical).
+      PluginResult.new(changed: changed, failed: false, msg: msg, acl: acl, key_order: ["changed", "msg", "acl"])
     rescue ex : Exception
       PluginResult.new(changed: false, failed: true, msg: ex.message || "acl module error")
     end

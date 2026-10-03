@@ -93,10 +93,14 @@ module Krikri
 
       # Real's exit_json(changed=..., **output): the ModuleHelper's
       # visible variables only - name, ubuntu_mode and mechanism, with
-      # NO msg key (the module never sets one on success).
+      # NO msg key (the module never sets one on success). Order
+      # live-verified against real 2.19.11 via registered {{ r | to_json }}
+      # dumps in the podman container (changed/unchanged/check all
+      # identical).
       PluginResult.new(changed: changed, failed: false,
         name: names, mechanism: mech,
-        ubuntu_mode: mech != "glibc")
+        ubuntu_mode: mech != "glibc",
+        key_order: ["changed", "name", "ubuntu_mode", "mechanism"])
     end
 
     private def parse_names : Array(String)

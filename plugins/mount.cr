@@ -314,6 +314,14 @@ module Krikri
       result_fields(path, fstab, backup_file, include_src_fstype).each do |key, value|
         result.extra[key] = JSON::Any.new(value)
       end
+      # Real mount.py's single success exit is
+      # `module.exit_json(changed=changed, **args)` with args ordered
+      # name, opts, dump, passno, fstab, boot, backup_file, then the
+      # user-specified src/fstype overrides appended (live-verified
+      # against real 2.19.11 via a registered {{ r | to_json }} dump in
+      # the podman container: state=absent, changed and unchanged runs
+      # and check mode all identical).
+      result.key_order = ["changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"]
       add_exit_json_warnings_deprecation(result)
       result
     end

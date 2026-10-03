@@ -43,18 +43,23 @@ module Krikri
 
       current = remote_exec("dpkg --get-selections #{shell_quote(name)} 2>/dev/null")
       current_selection = current[:stdout].strip.split(/\s+/).last?
+      current_selection ||= "not present"
 
       if current_selection == selection
-        return PluginResult.new(changed: false, failed: false, msg: "#{name} already set to #{selection}")
+        # Real dpkg_selections.py: every exit is
+        # `module.exit_json(changed=changed, before=current, after=selection)`
+        # - no msg on any success path (live-verified against real 2.19.11:
+        # check mode, changed and unchanged runs all identical).
+        return PluginResult.new(changed: false, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"])
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
-      return PluginResult.new(changed: true, failed: false, msg: "#{name} would be set to #{selection}") if check_mode
+      return PluginResult.new(changed: true, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"]) if check_mode
 
       result = remote_exec("echo #{shell_quote("#{name} #{selection}")} | dpkg --set-selections")
       return PluginResult.new(changed: false, failed: true, msg: "failed to set selection: #{result[:stderr].strip}") unless result[:exit_code] == 0
 
-      PluginResult.new(changed: true, failed: false, msg: "#{name} set to #{selection}")
+      PluginResult.new(changed: true, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"])
     end
 
     private def shell_quote(str : String) : String
