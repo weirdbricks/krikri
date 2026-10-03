@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_deprecations"
 require "../src/krikri/plugin_helpers/postgresql_password_verifier"
 require "../src/krikri/plugin_helpers/postgresql_role_flags"
 require "../src/krikri/plugin_helpers/sql_quoting"
@@ -54,6 +55,14 @@ module Krikri
   # fail_on_user:, trust_input:.
   class PostgresqlUserPlugin < BasePlugin
     ROLE_ATTR_COLUMNS = %w[rolsuper rolinherit rolcreaterole rolcreatedb rolcanlogin rolreplication rolbypassrls]
+
+    # community.postgresql's shared connection spec still ACCEPTS its
+    # deprecated aliases, and real warns about each one the task uses
+    # (both on stderr and in the registered result's trailing
+    # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
+    def finalize_result(result : PluginResult) : PluginResult
+      PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: true)
+    end
 
     def execute : PluginResult
       # Real Ansible's `name:` param has `aliases: ['user']` - same bug

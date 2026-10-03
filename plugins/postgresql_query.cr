@@ -6,6 +6,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_deprecations"
 require "../src/krikri/plugin_helpers/postgresql_query_heuristics"
 
 module Krikri
@@ -117,6 +118,14 @@ module Krikri
       changed query query_list statusmessage query_result query_all_results
       rowcount execution_time_ms failed
     ]
+
+    # community.postgresql's shared connection spec still ACCEPTS its
+    # deprecated aliases, and real warns about each one the task uses
+    # (both on stderr and in the registered result's trailing
+    # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
+    def finalize_result(result : PluginResult) : PluginResult
+      PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: true)
+    end
 
     def execute : PluginResult
       if err = validate_arguments

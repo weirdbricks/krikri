@@ -205,11 +205,16 @@ module Krikri
     private def failed_default_order(result : Hash(String, JSON::Any::Type)) : Array(String)
       order = ["failed", "msg", "diff"]
       result.each_key do |key|
-        next if key.in?("failed", "msg", "diff", "changed", "exception")
+        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations")
         order << key
       end
       order << "changed"
       order << "exception"
+      # real's controller appends the deprecations it collected to the
+      # module's result dict LAST, whatever the module itself exited
+      # with (live-verified vs 2.19.11 with community.postgresql's
+      # deprecated-alias warnings on both a failing and a passing task).
+      order << "deprecations" if result.has_key?("deprecations")
       order
     end
 
@@ -434,6 +439,18 @@ module Krikri
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
 
+    # Last chance for a plugin to add the result keys real's controller
+    # appends after the module's own dict - today only
+    # community.postgresql's deprecated-alias warnings
+    # (PluginHelpers::PostgresqlDeprecations). Wraps #execute rather
+    # than living inside it so EVERY exit path gets them, the early
+    # argument-validation failures included, exactly as real's
+    # AnsibleModule does (its collected deprecations ride along with the
+    # fail_json exit too). Default: no change.
+    def finalize_result(result : PluginResult) : PluginResult
+      result
+    end
+
     # Run the plugin and output JSON result
     def run : Nil
       puts run_and_capture
@@ -450,7 +467,7 @@ module Krikri
     # around this, so every existing one-shot call site (every plugin's
     # own driver trailer) is unaffected.
     def run_and_capture : String
-      execute.to_json
+      finalize_result(execute).to_json
     rescue ex : BoolParamError
       # The message is already the exact user-facing failure real Ansible
       # produces at module setup (parameters.py's check_type_bool wrapper,

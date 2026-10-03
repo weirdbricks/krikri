@@ -9,6 +9,7 @@ require "bz2"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_deprecations"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
@@ -81,6 +82,14 @@ module Krikri
   # instead), `target_opts:`/`dump_extra_args:` (extra pg_dump/pg_restore/
   # psql CLI args).
   class PostgresqlDbPlugin < BasePlugin
+    # community.postgresql's shared connection spec still ACCEPTS its
+    # deprecated aliases, and real warns about each one the task uses
+    # (both on stderr and in the registered result's trailing
+    # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
+    def finalize_result(result : PluginResult) : PluginResult
+      PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: false)
+    end
+
     def execute : PluginResult
       # Real Ansible's `name:` param has `aliases: ['db']` - real bug
       # found benchmarking robertdebock.postgres (round 43): its own
