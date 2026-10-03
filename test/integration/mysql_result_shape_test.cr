@@ -101,6 +101,18 @@ private def create_db_play(name : String) : String
   "        #{mysql_login_args(8)}\n"
 end
 
+private MYSQL_TEST_DB = "shape_krdb"
+
+# A play creating the scratch table the DML spec updates.
+private def setup_table_play : String
+  run_play(drop_dbs_play(MYSQL_TEST_DB))
+  "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
+  "    - name: setup\n      community.mysql.mysql_db:\n        name: #{MYSQL_TEST_DB}\n        state: present\n" \
+  "        #{mysql_login_args(8)}\n" \
+  "    - name: table\n      community.mysql.mysql_query:\n" \
+  "        query: \"create table #{MYSQL_TEST_DB}.t1 (i int)\"\n        #{mysql_login_args(8)}\n"
+end
+
 # Re-anchors an indented heredoc body (which arrives indented by an
 # arbitrary common amount) to the 4 spaces a `tasks:` list item needs.
 private def task_body(text : String) : String
@@ -209,5 +221,61 @@ describe "mysql_db plugin result shape" do
       "CREATE DATABASE `shape_db5` CHARACTER SET 'utf8mb4'",
       "CREATE DATABASE `shape_db6` CHARACTER SET 'utf8mb4'",
     ])
+  end
+end
+
+describe "mysql_query plugin result shape" do
+  # Real passes no `msg` on success; `execution_time_ms` is a per
+  # statement float (milliseconds, 4 decimals) that cannot be asserted
+  # exactly - only its presence and per-statement arity.
+  it "registers a select as changed, executed_queries, query_result, rowcount, execution_time_ms, failed" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: select
+              community.mysql.mysql_query:
+                query: "select 1 as a"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump["changed"].as_bool.must_equal(false)
+    dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a"])
+    dump["query_result"].as_a.map { |rows| rows.as_a.map(&.as_h["a"].as_i) }.must_equal([[1]])
+    dump["rowcount"].as_a.map(&.as_i).must_equal([1])
+    dump["execution_time_ms"].as_a.size.must_equal(1)
+  end
+
+  # One entry per statement in every list, in execution order.
+  it "registers one entry per statement for a multi-statement query" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: two selects
+              community.mysql.mysql_query:
+                query:
+                  - "select 1 as a"
+                  - "select 2 as b"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a", "select 2 as b"])
+    dump["rowcount"].as_a.map(&.as_i).must_equal([1, 1])
+    dump["execution_time_ms"].as_a.size.must_equal(2)
+  end
+
+  # DDL always counts as changed; a DML statement's own rowcount decides,
+  # and the no-rows DML is the unchanged case.
+  it "registers a DML statement with no affected rows as unchanged" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), setup_table_play)
+            - name: update nothing
+              community.mysql.mysql_query:
+                query: "update #{MYSQL_TEST_DB}.t1 set i = 5 where i = 99"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump["changed"].as_bool.must_equal(false)
+    dump["rowcount"].as_a.map(&.as_i).must_equal([0])
   end
 end
