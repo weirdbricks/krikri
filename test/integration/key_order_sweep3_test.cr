@@ -40,6 +40,34 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "kernel_blacklist plugin result key order" do
+  it "serializes a fresh present as changed-name-state-filename-lines-is_blacklisted (real-verified)" do
+    file = unique_tmp("kernel-blacklist-order")
+    File.delete(file) if File.exists?(file)
+
+    result = PluginSpecHelper.run("kernel_blacklist", {"name" => "krikri_kbl", "blacklist_file" => file})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed", "name", "state", "filename", "lines", "is_blacklisted"])
+    result["lines"].as_a.map(&.as_s).must_equal(["blacklist krikri_kbl"])
+  ensure
+    File.delete(file) if file && File.exists?(file)
+  end
+
+  it "serializes an unchanged rerun in the same order" do
+    file = unique_tmp("kernel-blacklist-order2")
+    File.delete(file) if File.exists?(file)
+    PluginSpecHelper.run("kernel_blacklist", {"name" => "krikri_kbl2", "blacklist_file" => file})
+
+    result = PluginSpecHelper.run("kernel_blacklist", {"name" => "krikri_kbl2", "blacklist_file" => file})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "name", "state", "filename", "lines", "is_blacklisted"])
+  ensure
+    File.delete(file) if file && File.exists?(file)
+  end
+end
+
 describe "dpkg_divert plugin result key order" do
   it "serializes an unmodified absence as changed-diversion-commands-messages (real: changed, diversion, commands, messages, diff)" do
     skip "no dpkg-divert on this machine" unless File.exists?("/usr/bin/dpkg-divert") || File.exists?("/usr/sbin/dpkg-divert")
