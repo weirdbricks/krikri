@@ -367,11 +367,11 @@ describe "get_url plugin" do
     File.write(dest, FILE_CONTENT)
     File.touch(dest, COND_TIME)
 
-    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest})
+    PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest})
     File.read(dest).must_equal("cc=none:ims=yes")
 
     File.touch(dest, COND_TIME)
-    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest, "force" => "yes"})
+    PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest, "force" => "yes"})
     File.read(dest).must_equal("cc=no-cache:ims=no")
 
     # Checksum mismatch -> forced re-download (cache-control, no

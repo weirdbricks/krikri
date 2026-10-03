@@ -840,10 +840,10 @@ describe "git plugin param coverage" do
     single["msg"].as_s.must_equal("Cannot find git executable at #{not_git}")
 
     separate = PluginSpecHelper.run("git", {
-      "repo"              => repo,
-      "dest"              => tmp_path("git-not-git-sgd-dest"),
-      "executable"        => not_git,
-      "separate_git_dir"  => tmp_path("git-not-git-sgd"),
+      "repo"             => repo,
+      "dest"             => tmp_path("git-not-git-sgd-dest"),
+      "executable"       => not_git,
+      "separate_git_dir" => tmp_path("git-not-git-sgd"),
     })
     separate["failed"].as_bool.must_equal(true)
     separate["msg"].as_s.must_equal("Cannot find git executable at #{not_git}")

@@ -32,7 +32,7 @@ describe SocketConnect do
 
     it "connects to a live listener" do
       server = TCPServer.new("127.0.0.1", 0)
-      port = server.local_address.not_nil!.port
+      port = (server.local_address || raise "unexpected nil").port
       socket = SocketConnect.open("127.0.0.1", port, 5.seconds)
       socket.print("hi")
       socket.flush
@@ -50,7 +50,7 @@ describe SocketConnect do
         ex
       end
 
-      error.not_nil!.message.must_equal("Connect timed out")
+      (error || raise "unexpected nil").message.must_equal("Connect timed out")
     end
   end
 
@@ -61,7 +61,7 @@ describe SocketConnect do
 
     it "is nil when the target answers" do
       server = TCPServer.new("127.0.0.1", 0)
-      port = server.local_address.not_nil!.port
+      port = (server.local_address || raise "unexpected nil").port
       SocketConnect.probe_errno("127.0.0.1", port).must_be_nil
       server.close
     end

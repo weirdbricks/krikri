@@ -731,11 +731,11 @@ describe "uri plugin" do
   describe "form-multipart body validation" do
     it "fails a non-mapping body with real's module-side message and Python class names" do
       {
-        "asgaub"                          => "str",
-        "5"                               => "int",
-        "1.5"                             => "float",
-        "true"                            => "bool",
-        %(["1", "2"])                     => "list",
+        "asgaub"                              => "str",
+        "5"                                   => "int",
+        "1.5"                                 => "float",
+        "true"                                => "bool",
+        %(["1", "2"])                         => "list",
         Krikri::NON_STRING_PARAM_PREFIX + "5" => "int",
       }.each do |body, class_name|
         result = PluginSpecHelper.run("uri", {

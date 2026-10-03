@@ -76,11 +76,11 @@ module Krikri
     #                     curve's OpenSSL short name
     #   public_der      - SubjectPublicKeyInfo DER, the fingerprint input
     module Pkey
-      NID_RSA    = 6    # NID_rsaEncryption
-      NID_DSA    = 116  # NID_dsa
-      NID_EC     = 408  # NID_X9_62_id_ecPublicKey
-      NID_X25519 = 1034
-      NID_X448   = 1035
+      NID_RSA     =    6 # NID_rsaEncryption
+      NID_DSA     =  116 # NID_dsa
+      NID_EC      =  408 # NID_X9_62_id_ecPublicKey
+      NID_X25519  = 1034
+      NID_X448    = 1035
       NID_ED25519 = 1087
       NID_ED448   = 1088
 
@@ -99,7 +99,7 @@ module Krikri
       extend self
 
       # EVP_PKEY* the caller owns (free_pkey) or nil on any failure.
-      def generate(type : String, size : Int32, curve_nid : Int32) : Void*?
+      def generate(type : String, size : Int32, curve_nid : Int32) : Void*? # ameba:disable Metrics/CyclomaticComplexity
         nid = TYPE_NIDS[type]?
         return nil unless nid
 

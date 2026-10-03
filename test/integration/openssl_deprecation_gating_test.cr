@@ -20,7 +20,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private HINT = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n"
+private HINT                = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n"
 private MACITER_DEPRECATION = "[DEPRECATION WARNING]: Param 'maciter_size' is deprecated. " \
                               "See the module docs for more information. This feature will be removed from " \
                               "collection 'community.crypto' version 4.0.0.\n"

@@ -28,7 +28,7 @@ module Krikri
     # V(present) state"), in declaration order.
     private LVG_STATES = %w[absent present active inactive]
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       unsupported = @params.keys.reject { |k| k.starts_with?("_") || LVG_SPEC.has_key?(k) }
       unless unsupported.empty?
         return PluginResult.new(changed: false, failed: true,
@@ -89,16 +89,16 @@ module Krikri
     end
 
     private LVG_SPEC = {
-      "vg"              => [] of String,
-      "pvs"             => [] of String,
-      "pesize"          => [] of String,
-      "pv_options"      => [] of String,
-      "pvresize"        => [] of String,
-      "vg_options"      => [] of String,
-      "state"           => [] of String,
-      "force"           => [] of String,
-      "reset_vg_uuid"   => [] of String,
-      "reset_pv_uuid"   => [] of String,
+      "vg"               => [] of String,
+      "pvs"              => [] of String,
+      "pesize"           => [] of String,
+      "pv_options"       => [] of String,
+      "pvresize"         => [] of String,
+      "vg_options"       => [] of String,
+      "state"            => [] of String,
+      "force"            => [] of String,
+      "reset_vg_uuid"    => [] of String,
+      "reset_pv_uuid"    => [] of String,
       "remove_extra_pvs" => [] of String,
     }
 

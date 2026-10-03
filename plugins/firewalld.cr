@@ -110,7 +110,7 @@ module Krikri
     @do_runtime = false
     @do_permanent = true
 
-    def execute : PluginResult
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       state = @params["state"]?
       unless state
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: state")

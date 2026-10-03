@@ -186,7 +186,7 @@ module Krikri
       !regen && existing && format_mismatch == "convert" && !format_matches?(path, type, format)
     end
 
-    private def write_key(regen : Bool, convert : Bool, path : String, type : String, size : Int32,
+    private def write_key(regen : Bool, convert : Bool, path : String, type : String, size : Int32, # ameba:disable Metrics/CyclomaticComplexity
                           curve : String?, passphrase : String?, cipher : String, format : String) : PluginResult
       return result(true, path, type, size, curve, nil) if true?(@params["_ansible_check_mode"]?)
 
