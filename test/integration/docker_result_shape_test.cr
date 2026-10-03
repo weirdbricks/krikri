@@ -306,3 +306,103 @@ describe "docker result shape: docker_login" do
     result["msg"].as_s.must_include("Logging into https://registry-1.docker.io/v1/ for user krikri failed - ")
   end
 end
+
+# Only ever touches the krikri-kp-dk-* containers these specs create.
+def remove_krikri_kp_dk_container(name : String) : Nil
+  Process.run("podman", ["rm", "-f", name], output: Process::Redirect::Close, error: Process::Redirect::Close)
+end
+
+describe "docker result shape: docker_container" do
+  serial!
+
+  # A tiny local image; the specs only ever create krikri-kp-dk-* containers.
+  CONTAINER_IMAGE = "docker.io/library/alpine:latest"
+
+  # real: {"changed": true, "container": {<inspect>}, "failed": false} - the
+  # inspect payload is the daemon's own, so its keys and their order are
+  # the daemon's, passed straight through.
+  it "matches real's create key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-c"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["changed", "container", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["container"]["Name"].as_s.must_equal("/#{name}")
+    docker_shape_keys(result["container"]).must_equal([
+      "Id", "Created", "Path", "Args", "State", "Image", "ResolvConfPath",
+      "HostnamePath", "HostsPath", "LogPath", "Name", "RestartCount",
+      "Driver", "Platform", "MountLabel", "ProcessLabel", "AppArmorProfile",
+      "ExecIDs", "HostConfig", "GraphDriver", "SizeRootFs", "Mounts",
+      "Config", "NetworkSettings",
+    ])
+    result.as_h.has_key?("msg").must_equal(false)
+
+    remove_krikri_kp_dk_container(name)
+  end
+
+  # real check_mode create: {"changed", "actions", "failed"} - one action
+  # dict per operation, and no `container` (nothing was actually created).
+  it "matches real's check_mode create key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-c2"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run_raw("docker_container",
+      {"name" => JSON::Any.new(name), "image" => JSON::Any.new(CONTAINER_IMAGE),
+       "command" => JSON::Any.new("sleep 30"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
+       "_ansible_check_mode" => JSON::Any.new(true)})
+    docker_shape_keys(result).must_equal(["changed", "actions", "failed"])
+    actions = result["actions"].as_a
+    actions.size.must_equal(1)
+    actions[0]["created"].as_s.must_equal("Created container")
+    actions[0]["create_parameters"]["Cmd"].as_a.map(&.as_s).must_equal(["sleep", "30"])
+    actions[0].as_h.has_key?("networks").must_equal(true)
+    result.as_h.has_key?("container").must_equal(false)
+
+    remove_krikri_kp_dk_container(name)
+  end
+
+  # real removal: {"changed": true, "failed": false} - state=absent records
+  # no container facts at all
+  it "matches real's removed key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-c3"
+    remove_krikri_kp_dk_container(name)
+    PluginSpecHelper.run("docker_container", {
+      "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "state" => "absent", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["changed", "failed"])
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  it "matches real's already-absent key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => "krikri-kp-dk-shape-gone", "state" => "absent",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["changed", "failed"])
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "matches real's missing-image failure key set and order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-c4"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "image" => "krikri-kp-dk-nosuchimage:9", "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("Error pulling image krikri-kp-dk-nosuchimage:9 - ")
+    remove_krikri_kp_dk_container(name)
+  end
+end
