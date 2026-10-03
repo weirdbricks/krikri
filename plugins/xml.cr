@@ -15,6 +15,14 @@ module Krikri
   # Real module runs on lxml (also libxml2 underneath), so XPath and
   # serialization behavior match.
   class XmlPlugin < BasePlugin
+    # Live-verified against real ansible-core 2.19.11 (community.general
+    # collection) via `{{ r | to_json }}` dumps. One order covers every
+    # success variant: set-attribute runs (changed and unchanged) are
+    # actions/changed (msg omitted when empty); count: adds count then
+    # msg; print_match adds matches then msg. The executor backfills
+    # failed/changed-after; warnings trails.
+    SUCCESS_KEY_ORDER = %w[actions changed count matches msg failed warnings]
+
     def execute : PluginResult
       raw = @config["params"]?.try(&.as_h?) || {} of String => JSON::Any
 
@@ -784,7 +792,7 @@ module Krikri
         "namespaces" => JSON::Any.new(namespaces),
         "state"      => JSON::Any.new(state),
       }
-      result = PluginResult.new(changed: changed, failed: false, msg: msg)
+      result = PluginResult.new(changed: changed, failed: false, msg: msg, key_order: SUCCESS_KEY_ORDER)
       result.extra["actions"] = JSON::Any.new(actions)
       result.extra["count"] = JSON::Any.new(count_result) if count_result
       result.extra["matches"] = matches_result if matches_result

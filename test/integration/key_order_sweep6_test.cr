@@ -417,6 +417,38 @@ describe "get_certificate plugin result key order" do
   end
 end
 
+describe "xml plugin result key order" do
+  it "serializes an attribute set as actions-changed" do
+    dir = PluginSpecHelper.tmp_path("ko-xml-1")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "test.xml")
+    File.write(path, %(<?xml version='1.0' encoding='UTF-8'?>\n<config><setting name="a" value="1"/></config>))
+    result = PluginSpecHelper.run("xml", {
+      "path"      => path,
+      "xpath"     => "/config/setting",
+      "attribute" => "value",
+      "value"     => "2",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["actions", "changed"])
+  end
+
+  it "serializes a count query as actions-changed-count-msg" do
+    dir = PluginSpecHelper.tmp_path("ko-xml-2")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "test.xml")
+    File.write(path, %(<?xml version='1.0' encoding='UTF-8'?>\n<config><setting name="a" value="1"/></config>))
+    result = PluginSpecHelper.run("xml", {
+      "path"  => path,
+      "xpath" => "/config/setting",
+      "count" => "true",
+    })
+
+    result.as_h.keys.must_equal(["actions", "changed", "count", "msg"])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")
