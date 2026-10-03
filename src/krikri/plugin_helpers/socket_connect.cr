@@ -162,12 +162,26 @@ module Krikri
         pending_errno(socket) || Errno::NONE
       end
 
+      # getsockopt's SO_ERROR option number. Crystal 1.21.1's LibC bindings
+      # define LibC::SO_ERROR, but the 1.21.0 toolchain the release workflow
+      # pins (musl/Alpine images and the macOS runners) does not - referencing
+      # it there is a compile error ("undefined constant LibC::SO_ERROR") that
+      # a glibc 1.21.1 dev build never shows. The numbers are the kernel ABI's:
+      # 4 on Linux (every architecture), 0x1007 on macOS and the BSDs.
+      {% if LibC.has_constant?("SO_ERROR") %}
+        SO_ERROR_OPTION = LibC::SO_ERROR
+      {% elsif flag?(:linux) %}
+        SO_ERROR_OPTION = 4
+      {% else %}
+        SO_ERROR_OPTION = 0x1007
+      {% end %}
+
       # The connect error the kernel recorded for `socket`, read before
       # anything else can (a successful getsockopt CLEARS it on Linux).
       private def self.pending_errno(socket : Socket) : Errno?
         value = 0
         size = LibC::SocklenT.new(sizeof(Int32))
-        return nil if LibC.getsockopt(socket.fd, LibC::SOL_SOCKET, LibC::SO_ERROR, pointerof(value), pointerof(size)) == -1
+        return nil if LibC.getsockopt(socket.fd, LibC::SOL_SOCKET, SO_ERROR_OPTION, pointerof(value), pointerof(size)) == -1
 
         errno = Errno.new(value)
         errno == Errno::NONE ? nil : errno
