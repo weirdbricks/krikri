@@ -91,13 +91,25 @@ module Krikri
       result = remote_exec(invocation)
       cleanup
 
+      stdout = result[:stdout].rstrip("\r\n")
+      stderr = result[:stderr].rstrip("\r\n")
+      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+      # rc, stdout, stdout_lines, stderr, stderr_lines, changed - the
+      # executor's failed: false backfill lands after changed. The script
+      # action plugin builds stdout_lines/stderr_lines itself (module-side
+      # here), which both places them between stdout/stderr and changed
+      # and stops the register-time lines augmentation from appending
+      # them after `failed`.
       PluginResult.new(
         changed: true,
         failed: result[:exit_code] != 0,
         msg: result[:exit_code] == 0 ? "" : "non-zero return code",
-        stdout: result[:stdout].rstrip("\r\n"),
-        stderr: result[:stderr].rstrip("\r\n"),
-        rc: result[:exit_code]
+        stdout: stdout,
+        stderr: stderr,
+        rc: result[:exit_code],
+        stdout_lines: stdout.split("\n").reject(&.empty?),
+        stderr_lines: stderr.split("\n").reject(&.empty?),
+        key_order: %w[rc stdout stdout_lines stderr stderr_lines changed]
       )
     end
 
@@ -122,13 +134,16 @@ module Krikri
     private def skip_reason : PluginResult?
       if creates = @params["creates"]?
         if path_or_glob_exists?(expand_tilde(creates))
-          return PluginResult.new(changed: false, failed: false, msg: "#{creates} exists, matching creates option", skipped: true)
+          # Real 2.19.11 (live-verified): the script ACTION plugin's
+          # short-circuit skip registers skipped, msg, changed - no failed
+          # key (unlike a module-side skip, which the executor backfills).
+          return PluginResult.new(changed: false, failed: false, msg: "#{creates} exists, matching creates option", skipped: true, key_order: %w[skipped msg changed])
         end
       end
 
       if removes = @params["removes"]?
         unless path_or_glob_exists?(expand_tilde(removes))
-          return PluginResult.new(changed: false, failed: false, msg: "#{removes} does not exist, matching removes option", skipped: true)
+          return PluginResult.new(changed: false, failed: false, msg: "#{removes} does not exist, matching removes option", skipped: true, key_order: %w[skipped msg changed])
         end
       end
 
