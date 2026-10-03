@@ -26,22 +26,31 @@ module Krikri
       private alias BatchOutcome = NamedTuple(changed: Bool, message: String?, output: String, failure: PluginResult?)
 
       # ------------------------------------------------------------------
-      # Real ansible-core 2.19.11 `ansible.builtin.dnf` registered-result
-      # shapes (live-verified inside a fedora:41 container through
-      # `{{ r | to_json }}` on a registered task, one FRESH container per
-      # engine so both engines saw identical host state):
+      # Real ansible-core 2.19.11 registered-result shapes for the
+      # dnf-family backends (each observed through `{{ r | to_json }}` on
+      # a registered task - fedora:41 container for dnf5, Rocky Linux 9
+      # for dnf, one FRESH host per engine so both engines saw identical
+      # host state):
       #
-      #   install/remove/latest (the module's own `response` dict, which
-      #   it initializes msg/changed/results/rc and exits with via
-      #   exit_json(**response)): results, changed, msg, rc, failed - msg
-      #   "Nothing to do" on a no-op, "" on a real transaction, results
-      #   holding "Installed: <name>-<version>-<release>.<arch>" /
-      #   "Removed: <nevra>" entries.
-      #   update_cache only (a literal exit_json(msg=, changed=, results=,
-      #   rc=) call, so THAT path keeps the module's kwargs order): msg,
-      #   changed, results, rc, failed - msg "Cache updated".
-      #   `list:` (list_items' exit_json(msg="", results=results)): msg,
-      #   results, failed.
+      #   The `dnf:` ACTION plugin dispatches on the host's pkg_mgr fact
+      #   (or an explicit use_backend), so the SAME task registers a
+      #   DIFFERENT key order per backend:
+      #   - dnf4 (Rocky 9, `dnf.py`): the module's own `response` dict,
+      #     initialized msg/changed/results/rc and exited via
+      #     exit_json(**response): msg, changed, results, rc, failed -
+      #     msg "Nothing to do" on a no-op, "" on a real transaction,
+      #     results holding "Installed: <nevra>" / "Removed: <nevra>"
+      #     entries.
+      #   - dnf5 (Fedora 41, `dnf5.py`): a literal
+      #     exit_json(results=, changed=, msg=, rc=) call, so THAT path
+      #     keeps the kwargs order: results, changed, msg, rc, failed.
+      #   update_cache only is a literal exit_json(msg=, changed=,
+      #   results=, rc=) call on BOTH backends, so that path keeps the
+      #   module's kwargs order: msg, changed, results, rc, failed - msg
+      #   "Cache updated".
+      #   `list:` (list_items' exit_json(msg="", results=results); dnf5
+      #   adds rc=0): msg, results[, rc], with `changed` backfilled by
+      #   the CONTROLLER after `failed`.
       #   failure (failure_response = msg/failures/results/rc): msg,
       #   failures, results, rc, failed.
       #
@@ -49,24 +58,29 @@ module Krikri
       # result (the interpreter-discovery warning and the fact the
       # controller merges in) but have no krikri equivalent - same as
       # every other plugin pinned in this sweep.
-      #
-      # dnf5 shares these shapes except its `list:` path, which also
-      # carries rc (its own exit_json(msg="", results=results, rc=0)) -
-      # see dnf5.cr's #list_result_key_order.
-      DNF_TRANSACTION_ORDER = %w[results changed msg rc failed]
-      DNF_CACHE_ORDER       = %w[msg changed results rc failed]
+      DNF_TRANSACTION_ORDER  = %w[msg changed results rc failed]
+      DNF5_TRANSACTION_ORDER = %w[results changed msg rc failed]
+      DNF_CACHE_ORDER        = %w[msg changed results rc failed]
       # `list:` - real's exit_json(msg="", results=results) carries no
-      # `changed`, so the CONTROLLER backfills it AFTER `failed`; `rc`
-      # rides along because the 2.19.11 module's own list path reports it
-      # (both observed live, in this order, on fedora:41).
-      DNF_LIST_ORDER        = %w[msg results rc failed changed]
-      DNF_FAILURE_ORDER     = %w[msg failures results rc failed]
+      # `changed`, so the CONTROLLER backfills it after `failed`; dnf4
+      # passes no rc at all, dnf5 passes rc=0 (both observed live, in
+      # this order, on their respective hosts).
+      DNF4_LIST_ORDER   = %w[msg results]
+      DNF5_LIST_ORDER   = %w[msg results rc]
+      DNF_FAILURE_ORDER = %w[msg failures results rc failed]
+
+      # The transaction success key order an includer emits - dnf4/yum
+      # (the response-dict order) by default, dnf5's kwargs order where
+      # the backend resolves to dnf5 (plugins/dnf5.cr always;
+      # plugins/dnf.cr when the host's pkg_mgr resolves there).
+      private def transaction_key_order : Array(String)
+        DNF_TRANSACTION_ORDER
+      end
 
       # The key order an includer uses for a `list:` query result - dnf's
-      # own list_items() passes no rc, dnf5's does (plugins/dnf5.cr
-      # overrides this).
+      # own list_items() passes no rc, dnf5's does.
       private def list_result_key_order : Array(String)
-        DNF_LIST_ORDER
+        DNF4_LIST_ORDER
       end
 
       # The msg real reports for a cache-only refresh. dnf and dnf5 both
@@ -102,7 +116,7 @@ module Krikri
           include_empty_msg: true,
           results: results,
           rc: 0,
-          key_order: DNF_TRANSACTION_ORDER
+          key_order: transaction_key_order
         )
       end
 
@@ -143,7 +157,7 @@ module Krikri
           msg: check_mode_msg,
           results: results,
           rc: 0,
-          key_order: DNF_TRANSACTION_ORDER
+          key_order: transaction_key_order
         )
       end
 
@@ -200,7 +214,7 @@ module Krikri
             include_empty_msg: true,
             results: [] of String,
             rc: 0,
-            key_order: DNF_TRANSACTION_ORDER
+            key_order: transaction_key_order
           )
         end
 
@@ -323,11 +337,11 @@ module Krikri
       # package spec (which has no flag form).
       private def list_flag(query : String) : String?
         case query
-        when "installed"             then "--installed"
-        when "available"             then "--available"
-        when "updates", "upgrades"   then "--upgrades"
-        when "extras"                then "--extras"
-        when "obsoletes"             then "--obsoletes"
+        when "installed"           then "--installed"
+        when "available"           then "--available"
+        when "updates", "upgrades" then "--upgrades"
+        when "extras"              then "--extras"
+        when "obsoletes"           then "--obsoletes"
         end
       end
 
@@ -578,7 +592,7 @@ module Krikri
             include_empty_msg: true,
             results: to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" },
             rc: 0,
-            key_order: DNF_TRANSACTION_ORDER
+            key_order: transaction_key_order
           )
         else
           failure_result(

@@ -15,13 +15,18 @@ module Krikri
     # all (it belongs to firewall-offline-cmd itself, a companion CLI
     # tool, not the Ansible module).
     #
-    # `service` removal is a real, confirmed quirk: `--remove-service`
-    # (no `-from-zone` suffix) is a legacy "lokkit" option that can't be
-    # combined with `--zone=` at all (real, verified error: "Can't use
-    # lokkit options with other options") - the zone-scoped removal form
-    # is `--remove-service-from-zone=`. `port`/`rich-rule`/`source`/
-    # `masquerade` don't have this quirk; their plain `--remove-<thing>=`
-    # forms work fine with `--zone=`.
+    # `service` removal is a real, confirmed quirk - but only on
+    # `firewall-offline-cmd`: its plain `--remove-service` is a legacy
+    # "lokkit" option that can't be combined with `--zone=` at all (real,
+    # verified error: "Can't use lokkit options with other options"), so
+    # the zone-scoped removal form there is `--remove-service-from-zone=`.
+    # The live `firewall-cmd` has NO `--remove-service-from-zone` option
+    # at all (real, verified error: "firewall-cmd: error: unrecognized
+    # arguments: --remove-service-from-zone=http", round994003 kop_rocky)
+    # and takes plain `--remove-service=` with `--zone=` like every other
+    # thing. `port`/`rich-rule`/`source`/`masquerade` don't have this
+    # quirk on either binary; their plain `--remove-<thing>=` forms work
+    # fine with `--zone=`.
     #
     # The ZoneXml section below is the direct zone-config-file backend
     # for offline mode: real ansible.posix.firewalld's offline mode does
@@ -73,7 +78,7 @@ module Krikri
       end
 
       def self.remove_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
-        flag = thing == "service" ? "remove-service-from-zone" : "remove-#{flag_name(thing)}"
+        flag = thing == "service" && binary != "firewall-cmd" ? "remove-service-from-zone" : "remove-#{flag_name(thing)}"
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --#{flag}#{value_suffix(thing, value)}"
       end
 

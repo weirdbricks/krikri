@@ -110,6 +110,17 @@ module Krikri
     @systemd_load_state = ""
     @systemd_active_state = ""
     @probe_service_mgr = ""
+    # The full `systemctl show <name>` property dict - real Ansible's
+    # service ACTION plugin dispatches to the systemd module on a
+    # systemd host, and that module's registered result carries the
+    # whole status dict (name, changed, status, [enabled], state).
+    @systemd_status = Hash(String, String).new
+    # The registered result's `enabled` (bool, only when the enabled:
+    # param was given) and `state` (the requested state, with
+    # restarted/reloaded settling on "started" - the systemd module's
+    # own values), populated on the systemd path only.
+    @result_enabled : Bool? = nil
+    @result_state : String? = nil
 
     def initialize(config : JSON::Any)
       super(config)
@@ -204,6 +215,11 @@ module Krikri
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
+        # Real's systemd module reports the unit's NEW enabled state in
+        # result['enabled'] - which is always the requested value (the
+        # unchanged case is exactly the case where the old state already
+        # equals it).
+        @result_enabled = true?(enabled) if @manager == Manager::Systemd
       end
 
       # Handle state
@@ -214,6 +230,12 @@ module Krikri
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
+        # Real's systemd module echoes the requested state, except that
+        # its restarted/reloaded branch settles result['state'] on
+        # "started" (both actions leave the unit running).
+        if @manager == Manager::Systemd
+          @result_state = {"restarted", "reloaded"}.includes?(state) ? "started" : state
+        end
       end
 
       msg = messages.empty? ? "No changes needed" : messages.join(", ")
@@ -221,19 +243,39 @@ module Krikri
         msg += " (check mode)"
       end
 
-      # Real 2.19.11's registered service result key order (live-verified
-      # via {{ r.keys() | list | to_json }} in check mode against an
-      # active systemd unit, would-change and no-change alike):
-      # name, changed, status, state, failed. krikri's service result
-      # carries only changed (+ msg) today - name/status/state (the
-      # systemd module's unit-property dict and state echo) are a known
-      # set gap, so the pin documents real's relative order for when
-      # they land; msg is krikri-only and trails.
+      if @manager == Manager::Systemd
+        # Real 2.19.11's registered `service` result on a systemd host IS
+        # the systemd module's result (the action plugin dispatches to
+        # it): name, changed, status, [enabled], state, failed - and NO
+        # msg key at all (round994002 virt_net_helper_service /
+        # round994003 firewalld_helper_service, live-verified via
+        # {{ r | to_json }}). enabled appears only when the enabled:
+        # param was given, with the systemd module's value semantics:
+        # the unit's NEW enabled state (== the requested value, whatever
+        # the previous state was). state carries the requested value,
+        # except restarted/reloaded settle on "started" (the systemd
+        # module's own `result['state'] = 'started'` for its restart/
+        # reload branch). The krikri-only human msg texts are dropped
+        # here to keep the registered shape byte-identical with real's.
+        result = PluginResult.new(
+          changed: changed,
+          failed: false,
+          name: name,
+          status: @systemd_status,
+          key_order: ["name", "changed", "status", "enabled", "state"],
+        )
+        result.extra["enabled"] = JSON.parse(@result_enabled.to_json) unless @result_enabled.nil?
+        result.extra["state"] = JSON.parse(@result_state.to_json) unless @result_state.nil?
+        return with_unused_param_warnings(result)
+      end
+
+      # Non-systemd managers keep the historical shape (real's generic
+      # service module result differs per init system and is not pinned
+      # by any live capture yet).
       with_unused_param_warnings(PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg,
-        key_order: ["name", "changed", "status", "state"],
       ))
     end
 
@@ -335,11 +377,17 @@ module Krikri
       @svc_cmd = cmd
       @enable_cmd = cmd
 
-      remote_exec("#{cmd} show #{shell_single_quote(name)} --property=LoadState --property=ActiveState 2>/dev/null")[:stdout].to_s.each_line do |line|
-        key, _, value = line.strip.partition('=')
+      # One full `systemctl show` - real Ansible's systemd module reads
+      # the whole property dict once (its `result['status']`), and this
+      # plugin reuses the same output for both the enabled:/state:
+      # decisions (LoadState/ActiveState) and the registered status dict.
+      remote_exec("#{cmd} show #{shell_single_quote(name)} 2>/dev/null")[:stdout].to_s.each_line do |line|
+        key, sep, value = line.partition('=')
+        next unless sep == "="
+        @systemd_status[key] = value
         case key
-        when "LoadState"   then @systemd_load_state = value
-        when "ActiveState" then @systemd_active_state = value
+        when "LoadState"   then @systemd_load_state = value.strip
+        when "ActiveState" then @systemd_active_state = value.strip
         end
       end
 

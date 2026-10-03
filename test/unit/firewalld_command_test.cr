@@ -55,9 +55,18 @@ describe Krikri::PluginHelpers::FirewalldCommand do
   end
 
   describe ".remove_command" do
-    it "uses --remove-service-from-zone for service (real, confirmed quirk: plain --remove-service can't combine with --zone=)" do
+    it "uses --remove-service-from-zone for service on firewall-offline-cmd (real, confirmed quirk: plain --remove-service can't combine with --zone=)" do
       Krikri::PluginHelpers::FirewalldCommand.remove_command("public", "service", "http")
         .must_equal("firewall-offline-cmd --zone=public --remove-service-from-zone='http'")
+    end
+
+    # round994003 kop_rocky: the offline-only quirk flag leaked into the
+    # live-daemon CLI, whose --remove-service-from-zone doesn't exist at
+    # all ("firewall-cmd: error: unrecognized arguments", verified in a
+    # real firewalld container) - the cleanup disable task died msg-less.
+    it "uses plain --remove-service on the live firewall-cmd (no -from-zone option exists there)" do
+      Krikri::PluginHelpers::FirewalldCommand.remove_command("public", "service", "http", "firewall-cmd")
+        .must_equal("firewall-cmd --zone=public --remove-service='http'")
     end
 
     it "uses the plain --remove-<thing>= form for port/rich_rule/source/masquerade" do

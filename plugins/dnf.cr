@@ -91,6 +91,61 @@ module Krikri
       "dnf"
     end
 
+    # Whether the request resolved to the dnf5 backend. Real's `dnf:`
+    # ACTION plugin (ansible/plugins/action/dnf.py) rewrites the module
+    # name from use_backend (default "auto") - and for auto/yum resolves
+    # the host's ansible_pkg_mgr fact, running the dnf5 MODULE on a host
+    # whose package manager is dnf5 (Fedora 41+) and the dnf4 module
+    # everywhere else. The two backends' registered results differ in
+    # key order (see RpmPackage's shape notes), so this plugin resolves
+    # the same way: an explicit use_backend wins, then the pkg_mgr fact
+    # when gathered, then a direct probe of what /usr/bin/dnf (or
+    # /usr/bin/microdnf) symlinks to - real pkg_mgr.py's own
+    # _check_rh_versions disambiguation.
+    @dnf5_backend = false
+
+    private def resolve_backend : Nil
+      use = @params["use_backend"]? || "auto"
+      @dnf5_backend = case use
+                      when "dnf5"
+                        true
+                      when "auto", "yum", "yum4"
+                        fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
+                        case fact
+                        when "dnf5" then true
+                        when nil, "", "auto"
+                          probe_pkg_mgr_dnf5?
+                        else
+                          false
+                        end
+                      else
+                        false
+                      end
+    end
+
+    private def probe_pkg_mgr_dnf5? : Bool
+      result = remote_exec(<<-SH)
+      if [ -e /usr/bin/dnf ]; then
+        [ "$(readlink -f /usr/bin/dnf)" = /usr/bin/dnf5 ] && echo dnf5 || echo dnf
+      elif [ -e /usr/bin/microdnf ]; then
+        [ "$(readlink -f /usr/bin/microdnf)" = /usr/bin/dnf5 ] && echo dnf5 || echo dnf
+      else
+        echo unknown
+      fi
+      SH
+      result[:stdout].to_s.strip == "dnf5"
+    rescue
+      false
+    end
+
+    private def transaction_key_order : Array(String)
+      @dnf5_backend ? DNF5_TRANSACTION_ORDER : DNF_TRANSACTION_ORDER
+    end
+
+    private def list_result_key_order : Array(String)
+      @dnf5_backend ? DNF5_LIST_ORDER : DNF4_LIST_ORDER
+    end
+
     # Real ansible.builtin.dnf's argument-spec validation rejects ANY
     # parameter outside its argument_spec at module-arg validation,
     # before any module code runs - found via the podman-diff
@@ -167,6 +222,8 @@ module Krikri
     end
 
     def execute : PluginResult
+      resolve_backend
+
       if failure = arg_spec_rejection
         return failure
       end

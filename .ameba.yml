@@ -245,6 +245,8 @@ Performance/ExcessiveAllocations:
 Style/HeredocEscape:
   Excluded:
   - test/integration/*
+  - test/integration/key_order_round994003_test.cr
+  - test/unit/firewalld_runtime_shapes_test.cr
   - test/integration/apache2_module_test.cr
   - test/integration/apt_key_test.cr
   - test/integration/apt_pinned_version_test.cr
@@ -268,6 +270,11 @@ Style/HeredocEscape:
 Style/HeredocIndent:
   Excluded:
   - test/integration/*
+  - plugins/dnf.cr
+  - plugins/dnf5.cr
+  - plugins/yum.cr
+  - test/integration/key_order_round994003_test.cr
+  - test/unit/firewalld_runtime_shapes_test.cr
   - test/unit/firewalld_command_test.cr
   - plugins/modprobe.cr
   - plugins/postgresql_privs.cr
