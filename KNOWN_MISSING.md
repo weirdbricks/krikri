@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1449`.**
+**Currently at `0.9.1450`.**
 
 ## Open gaps
 
@@ -54,13 +54,15 @@ and fixed and when.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
     `nsupdate`, `rabbitmq_*`.
-- **FAILED-result key order is fixed for plugin-path and argspec-validation failures, not for action-level
-  ones.** Fixed (real registers `failed, msg, changed, exception`): `command`/`shell`, `slurp`, `lineinfile`,
-  `blockinfile`, `replace`, `wait_for`, `file`/`stat` bad-parameter errors and any plain
-  `fail_json(msg=...)`. Still `changed, failed, msg` (no `exception`) because they fail through action
-  plugins, with a different order per module in real: `fail`: `failed, msg, changed, exception`; `assert`:
-  `failed, evaluated_to, assertion, msg, changed, exception`; `copy`/`template`: `failed, msg, exception,
-  changed`; `unarchive`: `failed, exception, msg, changed`.
+- **FAILED-result key order and `exception` now match real for plugin-path, argspec-validation and action-level
+  failures** (`command`/`shell`, `slurp`, `lineinfile`, `blockinfile`, `replace`, `wait_for`, `file`/`stat`,
+  `fail`, `assert`, `copy`, `template`, `unarchive`, `add_host`, `group_by`, `set_fact`, `debug`; real's per-module
+  orders: `fail`/`slurp`: `failed, msg, changed, exception`; `assert`: `failed, evaluated_to, assertion, msg, changed,
+  exception`; `copy`/`template`: `failed, msg, exception, changed`; `unarchive`: `failed, exception, msg, changed`).
+  Still open: `include_vars` with a missing file never registers its failed result at all in krikri (the variable
+  stays undefined afterwards) where real registers `failed, message, ansible_included_var_files, ansible_facts, changed,
+  exception, msg`; `set_fact`'s invalid-variable-name and `debug`'s finalization `[ERROR]` blocks differ in
+  origin/help text.
 - **PostgreSQL gaps found while verifying:** krikri emits no deprecation entry/warning for the shared-spec
   aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`; all now accepted by every `postgresql_*`
   plugin); `postgresql_query`'s connection-failure message is `Could not connect to the PostgreSQL server: ` with an

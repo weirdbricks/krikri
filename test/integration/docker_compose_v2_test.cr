@@ -109,6 +109,10 @@ describe "docker_compose_v2 plugin" do
 end
 
 describe "docker_compose_v2 plugin (live docker)" do
+  # Live podman runtime and project names derived from the (shared) suite pid:
+  # never run alongside sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "converges a project and is idempotent on re-run" do
     skip "docker compose CLI not available" unless compose_available?
 
@@ -168,6 +172,10 @@ end
 # a successful run registers changed/actions/stdout/stderr (with an
 # empty one dropped)/containers/images - and NO msg at all.
 describe "docker_compose_v2 result shape" do
+  # Live podman runtime and project names derived from the (shared) suite pid:
+  # never run alongside sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "matches real's up key set and order" do
     skip "docker compose CLI not available" unless compose_available?
 
