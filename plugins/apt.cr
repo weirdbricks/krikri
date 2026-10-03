@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
 
 module Krikri
@@ -121,6 +122,16 @@ module Krikri
     @cache_updated = false
     # early fail_json paths (before any cache work) carry no cache_updated key
     @omit_cache_updated = false
+    # Real apt.py's get_updated_cache_time() epoch value - the apt lists
+    # dir's mtime, read unconditionally at the top of every main() cache
+    # pass and re-read after a real `apt-get update` - carried as
+    # `cache_update_time` on the cache-only and install-path exits
+    # (round-992002/992003 *_helper_install captures). The two keys
+    # always travel together there, but cache_updated is backfilled
+    # engine-wide by #execute while this one is attached only at the
+    # exits real apt.py itself carries it on (remove/upgrade/deb exit
+    # through their own exit_json calls and never gain either).
+    @cache_update_time = 0
 
     # Real-Ansible apt module params this plugin threads into its apt-get
     # invocations (defaults mirror apt.py's argument_spec). Booleans are
@@ -375,6 +386,12 @@ module Krikri
       upgrade_requested = (raw_upgrade = @params["upgrade"]?) && raw_upgrade != "no"
       cache_update_is_sole_operation = no_effective_packages && !upgrade_requested && !@params["deb"]?
 
+      # Real apt.py reads the lists-dir mtime unconditionally at the top
+      # of its cache pass (get_updated_cache_time()) - not just when an
+      # update is due - so an install with no cache flags at all still
+      # carries the current mtime as cache_update_time.
+      @cache_update_time = cache_mtime
+
       # Handle cache update
       if update_cache || has_cache_valid_time
         # Real Ansible's apt module cannot run at all in check mode when
@@ -392,6 +409,11 @@ module Krikri
           if @check_mode
             messages << "Would update apt cache"
             changed = true if cache_update_is_sole_operation
+            # Real apt.py: `if module.check_mode or updated_cache_time !=
+            # post_cache_update_time: updated_cache = True` - a check-mode
+            # cache pass claims updated_cache/cache_updated unconditionally
+            # once the update was actually due.
+            @cache_updated = true
           elsif !python_apt_present?
             # Normal flow never reaches this branch - the module-start
             # auto-install above either puts the bindings in place or
@@ -418,6 +440,7 @@ module Krikri
             if update_result[:exit_code] == 0
               messages << "APT cache updated"
               @cache_updated = cache_mtime != pre_update_mtime
+              @cache_update_time = cache_mtime
             else
               return PluginResult.new(
                 changed: false,
@@ -457,6 +480,7 @@ module Krikri
               post_update_mtime = cache_mtime
               changed = true if cache_update_is_sole_operation && post_update_mtime != pre_update_mtime
               @cache_updated = post_update_mtime != pre_update_mtime
+              @cache_update_time = post_update_mtime
             else
               return PluginResult.new(
                 changed: false,
@@ -633,13 +657,25 @@ module Krikri
 
       # If no package name provided, just return cache update result
       unless name_param
-        if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
+        if (update_cache || has_cache_valid_time) && !upgrade_requested
+          # Real apt.py's cache-only early exit (its own "If there is
+          # nothing else to do exit" branch, INSIDE the update_cache/
+          # cache_valid_time block): exit_json(changed=updated_cache,
+          # cache_updated=updated_cache, cache_update_time=
+          # updated_cache_time) - no msg, no stdout (round-992002
+          # ufw_helper_install capture: [changed, cache_updated,
+          # cache_update_time, failed]).
+          return PluginResult.new(
+            changed: changed,
+            failed: false,
+            cache_update_time: @cache_update_time,
+            key_order: ["changed", "cache_updated", "cache_update_time"]
+          )
+        elsif update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
-          # Real apt.py: a cache-update-only invocation exits
-          # exit_json(changed=updated_cache, cache_updated=...,
-          # cache_update_time=...); one with an upgrade requested flows
-          # through upgrade()'s msg/stdout/stderr/diff shape
-          # (live-verified against real 2.19.11).
+          # Real apt.py: an upgrade requested flows through upgrade()'s
+          # msg/stdout/stderr/diff shape (live-verified against real
+          # 2.19.11).
           return PluginResult.new(
             changed: changed,
             failed: false,
@@ -682,13 +718,20 @@ module Krikri
       # instead fell through into the packages-present install path with
       # an empty list and lost that changed: entirely.
       if packages.empty?
-        if update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
+        if (update_cache || has_cache_valid_time) && !upgrade_requested
+          # Same cache-only early exit as the no-name case above (real
+          # apt.py's `not p['package']` reads an empty list the same way).
+          return PluginResult.new(
+            changed: changed,
+            failed: false,
+            cache_update_time: @cache_update_time,
+            key_order: ["changed", "cache_updated", "cache_update_time"]
+          )
+        elsif update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
-          # Real apt.py: a cache-update-only invocation exits
-          # exit_json(changed=updated_cache, cache_updated=...,
-          # cache_update_time=...); one with an upgrade requested flows
-          # through upgrade()'s msg/stdout/stderr/diff shape
-          # (live-verified against real 2.19.11).
+          # Real apt.py: an upgrade requested flows through upgrade()'s
+          # msg/stdout/stderr/diff shape (live-verified against real
+          # 2.19.11).
           return PluginResult.new(
             changed: changed,
             failed: false,
@@ -1081,7 +1124,8 @@ module Krikri
               return PluginResult.new(
                 changed: false,
                 failed: true,
-                msg: "no available installation candidate for #{pkg}"
+                msg: "no available installation candidate for #{pkg}",
+                cache_update_time: @cache_update_time
               )
             end
           elsif !package_resolvable?(base_name)
@@ -1157,10 +1201,9 @@ module Krikri
             # apt module (python-apt bindings, not this CLI-based
             # shell-out) correctly resolves the Provides: relationship
             # and reports changed: false here.
-            if apt_summary_had_no_effect?(install_result[:stdout])
-              messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} already satisfied"
-            else
-              messages << "Package#{to_install.size > 1 ? "s" : ""} #{to_install.join(", ")} installed"
+            # changed stays false when apt's own summary shows nothing was
+            # actually installed (see the virtual-package comment above).
+            unless apt_summary_had_no_effect?(install_result[:stdout])
               changed = true
             end
           else
@@ -1169,46 +1212,76 @@ module Krikri
               failed: true,
               msg: "Failed to install #{to_install.join(", ")}: #{install_result[:stderr]}",
               stdout: install_result[:stdout],
-              stderr: install_result[:stderr]
+              stderr: install_result[:stderr],
+              cache_update_time: @cache_update_time
             )
           end
         end
       end
 
-      # Report already installed packages
-      unless already_installed.empty?
-        messages << "Package#{already_installed.size > 1 ? "s" : ""} #{already_installed.join(", ")} already installed"
+      # Real apt.py's install(): an all-already-installed package list
+      # builds an EMPTY apt-get command line (`packages = ''` after the
+      # per-spec installed check skips every entry) and exits with the
+      # bare `data = dict(changed=False)` retvals - no stdout/stderr/msg
+      # and therefore no controller-appended stdout_lines/stderr_lines
+      # (round-992002 ufw_helper_install capture:
+      # [changed, cache_updated, cache_update_time, failed]). Only a
+      # package that actually reaches apt-get produces the
+      # [changed, stdout, stderr, diff, ...] shape below.
+      if to_install.empty?
+        return PluginResult.new(
+          changed: false,
+          failed: false,
+          cache_update_time: @cache_update_time,
+          key_order: ["changed", "cache_updated", "cache_update_time"]
+        )
       end
 
-      msg = messages.empty? ? "No changes needed" : messages.join(", ")
-      if @check_mode && changed
-        msg += " (check mode)"
-      end
-
-      # Real Ansible's ansible.builtin.apt module always registers a
-      # `stdout`/`stderr` key (the underlying apt-get invocation's raw
-      # output, "" when no apt-get command actually ran) - some roles
-      # register this task and inspect `.stdout` afterwards (found via
-      # claranet.postgresql's own `when: ... in
-      # _postgresql_packages_installation_res.stdout` checking apt's own
-      # postinst-trigger output for whether the just-installed postgres
-      # package auto-created a cluster). Without it, that `when:` failed
-      # outright ("object of type 'dict' has no attribute 'stdout'")
-      # instead of evaluating the condition like real Ansible does.
       # Real apt.py's install-path exit: exit_json(**retvals) with
       # retvals = {changed, stdout, stderr, diff} + cache_updated/
       # cache_update_time (live-verified against real 2.19.11 via a
-      # registered {{ r | to_json }} dump in the podman container; the
-      # unchanged and check-mode exits are the cache-keys-only shape,
-      # and the controller appends stdout_lines/stderr_lines).
+      # registered {{ r | to_json }} dump in the podman container, and
+      # against the round-992003 zfs_helper_install capture:
+      # [changed, stdout, stderr, diff, cache_updated, cache_update_time,
+      # stdout_lines, stderr_lines, failed]). There is NO msg key on
+      # either install shape - the per-package "already installed"/
+      # "installed" wording this engine used to invent is not part of
+      # real's result - and `diff` is ALWAYS present once packages reach
+      # apt-get (a bare {} when diff mode is off, parse_diff's
+      # {prepared: ...} slice of apt-get's own output when on). The
+      # controller appends stdout_lines/stderr_lines.
+      # diff mode off: a bare {} (real apt.py: `diff = {}` unless
+      # m._diff); diff mode on: parse_diff's prepared slice. The
+      # stdout_lines/stderr_lines pair is emitted MODULE-side (like the
+      # command/shell plugins) rather than left to the executor's
+      # post-backfill, so the registered order matches real's - real
+      # appends stdout_lines/stderr_lines BEFORE its failed backfill.
+      diff = @diff_mode ? apt_install_diff(install_stdout) : JSON.parse("{}")
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg,
         stdout: install_stdout,
         stderr: install_stderr,
+        diff: diff,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(install_stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(install_stderr),
+        cache_update_time: @cache_update_time,
         key_order: ["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines"]
       )
+    end
+
+    # Real apt.py's parse_diff() over the apt-get output: everything
+    # after the "Resolving dependencies..." (aptitude) or "Reading state
+    # information..." (apt-get) marker line up to and including the
+    # "N upgraded" summary line, joined into a single `prepared` string;
+    # with no markers, everything. The diff-mode-only half of the
+    # install path's always-present `diff` key (see above).
+    private def apt_install_diff(output : String) : JSON::Any
+      lines = output.lines
+      start = (lines.index("Resolving dependencies...") || lines.index("Reading state information...")).try(&.+(1)) || 0
+      stop = (lines.index { |line| line.matches?(/^\d+ (packages )?upgraded/) }).try(&.+(1)) || lines.size
+      stop = start if stop < start
+      JSON.parse({"prepared" => lines[start...stop].join("\n")}.to_json)
     end
 
     # Handle removing packages
