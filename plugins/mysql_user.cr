@@ -34,14 +34,11 @@ module Krikri
   #   either way, just not the smallest possible set of statements.
   # - update_password: "always" (default, matching real Ansible) or
   #   "on_create". "always" compares the account's current password hash
-  #   (mysql.user.authentication_string) against what the given password
-  #   would hash to via `SELECT PASSWORD(...)` before deciding whether an
-  #   ALTER is even needed - matching real Ansible's own idempotent
-  #   behavior for mysql_native_password/MariaDB accounts (round 18; was
-  #   previously an unconditional ALTER + changed: true on every run).
-  #   Falls back to the previous always-alter behavior if that comparison
-  #   itself fails for any reason (e.g. a caching_sha2_password account on
-  #   real MySQL 8, where PASSWORD() doesn't apply the same way).
+  #   (mysql.user.authentication_string) against the mysql_native_password
+  #   hash of the given password (computed by the server, the way real
+  #   does) before deciding whether an ALTER is even needed - matching
+  #   real Ansible's own idempotent behavior (round 18; was previously an
+  #   unconditional ALTER + changed: true on every run).
   # - plugin/plugin_hash_string/plugin_auth_string: non-password
   #   authentication, matching real Ansible's own mysql_user module
   #   (verified against community.mysql's module_utils/user.py). Auth
@@ -66,6 +63,11 @@ module Krikri
   # subtract_privs: (this always does a full revoke-then-regrant instead),
   # resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
+    # Carries the fail_json msg real's module would produce for a server
+    # rejection of a password/plugin auth statement, out of the deep
+    # statement helpers to #execute's rescue.
+    private class AuthStatementError < Exception; end
+
     # Real 2.19.11 + community.mysql 5.0.2 (live-verified, `{{ r |
     # to_json }}`, MySQL 8.4): the module's own exit_json kwargs, in its
     # own order - changed, user, msg, password_changed, attributes,
@@ -137,6 +139,8 @@ module Krikri
           plugin_hash_string, plugin_auth_string, check_mode, host_all),
         name
       )
+    rescue ex : AuthStatementError
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper (live-verified
       # against bookworm's community.mysql 3.x via the W9 harness case,
@@ -281,8 +285,8 @@ module Krikri
           return {PluginResult.new(changed: true, failed: false, msg: "User added"), false, true}
         end
 
-        clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
-        db.exec "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        clause = build_auth_clause(db, password, plugin, plugin_hash_string, plugin_auth_string)
+        exec_auth_statement db, "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
         return {nil, true, true}
       end
@@ -305,8 +309,8 @@ module Krikri
           return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false}
         end
 
-        clause = build_auth_clause(nil, plugin, plugin_hash_string, plugin_auth_string)
-        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        clause = build_auth_clause(db, nil, plugin, plugin_hash_string, plugin_auth_string)
+        exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
         {nil, true, false}
       end
@@ -325,19 +329,19 @@ module Krikri
       # from real ansible-playbook, which compares the account's current
       # password hash (mysql.user.authentication_string, the
       # mysql_native_password/MariaDB format) against what the given
-      # password WOULD hash to (`SELECT PASSWORD(...)`) before deciding
-      # whether an ALTER is even needed. Falls back to the previous
-      # always-alter behavior if the hash comparison itself fails for any
-      # reason (e.g. a caching_sha2_password account on real MySQL 8,
-      # where PASSWORD() doesn't apply the same way) - safe either way,
-      # just not idempotent in that narrower case, same as before.
-      if password_already_matches?(db, name, host, password)
+      # password WOULD hash to (`SELECT CONCAT('*', UCASE(SHA1(UNHEX(
+      # SHA1(...)))))) - the same hash real then hands to
+      # `ALTER USER ... IDENTIFIED WITH mysql_native_password AS ...`
+      # on the update path - before deciding whether an ALTER is even
+      # needed.
+      hash = native_password_hash(db, password)
+      if password_already_matches?(db, name, host, hash)
         return {nil, false, false}
       end
 
       return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false} if check_mode
 
-      db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
+      exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED WITH mysql_native_password AS #{quote_str(hash)}"
       @password_changed = JSON::Any.new(true)
       {nil, true, false}
     end
@@ -352,11 +356,25 @@ module Krikri
     # reaches the server with it (a bound query parameter) - MySQL accepts
     # a quoted string where the auth plugin name goes, and a raw
     # interpolation would let `plugin:` carry arbitrary SQL.
+    #
+    # A password with no `plugin:` is real's DEFAULT-PLUGIN path: it does
+    # NOT let the server pick its default - real hashes the password
+    # itself (`SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(...)))))`) and
+    # issues `IDENTIFIED WITH mysql_native_password AS '<hash>'`
+    # (module_utils/user.py's user_add/user_mod), so the account lands on
+    # mysql_native_password even where the server default is
+    # caching_sha2_password, and a server where that plugin is not loaded
+    # (MySQL 8.4+ disabled it by default; it is gone from 9.7 on) rejects
+    # the statement with error 1524 - the failure real surfaces, and the
+    # detection the module effectively relies on (it version-gates the
+    # same statement at 9.7; the server's own rejection is what actually
+    # decides here). The hash round trip is the only statement real
+    # issues first, so krikri does the same - no version sniffing.
     private def build_auth_clause(
-      password : String?, plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?,
+      db : DB::Database, password : String?, plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?,
     ) : String
       if password
-        " IDENTIFIED BY #{quote_str(password)}"
+        " IDENTIFIED WITH mysql_native_password AS #{quote_str(native_password_hash(db, password))}"
       elsif plugin && plugin_hash_string
         " IDENTIFIED WITH #{quote_str(plugin)} AS #{quote_str(plugin_hash_string)}"
       elsif plugin && plugin_auth_string
@@ -410,21 +428,68 @@ module Krikri
       false
     end
 
-    private def password_already_matches?(db : DB::Database, name : String, host : String, password : String) : Bool
-      # Does the comparison entirely server-side (`authentication_string =
-      # PASSWORD(...)`, a boolean 0/1) rather than pulling
-      # mysql.user.authentication_string back through the driver as a
-      # value - that column is LONGTEXT on the wire, a MySQL protocol
-      # type this vendored driver's type table has no `read` for at all
-      # (`MySql::Type::LongBlob` has no override, only the base `raise
-      # "not supported read"`), so fetching it directly always raised and
-      # fell into the "assume it needs updating" rescue below, defeating
-      # the whole point of this check. An integer result is a type every
-      # driver here already reads fine (ordinary registered-result/fact
-      # queries do this constantly).
+    # What the given plaintext password hashes to under
+    # mysql_native_password, computed by the server itself the way real
+    # computes it before every password-based CREATE/ALTER USER
+    # (module_utils/user.py: `SELECT CONCAT('*',
+    # UCASE(SHA1(UNHEX(SHA1(...)))))`).
+    private def native_password_hash(db : DB::Database, password : String) : String
+      db.query_one("SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(?)))))", password, as: String)
+    rescue ex : MySql::Connection::PacketError
+      raise mysql_auth_statement_error(ex)
+    end
+
+    # Runs a CREATE/ALTER USER auth statement, surfacing a server
+    # rejection in the shape real's module fails with: its
+    # `except mysql_driver.Error as e: module.fail_json(msg=to_native(e))`
+    # passes pymysql's own str(Exception) through, which is the
+    # `(errno, "message")` tuple form.
+    private def exec_auth_statement(db : DB::Database, sql : String) : Nil
+      db.exec sql
+    rescue ex : MySql::Connection::PacketError
+      raise mysql_auth_statement_error(ex)
+    end
+
+    # "Plugin '<name>' is not loaded" is ER_PLUGIN_IS_NOT_LOADED, always
+    # this errno, on every MySQL/MariaDB server.
+    private ER_PLUGIN_IS_NOT_LOADED = 1524
+
+    # Wraps a driver PacketError in real's failure shape when the errno
+    # is recoverable, re-raises it unchanged otherwise (the generic
+    # DbErrors shape stays for everything the harness has not pinned).
+    #
+    # The vendored driver drops the server's errno when it raises
+    # (handle_err_packet keeps only the message), but the message itself
+    # pins the error for the one rejection this path expects - that is
+    # exactly how a server without mysql_native_password loaded
+    # (MySQL 8.4+ ships it disabled by default) rejects the
+    # IDENTIFIED WITH mysql_native_password statement above, so the errno
+    # is reconstructed rather than version-sniffed.
+    private def mysql_auth_statement_error(ex : MySql::Connection::PacketError) : Exception
+      message = ex.message || ""
+      if plugin = message[/\APlugin '(.+)' is not loaded\z/, 1]?
+        AuthStatementError.new("(#{ER_PLUGIN_IS_NOT_LOADED}, \"Plugin '#{plugin}' is not loaded\")")
+      else
+        ex
+      end
+    end
+
+    # True when the account's current authentication_string already
+    # equals the given mysql_native_password hash, so no ALTER is needed.
+    private def password_already_matches?(db : DB::Database, name : String, host : String, hash : String) : Bool
+      # Does the comparison entirely server-side (`authentication_string
+      # = ?` against the precomputed hash, a boolean 0/1) rather than
+      # pulling mysql.user.authentication_string back through the driver
+      # as a value - that column is LONGTEXT on the wire, a MySQL
+      # protocol type this vendored driver's type table has no `read`
+      # for at all (`MySql::Type::LongBlob` has no override, only the
+      # base `raise "not supported read"`). An integer result is a type
+      # every driver here already reads fine. A NULL authentication
+      # string compares as NULL (never equal), matching real's
+      # current_pass_hash != encrypted_password on an unset password.
       matches = db.query_all(
-        "SELECT authentication_string = PASSWORD(?) FROM mysql.user WHERE User = ? AND Host = ?",
-        password, name, host, as: Int32
+        "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
+        hash, name, host, as: Int32
       ).first?
       matches == 1
     rescue
@@ -485,12 +550,13 @@ module Krikri
       end
 
       changed = false
+      hash = password ? native_password_hash(db, password) : nil
       existing_hosts.each do |host|
-        next unless needs_auth_update?(db, name, host, password, update_password, plugin, plugin_hash_string, plugin_auth_string)
+        next unless needs_auth_update?(db, name, host, password, hash, update_password, plugin, plugin_hash_string, plugin_auth_string)
         return PluginResult.new(changed: true, failed: false, msg: "User updated") if check_mode
 
-        clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
-        db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        clause = build_auth_clause(db, password, plugin, plugin_hash_string, plugin_auth_string)
+        exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
         changed = true
       end
@@ -499,7 +565,7 @@ module Krikri
     end
 
     private def needs_auth_update?(db : DB::Database, name : String, host : String,
-                                   password : String?, update_password : String, plugin : String?,
+                                   password : String?, hash : String?, update_password : String, plugin : String?,
                                    plugin_hash_string : String?, plugin_auth_string : String?) : Bool
       return false unless update_password == "always" && (password || plugin)
 
@@ -508,7 +574,8 @@ module Krikri
       # idempotency (see the long comment in ensure_present_all_hosts's
       # original loop for the round-24 devsec.mysql_hardening bug).
       if password
-        !password_already_matches?(db, name, host, password)
+        return false unless hash
+        !password_already_matches?(db, name, host, hash)
       else
         pl = plugin || return false
         !plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)

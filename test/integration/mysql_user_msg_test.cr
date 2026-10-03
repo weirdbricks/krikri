@@ -26,7 +26,14 @@ describe "mysql_user create-vs-update msg" do
   it "says \"User added\" on a brand-new create, not \"Updated user\"" do
     skip "no MySQL/MariaDB server at #{HOST}:#{PORT}" unless daemon_reachable?(HOST, PORT)
 
-    result = PluginSpecHelper.run("mysql_user", {
+    # With no `plugin:` given the create now goes through real's
+    # mysql_native_password default-plugin path (see
+    # mysql_user_native_password_test.cr): on a server where that plugin
+    # is not loaded (MySQL 8.4+) the task fails with real's 1524 msg and
+    # no account exists, so the wording is pinned in check mode instead
+    # (which is where real produces the same "User added" without
+    # touching the server).
+    probe = PluginSpecHelper.run("mysql_user", {
       "name"           => "krikri-spec-user",
       "host"           => "%",
       "password"       => "krikri-spec-pass",
@@ -36,20 +43,34 @@ describe "mysql_user create-vs-update msg" do
       "login_password" => ENV["KRIKRI_MYSQL_ROOT_PASS"]? || "rootpass",
     })
 
-    result["failed"]?.must_be_nil
-    result["changed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("User added")
+    if probe["failed"]?.try(&.as_bool?)
+      check_mode = PluginSpecHelper.run("mysql_user", {
+        "name"                => "krikri-spec-user",
+        "host"                => "%",
+        "password"            => "krikri-spec-pass",
+        "_ansible_check_mode" => "true",
+        "login_host"          => HOST,
+        "login_port"          => PORT.to_s,
+        "login_user"          => "root",
+        "login_password"      => ENV["KRIKRI_MYSQL_ROOT_PASS"]? || "rootpass",
+      })
+      check_mode["changed"].as_bool.must_equal(true)
+      check_mode["msg"].as_s.must_equal("User added")
+      check_mode["password_changed"].raw.must_be_nil
+    else
+      probe["msg"].as_s.must_equal("User added")
 
-    result = PluginSpecHelper.run("mysql_user", {
-      "name"           => "krikri-spec-user",
-      "host"           => "%",
-      "password"       => "krikri-spec-pass",
-      "login_host"     => HOST,
-      "login_port"     => PORT.to_s,
-      "login_user"     => "root",
-      "login_password" => ENV["KRIKRI_MYSQL_ROOT_PASS"]? || "rootpass",
-    })
-    result["changed"].as_bool.must_equal(false)
+      result = PluginSpecHelper.run("mysql_user", {
+        "name"           => "krikri-spec-user",
+        "host"           => "%",
+        "password"       => "krikri-spec-pass",
+        "login_host"     => HOST,
+        "login_port"     => PORT.to_s,
+        "login_user"     => "root",
+        "login_password" => ENV["KRIKRI_MYSQL_ROOT_PASS"]? || "rootpass",
+      })
+      result["changed"].as_bool.must_equal(false)
+    end
 
     PluginSpecHelper.run("mysql_user", {
       "name"           => "krikri-spec-user",
