@@ -91,7 +91,8 @@ module Krikri
       # what `db:` was set to.
       name = @params["name"]? || @params["db"]?
       unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing required arguments: db")
       end
 
       state = @params["state"]? || "present"
@@ -131,6 +132,20 @@ module Krikri
       )
     end
 
+    # Real Ansible's exit_json(changed=..., db=db, executed_commands=[...])
+    # (postgresql_db.py:887) - the registered result carries the db name and
+    # the SQL statements actually run, and `failed: false` is backfilled by
+    # _return_formatted after the module's own kwargs, hence its position.
+    # Live-verified against real ansible-core 2.19.11 +
+    # community.postgresql 4.2.0 on a real PostgreSQL 17.
+    SUCCESS_KEY_ORDER = %w[changed db executed_commands failed]
+
+    private def db_result(changed : Bool, name : String, executed : Array(String)) : PluginResult
+      PluginResult.new(changed: changed, failed: false, db: name,
+        executed_commands: executed, failed_flag: true,
+        key_order: SUCCESS_KEY_ORDER)
+    end
+
     private def apply_state(state : String, dbcon : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
       case state
       when "present"
@@ -143,8 +158,8 @@ module Krikri
     end
 
     private def ensure_present(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Database #{name} already exists") if exists
-      return PluginResult.new(changed: true, failed: false, msg: "Database #{name} would be created") if check_mode
+      return db_result(false, name, [] of String) if exists
+      return db_result(true, name, [] of String) if check_mode
 
       owner = @params["owner"]?
       encoding = @params["encoding"]?
@@ -169,16 +184,18 @@ module Krikri
         end
       end
 
-      db.exec "CREATE DATABASE #{quote_ident(name)}#{clause}"
-      PluginResult.new(changed: true, failed: false, msg: "Created database #{name}")
+      query = "CREATE DATABASE #{quote_ident(name)}#{clause}"
+      db.exec query
+      db_result(true, name, [query])
     end
 
     private def ensure_absent(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Database already absent") unless exists
-      return PluginResult.new(changed: true, failed: false, msg: "Database #{name} would be removed") if check_mode
+      return db_result(false, name, [] of String) unless exists
+      return db_result(true, name, [] of String) if check_mode
 
-      db.exec "DROP DATABASE #{quote_ident(name)}"
-      PluginResult.new(changed: true, failed: false, msg: "Removed database #{name}")
+      query = "DROP DATABASE #{quote_ident(name)}"
+      db.exec query
+      db_result(true, name, [query])
     end
 
     private def run_dump_or_restore(state : String, name : String) : PluginResult
