@@ -77,6 +77,23 @@ module Krikri
 
     @no_log_values = [] of String
 
+    # Real registered-result key order (live-verified vs ansible-core
+    # 2.19.11 + community.docker 5.2.1 driving a real BuildKit builder -
+    # rootless buildkitd reached as a buildx `remote` driver, with the
+    # module's CLI probes talking to a podman `system service` socket):
+    # - no build ran (already present / check mode): just the module's
+    #   result dict - changed/actions/image - with no msg at all;
+    # - a build ran successfully: the module dict (image updated after
+    #   the build), then the controller-side stdout_lines/stderr_lines,
+    #   then failed: false;
+    # - a failed build: fail_json's kwargs (stdout/stderr/command) come
+    #   first - fail_json appends failed/msg AFTER the kwargs it was
+    #   handed - then the controller's *_lines, then the executor's
+    #   changed: false and exception.
+    SUCCESS_KEY_ORDER  = %w[changed actions image stdout stderr command stdout_lines stderr_lines failed]
+    NO_BUILD_KEY_ORDER = %w[changed actions image failed]
+    FAILED_KEY_ORDER   = %w[stdout stderr command failed msg stdout_lines stderr_lines changed exception]
+
     def execute : PluginResult
       result = execute_validated
       # Real Ansible's remove_values() runs over the ENTIRE fail/exit
@@ -109,26 +126,63 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
 
       client, docker_host_description = PluginHelpers::DockerClient.build(@params)
-      existing_image = image_id(client, PluginHelpers::DockerRef.join(ref_name, tag))
+      full_ref = PluginHelpers::DockerRef.join(ref_name, tag)
+      existing_image = image_inspect(client, full_ref)
 
+      # Real's build_image returns the module dict {changed, actions,
+      # image} verbatim when the image already exists with rebuild: never
+      # (BEFORE the check_mode branch, so a check-mode run against an
+      # existing image lands here too) - no msg key at all.
       if existing_image && rebuild == "never"
-        return PluginResult.new(changed: false, failed: false, msg: "Image #{ref_name}:#{tag} already present")
+        return no_build_result(existing_image, changed: false)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would build image #{ref_name}:#{tag} (check mode)") if check_mode
+      # Check mode on an absent image: real still seeds image from
+      # find_image - {} when the image isn't there - and reports changed:
+      # true with no msg.
+      return no_build_result(existing_image || JSON.parse("{}"), changed: true) if check_mode
 
       args = build_args(ref_name, tag, path)
-      build_result = remote_exec("docker #{args.join(" ")}")
+      build_result = remote_exec("docker #{args.map { |arg| shell_quote(arg) }.join(" ")}")
 
       unless build_result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: "Building #{ref_name}:#{tag} failed", stdout: build_result[:stdout], stderr: build_result[:stderr])
+        result = PluginResult.new(changed: false, failed: true,
+          msg: "Building #{ref_name}:#{tag} failed",
+          stdout: build_result[:stdout], stderr: build_result[:stderr],
+          stdout_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stdout]),
+          stderr_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stderr]),
+          command: json_string_array(args))
+        result.key_order = FAILED_KEY_ORDER
+        return result
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Built image #{ref_name}:#{tag}", stdout: build_result[:stdout], stderr: build_result[:stderr])
+      # Real re-looks the image up after the build; a buildx backend that
+      # doesn't load the result into the daemon's store (a remote
+      # driver's default output) leaves it at the seeded {}.
+      result = PluginResult.new(changed: true, failed: false, failed_flag: false,
+        actions: json_string_array([] of String),
+        image: image_inspect(client, full_ref) || JSON.parse("{}"),
+        stdout: build_result[:stdout], stderr: build_result[:stderr],
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stdout]),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stderr]),
+        command: json_string_array(args))
+      result.key_order = SUCCESS_KEY_ORDER
+      result
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
+
+    # The no-build module dict shape: real's results = {"changed": ...,
+    # "actions": [], "image": image or {}} with no msg key at all -
+    # exit_json is called without one (unlike the old "Image ... already
+    # present"/"Would build image ..." texts this plugin used to emit).
+    private def no_build_result(image : JSON::Any, changed : Bool) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, failed_flag: false,
+        actions: json_string_array([] of String), image: image)
+      result.key_order = NO_BUILD_KEY_ORDER
+      result
     end
 
     # Real AnsibleModule validation for this module's argument_spec,
@@ -473,27 +527,34 @@ module Krikri
       msg
     end
 
+    # The buildx argv EXACTLY as real's module builds it (the same list
+    # real registers under `command`) - unquoted here; shell quoting for
+    # #remote_exec happens at the call site.
     private def build_args(ref_name : String, tag : String, path : String) : Array(String)
-      args = ["buildx", "build", "--progress", "plain", "--tag", shell_quote("#{ref_name}:#{tag}")]
+      args = ["buildx", "build", "--progress", "plain", "--tag", "#{ref_name}:#{tag}"]
 
       if dockerfile = @params["dockerfile"]?
-        args << "--file" << shell_quote(File.join(path, dockerfile))
+        args << "--file" << File.join(path, dockerfile)
       end
-      each_list_param("cache_from") { |v| args << "--cache-from" << shell_quote(v) }
+      each_list_param("cache_from") { |v| args << "--cache-from" << v }
       args << "--pull" if true?(@params["pull"]?)
       if network = @params["network"]?
-        args << "--network" << shell_quote(network)
+        args << "--network" << network
       end
       args << "--no-cache" if true?(@params["nocache"]?)
-      each_dict_param("args") { |k, v| args << "--build-arg" << shell_quote("#{k}=#{v}") }
+      each_dict_param("args") { |k, v| args << "--build-arg" << "#{k}=#{v}" }
       if target = @params["target"]?
-        args << "--target" << shell_quote(target)
+        args << "--target" << target
       end
-      each_list_param("platform") { |v| args << "--platform" << shell_quote(v) }
-      each_dict_param("labels") { |k, v| args << "--label" << shell_quote("#{k}=#{v}") }
+      each_list_param("platform") { |v| args << "--platform" << v }
+      each_dict_param("labels") { |k, v| args << "--label" << "#{k}=#{v}" }
 
-      args << "--" << shell_quote(path)
+      args << "--" << path
       args
+    end
+
+    private def json_string_array(values : Array(String)) : JSON::Any
+      JSON::Any.new(values.map { |value| JSON::Any.new(value) })
     end
 
     private def each_list_param(key : String, &) : Nil
@@ -533,15 +594,19 @@ module Krikri
       "'" + str.gsub("'", "'\\''") + "'"
     end
 
-    # Same raw-GET, minimal-trust approach as docker_image.cr's own
-    # #image_id (see that plugin's doc comment) - nil if the image
-    # doesn't exist.
-    private def image_id(client : Docr::Client, ref : String) : String?
-      id = nil
+    # The image's full daemon inspect payload for the reference (real
+    # registers `docker image inspect`'s dict, or {} when the image
+    # isn't there), nil if the image doesn't exist - same raw-GET,
+    # minimal-trust approach as docker_image.cr's image_inspect_json,
+    # plus 404 tolerance since build_image consults it speculatively
+    # before AND after the build.
+    private def image_inspect(client : Docr::Client, ref : String) : JSON::Any?
+      raw = nil
       client.call("GET", "/images/#{ref}/json") do |response|
-        id = JSON.parse(response.body_io).dig?("Id").try(&.as_s?)
+        raw = response.body_io?.try(&.gets_to_end)
       end
-      id
+      return nil if raw.nil? || raw.empty?
+      JSON.parse(raw)
     rescue ex : Docr::Errors::DockerAPIError
       return nil if ex.status_code == 404
       raise ex
