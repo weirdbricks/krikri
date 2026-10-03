@@ -52,6 +52,10 @@ private def public_schema_acl : String
 end
 
 describe "postgresql_privs against a real PostgreSQL server at 127.0.0.1:15432" do
+  # One shared throwaway server with fixed db/role names: never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "grants schema privileges to a hyphenated role (the peering_manager round divergence)" do
     skip "no PostgreSQL server at 127.0.0.1:15432" unless privs_postgres_reachable?
     run_query_tolerant(%(REVOKE USAGE ON SCHEMA public FROM "peering-manager"))

@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1452`.**
+**Currently at `0.9.1453`.**
 
 ## Open gaps
 
@@ -60,18 +60,19 @@ and fixed and when.
   `fail`, `assert`, `copy`, `template`, `unarchive`, `add_host`, `group_by`, `set_fact`, `debug`; real's per-module
   orders: `fail`/`slurp`: `failed, msg, changed, exception`; `assert`: `failed, evaluated_to, assertion, msg, changed,
   exception`; `copy`/`template`: `failed, msg, exception, changed`; `unarchive`: `failed, exception, msg, changed`).
-  Still open: `include_vars` with a missing file never registers its failed result at all in krikri (the variable
-  stays undefined afterwards) where real registers `failed, message, ansible_included_var_files, ansible_facts, changed,
-  exception, msg`; `set_fact`'s invalid-variable-name and `debug`'s finalization `[ERROR]` blocks differ in
-  origin/help text.
-- **PostgreSQL gaps found while verifying:** krikri emits no deprecation entry/warning for the shared-spec
-  aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`; all now accepted by every `postgresql_*`
-  plugin); `postgresql_query`'s connection-failure message is `Could not connect to the PostgreSQL server: ` with an
-  EMPTY reason where real prints psycopg2's text (`unable to connect to database: connection to server at ... failed:
-  Connection refused`). Otherwise the `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results
-  and accepted-parameter sets match real (live-verified on postgres:17 / mysql:8.4); real builds
-  `postgresql_privs`'s privilege list from a Python frozenset, so its multi-privilege ordering is nondeterministic
-  and krikri keeps declared order.
+  `include_vars` failures (missing file/dir, `Searched in:` list, `name:` warning) and `set_fact`'s invalid-name error block
+  now match real's registered result and console output as well.
+- **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
+  now print/register real's deprecation; connection failures use libpq's own wording (refused, wrong password,
+  missing database, missing unix socket - byte-identical to real). Still different: real prints `[WARNING]: Database
+  name has not been passed, used default database to connect to.` (and registers a `warnings` entry) when no
+  `login_db`/`db` is given, krikri does not; a *temporary* resolver failure prints the EAI_NONAME wording (Crystal's
+  `Addrinfo::Error` carries no gai code) and strerror texts are glibc's. `postgresql_*` and
+  `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results and accepted-parameter sets otherwise match real
+  (live-verified on postgres:17 / mysql:8.4); real builds `postgresql_privs`'s privilege list from a Python
+  frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order. The PostgreSQL
+  live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
+  test).
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
   http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only

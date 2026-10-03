@@ -2233,22 +2233,27 @@ describe "krikri-playbook CLI (--check mode)" do
 
   it "manages a PostgreSQL database and role (with attribute flag diffing) end to end (requires a real server at 127.0.0.1:15432)" do
     skip "no PostgreSQL server at 127.0.0.1:15432" unless daemon_reachable?("127.0.0.1", 15432)
-    status, output = run_playbook(
-      "test-postgresql-quick.yml",
-      [] of String,
-      inventory: File.join(__DIR__, "..", "fixtures", "inventory-testservers-local.ini")
-    )
+    # Shares one throwaway server and fixed db/role names with the serial! live
+    # PostgreSQL describes: take the same process-wide state mutex (reentrant, see
+    # test/minitest_helper.cr) so they never run in parallel with this test.
+    PluginSpecHelper::STATE_MUTEX.synchronize do
+      status, output = run_playbook(
+        "test-postgresql-quick.yml",
+        [] of String,
+        inventory: File.join(__DIR__, "..", "fixtures", "inventory-testservers-local.ini")
+      )
 
-    status.success?.must_equal(true)
-    output.must_include("db_first=True db_idempotent=False")
-    output.must_include("db_restore=True db_dump=True db_restore_gz=True")
-    output.must_include("restored_count=2")
-    output.must_include("db_dump_pgc=True")
-    output.must_include("db_restore_pgc=True")
-    output.must_include("restored_count_pgc=2")
-    output.must_include("user_first=True user_idempotent=False")
-    output.must_include("user_flags_changed=True user_removed=True db_removed=True")
-    output.must_include("postgresql plugins smoke test complete!")
+      status.success?.must_equal(true)
+      output.must_include("db_first=True db_idempotent=False")
+      output.must_include("db_restore=True db_dump=True db_restore_gz=True")
+      output.must_include("restored_count=2")
+      output.must_include("db_dump_pgc=True")
+      output.must_include("db_restore_pgc=True")
+      output.must_include("restored_count_pgc=2")
+      output.must_include("user_first=True user_idempotent=False")
+      output.must_include("user_flags_changed=True user_removed=True db_removed=True")
+      output.must_include("postgresql plugins smoke test complete!")
+    end
   end
 
   it "skips a same-user become entirely, matching real Ansible, and rejects an invalid become_user without shelling out" do
