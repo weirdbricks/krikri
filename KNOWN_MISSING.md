@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1447`.**
+**Currently at `0.9.1448`.**
 
 ## Open gaps
 
@@ -61,11 +61,14 @@ and fixed and when.
   plugins, with a different order per module in real: `fail`: `failed, msg, changed, exception`; `assert`:
   `failed, evaluated_to, assertion, msg, changed, exception`; `copy`/`template`: `failed, msg, exception,
   changed`; `unarchive`: `failed, exception, msg, changed`.
-- **`postgresql_query` rejects the `port` parameter** ("Unsupported parameters ... port") where real accepts it as
-  an alias of `login_port` (`postgresql_db`/`postgresql_user`/`postgresql_privs` accept it). The
-  `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results otherwise match real
-  (live-verified on postgres:17 / mysql:8.4 containers); real builds `postgresql_privs`'s privilege list
-  from a Python frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order.
+- **PostgreSQL gaps found while verifying:** krikri emits no deprecation entry/warning for the shared-spec
+  aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`; all now accepted by every `postgresql_*`
+  plugin); `postgresql_query`'s connection-failure message is `Could not connect to the PostgreSQL server: ` with an
+  EMPTY reason where real prints psycopg2's text (`unable to connect to database: connection to server at ... failed:
+  Connection refused`). Otherwise the `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results
+  and accepted-parameter sets match real (live-verified on postgres:17 / mysql:8.4); real builds
+  `postgresql_privs`'s privilege list from a Python frozenset, so its multi-privilege ordering is nondeterministic
+  and krikri keeps declared order.
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   `docker_container` with `command:` given as a YAML LIST is joined as `sleep,30` where real passes the list
   through (string form works); the text wrapped after real's own error prefixes is the Python SDK's wording
