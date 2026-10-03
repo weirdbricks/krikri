@@ -68,7 +68,10 @@ describe "package plugin" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_include("already installed")
+    # Real 2.19.11's unchanged-present exit carries NO msg - just the
+    # cache pair (live-verified; see key_order_sweep7_test.cr).
+    result["cache_updated"].as_bool.must_equal(false)
+    result["msg"]?.must_be_nil
   end
 
   it "the ansible_package_use variable overrides auto-detection but loses to use:" do
@@ -84,7 +87,7 @@ describe "package plugin" do
       {"name" => "bash", "state" => "present", "_ansible_check_mode" => "true", "use" => "apt"},
       {"ansible_package_use" => "dnf"})
     with_both["changed"].as_bool.must_equal(false)
-    with_both["msg"].as_s.must_include("already installed")
+    with_both["cache_updated"].as_bool.must_equal(false)
   end
 
   it "treats a missing name as a no-op, not a hard error (round 83221)" do
@@ -113,7 +116,10 @@ describe "package plugin" do
         {"name" => empty_name, "state" => "absent"})
 
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.wont_include("removed")
+      # Real 2.19.11's absent-nochange exit is a bare exit_json(changed=
+      # False) with no msg at all (live-verified; see
+      # key_order_sweep7_test.cr) - so the msg key may be absent entirely.
+      (result["msg"]? || JSON::Any.new("")).as_s.wont_include("removed")
     end
   end
 end

@@ -740,6 +740,27 @@ module Krikri
     end
 
     # Handle APT package management
+    # Real apt's check-mode simulate exit shape (live-verified 2.19.11 via
+    # package: check mode on this apt host): the simulate run's raw
+    # stdout/stderr under changed: true, an empty diff object, and the
+    # cache pair - with stdout_lines/stderr_lines emitted here so they
+    # land between cache_update_time and the executor's failed backfill,
+    # exactly where real's registered result shows them.
+    private def simulate_result(stdout : String, stderr : String) : PluginResult
+      PluginResult.new(
+        changed: true,
+        failed: false,
+        stdout: stdout,
+        stderr: stderr,
+        diff: JSON.parse("{}"),
+        cache_updated: false,
+        cache_update_time: apt_cache_mtime(->remote_exec(String)),
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr),
+        key_order: %w[changed stdout stderr diff cache_updated cache_update_time stdout_lines stderr_lines]
+      )
+    end
+
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
       # Real Ansible's `package:` action plugin delegates to the apt
       # module on Debian-family hosts, and apt.py's main() runs the cache
@@ -805,17 +826,38 @@ module Krikri
       case state
       when "present"
         if is_installed
+          # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`
+          # via package: on this apt host): changed, cache_updated,
+          # cache_update_time - NO msg (the apt module's unchanged-present
+          # exit is exit_json(changed=False, cache_updated=...,
+          # cache_update_time=...); the "Package X already installed" msg
+          # was this backend's own borrow).
           PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Package #{name} already installed"
+            cache_updated: false,
+            cache_update_time: apt_cache_mtime(->remote_exec(String)),
+            key_order: %w[changed cache_updated cache_update_time]
           )
         else
           if @check_mode
+            # Real apt's check-mode install runs the same command with
+            # --simulate and registers the simulate run's own shape
+            # (live-verified: changed, stdout, stderr, diff,
+            # cache_updated, cache_update_time, stdout_lines,
+            # stderr_lines); a name apt cannot resolve fails the task
+            # with apt.py's own "No package matching 'X' is available"
+            # (live-verified in check mode).
+            sim = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1")
+            if sim[:exit_code] == 0
+              return simulate_result(sim[:stdout], sim[:stderr])
+            end
             return PluginResult.new(
-              changed: true,
-              failed: false,
-              msg: "Would install #{name} (check mode)"
+              changed: false,
+              failed: true,
+              msg: "No package matching '#{name}' is available",
+              rc: sim[:exit_code],
+              stderr: sim[:stderr].empty? ? sim[:stdout] : sim[:stderr]
             )
           end
 
@@ -857,17 +899,32 @@ module Krikri
         end
       when "absent"
         if !is_installed
+          # Real 2.19.11 (live-verified via package: state=absent on a
+          # not-installed name): a bare exit_json(changed=False) - no msg,
+          # no cache keys (the absent-nochange exit skips them entirely).
           PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Package #{name} not installed"
+            key_order: %w[changed]
           )
         else
           if @check_mode
+            # Real apt's check-mode remove runs --simulate too and
+            # registers the same simulate shape as the install side
+            # (live-verified); an apt-get refusal (e.g. essential-package
+            # protection) surfaces as run_command's failure shape.
+            sim = remote_exec("apt-get remove --simulate #{shell_pkg} 2>&1")
+            if sim[:exit_code] == 0
+              return simulate_result(sim[:stdout], sim[:stderr])
+            end
+            stderr = sim[:stderr].empty? ? sim[:stdout] : sim[:stderr]
             return PluginResult.new(
-              changed: true,
-              failed: false,
-              msg: "Would remove #{name} (check mode)"
+              changed: false,
+              failed: true,
+              msg: "'apt-get remove #{shell_single_quote(shell_pkg)}' failed: #{stderr}",
+              rc: sim[:exit_code],
+              stdout: sim[:stdout],
+              stderr: stderr
             )
           end
 
