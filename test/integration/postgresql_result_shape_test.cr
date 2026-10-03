@@ -102,3 +102,96 @@ describe "community.postgresql.* registered result shape (127.0.0.1:35432)" do
     PluginSpecHelper.run("postgresql_db", SHAPE_LOGIN.merge({"name" => "shape_db5", "state" => "absent"}))
   end
 end
+
+describe "postgresql_user registered result shape (127.0.0.1:35432)" do
+  it "create registers user/changed/queries/failed with the CREATE template" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u1", "state" => "absent"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u1"}))
+    shape_keys(result).must_equal(["user", "changed", "queries", "failed"])
+    result["user"].as_s.must_equal("shape_u1")
+    result["changed"].as_bool.must_equal(true)
+    # Real's user_add() leaves the %(password)s placeholder literal and
+    # appends the (empty) flags string, hence the trailing space.
+    result["queries"].as_a.map(&.as_s).must_equal(["CREATE USER \"shape_u1\" "])
+    result["failed"].as_bool.must_equal(false)
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u1", "state" => "absent"}))
+  end
+
+  it "create with a password and role_attr_flags records both fragments" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u2", "state" => "absent"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({
+      "name" => "shape_u2", "password" => "sekrit1", "role_attr_flags" => "NOSUPERUSER,NOCREATEDB",
+    }))
+    shape_keys(result).must_equal(["user", "changed", "queries", "failed"])
+    result["queries"].as_a.map(&.as_s).must_equal([
+      "CREATE USER \"shape_u2\" WITH ENCRYPTED PASSWORD %(password)s NOSUPERUSER NOCREATEDB",
+    ])
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u2", "state" => "absent"}))
+  end
+
+  it "an unchanged repeat call reports no queries at all" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u3", "state" => "absent"}))
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u3", "password" => "sekrit2"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u3", "password" => "sekrit2"}))
+    shape_keys(result).must_equal(["user", "changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(false)
+    result["queries"].as_a.must_be_empty
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u3", "state" => "absent"}))
+  end
+
+  it "a password change records the ALTER template, and a flag change the WITH form" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u4", "state" => "absent"}))
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u4"}))
+    pw_change = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u4", "password" => "sekrit3"}))
+    pw_change["queries"].as_a.map(&.as_s).must_equal([
+      "ALTER USER \"shape_u4\" WITH ENCRYPTED PASSWORD %(password)s ",
+    ])
+    flag_change = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({
+      "name" => "shape_u4", "role_attr_flags" => "CREATEDB",
+    }))
+    flag_change["queries"].as_a.map(&.as_s).must_equal(["ALTER USER \"shape_u4\" WITH CREATEDB"])
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u4", "state" => "absent"}))
+  end
+
+  it "absent on an existing role adds user_removed and the DROP statement" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u5", "state" => "absent"}))
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u5"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u5", "state" => "absent"}))
+    shape_keys(result).must_equal(["user", "user_removed", "changed", "queries", "failed"])
+    result["user_removed"].as_bool.must_equal(true)
+    result["queries"].as_a.map(&.as_s).must_equal(["DROP USER \"shape_u5\""])
+    gone = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u5", "state" => "absent"}))
+    shape_keys(gone).must_equal(["user", "changed", "queries", "failed"])
+    gone["changed"].as_bool.must_equal(false)
+  end
+
+  it "check mode absent reports user_removed with no executed statement" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u6", "state" => "absent"}))
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u6"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({
+      "name" => "shape_u6", "state" => "absent", "_ansible_check_mode" => "true",
+    }))
+    shape_keys(result).must_equal(["user", "user_removed", "changed", "queries", "failed"])
+    result["user_removed"].as_bool.must_equal(true)
+    result["queries"].as_a.must_be_empty
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u6", "state" => "absent"}))
+  end
+
+  it "check mode create still records the CREATE template" do
+    skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u7", "state" => "absent"}))
+    result = PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({
+      "name" => "shape_u7", "_ansible_check_mode" => "true",
+    }))
+    shape_keys(result).must_equal(["user", "changed", "queries", "failed"])
+    result["changed"].as_bool.must_equal(true)
+    result["queries"].as_a.map(&.as_s).must_equal(["CREATE USER \"shape_u7\" "])
+    PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u7", "state" => "absent"}))
+  end
+end
