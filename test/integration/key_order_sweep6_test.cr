@@ -108,3 +108,20 @@ describe "openssl_publickey plugin result key order" do
     ])
   end
 end
+
+describe "openssl_publickey_info plugin result key order" do
+  it "serializes a PEM public key read with the info keys in real's order" do
+    dir = PluginSpecHelper.tmp_path("ko-pubi1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    pub = File.join(dir, "pub.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    PluginSpecHelper.run("openssl_publickey", {"path" => pub, "privatekey_path" => key})
+    result = PluginSpecHelper.run("openssl_publickey_info", {"path" => pub})
+
+    result.as_h.keys.must_equal([
+      "can_load_key", "can_parse_key", "key_is_consistent", "fingerprints",
+      "type", "public_data", "changed",
+    ])
+  end
+end
