@@ -40,6 +40,33 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "acl plugin result key order" do
+  it "serializes a present-ACL success as changed-msg-acl (real: changed, msg, acl)" do
+    target = unique_tmp("acl-order-target")
+    File.write(target, "x\n")
+
+    PluginSpecHelper.run("acl", {
+      "path"        => target,
+      "entity"      => "root",
+      "etype"       => "user",
+      "permissions" => "r",
+      "state"       => "present",
+    })
+    result = PluginSpecHelper.run("acl", {
+      "path"        => target,
+      "entity"      => "root",
+      "etype"       => "user",
+      "permissions" => "r",
+      "state"       => "present",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "msg", "acl"])
+  ensure
+    File.delete(target) if target && File.exists?(target)
+  end
+end
+
 describe "alternatives plugin result key order" do
   it "serializes a check-mode install claim as changed-msg (real: changed, diff, msg)" do
     dir = unique_tmp("alternatives-order")
