@@ -104,6 +104,18 @@ module Krikri
       STDERR.puts line.colorize(:light_magenta)
     end
 
+    # A collection-redirect deprecation (community.mysql.<module> ->
+    # ansible.mysql.<module>): one [DEPRECATION WARNING] console line per
+    # distinct message per run through emit_core_deprecation, exactly like
+    # real's Display. nil module names (pseudo-tasks) and non-redirected
+    # modules are no-ops.
+    def self.emit_module_redirect_deprecation(module_name : String?) : Nil
+      return unless module_name
+      if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)
+        emit_core_deprecation(text)
+      end
+    end
+
     # Removed-param deprecations whose stderr printing is deferred until
     # the module's actual outcome is known (stashed by the argspec
     # validator when validation passes - see its deprecation gate): real

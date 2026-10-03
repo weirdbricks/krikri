@@ -1946,6 +1946,22 @@ module Krikri
         end
       end
 
+      # Real ansible-core resolves each task's module at task-load time
+      # (ModuleArgsParser.parse -> _get_action_context -> the plugin
+      # loader's record_deprecation), which is where a collection
+      # redirect's own deprecation warning prints: for every parsed task
+      # - handlers and role tasks included, when:-gated or not - once per
+      # distinct message per run (the Display dedups), and it prints
+      # under --list-tasks too (live-verified vs 2.19.11). Hooked here,
+      # the one entry every task-list parse flows through (plays,
+      # pre/post_tasks, handlers, blocks, imports, roles, and the
+      # run-time include_tasks parses), instead of in the play loop,
+      # so lazily-parsed includes warn at their inclusion point the way
+      # real's per-task post_validate does.
+      tasks.each do |task|
+        ResultDisplay.emit_module_redirect_deprecation(task.module_name)
+      end
+
       tasks
     end
 
@@ -4782,6 +4798,23 @@ module Krikri
           if possibly_all_template?(yaml.as_s) && !RAW_COMMAND_MODULES.includes?(module_name)
             params["_templated_args"] = yaml.as_s.strip
           else
+            # A string arg that starts AND ends with any Jinja delimiter -
+            # `{% ... %}` / `{# ... #}` (real's check tests the start and
+            # end marker lists independently, so a mixed pair counts too) -
+            # is real's is_possibly_all_template as well: its
+            # TaskArgsFinalizer warns for it exactly like a `{{ ... }}`
+            # whole-args template (live-verified vs 2.19.11: `copy: "{% if
+            # true %}{{ d }}{% endif %}"` prints the argsplat warning AND
+            # resolves the whole string as one template to the rendered
+            # dict). krikri deliberately does NOT widen the `_templated_args`
+            # sentinel here - that would change how the value resolves (the
+            # whole-args path only ever drove `{{ }}`), not just whether a
+            # warning prints - so this marker rides along purely for the
+            # executor's warning, and the value keeps resolving through the
+            # free-form k=v path below exactly as before.
+            if starts_and_ends_with_jinja_delimiters?(yaml.as_s)
+              params["_argsplat_block_marker"] = "1"
+            end
             # Real Ansible's parse_kv (the function this mirrors for
             # non-command modules) only puts "_raw_params" in the result when
             # the string actually contained tokens with no "=" (leftover
@@ -4855,6 +4888,19 @@ module Krikri
     # whether a warning prints.
     private def self.possibly_all_template?(s : String) : Bool
       s.starts_with?("{{") && s.ends_with?("}}")
+    end
+
+    # Real's TemplateOverrides._starts_and_ends_with_jinja_delimiters
+    # (ansible/_internal/_templating/_jinja_bits.py): true when the string
+    # starts with ANY of the variable/block/comment start markers AND ends
+    # with ANY of the three end markers - the two lists are checked
+    # independently, so a mixed pair (`{{ x %}`) counts too. Used for the
+    # `{% ... %}`/`{# ... #}` string-args marker above; the `{{ }}`-only
+    # possibly_all_template? stays the sentinel's own (resolution-driving)
+    # condition.
+    private def self.starts_and_ends_with_jinja_delimiters?(s : String) : Bool
+      {"{{", "{%", "{#"}.any? { |marker| s.starts_with?(marker) } &&
+        {"}}", "%}", "#}"}.any? { |marker| s.ends_with?(marker) }
     end
 
     # Returns the key=value params plus, as a second tuple element, the

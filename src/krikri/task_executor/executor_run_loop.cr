@@ -2163,7 +2163,32 @@ module Krikri
     # then nohup-launched detached on the target with its stdout (the
     # module's own JSON result) collected into ~/.ansible_async/<jid>
     # via an atomic tmp+mv, and poll:ed by cat-ing that file over SSH.
+    # Real's TaskExecutor collects every deprecation emitted while the
+    # task ran into its DeferredWarningContext and puts the collected list
+    # on the result as `deprecations` (executor/task_executor.py's
+    # result.update(deprecations=...)) - live-verified vs 2.19.11 via
+    # register on a failing community.mysql.mysql_info task. For a
+    # redirected community.mysql module that is one entry per task
+    # occurrence (the console [DEPRECATION WARNING] line, emitted at
+    # task-load time by parse_tasks, dedups separately). A result where
+    # no module ever ran keeps nothing, mirroring the guards
+    # ResultDisplay.consume_pending_module_deprecations already
+    # established for the same class of question: module-side skip,
+    # unreachable, connection failure, uncaught crash.
+    private def attach_module_redirect_deprecations(task : Task, result : JSON::Any) : JSON::Any
+      entry = PlaybookParser.redirect_deprecation_result_entry(task.module_name) || return result
+      hash = result.as_h? || return result
+      return result if hash.has_key?("deprecations")
+      return result if hash["skipped"]?.try(&.as_bool?)
+      return result if hash["unreachable"]?.try(&.as_bool?)
+      return result if hash["_connection_failure"]?.try(&.as_bool?)
+      return result if ResultDisplay.module_crash_result?(result)
+      hash["deprecations"] = JSON::Any.new([entry] of JSON::Any)
+      JSON::Any.new(hash)
+    end
+
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+      result = attach_module_redirect_deprecations(task, result)
       changed_when = task.changed_when
       failed_when = task.failed_when
       return result unless changed_when || failed_when
