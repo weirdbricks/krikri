@@ -54,6 +54,19 @@ module Krikri
     # is listed last to match real's position after failed).
     private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
 
+    # A FAILED command/shell result (rc != 0) is NOT the success shape with
+    # `failed` moved: real's registered failure (live-verified against
+    # ansible-core 2.19.11 via `{{ r | to_json }}` for both command and
+    # shell) runs changed, stdout, stderr, rc, cmd, start, end, delta -
+    # the module's own result dict in its construction order - then
+    # fail_json's failed/msg (the module calls fail_json(msg=...) with no
+    # extra kwargs, so both land after the dict), then the action plugin's
+    # derived stdout_lines/stderr_lines, then the controller-appended
+    # exception. The success order (above) interleaves msg before
+    # stdout_lines and puts failed at the tail, so the two shapes need
+    # separate lists.
+    private FAILED_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta failed msg stdout_lines stderr_lines exception]
+
     # ansible.builtin.command's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.command). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -504,10 +517,9 @@ module Krikri
         end: ended_at.to_s("%F %H:%M:%S.%6N"),
         delta: python_delta(ended_at - started_at),
         failed_flag: false,
-        # Success paths only - a non-zero rc is a failure result (real's
-        # failed shape is handled separately); nil keeps the historical
-        # order there.
-        key_order: exit_code == 0 ? SUCCESS_KEY_ORDER : nil
+        # Success paths only - a non-zero rc is a failure result and takes
+        # FAILED_KEY_ORDER (real's separate failure shape).
+        key_order: exit_code == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER
       ))
     end
 

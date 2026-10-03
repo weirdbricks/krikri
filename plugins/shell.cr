@@ -56,6 +56,14 @@ module Krikri
     # LIST, same position either way).
     private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
 
+    # The FAILED (rc != 0) shape is NOT the success order with `failed`
+    # moved: real's registered failure runs the module dict
+    # (changed/stdout/stderr/rc/cmd/start/end/delta), then fail_json's
+    # failed/msg, then stdout_lines/stderr_lines, then the controller's
+    # exception - live-verified against ansible-core 2.19.11 for shell
+    # (identical to command's, see command.cr's FAILED_KEY_ORDER).
+    private FAILED_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta failed msg stdout_lines stderr_lines exception]
+
     # Real shell module's own argspec - which IS command.py's (bookworm
     # ansible-core 2.14, the harness reference): the shell module is
     # command.py with _uses_shell=True, and its unsupported-parameters
@@ -434,10 +442,9 @@ module Krikri
         delta: python_delta(Time.utc - started_at),
         failed_flag: false,
         diff: diff_data,
-        # Success paths only - a non-zero rc is a failure result (real's
-        # failed shape is handled separately); nil keeps the historical
-        # order there.
-        key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : nil
+        # Success paths only - a non-zero rc is a failure result and takes
+        # FAILED_KEY_ORDER (real's separate failure shape).
+        key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER
       )
     end
 
