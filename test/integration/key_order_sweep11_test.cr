@@ -365,12 +365,13 @@ describe "dnf-family plugin result key order (sweep11)" do
     YAML
 
     # real community.general gem's success result carries no msg and no
-    # captured output - just what was asked for, plus changed. (The
-    # module's own dict orders them name/state/changed; the registered
-    # result hoists changed to the front, and krikri's executor appends
-    # failed last, which is where real's controller puts it too.)
+    # captured output - just what was asked for, plus changed, in the
+    # module's own dict order name/state/changed (live-verified in a
+    # fresh container with real ansible-core 2.19.11: both an install and
+    # an absent no-op register name, state, changed); the controller's
+    # failed lands last, where krikri's executor appends it too.
     gem = dumps["gem"]
-    gem.keys.must_equal(%w[changed name state failed])
+    gem.keys.must_equal(%w[name state changed failed])
     gem["changed"].as_bool.must_equal(true)
     gem["name"].as_s.must_equal("rake")
     gem["state"].as_s.must_equal("present")

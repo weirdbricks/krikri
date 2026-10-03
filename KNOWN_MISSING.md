@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1450`.**
+**Currently at `0.9.1451`.**
 
 ## Open gaps
 
@@ -40,9 +40,10 @@ and fixed and when.
   (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
   their plugin files). What is still unpinned, by how it can be verified:
   - *Doable on the dev box with rootless podman (a throwaway container runs the service or distro; both
-    engines run against it):* `docker_*`/`podman_image`
-    (local runtime), the rpm family inside a Fedora container (`dnf`/`dnf5`/`yum`/`*_versionlock`,
-    `gem`/`rpm_key` success paths - no `gem`/`rpm` on the dev box).
+    engines run against it):* `docker_image_build` (needs BuildKit). The Docker plugins, `podman_image`, the rpm family
+    (`dnf`/`dnf5`/`yum`/`*_versionlock`) and `gem`/`rpm_key` are already verified this way (the rpm family and
+    `gem` inside a fresh `krikri-fedora-compat` container per engine, real ansible-core 2.19.11 pip-installed
+    there; real's `dnf` check mode additionally needs `python3-libdnf5` preinstalled in the container).
   - *Needs a real host with root and a real kernel - verify on Atlantic.net via `krikri-role-tester`
     (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
     `user`/`group`/`authorized_key`/`known_hosts` (real's `authorized_key` param-echo order also depends
