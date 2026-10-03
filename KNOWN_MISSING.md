@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1448`.**
+**Currently at `0.9.1449`.**
 
 ## Open gaps
 
@@ -70,10 +70,11 @@ and fixed and when.
   `postgresql_privs`'s privilege list from a Python frozenset, so its multi-privilege ordering is nondeterministic
   and krikri keeps declared order.
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
-  `docker_container` with `command:` given as a YAML LIST is joined as `sleep,30` where real passes the list
-  through (string form works); the text wrapped after real's own error prefixes is the Python SDK's wording
-  (`500 Server Error for http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode
-  `create_parameters` carries only the fields krikri itself sends where real also records defaulted options.
+  the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
+  http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
+  the fields krikri itself sends where real also records defaulted options; `docker_container`'s list options
+  (`command`, `entrypoint`, `volumes`, `ports`) have their own JSON wire in the parser (other modules' YAML lists use
+  the generic comma-joined wire - a list element containing a comma is ambiguous there).
 - **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP: the
   RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
   `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
