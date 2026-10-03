@@ -48,11 +48,11 @@ module Krikri
       if path
         raw = begin
           File.read(path)
-        rescue e : File::NotFoundError
+        rescue File::NotFoundError
           return read_failure(path, 2, "No such file or directory")
-        rescue e : File::AccessDeniedError
+        rescue File::AccessDeniedError
           return read_failure(path, 13, "Permission denied")
-        rescue e : File::Error
+        rescue File::Error
           return read_failure(path, nil, nil)
         end
       else

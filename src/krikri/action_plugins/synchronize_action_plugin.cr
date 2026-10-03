@@ -47,21 +47,27 @@ module Krikri
   # roles actually write apart from that one: no delegate_to:, delegate_to:
   # localhost, and delegate_to: the task's own host.
   class SynchronizeActionPlugin < ActionPlugin
-    def execute : ActionResult
-      src_param = @params["src"]?
-      dest_param = @params["dest"]?
-
+    # Real's up-front parameter checks (both ends set, mode push|pull), as
+    # a final failed result; nil when the params are valid.
+    private def invalid_params_result(src_param, dest_param, mode : String) : ActionResult?
       if !src_param || !dest_param || src_param.empty? || dest_param.empty?
         return ActionResult.final(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set"
         ))
       end
+      return if ["push", "pull"].includes?(mode)
 
+      ActionResult.final(ActionResult.plugin_result_json(
+        false, true, "mode must be 'push' or 'pull', got '#{mode}'"
+      ))
+    end
+
+    def execute : ActionResult
+      src_param = @params["src"]?
+      dest_param = @params["dest"]?
       mode = (@params["mode"]? || "push").downcase
-      unless ["push", "pull"].includes?(mode)
-        return ActionResult.final(ActionResult.plugin_result_json(
-          false, true, "mode must be 'push' or 'pull', got '#{mode}'"
-        ))
+      if invalid = invalid_params_result(src_param, dest_param, mode)
+        return invalid
       end
 
       src = src_param.to_s

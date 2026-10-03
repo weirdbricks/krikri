@@ -16,15 +16,15 @@ require "file_utils"
 # to a shared log so both the command sequence (real's exact argv shapes,
 # including vgreduce's hardcoded --force and vgextend's lack of vg_options)
 # and the registered result shapes are asserted.
-private VGS_SHIM      = "#!/bin/sh\ncat \"$LVG_TEST_DIR/vgs.out\" 2>/dev/null\n"
-private PVS_SHIM      = <<-SH
-  #!/bin/sh
-  if [ -f "$LVG_TEST_DIR/pvs.rc" ]; then
-    cat "$LVG_TEST_DIR/pvs.err" >&2
-    exit "$(cat "$LVG_TEST_DIR/pvs.rc")"
-  fi
-  cat "$LVG_TEST_DIR/pvs.out" 2>/dev/null
-  SH
+private VGS_SHIM = "#!/bin/sh\ncat \"$LVG_TEST_DIR/vgs.out\" 2>/dev/null\n"
+private PVS_SHIM = <<-SH
+#!/bin/sh
+if [ -f "$LVG_TEST_DIR/pvs.rc" ]; then
+  cat "$LVG_TEST_DIR/pvs.err" >&2
+  exit "$(cat "$LVG_TEST_DIR/pvs.rc")"
+fi
+cat "$LVG_TEST_DIR/pvs.out" 2>/dev/null
+SH
 
 private PVCREATE_SHIM = "#!/bin/sh\necho \"pvcreate $*\" >> \"$LVG_TEST_DIR/cmds.log\"\nexit 0\n"
 private VGCREATE_SHIM = "#!/bin/sh\necho \"vgcreate $*\" >> \"$LVG_TEST_DIR/cmds.log\"\nexit 0\n"
@@ -67,7 +67,7 @@ end
 
 private def lvg_shim_env(dir : String) : Hash(String, String)
   {
-    "PATH"        => "#{File.join(dir, "bin")}:#{ENV["PATH"]? || ""}",
+    "PATH"         => "#{File.join(dir, "bin")}:#{ENV["PATH"]? || ""}",
     "LVG_TEST_DIR" => dir,
   }
 end

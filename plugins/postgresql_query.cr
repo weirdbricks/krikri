@@ -342,9 +342,9 @@ module Krikri
     # COMMIT and ANALYZE.
     private def ddl_command_tag(sql : String, affected : Int64) : String
       case (keyword = PluginHelpers::PostgresqlQueryHeuristics.leading_keyword(sql).upcase)
-      when "INSERT" then "INSERT 0 #{affected}"
+      when "INSERT"           then "INSERT 0 #{affected}"
       when "UPDATE", "DELETE" then "#{keyword} #{affected}"
-      when "TRUNCATE" then "TRUNCATE TABLE"
+      when "TRUNCATE"         then "TRUNCATE TABLE"
       else
         object = object_word_after_verb(sql)
         object ? "#{keyword} #{object}" : keyword

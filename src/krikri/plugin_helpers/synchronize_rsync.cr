@@ -138,7 +138,7 @@ module Krikri
 
     def self.cmd_string(argv : Array(String)) : String
       parts = argv.map do |arg|
-        if prefix = QUOTED_VALUE_PREFIXES.find { |p| arg.starts_with?(p) }
+        if prefix = QUOTED_VALUE_PREFIXES.find { |pfx| arg.starts_with?(pfx) }
           prefix + Shell.quote_arg(arg[prefix.size..])
         else
           arg
