@@ -179,6 +179,10 @@ describe "until retries attempts key" do
       T
     result["attempts"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
+    # Real also projects the error-event exception onto the exhausted
+    # result, after attempts (live-verified vs 2.19.11, ignored or not).
+    result.as_h.keys.last(3).must_equal(["failed", "attempts", "exception"])
+    result["exception"].as_s.must_equal("(traceback unavailable)")
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(2 retries left\)\./).must_equal(true)
     output.matches?(/FAILED - RETRYING: \[localhost\]: .* \(1 retries left\)\./).must_equal(true)
   end
