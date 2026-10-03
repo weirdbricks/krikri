@@ -456,6 +456,21 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
   end
 
+  # The same list reaching the plugin through a variable (`filter: "{{ var }}"`)
+  # or a templated args dict arrives as JSON array text, not the literal
+  # list's comma-joined form - both must filter identically.
+  it "registers only the listed subsets for a list filter passed through a variable" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: version and databases via a variable
+              community.mysql.mysql_info:
+                filter: "{{ ['version', 'databases'] }}"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+  end
+
   # Real's comma-separated string form of the same list.
   it "registers only the comma-separated subsets for a string filter" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?

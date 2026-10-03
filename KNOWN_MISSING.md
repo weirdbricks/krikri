@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1445`.**
+**Currently at `0.9.1446`.**
 
 ## Open gaps
 
@@ -71,7 +71,7 @@ and fixed and when.
   `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
   krikri's `shard.yml` still pins the old driver and the first TCP connection to a fresh MySQL 8 server fails until
   the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours
-  `filter:` as a YAML list, comma string and `!name` exclusions and warns like real for an unknown element; still open:
+  `filter:` as a YAML list (literal or passed through a variable/templated dict), comma string and `!name` exclusions and warns like real for an unknown element; still open:
   `exclude_fields:` is not implemented; `connector_name`/`connector_version` are `"Unknown"`; `users`/`users_info` omit
   `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
   `mysql_native_password` plugin no longer exists there).

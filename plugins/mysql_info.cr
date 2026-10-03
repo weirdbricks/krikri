@@ -185,7 +185,17 @@ module Krikri
     # list or a comma-separated string, either way a list of subset names
     # (real's argspec coerces a plain string into one too).
     private def parse_filter(raw : String?) : Array(String)
-      (raw || "").split(',').map(&.strip).reject(&.empty?)
+      text = (raw || "").strip
+      # A list that reaches the plugin through a variable or templated
+      # args (`filter: "{{ flt }}"`) arrives as JSON array text, a literal
+      # YAML list as the comma-joined form.
+      if text.starts_with?('[')
+        begin
+          return Array(String).from_json(text).map(&.strip).reject(&.empty?)
+        rescue JSON::ParseException
+        end
+      end
+      text.split(',').map(&.strip).reject(&.empty?)
     end
 
     # Real's own filter handling (mysql_info.py's get_info): `!name`
