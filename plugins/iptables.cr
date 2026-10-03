@@ -97,10 +97,27 @@ module Krikri
         )
       end
 
+      # Real ansible-core 2.19.11 iptables exits with a single
+      # `exit_json(**args)` where args is the dict built at the top of
+      # main(): changed, failed, ip_version, table, chain, flush, rule,
+      # state, chain_management, wait - in exactly that insertion order
+      # (live-verified in check mode via register + to_json; `failed`
+      # sits at position 2 because the module itself puts it in the
+      # dict, unlike most modules whose failed: false is backfilled by
+      # the controller - hence the failed_flag extra). No msg key.
       PluginResult.new(
         changed: any_changed,
         failed: false,
-        msg: any_changed ? "Rule applied" : "Rule already in desired state"
+        failed_flag: true,
+        ip_version: ip_version,
+        table: @params["table"]? || "filter",
+        chain: chain,
+        flush: flush,
+        rule: rule_flags.join(" "),
+        state: state,
+        chain_management: chain_management,
+        wait: @params["wait"]?,
+        key_order: %w[changed failed ip_version table chain flush rule state chain_management wait]
       )
     end
 

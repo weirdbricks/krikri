@@ -469,3 +469,87 @@ describe "deb822_repository plugin result key order (sweep8)" do
     keys.must_equal(%w[repo changed dest key_filename failed])
   end
 end
+describe "iptables plugin result key order (sweep8)" do
+  # Real 2.19.11 iptables.py builds one args dict at the top of main()
+  # - changed, failed, ip_version, table, chain, flush, rule, state,
+  # chain_management, wait - and every exit is exit_json(**args), so the
+  # order is variant-independent. Note failed sits at position 2: the
+  # MODULE puts it in the dict (hence krikri's failed_flag extra),
+  # unlike modules whose failed is backfilled by the controller. No msg
+  # key. Live-verified through a stateful stub `iptables` binary (no
+  # kernel netfilter access unprivileged) driving the real module's own
+  # code paths, against the real /usr/sbin/iptables' argv shape.
+
+  serial!
+
+  IPTABLES_SHIM = <<-'SH'
+    #!/bin/sh
+    DB="${KO_IPT_DB:?}"
+    IN="$*"
+    case "$IN" in
+      *-C*) grep -qxF -- "$IN" "$DB" 2>/dev/null && exit 0 || exit 1;;
+      *-D*) grep -vxF -- "$IN" "$DB" > "$DB.tmp" 2>/dev/null; mv "$DB.tmp" "$DB"; exit 0;;
+      *-A*|-I*) grep -qxF -- "$IN" "$DB" 2>/dev/null || echo "$IN" >> "$DB"; exit 0;;
+      *--version*) echo "iptables v1.8.7 (nf_tables)"; exit 0;;
+    esac
+    exit 0
+    SH
+
+  private def with_iptables_shim(&)
+    bin_dir = File.tempname("krikri-sweep8-iptables")
+    Dir.mkdir_p(bin_dir)
+    binary = File.join(bin_dir, "iptables")
+    File.write(binary, IPTABLES_SHIM)
+    File.chmod(binary, 0o755)
+    db = File.tempname("krikri-sweep8-iptables-db")
+    File.delete(db) if File.exists?(db)
+    previous_path = ENV["PATH"]?
+    previous_db = ENV["KO_IPT_DB"]?
+    ENV["PATH"] = "#{bin_dir}:/usr/bin:/bin"
+    ENV["KO_IPT_DB"] = db
+    begin
+      yield db
+    ensure
+      previous_path ? (ENV["PATH"] = previous_path) : ENV.delete("PATH")
+      previous_db ? (ENV["KO_IPT_DB"] = previous_db) : ENV.delete("KO_IPT_DB")
+      FileUtils.rm_r(bin_dir)
+      File.delete(db) if File.exists?(db)
+    end
+  end
+
+  private IPTABLES_PLAY = <<-YAML
+    - name: repro
+      hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: iptables task
+          ansible.builtin.iptables:
+            chain: INPUT
+            protocol: tcp
+            destination_port: "8443"
+            jump: ACCEPT
+            action: append
+            STATE_SLOT
+          register: r
+        - name: dump
+          ansible.builtin.copy:
+            content: |-
+              {{ r | to_json }}
+            dest: KRIKRI_DUMP_PATH
+    YAML
+
+  it "registers a rule append in the module's own dict order" do
+    with_iptables_shim do
+      keys = run_registered_dump(IPTABLES_PLAY.gsub("STATE_SLOT", ""))
+      keys.must_equal(%w[changed failed ip_version table chain flush rule state chain_management wait])
+    end
+  end
+
+  it "registers an absent rule removal in the same shape" do
+    with_iptables_shim do
+      keys = run_registered_dump(IPTABLES_PLAY.gsub("STATE_SLOT", "state: absent"))
+      keys.must_equal(%w[changed failed ip_version table chain flush rule state chain_management wait])
+    end
+  end
+end
