@@ -119,7 +119,12 @@ describe "apt plugin result key order" do
 
     result["failed"]?.must_be_nil
     result["changed"].as_bool.must_equal(true)
-    result.as_h.keys.must_equal(["changed", "cache_updated", "msg", "stdout"])
+    # Real apt.py's check-mode cache pass claims updated_cache (and thus
+    # cache_updated) unconditionally once the update was due.
+    result["cache_updated"].as_bool.must_equal(true)
+    # Real apt.py's cache-only exit carries no msg/stdout - just the
+    # three keys (the controller appends failed).
+    result.as_h.keys.must_equal(["changed", "cache_updated", "cache_update_time"])
   end
 end
 

@@ -17,17 +17,20 @@ require "file_utils"
 # without touching the real /var/lib/apt or needing root, exactly the
 # before/after mtime pair the plugin diffs to decide cache_updated.
 # Yields the PATH value to embed in the plugin's `environment:` param.
+# The fake mtime moves when (and only when) the shimmed apt-get actually
+# runs an `update` - not on a stat call count - so the shim stays robust
+# to however many mtime probes the plugin makes around the update.
 private def with_stub_path(move : Bool, &) : Nil
   dir = File.join(Dir.tempdir, "krikri-apt-cache-updated-#{Random.rand(1_000_000)}")
   stamp = File.join(dir, "fake-stamp")
   FileUtils.mkdir_p(dir)
-  File.write(File.join(dir, "apt-get"), "#!/bin/sh\nexit 0\n")
-  stat_shim = if move
-                "#!/bin/sh\nif [ -f \"$KRIKRI_FAKE_STAMP\" ]; then echo 200; else echo 100; touch \"$KRIKRI_FAKE_STAMP\"; fi\n"
-              else
-                "#!/bin/sh\necho 100\n"
-              end
-  File.write(File.join(dir, "stat"), stat_shim)
+  apt_shim = if move
+               "#!/bin/sh\ncase \"$*\" in *update*) touch \"$KRIKRI_FAKE_STAMP\" ;; esac\nexit 0\n"
+             else
+               "#!/bin/sh\nexit 0\n"
+             end
+  File.write(File.join(dir, "apt-get"), apt_shim)
+  File.write(File.join(dir, "stat"), "#!/bin/sh\nif [ -f \"$KRIKRI_FAKE_STAMP\" ]; then echo 200; else echo 100; fi\n")
   File.chmod(File.join(dir, "apt-get"), 0o755)
   File.chmod(File.join(dir, "stat"), 0o755)
   yield "#{dir}:/usr/bin:/bin", stamp
@@ -58,11 +61,11 @@ describe "apt plugin cache_updated result key" do
     result["cache_updated"].as_bool.must_equal(false)
   end
 
-  it "reports cache_updated: false in check mode (the update never actually ran)" do
+  it "reports cache_updated: true in check mode (real apt.py claims updated_cache unconditionally once the update was due)" do
     result = PluginSpecHelper.run("apt", {"update_cache" => "true", "_ansible_check_mode" => "true"})
 
     result["cache_updated"]?.wont_be_nil
-    result["cache_updated"].as_bool.must_equal(false)
+    result["cache_updated"].as_bool.must_equal(true)
   end
 
   it "reports cache_updated: true when the update genuinely moved the cache mtime" do

@@ -129,7 +129,14 @@ module Krikri
       begin
         result = dispatch
       rescue e : UfwCommandFailure
-        result = PluginResult.new(changed: false, failed: true, msg: e.message.to_s)
+        # Real ufw.py's fail_json(msg=err or out, commands=cmds) keeps its
+        # kwargs ahead of the standard keys (same kwargs-first rule the
+        # lvol/parted failures show): registered order
+        # [commands, failed, msg, changed, exception] - the container
+        # oracle run (no CAP_NET_ADMIN) confirmed it live. A get_bin_path
+        # failure carries no commands key, which the order simply skips.
+        result = PluginResult.new(changed: false, failed: true, msg: e.message.to_s,
+          key_order: ["commands", "failed", "msg", "changed", "exception"])
       end
 
       # Real ufw.py carries the accumulated commands on BOTH success
@@ -138,6 +145,17 @@ module Krikri
       # before anything ran, and its fail_json carries no commands.
       unless @commands.empty?
         result.extra["commands"] = JSON.parse(@commands.to_json)
+      end
+      # Real ufw.py's exit shape (its own main() tail): every normal-mode
+      # exit is exit_json(changed=changed, commands=cmds,
+      # msg=post_state.rstrip()), while check mode returns
+      # exit_json(changed=changed, commands=cmds) with NO msg key at all
+      # (the dry-run output only feeds changed:, never the result). The
+      # controller backfills failed last, giving the registered orders
+      # [changed, commands, msg, failed] / [changed, commands, failed]
+      # (round-992002 ufw_* captures).
+      unless result.failed?
+        result.key_order = true?(@params["_ansible_check_mode"]?) ? ["changed", "commands"] : ["changed", "commands", "msg"]
       end
       result
     end
@@ -314,11 +332,16 @@ module Krikri
                 end
 
       if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: changed, failed: false, msg: "Would run: #{ufw_bin_cmd(cmd)} (check mode)")
+        return PluginResult.new(changed: changed, failed: false)
       end
 
-      cmd_out = ufw_exec(ufw_bin_cmd(cmd))
-      PluginResult.new(changed: changed, failed: false, msg: cmd_out)
+      ufw_exec(ufw_bin_cmd(cmd))
+      # Real ufw.py's tail ALWAYS snapshots `ufw status verbose` after the
+      # action, and the exit's msg is that snapshot rstripped
+      # ("Status: inactive" in the round-992002 captures) - never the
+      # action command's own output.
+      post_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
     end
 
     # "Status: active" (verbose) / a bare "active" appearing in `ufw
@@ -333,7 +356,7 @@ module Krikri
 
     private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
       if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "Would run: #{cmd} (check mode)")
+        return PluginResult.new(changed: true, failed: false)
       end
 
       # Real community.general.ufw computes `changed` differently per
@@ -345,24 +368,26 @@ module Krikri
       # The earlier pre-check-skip and post-diff approaches each matched
       # only one of the two (Oefenweb.ufw round 196: warm changed=4 vs 0,
       # then cold logging changed=0 vs real 1).
-      pre_status = if ufw_state_key
-                     ufw_exec("#{@bins["ufw"]} status verbose")
-                   end
+      pre_status = ufw_exec("#{@bins["ufw"]} status verbose")
 
-      cmd_out = ufw_exec(ufw_bin_cmd(cmd))
+      ufw_exec(ufw_bin_cmd(cmd))
 
-      changed = compute_changed(true, ufw_state_key, ufw_state_value, pre_status)
+      # Real ufw.py's tail always snapshots `ufw status verbose` after the
+      # action - it feeds the default-policy changed diff AND is the
+      # msg=post_state.rstrip() exit value.
+      post_status = ufw_exec("#{@bins["ufw"]} status verbose")
 
-      PluginResult.new(changed: changed, failed: false, msg: cmd_out)
+      changed = compute_changed(true, ufw_state_key, ufw_state_value, pre_status, post_status)
+
+      PluginResult.new(changed: changed, failed: false, msg: post_status.rstrip)
     end
 
-    private def compute_changed(ran_ok : Bool, ufw_state_key : String?, ufw_state_value : String?, pre_status : String?) : Bool
+    private def compute_changed(ran_ok : Bool, ufw_state_key : String?, ufw_state_value : String?, pre_status : String, post_status : String) : Bool
       if ufw_state_key == "logging" && (value = ufw_state_value)
-        logging_changed?(ran_ok, value, pre_status || "")
+        logging_changed?(ran_ok, value, pre_status)
       elsif ufw_state_key
-        post_status = ufw_exec("#{@bins["ufw"]} status verbose")
         ran_ok &&
-          extract_status_fragment(pre_status || "", ufw_state_key) !=
+          extract_status_fragment(pre_status, ufw_state_key) !=
             extract_status_fragment(post_status, ufw_state_key)
       else
         ran_ok
@@ -422,8 +447,12 @@ module Krikri
       # #ufw_exec: a failing pre/post `ufw status verbose` (no
       # CAP_NET_ADMIN, missing ufw, ...) fails the task with real ufw.py's
       # execute() behavior instead of reading as an empty snapshot.
-      pre_state = check_mode ? "" : ufw_exec("#{@bins["ufw"]} status verbose")
-      pre_rules = check_mode ? "" : current_rule_tuples
+      # The pre-probes run in CHECK MODE too (real takes them before its
+      # command loop unconditionally - the container oracle caught this
+      # engine reporting a dry-run success where real failed the task on
+      # the failing pre-status probe).
+      pre_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      pre_rules = current_rule_tuples
 
       result = remote_exec(ufw_bin_cmd(cmd))
       @commands << ufw_bin_cmd(cmd)
@@ -431,13 +460,18 @@ module Krikri
         raise UfwCommandFailure.new(PluginHelpers::UfwCommand.exec_failure_msg(result[:stdout].to_s, result[:stderr].to_s))
       end
 
-      changed = if check_mode
-                  PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
-                else
-                  post_state = ufw_exec("#{@bins["ufw"]} status verbose")
-                  pre_state != post_state || pre_rules != current_rule_tuples
-                end
-      PluginResult.new(changed: changed, failed: false, msg: result[:stdout])
+      if check_mode
+        changed = PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
+        # Real ufw.py's check-mode exit_json carries NO msg - the dry-run
+        # output only feeds changed:, never the result.
+        PluginResult.new(changed: changed, failed: false)
+      else
+        post_state = ufw_exec("#{@bins["ufw"]} status verbose")
+        changed = pre_state != post_state || pre_rules != current_rule_tuples
+        # msg=post_state.rstrip() - the FINAL status snapshot, not the
+        # rule command's own output.
+        PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
+      end
     end
 
     # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
