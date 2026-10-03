@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1444`.**
+**Currently at `0.9.1445`.**
 
 ## Open gaps
 
@@ -61,10 +61,11 @@ and fixed and when.
   plugins, with a different order per module in real: `fail`: `failed, msg, changed, exception`; `assert`:
   `failed, evaluated_to, assertion, msg, changed, exception`; `copy`/`template`: `failed, msg, exception,
   changed`; `unarchive`: `failed, exception, msg, changed`.
-- **`postgresql_privs`/`postgresql_query` results have a different KEY SET than real** (real's `postgresql_privs`
-  adds `queries`; `postgresql_query` adds `execution_time_ms`) - a fix is in progress. `postgresql_db`,
-  `postgresql_user`, `mysql_db`, `mysql_query`, `mysql_user` and `mysql_variables` now match real
-  (live-verified on postgres:17 / mysql:8.4 containers).
+- **`postgresql_query` rejects the `port` parameter** ("Unsupported parameters ... port") where real accepts it as
+  an alias of `login_port` (`postgresql_db`/`postgresql_user`/`postgresql_privs` accept it). The
+  `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results otherwise match real
+  (live-verified on postgres:17 / mysql:8.4 containers); real builds `postgresql_privs`'s privilege list
+  from a Python frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order.
 - **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP is
   not implemented (needs an RSA public-key exchange): the first TCP connection to a fresh MySQL 8 server whose
   auth cache is empty fails ("full authentication over plain TCP needs an RSA public-key exchange"); real's

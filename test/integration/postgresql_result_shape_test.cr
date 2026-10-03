@@ -45,6 +45,10 @@ private def shape_keys(result : JSON::Any) : Array(String)
 end
 
 describe "community.postgresql.* registered result shape (127.0.0.1:35432)" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "postgresql_db create registers changed/db/executed_commands/failed and no msg" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     PluginSpecHelper.run("postgresql_db", SHAPE_LOGIN.merge({"name" => "shape_db1", "state" => "absent"}))
@@ -104,6 +108,10 @@ describe "community.postgresql.* registered result shape (127.0.0.1:35432)" do
 end
 
 describe "postgresql_user registered result shape (127.0.0.1:35432)" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "create registers user/changed/queries/failed with the CREATE template" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     PluginSpecHelper.run("postgresql_user", SHAPE_LOGIN.merge({"name" => "shape_u1", "state" => "absent"}))
@@ -205,11 +213,11 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
   # community.postgresql 4.2.0.
 
   private PRIVS_SETUP_SQL = [
-      {"shape_pg_privs_role", "CREATE ROLE"},
-      {"shape_pg_privs_mem", "CREATE ROLE"},
-      {"shape_pg_privs_grp", "CREATE ROLE"},
-      {"shape_pg_privs_owner", "CREATE ROLE"},
-    ]
+    {"shape_pg_privs_role", "CREATE ROLE"},
+    {"shape_pg_privs_mem", "CREATE ROLE"},
+    {"shape_pg_privs_grp", "CREATE ROLE"},
+    {"shape_pg_privs_owner", "CREATE ROLE"},
+  ]
 
   private def privs_reset : Nil
     PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP TABLE IF EXISTS shape_pg_t1"}))
@@ -418,7 +426,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     result = query_result_for("SELECT 1 AS one, 'x'::text AS t")
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-      "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
     result["changed"].as_bool.must_equal(false)
     result["query"].as_s.must_equal("SELECT 1 AS one, 'x'::text AS t")
     result["query_list"].as_a.map(&.as_s).must_equal(["SELECT 1 AS one, 'x'::text AS t"])
@@ -436,7 +444,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP TABLE IF EXISTS shape_pg_q"}))
     result = query_result_for("CREATE TABLE shape_pg_q (id int)")
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-      "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
     result["changed"].as_bool.must_equal(true)
     result["statusmessage"].as_s.must_equal("CREATE TABLE")
     result["query_result"].as_h.must_be_empty
@@ -450,7 +458,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     result = PluginSpecHelper.run("postgresql_query",
       SHAPE_LOGIN.merge({"query" => %(["SELECT 1 AS a", "SELECT 2 AS b"])}))
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-      "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
     result["query"].as_s.must_equal("SELECT 2 AS b")
     result["query_list"].as_a.map(&.as_s).must_equal(["SELECT 1 AS a", "SELECT 2 AS b"])
     result["query_all_results"].as_a.size.must_equal(2)

@@ -55,6 +55,10 @@ private def unique_tmp(*parts : String) : String
 end
 
 describe "rpm_key plugin result key order (sweep8)" do
+  # Puts a stub rpm first on the process-wide PATH: serialize with the
+  # other ENV-touching tests (see test/minitest_helper.cr).
+  serial!
+
   # Real 2.19.11 rpm_key.py has FOUR success exits, all bare
   # exit_json(changed=...) - key imported / already present (state
   # present), key removed / already absent (state absent) - so every

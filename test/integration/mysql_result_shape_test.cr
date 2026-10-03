@@ -138,6 +138,10 @@ private def task_body(text : String) : String
 end
 
 describe "mysql_db plugin result shape" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   # Real's exit_json for present/absent carries no `msg` key at all, and
   # reports `executed_commands` as the mogrified statement it ran.
   it "registers a create as changed, db, db_list, executed_commands, failed" do
@@ -241,6 +245,10 @@ describe "mysql_db plugin result shape" do
 end
 
 describe "mysql_query plugin result shape" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   # Real passes no `msg` on success; `execution_time_ms` is a per
   # statement float (milliseconds, 4 decimals) that cannot be asserted
   # exactly - only its presence and per-statement arity.
@@ -297,6 +305,10 @@ describe "mysql_query plugin result shape" do
 end
 
 describe "mysql_user plugin result shape" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   # Real's own user_add branch: `user` is the `name:` param echoed
   # verbatim, `password_changed` is true for the create, null for a
   # check-mode create (nothing was attempted), and `attributes` is null
@@ -383,6 +395,10 @@ describe "mysql_user plugin result shape" do
 end
 
 describe "mysql_info plugin result shape" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   # Real's exit_json always leads with the three server/connector facts
   # and then appends exactly the subsets the filter kept, in the order
   # its own dict declares them.

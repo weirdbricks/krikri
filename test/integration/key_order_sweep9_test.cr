@@ -112,6 +112,10 @@ private def registered_dump_play(task : String) : String
 end
 
 describe "mysql_variables plugin result key order (sweep9)" do
+  # Shared external DB state (fixed table/role/db names): never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   # The change path and the "already set" no-op share one exit_json shape,
   # differing only in whether `queries` is present - so a single
   # SUCCESS_KEY_ORDER covers both. max_connections defaults to 151, so
