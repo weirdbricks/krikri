@@ -211,17 +211,21 @@ module Krikri
                "ownership, perms or SE linux context changed"
              end if attrs_changed
 
+      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`
+      # on create/rerun/update/remove): msg, changed - exit_json(msg=...,
+      # changed=...), and NO path key in the result (the path only exists
+      # as the task's input parameter).
       PluginResult.new(
         changed: content_changed || attrs_changed,
         failed: false,
         msg: msg,
-        path: path
+        key_order: %w[msg changed]
       )
     end
 
     private def missing_file_result(path : String, state : String, create : Bool) : PluginResult?
       return nil if File.exists?(path)
-      return PluginResult.new(changed: false, failed: false, msg: "path not present", path: path) if state == "absent"
+      return PluginResult.new(changed: false, failed: false, msg: "path not present", key_order: %w[msg changed]) if state == "absent"
       # present() raises ValueError(f"Destination {dest} does not exist")
       # - no ", and create=false" tail.
       return PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist") unless create

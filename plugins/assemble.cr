@@ -134,7 +134,8 @@ module Krikri
         diff: diff,
         dest: dest,
         checksum: Digest::SHA1.hexdigest(content),
-        md5sum: Digest::MD5.hexdigest(content)
+        md5sum: Digest::MD5.hexdigest(content),
+        key_order: SUCCESS_KEY_ORDER
       )
       # Real's result echoes the src: param and carries backup_file only
       # when a backup was actually taken (live-verified vs 2.19.11 at -v).
@@ -147,6 +148,17 @@ module Krikri
       add_path_info(result, dest)
       result
     end
+
+    # Real ansible.builtin.assemble's registered-result key order
+    # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
+    # assemble: tasks): src, dest, checksum, md5sum, then backup_file
+    # only when a backup was taken, then changed, msg, the stat block
+    # and failed - IDENTICAL on changed and unchanged runs (the
+    # checksums ride the no-op result too). No diff key outside --diff
+    # mode. In check mode against a not-yet-existing dest the stat block
+    # is absent and the same constant reduces to src, dest, checksum,
+    # md5sum, changed, msg, failed.
+    private SUCCESS_KEY_ORDER = %w[src dest checksum md5sum backup_file changed msg uid gid owner group mode state size failed]
 
     # Whether real's action plugin takes its controller-side branch for
     # this task's remote_src: PRESENT and boolean(remote_src, strict=False)

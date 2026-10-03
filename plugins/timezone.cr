@@ -101,11 +101,15 @@ module Krikri
       return apply_error if apply_error
 
       changed = before != after
+      # Real 2.19.11 registered timezone result (live-verified): changed,
+      # diff, failed - the module's exit_json passes changed itself, so
+      # only failed is backfilled at the tail. msg is krikri-only.
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: @msg.empty? ? "" : @msg.join("\n"),
         diff: generate_attribute_diff(before, after),
+        key_order: ["changed", "diff"],
       )
     end
 

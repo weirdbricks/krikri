@@ -127,7 +127,8 @@ module Krikri
         failed: false,
         msg: branch_msg || "OK",
         diff: diff,
-        path: path
+        path: path,
+        key_order: SUCCESS_KEY_ORDER
       )
       # Real module includes backup_file only when a backup was actually
       # made (its None default is dropped by exit_json).
@@ -138,6 +139,16 @@ module Krikri
       add_path_info(result, path)
       result
     end
+
+    # Real ansible.builtin.ini_file's registered-result key order
+    # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
+    # ini_file: tasks): changed, diff, msg, path, then backup_file only
+    # when a backup was taken, then the add_path_info stat block and
+    # failed - identical on create/change/remove/no-op runs. In check
+    # mode against a not-yet-existing path the stat block is absent (the
+    # file does not exist at exit) and the same constant reduces to
+    # changed, diff, msg, path, failed.
+    private SUCCESS_KEY_ORDER = %w[changed diff msg path backup_file uid gid owner group mode state size failed]
 
     private def initial_lines(original : String) : Array(String)
       # Real Ansible's own ini_file module force-seeds a single blank line

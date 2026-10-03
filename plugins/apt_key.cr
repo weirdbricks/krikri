@@ -164,6 +164,7 @@ module Krikri
       tmp.close
       staged = false
       added = false
+      result_after : Array(String)? = nil
       begin
         if key_id.nil?
           # No id: given - real Ansible derives it from the key material
@@ -182,6 +183,7 @@ module Krikri
 
         parsed = parse_key_id(key_id)
         return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless parsed
+        raw_id = key_id
 
         before_keys = all_keys
         return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
@@ -215,12 +217,39 @@ module Krikri
           end
 
           added = true
+          result_after = after_keys
         end
       ensure
         File.delete(tmp_path) rescue nil
       end
 
-      PluginResult.new(changed: added, failed: false, msg: added ? "Key added" : "Key already present")
+      # Real apt_key.py's r dict grows in place: {'changed'}, then id,
+      # short_id, fp, key_id (parse_key_id), then before, and after ONLY
+      # on a path that actually ran an add - live-verified 2.19.11 wire
+      # order [changed, id, short_id, fp, key_id, before(, after)], no
+      # msg key on any success exit.
+      apt_key_result(added, raw_id, parsed, before_keys, result_after)
+    end
+
+    # Real apt_key.py's success-exit shape: the r dict at exit_json time
+    # - id is the RAW key id as resolved (derived or given, pre-
+    # normalization), short_id/fp/key_id are parse_key_id's normalized
+    # values, before/after are the all_keys listings (after present only
+    # when an add/remove actually ran). No msg key.
+    private def apt_key_result(
+      changed : Bool, raw_id : String,
+      parsed : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool),
+      before_keys : Array(String), after_keys : Array(String)?,
+    ) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false,
+        id: raw_id,
+        short_id: parsed[:short_key_id],
+        fp: parsed[:fingerprint],
+        key_id: parsed[:key_id],
+        before: before_keys,
+        key_order: ["changed", "id", "short_id", "fp", "key_id", "before", "after"])
+      result.extra["after"] = JSON.parse(after_keys.to_json) if after_keys
+      result
     end
 
     # Stage the key material (from url:/data:/file:) into tmp_path.
@@ -395,49 +424,33 @@ module Krikri
       key_id = @params["id"]?
       return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: id") unless key_id
 
-      unless key_present?(key_id)
-        return PluginResult.new(changed: false, failed: false, msg: "Key already absent")
+      parsed = parse_key_id(key_id)
+      return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless parsed
+
+      # Real apt_key.py's state=absent path: before = all_keys (NOT the
+      # `apt-key list` fingerprint text #key_present? used to scan - that
+      # helper is only called on real's add path... which never calls it
+      # either), membership check via key_id_in_keys?, del by SHORT id,
+      # then an after re-list only when a key was actually removed.
+      before_keys = all_keys
+      return PluginResult.new(changed: false, failed: true, msg: "Unable to list public keys") unless before_keys
+
+      unless key_id_in_keys?(parsed, before_keys)
+        return apt_key_result(false, key_id, parsed, before_keys, nil)
       end
 
-      result = remote_exec("apt-key #{keyring_flag}del #{shell_single_quote(key_id)}")
+      result = remote_exec("apt-key #{keyring_flag}del #{shell_single_quote(parsed[:short_key_id])}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "apt-key del failed: #{result[:stderr]}")
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Key removed")
-    end
-
-    private def key_present?(key_id : String) : Bool
-      # `apt-key --keyring X list` against an X that does NOT exist yet
-      # creates X as a side effect - an EMPTY file in GnuPG's modern
-      # "keybox" format (not the classic OpenPGP binary format apt's own
-      # `trusted.gpg.d` reader requires). On a keyring: task's very first
-      # run (the common case - a fresh host, nothing installed yet), this
-      # runs before #add_key's own `apt-key add` ever does, so THAT later
-      # call finds X already exists (as an empty keybox) and appends the
-      # imported key into it in keybox format too, instead of creating a
-      # fresh classic-format file from scratch - apt then rejects the
-      # whole keyring outright ("the key(s) ... are ignored as the file
-      # has an unsupported filetype"), breaking every subsequent apt
-      # operation that depended on it. Real ansible.builtin.apt_key hits
-      # the same underlying `apt-key list`-creates-empty-keybox quirk in
-      # principle, but never actually triggers it in this specific
-      # ordering combination live-verified here. Since a keyring that
-      # doesn't exist trivially can't contain the key, skip the `list`
-      # call entirely (and its poisoning side effect) when the target
-      # keyring: file isn't there yet. Found benchmarking round167's
-      # buluma.gitlab_ce on Ubuntu 22.04.
-      if keyring = @params["keyring"]?
-        exists = remote_exec("test -e #{shell_single_quote(keyring)}")
-        return false if exists[:exit_code] != 0
+      after_keys = all_keys
+      return PluginResult.new(changed: true, failed: true, msg: "Unable to list public keys") unless after_keys
+      if key_id_in_keys?(parsed, after_keys)
+        return PluginResult.new(changed: true, failed: true, msg: "apt-key did not return an error, but the key was not removed (check that the id is correct and *not* a subkey)")
       end
 
-      # Real apt-key list output prints each key's fingerprint with
-      # spaces every 4 characters - stripping spaces from both sides
-      # before comparing so a shortened (e.g. last-8-hex-chars) id: still
-      # matches inside the full fingerprint.
-      result = remote_exec("apt-key #{keyring_flag}list 2>/dev/null")
-      result[:stdout].gsub(" ", "").includes?(key_id.gsub(" ", ""))
+      apt_key_result(true, key_id, parsed, before_keys, after_keys)
     end
   end
 end

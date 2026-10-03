@@ -98,10 +98,19 @@ module Krikri
         File.write(file, new_lines.map { |line| line + "\n" }.join)
       end
 
+      # Real StateModuleHelper output (live-verified against real 2.19.11
+      # in the podman container; check mode, changed and unchanged runs
+      # and state=absent all identical):
+      # changed, name, state, filename, lines, is_blacklisted.
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: "",
+        name: name,
+        state: state,
+        filename: file,
+        lines: new_lines,
+        is_blacklisted: PluginHelpers::KernelBlacklistFile.blacklisted?(new_lines, name),
+        key_order: ["changed", "name", "state", "filename", "lines", "is_blacklisted"],
       )
     end
 

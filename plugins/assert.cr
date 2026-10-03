@@ -95,10 +95,13 @@ module Krikri
         PluginResult.new(changed: false, failed: true, msg: fail_msg, assertion: failing, evaluated_to: false)
       else
         success_msg = @params["success_msg"]? || "All assertions passed"
+        # Real's registered assert success runs changed, msg, failed
+        # (live-verified vs 2.19.11 via `{{ r | to_json }}`) - mirrors
+        # AssertActionPlugin's key_order.
         if true?(@params["quiet"]?)
-          PluginResult.new(changed: false, failed: false, msg: success_msg, _ansible_quiet: true)
+          PluginResult.new(changed: false, failed: false, msg: success_msg, _ansible_quiet: true, key_order: ["changed", "msg"])
         else
-          PluginResult.new(changed: false, failed: false, msg: success_msg)
+          PluginResult.new(changed: false, failed: false, msg: success_msg, key_order: ["changed", "msg"])
         end
       end
     end

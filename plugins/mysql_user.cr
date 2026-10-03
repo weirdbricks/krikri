@@ -66,13 +66,28 @@ module Krikri
   # subtract_privs: (this always does a full revoke-then-regrant instead),
   # resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
+    # Real 2.19.11 + community.mysql 5.0.2 (live-verified, `{{ r |
+    # to_json }}`, MySQL 8.4): the module's own exit_json kwargs, in its
+    # own order - changed, user, msg, password_changed, attributes,
+    # failed. `user` is the `name:` param echoed verbatim (a bare name
+    # with no `host:`, exactly as written), `password_changed` is null
+    # only on the check-mode create (where nothing was attempted) and
+    # `attributes` is null unless `attributes:` was given.
+    private SUCCESS_KEY_ORDER = %w[changed user msg password_changed attributes failed]
+
+    # What real reports for whether the account's password was (re)set -
+    # tracked through the run and attached to the result in #with_shape.
+    @password_changed : JSON::Any? = JSON::Any.new(false)
+
     def execute : PluginResult
-      # Real Ansible's `name:` param has a deprecated `aliases: [user]`
-      # - same bug class fixed for postgresql_db/postgresql_user in
-      # round 43 (robertdebock.postgres): a real playbook writing
-      # `user: bob` (the alias) got "missing required argument: name"
-      # no matter what `user:` was set to.
-      name = @params["name"]? || @params["user"]?
+      # Real's `name:` param has NO `user:` alias (verified against the
+      # installed ansible.mysql 5.2.0 module source, which
+      # community.mysql's plugin_routing redirects to: real rejects
+      # `user:` with "Unsupported parameters for (mysql_user) module:
+      # user"). That rejection happens in real's argument-spec check,
+      # which krikri runs controller-side before this plugin is ever
+      # reached; keep the plugin itself reading the canonical name only.
+      name = @params["name"]?
       unless name
         # Real AnsibleModule's own required-arguments failure is plural
         # "arguments" even for a single missing param (same wording the
@@ -117,8 +132,11 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
-      run_with_db(uri, name, host, state, password, update_password, priv, plugin,
-        plugin_hash_string, plugin_auth_string, check_mode, host_all)
+      with_shape(
+        run_with_db(uri, name, host, state, password, update_password, priv, plugin,
+          plugin_hash_string, plugin_auth_string, check_mode, host_all),
+        name
+      )
     rescue ex : DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper (live-verified
       # against bookworm's community.mysql 3.x via the W9 harness case,
@@ -132,6 +150,32 @@ module Krikri
         msg: "unable to connect to database, check login_user and login_password are correct or /root/.my.cnf has the credentials. Exception message: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+    end
+
+    # Re-emits a result with real's registered keys attached. Only the
+    # SUCCESS paths carry them; a fail_json keeps the plain failure shape
+    # real's own fail_json produces.
+    private def with_shape(result : PluginResult, name : String) : PluginResult
+      return result if result.failed?
+
+      PluginResult.new(
+        changed: result.changed?,
+        failed: false,
+        msg: result.msg,
+        user: name,
+        password_changed: @password_changed,
+        attributes: desired_attributes,
+        failed_flag: true,
+        key_order: SUCCESS_KEY_ORDER
+      )
+    end
+
+    # Real reports the attributes the SERVER ended up storing, which is
+    # only ever something when `attributes:` was given; null otherwise.
+    private def desired_attributes : JSON::Any
+      attributes = @params["attributes"]?
+      return JSON::Any.new(nil) unless attributes
+      (JSON.parse(attributes) rescue JSON::Any.new(attributes))
     end
 
     private def validate_inputs(update_password : String, password : String?, plugin : String?,
@@ -215,9 +259,9 @@ module Krikri
       msg = if created
               "User added"
             elsif changed
-              "Updated user #{name}@#{host}"
+              "User updated"
             else
-              "User #{name}@#{host} already up to date"
+              "User unchanged"
             end
       PluginResult.new(changed: changed, failed: false, msg: msg)
     end
@@ -232,10 +276,14 @@ module Krikri
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : {PluginResult?, Bool, Bool}
       unless exists
-        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be created"), false, true} if check_mode
+        if check_mode
+          @password_changed = JSON::Any.new(nil)
+          return {PluginResult.new(changed: true, failed: false, msg: "User added"), false, true}
+        end
 
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        @password_changed = JSON::Any.new(true)
         return {nil, true, true}
       end
 
@@ -253,10 +301,13 @@ module Krikri
         pl = plugin || return {nil, false, false}
         return {nil, false, false} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
 
-        return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s authentication would be updated"), false, false} if check_mode
+        if check_mode
+          return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false}
+        end
 
         clause = build_auth_clause(nil, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        @password_changed = JSON::Any.new(true)
         {nil, true, false}
       end
     end
@@ -284,9 +335,10 @@ module Krikri
         return {nil, false, false}
       end
 
-      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s password would be updated"), false, false} if check_mode
+      return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false} if check_mode
 
       db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED BY #{quote_str(password)}"
+      @password_changed = JSON::Any.new(true)
       {nil, true, false}
     end
 
@@ -392,18 +444,18 @@ module Krikri
       current = exists && !changed ? current_grants(db, name, host) : Hash(String, Set(String)).new
       return {nil, changed} if current == desired
 
-      return {PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host}'s privileges would be updated"), changed} if check_mode
+      return {PluginResult.new(changed: true, failed: false, msg: "User updated"), changed} if check_mode
 
       apply_grants(db, name, host, desired)
       {nil, true}
     end
 
     private def ensure_absent(db : DB::Database, name : String, host : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "User already absent") unless exists
-      return PluginResult.new(changed: true, failed: false, msg: "User #{name}@#{host} would be removed") if check_mode
+      return PluginResult.new(changed: false, failed: false, msg: "User doesn't exist") unless exists
+      return PluginResult.new(changed: true, failed: false, msg: "User deleted") if check_mode
 
       db.exec "DROP USER #{quote_str(name)}@#{quote_str(host)}"
-      PluginResult.new(changed: true, failed: false, msg: "Removed user #{name}@#{host}")
+      PluginResult.new(changed: true, failed: false, msg: "User deleted")
     end
 
     private def user_exists?(db : DB::Database, name : String, host : String) : Bool
@@ -435,14 +487,15 @@ module Krikri
       changed = false
       existing_hosts.each do |host|
         next unless needs_auth_update?(db, name, host, password, update_password, plugin, plugin_hash_string, plugin_auth_string)
-        return PluginResult.new(changed: true, failed: false, msg: "User #{name}'s #{password ? "password" : "authentication"} would be updated on all hosts") if check_mode
+        return PluginResult.new(changed: true, failed: false, msg: "User updated") if check_mode
 
         clause = build_auth_clause(password, plugin, plugin_hash_string, plugin_auth_string)
         db.exec "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
+        @password_changed = JSON::Any.new(true)
         changed = true
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated user #{name} on all hosts" : "User #{name} already up to date on all hosts")
+      PluginResult.new(changed: changed, failed: false, msg: changed ? "User updated" : "User unchanged")
     end
 
     private def needs_auth_update?(db : DB::Database, name : String, host : String,
@@ -463,11 +516,11 @@ module Krikri
     end
 
     private def ensure_absent_all_hosts(db : DB::Database, name : String, existing_hosts : Array(String), check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "User already absent") if existing_hosts.empty?
-      return PluginResult.new(changed: true, failed: false, msg: "User #{name} would be removed from all hosts") if check_mode
+      return PluginResult.new(changed: false, failed: false, msg: "User doesn't exist") if existing_hosts.empty?
+      return PluginResult.new(changed: true, failed: false, msg: "User deleted") if check_mode
 
       existing_hosts.each { |host| db.exec "DROP USER #{quote_str(name)}@#{quote_str(host)}" }
-      PluginResult.new(changed: true, failed: false, msg: "Removed user #{name} from #{existing_hosts.size} host(s)")
+      PluginResult.new(changed: true, failed: false, msg: "User deleted")
     end
 
     private def current_grants(db : DB::Database, name : String, host : String) : Hash(String, Set(String))

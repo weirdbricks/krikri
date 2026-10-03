@@ -45,12 +45,14 @@ module Krikri
     def execute : ActionResult
       if (raw = @params["quiet"]?) &&
          (msg = bool_param_error_msg("quiet", JSON::Any.new(raw)))
-        return ActionResult.final(ActionResult.plugin_result_json(false, true, msg))
+        return ActionResult.final(Krikri.mark_failed_key_order(
+          ActionResult.plugin_result_json(false, true, msg), FAILED_KEY_ORDER_ASSERT))
       end
 
       that_json = @params["that"]?
       unless that_json
-        return ActionResult.final(ActionResult.plugin_result_json(false, true, "missing required argument: that"))
+        return ActionResult.final(Krikri.mark_failed_key_order(
+          ActionResult.plugin_result_json(false, true, "missing required argument: that"), FAILED_KEY_ORDER_ASSERT))
       end
 
       conditions = Array(String).from_json(that_json)
@@ -130,7 +132,8 @@ module Krikri
       unless true?(@params["quiet"]?)
         extra["_ansible_verbose_always"] = JSON::Any.new(true)
       end
-      ActionResult.final(ActionResult.plugin_result_json(false, true, fail_msg, extra))
+      ActionResult.final(Krikri.mark_failed_key_order(
+        ActionResult.plugin_result_json(false, true, fail_msg, extra), FAILED_KEY_ORDER_ASSERT))
     end
 
     # Every `that:` condition held. Real assert tags its successful result
@@ -145,7 +148,10 @@ module Krikri
               else
                 {"_ansible_verbose_always" => JSON::Any.new(true)}
               end
-      ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
+      # Real's registered assert success runs changed, msg, failed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+      ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra,
+        key_order: ["changed", "msg", "failed"]))
     end
 
     private def true?(value : String?, default : Bool = false) : Bool

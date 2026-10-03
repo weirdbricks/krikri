@@ -173,7 +173,11 @@ module Krikri
       if error = validate_src_and_dest(src, dest)
         # real: AnsibleActionFail in the controller-side action plugin - a bare
         # "Task failed: <msg>" block with no "Module failed." segment
-        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true)
+        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
+          # Real's unarchive action-failure order (unarchive.cr's plugin
+          # binary does not link base_action_plugin.cr, so the shared
+          # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
+          key_order: ["failed", "exception", "msg", "changed"])
       end
 
       # Real AnsibleModule validates bool-typed params at module setup -
@@ -371,6 +375,14 @@ module Krikri
 
       files = list_files ? members(handler, src) : nil
 
+      # Real's registered unarchive result runs handler, dest, src, then
+      # extract_results (only on the changed path - res_args gets it
+      # inserted before changed), changed, files (only with list_files),
+      # then add_path_info's uid/gid/owner/group/mode/state/size -
+      # live-verified vs 2.19.11 via `{{ r | to_json }}` for both the
+      # extract and the already-extracted rerun. krikri always carries
+      # `files` (empty without list_files), which lands in files' real
+      # position; extract_results is absent here and skipped.
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -385,7 +397,8 @@ module Krikri
         owner: stat_fields[:owner],
         group: stat_fields[:group],
         mode: stat_fields[:mode],
-        files: files || [] of String
+        files: files || [] of String,
+        key_order: %w[handler dest src extract_results changed files uid gid owner group mode state size]
       )
     end
 

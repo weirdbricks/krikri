@@ -1,16 +1,18 @@
 require "../minitest_helper"
 
 # Pins plugins/postgresql_query.cr's argument-validation surface
-# against real community.postgresql.postgresql_query (live-diffed vs
-# real ansible-playbook via the podman-diff postgresql_query_edge_cases
-# harness): in the live collection's argument_spec neither query nor
-# login_db is required, the old `db:` spelling and the deprecated
-# host/port/login/unix_socket aliases are NOT parameters at all,
-# positional_args|named_args are mutually exclusive, login_port is an
-# int, autocommit/trust_input are bools, ssl_mode is a choices
-# constraint, and unsupported params are rejected LAST with the
-# trailing all-aliases parenthetical. Validation failures happen
-# before any connection, so these run without a PostgreSQL server.
+# against real community.postgresql.postgresql_query 4.2.0
+# (live-verified by running real ansible-playbook 2.19.11 on this host,
+# 2026-10-03): in the live collection's argument_spec neither query nor
+# login_db is required, positional_args|named_args are mutually
+# exclusive, login_port is an int, autocommit/trust_input are bools,
+# ssl_mode is a choices constraint, the shared postgres_common_
+# argument_spec's deprecated host/port/login/unix_socket/db aliases ARE
+# accepted (so validation falls through to the connection attempt), and
+# unsupported params are rejected LAST with the trailing all-aliases
+# parenthetical and the module name as written in the task.
+# Validation failures happen before any connection, so these run
+# without a PostgreSQL server.
 describe "postgresql_query plugin argument validation" do
   it "fails on no parameters at all (nil query crashes the real module)" do
     result = PluginSpecHelper.run("postgresql_query", {} of String => String)
@@ -31,35 +33,30 @@ describe "postgresql_query plugin argument validation" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: positional_args|named_args")
   end
 
-  it "rejects the old db: spelling and unknown params, sorted, aliases trailing" do
+  it "rejects unknown params, sorted, aliases trailing, module name as written" do
     result = PluginSpecHelper.run("postgresql_query", {
       "query"        => "SELECT 1",
-      "db"           => "krikri_db",
       "krikri_bogus" => "x",
     })
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal(
-      "Unsupported parameters for (community.postgresql.postgresql_query) module: db, krikri_bogus. " \
+      "Unsupported parameters for (postgresql_query) module: krikri_bogus. " \
       "Supported parameters include: autocommit, ca_cert, connect_params, encoding, login_db, " \
       "login_host, login_password, login_port, login_unix_socket, login_user, named_args, " \
       "positional_args, query, search_path, session_role, ssl_cert, ssl_key, ssl_mode, " \
-      "trust_input (ssl_rootcert).")
+      "trust_input (db, host, login, port, ssl_rootcert, unix_socket).")
   end
 
-  it "rejects the deprecated host alias like any other unsupported param" do
+  it "accepts the deprecated host/db aliases - it fails connecting, not validating" do
     result = PluginSpecHelper.run("postgresql_query", {
       "query" => "SELECT 1",
+      "db"    => "krikri_db",
       "host"  => "127.0.0.1",
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal(
-      "Unsupported parameters for (community.postgresql.postgresql_query) module: host. " \
-      "Supported parameters include: autocommit, ca_cert, connect_params, encoding, login_db, " \
-      "login_host, login_password, login_port, login_unix_socket, login_user, named_args, " \
-      "positional_args, query, search_path, session_role, ssl_cert, ssl_key, ssl_mode, " \
-      "trust_input (ssl_rootcert).")
+    result["msg"].as_s.wont_include("Unsupported parameters")
   end
 
   it "fails an invalid ssl_mode choice" do

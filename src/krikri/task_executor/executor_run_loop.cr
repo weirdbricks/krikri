@@ -1429,7 +1429,7 @@ module Krikri
 
       begin
         substitute_block_name_chain(task, substitutor)
-        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name))
+        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), task)
         substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # Same "finalization of task args failed" handling as
@@ -1536,7 +1536,9 @@ module Krikri
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
           end
-          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
+          result_json = JSON.parse(failed.to_json)
+          Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
         # debug:/assert:/fail:/set_fact:/pause: - the action plugin
@@ -1719,7 +1721,7 @@ module Krikri
       begin
         substitute_block_name_chain(task, substitutor)
         task = resolve_templated_action(task, substitutor)
-        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name))
+        substituted_params = expand_templated_args(substitute_task_params(task.params, substitutor, native_containers: task.module_name.ends_with?("set_fact"), module_name: task.module_name), task)
         substituted_env = substitute_task_environment(task, substitutor)
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
@@ -1871,7 +1873,9 @@ module Krikri
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
           end
-          return apply_changed_failed_when(task, JSON.parse(failed.to_json), vars_context, host)
+          result_json = JSON.parse(failed.to_json)
+          Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          return apply_changed_failed_when(task, result_json, vars_context, host)
         end
 
         if final = action_result.final_result
@@ -1965,8 +1969,49 @@ module Krikri
         become_user
       )
 
+      result = shape_raw_result(task, result)
       result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
+    end
+
+    RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
+
+    # raw: is aliased to the shell plugin binary, whose result carries
+    # command-style keys (cmd/start/end/delta, an empty msg) real's raw
+    # action never returns. Real's raw result is
+    # {rc, stdout, stdout_lines, stderr, stderr_lines, changed, failed}
+    # plus msg/exception on a non-zero rc (live-verified 2.19.11).
+    # Internal `_ansible_*` keys the failure renderer needs are kept,
+    # after the real keys.
+    private def shape_raw_result(task : Task, result : JSON::Any) : JSON::Any
+      return result unless RAW_MODULES.includes?(task.action_name || task.module_name)
+      hash = result.as_h? || return result
+      failed = hash["failed"]?.try(&.as_bool?) || false
+      # raw: does not support check mode: real's executor skips it with the
+      # bare {skipped, failed, changed} shape.
+      if hash["skipped"]?.try(&.as_bool?)
+        return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
+      end
+      shaped = {} of String => JSON::Any
+      %w[rc stdout stdout_lines stderr stderr_lines changed failed].each do |key|
+        shaped[key] = hash[key] if hash.has_key?(key)
+      end
+      shaped["changed"] = JSON::Any.new(true) unless hash.has_key?("changed") && failed
+      shaped["failed"] = JSON::Any.new(failed)
+      if failed
+        %w[msg exception].each { |key| shaped[key] = hash[key] if hash.has_key?(key) }
+        # raw is an ACTION plugin in real: its failure renders as
+        # "Task failed: Action failed: <msg>", not "Module failed:".
+        if msg = hash["msg"]?.try(&.as_s?)
+          shaped["_ansible_action_level"] = JSON::Any.new(true)
+          shaped["_ansible_error_detail"] = JSON::Any.new("Action failed: #{msg}")
+        end
+      end
+      dropped = %w[cmd start end delta msg exception]
+      hash.each do |key, value|
+        shaped[key] = value unless shaped.has_key?(key) || dropped.includes?(key)
+      end
+      JSON::Any.new(shaped)
     end
 
     # Modules whose registered per-item results (loop `results[]`) carry

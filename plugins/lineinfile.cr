@@ -66,7 +66,7 @@ module Krikri
       # `state: absent` on /etc/at.allow/cron.allow, neither of which
       # exist on a stock image - failed outright instead of no-op'ing.
       if state == "absent" && !File.exists?(path)
-        return PluginResult.new(changed: false, failed: false, msg: "file not present")
+        return PluginResult.new(changed: false, failed: false, msg: "file not present", key_order: ABSENT_KEY_ORDER)
       end
 
       being_created, error = ensure_file_exists(path, true?(@params["create"]?), check_mode)
@@ -113,7 +113,10 @@ module Krikri
       return {false, nil} if File.exists?(path)
 
       unless create
-        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257)}
+        return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257,
+          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
+          # msg, changed, exception (live-verified against 2.19.11)
+          key_order: %w[rc failed msg changed exception])}
       end
 
       unless check_mode
@@ -182,6 +185,18 @@ module Krikri
     # removed lines (its present-path exit does not); the backup path
     # goes out under the key `backup` ("" when none), not blockinfile's
     # `backup_file`.
+    # Real ansible.builtin.lineinfile's registered-result key order
+    # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
+    # lineinfile: tasks): state=present runs changed, msg, backup, diff,
+    # failed - backup: "" even when no backup was taken, msg: "" on an
+    # already-correct re-run - while state=absent leads with a `found`
+    # count right after changed: changed, found, msg, backup, diff,
+    # failed. Check mode keeps the same order per state. The missing-
+    # file "file not present" early exit is just {changed, msg} - both
+    # constants reduce to that once the absent keys are skipped.
+    private PRESENT_KEY_ORDER = %w[changed msg backup diff failed]
+    private ABSENT_KEY_ORDER  = %w[changed found msg backup diff failed]
+
     private def line_result(path : String, state : String, changed : Bool, line : String?, backup_file : String, original_count : Int32, new_count : Int32, attrs_changed : Bool, diff : JSON::Any?) : PluginResult
       msg = if !changed
               ""
@@ -209,7 +224,8 @@ module Krikri
           include_empty_msg: true,
           diff: diff || lineinfile_diff(path),
           backup: backup_file,
-          found: original_count - new_count
+          found: original_count - new_count,
+          key_order: ABSENT_KEY_ORDER
         )
       else
         PluginResult.new(
@@ -218,7 +234,8 @@ module Krikri
           msg: msg,
           include_empty_msg: true,
           diff: diff || lineinfile_diff(path),
-          backup: backup_file
+          backup: backup_file,
+          key_order: PRESENT_KEY_ORDER
         )
       end
     end

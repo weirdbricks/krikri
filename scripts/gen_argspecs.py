@@ -286,6 +286,17 @@ CONSUMED_BY_ACTION = {
 # whatever the action plugin itself does (probed live; wordings and the
 # supported lists below are copied from real 2.19.11 output). action_level
 # selects the error-block chain shape (no "Module failed." middle segment).
+# Options the live-extracted spec misses (generator probes strip a few
+# dict/list-typed collection params), merged into the extracted spec.
+EXTRA_OPTIONS = {
+    # ansible.mysql.mysql_query's session_vars: a list of dicts
+    # (list of "SET var=value" statements), present in the module's own
+    # argument_spec and in real's unsupported-params listing.
+    "community.mysql.mysql_query": {
+        "session_vars": {"type": "list", "elements": "dict"},
+    },
+}
+
 VIRTUAL = {
     "ansible.builtin.debug": {
         "action_level": True,
@@ -483,6 +494,7 @@ def main():
             data["print"] = {"fixed": fixed_print}
         if fqcn in DUMP_EXTRA:
             data["dump_extra"] = DUMP_EXTRA[fqcn]
+        data.setdefault("options", {}).update(EXTRA_OPTIONS.get(fqcn, {}))
         if fqcn in CONSUMED_BY_ACTION:
             data["consumed_by_action"] = CONSUMED_BY_ACTION[fqcn]
         if fqcn in FACT_DELEGATES:

@@ -98,6 +98,21 @@ module Krikri
     # re-renders a non-string msg through Python repr for its error
     # blocks).
     property msg_native : JSON::Any?
+    # Optional wire-key order for the serialized result. Real Ansible's
+    # registered result is the module's own dict in ITS insertion order
+    # (exit_json's msg/status_code kwargs first, then the module's result
+    # dict, then add_path_info's stat block) - every module has its own,
+    # while PluginResult's fixed leading keys (changed/exception/failed/
+    # msg/diff) impose one engine-wide shape. When set, #to_json emits the
+    # listed keys first, in the listed order (absent ones skipped), then
+    # every remaining key in its current order; nil keeps the historical
+    # order on SUCCESS results, while a FAILED result without a key_order
+    # takes real's plain fail_json order (failed, msg, then extras, then
+    # changed, then exception - see #to_json). Observed programmatically
+    # (e.g. `{{ r | to_json }}`,
+    # `{{ r }}` in a debug msg) rather than in the -v dump, which real
+    # sorts alphabetically via _dump_results(sort_keys=True).
+    property key_order : Array(String)?
 
     def initialize(
       changed : Bool,
@@ -107,6 +122,7 @@ module Krikri
       omit_changed : Bool = false,
       include_empty_msg : Bool = false,
       native_msg : JSON::Any? = nil,
+      key_order : Array(String)? = nil,
       **kwargs,
     )
       @changed = changed
@@ -116,9 +132,14 @@ module Krikri
       @omit_changed = omit_changed
       @include_empty_msg = include_empty_msg
       @msg_native = native_msg
+      @key_order = key_order
       @extra = Hash(String, JSON::Any).new
       kwargs.each do |key, value|
-        @extra[key.to_s] = JSON.parse(value.to_json)
+        # A JSON::Any the plugin built itself is kept as-is: round-tripping
+        # it through to_json/JSON.parse re-parses every number as Int64 and
+        # raised "Arithmetic overflow" on a legitimate unsigned value (a
+        # MySQL global variable of 18446744073709551615).
+        @extra[key.to_s] = value.is_a?(JSON::Any) ? value : JSON.parse(value.to_json)
       end
     end
 
@@ -135,9 +156,12 @@ module Krikri
       # "has no attribute" error real Ansible raises.
       result["changed"] = @changed unless @omit_changed
       # fail_json adds exception: "(traceback unavailable)" in 2.19 (seen only
-      # through a registered result - the display drops it); controller-side
-      # action failures (omit_changed / _ansible_action_level) never carry it
-      result["exception"] = "(traceback unavailable)" if @failed && !@omit_changed && !@extra.has_key?("_ansible_action_level")
+      # through a registered result - the display drops it). Every failed
+      # result carries it, controller-side action failures included - their
+      # registered key ORDER differs, which PluginResult#key_order (or the
+      # _ansible_key_order marker TaskExecutor#register_result applies)
+      # covers, not its presence.
+      result["exception"] = "(traceback unavailable)" if @failed
       # Real Ansible's module protocol (module_utils/basic.py) only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
@@ -161,7 +185,58 @@ module Krikri
       # command.py-style modules report `failed: false` explicitly on success
       result["failed"] = false if @extra.has_key?("failed_flag") && !@failed
 
-      result.to_json(io)
+      if order = @key_order
+        emit_reordered(result, order, io)
+      elsif @failed
+        emit_reordered(result, failed_default_order(result), io)
+      else
+        result.to_json(io)
+      end
+    end
+
+    # Default FAILED order - real's fail_json shape, live-verified across
+    # seven plugins' plain failures (slurp missing file, stat unsupported
+    # parameter, file bad state, fail:, service missing service, getent
+    # unknown database, mount unmkdirable path - all register exactly
+    # failed, msg, changed, exception). Modules that pass extra kwargs to
+    # fail_json keep them positioned by the kwargs-first rule (rc/elapsed/
+    # cmd lead), which needs per-plugin key_order; the default here only
+    # covers the plain shape.
+    private def failed_default_order(result : Hash(String, JSON::Any::Type)) : Array(String)
+      order = ["failed", "msg", "diff"]
+      result.each_key do |key|
+        next if key.in?("failed", "msg", "diff", "changed", "exception", "deprecations", "warnings")
+        order << key
+      end
+      order << "changed"
+      order << "exception"
+      # real's AnsibleModule collects self.warn() texts into the
+      # result's `warnings` list, and the controller appends that list
+      # to the module's own dict LAST - after `exception`, before the
+      # `deprecations` it appends after it (live-verified vs 2.19.11
+      # with community.postgresql's no-database warning on a failing
+      # task).
+      order << "warnings" if result.has_key?("warnings")
+      # real's controller appends the deprecations it collected to the
+      # module's result dict LAST, whatever the module itself exited
+      # with (live-verified vs 2.19.11 with community.postgresql's
+      # deprecated-alias warnings on both a failing and a passing task).
+      order << "deprecations" if result.has_key?("deprecations")
+      order
+    end
+
+    # Serializes *result* with the keys named in *order* first (absent ones
+    # skipped), then every unlisted key in its existing insertion order -
+    # real Ansible's module-dict wire shape (see @key_order's comment).
+    private def emit_reordered(result : Hash(String, JSON::Any::Type), order : Array(String), io : IO) : Nil
+      ordered = Hash(String, JSON::Any::Type).new
+      order.each do |key|
+        ordered[key] = result[key] if result.has_key?(key)
+      end
+      result.each do |key, value|
+        ordered[key] = value unless ordered.has_key?(key)
+      end
+      ordered.to_json(io)
     end
 
     # A non-string `msg` (a YAML list/dict/bool) has to reach the wire
@@ -280,16 +355,16 @@ module Krikri
     protected def find_required_binary(name : String) : String?
       dirs = %($(printf '%s' "$PATH" | tr ':' ' ') #{BIN_EXTRA_DIRS.join(' ')})
       script = <<-SH
-      searched=""
-      found=""
-      for d in #{dirs}; do
-        case ":$searched:" in *":$d:"*) continue ;; esac
-        searched="${searched:+$searched:}$d"
-        if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
-      done
-      printf 'searched=%s\n' "$searched"
-      printf 'found=%s\n' "$found"
-      SH
+        searched=""
+        found=""
+        for d in #{dirs}; do
+          case ":$searched:" in *":$d:"*) continue ;; esac
+          searched="${searched:+$searched:}$d"
+          if [ -z "$found" ] && [ -x "$d/#{name}" ]; then found="$d/#{name}"; fi
+        done
+        printf 'searched=%s\n' "$searched"
+        printf 'found=%s\n' "$found"
+        SH
 
       searched = ""
       found = ""
@@ -371,6 +446,18 @@ module Krikri
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
 
+    # Last chance for a plugin to add the result keys real's controller
+    # appends after the module's own dict - today only
+    # community.postgresql's deprecated-alias warnings
+    # (PluginHelpers::PostgresqlDeprecations). Wraps #execute rather
+    # than living inside it so EVERY exit path gets them, the early
+    # argument-validation failures included, exactly as real's
+    # AnsibleModule does (its collected deprecations ride along with the
+    # fail_json exit too). Default: no change.
+    def finalize_result(result : PluginResult) : PluginResult
+      result
+    end
+
     # Run the plugin and output JSON result
     def run : Nil
       puts run_and_capture
@@ -387,7 +474,7 @@ module Krikri
     # around this, so every existing one-shot call site (every plugin's
     # own driver trailer) is unaffected.
     def run_and_capture : String
-      execute.to_json
+      finalize_result(execute).to_json
     rescue ex : BoolParamError
       # The message is already the exact user-facing failure real Ansible
       # produces at module setup (parameters.py's check_type_bool wrapper,

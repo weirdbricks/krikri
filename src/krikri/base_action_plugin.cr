@@ -1,6 +1,35 @@
 require "json"
 
 module Krikri
+  # Real ansible-core 2.19.11's REGISTERED key order for a FAILED
+  # action-level result, live-verified per action with `{{ r | to_json }}`
+  # under `ignore_errors: true` (real's registered dict keeps the module
+  # action's own insertion order - these orders genuinely differ per
+  # action, so each builder picks its own). The order travels with the
+  # result as the private `_ansible_key_order` marker key (stripped at
+  # register, like every other `_ansible_*` key) and is applied by
+  # TaskExecutor#register_result, which is also where the missing
+  # `exception: "(traceback unavailable)"` key is backfilled.
+  FAILED_KEY_ORDER_DEFAULT = ["failed", "msg", "changed", "exception"]
+  # copy/template (a missing controller-side src) and add_host's own
+  # AnsibleActionFail: exception sits between msg and changed.
+  FAILED_KEY_ORDER_MSG_FIRST = ["failed", "msg", "exception", "changed"]
+  # unarchive, set_fact and the task-arg finalization failure: exception
+  # leads, right after failed.
+  FAILED_KEY_ORDER_EXCEPTION_FIRST = ["failed", "exception", "msg", "changed"]
+  # assert: its own condition keys sit between failed and msg.
+  FAILED_KEY_ORDER_ASSERT = ["failed", "evaluated_to", "assertion", "msg", "changed", "exception"]
+  # include_vars: the action's own keys lead, and the wrapped msg comes
+  # last (real keeps it after changed/exception).
+  FAILED_KEY_ORDER_INCLUDE_VARS = ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
+
+  # Tags *result* with the real key order its registered FAILED form must
+  # carry; see FAILED_KEY_ORDER_DEFAULT.
+  def self.mark_failed_key_order(result : JSON::Any, order : Array(String)) : JSON::Any
+    result.as_h["_ansible_key_order"] = JSON::Any.new(order.map { |key| JSON::Any.new(key) })
+    result
+  end
+
   # Base class for Action Plugins
   # Action plugins run on the CONTROLLER (local machine) before the module runs on remote
   # They process inputs, read files, render templates, etc.
@@ -133,7 +162,7 @@ module Krikri
     # nesting) - used by every final-result action plugin
     # (action_plugins/*.cr) so each one only needs to name its own extra
     # fields, not re-derive this shape.
-    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : JSON::Any
+    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil) : JSON::Any
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
       # Unlike a module's own wire result (PluginResult#to_json), these
@@ -146,6 +175,19 @@ module Krikri
       h["failed"] = JSON::Any.new(failed)
       h["msg"] = JSON::Any.new(msg) unless msg.empty?
       extra.each { |k, v| h[k] = v }
+      # Same wire-key reorder PluginResult#key_order gives module results
+      # (see its comment): when *key_order* is set, the listed keys emit
+      # first in that order (absent ones skipped) and every unlisted key
+      # follows in its current order - real's registered action-result
+      # dict order (e.g. debug's msg/failed/changed, set_fact's
+      # ansible_facts/failed/changed, assert's changed/msg/failed),
+      # live-verified via `{{ r | to_json }}` on registered tasks.
+      if order = key_order
+        ordered = Hash(String, JSON::Any).new
+        order.each { |k| ordered[k] = h[k] if h.has_key?(k) }
+        h.each { |k, v| ordered[k] = v unless ordered.has_key?(k) }
+        h = ordered
+      end
       JSON::Any.new(h)
     end
 

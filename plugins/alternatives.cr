@@ -73,7 +73,11 @@ module Krikri
         return late if late
       end
 
-      PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '))
+      # Real community.general.alternatives: result = dict(changed=False,
+      # diff=...) then msg appended (alternatives.py:165,231) - live-verified
+      # against real 2.19.11 via a registered {{ r | to_json }} dump in the
+      # podman container (check mode, changed and unchanged runs identical).
+      PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '), key_order: ["changed", "diff", "msg"])
     end
 
     # Install the alternative for path when it's missing or its priority

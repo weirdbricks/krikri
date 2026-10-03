@@ -47,6 +47,15 @@ module Krikri
   # Ansible's stat, it exists to feed `register:` + `when:`, not to make
   # changes itself.
   class StatPlugin < BasePlugin
+    # Real ansible-core 2.19.11's registered stat result key order -
+    # live-verified via `{{ r | to_json }}` on a registered stat: task:
+    # changed, stat, failed (failed: false appended by _return_formatted;
+    # identical on a missing path and in check mode). krikri's success
+    # result carries no `failed` key on the wire (PluginResult only
+    # emits it when failed or failed_flag is set), so the listed tail
+    # key is skipped today but stays pinned for when it is added.
+    private SUCCESS_KEY_ORDER = %w[changed stat failed]
+
     # ansible.builtin.stat's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.stat). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -118,11 +127,11 @@ module Krikri
         unless stat_or_errno == Errno::ENOENT
           return PluginResult.new(changed: false, failed: true, msg: stat_or_errno.message)
         end
-        return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false})
+        return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false}, key_order: SUCCESS_KEY_ORDER)
       end
       stat_hash = stat_or_errno.as?(Hash(String, JSON::Any))
       unless stat_hash
-        return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false})
+        return PluginResult.new(changed: false, failed: false, msg: "", stat: {"exists" => false}, key_order: SUCCESS_KEY_ORDER)
       end
 
       stat_hash["readable"] = JSON::Any.new(File::Info.readable?(path))
@@ -137,7 +146,7 @@ module Krikri
       add_mime(stat_hash, path) if get_mime
       add_attributes(stat_hash, path) if get_attributes
 
-      PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash)
+      PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash, key_order: SUCCESS_KEY_ORDER)
     end
 
     private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String) : Nil

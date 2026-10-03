@@ -643,7 +643,15 @@ module Krikri
       # invocation genuinely changed nothing.
       changed = result[:stdout].includes?("Successfully installed")
 
-      PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout])
+      # Real 2.19.11 registered pip orders (live-verified against a venv
+      # pip): changed, cmd, name, version, state, requirements,
+      # virtualenv, stdout, stderr, stdout_lines, stderr_lines, failed
+      # (a fresh venv's create adds ansible_facts + warnings between
+      # stderr_lines and failed). krikri emits only changed/stdout of
+      # that set today - the pin keeps the shared keys in real's
+      # relative order; the missing echo keys are a known set gap.
+      PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout],
+        key_order: ["changed", "stdout"])
     end
 
     # Resolve what to pass to `pip install`: a requirements file, a
@@ -813,10 +821,11 @@ module Krikri
       # ok where real Ansible fails (pip refuses to even run), so the
       # command must actually be issued and its output parsed.
       if (result[:stdout] + result[:stderr]).downcase.includes?("not installed")
-        return PluginResult.new(changed: false, failed: false, msg: "Package already absent")
+        return PluginResult.new(changed: false, failed: false, msg: "Package already absent",
+          key_order: ["changed", "stdout"])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Package removed")
+      PluginResult.new(changed: true, failed: false, msg: "Package removed", key_order: ["changed", "stdout"])
     end
   end
 end

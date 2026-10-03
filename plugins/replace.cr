@@ -125,7 +125,11 @@ module Krikri
           changed: false,
           failed: true,
           msg: "Path #{path} does not exist !",
-          rc: 257
+          rc: 257,
+          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc,
+          # failed, msg, changed, exception (live-verified against
+          # 2.19.11, same module_utils pattern as lineinfile's failure)
+          key_order: %w[rc failed msg changed exception]
         )
       end
 
@@ -158,16 +162,23 @@ module Krikri
       # decode/encode pair produces for a single-byte codec.
       iconv_encoding = PythonCodecs.iconv_name(encoding)
 
-      content = begin
-        if iconv_encoding
-          File.open(path, "r", encoding: iconv_encoding) { |file| file.gets_to_end }
-        else
-          File.read(path)
-        end
-      rescue ArgumentError
-        # iconv has no converter for a codec Python does have on this
-        # host: keep the bytes instead of failing on a name real
-        # accepts.
+      # real replace.py decodes the file's BYTES with
+      # to_text(..., errors="surrogate_or_strict", encoding=...), which
+      # resolves to surrogateescape on every CPython: a byte the codec
+      # cannot decode becomes a lone surrogate and the substitution
+      # proceeds (to_bytes() on the way out turns each surrogate back
+      # into its original byte). So a UTF-8 file holding a latin-1 byte
+      # still replaces like real, where this engine used to abort with
+      # a PCRE "UTF-8 error" the moment the regex touched the decoded
+      # bytes - and codecs Python resolves but iconv cannot (mac_roman,
+      # utf_8_sig, ...) keep their byte-for-byte round trip instead of
+      # failing the regex the same way. PCRE2 aborts a match whose
+      # subject holds raw surrogate codepoints, so each undecodable byte
+      # maps to the private-use twin U+F780+(byte-0x80) instead of
+      # Python's U+DC80+(byte-0x80): one undecodable byte is one
+      # character to the regex either way, and encode() on write
+      # restores the original bytes exactly.
+      raw_content = begin
         File.read(path)
       rescue ex
         return PluginResult.new(
@@ -177,23 +188,30 @@ module Krikri
         )
       end
 
-      # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
-      # ^ and $ anchor at every line boundary, not just the start/end of the
-      # whole file - e.g. inmotionhosting.apache's "Listen 443$" against
-      # /etc/apache2/ports.conf, whose Listen lines sit indented inside
-      # <IfModule> blocks and are not the last line of the file.
-      # MULTILINE_ONLY, not MULTILINE: Crystal's MULTILINE constant implies
-      # DOTALL (regex.cr maps it to PCRE MULTILINE | DOTALL), which would
-      # let "." cross newlines and eat trailing content on replacement.
-      regex = begin
-        Regex.new(pattern, Regex::CompileOptions::MULTILINE_ONLY)
-      rescue ex
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Invalid regular expression: #{ex.message}"
-        )
-      end
+      surrogate = false
+      content = if ie = iconv_encoding
+                  if ie == "utf-8" || ie == "ascii"
+                    surrogate = true
+                    SurrogateText.decode(raw_content)
+                  else
+                    begin
+                      io = IO::Memory.new(raw_content.to_slice)
+                      io.set_encoding(ie)
+                      io.gets_to_end
+                    rescue
+                      # iconv has no converter for a codec Python does
+                      # have on this host, or the bytes do not decode
+                      # under it - real decodes with surrogateescape and
+                      # proceeds, so keep byte-level semantics instead
+                      # of failing.
+                      surrogate = true
+                      SurrogateText.decode(raw_content)
+                    end
+                  end
+                else
+                  surrogate = true
+                  SurrogateText.decode(raw_content)
+                end
 
       # before/after sectioning - replace.py builds a DOTALL wrapper regex
       # around a (?P<subsection>...) capture and runs the substitution on
@@ -220,14 +238,22 @@ module Krikri
                             "(?P<subsection>.*)#{before_pattern}"
                           end
 
+        # real replace.py compiles the section pattern OUTSIDE its
+        # `except re.error` (and before the regexp itself), so a bad
+        # after:/before: kills the module through the crash wrapper -
+        # live-verified vs 2.19.11: after: 'unmatched (' gives "Task
+        # failed: Module failed: missing ), unterminated subpattern at
+        # position 10" (the position of the '(' inside the composed
+        # pattern). PythonPattern.scan rejects first what PCRE2 would
+        # happily compile (real's Python rejects it, same crash).
+        section_scan = PythonPattern.scan(section_pattern)
+        if err = section_scan.error
+          return crash_result(err)
+        end
         section_regex = begin
-          Regex.new(section_pattern, Regex::CompileOptions::DOTALL)
+          Regex.new(section_scan.translated, Regex::CompileOptions::DOTALL)
         rescue ex
-          return PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Invalid regular expression: #{ex.message}"
-          )
+          return crash_result(python_pcre_error(ex.message.not_nil!, section_scan))
         end
 
         match = section_regex.match(content)
@@ -239,13 +265,42 @@ module Krikri
             changed: false,
             failed: false,
             msg: "Pattern for before/after params did not match the given file: #{section_pattern}",
-            rc: 0
+            rc: 0,
+            key_order: SUCCESS_KEY_ORDER
           )
         end
 
         section_start = match.begin(1).not_nil!
         section_end = match.end(1).not_nil!
         section = content.byte_slice(section_start, section_end - section_start)
+      end
+
+      # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
+      # ^ and $ anchor at every line boundary, not just the start/end of the
+      # whole file - e.g. inmotionhosting.apache's "Listen 443$" against
+      # /etc/apache2/ports.conf, whose Listen lines sit indented inside
+      # <IfModule> blocks and are not the last line of the file.
+      # MULTILINE_ONLY, not MULTILINE: Crystal's MULTILINE constant implies
+      # DOTALL (regex.cr maps it to PCRE MULTILINE | DOTALL), which would
+      # let "." cross newlines and eat trailing content on replacement.
+      #
+      # re.compile of the regexp sits OUTSIDE replace.py's `except
+      # re.error` too, so a bad pattern is an uncaught re.error - the
+      # module-crash wrapper ("Task failed: Module failed: missing ),
+      # unterminated subpattern at position 10" for regexp: 'unmatched (',
+      # live-verified vs 2.19.11), not this engine's old "Invalid regular
+      # expression: ..." fail_json. PythonPattern.scan rejects first what
+      # PCRE2 would happily compile (real's Python rejects it first, same
+      # crash), and a PCRE2 compile error is translated into Python's own
+      # wording/position where the mapping is exact.
+      pattern_scan = PythonPattern.scan(pattern)
+      if err = pattern_scan.error
+        return crash_result(err)
+      end
+      regex = begin
+        Regex.new(pattern_scan.translated, Regex::CompileOptions::MULTILINE_ONLY)
+      rescue ex
+        return crash_result(python_pcre_error(ex.message.not_nil!, pattern_scan))
       end
 
       # Real replace.py feeds the `replace:` string through Python re.sub's
@@ -299,7 +354,7 @@ module Krikri
           backup_file = write_backup(path)
         end
 
-        if failure = write_with_optional_validate(path, new_section, section_start, section_end, content, iconv_encoding)
+        if failure = write_with_optional_validate(path, new_section, section_start, section_end, content, iconv_encoding, surrogate)
           return failure
         end
       end
@@ -329,10 +384,108 @@ module Krikri
         failed: false,
         msg: msg,
         include_empty_msg: true,
-        rc: 0
+        rc: 0,
+        key_order: SUCCESS_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       result
+    end
+
+    # Real ansible.builtin.replace's registered-result key order
+    # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
+    # replace: tasks): rc leads, then backup_file only when a backup was
+    # taken, then msg (empty string included on a no-matches run), then
+    # changed, failed. Identical on changed, unchanged, no-match and
+    # check-mode runs; no diff key outside --diff mode, no path echo, no
+    # stat fields.
+    private SUCCESS_KEY_ORDER = %w[rc backup_file msg changed failed]
+
+    # The module-crash wrapper: real's executor renders an exception that
+    # escapes the module (a bad re.compile of regexp:/after:/before:, an
+    # unknown codec, an IndexError from the replacement template) as
+    # "Task failed: Module failed: <text>" with no rc key - distinct from
+    # replace.py's own fail_json paths (live-verified vs 2.19.11).
+    private def crash_result(detail : String) : PluginResult
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "Task failed: Module failed: #{detail}",
+        _ansible_error_detail: detail
+      )
+    end
+
+    # Translates a PCRE2 compile error (Crystal's wording, " at <byte
+    # offset>" suffix) into the re.error text Python's own parser raises
+    # for the same pattern, wherever the mapping is exact. PCRE2's
+    # offsets count BYTES; Python's re.error positions count CHARACTERS
+    # of the pattern as the user wrote it, so the offset goes byte ->
+    # translated char -> source char (the \uXXXX/\Uhhhhhhhh rewrites can
+    # move it). Cases without an exact mapping keep the PCRE2 wording -
+    # still inside the crash wrapper, which is the part users actually
+    # script against.
+    private def python_pcre_error(pcre_message : String, scan : PythonPattern::Scan) : String
+      match = pcre_message.match(/\A(.+) at (\d+)\z/)
+      return pcre_message unless match
+
+      text = match[1]
+      char_offset = scan.translated.byte_slice(0, match[2].to_i).size
+      case text
+      when "missing closing parenthesis"
+        # Python points at the INNERMOST unterminated '(' - "a(b" at 2,
+        # "unmatched (" at 10 - which PCRE2's end-of-pattern offset does
+        # not carry; the scan tracked the '(' stack instead.
+        position = scan.unclosed_paren || char_offset
+        "missing ), unterminated subpattern at position #{position}"
+      when "missing terminating ] for character class"
+        position = scan.open_class_start || char_offset
+        "unterminated character set at position #{position}"
+      when "unmatched closing parenthesis"
+        # Both engines point at the stray ')' itself.
+        "unbalanced parenthesis at position #{PythonPattern.source_index(scan, char_offset)}"
+      when "quantifier does not follow a repeatable item"
+        repeat_error(scan, char_offset)
+      when "unrecognized character follows \\"
+        backslash = PythonPattern.source_index(scan, (char_offset - 1).clamp(0, Int32::MAX))
+        offending = scan.translated[char_offset]? || ""
+        "bad escape \\#{offending} at position #{backslash}"
+      when "\\ at end of pattern"
+        backslash = PythonPattern.source_index(scan, (char_offset - 1).clamp(0, Int32::MAX))
+        "bad escape (end of pattern) at position #{backslash}"
+      when "numbers out of order in {} quantifier"
+        chars = scan.translated.chars
+        j = char_offset - 1
+        while j >= 0 && chars[j]? != '{'
+          j -= 1
+        end
+        d = j + 1
+        while d < chars.size && !chars[d].ascii_number?
+          d += 1
+        end
+        position = d < chars.size ? PythonPattern.source_index(scan, d) : char_offset
+        "min repeat greater than max repeat at position #{position}"
+      else
+        pcre_message
+      end
+    end
+
+    # PCRE2 collapses Python's two quantifier errors into one message;
+    # the shape of the char before the quantifier tells them apart the
+    # way Python's parser does (a quantifier right after a quantifier is
+    # "multiple repeat" - except a trailing ? (lazy) or + (possessive,
+    # which PCRE2 accepts outright so it never reaches here) - anything
+    # else non-repeatable is "nothing to repeat").
+    private def repeat_error(scan : PythonPattern::Scan, char_offset : Int32) : String
+      chars = scan.translated.chars
+      source = PythonPattern.source_index(scan, char_offset)
+      if char_offset.zero?
+        return "nothing to repeat at position #{source}"
+      end
+      prev = chars[char_offset - 1]
+      if prev.in?('*', '+', '?') || (prev == '}' && PythonPattern.quantifier_brace?(chars, char_offset - 1))
+        "multiple repeat at position #{source}"
+      else
+        "nothing to repeat at position #{source}"
+      end
     end
 
     # CPython's `re` replacement-template parser (re._parser.Tokenizer plus
@@ -613,6 +766,449 @@ module Krikri
       end
     end
 
+    # Python's errors="surrogateescape" text<->bytes round trip, for the
+    # codecs this engine reads as raw bytes (the UTF-8/ASCII family, and
+    # any codec iconv cannot convert). Each byte that is not part of a
+    # valid UTF-8 sequence becomes one character - Python maps it to
+    # U+DC80..U+DCFF, but PCRE2 aborts a match whose subject contains
+    # raw surrogate codepoints, so the twin used here is the
+    # private-use codepoint U+F780+(byte-0x80): one undecodable byte is
+    # one character to the regex either way (`.` matches it, counts line
+    # up identically), and encode() restores the exact original bytes on
+    # write. The twin collision is the one Python itself carries: a
+    # file legitimately containing the mapped codepoint round-trips
+    # wrong under real Ansible too (its U+DC80..U+DCFF), just in a
+    # different range.
+    private module SurrogateText
+      extend self
+
+      def decode(raw : String) : String
+        bytes = raw.to_slice
+        String.build do |buffer|
+          i = 0
+          size = bytes.size
+          while i < size
+            if len = utf8_sequence_length(bytes[i])
+              if i + len <= size && valid_continuation?(bytes, i, len)
+                buffer.write(bytes[i, len])
+                i += len
+                next
+              end
+            end
+            buffer << (0xF780 + bytes[i] - 0x80).chr
+            i += 1
+          end
+        end
+      end
+
+      def encode(content : String) : Bytes
+        output = Bytes.new(content.bytesize)
+        w = 0
+        content.each_char do |char|
+          codepoint = char.ord
+          if codepoint >= 0xF780 && codepoint <= 0xF7FF
+            output[w] = (0x80 + codepoint - 0xF780).to_u8
+            w += 1
+          else
+            char.bytes.each do |byte|
+              output[w] = byte
+              w += 1
+            end
+          end
+        end
+        output[0, w]
+      end
+
+      # Bytes in the UTF-8 sequence this lead byte starts, or nil when
+      # it cannot start one. Strict UTF-8, exactly as CPython's decoder
+      # validates: no overlong forms, no surrogates, max U+10FFFF - a
+      # rejected byte is resurrogated individually (CPython resyncs one
+      # byte at a time, so an overlong sequence becomes three twins).
+      private def utf8_sequence_length(lead : UInt8) : Int32?
+        if lead <= 0x7F
+          1
+        elsif lead >= 0xC2 && lead <= 0xDF
+          2
+        elsif lead >= 0xE0 && lead <= 0xEF
+          3
+        elsif lead >= 0xF0 && lead <= 0xF4
+          4
+        end
+      end
+
+      private def valid_continuation?(bytes : Bytes, start : Int32, len : Int32) : Bool
+        return true if len == 1
+        b1 = bytes[start + 1]
+        b2 = bytes[start + 2]?
+        case len
+        when 2
+          b1.in?(0x80..0xBF)
+        when 3
+          second_ok = case bytes[start]
+                      when 0xE0 then b1.in?(0xA0..0xBF)
+                      when 0xED then b1.in?(0x80..0x9F)
+                      else           b1.in?(0x80..0xBF)
+                      end
+          second_ok && !!b2.try(&.in?(0x80..0xBF))
+        else
+          second_ok = case bytes[start]
+                      when 0xF0 then b1.in?(0x90..0xBF)
+                      when 0xF4 then b1.in?(0x80..0x8F)
+                      else           b1.in?(0x80..0xBF)
+                      end
+          second_ok && !!b2.try(&.in?(0x80..0xBF)) &&
+            !!bytes[start + 3]?.try(&.in?(0x80..0xBF))
+        end
+      end
+    end
+
+    # A left-to-right scan of a Python `re` pattern that catches the
+    # error classes PCRE2 does not reproduce, worded and positioned
+    # exactly as re._parser raises them (all real-verified against
+    # Python 3.13, whose re backs ansible-core 2.19.11):
+    #
+    # - extensions Python rejects but PCRE2 accepts, most importantly
+    #   the PCRE group-name spellings `(?<name>...)` / `(?'name'...)`
+    #   (Python only takes (?P<name>...)), plus (?R)/(?&)/(?|/(?C)/(?{/
+    #   (?1 etc. - "unknown extension ?<X at position N", where N is the
+    #   index of the '?', or "unexpected end of pattern at position N"
+    #   when the pattern ends inside the extension;
+    # - the inline-flag section rules ("missing flag", "missing -, : or
+    #   )") - Python's semantic flag checks (L-with-str etc.) stay
+    #   unchecked;
+    # - escapes Python rejects but PCRE2 accepts (\e, \z, \K, \h, \G,
+    #   \C, \c, \o, \p, \Q, \x{...} - "bad escape \X at position N"),
+    #   with context-dependent letters: Python allows \A/\B/\Z/\g only
+    #   outside a character class;
+    # - escape forms Python accepts but PCRE2 rejects (\uXXXX,
+    #   \Uhhhhhhhh), rewritten to PCRE2's \x{...} so the compiled
+    #   pattern means the same thing to both engines, and malformed
+    #   spellings reported ("incomplete escape \u12 at position 0").
+    #
+    # \N{name} is left to PCRE2 (which rejects it): resolving Unicode
+    # character names here is out of scope, so such patterns fail with
+    # PCRE2's wording where real fails with "undefined character name".
+    # Also unchecked: \8/\9 group-reference semantics, class ranges over
+    # escapes, (?P=name) resolution, global-flags placement - all left
+    # to PCRE2 or absent by design.
+    private module PythonPattern
+      # The scan result: the PCRE2-ready pattern, the first Python-re
+      # error the scan can state exactly (nil when none), and the two
+      # positions python_pcre_error needs when PCRE2 itself rejects the
+      # pattern: the innermost unterminated '(' and the '[' of an
+      # unterminated character class, both in ORIGINAL pattern
+      # coordinates. Each \u/\U rewrite is remembered as {output char
+      # index, output length, source char index} so PCRE2 error
+      # positions can be mapped back through it.
+      record Scan, translated : String, error : String?,
+        unclosed_paren : Int32?, open_class_start : Int32?,
+        rewrites : Array({Int32, Int32, Int32})?
+
+      def self.scan(pattern : String) : Scan
+        chars = pattern.chars
+        size = chars.size
+        builder = String::Builder.new
+        builder_chars = 0
+        rewrites : Array({Int32, Int32, Int32})? = nil
+        paren_stack = [] of Int32
+        class_start = 0
+        in_class = false
+        error : String? = nil
+        i = 0
+        while i < size && error.nil?
+          c = chars[i]
+          if in_class
+            case c
+            when '\\'
+              consumed, err, replacement = check_escape(chars, i, true)
+              if err
+                error = err
+                break
+              end
+              if rep = replacement
+                rewrites ||= [] of {Int32, Int32, Int32}
+                rewrites.not_nil! << {builder_chars, rep.size, i}
+                builder << rep
+                builder_chars += rep.size
+              else
+                chars[i, consumed].each do |source_char|
+                  builder << source_char
+                  builder_chars += 1
+                end
+              end
+              i += consumed
+            when ']'
+              in_class = false
+              builder << c
+              builder_chars += 1
+              i += 1
+            else
+              builder << c
+              builder_chars += 1
+              i += 1
+            end
+            next
+          end
+          case c
+          when '\\'
+            consumed, err, replacement = check_escape(chars, i, false)
+            if err
+              error = err
+              break
+            end
+            if rep = replacement
+              rewrites ||= [] of {Int32, Int32, Int32}
+              rewrites.not_nil! << {builder_chars, rep.size, i}
+              builder << rep
+              builder_chars += rep.size
+            else
+              chars[i, consumed].each do |source_char|
+                builder << source_char
+                builder_chars += 1
+              end
+            end
+            i += consumed
+          when '['
+            in_class = true
+            class_start = i
+            # ']' as the first class member (after an optional ^) is
+            # literal, exactly as Python's tokenizer treats it
+            j = i + 1
+            j += 1 if chars[j]? == '^'
+            j += 1 if chars[j]? == ']'
+            while i < j
+              builder << chars[i]
+              builder_chars += 1
+              i += 1
+            end
+          when '('
+            paren_stack << i
+            if i + 1 < size && chars[i + 1] == '?'
+              if err = check_extension(chars, i, size)
+                error = err
+                break
+              end
+              marker = chars[i + 2]
+              if marker == '#'
+                # comment: Python skips raw to its own ')' - which also
+                # balances the '(' this scanner pushed, without ever
+                # opening a group
+                j = i + 3
+                while j < size && chars[j] != ')'
+                  j += 1
+                end
+                if j >= size
+                  error = "missing ), unterminated comment at position #{paren_stack.last}"
+                else
+                  paren_stack.pop
+                  while i <= j
+                    builder << chars[i]
+                    builder_chars += 1
+                    i += 1
+                  end
+                  next
+                end
+              elsif marker.in?('i', 'L', 'm', 's', 'x', 'a', 'u', '-')
+                error = check_flags(chars, i + 2, size)
+              end
+            end
+            unless error
+              builder << c
+              builder_chars += 1
+              i += 1
+            end
+          when ')'
+            paren_stack.pop?
+            builder << c
+            builder_chars += 1
+            i += 1
+          else
+            builder << c
+            builder_chars += 1
+            i += 1
+          end
+        end
+        if error
+          return Scan.new(pattern, error, nil, nil, nil)
+        end
+        Scan.new(builder.to_s, nil, paren_stack.last?, in_class ? class_start : nil, rewrites)
+      end
+
+      # After '(': Python's extension dispatch, exactly as
+      # re._parser._parse orders it. The accepted set is Python 3.13's
+      # own: P/:/#/=/!/< (only with =/!)/(/(>/atomic and the inline
+      # flags; everything else is an re.error whose position is the
+      # index of the '?'.
+      private def self.check_extension(chars : Array(Char), i : Int32, size : Int32) : String?
+        if i + 2 >= size
+          return "unexpected end of pattern at position #{size}"
+        end
+        case chars[i + 2]
+        when 'P'
+          if i + 3 >= size
+            return "unexpected end of pattern at position #{size}"
+          end
+          following = chars[i + 3]
+          unless following == '<' || following == '='
+            return "unknown extension ?P#{following} at position #{i + 1}"
+          end
+        when '<'
+          if i + 3 >= size
+            return "unexpected end of pattern at position #{size}"
+          end
+          following = chars[i + 3]
+          unless following == '=' || following == '!'
+            return "unknown extension ?<#{following} at position #{i + 1}"
+          end
+        when ':', '#', '=', '!', '(', '>'
+          nil
+        when 'i', 'L', 'm', 's', 'x', 'a', 'u', '-'
+          check_flags(chars, i + 2, size)
+        else
+          "unknown extension ?#{chars[i + 2]} at position #{i + 1}"
+        end
+      end
+
+      # The inline-flag section between "(?" and its ':' or ')'
+      # terminator: flag chars i/L/m/s/x/a/u with optional '-' groups -
+      # Python's "missing flag" fires when a '-' (or the section) meets
+      # a non-flag, and "missing -, : or )" when the section never
+      # terminates. (The semantic checks Python then applies - L with a
+      # str pattern, a/u negation - stay unchecked.)
+      private def self.check_flags(chars : Array(Char), start : Int32, size : Int32) : String?
+        j = start
+        after_minus = false
+        while j < size
+          cj = chars[j]
+          if cj == '-'
+            return "missing flag at position #{j}" if after_minus
+            after_minus = true
+          elsif "iLmsxua".includes?(cj)
+            after_minus = false
+          elsif cj == ':' || cj == ')'
+            return "missing flag at position #{j}" if after_minus
+            return nil
+          else
+            return "missing flag at position #{j}" if after_minus
+            return "missing -, : or ) at position #{j}"
+          end
+          j += 1
+        end
+        "missing -, : or ) at position #{size}"
+      end
+
+      # The escape at chars[i] == '\\'. Returns {source chars consumed,
+      # error?, replacement?} - a replacement only for the two forms
+      # Python accepts and PCRE2 does not (\uXXXX, \Uhhhhhhhh), spelled
+      # as PCRE2's \x{...}. Positions are the index of the backslash,
+      # as re._parser reports them.
+      private def self.check_escape(chars : Array(Char), i : Int32, in_class : Bool) : {Int32, String?, String?}
+        size = chars.size
+        if i + 1 >= size
+          return {1, "bad escape (end of pattern) at position #{i}", nil}
+        end
+        c = chars[i + 1]
+        # \0-\7 are octal escapes/group references in both engines; \8
+        # and \9 differ semantically (Python counts groups, PCRE2
+        # errors) and stay with PCRE2.
+        return {2, nil, nil} if c.ascii_number?
+        unless c.ascii_letter?
+          return {2, nil, nil}
+        end
+        case c
+        when 'a', 'b', 'f', 'n', 'r', 't', 'v', 'd', 'D', 's', 'S', 'w', 'W'
+          {2, nil, nil}
+        when 'x'
+          hex = hex_run(chars, i + 2, 2)
+          if hex.size == 2
+            {4, nil, nil}
+          else
+            {2, "incomplete escape \\x#{hex} at position #{i}", nil}
+          end
+        when 'u'
+          hex = hex_run(chars, i + 2, 4)
+          if hex.size == 4
+            {6, nil, "\\x{#{hex}}"}
+          else
+            {2, "incomplete escape \\u#{hex} at position #{i}", nil}
+          end
+        when 'U'
+          hex = hex_run(chars, i + 2, 8)
+          if hex.size == 8
+            {10, nil, "\\x{#{hex}}"}
+          else
+            {2, "incomplete escape \\U#{hex} at position #{i}", nil}
+          end
+        when 'N'
+          if i + 2 < size && chars[i + 2] == '{'
+            {2, nil, nil}
+          else
+            {2, "missing { at position #{i + 2}", nil}
+          end
+        when 'g'
+          if !in_class && i + 2 < size && (chars[i + 2] == '<' || chars[i + 2] == '\'')
+            {2, nil, nil}
+          else
+            {2, "bad escape \\g at position #{i}", nil}
+          end
+        when 'A', 'B', 'Z'
+          if in_class
+            {2, "bad escape \\#{c} at position #{i}", nil}
+          else
+            {2, nil, nil}
+          end
+        else
+          {2, "bad escape \\#{c} at position #{i}", nil}
+        end
+      end
+
+      private def self.hex_run(chars : Array(Char), from : Int32, limit : Int32) : String
+        result = String::Builder.new
+        j = from
+        while j < chars.size && result.bytesize < limit && "0123456789abcdefABCDEF".includes?(chars[j])
+          result << chars[j]
+          j += 1
+        end
+        result.to_s
+      end
+
+      # Translated-pattern char index -> original-pattern char index,
+      # through the \u/\U rewrites (each maps its whole output span to
+      # the source index of its backslash).
+      def self.source_index(scan : Scan, translated_char_index : Int32) : Int32
+        index = translated_char_index
+        if rewrites = scan.rewrites
+          rewrites.each do |out_start, out_len, src|
+            break if index < out_start
+            return src if index < out_start + out_len
+            index -= out_len - 1
+          end
+        end
+        index
+      end
+
+      # Whether the '}' at chars[close] closes a real {m,n}/ quantifier
+      # (used to tell Python's "multiple repeat" from "nothing to
+      # repeat" when PCRE2 reports an unusable quantifier after a
+      # brace).
+      def self.quantifier_brace?(chars : Array(Char), close : Int32) : Bool
+        j = close - 1
+        seen_digit = false
+        while j >= 0 && chars[j].ascii_number?
+          seen_digit = true
+          j -= 1
+        end
+        if j >= 0 && chars[j] == ','
+          j -= 1
+          while j >= 0 && chars[j].ascii_number?
+            seen_digit = true
+            j -= 1
+          end
+        end
+        j >= 0 && seen_digit && chars[j] == '{' && !(j > 0 && chars[j - 1] == '\\')
+      end
+    end
+
     # Applies mode if given; returns whether it changed. owner/group would
     # require resolving a name to uid/gid (getpwnam), which is only
     # meaningful for the local user of a local connection - the role's
@@ -684,7 +1280,7 @@ module Krikri
     # file is discarded and the real file is left untouched.
     #
     # Returns nil on success, or a failed PluginResult.
-    private def write_with_optional_validate(path : String, new_section : String, section_start : Int32, section_end : Int32, original_content : String, encoding : String?) : PluginResult?
+    private def write_with_optional_validate(path : String, new_section : String, section_start : Int32, section_end : Int32, original_content : String, encoding : String?, surrogate : Bool) : PluginResult?
       validate_cmd = @params["validate"]?
       if validate_cmd && !validate_cmd.includes?("%s")
         return PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}")
@@ -710,11 +1306,15 @@ module Krikri
         # itself - same reasoning as lineinfile's own apply_task_mode:
         # false, see staging_temp_mode's block comment).
         create_staging_temp(temp_file, staging_temp_mode(path, 0o644, apply_task_mode: false))
-        # A codec Python resolves but this host's iconv cannot converts
-        # nothing in either direction - the content is already the
-        # file's own bytes (see the read path), so write them as they
-        # are instead of encoding them.
-        if encoding
+        # surrogateescape read: the content holds private-use twins for
+        # the file's undecodable bytes, so encode() restores the exact
+        # original bytes and the rewritten region's replacements land as
+        # they were spelled - writing the string through iconv instead
+        # would emit the twins as their own UTF-8 encodings and corrupt
+        # the file.
+        if surrogate
+          File.write(temp_file, SurrogateText.encode(new_content), perm: 0o600)
+        elsif encoding
           File.write(temp_file, new_content, encoding: encoding, perm: 0o600)
         else
           File.write(temp_file, new_content, perm: 0o600)

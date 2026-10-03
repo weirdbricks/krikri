@@ -42,6 +42,18 @@ module Krikri
       "select_crypto_backend"   => [] of String,
     }
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps, identical with and without
+    # return_private_key_data and in check mode: private_data sits after
+    # public_data; ansible_facts (controller-added, not emitted here) sits
+    # before failed, and warnings trails last. The executor backfills
+    # failed/changed after the plugin JSON.
+    SUCCESS_KEY_ORDER = %w[
+      can_load_key can_parse_key key_is_consistent public_key
+      public_key_fingerprints type public_data private_data ansible_facts
+      failed changed warnings
+    ]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -95,7 +107,7 @@ module Krikri
       spki_der = openssl_der(args + ["-pubout", "-outform", "DER"])
       text = openssl_out(args + ["-noout", "-text"])
 
-      res = PluginResult.new(changed: false, failed: false, msg: "")
+      res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["can_load_key"] = JSON::Any.new(true)
       res.extra["can_parse_key"] = JSON::Any.new(true)
       res.extra["key_is_consistent"] = JSON::Any.new(nil)

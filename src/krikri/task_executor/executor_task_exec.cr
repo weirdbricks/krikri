@@ -378,13 +378,15 @@ module Krikri
         # shape include_vars's own failed results render through (see
         # ResultDisplay's _ansible_action_level + _ansible_error_detail
         # handling).
-        return JSON.parse({
-          "changed"               => false,
-          "failed"                => true,
-          "msg"                   => "the 'key' param is required when using group_by",
-          "_ansible_action_level" => true,
-          "_ansible_error_detail" => "Action failed: the 'key' param is required when using group_by",
-        }.to_json)
+        failure = {
+          "changed"               => JSON::Any.new(false),
+          "failed"                => JSON::Any.new(true),
+          "msg"                   => JSON::Any.new("the 'key' param is required when using group_by"),
+          "_ansible_action_level" => JSON::Any.new(true),
+          "_ansible_error_detail" => JSON::Any.new("Action failed: the 'key' param is required when using group_by"),
+        } of String => JSON::Any
+        Krikri.mark_failed_key_order(JSON::Any.new(failure), FAILED_KEY_ORDER_DEFAULT)
+        return JSON.parse(failure.to_json)
       end
 
       inventory = @inventory
@@ -437,20 +439,24 @@ module Krikri
         Process.exit(1)
       end
 
-      group_names = key.split(",").map(&.strip).reject(&.empty?)
-      parent_names = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?)) || [] of String
+      # Real's group_by.py: the key is ONE group name (spaces become `-`,
+      # never split on commas) and parents defaults to ["all"]; its
+      # result is exactly {changed, add_group, parent_groups} (the strategy
+      # then flips changed to true when the group or host membership is
+      # new). The registered result carries no msg/groups keys.
+      group_name = key.gsub(' ', '-')
+      explicit_parents = params["parents"]?.try(&.split(",").map(&.strip).reject(&.empty?))
+      parent_names = (explicit_parents || ["all"]).map(&.gsub(' ', '-'))
 
       changed = false
-      group_names.each do |group_name|
-        group = inventory.get_or_create_group(group_name)
-        unless group.hosts.has_key?(host.name)
-          group.add_host(host)
-          changed = true
-        end
-        parent_names.each { |parent_name| inventory.get_or_create_group(parent_name).add_child(group_name) }
+      group = inventory.get_or_create_group(group_name)
+      unless group.hosts.has_key?(host.name)
+        group.add_host(host)
+        changed = true
       end
+      explicit_parents.try &.each { |parent_name| inventory.get_or_create_group(parent_name.gsub(' ', '-')).add_child(group_name) }
 
-      JSON.parse({"changed" => changed, "failed" => false, "msg" => "", "groups" => group_names}.to_json)
+      JSON.parse({"changed" => changed, "add_group" => group_name, "parent_groups" => parent_names, "failed" => false}.to_json)
     end
 
     # set_stats: - same "no uploaded plugin binary" category as
@@ -1062,11 +1068,13 @@ module Krikri
     # absolute one carries none (real's absolute lookup branch never
     # populates one).
     private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
     end
 
     # copy:'s controller-side src: miss on a LOCAL connection: real
@@ -1074,11 +1082,13 @@ module Krikri
     # error: " prefix itself, WITHOUT the "Task failed: " prefix the
     # remote-host variant above carries (both live-verified).
     private def controller_missing_copy_local_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Unexpected AnsibleActionFail error: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
     end
 
     # copy:'s decrypt: param (real Ansible default true): only an
@@ -1397,11 +1407,13 @@ module Krikri
     # run of the same role. A relative src carries the full Searched-in
     # list (live-verified against 2.19.11); an absolute one none.
     private def controller_missing_unarchive_result(src : String, candidates : Array(String)) : JSON::Any
-      JSON.parse({
+      result = JSON.parse({
         "changed" => false,
         "failed"  => true,
         "msg"     => "Task failed: #{NeedleLookup.not_found_message(src, candidates)}",
       }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_EXCEPTION_FIRST)
+      result
     end
 
     private def unarchive_candidates(task : Task, src : String) : Array(String)
@@ -2017,12 +2029,12 @@ module Krikri
       end
 
       if effective_name.nil? || effective_name == Krikri::NONE_SENTINEL
-        return JSON.parse({
+        return Krikri.mark_failed_key_order(JSON.parse({
           "changed"               => false,
           "failed"                => true,
           "msg"                   => "name, host or hostname needs to be provided",
           "_ansible_action_level" => true,
-        }.to_json)
+        }.to_json), FAILED_KEY_ORDER_MSG_FIRST)
       end
 
       {"groupname", "groups", "group"}.each do |group_key|
@@ -2032,14 +2044,14 @@ module Krikri
         end
         if Krikri.non_string_scalar(raw)
           next unless Krikri.python_param_truthy?(raw)
-          return JSON.parse({
+          return Krikri.mark_failed_key_order(JSON.parse({
             "changed"               => false,
             "failed"                => true,
             "msg"                   => "Groups must be specified as a list.",
             "_ansible_action_level" => true,
             "_ansible_error_detail" => "Groups must be specified as a list.",
             "_ansible_fail_param"   => group_key,
-          }.to_json)
+          }.to_json), FAILED_KEY_ORDER_MSG_FIRST)
         end
         if bare = list_member_attribute_crash(raw, "strip")
           return literal_crash_result(bare)
@@ -2158,18 +2170,22 @@ module Krikri
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
 
-      result = {
-        "changed" => JSON::Any.new(false),
-        "failed"  => JSON::Any.new(true),
-        "msg"     => JSON::Any.new(failure.msg),
-      } of String => JSON::Any
-      result.delete("changed") if failure.omit_changed?
+      # Real's fail_json shape for an argument-spec rejection, live-verified
+      # vs ansible-core 2.19.11: the module's own kwargs lead (a copy
+      # module's always-present diff:[], then failed+msg), then the
+      # controller backfills changed, then exception
+      # ("(traceback unavailable)") - the same order PluginResult's own
+      # failed_default_order emits. Built in that order here rather than
+      # insertion-ordered by assignment.
+      result = {} of String => JSON::Any
       # copy's module-level failure keeps real's always-present "diff" key
       # (an empty LIST): a registered failed copy shows "diff": [] for the
       # argspec case too (live-verified vs 2.19.11) - the plugin's own
       # post-processing adds it to every copy result that reaches the
       # module binary, so the controller-simulated ones need it here.
       result["diff"] = JSON::Any.new([] of JSON::Any) if task.module_name == "ansible.builtin.copy" && !action_level_only
+      result["failed"] = JSON::Any.new(true)
+      result["msg"] = JSON::Any.new(failure.msg)
       # copy/template: real's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
       # the fatal dump carries "checksum" for these two modules - but
@@ -2188,6 +2204,13 @@ module Krikri
         if checksum = argspec_source_checksum(params)
           result["checksum"] = JSON::Any.new(checksum)
         end
+      end
+      # A controller-side failure with no changed key at all (the
+      # omit_changed shape) skips the backfill entirely - see
+      # PluginResult#omit_changed.
+      unless failure.omit_changed?
+        result["changed"] = JSON::Any.new(false)
+        result["exception"] = JSON::Any.new("(traceback unavailable)")
       end
       JSON.parse(result.to_json)
     end
@@ -2254,8 +2277,18 @@ module Krikri
     # netdata_requirements_install.stderr_lines` raises "object of type
     # 'dict' has no attribute 'stderr_lines'" even though a LATER task
     # referencing the same registered var would have seen it fine.
-    private def with_command_lines_augmented(result : JSON::Any) : JSON::Any
+    private def with_command_lines_augmented(result : JSON::Any, omit_command_lines : Bool = false) : JSON::Any
       result_hash = result.as_h.dup
+
+      # A result carrying the _ansible_omit_command_lines marker (pause -
+      # see the pause action plugin's own comment) opts out: real's pause
+      # module has stdout/stderr but never derives *_lines from them
+      # (live-verified vs 2.19.11 registered pause shape). register_result
+      # strips the marker with every other _ansible_* key BEFORE calling
+      # here, so its presence is captured and passed in as the flag; the
+      # has_key? check covers call sites that still see the unstripped
+      # result (the changed_when/failed_when eval context).
+      return JSON::Any.new(result_hash) if omit_command_lines || result_hash.has_key?("_ansible_omit_command_lines")
 
       if stdout = result_hash["stdout"]?.try(&.as_s)
         stdout_lines = ansible_splitlines(stdout).map { |line| JSON::Any.new(line) }
@@ -2289,9 +2322,13 @@ module Krikri
       # this must stay out of the loop aggregation path in
       # executor_loops.cr.
       result_hash = result.as_h.dup
+      apply_failed_key_order(result_hash)
+      # Capture the pause opt-out marker BEFORE the _ansible_* strip below
+      # removes it (see with_command_lines_augmented's comment).
+      omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
       result_hash.delete("invocation")
-      registered = with_command_lines_augmented(JSON::Any.new(result_hash))
+      registered = with_command_lines_augmented(JSON::Any.new(result_hash), omit_command_lines: omit_command_lines)
       @registered_vars[host.name][register_name] = registered
       # Write-time unsafe marking - the per-task context build marks these
       # stores too, but a host that never executes again would otherwise
@@ -2301,6 +2338,32 @@ module Krikri
       UnsafeValues.mark_value(registered)
       VarSubstitutor.add_resolved_var_name(host.name, register_name)
       @hv_generation += 1
+    end
+
+    # Applies the real key order a controller-side action failure's
+    # REGISTERED result carries (see Krikri::FAILED_KEY_ORDER_DEFAULT):
+    # the order the action's builder marked the result with, plus the
+    # `exception: "(traceback unavailable)"` key real's fail_json adds on
+    # every failure - including these, which krikri's own result builders
+    # left out. Applied here, at the single point every registered result
+    # passes through, so no individual builder has to know the rule.
+    private def apply_failed_key_order(hash : Hash(String, JSON::Any)) : Nil
+      order = hash["_ansible_key_order"]?.try(&.as_a) || return
+      hash["exception"] = JSON::Any.new("(traceback unavailable)") unless hash.has_key?("exception")
+      # A result whose display shape omits `changed` (debug:'s own
+      # fatalization failure) but whose registered shape carries it - see
+      # the `_ansible_register_changed` marker.
+      if hash.delete("_ansible_register_changed")
+        hash["changed"] = JSON::Any.new(false)
+      end
+      ordered = Hash(String, JSON::Any).new
+      order.each do |entry|
+        key = entry.as_s?
+        ordered[key] = hash[key] if key && hash.has_key?(key)
+      end
+      hash.each { |key, value| ordered[key] = value unless ordered.has_key?(key) }
+      hash.clear
+      ordered.each { |key, value| hash[key] = value }
     end
 
     # Run all notified handlers

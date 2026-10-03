@@ -221,10 +221,19 @@ module Krikri
         msg += " (check mode)"
       end
 
+      # Real 2.19.11's registered service result key order (live-verified
+      # via {{ r.keys() | list | to_json }} in check mode against an
+      # active systemd unit, would-change and no-change alike):
+      # name, changed, status, state, failed. krikri's service result
+      # carries only changed (+ msg) today - name/status/state (the
+      # systemd module's unit-property dict and state echo) are a known
+      # set gap, so the pin documents real's relative order for when
+      # they land; msg is krikri-only and trails.
       with_unused_param_warnings(PluginResult.new(
         changed: changed,
         failed: false,
-        msg: msg
+        msg: msg,
+        key_order: ["name", "changed", "status", "state"],
       ))
     end
 

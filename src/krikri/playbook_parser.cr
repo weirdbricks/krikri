@@ -4447,6 +4447,12 @@ module Krikri
       end
     end
 
+    # docker_container's list-typed options (`command`, `entrypoint`,
+    # `volumes`, `ports`) travel JSON-encoded rather than on the generic
+    # comma-joined wire, because a comma inside one element (or a space,
+    # for command) is meaningful there - see #parse_module_params.
+    DOCKER_CONTAINER_LIST_PARAMS = {"community.docker.docker_container", "docker_container"}
+
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
       params = Hash(String, String).new
 
@@ -4521,6 +4527,17 @@ module Krikri
             # prefixed - they stay raw template text for the executor's own
             # whole-span structural evaluation, which owns their type.
             params[key.to_s] = fact_literal_wire_value(value)
+          elsif (module_name == "ansible.mysql.mysql_db" || module_name == "community.mysql.mysql_db") && key.to_s == "name" && value.as_a?
+            # `name:` is `type='list', elements='str'` in real Ansible's
+            # mysql_db (a multi-database run is a single task), so the
+            # generic comma-join would fuse the names into one string -
+            # and real's own result echoes BOTH shapes (`db`, the names
+            # joined by a space, and `db_list`, the list itself).
+            # JSON-encoded here; MysqlDbPlugin#parse_name_list decodes it
+            # back into an Array(String) on the plugin side, the same
+            # wire mysql_query's own `query:` list uses.
+            names = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = names.to_json
           elsif (module_name == "ansible.mysql.mysql_query" || module_name == "community.mysql.mysql_query") && key.to_s == "query" && value.as_a?
             # `query:` as a list of independent SQL statements (dev-sec
             # mysql_hardening's own "Ensure that there are no users
@@ -4545,6 +4562,20 @@ module Krikri
             # Array(String) on the plugin side.
             entries = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = entries.to_json
+          elsif DOCKER_CONTAINER_LIST_PARAMS.includes?(module_name) &&
+                {"command", "entrypoint", "volumes", "ports"}.includes?(key.to_s) && value.as_a?
+            # community.docker's docker_container takes `command` as an
+            # ansible-type `raw` option (a list reaches the daemon as
+            # the argv list verbatim; `entrypoint`, `volumes` and
+            # `ports` are list-typed too) - the generic comma-joined
+            # Array wire below would fuse `command: [sh, -c, "echo hello
+            # world"]` into one string and then, plugin-side, into ONE
+            # argv element (live-verified vs 2.19.11 + community.docker
+            # 5.2.1: real runs it, krikri failed to exec "sleep,30").
+            # JSON-encoded here; DockerContainerPlugin's own
+            # #literal_list_param decodes it back into an Array(String).
+            docker_list_items = value.as_a.map { |item| stringify_value(item) }
+            params[key.to_s] = docker_list_items.to_json
           elsif RAW_COMMAND_MODULES.includes?(module_name) && key.to_s == "argv" && value.as_a?
             # `argv:` (command:'s list form, real Ansible's own way to
             # avoid shell quoting entirely) has the identical comma-
@@ -4740,7 +4771,15 @@ module Krikri
           # parse time `item` doesn't exist yet, and kv-parsing the raw
           # template text wrongly produced `_raw_params`, which strict
           # modules reject.
-          if yaml.as_s.strip.matches?(/\A\{\{.*\}\}\z/m) && !RAW_COMMAND_MODULES.includes?(module_name)
+          # The whole-`{{ }}` test is done on the value AS WRITTEN, not on
+          # a stripped copy: real's is_possibly_all_template
+          # (ansible/_internal/_templating/_jinja_bits.py) checks that the
+          # string STARTS AND ENDS with the delimiters, so a trailing
+          # space (`copy: "{{ d }} "`) is not one and takes real's "does
+          # not support raw params" error path instead - stripping first
+          # turned such a value into a template and, with the argsplat
+          # warning keyed off this sentinel, warned where real does not.
+          if possibly_all_template?(yaml.as_s) && !RAW_COMMAND_MODULES.includes?(module_name)
             params["_templated_args"] = yaml.as_s.strip
           else
             # Real Ansible's parse_kv (the function this mirrors for
@@ -4804,6 +4843,18 @@ module Krikri
     # the string can't be shaped into params at parse time.
     def self.parse_free_form_params(s : String, module_name : String) : Hash(String, String)
       parse_module_params(YAML::Any.new(s), module_name)
+    end
+
+    # Real's is_possibly_all_template, narrowed to the variable
+    # delimiters: true when the string STARTS with `{{` and ENDS with
+    # `}}` (a folded `>` scalar keeps its trailing newline and so is not
+    # one). Real also accepts the `{% %}`/`{# #}` pairs, but krikri's
+    # `_templated_args` sentinel - which both this and the argsplat
+    # warning key off - only ever drove `{{ }}` whole-args resolution, so
+    # widening it here would change how those values resolve, not just
+    # whether a warning prints.
+    private def self.possibly_all_template?(s : String) : Bool
+      s.starts_with?("{{") && s.ends_with?("}}")
     end
 
     # Returns the key=value params plus, as a second tuple element, the

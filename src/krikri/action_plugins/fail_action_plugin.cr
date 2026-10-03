@@ -30,7 +30,9 @@ module Krikri
           return ActionResult.final(fail_result(JSON::Any.new(raw)))
         end
       end
-      ActionResult.final(ActionResult.plugin_result_json(false, true, "Failed as requested from task"))
+      ActionResult.final(Krikri.mark_failed_key_order(
+        ActionResult.plugin_result_json(false, true, "Failed as requested from task"),
+        FAILED_KEY_ORDER_DEFAULT))
     end
 
     # The flat result hash with msg ALWAYS present (real's action sets
@@ -42,7 +44,7 @@ module Krikri
       h["changed"] = JSON::Any.new(false)
       h["failed"] = JSON::Any.new(true)
       h["msg"] = msg
-      JSON::Any.new(h)
+      Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_DEFAULT)
     end
   end
 end

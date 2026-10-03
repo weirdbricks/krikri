@@ -101,12 +101,22 @@ module Krikri
       case rc
       when 0
         facts = parse_output(result[:stdout].to_s, split)
+        # Real's registered getent success runs ansible_facts, msg,
+        # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`;
+        # the rc==0 path carries no msg at all, the fail_key: false
+        # not-found path does). Real's module wire carries no changed -
+        # exit_json passes none and the task executor backfills failed,
+        # changed at the tail - so the wire omits it (omit_changed) and
+        # normalize_module_result appends the same failed, changed tail
+        # on register. invocation is stripped before register.
         PluginResult.new(
           changed: false,
           failed: false,
           msg: "",
+          omit_changed: true,
           ansible_facts: JSON::Any.new({dbtree => JSON::Any.new(facts)}),
-          invocation: invocation_block(database)
+          invocation: invocation_block(database),
+          key_order: ["ansible_facts", "msg"]
         )
       when 1
         fail_result(database, "Missing arguments, or database unknown.")
@@ -127,8 +137,10 @@ module Krikri
             changed: false,
             failed: false,
             msg: "One or more supplied key could not be found in the database.",
+            omit_changed: true,
             ansible_facts: JSON::Any.new({dbtree => JSON::Any.new(facts)}),
-            invocation: invocation_block(database)
+            invocation: invocation_block(database),
+            key_order: ["ansible_facts", "msg"]
           )
         end
         fail_result(database, "One or more supplied key could not be found in the database.")

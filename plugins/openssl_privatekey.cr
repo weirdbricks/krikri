@@ -39,10 +39,10 @@ module Krikri
   # return_content, owner/group/mode, check_mode. select_crypto_backend
   # is accepted and ignored (there is only one backend here).
   class OpensslPrivatekeyPlugin < BasePlugin
-    Pkey = PluginHelpers::Pkey
-    NID_RSA = PluginHelpers::Pkey::NID_RSA
-    NID_DSA = PluginHelpers::Pkey::NID_DSA
-    NID_EC  = PluginHelpers::Pkey::NID_EC
+    Pkey      = PluginHelpers::Pkey
+    NID_RSA   = PluginHelpers::Pkey::NID_RSA
+    NID_DSA   = PluginHelpers::Pkey::NID_DSA
+    NID_EC    = PluginHelpers::Pkey::NID_EC
     TYPE_NIDS = PluginHelpers::Pkey::TYPE_NIDS
 
     # community.crypto names curves per the IANA TLS registry; the
@@ -68,6 +68,18 @@ module Krikri
     ]
 
     EDWARDS_TYPES = %w[Ed25519 Ed448 X25519 X448]
+
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
+    # unchanged, check-mode and state=absent runs. Variant positions
+    # confirmed live too: curve sits after fingerprint (before diff),
+    # privatekey after curve, backup_file after changed, warnings last.
+    # `diff` is present in real's every success result; krikri emits no
+    # diff here, so the key is simply skipped by the reorder.
+    SUCCESS_KEY_ORDER = %w[
+      type size fingerprint curve privatekey diff filename changed
+      backup_file failed warnings
+    ]
 
     def execute : PluginResult
       path = @params["path"]?
@@ -269,7 +281,7 @@ module Krikri
         extra["privatekey"] = JSON::Any.new(File.read(path))
       end
 
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       extra.each { |k, v| res.extra[k] = v }
       res
     end
@@ -282,7 +294,7 @@ module Krikri
         File.delete(path)
       end
 
-      res = PluginResult.new(changed: exists, failed: false, msg: "")
+      res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res

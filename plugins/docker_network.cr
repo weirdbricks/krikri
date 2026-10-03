@@ -101,6 +101,22 @@ module Krikri
       "scope" => %w[local global swarm],
     }
 
+    # Key order of real's registered result, live-verified against real
+    # ansible-core 2.19.11 + community.docker 5.2.1 over a Docker-API
+    # socket: the module seeds its result dict with `{"changed": ...,
+    # "actions": [...]}` (docker_network.py's __init__), then adds
+    # `network` (present) and `diff` (check_mode or debug), and the
+    # module protocol appends `failed` last. `actions` is popped again
+    # once a real (non-check_mode, non-debug) run finishes (present()'s
+    # `if not self.check_mode and not self.parameters.debug`), which is
+    # why a normal create/rerun registers only changed/network/failed.
+    KEY_ORDER = %w[changed actions network diff failed]
+
+    # Real's own wrapper for a DockerException escaping the module body.
+    # Only the prefix is reproduced verbatim; the wrapped message after it
+    # is the python SDK's own formatting, which docr words differently.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -124,12 +140,12 @@ module Krikri
 
       # state is choices-validated to exactly present/absent above.
       if state == "present"
-        ensure_present(api, name, driver, internal, attachable, labels, connected, appends, existing, check_mode)
+        ensure_present(api, name, driver, internal, attachable, labels, connected, appends, existing, check_mode, true?(@params["debug"]?))
       else
-        ensure_absent(api, existing, check_mode)
+        ensure_absent(api, name, existing, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
@@ -145,35 +161,75 @@ module Krikri
       appends : Bool,
       existing : Docr::Types::Network?,
       check_mode : Bool,
+      debug_mode : Bool,
     ) : PluginResult
       force = true?(@params["force"]?)
+      actions = [] of String
+      changed = false
 
-      if existing && existing.driver == driver && !force
-        return sync_connected_result(api, existing, connected, appends, check_mode, "Network #{name} already present")
+      # Real's remove-then-create recreate path (`force:` or a driver
+      # mismatch) records the removal in `actions` exactly like a plain
+      # absent run does.
+      if existing && (force || existing.driver != driver)
+        remove_network!(api, name, existing, check_mode, actions)
+        changed = true
+        existing = nil
       end
 
-      if check_mode
-        verb = existing ? (force ? "recreated (force)" : "recreated (driver changed)") : "created"
-        return PluginResult.new(changed: true, failed: false, msg: "Network #{name} would be #{verb}")
+      unless existing
+        unless check_mode
+          config = Docr::Types::NetworkConfig.new(
+            name: name,
+            driver: driver,
+            internal: internal,
+            attachable: attachable,
+            labels: labels,
+          )
+          existing = api.networks.create(config)
+        end
+        actions << "Created network #{name} with driver #{driver}"
+        changed = true
       end
 
+      # Connected-container syncing runs on every present run, whether or
+      # not the network itself changed (see the class doc comment), but
+      # only when the network is actually there to sync - real gates the
+      # same steps on its own `existing_network` being set, so a
+      # check_mode create (which creates nothing) syncs nothing.
       if existing
-        disconnect_all!(api, existing.id)
-        api.networks.delete(existing.id)
+        changed = true if sync_connected!(api, name, connected, appends, check_mode, actions)
       end
 
-      config = Docr::Types::NetworkConfig.new(
-        name: name,
-        driver: driver,
-        internal: internal,
-        attachable: attachable,
-        labels: labels,
-      )
-      created = api.networks.create(config)
-      net_changes = sync_connected!(api, created.id, connected, appends)
+      present_result(api, name, actions, changed, check_mode || debug_mode, check_mode)
+    end
 
-      verb = existing ? (force ? "Recreated (force)" : "Recreated (driver changed)") : "Created"
-      PluginResult.new(changed: true, failed: false, msg: "#{verb} network #{name}#{connected_suffix(net_changes)}")
+    # Real's `remove_network()`: disconnect everything first (Docker
+    # refuses to remove an in-use network), then delete, then record the
+    # action. Real addresses the network by NAME here, not by id.
+    private def remove_network!(
+      api : Docr::API, name : String, existing : Docr::Types::Network,
+      check_mode : Bool, actions : Array(String),
+    ) : Nil
+      disconnect_all!(api, existing.id) unless check_mode
+      api.networks.delete(existing.id) unless check_mode
+      actions << "Removed network #{name}"
+    end
+
+    # The present-state result dict, in real's own key order: `actions`
+    # only survives into the wire in check_mode/debug (real pops it
+    # otherwise), `network` is the raw inspect payload (`null` when a
+    # check_mode create did not actually create anything), and `diff` is
+    # only filled in check_mode/debug.
+    private def present_result(
+      api : Docr::API, name : String, actions : Array(String),
+      changed : Bool, keep_actions : Bool, with_diff : Bool,
+    ) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, failed_flag: false)
+      result.key_order = KEY_ORDER
+      result.extra["actions"] = json_string_array(actions) if keep_actions
+      result.extra["network"] = inspect_network_json(api, name)
+      result.extra["diff"] = JSON.parse(%({"differences": []})) if with_diff
+      result
     end
 
     # `force:` (and the driver-mismatch auto-recreate above) both delete
@@ -189,48 +245,63 @@ module Krikri
       end
     end
 
-    # Shared tail for "the network itself needs no change" - still syncs
-    # connected: (see the class doc comment) and folds that into
-    # changed:/msg: if it did anything.
-    private def sync_connected_result(
-      api : Docr::API, existing : Docr::Types::Network,
-      connected : Array(String), appends : Bool, check_mode : Bool, base_msg : String,
-    ) : PluginResult
-      unless check_mode
-        net_changes = sync_connected!(api, existing.id, connected, appends)
-        return PluginResult.new(changed: true, failed: false, msg: "#{base_msg}#{connected_suffix(net_changes)}") unless net_changes.empty?
-      end
+    # The raw inspect payload real puts under `network`, straight from the
+    # daemon's `/networks/<name>` GET (null when it does not exist) - not
+    # a re-serialization of a typed struct, so every daemon-returned key
+    # and its daemon-returned order survive verbatim.
+    private def inspect_network_json(api : Docr::API, name : String) : JSON::Any
+      raw = docker_raw_get(api.client, "/networks/#{name}")
+      raw || JSON::Any.new(nil)
+    end
 
-      PluginResult.new(changed: false, failed: false, msg: base_msg)
+    # A 404 (no such network) is real's `None`, not a failure - get_network
+    # swallows it into a null `network`.
+    private def json_string_array(values : Array(String)) : JSON::Any
+      JSON::Any.new(values.map { |value| JSON::Any.new(value) })
+    end
+
+    private def docker_raw_get(client : Docr::Client, path : String) : JSON::Any?
+      client.call("GET", path, HTTP::Headers{"Accept" => "application/json"}) do |response|
+        body = response.body_io?.try(&.gets_to_end)
+        body.nil? || body.empty? ? nil : JSON.parse(body)
+      end
+    rescue Docr::Errors::DockerAPIError
+      nil
     end
 
     # Connects any requested containers not yet connected; when appends:
     # is false (the default, matching real Ansible), also disconnects any
-    # currently-connected container not in the requested list. Returns a
-    # list of human-readable change descriptions ("connected foo",
-    # "disconnected bar") for the result message.
-    private def sync_connected!(api : Docr::API, network_id : String, connected : Array(String), appends : Bool) : Array(String)
-      return [] of String if connected.empty? && appends
+    # currently-connected container not in the requested list. Appends a
+    # real-worded entry to `actions` per change and reports whether
+    # anything changed (real records connect/disconnect there too, and
+    # folds each into `changed`).
+    private def sync_connected!(
+      api : Docr::API, name : String, connected : Array(String),
+      appends : Bool, check_mode : Bool, actions : Array(String),
+    ) : Bool
+      return false if connected.empty? && appends
 
-      current = api.networks.inspect(network_id).containers || Hash(String, Docr::Types::NetworkContainer).new
+      current = api.networks.inspect(name).containers || Hash(String, Docr::Types::NetworkContainer).new
       current_names = current.values.map(&.name)
-      changes = [] of String
+      changed = false
 
       connected.each do |container|
         next if current_names.includes?(container)
-        docker_raw_call(api.client, "POST", "/networks/#{network_id}/connect", {"Container" => container})
-        changes << "connected #{container}"
+        docker_raw_call(api.client, "POST", "/networks/#{name}/connect", {"Container" => container}) unless check_mode
+        actions << "Connected container #{container}"
+        changed = true
       end
 
       unless appends
         current_names.each do |container|
           next if connected.includes?(container)
-          docker_raw_call(api.client, "POST", "/networks/#{network_id}/disconnect", {"Container" => container})
-          changes << "disconnected #{container}"
+          docker_raw_call(api.client, "POST", "/networks/#{name}/disconnect", {"Container" => container}) unless check_mode
+          actions << "Disconnected container #{container}"
+          changed = true
         end
       end
 
-      changes
+      changed
     end
 
     # Real AnsibleModule validation over the merged spec, in
@@ -383,21 +454,18 @@ module Krikri
       client.call(method, path, headers, body.to_json) { |response| response.consume_body_io }
     end
 
-    private def connected_suffix(changes : Array(String)) : String
-      changes.empty? ? "" : " (#{changes.join(", ")})"
-    end
+    private def ensure_absent(api : Docr::API, name : String, existing : Docr::Types::Network?, check_mode : Bool) : PluginResult
+      actions = [] of String
+      remove_network!(api, name, existing, check_mode, actions) if existing
 
-    private def ensure_absent(api : Docr::API, existing : Docr::Types::Network?, check_mode : Bool) : PluginResult
-      unless existing
-        return PluginResult.new(changed: false, failed: false, msg: "Network already absent")
-      end
-
-      if check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Network #{existing.name} would be removed")
-      end
-
-      api.networks.delete(existing.id)
-      PluginResult.new(changed: true, failed: false, msg: "Removed network #{existing.name}")
+      # Real's absent path never records a `network` key; its diff
+      # tracker is emitted (as an empty dict - the removal never reaches
+      # it) only in check_mode.
+      result = PluginResult.new(changed: !existing.nil?, failed: false, failed_flag: false)
+      result.key_order = KEY_ORDER
+      result.extra["actions"] = json_string_array(actions)
+      result.extra["diff"] = JSON.parse("{}") if check_mode
+      result
     end
 
     private def find_network(api : Docr::API, name : String) : Docr::Types::Network?

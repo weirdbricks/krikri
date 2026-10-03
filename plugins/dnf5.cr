@@ -71,7 +71,11 @@ module Krikri
              when "updates", "upgrades"
                "--upgrades"
              end
-      flag ? "list #{flag}" : "list #{shell_single_quote(query)}"
+      # A bare spec goes through unquoted: remote_exec hands the command
+      # to an ARGV splitter, so a shell-quoted spec reached dnf5 with its
+      # quotes as part of the package name (see the shared list_args'
+      # comment in plugin_helpers/rpm_package.cr).
+      flag ? "list #{flag}" : "list #{query}"
     end
 
     def execute : PluginResult

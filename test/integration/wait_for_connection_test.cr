@@ -7,7 +7,9 @@ describe "wait_for_connection plugin" do
     result = PluginSpecHelper.run("wait_for_connection", {} of String => String)
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["changed"].as_bool.must_equal(false)
+    # Real's module wire carries no changed key (the controller backfills
+    # changed: false); never `true` is the contract.
+    (result["changed"]?.try(&.as_bool) || false).must_equal(false)
   end
 
   it "accepts connect_timeout/sleep/timeout params without erroring" do

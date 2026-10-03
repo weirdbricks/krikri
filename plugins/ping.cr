@@ -22,7 +22,13 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "boom")
       end
 
-      PluginResult.new(changed: false, failed: false, msg: "", ping: data)
+      # Real's registered ping result runs ping, failed, changed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`). Real's module
+      # wire carries ONLY {ping} - exit_json passes no changed, and the
+      # task executor backfills failed, changed at the tail - so the
+      # wire omits changed too (omit_changed) and normalize_module_result
+      # appends the same failed, changed tail on register.
+      PluginResult.new(changed: false, failed: false, msg: "", ping: data, omit_changed: true, key_order: ["ping"])
     end
   end
 end

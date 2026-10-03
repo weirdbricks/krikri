@@ -321,6 +321,13 @@ module Krikri
       archived = single_compress ? found_paths : members
       stat_fields = dest_stat_fields(dest)
 
+      # Real's registered archive result runs archived, dest, dest_state,
+      # changed, arcroot, missing, expanded_paths, expanded_exclude_paths,
+      # then add_path_info's uid/gid/owner/group/mode/state/size -
+      # live-verified vs 2.19.11 via `{{ r | to_json }}` for both the
+      # create and the already-archived rerun (check mode drops the stat
+      # block; the same order list covers it since absent keys skip).
+      # expanded_exclude_paths is absent here and skipped.
       PluginResult.new(
         changed: changed,
         failed: false,
@@ -337,7 +344,8 @@ module Krikri
         owner: stat_fields[:owner],
         group: stat_fields[:group],
         mode: stat_fields[:mode],
-        state: stat_fields[:state]
+        state: stat_fields[:state],
+        key_order: %w[archived dest dest_state changed arcroot missing expanded_paths expanded_exclude_paths uid gid owner group mode state size]
       )
     end
 

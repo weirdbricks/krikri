@@ -21,6 +21,15 @@ module Krikri
   class GitConfigPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
+    # Live-verified against real ansible-core 2.19.11 (community.general
+    # git_config) via `{{ r | to_json }}` dumps. The write path (set or
+    # unset, changed, including check mode) is msg/diff/changed; the
+    # converged no-op path is changed/msg - different module code paths,
+    # so two orders. krikri emits no diff (real carries one on the write
+    # path; the key is skipped by the reorder).
+    CHANGED_KEY_ORDER   = %w[msg diff changed ansible_facts failed warnings]
+    UNCHANGED_KEY_ORDER = %w[changed msg ansible_facts failed warnings]
+
     # Real argument_spec (community.general git_config.py) - no aliases,
     # so the unsupported-params message has no parenthetical.
     SPEC = {
@@ -68,7 +77,7 @@ module Krikri
       noop = already_converged?(unset, has_out, old_values, value, add_mode)
       return noop if noop
 
-      return PluginResult.new(changed: true, failed: false, msg: "setting changed (check mode)") if check_mode
+      return PluginResult.new(changed: true, failed: false, msg: "setting changed (check mode)", key_order: CHANGED_KEY_ORDER) if check_mode
 
       apply_setting(base_args, cwd, name, value, unset, add_mode)
     end
@@ -89,14 +98,14 @@ module Krikri
     end
 
     private def already_converged?(unset : Bool, has_out : Bool, old_values : Array(String), value : String, add_mode : String) : PluginResult?
-      return PluginResult.new(changed: false, failed: false, msg: "no setting to unset") if unset && !has_out
+      return PluginResult.new(changed: false, failed: false, msg: "no setting to unset", key_order: UNCHANGED_KEY_ORDER) if unset && !has_out
       return nil if unset
 
       if old_values.includes?(value) && (old_values.size == 1 || add_mode == "add")
         # Real's no-op path passes msg='' to exit_json explicitly, so the
         # result keeps an EMPTY msg key (msg | default('none') shows ''
         # there, not 'none' - live-verified GC9b).
-        return PluginResult.new(changed: false, failed: false, msg: "", include_empty_msg: true)
+        return PluginResult.new(changed: false, failed: false, msg: "", include_empty_msg: true, key_order: UNCHANGED_KEY_ORDER)
       end
       nil
     end
@@ -212,7 +221,7 @@ module Krikri
           cmd: set_args, rc: set_result[:exit_code])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "setting changed")
+      PluginResult.new(changed: true, failed: false, msg: "setting changed", key_order: CHANGED_KEY_ORDER)
     end
 
     private def find_binary(name : String) : String?

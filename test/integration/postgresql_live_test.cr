@@ -35,6 +35,10 @@ POSTGRES_LOGIN = {
 }
 
 describe "postgresql_query/postgresql_user against a real PostgreSQL server at 127.0.0.1:15432" do
+  # One shared throwaway server with fixed db/role names: never run in parallel with
+  # sibling workers (see test/minitest_helper.cr).
+  serial!
+
   describe "postgresql_query" do
     it "returns the full multi-row result set as an array of typed row objects" do
       skip "no PostgreSQL server at 127.0.0.1:15432" unless postgres_reachable?

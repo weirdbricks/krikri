@@ -78,8 +78,15 @@ module Krikri
       )
       if var_name
         debug_var(var_name, result)
+        # Real's registered debug var: result runs the VARIABLE-NAME key,
+        # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`)
+        # - mirrors DebugActionPlugin's key_order.
+        result.key_order = [var_name]
       else
         result.msg = msg.to_s
+        # Real's registered debug msg result runs msg, failed, changed
+        # (live-verified vs 2.19.11).
+        result.key_order = ["msg"]
       end
       result
     end

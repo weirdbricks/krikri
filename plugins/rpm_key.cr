@@ -139,7 +139,13 @@ module Krikri
 
         primary_short_id = pairs.first[0][-8..]? || pairs.first[0]
         if installed_short_keyids.includes?(primary_short_id)
-          return PluginResult.new(changed: false, failed: false, msg: "Key already present")
+          # Real 2.19.11's four success exits are all bare
+          # exit_json(changed=...) - no msg key at all (the
+          # "Key already present" text was this plugin's own borrow;
+          # dropped, npm-style). Live-verified changed AND unchanged
+          # (key re-import): the registered result is exactly
+          # {changed, failed}.
+          return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
         end
 
         result = remote_exec("rpm --import #{shell_single_quote(keyfile)}")
@@ -147,7 +153,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
         end
 
-        PluginResult.new(changed: true, failed: false, msg: "Key imported")
+        PluginResult.new(changed: true, failed: false, key_order: %w[changed])
       ensure
         remote_exec("rm -f #{Shell.quote_arg(tmp_path)}") if tmp_path
       end
@@ -156,7 +162,7 @@ module Krikri
     private def bare_keyid_result(key : String) : PluginResult?
       return nil if !bare_keyid?(key) || key.includes?("://") || key.starts_with?('/')
       short_id = normalize_keyid(key)[-8..]? || normalize_keyid(key)
-      return PluginResult.new(changed: false, failed: false, msg: "Key already present") if installed_short_keyids.includes?(short_id)
+      return PluginResult.new(changed: false, failed: false, key_order: %w[changed]) if installed_short_keyids.includes?(short_id)
       PluginResult.new(changed: false, failed: true, msg: "When importing a key, a valid file must be given")
     end
 
@@ -207,7 +213,7 @@ module Krikri
         end
 
       unless installed_short_keyids.includes?(short_id)
-        return PluginResult.new(changed: false, failed: false, msg: "Key already absent")
+        return PluginResult.new(changed: false, failed: false, key_order: %w[changed])
       end
 
       result = remote_exec("rpm --erase --allmatches gpg-pubkey-#{Shell.quote_arg(short_id)}")
@@ -215,7 +221,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: result[:stderr])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Key removed")
+      PluginResult.new(changed: true, failed: false, key_order: %w[changed])
     end
   end
 end

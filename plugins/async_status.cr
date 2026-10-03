@@ -57,7 +57,7 @@ module Krikri
         return cleanup_result(jid)
       end
 
-      status_result(status)
+      status_result(status, jid)
     end
 
     private def missing_jid_result : PluginResult
@@ -87,13 +87,45 @@ module Krikri
         ansible_job_id: jid, erased: AsyncJobs.status_path(jid))
     end
 
-    private def status_result(status : JSON::Any) : PluginResult
+    # Real 2.19.11's async_status registered shapes (live-verified via
+    # `{{ r.keys() | list | to_json }}` on registered status-mode tasks
+    # against a running and a finished command job):
+    #  - still running: started, finished, stdout, stderr, stdout_lines,
+    #    stderr_lines, ansible_job_id, results_file, failed, changed -
+    #    and NO msg key (the old "job is still running" msg was
+    #    krikri-only; real's action plugin never carries one).
+    #  - finished: the same base dict merged with the job file's module
+    #    result - duplicates keep their base position, the module's own
+    #    keys follow in file order (command: changed, rc, cmd, start,
+    #    end, delta, msg, failed). The base dict is what
+    #    ansible/plugins/action/async_status.py initializes (then
+    #    coerces started/finished to booleans) before merge_hash with
+    #    the module result; the key_order below mirrors that merge
+    #    DYNAMICALLY from the file's own key order, so any module's
+    #    shape lands in real's order rather than a command-only pin.
+    # Real's msg key on a finished job is whatever the module's file
+    # carried (an empty string for command) - present iff the file has
+    # the key, hence include_empty_msg on the empty-string case.
+    private def status_result(status : JSON::Any, jid : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       finished = AsyncJobs.finished?(status)
       job_changed = status["changed"]?.try(&.as_bool) || false
       job_failed = status["failed"]?.try(&.as_bool) || false
-      msg = status["msg"]?.try(&.as_s) || (finished ? "job finished" : "job is still running")
 
-      result = PluginResult.new(changed: finished && job_changed, failed: finished && job_failed, msg: msg)
+      file_msg = status["msg"]?
+      result = if file_msg && (file_msg_s = file_msg.as_s?)
+                 PluginResult.new(changed: finished && job_changed,
+                   failed: finished && job_failed,
+                   msg: file_msg_s,
+                   include_empty_msg: true)
+               elsif file_msg
+                 PluginResult.new(changed: finished && job_changed,
+                   failed: finished && job_failed,
+                   msg: "", native_msg: file_msg)
+               else
+                 PluginResult.new(changed: finished && job_changed,
+                   failed: finished && job_failed)
+               end
+
       # Normalize started/finished into the RESULT so a finished poll
       # never omits the key (the until:/retries machinery keys off
       # `poll_result.finished`; a finished poll that omits it would
@@ -105,10 +137,35 @@ module Krikri
       # started=true - the old 0/1 ints rendered as 1/0 instead).
       result.extra["started"] = JSON::Any.new(true)
       result.extra["finished"] = JSON::Any.new(finished)
+      # Real's action-plugin base dict: empty stdout/stderr pairs (and
+      # their _lines companions) plus the jid echo and the job-file path
+      # - present on the running shape, overwritten in place by the
+      # module file's own values on the finished one (same insertion
+      # position, like merge_hash).
+      result.extra["stdout"] = JSON::Any.new("")
+      result.extra["stderr"] = JSON::Any.new("")
+      result.extra["stdout_lines"] = JSON.parse("[]")
+      result.extra["stderr_lines"] = JSON.parse("[]")
+      result.extra["ansible_job_id"] = JSON::Any.new(jid)
+      result.extra["results_file"] = JSON::Any.new(AsyncJobs.status_path(jid))
       status.as_h.each do |key, value|
         next if ["changed", "failed", "msg", "started", "finished"].includes?(key)
         result.extra[key] = value
       end
+
+      order = ["started", "finished", "stdout", "stderr", "stdout_lines",
+               "stderr_lines", "ansible_job_id", "results_file"]
+      status.as_h.each_key do |key|
+        next if ["started", "finished"].includes?(key)
+        order << key unless order.includes?(key)
+      end
+      # A file without its own failed/changed (or the still-running
+      # stub, which has neither) trails them like the executor's
+      # failed/changed backfill would; a running job's registered shape
+      # is ... results_file, failed, changed (live-verified).
+      order << "failed" unless order.includes?("failed")
+      order << "changed" unless order.includes?("changed")
+      result.key_order = order
       result
     end
   end

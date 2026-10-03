@@ -272,3 +272,31 @@ describe "stat plugin" do
     result["stat"]["isreg"].as_bool.must_equal(true)
   end
 end
+
+# Real ansible-core 2.19.11's registered stat result runs changed, stat,
+# failed (failed: false appended by _return_formatted) - live-verified
+# via `{{ r | to_json }}` on a registered stat: task (the -v dump sorts
+# alphabetically, so the order is only observable programmatically).
+# krikri's wire result carries no `failed` key on success (PluginResult
+# only emits it when failed or failed_flag is set), so the pinned order
+# below covers the keys krikri actually emits, in real's relative order.
+describe "stat plugin result key order" do
+  it "serializes the existing-path result in real stat's key order" do
+    path = tmp_path("stat-order.txt")
+    File.write(path, "order")
+
+    result = PluginSpecHelper.run("stat", {"path" => path})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "stat"])
+  ensure
+    File.delete(path) if path && File.exists?(path)
+  end
+
+  it "serializes the missing-path result in real stat's key order" do
+    result = PluginSpecHelper.run("stat", {"path" => tmp_path("stat-order-missing.txt")})
+
+    result.as_h.keys.must_equal(["changed", "stat"])
+    result["stat"].as_h.keys.must_equal(["exists"])
+  end
+end

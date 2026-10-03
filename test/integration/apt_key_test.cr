@@ -330,7 +330,15 @@ describe "apt_key plugin" do
 
       result["changed"].as_bool.must_equal(false)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-      result["msg"].as_s.must_equal("Key already present")
+      # Real apt_key.py's success shape (live-verified 2.19.11): the r
+      # dict [changed, id, short_id, fp, key_id, before] with no msg
+      # key - id stays the RAW 8-char id, before is the parsed listing.
+      result["id"].as_s.must_equal("CAFEF00D")
+      result["short_id"].as_s.must_equal("CAFEF00D")
+      result["fp"].as_s.must_equal("CAFEF00D")
+      result["key_id"].as_s.must_equal("CAFEF00D")
+      result["before"].as_a.map(&.as_s).must_equal([FAKE_KEY_ID])
+      result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before"])
     end
     File.delete(state) rescue nil
   end
@@ -348,7 +356,15 @@ describe "apt_key plugin" do
 
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-      result["msg"].as_s.must_equal("Key added")
+      # Real apt_key.py's success shape (live-verified 2.19.11): the r
+      # dict [changed, id, short_id, fp, key_id, before, after] with no
+      # msg key - after present because an add ran, and carries the
+      # re-listed 16-char long id.
+      result["id"].as_s.must_equal("1278AEBD")
+      result["short_id"].as_s.must_equal("1278AEBD")
+      result["before"].as_a.must_be_empty
+      result["after"].as_a.map(&.as_s).must_equal(["E07A3F141278AEBD"])
+      result.as_h.keys.must_equal(["changed", "id", "short_id", "fp", "key_id", "before", "after"])
     end
     File.delete(state) rescue nil
   end

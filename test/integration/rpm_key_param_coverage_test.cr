@@ -95,7 +95,9 @@ describe "rpm_key plugin fingerprint param" do
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         result["changed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_include("imported")
+        # Real 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
+        # key_order_sweep8): the borrowed "Key imported" msg was dropped.
+        result["msg"]?.must_be_nil
       end
     end
   end
@@ -136,7 +138,9 @@ describe "rpm_key plugin fingerprint param" do
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         result["changed"].as_bool.must_equal(true)
-        result["msg"].as_s.must_include("imported")
+        # Real 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
+        # key_order_sweep8): the borrowed "Key imported" msg was dropped.
+        result["msg"]?.must_be_nil
       end
     end
   end

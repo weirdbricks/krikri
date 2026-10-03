@@ -109,7 +109,21 @@ module Krikri
       # register: and of every LOOPED per-item results[] entry (both
       # strip the prefix).
       extra["_ansible_pause_console"] = JSON::Any.new(console_lines) if console_lines
-      ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
+      # Registered-shape marker (stripped at register like every
+      # _ansible_* key): pause carries stdout/stderr but real's pause
+      # module does NOT derive *_lines from them (live-verified vs
+      # 2.19.11 - a registered pause result is changed, rc, stderr,
+      # stdout, start, stop, delta, echo, user_input, failed with no
+      # stdout_lines/stderr_lines), so the executor's central
+      # stdout_lines/stderr_lines augmentation must skip it.
+      extra["_ansible_omit_command_lines"] = JSON::Any.new(true)
+      # Real 2.19.11's registered pause result order (live-verified via
+      # `{{ r | to_json }}`): changed, rc, stderr, stdout, start, stop,
+      # delta, echo, user_input, failed. The trailing failed is the
+      # executor backfill (this result carries failed unconditionally but
+      # unlisted, so it emits last); msg: "" never serializes.
+      ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra,
+        key_order: ["changed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input"]))
     end
 
     # Real's pause always waits for Enter when no duration is given; with

@@ -41,6 +41,16 @@ module Krikri
       "select_crypto_backend" => [] of String,
     }
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dump on a PEM public-key file; the
+    # module is read-only so check mode changes nothing. The executor
+    # backfills failed/changed after the plugin JSON; real puts both
+    # after the module keys.
+    SUCCESS_KEY_ORDER = %w[
+      can_load_key can_parse_key key_is_consistent fingerprints type
+      public_data failed changed
+    ]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -77,7 +87,7 @@ module Krikri
         text = openssl_out(["pkey", "-pubin", "-in", key_file, "-noout", "-text"])
         spki_der = openssl_der(["pkey", "-pubin", "-in", key_file, "-outform", "DER"])
 
-        res = PluginResult.new(changed: false, failed: false, msg: "")
+        res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
         # the real module's result dict initializes these three BEFORE
         # get_info ever runs, so they appear (false/false/None) even on
         # SUCCESS - only a private key can ever be consistency-checked

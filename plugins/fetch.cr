@@ -122,7 +122,11 @@ module Krikri
     end
 
     private def check_mode_result : PluginResult
-      PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true)
+      # Real's registered fetch check-mode result runs skipped, msg,
+      # changed - and carries NO failed key (live-verified vs 2.19.11
+      # via `{{ r | to_json }}`).
+      PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true,
+        key_order: ["skipped", "msg", "changed"])
     end
 
     private def directory_src_result(src : String) : PluginResult
@@ -132,15 +136,21 @@ module Krikri
     # Real fetch's results carry NO msg key on either the success or the
     # already-present path (live-verified vs 2.19.11 at -v).
     private def unchanged_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
-      PluginResult.new(changed: false, failed: false, checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src)
+      # Real's registered already-present result: changed, md5sum, file,
+      # dest, checksum (live-verified vs 2.19.11).
+      PluginResult.new(changed: false, failed: false, checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src,
+        key_order: ["changed", "md5sum", "file", "dest", "checksum"])
     end
 
     private def success_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
+      # Real's registered changed result: changed, md5sum, dest,
+      # remote_md5sum, checksum, remote_checksum (live-verified vs 2.19.11).
       PluginResult.new(
         changed: true, failed: false,
         dest: dest_path, checksum: remote_checksum,
         md5sum: native_checksum(dest_path, "md5"),
-        remote_checksum: remote_checksum, remote_md5sum: nil
+        remote_checksum: remote_checksum, remote_md5sum: nil,
+        key_order: ["changed", "md5sum", "dest", "remote_md5sum", "checksum", "remote_checksum"]
       )
     end
 

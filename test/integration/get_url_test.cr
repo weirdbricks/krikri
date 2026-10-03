@@ -21,11 +21,43 @@ FILE_CHECKSUM_SHA384 = begin
   digest.final.hexstring
 end
 
+# Fixed mtime the conditional-GET specs pin dest files to (seconds
+# precision, like real's timetuple()-based If-Modified-Since), plus its
+# RFC 1123 rendering - exactly what the plugin must send.
+private COND_TIME      = Time.unix(1700000000)
+private COND_HTTP_DATE = Time::Format::HTTP_DATE.format(COND_TIME)
+
 private GET_URL_TEST_SERVER = HTTP::Server.new do |context|
   case context.request.path
   when "/file.txt"
     context.response.status_code = 200
+    # Content-Length set explicitly: get_url's success msg is built from
+    # the response's Content-Length header ("OK (<n> bytes)"), and a
+    # chunked response would read as "OK (unknown bytes)" instead.
+    context.response.headers["Content-Length"] = FILE_CONTENT.bytesize.to_s
     context.response.print(FILE_CONTENT)
+  when "/conditional.txt"
+    # Real get_url's conditional GET partner: answers 304 when the
+    # request's If-Modified-Since matches the fixture's HTTP date, 200
+    # (with Last-Modified) otherwise - the shape a plain python
+    # http.server shows for a static file.
+    if context.request.headers["If-Modified-Since"]? == COND_HTTP_DATE
+      context.response.status_code = 304
+    else
+      context.response.status_code = 200
+      context.response.headers["Last-Modified"] = COND_HTTP_DATE
+      context.response.headers["Content-Length"] = FILE_CONTENT.bytesize.to_s
+      context.response.print(FILE_CONTENT)
+    end
+  when "/echo-condition.txt"
+    # Echoes which cache-control headers the plugin actually sent:
+    # "cc=<value|none>:ims=<yes|no>".
+    context.response.status_code = 200
+    cc = context.request.headers["Cache-Control"]? || "none"
+    ims = context.request.headers["If-Modified-Since"]? ? "yes" : "no"
+    body = "cc=#{cc}:ims=#{ims}"
+    context.response.headers["Content-Length"] = body.bytesize.to_s
+    context.response.print(body)
   when "/redirect.txt"
     context.response.status_code = 302
     context.response.headers["Location"] = "/file.txt"
@@ -260,6 +292,143 @@ describe "get_url plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     File.read(dest).must_equal(FILE_CONTENT)
   ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports real's OK (<n> bytes) / status_code: 200 success shape on a fresh download" do
+    # Live-verified against ansible-core 2.19.11: the 200 exit is
+    # module.exit_json(msg=info['msg'], status_code=info['status'], **result)
+    # where urls.py built info['msg'] as "OK (%s bytes)" % the final
+    # response's Content-Length. Previously krikri said plain "OK" with
+    # no status_code at all.
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    result["status_code"].as_i.must_equal(200)
+    result["changed"].as_bool.must_equal(true)
+    result["checksum_dest"].raw.must_equal(nil)
+    result["checksum_src"].as_s.wont_be_empty
+    result["src"].as_s.wont_be_empty
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "short-circuits with real's 304 shape on a conditional GET answered not-modified" do
+    # Real url_get's 304 branch: exit_json(url, dest, changed=False,
+    # msg=info['msg'] ("HTTP Error 304: Not Modified"), status_code=304,
+    # elapsed) - no checksum/md5/src keys, since no content came back.
+    # Previously krikri had no conditional GET at all: an existing dest
+    # without force: always re-downloaded in full.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.touch(dest, COND_TIME)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/conditional.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("HTTP Error 304: Not Modified")
+    result["status_code"].as_i.must_equal(304)
+    result["checksum_src"]?.must_be_nil
+    result["checksum_dest"]?.must_be_nil
+    result["md5sum"]?.must_be_nil
+    result["src"]?.must_be_nil
+    File.read(dest).must_equal(FILE_CONTENT)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "falls through to the full download and real's OK shape when the conditional GET is answered 200" do
+    # A server that ignores If-Modified-Since (or a dest whose mtime is
+    # older than the remote's) answers 200: real re-downloads and decides
+    # by SHA1 compare - changed: false, but with the same
+    # "OK (<n> bytes)"/status_code: 200 exit and checksum_dest set.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.touch(dest, COND_TIME)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(false)
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    result["status_code"].as_i.must_equal(200)
+    result["checksum_dest"].as_s.must_equal(result["checksum_src"].as_s)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "sends If-Modified-Since from dest's mtime without force, and cache-control: no-cache with force" do
+    # Real fetch_url's cache-control branch: force carries
+    # "cache-control: no-cache"; the unforced conditional GET carries
+    # If-Modified-Since. A checksum MISMATCH must also take the forced
+    # shape (real sets force=True for the re-download - last_mod_time may
+    # be newer than the remote), which the third run below asserts.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, FILE_CONTENT)
+    File.touch(dest, COND_TIME)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest})
+    File.read(dest).must_equal("cc=none:ims=yes")
+
+    File.touch(dest, COND_TIME)
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/echo-condition.txt", "dest" => dest, "force" => "yes"})
+    File.read(dest).must_equal("cc=no-cache:ims=no")
+
+    # Checksum mismatch -> forced re-download (cache-control, no
+    # If-Modified-Since). The echo body is deterministic, so its own
+    # sha256 completes the download successfully after the header is
+    # observed.
+    File.touch(dest, COND_TIME)
+    digest = OpenSSL::Digest.new("SHA256")
+    digest.update("cc=no-cache:ims=no")
+    result = PluginSpecHelper.run("get_url", {
+      "url"      => "#{GET_URL_TEST_BASE}/echo-condition.txt",
+      "dest"     => dest,
+      "checksum" => "sha256:#{digest.final.hexstring}",
+    })
+    File.read(dest).must_equal("cc=no-cache:ims=no")
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports the pre-move dest sha1 as checksum_dest when a 200 re-download changes the content" do
+    # Real computes result['checksum_dest'] = sha1(dest) BEFORE the
+    # compare-and-move, so a content-changing re-download reports the OLD
+    # content's sha1 there (live-verified 2.19.11), not null - null only
+    # when dest did not exist at all.
+    dest = File.tempname("get-url-spec")
+    File.write(dest, "stale-old-content")
+    File.touch(dest, COND_TIME)
+    digest = OpenSSL::Digest.new("SHA1")
+    digest.update("stale-old-content")
+    old_sha1 = digest.final.hexstring
+
+    result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    result["checksum_dest"].as_s.must_equal(old_sha1)
+    result["checksum_src"].as_s.wont_equal(old_sha1)
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "reports status_code: null for a file:// source like real's status-less local result" do
+    # urllib's file handler sets no info['status'], so real's final
+    # info.get('status', '') serializes as null (live-verified 2.19.11),
+    # while the msg still carries the local file's size as
+    # "OK (<n> bytes)" from the handler's own Content-length.
+    src = File.tempname("get-url-spec-src")
+    File.write(src, FILE_CONTENT)
+    dest = File.tempname("get-url-spec")
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["msg"].as_s.must_equal("OK (#{FILE_CONTENT.bytesize} bytes)")
+    result["status_code"].raw.must_equal(nil)
+    result["changed"].as_bool.must_equal(true)
+  ensure
+    File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
 
@@ -1060,6 +1229,47 @@ describe "get_url plugin" do
     end
     result["size"].as_i.must_equal(FILE_CONTENT.size)
     result["state"].as_s.must_equal("file")
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "serializes the success result in real get_url's key order (changed: true)" do
+    # Real ansible-core 2.19.11's registered get_url result runs
+    # msg, status_code, changed, checksum_dest, checksum_src, dest,
+    # elapsed, url, src, md5sum, then add_path_info's stat block -
+    # verified live via `{{ g | to_json }}` on a registered get_url
+    # task (the -v dump sorts alphabetically, so the order is only
+    # observable programmatically). krikri's wire result previously
+    # led with its fixed `changed` header instead.
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result.as_h.keys.must_equal([
+      "msg", "status_code", "changed", "checksum_dest", "checksum_src", "dest",
+      "elapsed", "url", "src", "md5sum", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
+  ensure
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "serializes the unchanged (content-matches) result in real get_url's key order" do
+    src = File.tempname("get-url-spec-src")
+    dest = File.tempname("get-url-spec")
+    File.write(src, FILE_CONTENT)
+    File.write(dest, FILE_CONTENT)
+
+    result = PluginSpecHelper.run("get_url", {"url" => "file://#{src}", "dest" => dest})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "msg", "status_code", "changed", "checksum_dest", "checksum_src", "dest",
+      "elapsed", "url", "src", "md5sum", "uid", "gid", "owner", "group", "mode", "state", "size",
+    ])
   ensure
     File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)

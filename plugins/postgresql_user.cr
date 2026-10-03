@@ -5,6 +5,7 @@ require "pg"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/postgresql_connection"
+require "../src/krikri/plugin_helpers/postgresql_deprecations"
 require "../src/krikri/plugin_helpers/postgresql_password_verifier"
 require "../src/krikri/plugin_helpers/postgresql_role_flags"
 require "../src/krikri/plugin_helpers/sql_quoting"
@@ -55,6 +56,14 @@ module Krikri
   class PostgresqlUserPlugin < BasePlugin
     ROLE_ATTR_COLUMNS = %w[rolsuper rolinherit rolcreaterole rolcreatedb rolcanlogin rolreplication rolbypassrls]
 
+    # community.postgresql's shared connection spec still ACCEPTS its
+    # deprecated aliases, and real warns about each one the task uses
+    # (both on stderr and in the registered result's trailing
+    # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
+    def finalize_result(result : PluginResult) : PluginResult
+      PluginHelpers::PostgresqlDeprecations.finalize(result, @params, db_alias: true)
+    end
+
     def execute : PluginResult
       # Real Ansible's `name:` param has `aliases: ['user']` - same bug
       # class as postgresql_db's `db:` alias (round 43,
@@ -63,7 +72,8 @@ module Krikri
       # recognize at all.
       name = @params["name"]? || @params["user"]?
       unless name
-        return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name")
+        return PluginResult.new(changed: false, failed: true,
+          msg: "missing required arguments: user")
       end
 
       state = @params["state"]? || "present"
@@ -99,78 +109,136 @@ module Krikri
         end
       end
     rescue ex : DB::ConnectionRefused
-      PluginHelpers::DbErrors.connection_failed(ex, "PostgreSQL")
+      PluginHelpers::DbErrors.pg_connection_failed(ex, @params)
     rescue ex : PQ::PQError
       PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
+    end
+
+    # Real Ansible's exit_json(**kw) with kw = dict(user=user) then
+    # kw['user_removed'], kw['changed'], kw['queries']
+    # (postgresql_user.py:919, 955/965, 975-976) - `failed: false` is
+    # backfilled by the controller after the module's own kwargs. `queries`
+    # is the list of SQL statement TEMPLATES the module appended to
+    # executed_queries (unmogrified - the %(password)s placeholders stay
+    # literal, and the flags string is appended verbatim after a join, so a
+    # no-flag CREATE USER carries real's trailing space). Live-verified
+    # against real ansible-core 2.19.11 + community.postgresql 4.2.0.
+    SUCCESS_KEY_ORDER = %w[user user_removed changed queries failed]
+
+    private def user_result(
+      name : String, changed : Bool, queries : Array(String), user_removed : Bool? = nil,
+    ) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, user: name, queries: queries,
+        failed_flag: true, key_order: SUCCESS_KEY_ORDER)
+      result.extra["user_removed"] = JSON::Any.new(user_removed) if user_removed
+      result
     end
 
     private def ensure_present(
       db : DB::Database, name : String, existing_flags : Hash(String, Bool)?,
       password : String?, desired_flags : Hash(String, Bool)?, check_mode : Bool,
     ) : PluginResult
+      queries = [] of String
       if existing_flags
-        changed = update_existing_role(db, name, existing_flags, password, desired_flags, check_mode)
+        changed = update_existing_role(db, name, existing_flags, password, desired_flags, check_mode, queries)
       else
-        return PluginResult.new(changed: true, failed: false, msg: "Role #{name} would be created") if check_mode
-        create_role(db, name, password, desired_flags)
+        # Real's user_add() records the CREATE template even under check
+        # mode (the module is never executed, but the template is already
+        # appended) - live-verified.
+        queries << create_template(name, password, desired_flags)
+        unless check_mode
+          db.exec real_sql(queries.last, password)
+        end
         changed = true
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Updated role #{name}" : "Role #{name} already up to date")
+      user_result(name, changed, queries)
+    end
+
+    # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
+    # ROLE` - they're otherwise identical in Postgres, but `CREATE
+    # USER` implies LOGIN by default while plain `CREATE ROLE`
+    # defaults to NOLOGIN. Real bug found benchmarking
+    # robertdebock.postgres (round 43): with no `role_attr_flags:`
+    # given at all (the common case - most playbooks just want a
+    # normal login-capable user), this plugin created a role that
+    # couldn't log in at all, while real Ansible's created one that
+    # could - confirmed via `\du` showing "Cannot login" here vs.
+    # empty attributes on real Ansible's identically-configured run.
+    private def create_template(
+      name : String, password : String?, desired_flags : Hash(String, Bool)?,
+    ) : String
+      parts = ["CREATE USER #{quote_ident(name)}"]
+      if password && !password.empty?
+        parts << "WITH ENCRYPTED"
+        parts << "PASSWORD %(password)s"
+      end
+      parts << (desired_flags ? PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) : "")
+      String.build { |str| parts.each_with_index { |part, i| str << ' ' if i > 0; str << part } }
+    end
+
+    # The statement actually sent: real interpolates the %(password)s
+    # placeholder (plus encrypted/expires) via psycopg's parameter binding.
+    private def real_sql(template : String, password : String?) : String
+      return template unless password && !password.empty?
+      template.gsub("%(password)s", quote_str(password))
     end
 
     private def update_existing_role(
       db : DB::Database, name : String, existing_flags : Hash(String, Bool),
       password : String?, desired_flags : Hash(String, Bool)?, check_mode : Bool,
+      queries : Array(String),
     ) : Bool
       changed = false
 
       if password
         pw_changing = password_should_change?(db, name, password)
-        return true if check_mode && pw_changing
-
         if pw_changing
-          db.exec "ALTER ROLE #{quote_ident(name)} PASSWORD #{quote_str(password)}"
+          queries << alter_password_template(name, password)
+          unless check_mode
+            db.exec real_sql(queries.last, password)
+          end
           changed = true
         end
       end
 
       if desired_flags && flags_differ?(existing_flags, desired_flags)
-        return true if check_mode
-
-        db.exec "ALTER ROLE #{quote_ident(name)} #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
+        queries << "ALTER USER #{quote_ident(name)} WITH #{PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags)}"
+        db.exec queries.last unless check_mode
         changed = true
       end
 
       changed
     end
 
-    private def create_role(
-      db : DB::Database, name : String, password : String?, desired_flags : Hash(String, Bool)?,
-    ) : Nil
-      clause = String.build do |str|
-        str << " " << PluginHelpers::PostgresqlRoleFlags.to_sql(desired_flags) if desired_flags
-        str << " PASSWORD " << quote_str(password) if password
+    # Real's pwchanging ALTER template (postgresql_user.py:639-647):
+    # 'ALTER USER "name"' + 'WITH ENCRYPTED' + 'PASSWORD %(password)s' +
+    # the (possibly empty) role_attr_flags string.
+    private def alter_password_template(name : String, password : String) : String
+      String.build do |str|
+        str << "ALTER USER " << quote_ident(name)
+        if password.empty?
+          str << " WITH PASSWORD NULL"
+        else
+          str << " WITH ENCRYPTED PASSWORD %(password)s"
+        end
+        str << ' '
       end
-      # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
-      # ROLE` - they're otherwise identical in Postgres, but `CREATE
-      # USER` implies LOGIN by default while plain `CREATE ROLE`
-      # defaults to NOLOGIN. Real bug found benchmarking
-      # robertdebock.postgres (round 43): with no `role_attr_flags:`
-      # given at all (the common case - most playbooks just want a
-      # normal login-capable user), this plugin created a role that
-      # couldn't log in at all, while real Ansible's created one that
-      # could - confirmed via `\du` showing "Cannot login" here vs.
-      # empty attributes on real Ansible's identically-configured run.
-      db.exec "CREATE USER #{quote_ident(name)}#{clause}"
     end
 
     private def ensure_absent(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "Role already absent") unless exists
-      return PluginResult.new(changed: true, failed: false, msg: "Role #{name} would be removed") if check_mode
+      return user_result(name, false, [] of String) unless exists
 
-      db.exec "DROP ROLE #{quote_ident(name)}"
-      PluginResult.new(changed: true, failed: false, msg: "Removed role #{name}")
+      # Real's check-mode absent path never reaches user_delete(), so
+      # executed_queries stays empty while user_removed is still true
+      # (postgresql_user.py:951-956); a real drop appends the DROP and
+      # sets user_removed to the drop's own changed (965).
+      queries = [] of String
+      unless check_mode
+        queries << "DROP USER #{quote_ident(name)}"
+        db.exec queries.last
+      end
+      user_result(name, true, queries, true)
     end
 
     private def flags_differ?(existing : Hash(String, Bool), desired : Hash(String, Bool)) : Bool

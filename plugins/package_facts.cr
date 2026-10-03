@@ -143,11 +143,20 @@ module Krikri
 
       return no_manager_result(managers) if found == 0
 
+      # Real 2.19.11 registered package_facts result (live-verified):
+      # ansible_facts, failed, changed - the module's exit_json passes no
+      # changed, so the task executor backfills the failed, changed tail;
+      # the wire omits changed (omit_changed) to match. No msg: real's
+      # exit_json passes none either (an earlier krikri-only
+      # "Gathered N package facts" msg key sat between ansible_facts and
+      # failed - real has no msg at all, live-verified via
+      # `{{ r.keys() | list | to_json }}`).
       PluginResult.new(
         changed: false,
         failed: false,
-        msg: "Gathered #{packages.size} package facts",
-        ansible_facts: JSON::Any.new({"packages" => JSON::Any.new(packages)})
+        omit_changed: true,
+        ansible_facts: JSON::Any.new({"packages" => JSON::Any.new(packages)}),
+        key_order: ["ansible_facts"]
       )
     end
 

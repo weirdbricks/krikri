@@ -73,11 +73,13 @@ module Krikri
         command.concat(targets)
       end
 
+      params_val : JSON::Any? = nil
       if params_json = @params["params"]?.presence
         parsed = JSON.parse(params_json) rescue nil
         unless parsed && parsed.as_h?
           return PluginResult.new(changed: false, failed: true, msg: "params must be a dictionary")
         end
+        params_val = parsed
         parsed.as_h.each do |key, value|
           # Real: f"={v!s}" for non-None values (Python str() - a bool
           # becomes "True"/"False", a number its decimal digits), a bare
@@ -92,7 +94,6 @@ module Krikri
 
       full_command = command.map { |part| shlex_quote(part) }.join(' ')
       check_mode = true?(@params["_ansible_check_mode"]?)
-
       # An explicit `make:` param is used verbatim - real make.py never
       # existence-checks it, so the failure surfaces at run_command's
       # spawn of the -q check: basic.py's OSError handler does
@@ -120,11 +121,22 @@ module Krikri
 
       # Real reports NO msg anywhere - just stdout/stderr (sanitized
       # rstrip) and the shlex-quoted base command the -q check built.
+      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+      # changed, failed, stdout, stderr, target, targets, params, chdir,
+      # file, jobs, command - exit_json(changed=..., failed=False, ...)
+      # emits failed EXPLICITLY (second), and the module echoes its raw
+      # params back (null when absent). stdout_lines/stderr_lines land
+      # after command via the register-time lines augmentation, exactly
+      # where real's registered result shows them.
       if check_mode
-        return PluginResult.new(changed: needs_rebuild, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command)
+        return PluginResult.new(changed: needs_rebuild, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command,
+          failed_flag: true, target: target, targets: targets, params: params_val, chdir: chdir, file: @params["file"]?, jobs: @params["jobs"]?,
+          key_order: %w[changed failed stdout stderr target targets params chdir file jobs command])
       end
 
-      return PluginResult.new(changed: false, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command) unless needs_rebuild
+      return PluginResult.new(changed: false, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command,
+        failed_flag: true, target: target, targets: targets, params: params_val, chdir: chdir, file: @params["file"]?, jobs: @params["jobs"]?,
+        key_order: %w[changed failed stdout stderr target targets params chdir file jobs command]) unless needs_rebuild
 
       result = remote_exec("#{chdir_part}#{full_command}")
       unless result[:exit_code] == 0
@@ -133,7 +145,9 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: sanitize(result[:stderr]), stdout: sanitize(result[:stdout]), stderr: sanitize(result[:stderr]), rc: result[:exit_code])
       end
 
-      PluginResult.new(changed: true, failed: false, stdout: sanitize(result[:stdout]), stderr: sanitize(result[:stderr]), command: full_command)
+      PluginResult.new(changed: true, failed: false, stdout: sanitize(result[:stdout]), stderr: sanitize(result[:stderr]), command: full_command,
+        failed_flag: true, target: target, targets: targets, params: params_val, chdir: chdir, file: @params["file"]?, jobs: @params["jobs"]?,
+        key_order: %w[changed failed stdout stderr target targets params chdir file jobs command])
     end
 
     private def py_str(value : JSON::Any) : String

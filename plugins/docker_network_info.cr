@@ -54,6 +54,16 @@ module Krikri
     # aliases on this module).
     SPEC = PluginHelpers::DockerClient::COMMON_SPEC.merge({"name" => [] of String})
 
+    # Real's exit_json kwargs order (changed=, exists=, network=), with
+    # the module protocol appending `failed` last - live-verified
+    # against real ansible-core 2.19.11 + community.docker 5.2.1. Real
+    # passes no msg on either outcome, so a successful result carries no
+    # `msg` key at all.
+    KEY_ORDER = %w[changed exists network failed]
+
+    # Real's own wrapper for a DockerException escaping the module body.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -66,16 +76,18 @@ module Krikri
 
       matched = api.networks.list.find { |net| net.name == name || net.id.starts_with?(name) }
 
+      # Real returns exists:false + a null network rather than failing
+      # when the name/ID matches nothing.
       unless matched
-        return PluginResult.new(changed: false, failed: false, msg: "Network #{name} not found",
-          exists: false, network: nil)
+        return PluginResult.new(changed: false, failed: false, failed_flag: false,
+          key_order: KEY_ORDER, exists: false, network: nil)
       end
 
       raw = raw_get(api.client, "/networks/#{matched.id}")
-      PluginResult.new(changed: false, failed: false, msg: "Network #{name} found",
-        exists: true, network: JSON.parse(raw))
+      PluginResult.new(changed: false, failed: false, failed_flag: false,
+        key_order: KEY_ORDER, exists: true, network: JSON.parse(raw))
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Error connecting: Cannot connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end

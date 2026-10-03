@@ -78,9 +78,18 @@ module Krikri
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
+    # Real's registered find result order (live-verified vs 2.19.11).
+    private FIND_KEY_ORDER = %w[files changed msg matched examined skipped_paths]
+
     # contains: with an unknown encoding: name - not a per-file miss but a
     # path-level failure in real (see read_content)
     class UnknownEncoding < Exception; end
+
+    # A directory-listing error real's handle_walk_errors does NOT swallow
+    # (anything but EPERM/EACCES/ENOENT): real re-raises it out of
+    # os.walk into the per-search-path handler, which records the TOP
+    # search path (not the failing subdirectory) and warns about it.
+    class WalkError < Exception; end
 
     # ansible.builtin.find's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.find). Validated at
@@ -166,65 +175,83 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "failed to process size", size: size)
       end
 
-      files, examined, skipped_paths = collect_matches(paths, options)
+      files, examined, skipped_paths, warnings = collect_matches(paths, options)
 
-      # find.py: module.warn("Skipped '%s' path due to this access issue: %s\n")
-      # per skipped path - the trailing newline stays in the registered
-      # warning text (the [WARNING] display strips it).
-      warnings = skipped_paths.map { |path, why| "Skipped '#{path}' path due to this access issue: #{why}\n" }
+      # Real find.py warns ONLY for the per-search-path failures (a
+      # not-a-directory path, an UnknownEncoding hit, a non-EPERM/EACCES/
+      # ENOENT directory-listing error) and - live-verified vs 2.19.11 -
+      # any warning flips the result msg to "Not all paths examined,
+      # check warnings for details". An unreadable directory recorded by
+      # os.walk's onerror handler stays silent: msg unchanged, no
+      # warnings key (see walk's rescue).
       extra = warnings.empty? ? nil : warnings
+      msg = extra ? "Not all paths examined, check warnings for details" : "All paths examined"
 
       if extra
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "All paths examined",
+          msg: msg,
           examined: examined,
           matched: files.size,
           files: files,
           skipped_paths: skipped_paths,
-          warnings: extra
+          warnings: extra,
+          key_order: FIND_KEY_ORDER
         )
       end
 
+      # Real's registered find result runs files, changed, msg, matched,
+      # examined, skipped_paths, failed (live-verified vs 2.19.11 via
+      # `{{ r | to_json }}`; check mode is the same shape). warnings is
+      # unlisted - it trails (its real position was not confirmed live).
       PluginResult.new(
         changed: false,
         failed: false,
-        msg: "All paths examined",
+        msg: msg,
         examined: examined,
         matched: files.size,
         files: files,
-        skipped_paths: skipped_paths
+        skipped_paths: skipped_paths,
+        key_order: FIND_KEY_ORDER
       )
     end
 
-    private def collect_matches(paths : Array(String), options : Options) : {Array(JSON::Any), Int32, Hash(String, JSON::Any)}
+    private def collect_matches(paths : Array(String), options : Options) : {Array(JSON::Any), Int32, Hash(String, JSON::Any), Array(String)}
       files = [] of JSON::Any
       examined = 0
       skipped_paths = {} of String => JSON::Any
+      warnings = [] of String
 
       paths.each do |search_path|
         unless Dir.exists?(search_path)
-          skipped_paths[search_path] = JSON::Any.new("'#{search_path}' is not a directory")
+          why = "'#{search_path}' is not a directory"
+          skipped_paths[search_path] = JSON::Any.new(why)
+          warnings << "Skipped '#{search_path}' path due to this access issue: #{why}\n"
           next
         end
 
         begin
-          examined += walk_path(search_path, options, files)
+          examined += walk_path(search_path, options, files, skipped_paths, warnings)
         rescue ex : UnknownEncoding
           skipped_paths[search_path] = JSON::Any.new(ex.message.to_s)
+          warnings << "Skipped '#{search_path}' path due to this access issue: #{ex.message}\n"
+          next
+        rescue ex : WalkError
+          skipped_paths[search_path] = JSON::Any.new(ex.message.to_s)
+          warnings << "Skipped '#{search_path}' path due to this access issue: #{ex.message}\n"
           next
         end
         break if (limit = options.limit) && files.size >= limit
       end
 
-      {files, examined, skipped_paths}
+      {files, examined, skipped_paths, warnings}
     end
 
-    private def walk_path(search_path : String, options : Options, files : Array(JSON::Any)) : Int32
+    private def walk_path(search_path : String, options : Options, files : Array(JSON::Any), skipped_paths : Hash(String, JSON::Any), warnings : Array(String)) : Int32
       examined = 0
 
-      entries = list_entries(search_path, options)
+      entries = list_entries(search_path, options, skipped_paths)
       entries.each do |entry_path|
         examined += 1
         next if !options.hidden && hidden_path?(entry_path, search_path)
@@ -315,7 +342,7 @@ module Krikri
     # either way), just not walked into. Unreadable directories are
     # skipped silently rather than failing the whole search, matching the
     # previous shell implementation's `2>/dev/null`.
-    private def list_entries(search_path : String, options : Options) : Array(String)
+    private def list_entries(search_path : String, options : Options, skipped_paths : Hash(String, JSON::Any)) : Array(String)
       max_depth = if !options.recurse
                     1
                   elsif depth = options.depth
@@ -325,11 +352,11 @@ module Krikri
                   end
 
       entries = [] of String
-      walk(search_path, 1, max_depth, options, entries)
+      walk(search_path, 1, max_depth, options, entries, skipped_paths)
       entries
     end
 
-    private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(String)) : Nil
+    private def walk(dir : String, current_depth : Int32, max_depth : Int32, options : Options, entries : Array(String), skipped_paths : Hash(String, JSON::Any)) : Nil
       return if current_depth > max_depth
 
       Dir.each_child(dir) do |child|
@@ -342,12 +369,32 @@ module Krikri
         # follow, so follow only widens the walk, never re-classifies a
         # symlink as its target type.
         if File.directory?(child_path) && (options.follow || !File.symlink?(child_path))
-          walk(child_path, current_depth + 1, max_depth, options, entries)
+          walk(child_path, current_depth + 1, max_depth, options, entries, skipped_paths)
         end
       end
-    rescue File::Error
-      # Permission denied, etc. - skip this directory, same as the
-      # previous shell implementation's `2>/dev/null`.
+    rescue ex : File::Error
+      # Real's os.walk(onerror=handle_walk_errors) - live-verified vs
+      # 2.19.11: an unreadable directory is NOT a silent skip and NOT a
+      # failure. EPERM/EACCES/ENOENT are recorded in skipped_paths under
+      # the UNLISTABLE directory's own path with Python's OSError str()
+      # text ("[Errno 13] Permission denied: '<path>'"), swallowed
+      # silently - no warning, msg stays "All paths examined", the
+      # registered result carries no warnings key. Any other errno
+      # re-raises out of os.walk into the per-search-path handler, which
+      # records the TOP search path and warns (WalkError).
+      case ex.os_error
+      when Errno::EACCES, Errno::EPERM, Errno::ENOENT
+        skipped_paths[dir] = JSON::Any.new(os_error_text(dir, ex))
+      else
+        raise WalkError.new(os_error_text(dir, ex))
+      end
+    end
+
+    # Python's OSError str(): "[Errno 13] Permission denied: '/path'".
+    private def os_error_text(path : String, ex : File::Error) : String
+      strerror = ex.os_error.try(&.message) || ex.message.to_s
+      errno_value = ex.os_error.try(&.value) || 0
+      "[Errno #{errno_value}] #{strerror}: '#{path}'"
     end
 
     # True if any path component between search_path and entry_path starts

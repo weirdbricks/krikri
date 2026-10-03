@@ -92,6 +92,25 @@ module Krikri
       end
     end
 
+    # Real modprobe.py exits every success path through
+    # `module.exit_json(**modprobe.result)` where result is the
+    # fixed-shape dict {"changed", "name", "params", "state"} (its
+    # `result` property) - no msg key on any success exit, and the same
+    # order whether the module was already loaded, loaded/unloaded for
+    # real, or would be in check mode. Live-verified against real
+    # ansible-core 2.19.11 (already-loaded path).
+    private def modprobe_result(changed : Bool, name : String, state : String) : PluginResult
+      params = @params["params"]? || ""
+      PluginResult.new(
+        changed: changed,
+        failed: false,
+        name: name,
+        params: params,
+        state: state,
+        key_order: ["changed", "name", "params", "state"],
+      )
+    end
+
     # Real modprobe.py's module_loaded(): scans /proc/modules for
     # "<name_> " (dash-normalized), then falls back to scanning
     # /lib/modules/$(uname -r)/modules.builtin for lines ending in
@@ -176,8 +195,8 @@ module Krikri
     end
 
     private def ensure_loaded(modprobe_path : String, name : String, loaded : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "#{name} already loaded") if loaded
-      return PluginResult.new(changed: true, failed: false, msg: "Would load #{name}") if check_mode
+      return modprobe_result(false, name, "present") if loaded
+      return modprobe_result(true, name, "present") if check_mode
 
       result = remote_exec(PluginHelpers::ModprobeCommand.load_command(modprobe_path, name, @params["params"]?))
       unless result[:exit_code] == 0
@@ -186,19 +205,19 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Loaded #{name}")
+      modprobe_result(true, name, "present")
     end
 
     private def ensure_unloaded(modprobe_path : String, name : String, loaded : Bool, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "#{name} already unloaded") unless loaded
-      return PluginResult.new(changed: true, failed: false, msg: "Would unload #{name}") if check_mode
+      return modprobe_result(false, name, "absent") unless loaded
+      return modprobe_result(true, name, "absent") if check_mode
 
       result = remote_exec("#{modprobe_path} -r #{Process.quote(name)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "Unloaded #{name}")
+      modprobe_result(true, name, "absent")
     end
   end
 end

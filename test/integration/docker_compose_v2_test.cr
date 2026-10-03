@@ -109,6 +109,10 @@ describe "docker_compose_v2 plugin" do
 end
 
 describe "docker_compose_v2 plugin (live docker)" do
+  # Live podman runtime and project names derived from the (shared) suite pid:
+  # never run alongside sibling workers (see test/minitest_helper.cr).
+  serial!
+
   it "converges a project and is idempotent on re-run" do
     skip "docker compose CLI not available" unless compose_available?
 
@@ -121,14 +125,14 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_src"  => dir,
       "project_name" => project_name,
     })
-    falsey?(first["failed"]?.try(&.as_bool)).must_equal(true, first["msg"].as_s)
+    falsey?(first["failed"]?.try(&.as_bool)).must_equal(true, first["msg"]?.try(&.raw).to_s)
     first["changed"].as_bool.must_equal(true, "first up should create the container")
 
     second = PluginSpecHelper.run("docker_compose_v2", {
       "project_src"  => dir,
       "project_name" => project_name,
     })
-    falsey?(second["failed"]?.try(&.as_bool)).must_equal(true, second["msg"].as_s)
+    falsey?(second["failed"]?.try(&.as_bool)).must_equal(true, second["msg"]?.try(&.raw).to_s)
     second["changed"].as_bool.must_equal(false, "second up should be a no-op (warm-run idempotency)")
 
     stopped = PluginSpecHelper.run("docker_compose_v2", {
@@ -136,7 +140,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_name" => project_name,
       "state"        => "stopped",
     })
-    falsey?(stopped["failed"]?.try(&.as_bool)).must_equal(true, stopped["msg"].as_s)
+    falsey?(stopped["failed"]?.try(&.as_bool)).must_equal(true, stopped["msg"]?.try(&.raw).to_s)
     stopped["changed"].as_bool.must_equal(true, "stopping a running project reports changed")
 
     stopped_again = PluginSpecHelper.run("docker_compose_v2", {
@@ -144,7 +148,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "project_name" => project_name,
       "state"        => "stopped",
     })
-    falsey?(stopped_again["failed"]?.try(&.as_bool)).must_equal(true, stopped_again["msg"].as_s)
+    falsey?(stopped_again["failed"]?.try(&.as_bool)).must_equal(true, stopped_again["msg"]?.try(&.raw).to_s)
     stopped_again["changed"].as_bool.must_equal(false, "stopping an already-stopped project is a no-op (real module's _are_containers_stopped gate)")
 
     down = PluginSpecHelper.run("docker_compose_v2", {
@@ -153,12 +157,75 @@ describe "docker_compose_v2 plugin (live docker)" do
       "state"          => "absent",
       "remove_volumes" => "true",
     })
-    falsey?(down["failed"]?.try(&.as_bool)).must_equal(true, down["msg"].as_s)
+    falsey?(down["failed"]?.try(&.as_bool)).must_equal(true, down["msg"]?.try(&.raw).to_s)
   ensure
     if dir && Dir.exists?(dir)
       cleanup_err = IO::Memory.new
       Process.run("docker", ["compose", "-p", "krikri-spec-#{Process.pid}", "down", "--volumes", "--remove-orphans"], error: cleanup_err)
       FileUtils.rm_r(dir)
+    end
+  end
+end
+
+# Registered-result shape parity for docker_compose_v2, live-verified
+# key-for-key against real ansible-core 2.19.11 + community.docker 5.2.1:
+# a successful run registers changed/actions/stdout/stderr (with an
+# empty one dropped)/containers/images - and NO msg at all.
+describe "docker_compose_v2 result shape" do
+  # Live podman runtime and project names derived from the (shared) suite pid:
+  # never run alongside sibling workers (see test/minitest_helper.cr).
+  serial!
+
+  it "matches real's up key set and order" do
+    skip "docker compose CLI not available" unless compose_available?
+
+    dir = File.tempname("dcv2-shape", ".d")
+    Dir.mkdir(dir)
+    File.write(File.join(dir, "compose.yaml"), live_compose_yaml)
+    project_name = "krikri-kp-dk2-shape-#{Process.pid}"
+    begin
+      up = PluginSpecHelper.run("docker_compose_v2", {
+        "project_src" => dir, "project_name" => project_name,
+      })
+      falsey?(up["failed"]?.try(&.as_bool)).must_equal(true, up.to_json)
+      up.as_h.keys.to_a.must_equal(["changed", "actions", "stderr", "containers", "images", "failed"])
+      up["actions"].as_a.all? { |a| a.as_h.keys.to_a == ["what", "id", "status"] }.must_equal(true)
+      up["containers"].as_a.all? { |entry| entry.as_h["Names"].as_a.map(&.as_s).size >= 1 }.must_equal(true)
+      up["images"].as_a.select { |image| image.as_h.has_key?("ID") }.wont_be_empty
+
+      PluginSpecHelper.run("docker_compose_v2", {
+        "project_src" => dir, "project_name" => project_name, "state" => "absent",
+      })
+    ensure
+      Process.run("docker", ["compose", "--project-name", project_name, "-f",
+                             File.join(dir, "compose.yaml"), "down", "--volumes", "--remove-orphans"],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  it "matches real's down key set and order" do
+    skip "docker compose CLI not available" unless compose_available?
+
+    dir = File.tempname("dcv2-shape-down", ".d")
+    Dir.mkdir(dir)
+    File.write(File.join(dir, "compose.yaml"), live_compose_yaml)
+    project_name = "krikri-kp-dk2-shape-#{Process.pid}"
+    begin
+      PluginSpecHelper.run("docker_compose_v2", {
+        "project_src" => dir, "project_name" => project_name,
+      })
+      down = PluginSpecHelper.run("docker_compose_v2", {
+        "project_src" => dir, "project_name" => project_name, "state" => "absent",
+      })
+      falsey?(down["failed"]?.try(&.as_bool)).must_equal(true, down.to_json)
+      down.as_h.keys.to_a.must_equal(["changed", "actions", "stderr", "containers", "images", "failed"])
+      down["containers"].as_a.must_be_empty
+    ensure
+      Process.run("docker", ["compose", "--project-name", project_name, "-f",
+                             File.join(dir, "compose.yaml"), "down", "--volumes", "--remove-orphans"],
+        output: Process::Redirect::Close, error: Process::Redirect::Close)
+      FileUtils.rm_rf(dir)
     end
   end
 end

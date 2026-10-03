@@ -76,6 +76,35 @@ module Krikri
   # native. This matches the *existing* (pre-conversion) limitation
   # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
+    # Real ansible-core 2.19.11's registered file result key order -
+    # live-verified via `{{ r | to_json }}` on registered file: tasks
+    # (the -v dump sorts alphabetically, so the order is only observable
+    # programmatically). The module's ensure_* helpers build their dict
+    # as path|dest, changed (, diff - present only under --diff, popped
+    # otherwise: `if not module._diff: result.pop('diff', None)`), then
+    # AnsibleModule.add_path_info merges uid/gid/owner/group/mode/state/
+    # size and _return_formatted appends failed: false. Verified across
+    # state=directory/touch/absent (changed and unchanged), state=link/
+    # hard (created and already-correct), check mode on existing and
+    # absent paths, and state=file with a mode change under --diff.
+    # `path` and `dest` are both listed because the lead key differs per
+    # state (touch/link/hard report under dest, the rest under path) -
+    # exactly one of the two is ever present, and real never emits both.
+    # `src` trails dest on the link/hard results (real: dest, src,
+    # changed, ... - live-verified); no success result carries path and
+    # src together.
+    private SUCCESS_KEY_ORDER = %w[path dest src changed diff uid gid owner group mode state size failed]
+
+    # state=absent's variant: ensure_absent builds its dict with a
+    # module-level `state: absent` echo BEFORE add_path_info runs, and a
+    # Python dict assignment to an existing key keeps its insertion
+    # position - so add_path_info's overwritten `state` stays right
+    # after changed, ahead of uid (live-verified: a state=absent --check
+    # on an existing directory reports path, changed, state, uid, gid,
+    # owner, group, mode, size, failed - state BEFORE uid, unlike every
+    # other state where add_path_info appends it after mode).
+    private ABSENT_KEY_ORDER = %w[path dest changed diff state uid gid owner group mode size failed]
+
     # ansible.builtin.file's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.file). Validated at
     # module setup by BasePlugin#validate_bool_params! - see its block
@@ -351,7 +380,8 @@ module Krikri
           result = PluginResult.new(
             changed: changed,
             failed: false,
-            path: path
+            path: path,
+            key_order: SUCCESS_KEY_ORDER
           )
           add_path_info(result, path)
           return result
@@ -372,7 +402,8 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "",
-          path: path
+          path: path,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -380,7 +411,8 @@ module Krikri
         return PluginResult.new(
           changed: true,
           failed: false,
-          msg: ""
+          msg: "",
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -443,7 +475,8 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        path: path
+        path: path,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -474,7 +507,8 @@ module Krikri
           result = PluginResult.new(
             changed: changed,
             failed: false,
-            path: path
+            path: path,
+            key_order: SUCCESS_KEY_ORDER
           )
           add_path_info(result, path)
           return result
@@ -490,7 +524,8 @@ module Krikri
           # Same no-msg-on-unchanged shape as handle_directory's own
           # existing-directory branch (round900902 juju4.adduser).
           msg: "",
-          path: path
+          path: path,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -513,7 +548,8 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "",
-          diff: diff_data
+          diff: diff_data,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -525,9 +561,15 @@ module Krikri
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: "File attributes updated",
+        # Real's file module result carries NO msg on any success path -
+        # attribute updates included (live-verified vs 2.19.11: a mode
+        # change on an existing file serializes as path, changed, the
+        # stat block, failed - no msg key). msg: "" serializes as no msg
+        # key - PluginResult omits empty msgs unless include_empty_msg.
+        msg: "",
         diff: diff_data,
-        path: path
+        path: path,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -549,7 +591,8 @@ module Krikri
               failed: false,
               msg: "",
               dest: path,
-              src: src
+              src: src,
+              key_order: SUCCESS_KEY_ORDER
             )
           end
 
@@ -562,7 +605,8 @@ module Krikri
             failed: false,
             msg: "",
             dest: path,
-            src: src
+            src: src,
+            key_order: SUCCESS_KEY_ORDER
           )
         end
       end
@@ -574,7 +618,8 @@ module Krikri
           failed: false,
           msg: "",
           dest: path,
-          src: src
+          src: src,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -609,7 +654,8 @@ module Krikri
         failed: false,
         msg: "",
         dest: path,
-        src: src
+        src: src,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -707,7 +753,8 @@ module Krikri
           failed: false,
           msg: "",
           dest: path,
-          src: src
+          src: src,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -716,7 +763,8 @@ module Krikri
         failed: false,
         msg: "",
         dest: path,
-        src: src
+        src: src,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -741,7 +789,8 @@ module Krikri
           failed: false,
           msg: "",
           dest: path,
-          src: src
+          src: src,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -780,7 +829,8 @@ module Krikri
         failed: false,
         msg: "",
         dest: path,
-        src: src
+        src: src,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -823,7 +873,8 @@ module Krikri
           changed: changed,
           failed: false,
           msg: "",
-          dest: path
+          dest: path,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -837,7 +888,8 @@ module Krikri
           changed: true,
           failed: false,
           msg: "",
-          dest: path
+          dest: path,
+          key_order: SUCCESS_KEY_ORDER
         )
       end
 
@@ -884,7 +936,8 @@ module Krikri
         changed: true,
         failed: false,
         msg: "",
-        dest: path
+        dest: path,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -901,7 +954,8 @@ module Krikri
         changed: attrs_changed || times_changed,
         failed: false,
         msg: "",
-        dest: path
+        dest: path,
+        key_order: SUCCESS_KEY_ORDER
       )
     end
 
@@ -917,7 +971,8 @@ module Krikri
             changed: false,
             failed: false,
             msg: "",
-            path: path
+            path: path,
+            key_order: ABSENT_KEY_ORDER
           )
         end
 
@@ -925,7 +980,8 @@ module Krikri
           changed: false,
           failed: false,
           msg: "",
-          path: path
+          path: path,
+          key_order: ABSENT_KEY_ORDER
         )
       end
 
@@ -935,7 +991,8 @@ module Krikri
           changed: true,
           failed: false,
 
-          path: path
+          path: path,
+          key_order: ABSENT_KEY_ORDER
         )
         # Check mode does NOT remove - the file still exists at module
         # exit, so real Ansible's add_path_info merges its PRE-removal
@@ -965,7 +1022,8 @@ module Krikri
       PluginResult.new(
         changed: true,
         failed: false,
-        path: path
+        path: path,
+        key_order: ABSENT_KEY_ORDER
       )
     end
 

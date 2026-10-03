@@ -53,6 +53,10 @@ module Krikri
       host = inventory.hosts[name]? || Host.new(name)
       @params.each do |key, value|
         next if SPECIAL_PARAMS.includes?(key)
+        # The executor injects control params (_verbosity, _ansible_*) into
+        # every action's params; real's host_vars loop only sees the task's
+        # own args, so these must not become host variables.
+        next if key == "_verbosity" || key.starts_with?("_ansible_")
         host.vars[key] = JSON::Any.new(value)
       end
 
@@ -77,7 +81,7 @@ module Krikri
           "host_vars" => JSON::Any.new(host.vars),
         }),
       }
-      ActionResult.final(ActionResult.plugin_result_json(true, false, "", extra))
+      ActionResult.final(ActionResult.plugin_result_json(true, false, "", extra, key_order: ["changed", "add_host", "failed"]))
     end
 
     # `groups`/`group` accepts a comma-separated string, a JSON array

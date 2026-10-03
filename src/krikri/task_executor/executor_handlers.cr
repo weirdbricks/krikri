@@ -727,7 +727,9 @@ module Krikri
           # the plugin itself) renders without the "Module failed." chain
           # segment - see ActionResult#action_level.
           failed["_ansible_action_level"] = true if action_result.action_level?
-          return JSON.parse(failed.to_json)
+          result_json = JSON.parse(failed.to_json)
+          Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
+          return result_json
         end
 
         if final = action_result.final_result

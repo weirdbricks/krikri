@@ -49,6 +49,18 @@ module Krikri
       {"email_address", "emailAddress"},
     ]
 
+    # Live-verified against real ansible-core 2.19.11 via `{{ r | to_json }}`
+    # dumps, identical on changed, unchanged, state=absent and check-mode
+    # runs. csr sits after the name_constraints lists (before diff);
+    # backup_file after changed; ansible_facts controller-added, warnings
+    # trails last.
+    SUCCESS_KEY_ORDER = %w[
+      privatekey subject subjectAltName keyUsage extendedKeyUsage
+      basicConstraints ocspMustStaple name_constraints_permitted
+      name_constraints_excluded csr diff filename changed backup_file
+      ansible_facts failed warnings
+    ]
+
     def execute : PluginResult
       path = @params["path"]?
       return failure("missing required arguments: path") unless path
@@ -117,7 +129,7 @@ module Krikri
         backup_file = backup(path)
         File.delete(path)
       end
-      res = PluginResult.new(changed: exists, failed: false, msg: "")
+      res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
@@ -323,7 +335,7 @@ module Krikri
 
     private def result(changed : Bool, path : String, privatekey_path : String,
                        backup_file : String?) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+      res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["privatekey"] = JSON::Any.new(privatekey_path)
       res.extra["subject"] = JSON::Any.new(subject_pairs.map { |(key, value)|

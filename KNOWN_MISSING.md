@@ -30,17 +30,74 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1386`.**
+**Currently at `0.9.1455`.**
 
 ## Open gaps
 
-- **`docker_container` `state: healthy`** (kpg35): accepted with real's choices/wording but runs the plain `started` flow; real additionally waits for the container's
-  healthcheck to report healthy (a container with no healthcheck is immediately healthy, which is the only case krikri matches today).
-- **`replace:` leftovers** (kpg31 sweep): PCRE accepts `(?<name>...)`/`(?'name'...)` in `regexp:` where Python `re` rejects it, and a bad `regexp:` reports
-  `Invalid regular expression: ...` instead of real's uncaught-`re.error` module crash; non-UTF-8 file bytes under `encoding:` fail the regex (`UTF-8 error`) where
-  real decodes with `surrogateescape` and proceeds (also for codecs Python has but this host's iconv lacks, e.g. `utf-7`, `mac_roman`).
-- **`get_url` success path and conditional GET** (kpg30 sweep): success result lacks real's `msg="OK (<n> bytes)"`/`status_code: 200`; an existing dest with no `force:` always
-  re-downloads where real's conditional GET (304) short-circuits; registered-result key order differs from real engine-wide.
+- **Registered-result key order is verified per plugin, not engine-wide.** `PluginResult#key_order`
+  pins a plugin's keys to real 2.19.11's order (live-verified with `{{ r | to_json }}` dumps on both
+  engines); a plugin without it emits krikri's historical `changed`-first shape
+  (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
+  their plugin files). What is still unpinned, by how it can be verified:
+  - *Doable on the dev box with rootless podman (a throwaway container runs the service or distro; both
+    engines run against it):* `docker_image_build` (needs BuildKit). The Docker plugins, `podman_image`, the rpm family
+    (`dnf`/`dnf5`/`yum`/`*_versionlock`) and `gem`/`rpm_key` are already verified this way (the rpm family and
+    `gem` inside a fresh `krikri-fedora-compat` container per engine, real ansible-core 2.19.11 pip-installed
+    there; real's `dnf` check mode additionally needs `python3-libdnf5` preinstalled in the container).
+  - *Needs a real host with root and a real kernel - verify on Atlantic.net via `krikri-role-tester`
+    (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
+    `user`/`group`/`authorized_key`/`known_hosts` (real's `authorized_key` param-echo order also depends
+    on the invocation), `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
+    `lvg`/`lvol`/`parted`/`zfs`, `virt_net`, `mount_facts`, the real-mutation variants of
+    `mount`/`modprobe`/`iptables` (their check-mode/stub shapes are already pinned), `synchronize`,
+    `subversion`, `snap`/`homebrew`/`easy_install`/`maven_artifact`/`java_cert` (needs a JDK/keytool),
+    `apache2_module`, `openssl_csr_info`.
+  - *Needs an external account or appliance neither engine can reach from either host (not a gap to
+    close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
+    `nsupdate`, `rabbitmq_*`.
+- **FAILED-result key order and `exception` now match real for plugin-path, argspec-validation and action-level
+  failures** (`command`/`shell`, `slurp`, `lineinfile`, `blockinfile`, `replace`, `wait_for`, `file`/`stat`,
+  `fail`, `assert`, `copy`, `template`, `unarchive`, `add_host`, `group_by`, `set_fact`, `debug`; real's per-module
+  orders: `fail`/`slurp`: `failed, msg, changed, exception`; `assert`: `failed, evaluated_to, assertion, msg, changed,
+  exception`; `copy`/`template`: `failed, msg, exception, changed`; `unarchive`: `failed, exception, msg, changed`).
+  `include_vars` failures (missing file/dir, `Searched in:` list, `name:` warning) and `set_fact`'s invalid-name error block
+  now match real's registered result and console output as well.
+- **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
+  now print/register real's deprecation; connection failures use libpq's own wording (refused, wrong password,
+  missing database, missing unix socket - byte-identical to real); `postgresql_query` without a database name warns
+  like real. Still different: a *temporary* resolver failure prints the EAI_NONAME wording (Crystal's
+  `Addrinfo::Error` carries no gai code) and strerror texts are glibc's. `postgresql_*` and
+  `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results and accepted-parameter sets otherwise match real
+  (live-verified on postgres:17 / mysql:8.4); real builds `postgresql_privs`'s privilege list from a Python
+  frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order. The PostgreSQL
+  live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
+  test).
+- **Console warnings real prints that krikri does not:** the `[WARNING]: Using a template for task args is unsafe ...`
+  block now matches real for `module: "{{ dict }}"`/`args: "{{ dict }}"` (once per task, not for templated values,
+  free-form modules or `when: false`), except for `{% ... %}`/`{# ... #}` string args (real warns; krikri does not -
+  those values already resolve differently) and handler tasks (krikri's handler args expansion fails earlier); and the
+  collection-redirect `[DEPRECATION WARNING]: community.mysql.<module> has been deprecated. Use ansible.mysql.<module>
+  instead ...` (with its `deprecations`/`warnings` result entries) for the redirected community.mysql modules, plus
+  the `Deprecation warnings can be disabled by setting deprecation_warnings=False in ansible.cfg.` trailer.
+- **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
+  the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
+  http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
+  the fields krikri itself sends where real also records defaulted options; `docker_container`'s list options
+  (`command`, `entrypoint`, `volumes`, `ports`) have their own JSON wire in the parser (other modules' YAML lists use
+  the generic comma-joined wire - a list element containing a comma is ambiguous there).
+- **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP: the
+  RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
+  `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
+  krikri's `shard.yml` still pins the old driver and the first TCP connection to a fresh MySQL 8 server fails until
+  the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours `exclude_fields:` and
+  `filter:` as a YAML list (literal or passed through a variable/templated dict), comma string and `!name` exclusions and warns like real for an unknown element; still open:
+  `connector_name`/`connector_version` are `"Unknown"` (real reports its Python driver, `pymysql`/its version; krikri has none); `users`/`users_info` omit
+  `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
+  `mysql_native_password` plugin no longer exists there).
+- **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;
+  `archive` lacks `expanded_exclude_paths`; `git_config`'s write path lacks real's `diff`;
+  `get_certificate` returns the full `X509CertInfo` key set where real returns ten (extras trail);
+  `hostvars` of a host created by `add_host` lacks the ~20 magic variables real defines.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
@@ -497,6 +554,35 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   deliberately avoided - for a shape nothing in the role corpus hits
   (`| string` on a tuple-bearing var read back out of storage). Revisit
   only if a real role is found relying on it.
+### `replace:` pattern syntax is checked by a targeted Python-re scanner, not a full re._parser port
+
+`ansible.builtin.replace` compiles `regexp:`/`after:`/`before:` with Python's own `re` module, outside
+its `except re.error` - so a pattern Python rejects kills the module ("Task failed: Module failed:
+<re.error text>"). PCRE2 (krikri's engine) accepts a superset of Python's syntax, so krikri runs a
+left-to-right Python-re scanner over each pattern first (plugins/replace.cr, `PythonPattern`) and
+translates PCRE2 compile errors to Python's wording/position where the mapping is exact. Covered with
+real-verified messages: the PCRE group-name spellings `(?<name>...)`/`(?'name'...)` and every other
+extension char Python rejects (`(?R)`, `(?&`, `(?|`, `(?1`, ...), the inline-flag section rules,
+PCRE-only escapes (`\e`, `\z`, `\K`, `\h`, `\G`, `\C`, `\c`, `\o`, `\p`, `\Q`, `\x{...}`) with the
+class-context rules for `\A`/`\B`/`\Z`/`\g`, and `\uXXXX`/`\Uhhhhhhhh` (Python accepts, PCRE2 does
+not - rewritten to PCRE2's `\x{...}`). Deliberately left unchecked (they surface with PCRE2's wording
+inside the same crash wrapper, or accept where real rejects, and are too rare in roles to justify a
+full re._parser port):
+
+- `\N{...}` character names (real resolves them against the Unicode name DB; PCRE2 rejects the syntax,
+  so such patterns fail either way - wording differs, and a *valid* name still fails here);
+- `\8`/`\9` group-reference semantics (Python counts groups, PCRE2 errors);
+- `(?P=name)` resolution and `(?P<>`-shape name errors;
+- Python's semantic inline-flag checks (`(?iLmsxua)`'s "cannot use 'L' flag with a str pattern",
+  `a`/`u` negation, global-flags placement);
+- character-class ranges over escapes (`[\d-e]`).
+
+The surrogateescape twin for undecodable bytes under `encoding:` is the private-use codepoint
+U+F780+(byte-0x80) rather than Python's U+DC80+(byte-0x80), because PCRE2 aborts a match whose subject
+holds raw surrogates; one undecodable byte is one character to the regex either way and the byte
+round-trips on write. The collision risk is the one real carries itself (a file legitimately
+containing the mapped codepoint), just in a different range.
+
 ### Cosmetic differences (both engines fail; only the wording differs)
 
 These change no outcome and no recap. Listed so they aren't re-reported

@@ -5,7 +5,10 @@ describe "ping plugin" do
     result = PluginSpecHelper.run("ping", {} of String => String)
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["changed"].as_bool.must_equal(false)
+    # Real's ping module wire carries ONLY {ping} - no changed (exit_json
+    # passes none; the task executor backfills failed, changed onto the
+    # registered result).
+    result["changed"]?.must_equal(nil)
     result["ping"].as_s.must_equal("pong")
   end
 

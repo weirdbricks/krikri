@@ -49,6 +49,18 @@ module Krikri
       "config_path"  => %w[dockercfg_path],
     })
 
+    # Real seeds its result dict as `{"changed": False, "actions": [],
+    # "login_result": {}}` and then DELETES `actions` again before
+    # exit_json (docker_login.py's main) - so a successful register
+    # carries exactly changed + login_result, with the module protocol's
+    # `failed` last. Live-verified against real ansible-core 2.19.11 +
+    # community.docker 5.2.1 (a state=absent logout registers
+    # {"changed": false, "login_result": {}, "failed": false}, no msg).
+    KEY_ORDER = %w[changed login_result failed]
+
+    # Real's own wrapper for a DockerException escaping the module body.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -82,8 +94,7 @@ module Krikri
       config, _config_raw = read_config(config_path)
       if !reauthorize && (stored = PluginHelpers::DockerLogin.stored_credentials(config, registry_url))
         if stored[:username] == username && stored[:password] == password
-          return PluginResult.new(changed: false, failed: false,
-            msg: "Already logged into #{registry_url}", login_result: login_result(registry_url, username))
+          return success_result(changed: false, login_result: login_result(registry_url, username))
         end
       end
 
@@ -94,8 +105,17 @@ module Krikri
       return censor(PluginResult.new(changed: false, failed: true,
         msg: "Logging into #{registry_url} for user #{username} failed - #{login[:stderr].strip.presence || login[:stdout].strip.presence || "docker login returned #{login[:exit_code]}"}"), password) if login[:exit_code] != 0
 
-      censor(PluginResult.new(changed: true, failed: false,
-        msg: "Logged into #{registry_url}", login_result: login_result(registry_url, username)), password)
+      censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
+    end
+
+    # A successful login/logout carries no msg: real's `actions` list
+    # (which held every human-readable line) is deleted before exit_json,
+    # so nothing survives it but changed and login_result.
+    private def success_result(changed : Bool, login_result : JSON::Any) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, failed_flag: false,
+        login_result: login_result)
+      result.key_order = KEY_ORDER
+      result
     end
 
     # Real remove_values(): password is no_log, so its value never
@@ -191,16 +211,16 @@ module Krikri
     private def logout(registry_url : String, config_path : String) : PluginResult
       config, _ = read_config(config_path)
       if PluginHelpers::DockerLogin.stored_credentials(config, registry_url).nil?
-        return PluginResult.new(changed: false, failed: false,
-          msg: "Credentials for #{registry_url} not present, doing nothing.")
+        return success_result(changed: false, login_result: JSON.parse("{}"))
       end
 
       updated = PluginHelpers::DockerLogin.with_erased_credentials(config, registry_url)
-      return PluginResult.new(changed: false, failed: false,
-        msg: "Credentials for #{registry_url} not present, doing nothing.") unless updated
+      return success_result(changed: false, login_result: JSON.parse("{}")) unless updated
 
       write_config(config_path, updated)
-      PluginResult.new(changed: true, failed: false, msg: "Logged out of #{registry_url}")
+      # Real's logout() never touches login_result - it stays at the
+      # empty dict its result was seeded with.
+      success_result(changed: true, login_result: JSON.parse("{}"))
     end
 
     private def write_config(config_path : String, content : String) : Nil
