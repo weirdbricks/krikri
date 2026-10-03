@@ -2319,10 +2319,17 @@ module Krikri
         end
       end
 
+      # Real 2.19.11's registered setup/gather_facts result key order -
+      # live-verified via `{{ r.keys() | list | to_json }}` on a
+      # registered setup: task: ansible_facts, failed, changed (warnings,
+      # when the module produced any, trails - krikri's gatherer emits
+      # none). The registered tail is failed BEFORE changed here, unlike
+      # the executor-backfilled modules where failed lands after every
+      # wire key - setup's wire carries both itself, in this order.
       {
-        "changed"       => false,
-        "failed"        => false,
         "ansible_facts" => facts,
+        "failed"        => false,
+        "changed"       => false,
       }.to_json
     rescue ex : BadSubsetError
       {

@@ -50,8 +50,14 @@ module Krikri
       start_monotonic = Time.instant
 
       if true?(@params["_ansible_check_mode"]?)
+        # Real 2.19.11's check-mode registered wait_for_connection shape
+        # (live-verified via {{ r.keys() | list | to_json }}): skipped,
+        # failed, changed - no msg key. The wire omits changed
+        # (omit_changed) so normalize_module_result backfills failed THEN
+        # changed onto the registered result, producing real's tail
+        # (same pattern as ping/getent/wait_for).
         return PluginResult.new(changed: false, failed: false,
-          msg: "`wait_for_connection` did not execute due to check mode",
+          msg: "", omit_changed: true,
           skipped: true)
       end
 
@@ -62,7 +68,14 @@ module Krikri
 
       loop do
         if probe_connection(connect_timeout)
+          # Real 2.19.11's registered wait_for_connection shape
+          # (live-verified via {{ r.keys() | list | to_json }} on a local
+          # connection): elapsed, failed, changed. The wire carries only
+          # elapsed (real's exit_json passes none of the others);
+          # normalize_module_result backfills failed THEN changed onto
+          # the registered result - same pattern as ping/getent/wait_for.
           return PluginResult.new(changed: false, failed: false, msg: "",
+            omit_changed: true,
             elapsed: elapsed_since(start_monotonic))
         end
 

@@ -138,6 +138,34 @@ module Krikri
     #   configured return exit 1 + stderr "Name or service not known",
     #   matching the facts module's own behavior).
     # - ansible_domain:    the suffix after the first '.' of the FQDN, or "".
+    # Real 2.19.11's registered hostname result key order (live-verified
+    # via `{{ r.keys() | list | to_json }}` - an unchanged real-mode run
+    # against the box's own hostname and a would-change check-mode run,
+    # no mutation): changed, name, ansible_facts, [diff], failed - and NO
+    # msg key on any success path (real's module never carries one;
+    # krikri previously reported "hostname is already X" / "hostname
+    # changed ..." msg strings no real success result has). `name` is the
+    # module param echo; diff appears only when the hostname would change
+    # (check mode) or did. The registered tail failed is the executor
+    # backfill.
+    private HOSTNAME_SUCCESS_KEY_ORDER = ["changed", "name", "ansible_facts", "diff"]
+
+    private def hostname_success(changed : Bool, hostname_facts : Hash(String, String), old_facts : Hash(String, String)?) : PluginResult
+      name_echo = @params["name"].to_s
+      if ofacts = old_facts
+        PluginResult.new(changed: changed, failed: false, msg: "",
+          ansible_facts: hostname_facts,
+          diff: generate_attribute_diff(ofacts, hostname_facts),
+          name: name_echo,
+          key_order: HOSTNAME_SUCCESS_KEY_ORDER)
+      else
+        PluginResult.new(changed: changed, failed: false, msg: "",
+          ansible_facts: hostname_facts,
+          name: name_echo,
+          key_order: HOSTNAME_SUCCESS_KEY_ORDER)
+      end
+    end
+
     private def build_facts(hostname : String) : Hash(String, String)
       dot = hostname.index('.')
       short = dot ? hostname[0...dot] : hostname
@@ -254,24 +282,13 @@ module Krikri
       hostname_facts = build_facts(name)
 
       if permanent == name
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          ansible_facts: hostname_facts,
-          msg: "hostname is already #{name}",
-        )
+        return hostname_success(false, hostname_facts, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return PluginResult.new(
-          changed: true,
-          failed: false,
-          ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{permanent} to #{name}",
-        )
+        return hostname_success(true, hostname_facts, old_facts)
       end
 
       begin
@@ -281,13 +298,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      PluginResult.new(
-        changed: true,
-        failed: false,
-        ansible_facts: hostname_facts,
-        diff: generate_attribute_diff(old_facts, hostname_facts),
-        msg: "hostname changed from #{permanent} to #{name}",
-      )
+      hostname_success(true, hostname_facts, old_facts)
     end
 
     # SystemdStrategy (use: systemd / use: debian - real Ansible's STRATS
@@ -322,36 +333,19 @@ module Krikri
       hostname_facts = build_facts(name)
 
       unless changed
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          ansible_facts: hostname_facts,
-          msg: "hostname is already #{name}",
-        )
+        return hostname_success(false, hostname_facts, nil)
       end
 
       old_facts = build_facts(transient_name)
 
       if @check_mode
-        return PluginResult.new(
-          changed: true,
-          failed: false,
-          ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{transient_name} to #{name}",
-        )
+        return hostname_success(true, hostname_facts, old_facts)
       end
 
       set_failure = systemd_set_phase(name, transient_name, permanent_name)
       return set_failure if set_failure
 
-      PluginResult.new(
-        changed: true,
-        failed: false,
-        ansible_facts: hostname_facts,
-        diff: generate_attribute_diff(old_facts, hostname_facts),
-        msg: "hostname changed from #{transient_name} to #{name}",
-      )
+      hostname_success(true, hostname_facts, old_facts)
     end
 
     # The set-phase half of the systemd strategy: permanent first, then
@@ -405,24 +399,13 @@ module Krikri
       hostname_facts = build_facts(name)
 
       if permanent == name
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          ansible_facts: hostname_facts,
-          msg: "hostname is already #{name}",
-        )
+        return hostname_success(false, hostname_facts, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return PluginResult.new(
-          changed: true,
-          failed: false,
-          ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{permanent} to #{name}",
-        )
+        return hostname_success(true, hostname_facts, old_facts)
       end
 
       # Real Ansible's set_permanent_hostname: rewrite the file line by
@@ -450,13 +433,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      PluginResult.new(
-        changed: true,
-        failed: false,
-        ansible_facts: hostname_facts,
-        diff: generate_attribute_diff(old_facts, hostname_facts),
-        msg: "hostname changed from #{permanent} to #{name}",
-      )
+      hostname_success(true, hostname_facts, old_facts)
     end
 
     # AlpineStrategy (use: alpine) - runs `hostname -F /etc/hostname` FIRST
@@ -481,24 +458,13 @@ module Krikri
       hostname_facts = build_facts(name)
 
       if permanent == name
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          ansible_facts: hostname_facts,
-          msg: "hostname is already #{name}",
-        )
+        return hostname_success(false, hostname_facts, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return PluginResult.new(
-          changed: true,
-          failed: false,
-          ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{permanent} to #{name}",
-        )
+        return hostname_success(true, hostname_facts, old_facts)
       end
 
       result = remote_exec("hostname -F #{Shell.single_quote(hostname_file)}")
@@ -511,13 +477,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      PluginResult.new(
-        changed: true,
-        failed: false,
-        ansible_facts: hostname_facts,
-        diff: generate_attribute_diff(old_facts, hostname_facts),
-        msg: "hostname changed from #{permanent} to #{name}",
-      )
+      hostname_success(true, hostname_facts, old_facts)
     end
 
     # OpenRCStrategy (use: openrc) - edits /etc/conf.d/hostname's
@@ -556,24 +516,13 @@ module Krikri
       hostname_facts = build_facts(name)
 
       if permanent == name
-        return PluginResult.new(
-          changed: false,
-          failed: false,
-          ansible_facts: hostname_facts,
-          msg: "hostname is already #{name}",
-        )
+        return hostname_success(false, hostname_facts, nil)
       end
 
       old_facts = build_facts(permanent)
 
       if @check_mode
-        return PluginResult.new(
-          changed: true,
-          failed: false,
-          ansible_facts: hostname_facts,
-          diff: generate_attribute_diff(old_facts, hostname_facts),
-          msg: "would change hostname from #{permanent} to #{name}",
-        )
+        return hostname_success(true, hostname_facts, old_facts)
       end
 
       lines = File.exists?(conf_file) ? File.read(conf_file).lines.map(&.strip) : [] of String
@@ -593,13 +542,7 @@ module Krikri
           msg: "failed to update hostname: #{python_os_error_message(ex)}")
       end
 
-      PluginResult.new(
-        changed: true,
-        failed: false,
-        ansible_facts: hostname_facts,
-        diff: generate_attribute_diff(old_facts, hostname_facts),
-        msg: "hostname changed from #{permanent} to #{name}",
-      )
+      hostname_success(true, hostname_facts, old_facts)
     end
 
     # Run one of the strategy's hostnamectl reads; returns the stripped

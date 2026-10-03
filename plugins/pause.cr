@@ -66,7 +66,15 @@ module Krikri
         delta: elapsed.to_i,
         stdout: "Paused for #{shown} #{unit}", stderr: "", rc: 0,
         echo: true?(@params["echo"]?, default: true),
-        user_input: ""
+        user_input: "",
+        # Real 2.19.11's registered pause result key order - live-verified
+        # via `{{ r.keys() | list | to_json }}` on a registered
+        # `pause: seconds: 1`: changed, rc, stderr, stdout, start, stop,
+        # delta, echo, user_input, failed. The registered tail failed is
+        # the executor backfill (pause's wire carries none); msg: "" never
+        # serializes, matching real's msg-less registered shape.
+        key_order: ["changed", "rc", "stderr", "stdout", "start", "stop",
+                    "delta", "echo", "user_input"],
       )
     end
 
