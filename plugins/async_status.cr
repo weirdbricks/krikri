@@ -106,16 +106,16 @@ module Krikri
     # Real's msg key on a finished job is whatever the module's file
     # carried (an empty string for command) - present iff the file has
     # the key, hence include_empty_msg on the empty-string case.
-    private def status_result(status : JSON::Any, jid : String) : PluginResult
+    private def status_result(status : JSON::Any, jid : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       finished = AsyncJobs.finished?(status)
       job_changed = status["changed"]?.try(&.as_bool) || false
       job_failed = status["failed"]?.try(&.as_bool) || false
 
       file_msg = status["msg"]?
-      result = if file_msg && file_msg.as_s?
+      result = if file_msg && (file_msg_s = file_msg.as_s?)
                  PluginResult.new(changed: finished && job_changed,
                    failed: finished && job_failed,
-                   msg: file_msg.as_s.not_nil!,
+                   msg: file_msg_s,
                    include_empty_msg: true)
                elsif file_msg
                  PluginResult.new(changed: finished && job_changed,
