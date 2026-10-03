@@ -381,3 +381,64 @@ describe "mysql_user plugin result shape" do
     dump["password_changed"].raw.must_be_nil
   end
 end
+
+describe "mysql_info plugin result shape" do
+  # Real's exit_json always leads with the three server/connector facts
+  # and then appends exactly the subsets the filter kept, in the order
+  # its own dict declares them.
+  it "registers every subset, in real's order, with no filter" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: everything
+              community.mysql.mysql_info:
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[
+      changed server_engine connector_name connector_version
+      version databases settings global_status engines
+      users users_info master_status slave_hosts slave_status failed
+    ])
+    dump["changed"].as_bool.must_equal(false)
+    dump["server_engine"].as_s.must_equal("MySQL")
+    # `version` is a dict whose own key order is real's dict(...) order.
+    dump["version"].as_h.keys.must_equal(%w[major minor release suffix full])
+    # Empty on a standalone server - real reports them as empty dicts, not
+    # by omitting the keys.
+    dump["slave_hosts"].as_h.must_be_empty
+    dump["slave_status"].as_h.must_be_empty
+    (dump["settings"].as_h["max_connections"].as_i > 0).must_equal(true)
+    dump["users"].as_h.keys.sort!.must_equal(["%", "localhost"])
+    (dump["users_info"].as_a.size > 0).must_equal(true)
+  end
+
+  it "registers only the filtered subset, still led by the connector facts" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: version only
+              community.mysql.mysql_info:
+                filter: version
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed])
+  end
+
+  # Real's `!name` exclusion form, and its rule that any inclusion makes
+  # the exclusions irrelevant.
+  it "registers every subset but settings for filter '!settings'" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: all but settings
+              community.mysql.mysql_info:
+                filter: "!settings"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[
+      changed server_engine connector_name connector_version
+      version databases global_status engines
+      users users_info master_status slave_hosts slave_status failed
+    ])
+  end
+end

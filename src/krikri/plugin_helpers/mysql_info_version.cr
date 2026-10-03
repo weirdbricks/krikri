@@ -19,8 +19,10 @@ module Krikri
           "major"   => JSON::Any.new(parts[0]?.try(&.to_i64?) || 0_i64),
           "minor"   => JSON::Any.new(parts[1]?.try(&.to_i64?) || 0_i64),
           "release" => JSON::Any.new(release.to_i64? || 0_i64),
-          "full"    => JSON::Any.new(full),
-          "suffix"  => JSON::Any.new(suffix),
+          # Real's dict(...) names suffix before full - the registered
+          # key order of `version` follows its dict, not this Hash's.
+          "suffix" => JSON::Any.new(suffix),
+          "full"   => JSON::Any.new(full),
         }
       end
     end
