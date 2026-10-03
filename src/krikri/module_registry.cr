@@ -596,6 +596,62 @@ module Krikri
                                      "Please migrate to community.docker.docker_compose_v2. " \
                                      "This feature was removed from collection 'community.docker' version 4.0.0."
 
+    # community.mysql 5.x's own meta/runtime.yml plugin_routing redirects
+    # these module FQCNs to their ansible.mysql.* homes with a deprecation
+    # (removal_version 6.0.0, warning_text "Use ansible.mysql.<module>
+    # instead.") - live-verified against the installed community.mysql
+    # 5.0.2's meta/runtime.yml and real ansible-core 2.19.11's console
+    # output (mysql_replication/mysql_role redirect the same way but are
+    # not krikri-supported modules, so they are deliberately absent: an
+    # unsupported module's divergence is out of scope per the coverage
+    # bar). Real resolves a task's module at task-load time and
+    # record_deprecation warns there - once per distinct message per run
+    # (the Display dedups), with the one-time
+    # "Deprecation warnings can be disabled" hint before the first - and
+    # every task result the module actually produced carries the
+    # `deprecations` entry (TaskExecutor's DeferredWarningContext). The
+    # bare (non-FQCN) spellings resolve through MODULE_SEARCH_COLLECTIONS
+    # to the community.mysql FQCN and warn identically.
+    COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS = {
+      "community.mysql.mysql_db"        => "ansible.mysql.mysql_db",
+      "community.mysql.mysql_info"      => "ansible.mysql.mysql_info",
+      "community.mysql.mysql_query"     => "ansible.mysql.mysql_query",
+      "community.mysql.mysql_user"      => "ansible.mysql.mysql_user",
+      "community.mysql.mysql_variables" => "ansible.mysql.mysql_variables",
+    }
+
+    # The exact console [DEPRECATION WARNING] text real ansible-core
+    # 2.19.11 prints for one of the redirects above (live-verified: the
+    # loader's warning_text joined onto the "has been deprecated." stem,
+    # followed by Display's removal-version tail naming the collection and
+    # version). nil for every name that is not one of the redirects.
+    def self.redirect_deprecation_text(fqcn : String) : String?
+      target = COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS[fqcn]? || return nil
+      "#{fqcn} has been deprecated. Use #{target} instead. " \
+      "This feature will be removed from collection 'community.mysql' version 6.0.0."
+    end
+
+    # The `deprecations` result entry real attaches to every executed
+    # task result for a redirected module (live-verified via register:
+    # r.deprecations == [{"msg": "community.mysql.mysql_info has been
+    # deprecated. Use ansible.mysql.mysql_info instead.",
+    # "collection_name": "community.mysql", "version": "6.0.0",
+    # "deprecator": {"resolved_name": "community.mysql", "type": null}}]
+    # - note the msg carries NO removal tail; only the console line
+    # does). nil for every name that is not one of the redirects.
+    def self.redirect_deprecation_result_entry(fqcn : String) : JSON::Any?
+      target = COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS[fqcn]? || return nil
+      JSON.parse({
+        "msg"            => "#{fqcn} has been deprecated. Use #{target} instead.",
+        "collection_name" => "community.mysql",
+        "version"         => "6.0.0",
+        "deprecator"      => {
+          "resolved_name" => "community.mysql",
+          "type"          => nil,
+        },
+      }.to_json)
+    end
+
     # Bare module names real ansible-core can no longer resolve in ANY
     # collection (removed from ansible-core years ago and from the
     # collections that absorbed them), so every real ansible-playbook

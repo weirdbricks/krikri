@@ -1886,14 +1886,23 @@ module Krikri
     # never reaches the plugin (every plugin's validation now ignores
     # `_`-prefixed keys anyway).
     private def expand_templated_args(params : Hash(String, String), task : Task? = nil) : Hash(String, String)
-      raw = params.delete("_templated_args") || return params
+      raw = params.delete("_templated_args")
+      # The `{% ... %}`/`{# ... #}` string-args marker (see
+      # parse_module_params's marker comment) warns through the SAME
+      # once-per-task-occurrence argsplat machinery as the `{{ }}`
+      # sentinel, while leaving the value's own resolution untouched -
+      # real's TaskArgsFinalizer warns for both delimiter families
+      # (is_possibly_all_template) before anything about the rendered
+      # value is known.
+      block_marker = params.delete("_argsplat_block_marker")
       # Real warns as soon as it starts resolving such a string args layer
       # (ansible/_internal/_task.py's TaskArgsFinalizer.finalize), BEFORE
       # the value is known to resolve to a dict - so a `copy: "{# c #}"`
       # still gets the warning and only then fails to resolve. `task` is
       # nil only where no Task is at hand (never today); the warning's
       # best-effort Origin needs it.
-      emit_argsplat_warning(task) if task
+      emit_argsplat_warning(task) if task && (raw || block_marker)
+      return params unless raw
       rendered = raw.strip
       expanded = params.dup
       json = (JSON.parse(rendered) rescue nil)

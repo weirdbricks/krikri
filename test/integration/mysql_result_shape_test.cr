@@ -10,8 +10,9 @@ require "socket"
 # key_order_sweep9_test.cr for the general method). Real's registered
 # result also carries `deprecations` after `failed` - that is the
 # collection-version redirect community.mysql -> ansible.mysql emitted by
-# the collection loader, not part of the module's own result dict, so it
-# is not asserted here.
+# the collection loader, not part of the module's own result dict - and
+# this engine now emits the same entry, so every registered-dump key list
+# below ends with `deprecations`.
 #
 # These specs assert VALUES too, not just the key set: real echoes the
 # `name:`/`user:` parameter back and reports the exact SQL statement(s) it
@@ -156,7 +157,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
     dump["changed"].as_bool.must_equal(true)
     dump["db"].as_s.must_equal("shape_db1")
     dump["db_list"].as_a.map(&.as_s).must_equal(["shape_db1"])
@@ -175,7 +176,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
     dump["changed"].as_bool.must_equal(false)
     dump["executed_commands"].as_a.size.must_equal(0)
   end
@@ -194,7 +195,7 @@ describe "mysql_db plugin result shape" do
               register: r
               check_mode: true
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list failed])
+    dump.as_h.keys.must_equal(%w[changed db db_list failed deprecations])
     dump["changed"].as_bool.must_equal(true)
   end
 
@@ -213,7 +214,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
     dump["changed"].as_bool.must_equal(true)
     dump["executed_commands"].as_a.map(&.as_s).must_equal(["DROP DATABASE `shape_db4`"])
   end
@@ -235,7 +236,7 @@ describe "mysql_db plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed])
+    dump.as_h.keys.must_equal(%w[changed db db_list executed_commands failed deprecations])
     dump["db"].as_s.must_equal("shape_db5 shape_db6")
     dump["db_list"].as_a.map(&.as_s).must_equal(%w[shape_db5 shape_db6])
     dump["executed_commands"].as_a.map(&.as_s).must_equal([
@@ -262,7 +263,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
     dump["changed"].as_bool.must_equal(false)
     dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a"])
     dump["query_result"].as_a.map { |rows| rows.as_a.map(&.as_h["a"].as_i) }.must_equal([[1]])
@@ -282,7 +283,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
     dump["executed_queries"].as_a.map(&.as_s).must_equal(["select 1 as a", "select 2 as b"])
     dump["rowcount"].as_a.map(&.as_i).must_equal([1, 1])
     dump["execution_time_ms"].as_a.size.must_equal(2)
@@ -299,7 +300,7 @@ describe "mysql_query plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
+    dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed deprecations])
     dump["changed"].as_bool.must_equal(false)
     dump["rowcount"].as_a.map(&.as_i).must_equal([0])
   end
@@ -325,7 +326,7 @@ describe "mysql_user plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
     dump["changed"].as_bool.must_equal(true)
     dump["user"].as_s.must_equal("kru_create@localhost")
     dump["msg"].as_s.must_equal("User added")
@@ -342,7 +343,7 @@ describe "mysql_user plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
     dump["changed"].as_bool.must_equal(false)
     dump["msg"].as_s.must_equal("User unchanged")
     dump["password_changed"].as_bool.must_equal(false)
@@ -358,7 +359,7 @@ describe "mysql_user plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
     dump["changed"].as_bool.must_equal(true)
     dump["msg"].as_s.must_equal("User deleted")
     dump["password_changed"].as_bool.must_equal(false)
@@ -388,7 +389,7 @@ describe "mysql_user plugin result shape" do
               register: r
               check_mode: true
     YAML
-    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed deprecations])
     dump["changed"].as_bool.must_equal(true)
     dump["user"].as_s.must_equal("kru_check@localhost")
     dump["password_changed"].raw.must_be_nil
@@ -414,7 +415,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[
       changed server_engine connector_name connector_version
       version databases settings global_status engines
-      users users_info master_status slave_hosts slave_status failed
+      users users_info master_status slave_hosts slave_status failed deprecations
     ])
     dump["changed"].as_bool.must_equal(false)
     dump["server_engine"].as_s.must_equal("MySQL")
@@ -438,7 +439,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed deprecations])
   end
 
   # A YAML list of subset names: real's argspec types `filter` as a list,
@@ -454,7 +455,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
   end
 
   # The same list reaching the plugin through a variable (`filter: "{{ var }}"`)
@@ -469,7 +470,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
   end
 
   # Real's comma-separated string form of the same list.
@@ -482,7 +483,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
   end
 
   # Real's `!name` exclusion form as a list, and the rule that an
@@ -501,7 +502,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[
       changed server_engine connector_name connector_version
       version databases global_status
-      users users_info master_status slave_hosts slave_status failed
+      users users_info master_status slave_hosts slave_status failed deprecations
     ])
   end
 
@@ -518,7 +519,7 @@ describe "mysql_info plugin result shape" do
                 #{mysql_login_args(12)}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed warnings])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed warnings deprecations])
     dump["warnings"].as_a.map(&.as_s).must_equal(["filter element: bogus is not allowable, ignored"])
   end
 
@@ -536,7 +537,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[
       changed server_engine connector_name connector_version
       version databases global_status engines
-      users users_info master_status slave_hosts slave_status failed
+      users users_info master_status slave_hosts slave_status failed deprecations
     ])
   end
 end
@@ -590,7 +591,7 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
                 #{excl_login_args}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed deprecations])
     dump["databases"].as_h.each_value do |entry|
       entry.as_h.keys.must_equal(%w[size tables])
     end
@@ -662,7 +663,7 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
                 #{excl_login_args}
               register: r
     YAML
-    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed])
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed deprecations])
     dump["databases"].as_h.each_value do |entry|
       entry.as_h.keys.must_equal(%w[size tables])
     end

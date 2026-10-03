@@ -194,4 +194,68 @@ describe "argsplat warning" do
     warning_count(output).must_equal(1)
     warning_origin(output).not_nil!.must_equal({"12", "33"})
   end
+
+  # Real's is_possibly_all_template also accepts the `{% ... %}` and
+  # `{# ... #}` delimiter pairs (live-verified vs 2.19.11: `copy: "{% if
+  # true %}{{ some_dict }}{% endif %}"` and `copy: "{# c #}{{ some_dict }}"`
+  # both print the identical argsplat warning block at the same Origin and
+  # then resolve the WHOLE string as one template to the dict - the copy
+  # succeeds). krikri warns identically (same once-per-task rule, same
+  # text) but deliberately does NOT widen its whole-args resolution, which
+  # only ever drove `{{ }}`, so such a value keeps resolving through the
+  # free-form k=v path and the copy fails with real's own "src (or
+  # content) is required" - the warning is the parity surface here.
+  it "warns for a {% block %}-delimited string args" do
+    success, output = run_play([
+      "    - name: block delimiters",
+      "      ansible.builtin.copy: \"{% if true %}{{ some_dict }}{% endif %}\"",
+    ], dict_vars_for("block"))
+    success.must_equal(false)
+    warning_count(output).must_equal(1)
+    warning_origin(output).not_nil!.must_equal({"10", "29"})
+    output.includes?("src (or content) is required").must_equal(true)
+  end
+
+  it "warns for a {# comment #}-delimited string args" do
+    success, output = run_play([
+      "    - name: comment delimiters",
+      "      ansible.builtin.copy: \"{# c #}{{ some_dict }}\"",
+    ], dict_vars_for("comment"))
+    success.must_equal(false)
+    warning_count(output).must_equal(1)
+    warning_origin(output).not_nil!.must_equal({"10", "29"})
+  end
+
+  it "does not warn for a when-false block-delimited string args task" do
+    success, output = run_play([
+      "    - name: skipped block args",
+      "      ansible.builtin.copy: \"{% if true %}{{ some_dict }}{% endif %}\"",
+      "      when: false",
+    ], dict_vars_for("blockskip"))
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+    output.includes?("skipping: [localhost]").must_equal(true)
+  end
+
+  it "warns once for a looped block-delimited string args task" do
+    success, output = run_play([
+      "    - name: looped block args",
+      "      ansible.builtin.copy: \"{% if true %}{{ item }}{% endif %}\"",
+      "      loop:",
+      "        - {content: one}",
+      "        - {content: two}",
+    ])
+    success.must_equal(false)
+    warning_count(output).must_equal(1)
+  end
+
+  it "does not warn for a free-form module given a block-delimited string" do
+    success, output = run_play([
+      "    - name: free form block args",
+      "      ansible.builtin.command: \"{% if true %}echo hi{% endif %}\"",
+    ])
+    # The literal command text fails in real too (free-form modules take
+    # the string verbatim); only the WARNING count is the parity surface.
+    warning_count(output).must_equal(0)
+  end
 end
