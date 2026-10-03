@@ -111,3 +111,61 @@ describe "filesystem plugin result key order" do
     result.as_h.keys.must_equal(["msg", "changed"])
   end
 end
+
+describe "pam_limits plugin result key order" do
+  # Real pam_limits.py's res_args dict is {changed, msg, diff} with
+  # backup_file appended only when a backup was taken - live-verified
+  # 2.19.11 against a temp dest (add / already-set / backup /
+  # check-mode all share the shape).
+  def pam_limits_result(content : String, params : Hash(String, String))
+    dest = unique_tmp("limits.conf")
+    File.write(dest, content)
+    PluginSpecHelper.run("pam_limits", {"dest" => dest}.merge(params))
+  end
+
+  it "serializes a new limit as changed-msg-diff (real: changed, msg, diff)" do
+    result = pam_limits_result("", {
+      "domain" => "krlim", "limit_type" => "soft", "limit_item" => "nofile", "value" => "1000",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("krlim\tsoft\tnofile\t1000\n")
+    result["backup_file"]?.must_be_nil
+    result.as_h.keys.must_equal(["changed", "msg", "diff"])
+  end
+
+  it "serializes an already-set limit as changed-msg-diff (real: changed, msg, diff)" do
+    result = pam_limits_result("krlim\tsoft\tnofile\t1000\n", {
+      "domain" => "krlim", "limit_type" => "soft", "limit_item" => "nofile", "value" => "1000",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "msg", "diff"])
+  end
+
+  it "serializes a backup-taking change with backup_file after diff (real: changed, msg, diff, backup_file)" do
+    result = pam_limits_result("krlim\tsoft\tnofile\t1000\n", {
+      "domain" => "krlim", "limit_type" => "soft", "limit_item" => "nofile", "value" => "2000",
+      "backup" => "yes",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["backup_file"].as_s.wont_be_empty
+    result.as_h.keys.must_equal(["changed", "msg", "diff", "backup_file"])
+  end
+
+  it "serializes a check-mode change as changed-msg-diff without backup_file (real: changed, msg, diff)" do
+    result = pam_limits_result("krlim\tsoft\tnofile\t1000\n", {
+      "domain" => "krlim", "limit_type" => "soft", "limit_item" => "nofile", "value" => "3000",
+      "_ansible_check_mode" => "true",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    result["backup_file"]?.must_be_nil
+    result.as_h.keys.must_equal(["changed", "msg", "diff"])
+  end
+end
