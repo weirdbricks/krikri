@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "socket"
 
 # Real ansible-core 2.19.11 (community.crypto 3.1.1) registered-result key
 # order for the crypto plugins - live-verified via `{{ r | to_json }}` dumps
@@ -349,6 +350,70 @@ describe "openssh_keypair plugin result key order" do
     result.as_h.keys.must_equal([
       "size", "type", "filename", "fingerprint", "public_key", "comment", "changed", "msg",
     ])
+  end
+end
+
+describe "get_certificate plugin result key order" do
+  it "serializes a fetched cert as changed-cert then the info keys" do
+    dir = PluginSpecHelper.tmp_path("ko-getcert-1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    cert = File.join(dir, "cert.pem")
+    status = Process.run("openssl", ["req", "-x509", "-new", "-key", key,
+      "-subj", "/CN=test.example.com", "-days", "365", "-out", cert])
+    status.success?.must_equal(true)
+
+    # Local TLS endpoint serving that cert (mirrors the live-verification
+    # play); a per-test port keeps parallel workers independent.
+    port = 20000 + (Random::Secure.rand(20000))
+    server = File.join(dir, "tlssrv.py")
+    File.write(server, <<-PYTHON)
+      import ssl, socket, time
+      context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+      context.load_cert_chain(#{cert.inspect}, #{key.inspect})
+      srv = socket.socket()
+      srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      srv.bind(("127.0.0.1", #{port}))
+      srv.listen(4)
+      while True:
+          try:
+              conn, _ = srv.accept()
+              with context.wrap_socket(conn, server_side=True) as tls:
+                  tls.recv(1024)
+                  tls.sendall(b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok")
+          except Exception:
+              time.sleep(0.05)
+      PYTHON
+    proc = Process.new("python3", [server], output: Process::Redirect::Close,
+      error: Process::Redirect::Close)
+    begin
+      ready = false
+      25.times do
+        begin
+          TCPSocket.new("127.0.0.1", port).close
+          ready = true
+          break
+        rescue IO::Error
+          sleep 0.2
+        end
+      end
+      ready.must_equal(true)
+
+      result = PluginSpecHelper.run("get_certificate",
+        {"host" => "127.0.0.1", "port" => port.to_s})
+      # krikri reuses the full X509CertInfo.parse key set (real
+      # get_certificate carries only the ten keys below and trails the
+      # extras after them), so pin the real-ordered PREFIX.
+      keys = result.as_h.keys
+      keys.size >= 10
+      keys[0, 10].must_equal([
+        "changed", "cert", "subject", "expired", "issuer", "not_after",
+        "not_before", "serial_number", "signature_algorithm", "version",
+      ])
+    ensure
+      proc.terminate(graceful: false) rescue nil
+    end
   end
 end
 
