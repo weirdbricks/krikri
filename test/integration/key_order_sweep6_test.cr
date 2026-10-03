@@ -45,3 +45,34 @@ describe "openssl_privatekey plugin result key order" do
     ])
   end
 end
+
+describe "openssl_privatekey_info plugin result key order" do
+  it "serializes an RSA key read with the info keys in real's order" do
+    dir = PluginSpecHelper.tmp_path("ko-pki1")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => path, "size" => "2048"})
+    result = PluginSpecHelper.run("openssl_privatekey_info", {"path" => path})
+
+    result["can_load_key"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "can_load_key", "can_parse_key", "key_is_consistent", "public_key",
+      "public_key_fingerprints", "type", "public_data", "changed",
+    ])
+  end
+
+  it "places private_data after public_data with return_private_key_data" do
+    dir = PluginSpecHelper.tmp_path("ko-pki2")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => path, "size" => "2048"})
+    result = PluginSpecHelper.run("openssl_privatekey_info",
+      {"path" => path, "return_private_key_data" => "true"})
+
+    result["can_load_key"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "can_load_key", "can_parse_key", "key_is_consistent", "public_key",
+      "public_key_fingerprints", "type", "public_data", "private_data", "changed",
+    ])
+  end
+end
