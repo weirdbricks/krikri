@@ -86,36 +86,86 @@ module Krikri
       # multi-argument string the real module shlex.splits into argv
       # elements, so it is tokenized the same way below and each token is
       # quoted on its own.
-      bin_ok = remote_exec("command -v #{Shell.quote_arg(executable)}")
+      # `command` is a shell BUILTIN, and real runs every podman
+      # invocation through run_command (a shell), so this probe has to go
+      # through one too - the engine's metacharacter-free argv fast path
+      # would otherwise try to exec a binary literally named "command".
+      bin_ok = remote_exec("command -v #{Shell.quote_arg(executable)}", force_shell: true)
       return censor(PluginResult.new(changed: false, failed: true,
         msg: missing_executable_message(executable.to_s))) if bin_ok[:exit_code] != 0
+      # Real resolves the binary once with get_bin_path and records every
+      # invocation's full command line in its own podman_actions list.
+      executable = bin_ok[:stdout].strip
 
-      exists = remote_exec("#{Shell.quote_arg(executable)} image exists #{Shell.quote_arg(reference)}")
+      exists = podman(executable, "image exists #{Shell.quote_arg(reference)}")
       image_exists = exists[:exit_code] == 0
 
       if state == "absent"
-        return PluginResult.new(changed: false, failed: false,
-          msg: "Image not found") unless image_exists
-        rmi = remote_exec("#{Shell.quote_arg(executable)} rmi -f #{Shell.quote_arg(reference)}")
+        unless image_exists
+          return censor(shape(false, JSON.parse("{}")))
+        end
+        rmi = podman(executable, "rmi -f #{Shell.quote_arg(reference)}")
         return censor(PluginResult.new(changed: false, failed: true,
           msg: "Failed to remove image #{reference}: #{rmi[:stderr]}")) if rmi[:exit_code] != 0
-        return PluginResult.new(changed: true, failed: false,
-          msg: "Removed image #{reference}")
+        return censor(shape(true, JSON.parse(%({"state":"Deleted"})), ["Removed image #{name}"]))
       end
 
-      return PluginResult.new(changed: false, failed: false,
-        msg: "Image already exists") if image_exists && !force
+      if image_exists && !force
+        return censor(shape(false, find_image(executable, reference)))
+      end
 
       image_id_before = image_id(executable, reference)
       creds = build_creds
-      pull = remote_exec("#{Shell.quote_arg(executable)} pull#{creds} #{Shell.quote_arg(reference)}#{extra_args}")
+      pull = podman(executable, "pull#{creds} #{Shell.quote_arg(reference)}#{extra_args}")
       return censor(PluginResult.new(changed: false, failed: true,
         msg: "Failed to pull image #{reference}: #{pull[:stderr].presence || pull[:stdout]}")) if pull[:exit_code] != 0
 
       image_id_after = image_id(executable, reference)
       changed = !image_exists || image_id_before != image_id_after
-      censor(PluginResult.new(changed: changed, failed: false,
-        msg: "Updated podman image: #{reference}", podman_image: image_id_after))
+      censor(shape(changed, find_image(executable, reference), ["Pulled image #{reference}"]))
+    end
+
+    # Real's own result dict (podman_image.py main): changed, actions,
+    # podman_actions, image, stdout - then Ansible's own stdout_lines and
+    # failed. Live-verified against containers.podman 1.17.0.
+    KEY_ORDER = %w[changed actions podman_actions image stdout stdout_lines failed]
+
+    # Builds that registered shape; real carries NO msg on success.
+    private def shape(changed : Bool, image : JSON::Any, actions : Array(String)? = nil) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, failed_flag: false)
+      result.key_order = KEY_ORDER
+      result.extra["actions"] = JSON::Any.new((actions || [] of String).map { |action| JSON::Any.new(action) })
+      result.extra["podman_actions"] = JSON::Any.new(@podman_actions.map { |cmd| JSON::Any.new(cmd) })
+      result.extra["image"] = image
+      result.extra["stdout"] = JSON::Any.new("")
+      result.extra["stdout_lines"] = JSON::Any.new([] of JSON::Any)
+      result
+    end
+
+    # Every podman invocation, recorded the way real's _run does (the
+    # full command line, unquoted).
+    @podman_actions = [] of String
+
+    private def podman(executable : String, args : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+      @podman_actions << "#{executable} #{args}"
+      remote_exec("#{Shell.quote_arg(executable)} #{args}")
+    end
+
+    # Real's find_image: `podman image ls <ref> --format json` followed by
+    # `podman inspect <ref> --format json`, both lists concatenated.
+    private def find_image(executable : String, reference : String) : JSON::Any
+      entries = [] of JSON::Any
+      [podman(executable, "image ls #{Shell.quote_arg(reference)} --format json"),
+       podman(executable, "inspect #{Shell.quote_arg(reference)} --format json")].each do |result|
+        next if result[:exit_code] != 0
+        (JSON.parse(result[:stdout].strip) rescue nil).try do |parsed|
+          case parsed.raw
+          when Array then parsed.as_a.each { |entry| entries << entry }
+          when Hash  then entries << parsed
+          end
+        end
+      end
+      JSON::Any.new(entries)
     end
 
     # Real AnsibleModule validation, in arg_spec.ArgumentSpecValidator
@@ -311,7 +361,7 @@ module Krikri
     end
 
     private def image_id(executable : String, reference : String) : String?
-      inspect = remote_exec("#{Shell.quote_arg(executable)} image inspect --format '{{.Id}}' #{Shell.quote_arg(reference)}")
+      inspect = podman(executable, "image inspect --format '{{.Id}}' #{Shell.quote_arg(reference)}")
       inspect[:exit_code] == 0 ? inspect[:stdout].strip.presence : nil
     end
   end
