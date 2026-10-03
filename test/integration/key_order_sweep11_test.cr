@@ -61,6 +61,12 @@ end
 
 # A play whose every task registers `r` and dumps it to
 # /work/out-<label>.json, so one container run can pin several shapes.
+private def dump_var_task(label : String, var : String) : String
+  "    - copy:\n" \
+  "        dest: /work/out-#{label}.json\n" \
+  "        content: \"{{ #{var} | to_json }}\"\n"
+end
+
 private def dump_task(label : String) : String
   "    - copy:\n" \
   "        dest: /work/out-#{label}.json\n" \
@@ -368,5 +374,41 @@ describe "dnf-family plugin result key order (sweep11)" do
     gem["changed"].as_bool.must_equal(true)
     gem["name"].as_s.must_equal("rake")
     gem["state"].as_s.must_equal("present")
+  end
+  it "registers real's dnf check-mode shape without touching the host" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "dnfck")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: install (check mode only)
+          dnf:
+            name: sl
+            state: present
+          check_mode: true
+          register: r
+    #{dump_task("check")}
+        - name: prove nothing was installed
+          command: rpm -q sl
+          register: q
+          failed_when: false
+          changed_when: false
+    #{dump_var_task("query", "q")}
+    YAML
+
+    # real's check-mode exit carries the same keys as a real transaction,
+    # with the "would have" msg and the RPMs it would have installed.
+    check = dumps["check"]
+    check.keys.must_equal(%w[results changed msg rc failed])
+    check["changed"].as_bool.must_equal(true)
+    check["msg"].as_s.must_equal("Check mode: No changes made, but would have if not in check mode")
+    check["results"].as_a.first.as_s.must_match(/^Installed: sl-\d/)
+
+    # ...and the package is still NOT installed afterwards.
+    query = dumps["query"]
+    query["rc"].as_i.must_equal(1)
+    query["stdout"].as_s.must_include("not installed")
   end
 end

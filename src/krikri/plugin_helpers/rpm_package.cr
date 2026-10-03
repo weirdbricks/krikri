@@ -106,6 +106,47 @@ module Krikri
         )
       end
 
+      # Real's check-mode shape: the module runs the SAME transaction
+      # planning but stops before touching the host, so it reports what
+      # it WOULD have done - `results` naming the RPMs involved and msg
+      # "Check mode: No changes made, but would have if not in check
+      # mode" (dnf.py) - with the same key order as the real
+      # transaction. This engine used to run the transaction for real
+      # under --check (installing/removing packages on the target!), and
+      # reported the ordinary transaction msg on top of that.
+      private def check_mode? : Bool
+        true?(@params["_ansible_check_mode"]?)
+      end
+
+      private def check_mode_msg : String
+        "Check mode: No changes made, but would have if not in check mode"
+      end
+
+      # The NEVRA the backend WOULD settle on for `pkg`, without
+      # installing it: the installed one when the package is already
+      # there, otherwise the newest row `dnf list --available` reports.
+      private def candidate_nevra(pkg : String) : String
+        return rpm_nevra(pkg) if package_installed?(pkg)
+        listed = remote_exec("#{pkg_manager_binary} list --available #{quote_package(pkg)}")
+        row = parse_dnf_list_output(listed[:stdout]).first?
+        row && row["nevra"].as_s? ? row["nevra"].as_s : pkg
+      end
+
+      # The check-mode twin of #transaction_result: same keys and order,
+      # but the "would have" msg and, crucially, no host mutation.
+      private def check_mode_transaction_result(changed : Bool, results : Array(String) = [] of String) : PluginResult
+        return transaction_result(false) unless changed
+
+        PluginResult.new(
+          changed: true,
+          failed: false,
+          msg: check_mode_msg,
+          results: results,
+          rc: 0,
+          key_order: DNF_TRANSACTION_ORDER
+        )
+      end
+
       # Real's failure shape: msg, failures, results, rc, failed. The
       # backend's own error text is what goes in `failures`.
       private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1) : PluginResult
@@ -407,6 +448,14 @@ module Krikri
         to_install = classified[:to_install]
         to_update = classified[:to_update]
 
+        # --check: report what the transaction WOULD have done without
+        # running it (real's module resolves the goal, then stops).
+        if check_mode?
+          pending = to_install + to_update
+          return transaction_result(false) if pending.empty?
+          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
+        end
+
         changed = false
         installed = [] of String
         all_output = [] of String
@@ -508,6 +557,10 @@ module Krikri
         nevras = {} of String => String
         to_remove.each { |pkg| nevras[pkg] = rpm_nevra(pkg) }
 
+        if check_mode?
+          return check_mode_transaction_result(true, to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" })
+        end
+
         # Build remove command
         autoremove_flag = true?(@params["autoremove"]?) ? "" : "--setopt=clean_requirements_on_remove=False"
         pkg_list = to_remove.map { |pth| quote_package(pth) }.join(" ")
@@ -559,6 +612,12 @@ module Krikri
           else
             to_install << pkg
           end
+        end
+
+        if check_mode?
+          pending = to_install + to_update
+          return transaction_result(false) if pending.empty?
+          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
         end
 
         changed = false
