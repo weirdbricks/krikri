@@ -1831,8 +1831,15 @@ module Krikri
     # post-template dispatch for a string args value. The sentinel key
     # never reaches the plugin (every plugin's validation now ignores
     # `_`-prefixed keys anyway).
-    private def expand_templated_args(params : Hash(String, String)) : Hash(String, String)
+    private def expand_templated_args(params : Hash(String, String), task : Task? = nil) : Hash(String, String)
       raw = params.delete("_templated_args") || return params
+      # Real warns as soon as it starts resolving such a string args layer
+      # (ansible/_internal/_task.py's TaskArgsFinalizer.finalize), BEFORE
+      # the value is known to resolve to a dict - so a `copy: "{# c #}"`
+      # still gets the warning and only then fails to resolve. `task` is
+      # nil only where no Task is at hand (never today); the warning's
+      # best-effort Origin needs it.
+      emit_argsplat_warning(task) if task
       rendered = raw.strip
       expanded = params.dup
       json = (JSON.parse(rendered) rescue nil)
@@ -1846,6 +1853,72 @@ module Krikri
         expanded["_raw_params"] = leftover if leftover
       end
       expanded
+    end
+
+    # Real ansible-core 2.19.11's warning for a task whose module args are
+    # a single all-template string (`copy: "{{ some_dict }}"`, live-
+    # verified against 2.19.11):
+    #
+    #   [WARNING]: Using a template for task args is unsafe in some
+    #   situations (see https://docs.ansible.com/ansible/devel/
+    #   reference_appendices/faq.html#argsplat-unsafe).
+    #   Origin: <file>:<line>:<col>
+    #
+    # Its trigger (ansible/playbook/task.py's post_validate +
+    # ansible/_internal/_task.py's TaskArgsFinalizer) is NOT "the value
+    # renders to a dict": it is "this module does not take free-form
+    # params AND the string args STARTS AND ENDS with a Jinja delimiter"
+    # (so `{% ... %}`, `{# ... #}` count too). Modules that DO take
+    # free-form params (`command:`/`shell:`/`script:`/`raw:`, see
+    # module_registry.cr's RAW_COMMAND_MODULES) never warn, and a
+    # non-template string fails earlier with real's own "does not
+    # support raw params" error - which is exactly the parser's
+    # `_templated_args` sentinel condition, so keying off that sentinel
+    # reproduces the same set of tasks. Gated on INJECT_FACTS_AS_VARS
+    # upstream; that is true by default and krikri does not model the
+    # knob.
+    #
+    # Live-verified print counts: ONE per task occurrence however many
+    # hosts it runs on and however many loop items it has (real dedups by
+    # the task's own finalization, which is cached per host and the
+    # warning is keyed off the same object) - so the rendered text, which
+    # carries the Origin position, is the dedup key. It is NOT printed
+    # for a when:-skipped task (finalization never runs) and NOT
+    # suppressed by `no_log:` (which only censors the task's result).
+    @@argsplat_warning_seen = Set(String).new
+
+    private def emit_argsplat_warning(task : Task) : Nil
+      text = argsplat_warning_text(task)
+      return if text.empty?
+      return unless @@argsplat_warning_seen.add?(text)
+      STDERR.puts text
+    end
+
+    # Best-effort Origin for the argsplat warning: the module KEY's line,
+    # column pointing at the first character OF the scalar (real's YAML
+    # node start_mark sits inside the quotes for a quoted scalar, so
+    # `      ansible.builtin.copy: "{{ d }}"` gives column 29 - one past
+    # the quote at 28 - for both double and single quotes). A value on a
+    # following line (`module: >` folded) has no same-line token to point
+    # at, so nothing is emitted; real doesn't warn there anyway (the
+    # folded value keeps its trailing newline and so does not start AND
+    # end with the delimiters).
+    private def argsplat_warning_text(task : Task) : String
+      path = task.source_file
+      return "" unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      mod_idx, _col = module_key_position(lines, task)
+      return "" unless mod_idx.is_a?(Int32)
+      _, column = free_form_value_position(lines, mod_idx, task.module_name)
+      line = lines[mod_idx]
+      rest = line[(line.index(':') || 0)..].to_s.lstrip
+      column += 1 if rest.starts_with?("'") || rest.starts_with?("\"")
+
+      String.build do |io|
+        io << "[WARNING]: Using a template for task args is unsafe in some situations (see https://docs.ansible.com/ansible/devel/reference_appendices/faq.html#argsplat-unsafe).\n"
+        io << origin_context_block(path, lines, mod_idx + 1, column)
+        io << "\n"
+      end
     end
 
     # Real ansible-core 2.19's task-arg undefined-variable failure

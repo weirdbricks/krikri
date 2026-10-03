@@ -1,0 +1,187 @@
+require "../minitest_helper"
+
+# Real ansible-core 2.19.11's console warning for a task whose module args
+# are a SINGLE all-template string (`copy: "{{ some_dict }}"`),
+# live-verified against 2.19.11 - every expectation below is real's own
+# output with tmp paths masked.
+#
+# Real's trigger (ansible/playbook/task.py post_validate +
+# ansible/_internal/_task.py TaskArgsFinalizer) is NOT "renders to a dict":
+# it is "the module does not take free-form params AND the string args
+# STARTS AND ENDS with a Jinja delimiter". So:
+#   - `copy: "{{ d }}"`, a `vars:`-defined dict, a loop item, a block or
+#     role task - all warn
+#   - `command: "{{ cmd }}"` (free-form module) - no warning
+#   - `{path: "{{ p }}"}` (templated VALUES) - no warning
+#   - `when: false` - no warning (finalization never runs)
+#   - `no_log:` does NOT suppress it; `ignore_errors:`/`check_mode:` don't
+#     either
+#   - ONE warning per task occurrence: 2 hosts and a 2-item loop still
+#     print it once
+# The Origin points at the first character OF the scalar - inside the
+# quotes for a quoted value (column 29 for a 6-space-indented
+# `ansible.builtin.copy: "{{ d }}"`, single or double quotes alike).
+
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+
+private WARNING_LINE = "[WARNING]: Using a template for task args is unsafe in some situations " \
+                       "(see https://docs.ansible.com/ansible/devel/reference_appendices/faq.html#argsplat-unsafe)."
+
+private DICT_VARS = [
+  "  vars:",
+  "    some_dict:",
+  "      content: hello",
+  "      dest: /tmp/argsplat-warning-out.txt",
+]
+
+private DICT_DEST = "/tmp/argsplat-warning-out.txt"
+
+private PLAY_HEADER = [
+  "- hosts: localhost",
+  "  gather_facts: false",
+  "  connection: local",
+]
+
+# `tasks` are task lines already indented for the play's `tasks:` list;
+# `vars_lines` (optional) are already-indented play-level lines (the
+# `vars:` block).
+private def run_play(tasks : Array(String), vars_lines : Array(String) = [] of String) : {Bool, String}
+  playbook = File.tempname("argsplat-warning", ".yml")
+  body = PLAY_HEADER.dup
+  body.concat(vars_lines)
+  body << "  tasks:"
+  body.concat(tasks)
+  File.write(playbook, body.join("\n") + "\n")
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, input: IO::Memory.new)
+  {status.success?, output.to_s}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+private def warning_count(output : String) : Int32
+  output.scan(WARNING_LINE).size
+end
+
+# The warning's Origin LINE:COL, nil when the task printed no warning.
+private def warning_origin(output : String) : Tuple(String, String)?
+  idx = output.index(WARNING_LINE)
+  return nil unless idx
+  match = output[(idx + WARNING_LINE.size)..].to_s.match(/Origin: .*\.yml:(\d+):(\d+)\n/)
+  match ? {match[1], match[2]} : nil
+end
+
+describe "argsplat warning" do
+  it "warns with an Origin at the templated args scalar for a vars-defined dict" do
+    File.delete(DICT_DEST)
+    success, output = run_play([
+      "    - name: templated args",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+
+    origin = warning_origin(output)
+    origin.not_nil!.must_equal({"10", "29"})
+    output.includes?("^ column 29").must_equal(true)
+    output.includes?("changed: [localhost]").must_equal(true)
+  end
+
+  it "does not warn for templated dict VALUES" do
+    success, output = run_play([
+      "    - name: templated value",
+      "      ansible.builtin.copy:",
+      "        content: hello",
+      "        dest: /tmp/argsplat-warning-values.txt",
+    ])
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+  end
+
+  it "does not warn for a free-form module given a templated string" do
+    success, output = run_play([
+      "    - name: free form",
+      "      ansible.builtin.command: \"{{ cmd }}\"",
+    ], ["  vars:", "    cmd: /bin/true"])
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+  end
+
+  it "does not warn for a when-false skipped task" do
+    success, output = run_play([
+      "    - name: skipped",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+      "      when: false",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+    output.includes?("skipping: [localhost]").must_equal(true)
+  end
+
+  it "warns once for a loop task, not once per item" do
+    success, output = run_play([
+      "    - name: looped",
+      "      ansible.builtin.copy: \"{{ item }}\"",
+      "      loop:",
+      "        - {content: one, dest: /tmp/argsplat-warning-loop1.txt}",
+      "        - {content: two, dest: /tmp/argsplat-warning-loop2.txt}",
+    ])
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+  end
+
+  it "warns under no_log, ignore_errors and check_mode alike" do
+    success, output = run_play([
+      "    - name: no_log",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+      "      no_log: true",
+      "    - name: ignore_errors",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+      "      ignore_errors: true",
+      "    - name: check_mode",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+      "      check_mode: true",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(3)
+  end
+
+  it "warns for single-quoted and non-FQCN module calls at the same column" do
+    success, output = run_play([
+      "    - name: single quoted",
+      "      ansible.builtin.copy: '{{ some_dict }}'",
+      "    - name: short name",
+      "      copy: \"{{ some_dict }}\"",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(2)
+    # One past the opening quote, whichever quote was used; the short
+    # module name simply makes that column smaller.
+    output.scan(/Origin: .*\.yml:(\d+):(\d+)\n/).map(&.[2].to_i).must_equal([29, 13])
+  end
+
+  it "does not warn for a folded value that is not all one template" do
+    success, output = run_play([
+      "    - name: folded",
+      "      ansible.builtin.copy: >",
+      "        {{ some_dict }}",
+      "      ignore_errors: true",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(0)
+  end
+
+  it "warns for a templated args task nested in a block" do
+    success, output = run_play([
+      "    - name: enclosing block",
+      "      block:",
+      "        - name: nested",
+      "          ansible.builtin.copy: \"{{ some_dict }}\"",
+    ], DICT_VARS)
+    success.must_equal(true, output)
+    warning_count(output).must_equal(1)
+    warning_origin(output).not_nil!.must_equal({"12", "33"})
+  end
+end

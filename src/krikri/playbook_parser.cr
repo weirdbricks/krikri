@@ -4771,7 +4771,15 @@ module Krikri
           # parse time `item` doesn't exist yet, and kv-parsing the raw
           # template text wrongly produced `_raw_params`, which strict
           # modules reject.
-          if yaml.as_s.strip.matches?(/\A\{\{.*\}\}\z/m) && !RAW_COMMAND_MODULES.includes?(module_name)
+          # The whole-`{{ }}` test is done on the value AS WRITTEN, not on
+          # a stripped copy: real's is_possibly_all_template
+          # (ansible/_internal/_templating/_jinja_bits.py) checks that the
+          # string STARTS AND ENDS with the delimiters, so a trailing
+          # space (`copy: "{{ d }} "`) is not one and takes real's "does
+          # not support raw params" error path instead - stripping first
+          # turned such a value into a template and, with the argsplat
+          # warning keyed off this sentinel, warned where real does not.
+          if possibly_all_template?(yaml.as_s) && !RAW_COMMAND_MODULES.includes?(module_name)
             params["_templated_args"] = yaml.as_s.strip
           else
             # Real Ansible's parse_kv (the function this mirrors for
@@ -4835,6 +4843,18 @@ module Krikri
     # the string can't be shaped into params at parse time.
     def self.parse_free_form_params(s : String, module_name : String) : Hash(String, String)
       parse_module_params(YAML::Any.new(s), module_name)
+    end
+
+    # Real's is_possibly_all_template, narrowed to the variable
+    # delimiters: true when the string STARTS with `{{` and ENDS with
+    # `}}` (a folded `>` scalar keeps its trailing newline and so is not
+    # one). Real also accepts the `{% %}`/`{# #}` pairs, but krikri's
+    # `_templated_args` sentinel - which both this and the argsplat
+    # warning key off - only ever drove `{{ }}` whole-args resolution, so
+    # widening it here would change how those values resolve, not just
+    # whether a warning prints.
+    private def self.possibly_all_template?(s : String) : Bool
+      s.starts_with?("{{") && s.ends_with?("}}")
     end
 
     # Returns the key=value params plus, as a second tuple element, the
