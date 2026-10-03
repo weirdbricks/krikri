@@ -47,9 +47,12 @@ module Krikri
       if true?(@params["_ansible_check_mode"]?)
         # Real's registered wait_for check-mode skip runs skipped, msg,
         # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`;
-        # krikri's wire omits failed: false on success).
+        # basic.py's module-side skip goes through exit_json with no
+        # changed, and the task executor backfills failed, changed at the
+        # tail - so the wire omits changed (omit_changed) and
+        # normalize_module_result appends the same tail on register).
         return PluginResult.new(changed: false, failed: false, msg: "remote module (wait_for) does not support check mode", skipped: true,
-          key_order: ["skipped", "msg", "changed"])
+          omit_changed: true, key_order: ["skipped", "msg"])
       end
 
       port = @params["port"]?.try(&.to_i)
@@ -193,12 +196,16 @@ module Krikri
     private def success_result(path : String?, match : Regex::MatchData?, started : Time::Instant) : PluginResult
       # Real's registered wait_for success runs state, port, search_regex,
       # match_groups, match_groupdict, path, elapsed, then (for an
-      # existing path) add_path_info's uid/gid/owner/group/mode/size -
-      # live-verified vs 2.19.11 via `{{ r | to_json }}` for the file,
-      # port, timeout-only and state=absent variants (the timeout-only
+      # existing path) add_path_info's uid/gid/owner/group/mode/size, and
+      # ends failed, changed - wait_for.py's exit_json passes no changed
+      # and the task executor backfills failed, changed at the tail
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}` for the file,
+      # port, timeout-only and state=absent variants; the timeout-only
       # one carries path: null and no stat block; the same order list
-      # covers all of them since absent keys are skipped).
-      result = PluginResult.new(changed: false, failed: false, msg: "", path: path, elapsed: (Time.instant - started).total_seconds.to_i,
+      # covers all of them since absent keys are skipped). The wire omits
+      # changed (omit_changed) so normalize_module_result appends the
+      # same failed, changed tail on register.
+      result = PluginResult.new(changed: false, failed: false, msg: "", omit_changed: true, path: path, elapsed: (Time.instant - started).total_seconds.to_i,
         key_order: %w[state port search_regex match_groups match_groupdict path elapsed uid gid owner group mode size])
       groups = match.try(&.to_a[1..].compact.map { |group| JSON::Any.new(group) }) || [] of JSON::Any
       result.extra["match_groups"] = JSON::Any.new(groups)

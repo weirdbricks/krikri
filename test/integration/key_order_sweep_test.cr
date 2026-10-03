@@ -11,10 +11,14 @@ require "file_utils"
 # Module-plugin specs assert the plugin's own wire shape via
 # PluginSpecHelper.run - krikri's successful module wire omits failed:
 # false (real's registered result carries it, appended after the module
-# dict), so the pins cover the keys krikri emits, in real's relative
-# order. Action-plugin specs (debug/set_fact/assert) run the compiled
-# binary against a real playbook and assert the REGISTERED shape, which
-# for those controller-computed results does carry failed: false.
+# dict), and for the modules whose real wire also carries no changed
+# (ping/getent/wait_for: exit_json passes none, so real's task executor
+# backfills the failed, changed TAIL on register) krikri's wire omits
+# changed too (omit_changed), giving the registered shape ping/...,
+# failed, changed. Action-plugin specs (debug/set_fact/assert) run the
+# compiled binary against a real playbook and assert the REGISTERED
+# shape, which for those controller-computed results does carry
+# failed: false.
 #
 # fetch's check-mode and already-present shapes, wait_for's check-mode
 # skip and the port/timeout-only/absent wait variants, unarchive's
@@ -50,23 +54,63 @@ private def unique_tmp(*parts : String) : String
 end
 
 describe "ping plugin result key order" do
-  it "serializes success with ping leading (real: ping, failed, changed)" do
+  it "serializes a wire of just ping (real's module wire carries no changed)" do
     result = PluginSpecHelper.run("ping", {} of String => String)
     result["ping"].as_s.must_equal("pong")
-    result.as_h.keys.must_equal(["ping", "changed"])
+    result.as_h.keys.must_equal(["ping"])
+  end
+
+  it "registers as ping, failed, changed" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: ping it
+            ansible.builtin.ping:
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+    keys.must_equal(["ping", "failed", "changed"])
   end
 end
 
 describe "getent plugin result key order" do
-  it "serializes a passwd hit with ansible_facts leading (real: ansible_facts, failed, changed)" do
+  it "serializes a passwd hit with ansible_facts leading (wire: ansible_facts, invocation)" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root"})
-    result.as_h.keys.must_equal(["ansible_facts", "changed", "invocation"])
+    result.as_h.keys.must_equal(["ansible_facts", "invocation"])
   end
 
-  it "serializes the fail_key-false not-found hit with msg after ansible_facts (real: ansible_facts, msg, failed, changed)" do
+  it "serializes the fail_key-false not-found hit with msg after ansible_facts (wire: ansible_facts, msg, invocation)" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "krikri_no_such_user_9x7", "fail_key" => "false"})
     result["msg"].as_s.must_equal("One or more supplied key could not be found in the database.")
-    result.as_h.keys.must_equal(["ansible_facts", "msg", "changed", "invocation"])
+    result.as_h.keys.must_equal(["ansible_facts", "msg", "invocation"])
+  end
+
+  it "registers a passwd hit as ansible_facts, failed, changed" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: getent it
+            ansible.builtin.getent:
+              database: passwd
+              key: root
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+    keys.must_equal(["ansible_facts", "failed", "changed"])
   end
 end
 
@@ -122,29 +166,77 @@ describe "fetch plugin result key order" do
 end
 
 describe "wait_for plugin result key order" do
-  it "serializes a path wait as state, port, search_regex, match_groups, match_groupdict, path, elapsed, then the stat block" do
+  it "serializes a path wait as state, port, search_regex, match_groups, match_groupdict, path, elapsed, then the stat block (wire: no changed)" do
     path = PluginSpecHelper.tmp_path("wait-for-order.txt")
     File.write(path, "here\n")
 
     result = PluginSpecHelper.run("wait_for", {"path" => path})
-    result["changed"].as_bool.must_equal(false)
     result.as_h.keys.must_equal([
       "state", "port", "search_regex", "match_groups", "match_groupdict",
-      "path", "elapsed", "uid", "gid", "owner", "group", "mode", "size", "changed",
+      "path", "elapsed", "uid", "gid", "owner", "group", "mode", "size",
     ])
   end
 
-  it "serializes a timeout-only wait with path null and no stat block" do
+  it "serializes a timeout-only wait with path null and no stat block (wire: no changed)" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "1"})
     result.as_h.keys.must_equal([
       "state", "port", "search_regex", "match_groups", "match_groupdict",
-      "path", "elapsed", "changed",
+      "path", "elapsed",
     ])
   end
 
-  it "serializes the check-mode skip as skipped, msg, changed" do
+  it "serializes the check-mode skip as skipped, msg (wire: no changed)" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "1", "_ansible_check_mode" => "true"})
-    result.as_h.keys.must_equal(["skipped", "msg", "changed"])
+    result.as_h.keys.must_equal(["skipped", "msg"])
+  end
+
+  it "registers a path wait ending failed, changed after the stat block" do
+    path = PluginSpecHelper.tmp_path("wait-for-order-reg.txt")
+    File.write(path, "here\n")
+
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: wait for it
+            ansible.builtin.wait_for:
+              path: #{path}
+              timeout: 1
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+    keys.must_equal([
+      "state", "port", "search_regex", "match_groups", "match_groupdict",
+      "path", "elapsed", "uid", "gid", "owner", "group", "mode", "size",
+      "failed", "changed",
+    ])
+  end
+
+  it "registers the check-mode skip as skipped, msg, failed, changed" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: wait for it in check mode
+            ansible.builtin.wait_for:
+              timeout: 1
+            check_mode: true
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+    keys.must_equal(["skipped", "msg", "failed", "changed"])
   end
 end
 
