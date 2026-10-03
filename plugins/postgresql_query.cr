@@ -15,10 +15,10 @@ module Krikri
   # plugins (crystal-pg standing in for psycopg2). Params:
   # - login_db: database to connect to. NOT required in the live module
   #   (community.postgresql 4.x dropped required=True; with neither
-  #   login_db given, psycopg2 connects to the default database), and
-  #   the old `db:` spelling is no longer a parameter at all - real
-  #   rejects it as unsupported (live-verified via the podman-diff
-  #   postgresql_query case file).
+  #   login_db given, psycopg2 connects to the default database). The
+  #   deprecated `db:` spelling IS still accepted as an alias of
+  #   login_db (it is in the real 4.2.0 argument_spec, with a
+  #   deprecation warning - live-verified by running real 2.19.11).
   # - query: SQL string, or a JSON-encoded list of statements run in
   #   order (the real module's list form). Also not required: real's
   #   argument_spec has no required=True on query, and a nil query
@@ -29,9 +29,9 @@ module Krikri
   #   dict of %(name)s binds (each statement's placeholders expanded to
   #   $N positions - crystal-pg has no named binding). Mutually
   # - login_host/login_port/login_user/login_password/login_unix_socket
-  #   (the deprecated host/port/login/unix_socket aliases the other
-  #   plugins still resolve are NOT in the real module's argument_spec
-  #   - they're rejected as unsupported params).
+  #   plus the deprecated host/port/login/unix_socket aliases (all in
+  #   the real module's argument_spec - the same shared spec the other
+  #   plugins use, so they resolve to identical values).
   # - autocommit: for statements that can't run in a transaction block
   #   (VACUUM). Mutually exclusive with check_mode.
   # - search_path: SET search_path before the query.
@@ -44,9 +44,10 @@ module Krikri
   # postgresql_query case file): mutually-exclusive positional|named,
   # login_port int conversion, autocommit/trust_input bool conversion,
   # ssl_mode choices, and unsupported params LAST with the trailing
-  # all-aliases parenthetical (ca_cert's ssl_rootcert is the spec's only
-  # alias). The deprecated host/port/login/unix_socket names are not in
-  # the spec and get rejected like any other unsupported param.
+  # all-aliases parenthetical. The deprecated host/port/login/
+  # unix_socket/db names are real aliases of the login_* params, so
+  # they're accepted and resolve to the same values (live-verified by
+  # running real 2.19.11 + community.postgresql 4.2.0).
   #
   # Returns, in real Ansible's own key order: changed, query (the LAST
   # statement, mogrify'd), query_list, statusmessage, query_result (the
@@ -80,18 +81,18 @@ module Krikri
     # argument_spec + postgresql_query's own update) in declaration
     # order - values are the spec's aliases.
     SPEC = {
-      "login_user"        => [] of String,
+      "login_user"        => ["login"],
       "login_password"    => [] of String,
-      "login_host"        => [] of String,
-      "login_unix_socket" => [] of String,
-      "login_port"        => [] of String,
+      "login_host"        => ["host"],
+      "login_unix_socket" => ["unix_socket"],
+      "login_port"        => ["port"],
       "ssl_mode"          => [] of String,
       "ca_cert"           => ["ssl_rootcert"],
       "ssl_cert"          => [] of String,
       "ssl_key"           => [] of String,
       "connect_params"    => [] of String,
       "query"             => [] of String,
-      "login_db"          => [] of String,
+      "login_db"          => ["db"],
       "positional_args"   => [] of String,
       "named_args"        => [] of String,
       "session_role"      => [] of String,
@@ -128,7 +129,7 @@ module Krikri
         # None) - a failed module either way.
         return PluginResult.new(changed: false, failed: true, msg: "MODULE FAILURE")
       end
-      db = @params["login_db"]?
+      db = @params["login_db"]? || @params["db"]?
 
       queries = parse_query_list(query)
       positional = parse_list_param("positional_args")
@@ -213,7 +214,7 @@ module Krikri
 
       unsupported = unsupported_param_keys(@params, SPEC)
       unless unsupported.empty?
-        return unsupported_params_error("community.postgresql.postgresql_query", unsupported, SPEC)
+        return unsupported_params_error("postgresql_query", unsupported, SPEC)
       end
 
       nil
