@@ -270,7 +270,11 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
 
       write_target(target, result[:stdout])
-      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+      # dump/import lead with msg in real's own exit_json (and carry the
+      # shell command it ran in executed_commands, which this plugin's
+      # native-codec path does not build as a single string).
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
+        key_order: SUCCESS_KEY_ORDER)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to write dump to #{target}: #{ex.message}")
     end
@@ -288,7 +292,11 @@ module Krikri
       File.delete?(sql_path) if sql_path != target
 
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name])
+      # dump/import lead with msg in real's own exit_json (and carry the
+      # shell command it ran in executed_commands, which this plugin's
+      # native-codec path does not build as a single string).
+      PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
+        key_order: SUCCESS_KEY_ORDER)
     rescue ex
       PluginResult.new(changed: false, failed: true, msg: "Failed to import #{target}: #{ex.message}")
     end
