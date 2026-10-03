@@ -129,7 +129,10 @@ describe "wait_for plugin" do
 
   it "never reports changed" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "0"})
-    result["changed"].as_bool.must_equal(false)
+    # Real's wait_for wire carries no changed at all (exit_json passes
+    # none; the task executor backfills failed, changed onto the
+    # registered result).
+    result["changed"]?.must_equal(nil)
   end
 
   it "fails clearly when state: drained is given without a port:" do

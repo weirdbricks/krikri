@@ -10,7 +10,10 @@ describe "getent plugin" do
   it "returns getent_passwd keyed by username with field lists" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["changed"].as_bool.must_equal(false)
+    # Real's getent module wire carries no changed (exit_json passes
+    # none; the task executor backfills failed, changed onto the
+    # registered result).
+    result["changed"]?.must_equal(nil)
 
     facts = result["ansible_facts"]
     passwd = facts["getent_passwd"]

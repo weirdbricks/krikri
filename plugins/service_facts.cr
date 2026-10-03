@@ -60,11 +60,18 @@ module Krikri
         )
       end
 
+      # Real 2.19.11 registered service_facts result (live-verified):
+      # ansible_facts, failed, changed - exit_json passes no changed, so
+      # the wire omits it (omit_changed) and normalize_module_result
+      # backfills the failed, changed tail on register. msg is
+      # krikri-only.
       PluginResult.new(
         changed: false,
         failed: false,
         msg: "Gathered #{services.size} service facts",
-        ansible_facts: JSON::Any.new({"services" => JSON::Any.new(services)})
+        omit_changed: true,
+        ansible_facts: JSON::Any.new({"services" => JSON::Any.new(services)}),
+        key_order: ["ansible_facts"]
       )
     end
 

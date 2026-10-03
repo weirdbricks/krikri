@@ -216,7 +216,10 @@ module Krikri
         cron_file: cron_file,
         state: state,
         jobs: PluginHelpers::CronTable.job_names(new_content),
-        envs: PluginHelpers::CronTable.env_names(new_content)
+        envs: PluginHelpers::CronTable.env_names(new_content),
+        # Real 2.19.11 registered cron result (live-verified, changed and
+        # unchanged identical): jobs, envs, changed, failed.
+        key_order: ["jobs", "envs", "changed"]
       )
       report_backup(result, backup_file)
     end
@@ -249,7 +252,8 @@ module Krikri
         name: name,
         state: state,
         jobs: PluginHelpers::CronTable.job_names(new_content),
-        envs: PluginHelpers::CronTable.env_names(new_content)
+        envs: PluginHelpers::CronTable.env_names(new_content),
+        key_order: ["jobs", "envs", "changed"]
       )
       report_backup(result, backup_file)
     end
@@ -275,7 +279,8 @@ module Krikri
         cron_file: cron_file,
         state: state,
         jobs: PluginHelpers::CronTable.job_names(new_content),
-        envs: PluginHelpers::CronTable.env_names(new_content)
+        envs: PluginHelpers::CronTable.env_names(new_content),
+        key_order: ["jobs", "envs", "changed"]
       )
       report_backup(result, backup_file)
     end
@@ -303,7 +308,8 @@ module Krikri
         name: name,
         state: state,
         jobs: PluginHelpers::CronTable.job_names(new_content),
-        envs: PluginHelpers::CronTable.env_names(new_content)
+        envs: PluginHelpers::CronTable.env_names(new_content),
+        key_order: ["jobs", "envs", "changed"]
       )
       report_backup(result, backup_file)
     end
