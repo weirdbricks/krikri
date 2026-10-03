@@ -206,4 +206,63 @@ describe "dnf-family plugin result key order (sweep11)" do
     remove["msg"].as_s.must_equal("")
     remove["results"].as_a.first.as_s.must_match(/^Removed: sl-\d/)
   end
+  it "registers real's dnf5 install/no-op/list result shapes" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "dnf5")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: no-op (already installed)
+          dnf5:
+            name: bash
+            state: present
+          register: r
+    #{dump_task("noop")}
+        - name: list
+          dnf5:
+            list: bash
+          register: r
+    #{dump_task("list")}
+        - name: install
+          dnf5:
+            name: sl
+            state: present
+          register: r
+    #{dump_task("install")}
+        - name: remove
+          dnf5:
+            name: sl
+            state: absent
+          register: r
+    #{dump_task("remove")}
+    YAML
+
+    # real dnf5's own exit_json(results=, changed=, msg=, rc=) - the same
+    # shape as dnf's transaction path.
+    noop = dumps["noop"]
+    noop.keys.must_equal(%w[results changed msg rc failed])
+    noop["msg"].as_s.must_equal("Nothing to do")
+    noop["results"].as_a.must_equal([] of JSON::Any)
+
+    # dnf5's list path also reports rc, like dnf's.
+    list = dumps["list"]
+    list.keys.must_equal(%w[msg results rc changed failed])
+    list["msg"].as_s.must_equal("")
+    pkg = list["results"].as_a.first.as_h
+    pkg.keys.must_equal(%w[name arch epoch release version repo nevra envra yumstate])
+    pkg["name"].as_s.must_equal("bash")
+
+    install = dumps["install"]
+    install.keys.must_equal(%w[results changed msg rc failed])
+    install["changed"].as_bool.must_equal(true)
+    install["msg"].as_s.must_equal("")
+    install["results"].as_a.first.as_s.must_match(/^Installed: sl-\d/)
+
+    remove = dumps["remove"]
+    remove.keys.must_equal(%w[results changed msg rc failed])
+    remove["changed"].as_bool.must_equal(true)
+    remove["results"].as_a.first.as_s.must_match(/^Removed: sl-\d/)
+  end
 end
