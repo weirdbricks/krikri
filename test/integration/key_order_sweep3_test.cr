@@ -40,6 +40,36 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "modprobe plugin result key order" do
+  # Only the already-loaded success path is testable unprivileged (a
+  # real load/unload needs root); the other success exits share real's
+  # single `exit_json(**result)` shape, so the pin covers them all.
+  it "serializes an already-loaded module as changed-name-params-state (real: changed, name, params, state)" do
+    loaded = File.read("/proc/modules").each_line.map { |line| line.split.first? }.to_a.compact.first?
+    skip "no loaded modules visible in /proc/modules" unless loaded
+
+    result = PluginSpecHelper.run("modprobe", {"name" => loaded, "state" => "present"})
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["params"].as_s.must_equal("")
+    result.as_h.keys.must_equal(["changed", "name", "params", "state"])
+  end
+end
+
+describe "locale_gen plugin result key order" do
+  # The already-generated path needs no mutation (locale-gen itself is
+  # root-only), so this pin is testable unprivileged; the changed and
+  # check-mode orders were live-verified identical to it.
+  it "serializes an already-generated locale as changed-name-ubuntu_mode-mechanism (real-verified)" do
+    result = PluginSpecHelper.run("locale_gen", {"name" => "en_US.UTF-8", "state" => "present"})
+
+    result["failed"]?.must_be_nil
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "name", "ubuntu_mode", "mechanism"])
+  end
+end
+
 describe "kernel_blacklist plugin result key order" do
   it "serializes a fresh present as changed-name-state-filename-lines-is_blacklisted (real-verified)" do
     file = unique_tmp("kernel-blacklist-order")
