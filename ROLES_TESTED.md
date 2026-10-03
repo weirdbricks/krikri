@@ -9695,3 +9695,20 @@ ended 74/74 CLEAN. See `KNOWN_MISSING.md`'s entry for this round.
 | `mrlesmithjr.kea-dhcp` | rocky | ✅ clean (round 985047, 0.9.1335/0.9.1336 release re-measure). Times: cold py 34.93s vs cr 214.58s; warm py 14.85s vs cr 1.02s. |
 | `moletti.apt` | ubuntu | ✅ clean (round 984130, 0.9.1335/0.9.1336 release re-measure). Times: cold py 12.30s vs cr 4.41s; warm py 14.23s vs cr 0.76s. |
 | `juju4.harden_sysctl` | rocky | ✅ clean (round 985031, 0.9.1335/0.9.1336 release re-measure). Times: cold py 69.04s vs cr 22.51s; warm py 61.69s vs cr 2.47s. |
+
+## Round 991000-991009 (2026-10-03): 0.9.1459 confirm round, 10 roles touching the modules changed in 0.9.1457-0.9.1459
+
+All clean, cold and warm, static musl release build. Exercises `add_host` hostvars, `community.mysql.*` (new `deprecations` entry), `uri`, `git_config`, `archive`, `get_certificate`.
+
+| Role | OS | Status |
+|---|---|---|
+| `robertdebock.mysql` | ubuntu | ✅ clean (round 991000, 0.9.1459 release). Times: cold py 52.04s vs cr 28.73s; warm py 20.02s vs cr 0.83s. |
+| `robertdebock.postgres` | ubuntu | ✅ clean (round 991001, 0.9.1459 release). Times: cold py 73.14s vs cr 40.47s; warm py 22.56s vs cr 0.87s. |
+| `robertdebock.phpmyadmin` | ubuntu | ✅ clean (round 991002, 0.9.1459 release). Times: cold py 97.77s vs cr 62.21s; warm py 27.85s vs cr 3.05s. |
+| `buluma.phpmyadmin` | ubuntu | ✅ clean (round 991003, 0.9.1459 release). Times: cold py 85.49s vs cr 46.55s; warm py 70.45s vs cr 1.81s. |
+| `robertdebock.openssl` | ubuntu | ✅ clean (round 991004, 0.9.1459 release). Times: cold py 14.06s vs cr 7.57s; warm py 9.59s vs cr 0.58s. |
+| `robertdebock.nextcloud` | ubuntu | ✅ clean (round 991005, 0.9.1459 release). Times: cold py 47.15s vs cr 39.91s; warm py 9.05s vs cr 1.75s. |
+| `gantsign.git_credential_manager` | ubuntu | ✅ clean (round 991006, 0.9.1459 release). Times: cold py 49.75s vs cr 53.75s; warm py 14.68s vs cr 1.38s. |
+| `geerlingguy.git` | ubuntu | ✅ clean (round 991007, 0.9.1459 release). Times: cold py 9.57s vs cr 4.60s; warm py 9.33s vs cr 0.92s. |
+| `geerlingguy.postgresql` | ubuntu | ✅ clean (round 991008, 0.9.1459 release). Times: cold py 75.44s vs cr 58.57s; warm py 23.72s vs cr 1.79s. |
+| `geerlingguy.mysql` | ubuntu | ✅ clean (round 991009, 0.9.1459 release). Times: cold py 100.43s vs cr 66.05s; warm py 22.94s vs cr 0.97s. |
