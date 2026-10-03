@@ -26,6 +26,11 @@ module Krikri
   #   slave_hosts, slave_status - with real's `!name` exclusion form and
   #   its "an include wins over an exclude" rule. Only the keys the
   #   filter keeps are emitted, exactly as real's get_info does.
+  # - exclude_fields: a list (or comma-separated string) of per-database
+  #   fields to skip - db_size, db_table_count. Anything else is
+  #   silently ignored, exactly as real's own docs promise; an excluded
+  #   field is dropped from the `databases` dict AND from the query that
+  #   would have produced it.
   # - return_empty_dbs: include databases that hold no tables at all
   #   (real reports them with size/tables 0).
   # - login_host/login_port/login_user/login_password/login_unix_socket
@@ -47,8 +52,7 @@ module Krikri
   #   hardening's own configure.yml) read arbitrary keys like `datadir`/
   #   `log_error` directly.
   #
-  # Not implemented: exclude_fields (db_size/db_table_count are always
-  # computed), proxy-privilege-only accounts in users_info, and the
+  # Not implemented: proxy-privilege-only accounts in users_info, and the
   # mysql.user columns this vendored driver cannot decode at all
   # (authentication_string is a LONGTEXT) - see UNREADABLE_COLUMN_TYPES.
   #
@@ -112,6 +116,7 @@ module Krikri
 
       filters = parse_filter(@params["filter"]?)
       unknown = filters.reject { |entry| SUBSETS.includes?(entry.lstrip('!')) }
+      excluded_fields = parse_filter(@params["exclude_fields"]?)
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -144,7 +149,7 @@ module Krikri
 
       DB.open(uri) do |connection|
         engine_name = implementation_of(connection)
-        collect(connection, wanted) do |name, value|
+        collect(connection, wanted, excluded_fields) do |name, value|
           result.extra[name] = value
         end
       end
@@ -215,10 +220,10 @@ module Krikri
     # Runs each wanted subset's collector, in SUBSETS order, and hands
     # each result to the block - real builds the dict in that same order,
     # which is what the registered key order shows.
-    private def collect(db : DB::Database, wanted : Array(String), &) : Nil
+    private def collect(db : DB::Database, wanted : Array(String), excluded_fields : Array(String), &) : Nil
       collectors = {
         "global_status" => ->(connection : DB::Database) { collect_global_status(connection) },
-        "databases"     => ->(connection : DB::Database) { collect_databases(connection) },
+        "databases"     => ->(connection : DB::Database) { collect_databases(connection, excluded_fields) },
         "engines"       => ->(connection : DB::Database) { collect_engines(connection) },
         "users"         => ->(connection : DB::Database) { collect_users(connection) },
         "users_info"    => ->(connection : DB::Database) { collect_users_info(connection) },
@@ -250,29 +255,47 @@ module Krikri
       JSON::Any.new(rows)
     end
 
-    private def collect_databases(db : DB::Database) : JSON::Any
+    # Real's `exclude_fields:` (mysql_info.py's __get_databases): it drops
+    # the named per-database fields from the emitted dict AND from the
+    # query itself, so an excluded field costs nothing to collect. Only
+    # `db_size` and `db_table_count` are supported; anything else is
+    # silently ignored (live-verified: `exclude_fields: bogus_field`
+    # emits no warning and returns the full dict). `size` is emitted
+    # first, then `tables`, exactly as real's create_db_info builds it -
+    # and a database whose every field is excluded gets an empty dict.
+    private def collect_databases(db : DB::Database, excluded_fields : Array(String)) : JSON::Any
       databases = {} of String => JSON::Any
-      rows_as_hashes(db, "SELECT table_schema AS name, SUM(data_length + index_length) AS size, COUNT(table_name) AS tables FROM information_schema.TABLES GROUP BY table_schema").each do |row|
-        databases[row["name"]] = database_entry(row["size"]? || "", row["tables"]? || "")
+      want_size = !excluded_fields.includes?("db_size")
+      want_tables = !excluded_fields.includes?("db_table_count")
+
+      columns = ["table_schema AS name"]
+      columns << "SUM(data_length + index_length) AS size" if want_size
+      columns << "COUNT(table_name) AS tables" if want_tables
+      sql = "SELECT #{columns.join(", ")} FROM information_schema.TABLES GROUP BY table_schema"
+
+      rows_as_hashes(db, sql).each do |row|
+        databases[row["name"]] = database_entry(row["size"]? || "", row["tables"]? || "", want_size, want_tables)
       end
 
       if true?(@params["return_empty_dbs"]?)
         rows_as_hashes(db, "SHOW DATABASES").each do |row|
-          databases[row["Database"]] ||= database_entry("", "")
+          databases[row["Database"]] ||= database_entry("", "", want_size, want_tables)
         end
       end
 
       JSON::Any.new(databases)
     end
 
-    private def database_entry(size : String, tables : String) : JSON::Any
-      JSON::Any.new({
-        # SUM(data_length + index_length) arrives as a DECIMAL, which real
-        # converts through float before its int() pass - so the size lands
-        # as a plain int, not a float or a string.
-        "size"   => JSON::Any.new(size.to_f.to_i64),
-        "tables" => JSON::Any.new(tables.to_i64),
-      })
+    private def database_entry(size : String, tables : String, want_size : Bool = true, want_tables : Bool = true) : JSON::Any
+      entry = {} of String => JSON::Any
+      # SUM(data_length + index_length) arrives as a DECIMAL, which real
+      # converts through float before its int() pass - so the size lands
+      # as a plain int, not a float or a string. A database the
+      # grouped query never returned (return_empty_dbs only) has no
+      # aggregate at all, which real reads as 0.
+      entry["size"] = JSON::Any.new(size.empty? ? 0_i64 : size.to_f.to_i64) if want_size
+      entry["tables"] = JSON::Any.new(tables.empty? ? 0_i64 : tables.to_i64) if want_tables
+      JSON::Any.new(entry)
     end
 
     private def collect_engines(db : DB::Database) : JSON::Any

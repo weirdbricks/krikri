@@ -95,10 +95,11 @@ end
 
 # A play that creates one database, for a spec that needs the server to
 # start out already in that state.
-private def create_db_play(name : String) : String
+private def create_db_play(name : String, host : String = MYSQL_HOST, port : Int32 = MYSQL_PORT) : String
   "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
   "    - name: create\n      community.mysql.mysql_db:\n        name: #{name}\n        state: present\n" \
-  "        #{mysql_login_args(8)}\n"
+  "        login_host: #{host}\n        login_port: #{port}\n        login_user: root\n" \
+  "        login_password: krikri\n"
 end
 
 private MYSQL_TEST_DB = "shape_krdb"
@@ -537,5 +538,156 @@ describe "mysql_info plugin result shape" do
       version databases global_status engines
       users users_info master_status slave_hosts slave_status failed
     ])
+  end
+end
+
+# `exclude_fields:` support in mysql_info, against a throwaway MySQL at
+# 127.0.0.1:33307 (pended when nothing is listening there).
+#
+# Real's community.mysql 5.0.2 mysql_info.py passes `exclude_fields` to
+# __get_databases, which drops each named field from the emitted
+# per-database dict AND from the information_schema query that would
+# have produced it. Only `db_size` and `db_table_count` are supported -
+# anything else is silently ignored (no warning, no error), as the
+# module's own documentation promises. Every value pinned here was
+# live-verified against real ansible-playbook 2.19.11 with
+# community.mysql 5.0.2 on MySQL 8.4.
+private EXCL_HOST = "127.0.0.1"
+private EXCL_PORT = 33307
+
+private def excl_reachable? : Bool
+  sock = TCPSocket.new(EXCL_HOST, EXCL_PORT, connect_timeout: 1)
+  sock.close
+  true
+rescue
+  false
+end
+
+private def excl_login_args(indent : Int32 = 12) : String
+  [
+    "login_host: #{EXCL_HOST}",
+    "login_port: #{EXCL_PORT}",
+    "login_user: root",
+    "login_password: krikri",
+  ].join("\n" + " " * indent)
+end
+
+private def excl_dump(tasks : String) : JSON::Any
+  registered_dump(tasks)
+end
+
+describe "mysql_info exclude_fields (127.0.0.1:33307)" do
+  # Shared external DB state: never run in parallel with sibling workers
+  # (see test/minitest_helper.cr).
+  serial!
+
+  it "emits size and tables per database when no field is excluded" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = excl_dump(task_body(<<-YAML))
+            - name: databases
+              community.mysql.mysql_info:
+                filter: databases
+                #{excl_login_args}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed])
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.keys.must_equal(%w[size tables])
+    end
+    (dump["databases"].as_h.size > 0).must_equal(true)
+  end
+
+  it "omits size when exclude_fields names db_size" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = excl_dump(task_body(<<-YAML))
+            - name: databases without size
+              community.mysql.mysql_info:
+                filter: databases
+                exclude_fields: db_size
+                #{excl_login_args}
+              register: r
+    YAML
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.keys.must_equal(%w[tables])
+      (entry["tables"].as_i >= 0).must_equal(true)
+    end
+    (dump["databases"].as_h.size > 0).must_equal(true)
+  end
+
+  it "emits an empty per-database dict when both fields are excluded" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = excl_dump(task_body(<<-YAML))
+            - name: databases without either field
+              community.mysql.mysql_info:
+                filter: databases
+                exclude_fields: db_size,db_table_count
+                #{excl_login_args}
+              register: r
+    YAML
+    # Real still names every database it found - the dict is per
+    # database, just with no keys left in it.
+    (dump["databases"].as_h.size > 0).must_equal(true)
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.must_be_empty
+    end
+  end
+
+  # Real's argspec types `exclude_fields` as a list, so a YAML list
+  # reaches the same code as the comma-separated string form.
+  it "honors a YAML list of exclude_fields" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = excl_dump(task_body(<<-YAML))
+            - name: databases without tables
+              community.mysql.mysql_info:
+                filter: databases
+                exclude_fields:
+                  - db_table_count
+                #{excl_login_args}
+              register: r
+    YAML
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.keys.must_equal(%w[size])
+    end
+  end
+
+  # An unsupported element is silently ignored: the full per-database
+  # dict comes back and no warning is raised.
+  it "ignores an unsupported exclude_fields element without warning" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = excl_dump(task_body(<<-YAML))
+            - name: databases with a bogus exclusion
+              community.mysql.mysql_info:
+                filter: databases
+                exclude_fields: bogus_field
+                #{excl_login_args}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version databases failed])
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.keys.must_equal(%w[size tables])
+    end
+  end
+
+  # `return_empty_dbs` adds databases the grouped query never returns
+  # (no tables at all); an excluded field must be absent from those
+  # entries too, not defaulted to 0.
+  it "keeps exclude_fields on the empty databases return_empty_dbs adds" do
+    skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
+    dump = registered_dump(task_body(<<-YAML), create_db_play("excl_shape_db", EXCL_HOST, EXCL_PORT))
+            - name: every database without size
+              community.mysql.mysql_info:
+                filter: databases
+                return_empty_dbs: true
+                exclude_fields: db_size
+                #{excl_login_args}
+              register: r
+    YAML
+    dump["databases"].as_h.each_value do |entry|
+      entry.as_h.keys.must_equal(%w[tables])
+    end
+    # The scratch database holds no tables, so it can only be present
+    # through the SHOW DATABASES branch - real reports it as
+    # {"tables": 0}, and an excluded `size` must be absent, not 0.
+    dump["databases"].as_h["excl_shape_db"].as_h.must_equal({"tables" => JSON::Any.new(0_i64)})
   end
 end
