@@ -145,7 +145,10 @@ module Krikri
               else
                 {"_ansible_verbose_always" => JSON::Any.new(true)}
               end
-      ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra))
+      # Real's registered assert success runs changed, msg, failed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+      ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra,
+        key_order: ["changed", "msg", "failed"]))
     end
 
     private def true?(value : String?, default : Bool = false) : Bool

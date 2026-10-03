@@ -49,11 +49,15 @@ module Krikri
         facts[key] = coerce(value)
       end
 
+      # Real's registered set_fact result runs ansible_facts, failed,
+      # changed (live-verified vs 2.19.11 via `{{ r | to_json }}`) - the
+      # module-plugin copy mirrors the action plugin's key_order.
       PluginResult.new(
         changed: false,
         failed: false,
         msg: "",
-        ansible_facts: JSON::Any.new(facts)
+        ansible_facts: JSON::Any.new(facts),
+        key_order: ["ansible_facts"]
       )
     end
 

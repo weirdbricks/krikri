@@ -57,7 +57,10 @@ module Krikri
       end
 
       extra = {"ansible_facts" => JSON::Any.new(facts)}
-      ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra))
+      # Real's registered set_fact result runs ansible_facts, failed,
+      # changed (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+      ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra,
+        key_order: ["ansible_facts", "failed", "changed"]))
     end
 
     # The executor marks every set_fact param value with

@@ -133,7 +133,7 @@ module Krikri
     # nesting) - used by every final-result action plugin
     # (action_plugins/*.cr) so each one only needs to name its own extra
     # fields, not re-derive this shape.
-    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : JSON::Any
+    def self.plugin_result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil) : JSON::Any
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
       # Unlike a module's own wire result (PluginResult#to_json), these
@@ -146,6 +146,19 @@ module Krikri
       h["failed"] = JSON::Any.new(failed)
       h["msg"] = JSON::Any.new(msg) unless msg.empty?
       extra.each { |k, v| h[k] = v }
+      # Same wire-key reorder PluginResult#key_order gives module results
+      # (see its comment): when *key_order* is set, the listed keys emit
+      # first in that order (absent ones skipped) and every unlisted key
+      # follows in its current order - real's registered action-result
+      # dict order (e.g. debug's msg/failed/changed, set_fact's
+      # ansible_facts/failed/changed, assert's changed/msg/failed),
+      # live-verified via `{{ r | to_json }}` on registered tasks.
+      if order = key_order
+        ordered = Hash(String, JSON::Any).new
+        order.each { |k| ordered[k] = h[k] if h.has_key?(k) }
+        h.each { |k, v| ordered[k] = v unless ordered.has_key?(k) }
+        h = ordered
+      end
       JSON::Any.new(h)
     end
 

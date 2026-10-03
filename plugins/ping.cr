@@ -22,7 +22,10 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "boom")
       end
 
-      PluginResult.new(changed: false, failed: false, msg: "", ping: data)
+      # Real's registered ping result runs ping, failed, changed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`); krikri's
+      # module wire omits failed: false on success, so only ping leads.
+      PluginResult.new(changed: false, failed: false, msg: "", ping: data, key_order: ["ping"])
     end
   end
 end

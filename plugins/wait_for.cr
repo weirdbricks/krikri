@@ -45,7 +45,11 @@ module Krikri
   class WaitForPlugin < BasePlugin
     def execute : PluginResult
       if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: false, failed: false, msg: "remote module (wait_for) does not support check mode", skipped: true)
+        # Real's registered wait_for check-mode skip runs skipped, msg,
+        # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`;
+        # krikri's wire omits failed: false on success).
+        return PluginResult.new(changed: false, failed: false, msg: "remote module (wait_for) does not support check mode", skipped: true,
+          key_order: ["skipped", "msg", "changed"])
       end
 
       port = @params["port"]?.try(&.to_i)
@@ -187,7 +191,15 @@ module Krikri
     end
 
     private def success_result(path : String?, match : Regex::MatchData?, started : Time::Instant) : PluginResult
-      result = PluginResult.new(changed: false, failed: false, msg: "", path: path, elapsed: (Time.instant - started).total_seconds.to_i)
+      # Real's registered wait_for success runs state, port, search_regex,
+      # match_groups, match_groupdict, path, elapsed, then (for an
+      # existing path) add_path_info's uid/gid/owner/group/mode/size -
+      # live-verified vs 2.19.11 via `{{ r | to_json }}` for the file,
+      # port, timeout-only and state=absent variants (the timeout-only
+      # one carries path: null and no stat block; the same order list
+      # covers all of them since absent keys are skipped).
+      result = PluginResult.new(changed: false, failed: false, msg: "", path: path, elapsed: (Time.instant - started).total_seconds.to_i,
+        key_order: %w[state port search_regex match_groups match_groupdict path elapsed uid gid owner group mode size])
       groups = match.try(&.to_a[1..].compact.map { |group| JSON::Any.new(group) }) || [] of JSON::Any
       result.extra["match_groups"] = JSON::Any.new(groups)
       result.extra["match_groupdict"] = JSON::Any.new(Hash(String, JSON::Any).new)

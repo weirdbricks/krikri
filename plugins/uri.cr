@@ -165,7 +165,10 @@ module Krikri
       end
 
       if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true)
+        # Real's registered uri check-mode skip runs skipped, msg, changed
+        # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+        return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true,
+          key_order: ["skipped", "msg", "changed"])
       end
 
       start = Time.instant
@@ -288,6 +291,26 @@ module Krikri
 
       result.extra["elapsed"] = JSON::Any.new(elapsed)
       apply_response_extras(result, headers, body, redirected)
+      # Real's registered uri success order (live-verified vs 2.19.11 via
+      # `{{ r | to_json }}`): content (only with return_content -
+      # exit_json's leading kwarg), redirected, url, status, then EVERY
+      # response header transmogrified in response order, then msg,
+      # elapsed, changed, path (dest:), json (json body - appended after
+      # path by uresp), then add_path_info's stat block. The response
+      # headers vary per server, so the order list is built per request;
+      # failure results (status not in status_code) keep the historical
+      # order - real's fail_json shape was not pinned here.
+      unless failed
+        order = [] of String
+        order << "content" if result.extra.has_key?("content")
+        order += ["redirected", "url", "status"]
+        headers.each { |name, _| order << name.gsub("-", "_").downcase }
+        order += ["msg", "elapsed", "changed"]
+        order << "path" if result.extra.has_key?("path")
+        order << "json" if result.extra.has_key?("json")
+        order += ["uid", "gid", "owner", "group", "mode", "state", "size"]
+        result.key_order = order
+      end
       result
     end
 

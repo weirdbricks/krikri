@@ -78,6 +78,9 @@ module Krikri
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
+    # Real's registered find result order (live-verified vs 2.19.11).
+    private FIND_KEY_ORDER = %w[files changed msg matched examined skipped_paths]
+
     # contains: with an unknown encoding: name - not a per-file miss but a
     # path-level failure in real (see read_content)
     class UnknownEncoding < Exception; end
@@ -183,10 +186,15 @@ module Krikri
           matched: files.size,
           files: files,
           skipped_paths: skipped_paths,
-          warnings: extra
+          warnings: extra,
+          key_order: FIND_KEY_ORDER
         )
       end
 
+      # Real's registered find result runs files, changed, msg, matched,
+      # examined, skipped_paths, failed (live-verified vs 2.19.11 via
+      # `{{ r | to_json }}`; check mode is the same shape). warnings is
+      # unlisted - it trails (its real position was not confirmed live).
       PluginResult.new(
         changed: false,
         failed: false,
@@ -194,7 +202,8 @@ module Krikri
         examined: examined,
         matched: files.size,
         files: files,
-        skipped_paths: skipped_paths
+        skipped_paths: skipped_paths,
+        key_order: FIND_KEY_ORDER
       )
     end
 

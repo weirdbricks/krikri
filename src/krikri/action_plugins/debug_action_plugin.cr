@@ -69,7 +69,10 @@ module Krikri
       # unconditional (see ResultDisplay's empty-msg branch).
       return debug_var(var_name) if var_name
 
-      final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)})
+      # Real's registered debug msg result runs msg, failed, changed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
+      final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)},
+        key_order: ["msg", "failed", "changed"])
       if (typed = native_msg) && typed.as_s?.nil?
         return ActionResult.final(JSON.parse({
           "changed"                 => false,
@@ -109,7 +112,7 @@ module Krikri
           # 2.19.11 renders the undefined var's error inline (older releases
           # printed "VARIABLE IS NOT DEFINED!")
           var_name => JSON::Any.new("<< error 1 - #{Krikri.strict_undefined_message(var_name, @vars)} >>"),
-        }))
+        }, key_order: [var_name, "failed", "changed"]))
       end
 
       # Real debug's var: templates the looked-up value through the
@@ -141,10 +144,12 @@ module Krikri
       # stays `true`, an int `0`, an object nested) - live-verified
       # 2026-09-24: `debug: var=r.changed` prints `"r.changed": true`,
       # not a quoted string. Only the unresolvable case is a string.
+      # Real's registered debug var: result runs the VARIABLE-NAME key,
+      # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       ActionResult.final(result_json(false, false, "", {
         "_ansible_verbose_always" => JSON::Any.new(true),
         var_name                  => rendered,
-      }))
+      }, key_order: [var_name, "failed", "changed"]))
     end
 
     # Render lazy `{{ ... }}` template strings inside a looked-up var
@@ -200,8 +205,8 @@ module Krikri
       end
     end
 
-    private def result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : JSON::Any
-      ActionResult.plugin_result_json(changed, failed, msg, extra)
+    private def result_json(changed : Bool, failed : Bool, msg : String, extra : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, key_order : Array(String)? = nil) : JSON::Any
+      ActionResult.plugin_result_json(changed, failed, msg, extra, key_order: key_order)
     end
   end
 end
