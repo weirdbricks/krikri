@@ -561,7 +561,12 @@ module Krikri
       PluginResult.new(
         changed: changed,
         failed: false,
-        msg: "File attributes updated",
+        # Real's file module result carries NO msg on any success path -
+        # attribute updates included (live-verified vs 2.19.11: a mode
+        # change on an existing file serializes as path, changed, the
+        # stat block, failed - no msg key). msg: "" serializes as no msg
+        # key - PluginResult omits empty msgs unless include_empty_msg.
+        msg: "",
         diff: diff_data,
         path: path,
         key_order: SUCCESS_KEY_ORDER

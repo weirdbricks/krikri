@@ -47,8 +47,17 @@ module Krikri
       end
 
       path = result[:stdout].strip
-      PluginResult.new(changed: true, failed: false, msg: "", path: path, state: state)
+      # Real tempfile's success result runs changed, path, then the
+      # add_path_info stat block, then failed (live-verified vs 2.19.11
+      # via a registered result, state file and directory alike; msg: ""
+      # never serializes). add_path_info re-derives state from the stat,
+      # so the explicit state: only covers the not-yet-statable edge.
+      res = PluginResult.new(changed: true, failed: false, msg: "", path: path, state: state, key_order: SUCCESS_KEY_ORDER)
+      add_path_info(res, path)
+      res
     end
+
+    private SUCCESS_KEY_ORDER = %w[changed path uid gid owner group mode state size failed]
 
     private def normalized_state : String
       state = @params["state"]?

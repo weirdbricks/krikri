@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "digest/md5"
 require "file_utils"
 
 # Real ansible-core 2.19.11's registered copy result key orders -
@@ -9,8 +10,10 @@ require "file_utils"
 # stat block and failed: false; the equal-content and check-mode
 # would-not-change paths dispatch real's FILE module instead, whose
 # result runs diff, path, changed, the stat block, then the
-# action-injected checksum and dest. krikri's wire result omits src/
-# md5sum (no staged-tempfile path to echo) and failed: false, and its
+# action-injected checksum and dest. Real's src is its staged
+# .source.txt tempfile path - krikri echoes the staging temp the bytes
+# actually travelled through (content path) or the source path itself
+# (src path) - and md5sum is the source content's MD5. krikri's
 # execute() wrapper always materializes a `diff` key (empty list when
 # no diff data - real's own always-present-diff shape), so the pins
 # below cover the keys krikri emits, in real's relative order.
@@ -22,7 +25,7 @@ describe "copy plugin result key order" do
 
     result["changed"].as_bool.must_equal(true)
     result.as_h.keys.must_equal([
-      "diff", "dest", "md5sum", "checksum", "changed",
+      "diff", "dest", "src", "md5sum", "checksum", "changed",
       "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
   ensure
@@ -37,7 +40,7 @@ describe "copy plugin result key order" do
 
     result["changed"].as_bool.must_equal(true)
     result.as_h.keys.must_equal([
-      "diff", "dest", "md5sum", "checksum", "changed", "backup_file",
+      "diff", "dest", "src", "md5sum", "checksum", "changed", "backup_file",
       "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
   ensure
@@ -58,7 +61,7 @@ describe "copy plugin result key order" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "serializes a src-copy success in real copy's key order" do
+  it "serializes a src-copy success in real copy's key order with src and md5sum present" do
     src = PluginSpecHelper.tmp_path("copy-order-src.txt")
     File.write(src, "src bytes\n")
     dest = PluginSpecHelper.tmp_path("copy-order-src-dest.txt")
@@ -66,8 +69,10 @@ describe "copy plugin result key order" do
     result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest})
 
     result["changed"].as_bool.must_equal(true)
+    result["src"].as_s.must_equal(src)
+    result["md5sum"].as_s.must_equal(Digest::MD5.hexdigest("src bytes\n"))
     result.as_h.keys.must_equal([
-      "diff", "dest", "checksum", "changed",
+      "diff", "dest", "src", "md5sum", "checksum", "changed",
       "uid", "gid", "owner", "group", "mode", "state", "size",
     ])
   ensure
@@ -91,13 +96,13 @@ describe "copy plugin result key order" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "serializes the force-false existing-dest no-op with dest leading (krikri's always-present diff trails)" do
+  it "serializes the force-false existing-dest no-op with dest and src leading (krikri's always-present diff trails)" do
     dest = PluginSpecHelper.tmp_path("copy-order-forcefalse.txt")
     PluginSpecHelper.run("copy", {"content" => "kept\n", "dest" => dest})
     result = PluginSpecHelper.run("copy", {"content" => "other\n", "dest" => dest, "force" => "false"})
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["dest", "changed", "diff"])
+    result.as_h.keys.must_equal(["dest", "src", "changed", "diff"])
   ensure
     File.delete(dest) if dest && File.exists?(dest)
   end

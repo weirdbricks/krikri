@@ -56,6 +56,28 @@ module Krikri
       %w[backup force unsafe_writes]
     end
 
+    # Real ansible.builtin.template's registered-result key orders (the
+    # template ACTION plugin delegates to the copy module, so the module
+    # result is copy-shaped; live-verified vs 2.19.11 via `{{ r | to_json }}`
+    # on registered template: tasks - the -v dump sorts alphabetically):
+    #
+    # - changed path (fresh and backup: alike): diff, dest, src, md5sum,
+    #   checksum, changed (, backup_file), then the add_path_info stat
+    #   block and failed: false - identical to copy's changed order.
+    #   `src` is real's staged .source.txt tempfile path; krikri echoes
+    #   the rendered-source path the action plugin sent along
+    #   (_rendered_from_template).
+    # - equal-content rerun: diff, path, changed, the stat block, then
+    #   the checksum and dest echo - copy's unchanged order.
+    # - force: false against an existing dest: ONLY {dest, src, changed}
+    #   (live-verified; no msg, no stat fields) - copy's noop order.
+    # - check-mode would-change: the action-level bare {diff, changed}
+    #   (live-verified) - copy's check order.
+    private CHANGED_KEY_ORDER   = %w[diff dest src md5sum checksum changed backup_file uid gid owner group mode state size failed]
+    private UNCHANGED_KEY_ORDER = %w[diff path changed uid gid owner group mode state size checksum dest failed]
+    private NOOP_KEY_ORDER      = %w[dest src changed failed]
+    private CHECK_KEY_ORDER     = %w[diff changed failed]
+
     property? check_mode : Bool
     property? diff_mode : Bool
 
@@ -227,11 +249,17 @@ module Krikri
       # (round 811059/812xxx, cchurch.uwsgi's own `uwsgi_conf_force:
       # false` default) - real Ansible creates it fine.
       if changed && File.exists?(dest) && !true?(@params["force"]?, default: true)
+        # Real's result here is ONLY {dest, src, changed} - no msg key at
+        # all (live-verified vs 2.19.11 via a registered result: src is
+        # the rendered-source path, here the action plugin's
+        # _rendered_from_template). The old "File already exists" msg was
+        # an extra success key real does not emit.
         return PluginResult.new(
           changed: false,
           failed: false,
-          msg: "File already exists (use force=yes to overwrite)",
-          dest: dest
+          dest: dest,
+          src: @params["_rendered_from_template"]?.presence || "template",
+          key_order: NOOP_KEY_ORDER
         )
       end
 
@@ -258,7 +286,8 @@ module Krikri
           return PluginResult.new(
             changed: true,
             failed: false,
-            diff: diff_data
+            diff: diff_data,
+            key_order: CHECK_KEY_ORDER
           )
         else
           # Real's equal-content check run still executes the module
@@ -273,7 +302,8 @@ module Krikri
             failed: false,
             diff: diff_data,
             dest: dest,
-            checksum: content_sha1
+            checksum: content_sha1,
+            key_order: UNCHANGED_KEY_ORDER
           )
           add_path_info(result, dest)
           result.extra["path"] = JSON::Any.new(dest)
@@ -303,7 +333,8 @@ module Krikri
           changed: attributes_fixed,
           failed: false,
           dest: dest,
-          checksum: content_sha1
+          checksum: content_sha1,
+          key_order: UNCHANGED_KEY_ORDER
         )
         add_path_info(result, dest)
         result.extra["path"] = JSON::Any.new(dest)
@@ -526,8 +557,13 @@ module Krikri
         failed: false,
         diff: diff_data,
         dest: dest,
+        # Real's src is the staged rendered-source tempfile (.source.txt,
+        # live-verified); krikri echoes the rendered-source path the
+        # action plugin passed along for exactly this purpose.
+        src: @params["_rendered_from_template"]?.presence || "template",
         checksum: content_sha1,
-        md5sum: content_md5
+        md5sum: content_md5,
+        key_order: CHANGED_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       add_path_info(result, dest)

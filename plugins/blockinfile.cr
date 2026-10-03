@@ -77,7 +77,7 @@ module Krikri
       # state=present (or an explicit need for the file) goes through the
       # create/fail logic below.
       if state == "absent" && !File.exists?(path) && true?(@params["create"]?)
-        return PluginResult.new(changed: false, failed: false, msg: "File #{path} not present")
+        return PluginResult.new(changed: false, failed: false, msg: "File #{path} not present", key_order: BLOCK_KEY_ORDER)
       end
 
       being_created, error = ensure_file_exists(path, true?(@params["create"]?), check_mode)
@@ -127,6 +127,12 @@ module Krikri
       # one empty line and re-create the markers around it.
       trimmed_block = block.try(&.rstrip("\n")) || ""
       block_lines = trimmed_block.empty? ? [] of String : trimmed_block.split("\n")
+      # Real Ansible clears blocklines entirely for state=absent
+      # (`if present and block: ... else: blocklines = []`), so the
+      # block is never "present" on an absent run - the removal msg is
+      # 'Block removed' even when block: was passed, and the render's
+      # trailing-newline heuristic sees an absent block.
+      block_present = state == "present" && !block_lines.empty?
 
       lines = split_lines(original_content)
       new_lines, _ = PluginHelpers::BlockEditor.apply(
@@ -135,7 +141,7 @@ module Krikri
         append_newline: true?(@params["append_newline"]?),
         prepend_newline: true?(@params["prepend_newline"]?)
       )
-      new_content = render_content(new_lines, original_content, being_created, marker_end_line, !block_lines.empty?)
+      new_content = render_content(new_lines, original_content, being_created, marker_end_line, block_present)
 
       # Real Ansible compares the whole file byte for byte (`original ==
       # result`), and a file it had to CREATE always counts as changed -
@@ -147,6 +153,12 @@ module Krikri
       return write_failure if write_failure
 
       diff = generate_unified_diff(original_content, new_content, path, path) if changed && @diff_mode
+      # Real blockinfile's wire result ALWAYS carries a `diff` key - the
+      # same two-entry list lineinfile's does (a content diff and a
+      # file-attributes diff; both before/after bodies empty outside
+      # --diff mode, live-verified vs 2.19.11 via a registered result on
+      # changed, unchanged and absent runs alike).
+      diff ||= blockinfile_diff(path)
 
       # owner:/group:/mode:/attributes:/SELinux apply even when the block
       # content itself was already correct - real Ansible's blockinfile
@@ -162,16 +174,43 @@ module Krikri
       # included explicitly on an already-correct re-run) plus a
       # backup_file only when a backup was actually taken - never a
       # path echo, never the file-common stat fields (live-verified vs
-      # 2.19.11 at -v).
+      # 2.19.11 at -v). Registered-result key order: changed, msg, diff
+      # (, backup_file), failed.
       result = PluginResult.new(
         changed: changed,
         failed: false,
-        msg: result_msg(being_created, changed, !block_lines.empty?),
+        msg: result_msg(being_created, changed, block_present),
         diff: diff,
-        include_empty_msg: true
+        include_empty_msg: true,
+        key_order: BLOCK_KEY_ORDER
       )
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       result
+    end
+
+    # Real blockinfile's registered-result key order (live-verified vs
+    # 2.19.11 via `{{ r | to_json }}`): changed, msg, diff, then
+    # backup_file only when a backup was taken, then failed. The
+    # "File X not present" missing-file early exit is just {changed,
+    # msg} - the same constant reduces to that once the absent keys are
+    # skipped.
+    private BLOCK_KEY_ORDER = %w[changed msg diff backup_file failed]
+
+    # Same shape as lineinfile's always-present diff list: a content
+    # entry (before/after empty outside --diff mode) plus a
+    # file-attributes entry with no before/after at all.
+    private def blockinfile_diff(path : String) : JSON::Any
+      content_entry = JSON::Any.new({
+        "after"         => JSON::Any.new(""),
+        "after_header"  => JSON::Any.new("#{path} (content)"),
+        "before"        => JSON::Any.new(""),
+        "before_header" => JSON::Any.new("#{path} (content)"),
+      })
+      attributes_entry = JSON::Any.new({
+        "after_header"  => JSON::Any.new("#{path} (file attributes)"),
+        "before_header" => JSON::Any.new("#{path} (file attributes)"),
+      })
+      JSON::Any.new([content_entry, attributes_entry])
     end
 
     # A file that had to be created reports "File created" even when the
