@@ -1534,10 +1534,22 @@ module Krikri
       item_label : String? = nil,
     ) : JSON::Any?
       register_name = task.register
-      attempts = task.retries.clamp(1..)
+      # Real task_executor's attempt loop (task_executor.py): total runs =
+      # 1 + max(0, retries) when retries was explicitly given (retries: 0
+      # is a SINGLE run - live-verified vs 2.19.11: such a task never
+      # evaluates its until at all and registers NO attempts key, because
+      # the whole condition/retry block only engages when there is more
+      # than one run), and an until task with retries unset runs 1 + 3
+      # (real's implicit default, kept here via the parser's 3).
+      total_runs = 1 + (task.retries < 0 ? 0 : task.retries)
+      # Real clamps a negative delay to 1.
+      delay = task.delay < 0 ? 1 : task.delay
       result = nil
+      attempt = 0
+      condition_met = false
 
-      attempts.times do |attempt|
+      while attempt < total_runs
+        attempt += 1
         result = execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
         break unless result
 
@@ -1546,12 +1558,52 @@ module Krikri
           vars_context[register_name] = @registered_vars[host.name][register_name]
         end
 
-        substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
-        substituted_condition = substitutor.substitute(until_condition)
-        break if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+        if total_runs > 1
+          substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+          maybe_conditional_delimiters_deprecation(task, until_condition, "until", vars_context)
+          substituted_condition = substitutor.substitute(until_condition)
+          if ConditionalEvaluator.evaluate(substituted_condition, vars_context)
+            condition_met = true
+            break
+          end
+        end
 
-        sleep(task.delay.seconds) if attempt < attempts - 1
+        break if attempt >= total_runs
+
+        # Real's v2_runner_retry callback line (default callback plugin),
+        # printed after every failed attempt that still has retries left,
+        # before the delay sleep. Real's task_name is the task's get_name()
+        # (the same text the TASK banner shows); the loop item is NOT part
+        # of the line. Color DEBUG - plain text in a non-tty run.
+        puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt} retries left)."
+        sleep(delay.seconds)
+      end
+
+      # Real's post-loop shape, live-verified vs 2.19.11: the registered
+      # result of an until task carries an attempts int - the successful
+      # attempt's 1-based number, or the retries value when the loop ran
+      # out (real sets attempts = total_runs - 1 there even though
+      # total_runs runs actually happened), and marks the result
+      # failed: true (the fatal display + ...ignoring/recap follow from
+      # the ordinary failure pipeline below). The exhausted result also
+      # carries real's error-event projection exception:
+      # "(traceback unavailable)" AFTER attempts (live-verified - both a
+      # retries-exhausted and every other failed registered result project
+      # it; the fatal path just never gets to show it off). A single-run
+      # until task (retries: 0) gets NEITHER key (real never engages the
+      # loop machinery).
+      if result && total_runs > 1
+        result_hash = result.as_h.dup
+        result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
+        unless condition_met
+          result_hash["failed"] = JSON::Any.new(true)
+          result_hash["exception"] = JSON::Any.new("(traceback unavailable)") unless result_hash.has_key?("exception")
+        end
+        result = JSON::Any.new(result_hash)
+        if register_name && !register_name.empty?
+          register_result(host, register_name, result)
+          vars_context[register_name] = @registered_vars[host.name][register_name]
+        end
       end
 
       result

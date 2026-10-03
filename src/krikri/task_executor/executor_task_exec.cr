@@ -2258,8 +2258,18 @@ module Krikri
     # netdata_requirements_install.stderr_lines` raises "object of type
     # 'dict' has no attribute 'stderr_lines'" even though a LATER task
     # referencing the same registered var would have seen it fine.
-    private def with_command_lines_augmented(result : JSON::Any) : JSON::Any
+    private def with_command_lines_augmented(result : JSON::Any, omit_command_lines : Bool = false) : JSON::Any
       result_hash = result.as_h.dup
+
+      # A result carrying the _ansible_omit_command_lines marker (pause -
+      # see the pause action plugin's own comment) opts out: real's pause
+      # module has stdout/stderr but never derives *_lines from them
+      # (live-verified vs 2.19.11 registered pause shape). register_result
+      # strips the marker with every other _ansible_* key BEFORE calling
+      # here, so its presence is captured and passed in as the flag; the
+      # has_key? check covers call sites that still see the unstripped
+      # result (the changed_when/failed_when eval context).
+      return JSON::Any.new(result_hash) if omit_command_lines || result_hash.has_key?("_ansible_omit_command_lines")
 
       if stdout = result_hash["stdout"]?.try(&.as_s)
         stdout_lines = ansible_splitlines(stdout).map { |line| JSON::Any.new(line) }
@@ -2293,9 +2303,12 @@ module Krikri
       # this must stay out of the loop aggregation path in
       # executor_loops.cr.
       result_hash = result.as_h.dup
+      # Capture the pause opt-out marker BEFORE the _ansible_* strip below
+      # removes it (see with_command_lines_augmented's comment).
+      omit_command_lines = result_hash.has_key?("_ansible_omit_command_lines")
       result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
       result_hash.delete("invocation")
-      registered = with_command_lines_augmented(JSON::Any.new(result_hash))
+      registered = with_command_lines_augmented(JSON::Any.new(result_hash), omit_command_lines: omit_command_lines)
       @registered_vars[host.name][register_name] = registered
       # Write-time unsafe marking - the per-task context build marks these
       # stores too, but a host that never executes again would otherwise

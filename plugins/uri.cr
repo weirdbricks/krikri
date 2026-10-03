@@ -206,6 +206,36 @@ module Krikri
       begin
         status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time)
       rescue ex
+        # A scheme real's urllib has no handler for never reaches uri.py's
+        # resp assembly - urlopen raises URLError("unknown url type: X")
+        # and fetch_url turns it into the status -1 shape. Schemes urllib
+        # DOES open (file:, data:) hit the opposite wall: the response
+        # carries no HTTP status, so uri.py's `resp['status'] =
+        # int(resp['status'])` crashes the module with int()'s own
+        # TypeError text (live-verified vs 2.19.11 for file:///etc/hostname -
+        # the registered result is exactly {failed, changed, exception, msg}
+        # with that message, and no url/status/elapsed/redirected at all).
+        # ftp(s) keeps its krikri-side failure: real would attempt the FTP
+        # protocol itself, which this engine does not implement.
+        scheme = begin
+          URI.parse(url).scheme.try(&.downcase) || ""
+        rescue
+          ""
+        end
+        case scheme
+        when "file", "data"
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Task failed: Module failed: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'",
+            key_order: ["failed", "changed", "exception", "msg"],
+          )
+        when "http", "https", "ftp"
+          # fall through to the ordinary failure shapes below
+        else
+          return failed_request_result(
+            "Status code was -1 and not #{status_codes}: Request failed: <urlopen error unknown url type: #{scheme}>", url, start)
+        end
         # Real Ansible's uri result ALWAYS carries a status field, even when
         # the request dies before any HTTP response: its fetch_url() info
         # dict is initialized with status=-1 and stays there on connection
@@ -231,7 +261,7 @@ module Krikri
         # already rebuilt from a re-probe - Crystal's connect reports the
         # wrong errno for it.
         return failed_request_result(
-          "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url)
+          "Status code was -1 and not #{status_codes}: Request failed: #{ex.message}", url, start)
       end
       elapsed = (Time.instant - start).total_seconds.to_i
 
@@ -497,8 +527,22 @@ module Krikri
     # request that ran and came back with status -1): status, url,
     # redirected: false, elapsed: 0, plus content: "" when return_content
     # asked for the body.
-    private def failed_request_result(msg : String, url : String) : PluginResult
-      result = PluginResult.new(changed: false, failed: true, msg: msg, url: url, status: -1, elapsed: 0, redirected: false)
+    #
+    # Key order is real's fail_json kwargs order (live-verified vs
+    # 2.19.11 via `{{ r | to_json }}` on a connection-refused failure):
+    # redirected, url, status, elapsed, changed, failed, msg, exception.
+    # msg/failed/exception are the executor/backfill keys to_json adds -
+    # real's fail_json binds msg to its named parameter (moving it after
+    # the failed flag it appends) and _return_formatted trails exception
+    # last. With return_content: true real calls
+    # fail_json(content=..., **uresp), so content leads the whole dict.
+    private def failed_request_result(msg : String, url : String, start : Time::Instant? = nil) : PluginResult
+      elapsed = start ? (Time.instant - start).total_seconds.to_i : 0
+      result = PluginResult.new(changed: false, failed: true, msg: msg, url: url, status: -1, elapsed: elapsed, redirected: false)
+      order = [] of String
+      order << "content" if true?(@params["return_content"]?)
+      order += ["redirected", "url", "status", "elapsed", "changed", "failed", "msg", "exception"]
+      result.key_order = order
       result.extra["content"] = JSON::Any.new("") if true?(@params["return_content"]?)
       result
     end
