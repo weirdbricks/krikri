@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1446`.**
+**Currently at `0.9.1447`.**
 
 ## Open gaps
 
@@ -66,6 +66,11 @@ and fixed and when.
   `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results otherwise match real
   (live-verified on postgres:17 / mysql:8.4 containers); real builds `postgresql_privs`'s privilege list
   from a Python frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order.
+- **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
+  `docker_container` with `command:` given as a YAML LIST is joined as `sleep,30` where real passes the list
+  through (string form works); the text wrapped after real's own error prefixes is the Python SDK's wording
+  (`500 Server Error for http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode
+  `create_parameters` carries only the fields krikri itself sends where real also records defaulted options.
 - **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP: the
   RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
   `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
