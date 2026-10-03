@@ -66,12 +66,13 @@ and fixed and when.
   `postgresql_*` and `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results otherwise match real
   (live-verified on postgres:17 / mysql:8.4 containers); real builds `postgresql_privs`'s privilege list
   from a Python frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order.
-- **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP is
-  not implemented (needs an RSA public-key exchange): the first TCP connection to a fresh MySQL 8 server whose
-  auth cache is empty fails ("full authentication over plain TCP needs an RSA public-key exchange"); real's
-  PyMySQL does the exchange and warms the cache, after which krikri connects. (2) `mysql_info` ignores a
-  `filter:` given as a YAML list and returns every key where real returns only the filtered ones; `exclude_fields:`
-  is not implemented; `connector_name`/`connector_version` are `"Unknown"`; `users`/`users_info` omit
+- **MySQL driver gaps found while verifying:** (1) caching_sha2_password FULL authentication over plain TCP: the
+  RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
+  `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
+  krikri's `shard.yml` still pins the old driver and the first TCP connection to a fresh MySQL 8 server fails until
+  the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours
+  `filter:` as a YAML list, comma string and `!name` exclusions and warns like real for an unknown element; still open:
+  `exclude_fields:` is not implemented; `connector_name`/`connector_version` are `"Unknown"`; `users`/`users_info` omit
   `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
   `mysql_native_password` plugin no longer exists there).
 - **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;

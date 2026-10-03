@@ -440,6 +440,72 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed])
   end
 
+  # A YAML list of subset names: real's argspec types `filter` as a list,
+  # so both spellings reach the same code.
+  it "registers only the listed subsets for a YAML list filter" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: version and databases
+              community.mysql.mysql_info:
+                filter:
+                  - version
+                  - databases
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+  end
+
+  # Real's comma-separated string form of the same list.
+  it "registers only the comma-separated subsets for a string filter" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: version and databases
+              community.mysql.mysql_info:
+                filter: version, databases
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed])
+  end
+
+  # Real's `!name` exclusion form as a list, and the rule that an
+  # inclusion alongside an exclusion makes the exclusion irrelevant.
+  it "registers every subset but settings and engines for a list of exclusions" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: all but settings and engines
+              community.mysql.mysql_info:
+                filter:
+                  - "!settings"
+                  - "!engines"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[
+      changed server_engine connector_name connector_version
+      version databases global_status
+      users users_info master_status slave_hosts slave_status failed
+    ])
+  end
+
+  # A filter element that is not a subset name: real warns per element
+  # (in the order given) and ignores it.
+  it "warns and ignores an unknown filter element" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML))
+            - name: version with a bogus element
+              community.mysql.mysql_info:
+                filter:
+                  - version
+                  - bogus
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed warnings])
+    dump["warnings"].as_a.map(&.as_s).must_equal(["filter element: bogus is not allowable, ignored"])
+  end
+
   # Real's `!name` exclusion form, and its rule that any inclusion makes
   # the exclusions irrelevant.
   it "registers every subset but settings for filter '!settings'" do

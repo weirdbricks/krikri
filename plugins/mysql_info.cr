@@ -110,7 +110,8 @@ module Krikri
         return err
       end
 
-      filters = (@params["filter"]? || "").split(',').map(&.strip).reject(&.empty?).to_set
+      filters = parse_filter(@params["filter"]?)
+      unknown = filters.reject { |entry| SUBSETS.includes?(entry.lstrip('!')) }
 
       uri = PluginHelpers::MysqlConnection.build_uri(
         host: @params["login_host"]?,
@@ -121,7 +122,7 @@ module Krikri
         config_file: @params["config_file"]? || "~/.my.cnf",
       )
 
-      wanted = resolve_filter(filters)
+      wanted = resolve_filter(filters.reject { |entry| unknown.includes?(entry) })
 
       engine_name = "MySQL"
       result = PluginResult.new(changed: false, failed: false, msg: "",
@@ -133,6 +134,13 @@ module Krikri
         connector_name: "Unknown",
         connector_version: "Unknown",
         key_order: SUCCESS_KEY_ORDER)
+
+      # Real's module.warn for every filter element that isn't a known
+      # subset name (mysql_info.py's get_info): the element is ignored and
+      # the warning rides on the result, after `failed`.
+      unless unknown.empty?
+        result.extra["warnings"] = JSON::Any.new(unknown.map { |entry| JSON::Any.new("filter element: #{entry} is not allowable, ignored") })
+      end
 
       DB.open(uri) do |connection|
         engine_name = implementation_of(connection)
@@ -173,11 +181,18 @@ module Krikri
       rows
     end
 
+    # The `filter:` value as real's own list argument spec sees it: a YAML
+    # list or a comma-separated string, either way a list of subset names
+    # (real's argspec coerces a plain string into one too).
+    private def parse_filter(raw : String?) : Array(String)
+      (raw || "").split(',').map(&.strip).reject(&.empty?)
+    end
+
     # Real's own filter handling (mysql_info.py's get_info): `!name`
     # entries are exclusions, plain names are inclusions, and any
     # inclusion at all makes the exclusions irrelevant. With no filter
     # every subset is collected, in self.info declaration order.
-    private def resolve_filter(filters : Set(String)) : Array(String)
+    private def resolve_filter(filters : Array(String)) : Array(String)
       return SUBSETS.dup if filters.empty?
 
       includes = filters.reject { |entry| entry.starts_with?("!") }.map(&.lstrip('!')).select { |entry| SUBSETS.includes?(entry) }
