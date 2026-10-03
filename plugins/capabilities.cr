@@ -78,16 +78,21 @@ module Krikri
         # state=self.state)` - no msg at all (its wire result is just
         # changed+state; the "capabilities changed" msg exists only on
         # the changed path).
-        PluginResult.new(changed: false, failed: false, msg: "", state: state)
+        PluginResult.new(changed: false, failed: false, msg: "", state: state, key_order: ["changed", "state"])
       end
     end
 
     # Commit the new capability set (or just report it, in check mode)
+    #
+    # Key orders live-verified against real 2.19.11 (community.general
+    # capabilities.py's three exit_json shapes): unchanged ->
+    # changed,state; check-mode change -> changed,msg; real change ->
+    # changed,state,msg,stdout.
     private def apply_caps(path : String, new_caps : Array(Cap), state : String, check_mode : Bool, setcap_cmd : String) : PluginResult
-      return PluginResult.new(changed: true, failed: false, msg: "capabilities changed") if check_mode
+      return PluginResult.new(changed: true, failed: false, msg: "capabilities changed", key_order: ["changed", "msg"]) if check_mode
 
       stdout = setcap(path, new_caps, setcap_cmd)
-      PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout)
+      PluginResult.new(changed: true, failed: false, msg: "capabilities changed", state: state, stdout: stdout, key_order: ["changed", "state", "msg", "stdout"])
     end
 
     private def getcap(path : String, getcap_cmd : String) : Array(Cap)

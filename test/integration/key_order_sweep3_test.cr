@@ -40,6 +40,27 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "capabilities plugin result key order" do
+  # The unchanged exit needs only getcap (no root); the changed exits
+  # need setcap (root-only on the host) and are covered by the
+  # live-verified pins above.
+  it "serializes an absent-nothing rerun as changed-state (real: changed, state)" do
+    target = unique_tmp("capabilities-order-target")
+    File.write(target, "#!/bin/sh\nexit 0\n")
+
+    result = PluginSpecHelper.run("capabilities", {
+      "path"       => target,
+      "capability" => "cap_chown=ep",
+      "state"      => "absent",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "state"])
+  ensure
+    File.delete(target) if target && File.exists?(target)
+  end
+end
+
 describe "acl plugin result key order" do
   it "serializes a present-ACL success as changed-msg-acl (real: changed, msg, acl)" do
     target = unique_tmp("acl-order-target")
