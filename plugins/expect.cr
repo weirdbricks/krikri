@@ -241,8 +241,13 @@ module Krikri
 
     # Real expect.py's skip exits with cmd/stdout/changed/rc only - NO
     # msg (that wording belongs to the command module, not expect.py).
+    # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+    # cmd, stdout, changed, rc - exit_json's own kwargs order.
     private def skip_result(stdout : String) : PluginResult
-      PluginResult.new(changed: false, failed: false, stdout: stdout, rc: 0)
+      PluginResult.new(changed: false, failed: false, stdout: stdout, rc: 0,
+        cmd: @params["command"]? || @params["_raw_params"]? || "",
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        key_order: %w[cmd stdout changed rc stdout_lines])
     end
 
     private def run_expect(command : String, responses : Array(Response), timeout : Int32, chdir : String?, echo : Bool) : PluginResult
@@ -279,6 +284,12 @@ module Krikri
 
       master_io = IO::FileDescriptor.new(amaster)
       IO::FileDescriptor.set_blocking(amaster, true)
+      # Real expect.py stamps start_date just before pexpect.run and
+      # end_date right after it returns, then reports start/end (str()
+      # of the datetimes) and delta (str() of the timedelta) in the
+      # result dict - live-verified registered order cmd, stdout, rc,
+      # start, end, delta, changed on the success exit.
+      start_date = Time.local
       timed_out, exhausted, output = read_until_deadline(amaster, responses, Time.instant + timeout.seconds)
 
       LibC.kill(child_pid, Signal::TERM.value) rescue nil
@@ -286,6 +297,7 @@ module Krikri
       LibC.waitpid(child_pid, pointerof(raw_status), 0)
       status = build_status(raw_status)
       master_io.close rescue nil
+      end_date = Time.local
 
       # Real rstrip('\r\n')s the accumulated pty output.
       output = output.rstrip("\r\n")
@@ -301,10 +313,29 @@ module Krikri
 
       rc = status.exit_code? || -1
       if rc == 0
-        PluginResult.new(changed: true, failed: false, stdout: output, rc: rc)
+        PluginResult.new(changed: true, failed: false, stdout: output, rc: rc,
+          cmd: command, start: py_datetime(start_date), end: py_datetime(end_date), delta: py_timedelta(end_date - start_date),
+          stdout_lines: PluginHelpers::AnsibleSplitlines.split(output),
+          key_order: %w[cmd stdout rc start end delta changed stdout_lines])
       else
         PluginResult.new(changed: true, failed: true, msg: "non-zero return code", stdout: output, rc: rc)
       end
+    end
+
+    # str(datetime.datetime.now()) - local wall-clock with exactly six
+    # fractional digits, no offset ("2026-10-02 23:26:13.609915").
+    private def py_datetime(time : Time) : String
+      time.to_s("%F %T.%6N")
+    end
+
+    # str(datetime.timedelta) - "H:MM:SS.ffffff" with UNPADDED hours.
+    private def py_timedelta(span : Time::Span) : String
+      seconds = span.total_seconds
+      hours = (seconds / 3600).to_i
+      remainder = seconds - hours * 3600
+      minutes = (remainder / 60).to_i
+      secs = remainder - minutes * 60
+      "#{hours}:#{sprintf("%02d", minutes)}:#{sprintf("%02d", secs.to_i)}.#{sprintf("%06d", ((secs - secs.to_i) * 1_000_000).round.to_i)}"
     end
 
     # Real Ansible's own default (echo: no) means a sent response's text

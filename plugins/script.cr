@@ -107,8 +107,8 @@ module Krikri
         stdout: stdout,
         stderr: stderr,
         rc: result[:exit_code],
-        stdout_lines: stdout.split("\n").reject(&.empty?),
-        stderr_lines: stderr.split("\n").reject(&.empty?),
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr),
         key_order: %w[rc stdout stdout_lines stderr stderr_lines changed]
       )
     end

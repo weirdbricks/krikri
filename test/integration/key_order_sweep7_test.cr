@@ -100,6 +100,62 @@ describe "make plugin result key order (sweep7)" do
   end
 end
 
+describe "expect plugin result key order (sweep7)" do
+  # Real 2.19.11 expect.py builds result = dict(cmd, stdout, rc, start,
+  # end, delta, changed) and the creates:/removes: skip exits
+  # exit_json(cmd, stdout, changed, rc) - live-verified both, with
+  # stdout_lines after changed/rc in each.
+  it "registers a successful run as cmd, stdout, rc, start, end, delta, changed, stdout_lines" do
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: run it
+            ansible.builtin.expect:
+              command: echo hello
+              responses:
+                .$: ""
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["cmd", "stdout", "rc", "start", "end", "delta", "changed", "stdout_lines", "failed"])
+  end
+
+  it "registers a holding creates gate as cmd, stdout, changed, rc, stdout_lines" do
+    marker = unique_tmp("expect-order-marker")
+    File.touch(marker)
+
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: gated run
+            ansible.builtin.expect:
+              command: echo hello
+              responses:
+                .$: ""
+              creates: #{marker}
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["cmd", "stdout", "changed", "rc", "stdout_lines", "failed"])
+  end
+end
+
 describe "script plugin result key order (sweep7)" do
   # Real 2.19.11's script ACTION plugin builds its own result dict
   # (rc, stdout, stdout_lines, stderr, stderr_lines, changed) around the
