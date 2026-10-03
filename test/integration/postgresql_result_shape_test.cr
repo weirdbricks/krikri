@@ -426,7 +426,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     result = query_result_for("SELECT 1 AS one, 'x'::text AS t")
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed", "warnings"])
     result["changed"].as_bool.must_equal(false)
     result["query"].as_s.must_equal("SELECT 1 AS one, 'x'::text AS t")
     result["query_list"].as_a.map(&.as_s).must_equal(["SELECT 1 AS one, 'x'::text AS t"])
@@ -444,7 +444,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     PluginSpecHelper.run("postgresql_query", SHAPE_LOGIN.merge({"query" => "DROP TABLE IF EXISTS shape_pg_q"}))
     result = query_result_for("CREATE TABLE shape_pg_q (id int)")
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed", "warnings"])
     result["changed"].as_bool.must_equal(true)
     result["statusmessage"].as_s.must_equal("CREATE TABLE")
     result["query_result"].as_h.must_be_empty
@@ -458,7 +458,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     result = PluginSpecHelper.run("postgresql_query",
       SHAPE_LOGIN.merge({"query" => %(["SELECT 1 AS a", "SELECT 2 AS b"])}))
     shape_keys(result).must_equal(["changed", "query", "query_list", "statusmessage",
-                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed"])
+                                   "query_result", "query_all_results", "rowcount", "execution_time_ms", "failed", "warnings"])
     result["query"].as_s.must_equal("SELECT 2 AS b")
     result["query_list"].as_a.map(&.as_s).must_equal(["SELECT 1 AS a", "SELECT 2 AS b"])
     result["query_all_results"].as_a.size.must_equal(2)

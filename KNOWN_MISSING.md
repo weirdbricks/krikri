@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1453`.**
+**Currently at `0.9.1454`.**
 
 ## Open gaps
 
@@ -64,15 +64,20 @@ and fixed and when.
   now match real's registered result and console output as well.
 - **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
   now print/register real's deprecation; connection failures use libpq's own wording (refused, wrong password,
-  missing database, missing unix socket - byte-identical to real). Still different: real prints `[WARNING]: Database
-  name has not been passed, used default database to connect to.` (and registers a `warnings` entry) when no
-  `login_db`/`db` is given, krikri does not; a *temporary* resolver failure prints the EAI_NONAME wording (Crystal's
+  missing database, missing unix socket - byte-identical to real); `postgresql_query` without a database name warns
+  like real. Still different: a *temporary* resolver failure prints the EAI_NONAME wording (Crystal's
   `Addrinfo::Error` carries no gai code) and strerror texts are glibc's. `postgresql_*` and
   `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results and accepted-parameter sets otherwise match real
   (live-verified on postgres:17 / mysql:8.4); real builds `postgresql_privs`'s privilege list from a Python
   frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order. The PostgreSQL
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
+- **Console warnings real prints that krikri does not:** `[WARNING]: Using a template for task args is unsafe in some
+  situations (see ...#argsplat-unsafe)` for any task whose module args are a single templated value
+  (`module: "{{ some_dict }}"`); the collection-redirect `[DEPRECATION WARNING]: community.mysql.<module> has been
+  deprecated. Use ansible.mysql.<module> instead ...` (and the matching `deprecations`/`warnings` result entries) for
+  the redirected community.mysql modules; and the `Deprecation warnings can be disabled by setting
+  deprecation_warnings=False in ansible.cfg.` trailer that follows any deprecation.
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
   http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
@@ -83,9 +88,9 @@ and fixed and when.
   RSA public-key exchange is implemented in the mysql shard (`crystal-mysql`, local commit `6262d0f`, tag
   `crystal-ansible-0.9.341`, verified as the first TCP client on a fresh mysql:8.4) but that repo is not pushed yet, so
   krikri's `shard.yml` still pins the old driver and the first TCP connection to a fresh MySQL 8 server fails until
-  the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours
+  the pin is bumped (the prepared krikri commit is `75852b37` on branch `crush-mysql`). (2) `mysql_info` now honours `exclude_fields:` and
   `filter:` as a YAML list (literal or passed through a variable/templated dict), comma string and `!name` exclusions and warns like real for an unknown element; still open:
-  `exclude_fields:` is not implemented; `connector_name`/`connector_version` are `"Unknown"`; `users`/`users_info` omit
+  `connector_name`/`connector_version` are `"Unknown"` (real reports its Python driver, `pymysql`/its version; krikri has none); `users`/`users_info` omit
   `authentication_string`. (3) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
   `mysql_native_password` plugin no longer exists there).
 - **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;

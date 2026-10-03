@@ -118,8 +118,10 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
     skip "no PostgreSQL server at 127.0.0.1:35433" unless pg2_reachable?
     result = PluginSpecHelper.run("postgresql_query",
       CONN_LOGIN.merge({"login_port" => "35433", "login_password" => "wrongpw", "query" => "SELECT 1"}))
+    # No login_db given: real's postgresql_query also warns about the default database.
     assert_conn_failure(result,
-      "unable to connect to database: connection to server at \"127.0.0.1\", port 35433 failed: FATAL:  password authentication failed for user \"postgres\"\n")
+      "unable to connect to database: connection to server at \"127.0.0.1\", port 35433 failed: FATAL:  password authentication failed for user \"postgres\"\n",
+      with_db_warning: true)
   end
 
   it "postgresql_query nonexistent database reports the server's own FATAL text" do
