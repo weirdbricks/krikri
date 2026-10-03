@@ -95,7 +95,15 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "Value set" : "Value already set")
+      # Real debconf.py exit shapes (live-verified against real 2.19.11
+      # via registered {{ r | to_json }} dumps in the podman container):
+      # a changed selection (check mode included) exits with
+      # changed,msg,current,previous,diff; an already-set rerun with
+      # changed,msg,current. krikri doesn't emit current/previous/diff
+      # (pre-existing content gap); the pin only fixes the relative
+      # order.
+      PluginResult.new(changed: changed, failed: false, msg: changed ? "Value set" : "Value already set",
+        key_order: changed ? ["changed", "msg", "current", "previous", "diff"] : ["changed", "msg", "current"])
     end
 
     # question:/selection:/setting: are documented aliases of each other

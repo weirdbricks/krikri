@@ -40,6 +40,33 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+describe "debconf plugin result key order" do
+  it "serializes an already-set question as changed-msg (real: changed, msg, current)" do
+    result = PluginSpecHelper.run("debconf", {
+      "name"     => "locales",
+      "question" => "locales/default_environment_locale",
+      "value"    => "en_US.UTF-8",
+      "vtype"    => "string",
+    })
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "msg"])
+  end
+
+  it "serializes a check-mode set as changed-msg (real: changed, msg, current, previous, diff)" do
+    result = PluginSpecHelper.run("debconf", {
+      "name"                => "locales",
+      "question"            => "locales/default_environment_locale",
+      "value"               => "fr_FR.UTF-8",
+      "vtype"               => "string",
+      "_ansible_check_mode" => "true",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["changed", "msg"])
+  end
+end
+
 describe "capabilities plugin result key order" do
   # The unchanged exit needs only getcap (no root); the changed exits
   # need setcap (root-only on the host) and are covered by the
