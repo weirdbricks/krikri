@@ -243,14 +243,21 @@ module Krikri
       # present in the module's own res_args regardless of diff mode -
       # in check mode the after-content is the would-be file content),
       # and NO path echo. Its msg is never empty, so it always appears.
+      # Wire order [changed, msg, diff, backup_file] from res_args' dict
+      # order (backup_file appended last when backup: true) -
+      # live-verified 2.19.11.
       new_content = out_lines.join
       result = PluginResult.new(
         changed: changed,
         failed: false,
         msg: message,
         diff: JSON.parse({before: content, after: new_content}.to_json),
-        backup_file: backupdest
+        backup_file: backupdest,
+        key_order: ["changed", "msg", "diff", "backup_file"]
       )
+      # Real res_args carries backup_file ONLY when backup: true took a
+      # backup - never an empty/null placeholder (live-verified 2.19.11).
+      result.extra.delete("backup_file") if backupdest.empty?
       result
     end
 

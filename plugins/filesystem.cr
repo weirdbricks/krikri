@@ -137,19 +137,31 @@ module Krikri
       if state == "present"
         PluginResult.new(changed: false, failed: true, msg: "Device #{dev} not found.")
       else
-        PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.")
+        # Real state=absent dev-not-found exits exit_json(msg=msg): the
+        # module dict carries only msg, and the controller backfills
+        # changed:false after it - live-verified 2.19.11 wire order
+        # [msg, changed].
+        PluginResult.new(changed: false, failed: false, msg: "Device #{dev} not found.",
+          key_order: ["msg", "changed"])
       end
     end
 
+    # Real filesystem.py's success exits are exit_json(changed=changed)
+    # with no msg key at all (absent: unchanged/wipefs; present:
+    # already-same-fs/create) - live-verified 2.19.11.
+    private def fs_success(changed : Bool) : PluginResult
+      PluginResult.new(changed: changed, failed: false, key_order: ["changed"])
+    end
+
     private def absent_result(dev : String, current_fs : String, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: false, failed: false, msg: "") if current_fs.empty?
-      return PluginResult.new(changed: true, failed: false, msg: "") if check_mode
+      return fs_success(false) if current_fs.empty?
+      return fs_success(true) if check_mode
 
       wipe_result = remote_exec("wipefs --all #{shell_quote(dev)}")
       unless wipe_result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true, msg: "wipefs failed: #{wipe_result[:stderr]}")
       end
-      PluginResult.new(changed: true, failed: false, msg: "")
+      fs_success(true)
     end
 
     # Real filesystem.py's idempotency compares FILESYSTEMS values (the
@@ -185,12 +197,12 @@ module Krikri
     ) : PluginResult
       same_fs = !current_fs.empty? && current_fs_class == fstype_class
       if same_fs && !force
-        return PluginResult.new(changed: false, failed: false, msg: "")
+        return fs_success(false)
       elsif !current_fs.empty? && !same_fs && !force
         return PluginResult.new(changed: false, failed: true, msg: "'#{dev}' is already used as #{current_fs}, use force=true to overwrite")
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "") if check_mode
+      return fs_success(true) if check_mode
 
       cmd = (mkfs_argv + force_flags + opts + [dev]).map { |itm| shell_quote(itm) }.join(' ')
       mkfs_result = remote_exec(cmd)
@@ -198,7 +210,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "#{mkfs_argv.first} failed: #{mkfs_result[:stderr]}")
       end
 
-      PluginResult.new(changed: true, failed: false, msg: "")
+      fs_success(true)
     end
 
     private def shell_quote(s : String) : String
