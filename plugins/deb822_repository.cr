@@ -106,6 +106,9 @@ module Krikri
     SOURCES_LIST_D = "/etc/apt/sources.list.d"
     KEYRINGS_DIR   = "/etc/apt/keyrings"
 
+    # Real deb822_repository's success dict insertion order (both exits).
+    DEB822_ORDER = %w[repo changed dest key_filename]
+
     @slug : String = ""
 
     def execute : PluginResult
@@ -403,19 +406,55 @@ module Krikri
       existing = File.exists?(target) ? File.read(target) : nil
       changed = existing != new_content
 
+      # Real ansible-core 2.19.11 deb822_repository exits (both success
+      # exits, present AND absent, live-verified in check mode via
+      # register + to_json) with exactly:
+      #   exit_json(repo=repo, changed=changed, dest=sources_filename,
+      #             key_filename=signed_by_filename)
+      # - no msg, and `repo` FIRST (it is the file content). key_filename
+      # is the downloaded keyring path only when signed_by was a URL
+      # (a local path or inline key leaves it None); the absent exit
+      # leaves it at the last probed ext, i.e. always
+      # /etc/apt/keyrings/<slug>.gpg.
       if check_mode
-        return PluginResult.new(changed: changed, failed: false, msg: changed ? "Would write #{target} (check mode)" : "Already up to date", repo: new_content)
+        return PluginResult.new(changed: changed, failed: false, repo: new_content, dest: target,
+          key_filename: url_keyring_filename, key_order: DEB822_ORDER)
       end
 
       unless changed
-        return PluginResult.new(changed: false, failed: false, msg: "Already up to date", repo: new_content)
+        return PluginResult.new(changed: false, failed: false, repo: new_content, dest: target,
+          key_filename: url_keyring_filename, key_order: DEB822_ORDER)
       end
 
       Dir.mkdir_p(SOURCES_LIST_D)
       File.write(target, new_content)
       apply_owner_group_mode(target, nil, nil, @params["mode"]? || "0644")
 
-      PluginResult.new(changed: true, failed: false, msg: "Repository added", repo: new_content, path: target)
+      PluginResult.new(changed: true, failed: false, repo: new_content, dest: target,
+        key_filename: url_keyring_filename, key_order: DEB822_ORDER)
+    end
+
+    # key_filename for the present-path exit: a real path only when
+    # signed_by was a URL (the module then hands back the keyring it
+    # downloaded); any other signed_by form leaves it None.
+    private def url_keyring_filename : String?
+      return nil unless url_signed_by?
+      keyring_filename
+    end
+
+    private def url_signed_by? : Bool
+      raw = @params["signed_by"]?
+      return false unless raw
+      scheme = URI.parse(raw).scheme
+      !scheme.nil? && %w[http https].includes?(scheme.downcase)
+    end
+
+    # The keyring path the URL download produced (prefer the binary .gpg
+    # the way resolve_url_signed_by's own check-mode guess does).
+    private def keyring_filename : String
+      gpg = File.join(KEYRINGS_DIR, "#{@slug}.gpg")
+      asc = File.join(KEYRINGS_DIR, "#{@slug}.asc")
+      File.exists?(gpg) ? gpg : asc
     end
 
     private def remove(target : String, check_mode : Bool) : PluginResult
@@ -437,10 +476,13 @@ module Krikri
         changed = true
       end
 
-      return PluginResult.new(changed: false, failed: false, msg: "Repository already absent") unless changed
-      return PluginResult.new(changed: true, failed: false, msg: "Would remove #{target} (check mode)") if check_mode
-
-      PluginResult.new(changed: true, failed: false, msg: "Repository removed", path: target)
+      # Real absent exit (verified from module source, matching the
+      # live-verified shape): repo=None, dest still reported, and
+      # key_filename left at the last probed ext (.gpg) even when
+      # nothing existed - the "already absent" no-op carries the SAME
+      # shape, no msg.
+      PluginResult.new(changed: changed, failed: false, repo: nil, dest: target,
+        key_filename: File.join(KEYRINGS_DIR, "#{@slug}.gpg"), key_order: DEB822_ORDER)
     end
   end
 end
