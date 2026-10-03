@@ -27,7 +27,7 @@ module Krikri
     # converged no-op path is changed/msg - different module code paths,
     # so two orders. krikri emits no diff (real carries one on the write
     # path; the key is skipped by the reorder).
-    CHANGED_KEY_ORDER = %w[msg diff changed ansible_facts failed warnings]
+    CHANGED_KEY_ORDER   = %w[msg diff changed ansible_facts failed warnings]
     UNCHANGED_KEY_ORDER = %w[changed msg ansible_facts failed warnings]
 
     # Real argument_spec (community.general git_config.py) - no aliases,
