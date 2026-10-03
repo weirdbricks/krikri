@@ -27,9 +27,10 @@ module Krikri
   #   when name: has none)
   # - state: present (default) / absent (remove if present)
   # - source: required when state: present, same as real Ansible
-  #   (required_if, verified - it has no default there either). Only
-  #   "pull" is implemented - "build"/"load"/"local" (real Ansible's other
-  #   source: values) are not
+  #   (required_if, verified - it has no default there either). "pull"
+  #   and "local" are implemented; "build"/"load" (real Ansible's other
+  #   source: values) are not - they need a build context / archive tar
+  #   the daemon reads, which is a separate feature
   # - check_mode
   #
   # - docker_host: / tls: / validate_certs: (alias tls_verify:) / cacert_path: /
@@ -57,6 +58,16 @@ module Krikri
   # feature, not a standalone gap), `api_version:` (see
   # PluginHelpers::DockerClient), build/archive/repository sources.
   class DockerImagePlugin < BasePlugin
+    # Real seeds its result dict as `{"changed": False, "actions": [],
+    # "image": {}}` (docker_image.py's main) and the module protocol
+    # appends `failed` last - live-verified against real ansible-core
+    # 2.19.11 + community.docker 5.2.1. Real never passes msg on
+    # success, so a successful result carries no `msg` key at all.
+    KEY_ORDER = %w[changed actions image failed]
+
+    # Real's own wrapper for a DockerException escaping the module body.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     def execute : PluginResult
       name = @params["name"]?
       unless name
@@ -88,12 +99,12 @@ module Krikri
       force_source = true?(@params["force_source"]?)
 
       if state == "present"
-        present_result(client, api, ref_name, ref_tag, full_ref, pre_pull_id, exists, force_source, check_mode)
+        present_result(client, api, ref_name, ref_tag, full_ref, pre_pull_id, exists, force_source, check_mode, source)
       else
-        absent_result(api, full_ref, exists, check_mode)
+        absent_result(client, api, full_ref, exists, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
@@ -114,13 +125,12 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "state is present but all of the following are missing: source")
         end
-        unless source == "pull"
-          # A VALID non-pull source is the documented scope cut (real
-          # module needs the daemon for build/load/local anyway, so on a
-          # daemon-less host both engines fail here - wording differs,
-          # failed=/changed= match).
+        unless source.in?("pull", "local")
+          # build/load need a build context / archive the daemon has to
+          # read; that stays a documented scope cut (see the class doc
+          # comment). `local` IS implemented - it is pure local lookup.
           return PluginResult.new(changed: false, failed: true,
-            msg: "docker_image: only source: pull is implemented, got '#{source}'")
+            msg: "docker_image: only source: pull and source: local are implemented, got '#{source}'")
         end
       end
       nil
@@ -129,12 +139,28 @@ module Krikri
     private def present_result(
       client : Docr::Client, api : Docr::API, ref_name : String, ref_tag : String,
       full_ref : String, pre_pull_id : String?, exists : Bool,
-      force_source : Bool, check_mode : Bool,
+      force_source : Bool, check_mode : Bool, source : String?,
     ) : PluginResult
+      # source: local never touches the network - real simply looks the
+      # image up and FAILS if it is not there.
+      if source == "local"
+        unless exists
+          return PluginResult.new(changed: false, failed: true,
+            msg: "Cannot find the image #{full_ref} locally.")
+        end
+        return image_result(client, full_ref, changed: false, actions: [] of String)
+      end
+
       if exists && !force_source
-        PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already present")
+        image_result(client, full_ref, changed: false, actions: [] of String)
       elsif check_mode
-        PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be pulled")
+        # Real records the pull it WOULD do, and leaves `image` at its
+        # seeded empty dict - the pull never ran, so nothing to report.
+        result = PluginResult.new(changed: true, failed: false, failed_flag: false,
+          actions: json_string_array(["Pulled image #{full_ref}"]),
+          image: JSON.parse("{}"))
+        result.key_order = KEY_ORDER
+        result
       else
         api.images.create(ref_name, ref_tag)
         # force_source: re-pulling an image that resolves to the
@@ -142,33 +168,53 @@ module Krikri
         # #image_id's own doc comment for why this matters and what
         # real Ansible's source does.
         unchanged = exists && image_id(client, full_ref) == pre_pull_id
-        PluginResult.new(
+        image_result(client, full_ref,
           changed: !unchanged,
-          failed: false,
-          msg: pull_result_msg(full_ref, unchanged, exists)
-        )
+          actions: ["Pulled image #{full_ref}"])
       end
     end
 
-    private def pull_result_msg(full_ref : String, unchanged : Bool, exists : Bool) : String
-      if unchanged
-        "Image #{full_ref} already present (force_source, unchanged)"
-      elsif exists
-        "Re-pulled image #{full_ref} (force_source)"
-      else
-        "Pulled image #{full_ref}"
-      end
+    # `image` is the daemon's own inspect payload for the reference,
+    # verbatim - real registers the full dict, not a subset.
+    private def image_result(client : Docr::Client, ref : String, changed : Bool, actions : Array(String)) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false, failed_flag: false,
+        actions: json_string_array(actions),
+        image: image_inspect_json(client, ref))
+      result.key_order = KEY_ORDER
+      result
     end
 
-    private def absent_result(api : Docr::API, full_ref : String, exists : Bool, check_mode : Bool) : PluginResult
+    private def absent_result(client : Docr::Client, api : Docr::API, full_ref : String, exists : Bool, check_mode : Bool) : PluginResult
       if !exists
-        PluginResult.new(changed: false, failed: false, msg: "Image #{full_ref} already absent")
-      elsif check_mode
-        PluginResult.new(changed: true, failed: false, msg: "Image #{full_ref} would be removed")
-      else
-        api.images.delete(full_ref, force: true)
-        PluginResult.new(changed: true, failed: false, msg: "Removed image #{full_ref}")
+        # Real seeds `image` to {} and only ever fills it in on a removal.
+        result = PluginResult.new(changed: false, failed: false, failed_flag: false,
+          actions: json_string_array([] of String), image: JSON.parse("{}"))
+        result.key_order = KEY_ORDER
+        return result
       end
+
+      api.images.delete(full_ref, force: true) unless check_mode
+
+      # Real marks the (already emptied) image dict as deleted, in
+      # check_mode too - the action and changed: come from the same block.
+      result = PluginResult.new(changed: true, failed: false, failed_flag: false,
+        actions: json_string_array(["Removed image #{full_ref}"]),
+        image: JSON.parse(%({"state": "Deleted"})))
+      result.key_order = KEY_ORDER
+      result
+    end
+
+    private def image_inspect_json(client : Docr::Client, ref : String) : JSON::Any
+      raw = nil
+      client.call("GET", "/images/#{ref}/json") do |response|
+        raw = response.body_io?.try(&.gets_to_end)
+      end
+      return JSON.parse("{}") if raw.nil? || raw.empty?
+      JSON.parse(raw)
+    end
+
+    private def json_string_array(values : Array(String)) : JSON::Any
+      JSON::Any.new(values.map { |value| JSON::Any.new(value) })
     end
 
     # Existence check via a raw GET rather than Images#inspect: we only

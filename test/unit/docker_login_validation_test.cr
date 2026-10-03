@@ -87,6 +87,9 @@ describe "docker_login plugin argument validation" do
     result = PluginSpecHelper.run("docker_login", {"state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result["msg"].as_s.must_include("not present, doing nothing")
+    # real deletes its `actions` list before exit_json, so a successful
+    # login/logout registers changed + login_result and no msg at all
+    result.as_h.keys.to_a.must_equal(["changed", "login_result", "failed"])
+    result["login_result"].as_h.empty?.must_equal(true)
   end
 end

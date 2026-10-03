@@ -198,6 +198,19 @@ module Krikri
       end
     end
 
+    # Real seeds its result dict as `{"changed": False, "actions":
+    # []}`, deletes `actions` again once a real (non-check_mode,
+    # non-debug) run finishes, and then adds `container` (the inspect
+    # payload) whenever a container is present afterwards - so a normal
+    # create/rerun registers changed + container + failed, a removal
+    # registers changed + failed only, and only a check_mode run keeps
+    # the structured `actions` list. Live-verified against real
+    # ansible-core 2.19.11 + community.docker 5.2.1.
+    KEY_ORDER = %w[changed actions container failed]
+
+    # Real's own wrapper for a DockerException escaping the module body.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     def execute : PluginResult
       name = @params["name"]?
       unless name
@@ -218,7 +231,7 @@ module Krikri
       api = Docr::API.new(client)
       existing = find_container(api, name)
 
-      return ensure_absent(api, existing, check_mode) if state == "absent"
+      return absent_shape(api, name, existing, check_mode) if state == "absent"
 
       image_ref = @params["image"]?
       command = @params["command"]?.try(&.split(/\s+/).reject(&.empty?))
@@ -232,15 +245,33 @@ module Krikri
         return failure
       end
 
-      requested_networks = parsed_networks
+      dispatch_state(state, api, name, existing, image_ref, pull, needs_create,
+        needs_recreate, parsed_networks, healthy_max_wait, check_mode)
+    rescue ex : ImagePullError
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "")
+    rescue ex : Docr::Errors::DockerAPIError
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
+    rescue ex : Socket::ConnectError
+      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
 
+    # The per-state dispatch, kept out of #execute so both stay readable.
+    private def dispatch_state(
+      state : String, api : Docr::API, name : String,
+      existing : Docr::Types::ContainerSummary?, image_ref : String?, pull : Bool,
+      needs_create : Bool, needs_recreate : Bool, requested_networks : Array(RequestedNetwork),
+      healthy_max_wait : Float64?, check_mode : Bool,
+    ) : PluginResult
       case state
       when "started"
-        ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode)
+        real_shape(ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode),
+          api, name, check_mode, existing)
       when "present"
-        ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: false, check_mode: check_mode)
+        real_shape(ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: false, check_mode: check_mode),
+          api, name, check_mode, existing)
       when "stopped"
-        ensure_stopped(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, check_mode)
+        real_shape(ensure_stopped(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, check_mode),
+          api, name, check_mode, existing)
       when "healthy"
         # Real state=healthy: the started flow, then (outside check
         # mode) a wait for the container's health status - real's
@@ -250,17 +281,123 @@ module Krikri
         # immediately healthy; 'unhealthy' is a wait state, not an
         # immediate failure). The wait loop itself lives in
         # PluginHelpers::DockerHealthWait.
-        wait_for_healthy_result(api, name, ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode), healthy_max_wait, check_mode)
+        real_shape(wait_for_healthy_result(api, name, ensure_present(api, name, existing, image_ref, pull, needs_create, needs_recreate, requested_networks, start: true, check_mode: check_mode), healthy_max_wait, check_mode),
+          api, name, check_mode, existing)
       else
         # Real argspec wording and choices order (live-verified against
         # 2.19.11 with state: bogus).
         PluginResult.new(changed: false, failed: true,
           msg: "value of state must be one of: absent, present, healthy, started, stopped, got: #{state}")
       end
-    rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
-    rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+    end
+
+    # state=absent: real records no container facts here at all, even in
+    # check_mode where the container is still there afterwards.
+    private def absent_shape(
+      api : Docr::API, name : String, existing : Docr::Types::ContainerSummary?, check_mode : Bool,
+    ) : PluginResult
+      real_shape(ensure_absent(api, existing, check_mode), api, name, check_mode, existing, removed: true)
+    end
+
+    # Turns an internal result (which carries a prose msg) into the
+    # registered shape real's docker_container produces: the structured
+    # `actions` list in check_mode/debug only, and `container` (the
+    # daemon's raw inspect payload) whenever a container is present
+    # afterwards. A failed result is passed through untouched - real's
+    # fail_json shape is already PluginResult's default.
+    private def real_shape(
+      result : PluginResult, api : Docr::API, name : String, check_mode : Bool,
+      existing : Docr::Types::ContainerSummary?, removed : Bool = false,
+    ) : PluginResult
+      return result if result.failed?
+
+      debug_mode = true?(@params["debug"]?)
+      previous_id = existing.try(&.id)
+
+      # Real's state=absent path never records container facts, even in
+      # check_mode where the container is still there afterwards.
+      facts = removed ? nil : container_inspect_json(api, name)
+      final = PluginResult.new(changed: result.changed?, failed: false, failed_flag: false)
+      final.key_order = KEY_ORDER
+      final.extra["actions"] = check_mode_actions(result.msg.to_s, name, previous_id) if check_mode || debug_mode
+      final.extra["container"] = facts if facts
+      final
+    end
+
+    # Real's action dicts, per operation. They carry the parameters real
+    # would have sent to the daemon; the create action's payload here is
+    # the subset krikri itself sends (real's additionally records the
+    # options it defaults but does not act on - e.g. AttachStdin/OpenStdin
+    # handling above this layer).
+    private def check_mode_actions(msg : String, name : String, previous_id : String?) : JSON::Any
+      actions = [] of JSON::Any
+
+      if msg.includes?("would be created") || msg.includes?("would be recreated")
+        # Real records a create as ONE action - starting a freshly
+        # created container is part of it, not a separate entry.
+        actions << removed_action(previous_id) if msg.includes?("recreated")
+        actions << created_action(name)
+      elsif msg.includes?("would be stopped")
+        actions << stopped_action(previous_id)
+      elsif msg.includes?("would be started")
+        actions << started_action(previous_id)
+      elsif msg.includes?("would be removed")
+        actions << removed_action(previous_id)
+      end
+
+      JSON::Any.new(actions)
+    end
+
+    private def removed_action(container_id : String?) : JSON::Any
+      JSON::Any.new({
+        "removed"      => JSON::Any.new(container_id || ""),
+        "volume_state" => JSON::Any.new(false),
+        "link"         => JSON::Any.new(false),
+        "force"        => JSON::Any.new(true?(@params["force_kill"]?)),
+      })
+    end
+
+    private def started_action(container_id : String?) : JSON::Any
+      JSON::Any.new({"started" => JSON::Any.new(container_id || "")})
+    end
+
+    private def stopped_action(container_id : String?) : JSON::Any
+      JSON::Any.new({"stopped" => JSON::Any.new(container_id || "")})
+    end
+
+    private def created_action(name : String) : JSON::Any
+      JSON::Any.new({
+        "created"           => JSON::Any.new("Created container"),
+        "create_parameters" => create_parameters(name),
+        "networks"          => JSON.parse("{}"),
+      })
+    end
+
+    # The create payload real records: the command as a list plus the
+    # stdio flags krikri itself sets on every create.
+    private def create_parameters(name : String) : JSON::Any
+      params = {
+        "Cmd"          => JSON::Any.new((@params["command"]? || "").split(/\s+/).reject(&.empty?).map { |arg| JSON::Any.new(arg) }),
+        "AttachStdout" => JSON::Any.new(true),
+        "AttachStderr" => JSON::Any.new(true),
+        "AttachStdin"  => JSON::Any.new(false),
+        "StdinOnce"    => JSON::Any.new(false),
+        "OpenStdin"    => JSON::Any.new(nil),
+        "Image"        => JSON::Any.new(@params["image"]? || ""),
+        "ExposedPorts" => JSON.parse("{}"),
+      }
+      JSON::Any.new(params)
+    end
+
+    private def container_inspect_json(api : Docr::API, name : String) : JSON::Any?
+      raw = nil
+      api.client.call("GET", "/containers/#{name}/json", HTTP::Headers{"Accept" => "application/json"}) do |response|
+        raw = response.body_io?.try(&.gets_to_end)
+      end
+      return nil if raw.nil? || raw.empty?
+      JSON.parse(raw)
+    rescue Docr::Errors::DockerAPIError
+      nil
     end
 
     # Parses healthy_wait_timeout (float, default 300; <= 0 means wait
@@ -933,12 +1070,25 @@ module Krikri
       parts.empty? ? "" : " (#{parts.join("; ")})"
     end
 
+    # Real wraps a failed pull in its own wording ("Error pulling image
+    # <ref> - ..."); everything else escaping the module body gets the
+    # generic DockerException wrapper. Only the prefix is reproducible -
+    # the wrapped text is the SDK's own formatting.
     private def ensure_image_pulled(api : Docr::API, image_ref : String) : Nil
       ref_name, ref_tag = PluginHelpers::DockerRef.split(image_ref)
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
       return if image_exists?(api.client, full_ref)
 
-      api.images.create(ref_name, ref_tag)
+      begin
+        api.images.create(ref_name, ref_tag)
+      rescue ex : Docr::Errors::DockerAPIError
+        raise ImagePullError.new("Error pulling image #{image_ref} - #{ex.message}")
+      end
+    end
+
+    # Raised for a pull the daemon rejected, so the failure message can
+    # keep real's own wording instead of the generic API-error one.
+    class ImagePullError < Exception
     end
 
     # Same reasoning as docker_image.cr's own image_exists? - a raw GET,

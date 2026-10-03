@@ -105,7 +105,8 @@ describe "docker_container state=healthy" do
       })
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_include("would be created and started")
+      # real registers its structured `actions` list in check_mode, not a msg
+      result["actions"].as_a.size.must_equal(1)
       result["container"]?.must_be_nil
     ensure
       PluginSpecHelper.run("docker_container", {"name" => name, "state" => "absent"})
