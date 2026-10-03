@@ -52,6 +52,19 @@ module Krikri
       "dnf5"
     end
 
+    # dnf5's exit_json call passes its kwargs in results/changed/msg/rc
+    # order (its transaction tail is a literal
+    # `exit_json(results=, changed=, msg=, rc=0)`), the reverse of dnf4's
+    # response-dict order - and its `list:` path passes rc=0 where dnf4's
+    # passes none. Both observed live on fedora:41 (key_order_sweep11).
+    private def transaction_key_order : Array(String)
+      DNF5_TRANSACTION_ORDER
+    end
+
+    private def list_result_key_order : Array(String)
+      DNF5_LIST_ORDER
+    end
+
     # dnf5 dropped the yum/dnf `update` verb in favor of `upgrade`.
     private def update_verb : String
       "upgrade"

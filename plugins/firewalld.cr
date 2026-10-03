@@ -110,6 +110,17 @@ module Krikri
     @do_runtime = false
     @do_permanent = true
 
+    # Real Ansible's result msg is built from a msgs list each
+    # transaction appends to (module_utils/firewalld.py's self.msgs): a
+    # context line first ("Permanent and Non-Permanent(immediate)
+    # operation" / "Permanent operation" / "Non-permanent operation"),
+    # then per-change detail lines, then - only on hosts where firewalld
+    # is not running - the trailing "(offline operation: only on-disk
+    # configs were altered)" note. Failure results wrap the same list:
+    # "ERROR: Exception caught: <exception>[ <joined msgs>]".
+    @msgs = [] of String
+    @fw_offline = false
+
     def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       state = @params["state"]?
       unless state
@@ -193,10 +204,107 @@ module Krikri
 
       # Zero "things" is NOT an error: verified live, real Ansible with
       # only zone+state (enabled, permanent) succeeds as a no-op
-      # (changed=false) - its transaction list is simply empty. This
-      # plugin previously failed such a task with an "exactly one of
-      # ... is required" error.
-      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
+      # (changed=false) - its transaction list is simply empty, so the
+      # msgs list stays empty too and exit_json(msg='') keeps the EMPTY
+      # msg key (an explicit kwarg). Only the offline note can occupy it
+      # (see #firewalld_success).
+      firewalld_success(false)
+    end
+
+    # Real Ansible never includes a `zone` key in any firewalld result
+    # (its exit_json/fail_json calls pass changed/msg only), so none of
+    # the result builders below emit one.
+
+    # The success shape: changed, msg, failed - real's
+    # exit_json(changed=changed, msg=', '.join(msgs)) with the empty-msg
+    # key kept only when msgs is empty (an explicit msg='' kwarg).
+    private def firewalld_success(changed : Bool) : PluginResult
+      if @fw_offline
+        @msgs << "(offline operation: only on-disk configs were altered)"
+      end
+      if @msgs.empty?
+        PluginResult.new(changed: changed, failed: false, msg: "", include_empty_msg: true)
+      else
+        PluginResult.new(changed: changed, failed: false, msg: @msgs.join(", "))
+      end
+    end
+
+    # Check-mode change: real's transaction run() calls
+    # exit_json(changed=True) outright - NO msg key at all (registered
+    # shape: changed, failed only, round994003 firewalld_service_check).
+    private def check_mode_changed_result : PluginResult
+      PluginResult.new(changed: true, failed: false)
+    end
+
+    # Real's action_handler (module_utils/firewalld.py) wraps every
+    # firewalld interaction in try/except and fail_json's with
+    # "ERROR: Exception caught: <exception>" plus, when any context msgs
+    # have accumulated, " <joined msgs>"; a message mentioning
+    # INVALID_SERVICE first earns the module's own /etc/services hint
+    # line. <exception> is the str() of the raised error: a D-Bus error
+    # from the live-daemon path carries the "org.fedoraproject.
+    # FirewallD1.Exception: " error-name prefix (round994003
+    # firewalld_fail), while the offline Python's local FirewallError
+    # does not.
+    private def firewalld_exception_failure(error_core : String) : PluginResult
+      if error_core.includes?("INVALID_SERVICE")
+        @msgs << "Services are defined by port/tcp relationship and named as they are in /etc/services (on most systems)"
+      end
+      exception = @fw_offline ? error_core : "org.fedoraproject.FirewallD1.Exception: #{error_core}"
+      msg = @msgs.empty? ? "ERROR: Exception caught: #{exception}" : "ERROR: Exception caught: #{exception} #{@msgs.join(", ")}"
+      PluginResult.new(changed: false, failed: true, msg: msg)
+    end
+
+    # The CLI tools report their errors on STDERR with an empty stdout
+    # ("Error: <core>" for most, a bare "<core>" for some offline
+    # service paths) - feeding the empty stdout into the result msg is
+    # what made every krikri firewalld failure on the round994003 real
+    # host msg-less. Strip the optional prefix and wrap the core the way
+    # real's action_handler does.
+    private def command_failure_result(result) : PluginResult
+      core = result[:stderr].to_s.strip
+      core = result[:stdout].to_s.strip if core.empty?
+      firewalld_exception_failure(core.lchop("Error: ").strip)
+    end
+
+    # The context line each real transaction appends to msgs right after
+    # its get_enabled probes, before any mutation.
+    private def append_operation_context_msg : Nil
+      @msgs << if @do_runtime && @do_permanent
+        "Permanent and Non-Permanent(immediate) operation"
+      elsif @do_runtime
+        "Non-permanent operation"
+      else
+        "Permanent operation"
+      end
+    end
+
+    # The per-change detail line, in real's composition order: the
+    # service/port/rich_rule/protocol/icmp-block(-inversion)/port_forward
+    # messages come from main() after the transaction returns, while
+    # source/interface/masquerade/forward carry their own
+    # enabled_msg/disabled_msg inside the transaction itself. nil for the
+    # things real composes no change line for (icmp_block_inversion,
+    # target).
+    private def thing_changed_msg(zone : String, key : String, value : String, want_present : Bool) : String?
+      state = want_present ? "enabled" : "disabled"
+      # main()'s own "Changed <thing> <value> to <state>" lines...
+      value_msgs = {
+        "service"    => "Changed service #{value} to #{state}",
+        "port"       => "Changed port #{value} to #{state}",
+        "rich_rule"  => "Changed rich_rule #{value} to #{state}",
+        "protocol"   => "Changed protocol #{value} to #{state}",
+        "icmp_block" => "Changed icmp-block #{value} to #{state}",
+        # ...and the transactions that carry their own
+        # enabled_msg/disabled_msg (appended inside run(), before main()'s
+        # tail). icmp_block_inversion sets neither; target is composed by
+        # #run_target and port_forward by #run_port_forward.
+        "source"     => want_present ? "Added #{value} to zone #{zone}" : "Removed #{value} from zone #{zone}",
+        "interface"  => want_present ? "Changed #{value} to zone #{zone}" : "Removed #{value} from zone #{zone}",
+        "masquerade" => want_present ? "Added masquerade to zone #{zone}" : "Removed masquerade from zone #{zone}",
+        "forward"    => want_present ? "Added forward to zone #{zone}" : "Removed forward from zone #{zone}",
+      }
+      value_msgs[key]?
     end
 
     private def run_target(zone : String, state : String, target : String) : PluginResult
@@ -212,23 +320,24 @@ module Krikri
       # immediate transaction runs first. Only permanent-only requests
       # proceed.
       if @do_runtime
-        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.", zone: zone)
+        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.")
       end
 
       want_present = state == "enabled" || state == "present"
       desired = want_present ? target : "default"
 
       content = read_zone_xml(zone)
-      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
+      return firewalld_exception_failure("INVALID_ZONE: #{zone}") unless content
 
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if zone_target(content) == desired
+      append_operation_context_msg
+      return firewalld_success(false) if zone_target(content) == desired
 
-      if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
-      end
+      return check_mode_changed_result if true?(@params["_ansible_check_mode"]?)
 
       write_zone_xml(zone, PluginHelpers::FirewalldCommand.zone_set_target(content, desired))
-      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      # Real's own ZoneTargetTransaction enabled/disabled msgs.
+      @msgs << (want_present ? "Set zone #{zone} target to #{target}" : "Reset zone #{zone} target to default")
+      firewalld_success(true)
     end
 
     # The zone root's target attribute - a zone's target isn't optional
@@ -255,26 +364,31 @@ module Krikri
     # sentinel).
     private def run_zone_transaction(zone : String, state : String) : PluginResult
       if @do_runtime
-        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.", zone: zone)
+        return PluginResult.new(changed: false, failed: true, msg: "Zone operations must be permanent. Make sure you didn't set the 'permanent' flag to 'false' or the 'immediate' flag to 'true'.")
       end
 
       want_present = state == "present"
       exists = read_zone_xml(zone) ? true : false
 
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if exists == want_present
-      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if true?(@params["_ansible_check_mode"]?)
+      append_operation_context_msg
+      return firewalld_success(false) if exists == want_present
+      return check_mode_changed_result if true?(@params["_ansible_check_mode"]?)
 
       if want_present
         write_zone_xml(zone, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<zone>\n</zone>\n")
+        # Real's own ZoneTransaction enabled msg, then main()'s detail line.
+        @msgs << "Added zone #{zone}"
       else
         etc_path = File.join(ETC_ZONE_DIR, "#{zone}.xml")
         if File.exists?(etc_path)
           File.delete(etc_path)
+          @msgs << "Removed zone #{zone}"
         else
-          return PluginResult.new(changed: false, failed: true, msg: "BUILTIN_ZONE: '#{zone}' is built-in zone", zone: zone)
+          return PluginResult.new(changed: false, failed: true, msg: "BUILTIN_ZONE: '#{zone}' is built-in zone")
         end
       end
-      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      @msgs << "Changed zone #{zone} to #{state}"
+      firewalld_success(true)
     end
 
     # Matches real Ansible's own `ForwardPortTransaction` construction
@@ -282,133 +396,134 @@ module Krikri
     # in that order, matching the real module's own error-message
     # order), `toaddr` optional and simply omitted from the compound
     # value when absent.
-    private def run_port_forward(zone : String, state : String, raw : String) : PluginResult
+    private def run_port_forward(zone : String, state : String, raw : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       entries = JSON.parse(raw).as_a
       return PluginResult.new(changed: false, failed: true, msg: "Only one port forward supported at a time") if entries.size > 1
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if entries.empty?
+      return firewalld_success(false) if entries.empty?
 
       built = PluginHelpers::FirewalldCommand.port_forward_value(entries[0])
       return PluginResult.new(changed: false, failed: true, msg: built[:error] || "invalid port_forward value") unless value = built[:value]
 
       want_present = state == "enabled"
       check_mode = true?(@params["_ansible_check_mode"]?)
-      changed = false
+      runtime_present : Bool? = nil
+      permanent_plan : NamedTuple(content: String, element: String, attrs: Hash(String, String), present: Bool)? = nil
 
       if @do_runtime
-        result = forward_port_runtime(zone, value, want_present, check_mode)
-        return result if result.failed?
-        changed ||= result.changed?
+        query = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value, "firewall-cmd"))
+        return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
+        runtime_present = query[:exit_code] == 0
       end
 
       if @do_permanent
-        result = forward_port_offline(zone, entries[0], want_present, check_mode)
-        return result if result.failed?
-        changed ||= result.changed?
+        content = read_zone_xml(zone)
+        return firewalld_exception_failure("INVALID_ZONE: #{zone}") unless content
+        element, attrs = PluginHelpers::FirewalldCommand.forward_port_element(entries[0])
+        permanent_plan = {content: content, element: element, attrs: attrs,
+                          present: PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)}
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
-    end
-
-    private def forward_port_runtime(zone : String, value : String, want_present : Bool, check_mode : Bool) : PluginResult
-      present = remote_exec(PluginHelpers::FirewalldCommand.forward_port_query_command(zone, value, "firewall-cmd"))[:exit_code] == 0
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
-      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-
-      cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value, "firewall-cmd")
-      result = remote_exec(cmd)
-      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
-
-      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
-    end
-
-    private def forward_port_offline(zone : String, entry : JSON::Any, want_present : Bool, check_mode : Bool) : PluginResult
-      content = read_zone_xml(zone)
-      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
-
-      element, attrs = PluginHelpers::FirewalldCommand.forward_port_element(entry)
-      present = PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
-      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-
-      new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(content, element, attrs) : PluginHelpers::FirewalldCommand.zone_remove(content, element, attrs)
-      if new_content
-        write_zone_xml(zone, new_content)
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
-      end
-
-      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
-    end
-
-    private def run(zone : String, state : String, key : String, value : String) : PluginResult
-      want_present = state == "enabled"
-      check_mode = true?(@params["_ansible_check_mode"]?)
+      append_operation_context_msg
       changed = false
 
-      if @do_runtime
-        present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))[:exit_code] == 0
-        if present != want_present
-          return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-          cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.remove_command(zone, key, value, "firewall-cmd")
-          result = remote_exec(cmd)
-          return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
-          changed = true
+      runtime_present.try do |present|
+        next if present == want_present
+        return check_mode_changed_result if check_mode
+        cmd = want_present ? PluginHelpers::FirewalldCommand.forward_port_add_command(zone, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.forward_port_remove_command(zone, value, "firewall-cmd")
+        result = remote_exec(cmd)
+        return command_failure_result(result) if result[:exit_code] != 0
+        changed = true
+      end
+
+      if plan = permanent_plan
+        if plan[:present] != want_present
+          return check_mode_changed_result if check_mode
+          new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(plan[:content], plan[:element], plan[:attrs]) : PluginHelpers::FirewalldCommand.zone_remove(plan[:content], plan[:element], plan[:attrs])
+          if new_content
+            write_zone_xml(zone, new_content)
+            changed = true
+          end
         end
+      end
+
+      # Real's ForwardPortTransaction sets no enabled/disabled msg; the
+      # detail line comes from main(), keyed on the ORIGINAL dict values
+      # with toaddr always spelled out (empty when absent).
+      if changed
+        entry = entries[0]
+        toaddr = entry["toaddr"]?.try(&.to_s) || ""
+        compound = "port=#{entry["port"]}:proto=#{entry["proto"]}:toport=#{entry["toport"]}:toaddr=#{toaddr}"
+        @msgs << "Changed port_forward #{compound} to #{state}"
+      end
+      firewalld_success(changed)
+    end
+
+    private def run(zone : String, state : String, key : String, value : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
+      want_present = state == "enabled"
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      runtime_present : Bool? = nil
+      rich_permanent_present : Bool? = nil
+      permanent_plan : NamedTuple(content: String, element: String, attrs: Hash(String, String), present: Bool)? = nil
+
+      if @do_runtime
+        query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))
+        # firewall-cmd's query flags exit 0 ("yes")/1 ("no"); anything
+        # else is a real error and is what real Ansible's
+        # action_handler would have caught.
+        return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
+        runtime_present = query[:exit_code] == 0
       end
 
       if @do_permanent
         if key == "rich_rule"
-          result = run_rich_rule_offline(zone, want_present, value, check_mode)
-          return result if result.failed?
-          changed ||= result.changed?
+          query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, "rich_rule", value))
+          return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
+          rich_permanent_present = query[:exit_code] == 0
         else
-          result = run_thing_offline(zone, key, value, want_present, check_mode)
-          return result if result.failed?
-          changed ||= result.changed?
+          content = read_zone_xml(zone)
+          return firewalld_exception_failure("INVALID_ZONE: #{zone}") unless content
+          element, attrs = PluginHelpers::FirewalldCommand.zone_element(key, value)
+          permanent_plan = {content: content, element: element, attrs: attrs,
+                            present: PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)}
         end
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "", zone: zone)
-    end
+      append_operation_context_msg
+      changed = false
 
-    # The XML-file backend for every "thing" except rich_rule (see the
-    # class comment) - real Ansible's own offline mode edits the zone
-    # config files via firewalld's Python Firewall(offline=True); the
-    # direct file manipulation below mirrors that. The zone file is
-    # read from /etc (user config) first, then /usr/lib (stock), exactly
-    # the real module's load order; a zone present in neither is real
-    # Ansible's INVALID_ZONE failure.
-    private def run_thing_offline(zone : String, key : String, value : String, want_present : Bool, check_mode : Bool) : PluginResult
-      content = read_zone_xml(zone)
-      return PluginResult.new(changed: false, failed: true, msg: "INVALID_ZONE: #{zone}", zone: zone) unless content
-
-      element, attrs = PluginHelpers::FirewalldCommand.zone_element(key, value)
-      present = PluginHelpers::FirewalldCommand.zone_query(content, element, attrs)
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
-      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
-
-      new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(content, element, attrs) : PluginHelpers::FirewalldCommand.zone_remove(content, element, attrs)
-      if new_content
-        write_zone_xml(zone, new_content)
-        return PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      runtime_present.try do |present|
+        next if present == want_present
+        return check_mode_changed_result if check_mode
+        cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, key, value, "firewall-cmd") : PluginHelpers::FirewalldCommand.remove_command(zone, key, value, "firewall-cmd")
+        result = remote_exec(cmd)
+        return command_failure_result(result) if result[:exit_code] != 0
+        changed = true
       end
 
-      PluginResult.new(changed: false, failed: false, msg: "", zone: zone)
-    end
+      rich_permanent_present.try do |present|
+        next if present == want_present
+        return check_mode_changed_result if check_mode
+        cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, "rich_rule", value) : PluginHelpers::FirewalldCommand.remove_command(zone, "rich_rule", value)
+        result = remote_exec(cmd)
+        return command_failure_result(result) if result[:exit_code] != 0
+        changed = true
+      end
 
-    # rich_rule stays on the firewall-offline-cmd path (see the class
-    # comment - its string form needs firewalld's own Rich_Rule parser,
-    # both for XML serialization and for query canonicalization), so
-    # this only works on hosts where that binary works.
-    private def run_rich_rule_offline(zone : String, want_present : Bool, value : String, check_mode : Bool) : PluginResult
-      present = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, "rich_rule", value))[:exit_code] == 0
-      return PluginResult.new(changed: false, failed: false, msg: "", zone: zone) if present == want_present
-      return PluginResult.new(changed: true, failed: false, msg: "", zone: zone) if check_mode
+      if plan = permanent_plan
+        if plan[:present] != want_present
+          return check_mode_changed_result if check_mode
+          new_content = want_present ? PluginHelpers::FirewalldCommand.zone_add(plan[:content], plan[:element], plan[:attrs]) : PluginHelpers::FirewalldCommand.zone_remove(plan[:content], plan[:element], plan[:attrs])
+          if new_content
+            write_zone_xml(zone, new_content)
+            changed = true
+          end
+        end
+      end
 
-      cmd = want_present ? PluginHelpers::FirewalldCommand.add_command(zone, "rich_rule", value) : PluginHelpers::FirewalldCommand.remove_command(zone, "rich_rule", value)
-      result = remote_exec(cmd)
-      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], zone: zone) if result[:exit_code] != 0
-
-      PluginResult.new(changed: true, failed: false, msg: "", zone: zone)
+      if changed && (detail = thing_changed_msg(zone, key, value, want_present))
+        @msgs << detail
+      end
+      firewalld_success(changed)
     end
 
     # Writes back to /etc/firewalld/zones/<zone>.xml - real Ansible's
@@ -496,7 +611,7 @@ module Krikri
 
       if offline_param
         unless permanent
-          return PluginResult.new(changed: false, failed: true, msg: "offline cannot be enabled unless permanent changes are allowed", zone: zone)
+          return PluginResult.new(changed: false, failed: true, msg: "offline cannot be enabled unless permanent changes are allowed")
         end
         immediate = false if fw_offline
       end
@@ -504,7 +619,7 @@ module Krikri
       immediate = true if !permanent && !immediate
 
       if immediate && fw_offline
-        return PluginResult.new(changed: false, failed: true, msg: "firewall is not currently running, unable to perform immediate actions without a running firewall daemon", zone: zone)
+        return PluginResult.new(changed: false, failed: true, msg: "firewall is not currently running, unable to perform immediate actions without a running firewall daemon")
       end
 
       # Which contexts this request touches: an immediate action against
