@@ -181,6 +181,9 @@ describe "package_facts plugin result key order" do
       YAML
     keys.first.must_equal("ansible_facts")
     keys.last(2).must_equal(["failed", "changed"])
+    # Full shape - real has NO msg key (a krikri-only "Gathered N package
+    # facts" msg used to sit between ansible_facts and failed).
+    keys.must_equal(["ansible_facts", "failed", "changed"])
   end
 end
 
