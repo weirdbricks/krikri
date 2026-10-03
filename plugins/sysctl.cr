@@ -118,7 +118,10 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "", name: name, sysctl_file: sysctl_file)
+      # Real sysctl.py has exactly one success exit - module.exit_json(changed=result.changed)
+      # (sysctl.py:416) - and it echoes neither name nor sysctl_file (round 992001
+      # kop_kernel key-order capture: real registers {changed, failed} only).
+      PluginResult.new(changed: changed, failed: false)
     end
 
     # Real _parse_value: booleans become "1"/"0", strings are stripped,

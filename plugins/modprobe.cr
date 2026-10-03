@@ -194,15 +194,65 @@ module Krikri
       parsed[:path]
     end
 
+    # Real modprobe.py's failure exits (load_module/unload_module) are
+    # fail_json(msg=err, rc=rc, stdout=out, stderr=err, **self.result)
+    # (modprobe.py:125/283): msg is the named parameter of fail_json, so
+    # the kwargs dict is rc/stdout/stderr + the result property's
+    # changed/name/params/state, then basic.py's kwargs.update appends
+    # failed and msg; the controller derives stdout_lines/stderr_lines
+    # after that and the exception lands last (round 992001 kop_kernel
+    # capture). The *_lines are emitted wire-side so they keep this
+    # position - register_result's re-derivation overwrites them in place.
+    private def modprobe_failure(rc : Int32, stdout : String, stderr : String, name : String, state : String) : PluginResult
+      params = @params["params"]? || ""
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: stderr,
+        rc: rc,
+        stdout: stdout,
+        stderr: stderr,
+        name: name,
+        params: params,
+        state: state,
+        stdout_lines: python_splitlines(stdout),
+        stderr_lines: python_splitlines(stderr),
+        key_order: ["rc", "stdout", "stderr", "changed", "name", "params", "state", "failed", "msg", "stdout_lines", "stderr_lines", "exception"],
+      )
+    end
+
+    # Python str.splitlines for the common line endings (modprobe stderr
+    # is "...\n"-terminated, so the trailing newline yields no empty
+    # trailing element).
+    private def python_splitlines(value : String) : Array(String)
+      lines = [] of String
+      start = 0
+      i = 0
+      while i < value.size
+        case value[i]
+        when '\n'
+          lines << value[start...i]
+          i += 1
+          start = i
+        when '\r'
+          lines << value[start...i]
+          i += value[i + 1]? == '\n' ? 2 : 1
+          start = i
+        else
+          i += 1
+        end
+      end
+      lines << value[start..] if start < value.size
+      lines
+    end
+
     private def ensure_loaded(modprobe_path : String, name : String, loaded : Bool, check_mode : Bool) : PluginResult
       return modprobe_result(false, name, "present") if loaded
       return modprobe_result(true, name, "present") if check_mode
 
       result = remote_exec(PluginHelpers::ModprobeCommand.load_command(modprobe_path, name, @params["params"]?))
       unless result[:exit_code] == 0
-        # Real modprobe.py's load_module: fail_json(msg=err, ...) - the
-        # msg IS the raw modprobe stderr, not a wrapper sentence.
-        return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
+        return modprobe_failure(result[:exit_code], result[:stdout].to_s, result[:stderr].to_s, name, "present")
       end
 
       modprobe_result(true, name, "present")
@@ -214,7 +264,7 @@ module Krikri
 
       result = remote_exec("#{modprobe_path} -r #{Process.quote(name)}")
       unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true, msg: result[:stderr].to_s, stderr: result[:stderr])
+        return modprobe_failure(result[:exit_code], result[:stdout].to_s, result[:stderr].to_s, name, "absent")
       end
 
       modprobe_result(true, name, "absent")

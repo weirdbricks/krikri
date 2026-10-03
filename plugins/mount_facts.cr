@@ -86,20 +86,26 @@ module Krikri
       } of String => JSON::Any
 
       facts = JSON::Any.new(result_facts)
+      # Real mount_facts.py's single exit is module.exit_json(ansible_facts={...})
+      # (mount_facts.py:647) - no msg, no changed (round 992001 kop_kernel
+      # key-order capture: real registers ansible_facts, then the controller
+      # backfills failed, then changed, then appends warnings).
       if warnings.empty?
         PluginResult.new(
           changed: false,
           failed: false,
-          msg: "Gathered #{mount_points.size} mount facts",
-          ansible_facts: facts
+          omit_changed: true,
+          ansible_facts: facts,
+          key_order: ["ansible_facts"]
         )
       else
         PluginResult.new(
           changed: false,
           failed: false,
-          msg: "Gathered #{mount_points.size} mount facts",
+          omit_changed: true,
           ansible_facts: facts,
-          warnings: JSON::Any.new(warnings.map { |warning| JSON::Any.new(warning) })
+          warnings: JSON::Any.new(warnings.map { |warning| JSON::Any.new(warning) }),
+          key_order: ["ansible_facts"]
         )
       end
     end
@@ -235,6 +241,26 @@ module Krikri
       out
     end
 
+    # Real mount_facts.py's per-entry key order (round 992001 kop_kernel
+    # capture): the fstab columns, then the statvfs stats with size_total/
+    # size_available leading the block_* group, then ansible_context, then
+    # uuid last. Absent keys (dump/passno when the source line lacks them,
+    # stats when statvfs can't read the mount) stay absent.
+    ENTRY_KEY_ORDER = %w[
+      device mount fstype options dump passno
+      size_total size_available
+      block_size block_total block_available block_used
+      inode_total inode_available inode_used
+      ansible_context uuid
+    ]
+
+    private def order_entry_keys(fields : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      ordered = Hash(String, JSON::Any).new
+      ENTRY_KEY_ORDER.each { |key| ordered[key] = fields[key] if fields.has_key?(key) }
+      fields.each { |key, value| ordered[key] = value unless ordered.has_key?(key) }
+      ordered
+    end
+
     # Apply the device/fstype fnmatch filters, resolve UUIDs, and enrich
     # with statvfs-derived size/inode fields plus ansible_context.
     private def filter_entries(parsed : Array({fields: Hash(String, JSON::Any), line: String}),
@@ -277,7 +303,7 @@ module Krikri
           "source"      => JSON::Any.new(source),
           "source_data" => JSON::Any.new(item[:line]),
         })
-        out << fields
+        out << order_entry_keys(fields)
       end
       out
     end
