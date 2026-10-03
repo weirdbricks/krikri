@@ -1486,6 +1486,12 @@ module Krikri
       # backfill. krikri's plugins emit warnings in the wire, so pull it
       # out and re-append it after the failed/changed backfill.
       warnings = hash.delete("warnings")
+      # `deprecations` gets the same treatment, for the same reason: the
+      # controller appends its collected deprecations AFTER the failed
+      # backfill (round 992003 kop_storage: ansible.posix.mount registers
+      # ..., fstype, failed, deprecations on real, while a wire-side
+      # deprecations lands before the backfilled failed key here).
+      deprecations = hash.delete("deprecations")
 
       unless hash.has_key?("failed")
         rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
@@ -1504,6 +1510,7 @@ module Krikri
       end
 
       hash["warnings"] = warnings if warnings
+      hash["deprecations"] = deprecations if deprecations
 
       JSON::Any.new(hash)
     end

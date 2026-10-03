@@ -7,28 +7,31 @@ module Krikri
   # parted plugin - creates, resizes, flags, or removes disk partitions
   # via `parted -s`, a native port of community.general.parted.
   #
-  # Implemented against real parted.py's control flow:
-  #   - discovery via `parted -s <device> -m unit <unit> print` (the
-  #     -m machine-parseable output, one line per partition,
-  #     fields separated by ':')
-  #   - create via `parted -s <dev> unit <unit> mkpart <parttype>
-  #     <fstype|name> <start> <end>`, remove via `rm <number>`,
-  #     resize via `resizepart <number> <end>` (resize: true),
-  #     flags via `set <number> <flag> on|off`, label via mklabel
-  #   - idempotency: existing partition matched by number + boundaries
-  #     (a same-number partition whose start/end already match the
-  #     requested values is a no-op); flags compared against the
-  #     current flag state from print's per-partition output
-  #   - check mode: discovery runs for real, mutating commands are not
-  #     run (changed verdict still reported)
-  #
-  # Not implemented (narrow, documented cuts):
-  #   - state: info (real returns partition facts; no tested role
-  #     caller) - accepted but behaves as a no-op discovery returning
-  #     the print output
-  #   - fs_type only applies on GPT-less msdos create paths where real
-  #     passes it as the mkpart filesystem-type argument; on GPT it is
-  #     the partition NAME argument, matching real's handling
+  # Implemented against real parted.py's control flow, including its
+  # result shapes (round 992003 kop_storage captures):
+  #   - every exit is `exit_json(changed=..., disk=..., partitions=...,
+  #     script=...)` - disk is the parsed "generic" block (dev, size,
+  #     unit, table, model, logical_block, physical_block), partitions
+  #     the parsed print rows (num, begin, end, size, fstype, name,
+  #     flags, unit), script the exact parted script list that ran (or
+  #     would have run in check mode)
+  #   - a device WITHOUT a disk label is not an error: get_device_info
+  #     runs `parted -s -m <dev> -- unit <unit> print`, and when it
+  #     exits non-zero with "unrecognised disk label" the stdout is
+  #     parsed anyway (parted still prints the BYT;/disk line with
+  #     table "unknown") - the missing label then drives mklabel in the
+  #     script. Only a non-label failure (e.g. a nonexistent device)
+  #     fails with real's rc/out/err-carrying shape
+  #   - the script is built exactly like real: mklabel when the current
+  #     table differs, mkpart (with the part_type, and fs_type ONLY when
+  #     the user passed one - there is no ext2 default) when the label
+  #     changes or the partition is missing, resizepart/name/set
+  #     additions, "unit <unit>" prefixed onto each actual run
+  #   - script runs go through `parted [-s|-s -f] -m -a <align> <dev>
+  #     -- <script>`; -f only on parted >= 3.4.64 (probed via
+  #     `parted --version`, like real)
+  #   - check mode: discovery runs for real, script runs are skipped
+  #     (changed verdict still reported, script still reported)
   class PartedPlugin < BasePlugin
     # Real argument_spec's deterministic orders (live-verified wording
     # against 2.19.11: "value of state must be one of: absent, info,
@@ -38,13 +41,30 @@ module Krikri
     # accepts neither the bare "b" nor "kB"/"kKiB").
     private PARTED_STATES = %w[absent info present]
 
-    private PARTED_FLAGS = %w[boot lba bootable cyl align hidden swap lvm raid thinp esp diag cp legacy_boot]
+    private PARTED_UNITS_ORDER = %w[B KB MB GB TB KiB MiB GiB TiB s % cyl chs compact]
 
     private PARTED_LABELS = %w[aix amiga bsd dvh gpt loop mac msdos pc98 sun]
 
-    private PARTED_UNITS = %w[B KB MB GB TB KiB MiB GiB TiB s % cyl chs compact]
+    private PARTED_PART_TYPES = %w[extended logical primary]
 
-    def execute : PluginResult
+    private PARTED_ALIGNS = %w[cylinder minimal none optimal undefined]
+
+    private UNITS_SI = %w[B KB MB GB TB]
+
+    private UNITS_IEC = %w[KiB MiB GiB TiB]
+
+    # real's fail_json kwargs (rc, out, err) lead the registered result,
+    # then failed/msg/changed/exception (round 992003 parted_fail:
+    # [rc, out, err, failed, msg, changed, exception]).
+    private PARTED_FAIL_KEY_ORDER = %w[rc out err failed msg changed exception]
+
+    # The single success exit: exit_json(changed=changed, disk=...,
+    # partitions=..., script=...) plus the controller's failed backfill.
+    private PARTED_KEY_ORDER = %w[changed disk partitions script]
+
+    @parted_version : Tuple(Int32, Int32, Int32)? = nil
+
+    def execute : PluginResult # ameba:disable Metrics/CyclomaticComplexity
       device = @params["device"]?
       unless device
         return PluginResult.new(changed: false, failed: true,
@@ -58,12 +78,19 @@ module Krikri
       end
 
       unit = @params["unit"]? || "KiB"
-      if error = validate_unit_and_label(unit)
+      if error = validate_module_choices(unit)
         return error
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
-      number, part_start, part_end, label, fs_type, flags = resolve_partition_params
+      number, part_start, part_end, label, fs_type, flags, part_type, name, align = resolve_partition_params
+
+      # Real's required_if: state=absent needs number (AnsibleModule
+      # init-time, before the binary lookup).
+      if state == "absent" && number.nil?
+        return PluginResult.new(changed: false, failed: true,
+          msg: "state is absent but all of the following are missing: number")
+      end
 
       # Real parted.py resolves the parted binary at main() start
       # (get_bin_path("parted", True)) - AFTER the AnsibleModule init
@@ -76,36 +103,175 @@ module Krikri
           msg: missing_executable_message("parted"))
       end
 
-      # state: info - real runs print and returns the parsed output.
-      if state == "info"
-        return info_result(device, unit, parted_path)
+      # Real's conditioning block: a number below 1 fails before any
+      # device access.
+      if n = number
+        if n < 1
+          return PluginResult.new(changed: false, failed: true,
+            msg: "The partition number must be greater then 0.")
+        end
       end
 
-      current = stat_and_read(device, unit, parted_path)
+      # Read the current disk information (this is where real runs
+      # `parted --version` for the first time, via check_parted_label).
+      current = read_device_info(device, unit, parted_path)
       return current if current.is_a?(PluginResult)
 
-      if state == "absent"
-        return absent_partition(device, current, number, check_mode)
+      changed = false
+      output_script = [] of String
+      script = [] of String
+      current_parts = current[:partitions]
+      generic = current[:generic]
+
+      case state
+      when "present"
+        # Assign label if required
+        current_table = generic["table"]?.try(&.as_s?)
+        mklabel_needed = current_table != label
+        if mklabel_needed
+          script << "mklabel" << label
+        end
+
+        # Create partition if required
+        if !part_type.empty? && (mklabel_needed || !part_exists?(current_parts, number))
+          script << "mkpart" << part_type
+          script << fs_type if fs_type
+          script << part_start << part_end
+        end
+
+        # Set the unit of the run
+        script = ["unit", unit] + script unless script.empty?
+
+        # If partition exists, try to resize
+        if resize_enabled? && part_exists?(current_parts, number)
+          partition = current_parts.find! { |part| part["num"] == number }
+          current_part_end = convert_to_bytes(partition["end"].as_f, unit)
+
+          size, parsed_unit = parse_unit(part_end, unit)
+          if parsed_unit == "%"
+            size = (generic["size"].as_f * size / 100)
+            parsed_unit = unit
+          end
+
+          desired_part_end = convert_to_bytes(size, parsed_unit)
+
+          if current_part_end != desired_part_end
+            script << "resizepart" << number.not_nil!.to_s << part_end # ameba:disable Lint/NotNil
+          end
+        end
+
+        # Execute the script and update the data structure.
+        if !script.empty?
+          output_script += script
+          if failure = run_parted_script(script, device, align, parted_path)
+            return failure
+          end
+          changed = true
+          script = [] of String
+
+          unless check_mode
+            refreshed = read_device_info(device, unit, parted_path)
+            return refreshed if refreshed.is_a?(PluginResult)
+            current_parts = refreshed[:partitions]
+          end
+        end
+
+        if part_exists?(current_parts, number) || check_mode
+          # check mode with a would-be change has no printed partition
+          # row yet - real substitutes an empty flags-only structure
+          partition = if changed && check_mode
+                        {"flags" => JSON::Any.new([] of JSON::Any)} of String => JSON::Any
+                      else
+                        current_parts.find { |part| part["num"] == number }
+                      end
+
+          if n = number
+            # Assign name to the partition
+            if (nm = name) && partition && partition["name"]?.try(&.as_s?) != nm
+              # The double quotes need to be included in the arg passed
+              # to parted (real passes the quoted name verbatim).
+              script << "name" << n.to_s << "\"#{nm}\""
+            end
+
+            # Manage flags
+            if flags
+              # Parted infers boot with esp: assigning esp sets boot.
+              requested = flags.dup
+              if requested.includes?("esp") && !requested.includes?("boot")
+                requested << "boot"
+              end
+
+              current_flags = partition ? partition["flags"].as_a.map(&.as_s) : [] of String
+              # Compute only the changes in flags status (real's
+              # set-difference loops, in deterministic order here).
+              (requested - current_flags).each do |flag|
+                script << "set" << n.to_s << flag << "on"
+              end
+              (current_flags - requested).each do |flag|
+                script << "set" << n.to_s << flag << "off"
+              end
+            end
+          end
+        end
+
+        # Set the unit of the run
+        script = ["unit", unit] + script unless script.empty?
+
+        # Execute the script
+        if !script.empty?
+          output_script += script
+          if failure = run_parted_script(script, device, align, parted_path)
+            return failure
+          end
+          changed = true
+        end
+      when "absent"
+        # Remove the partition
+        if part_exists?(current_parts, number) || check_mode
+          script = ["rm", number.not_nil!.to_s] # ameba:disable Lint/NotNil
+          output_script += script
+          if failure = run_parted_script(script, device, align, parted_path)
+            return failure
+          end
+          changed = true
+        end
+      when "info"
+        output_script = ["unit", unit, "print"]
       end
 
-      present_partition(device, current, number, part_start, part_end,
-        unit, label, fs_type, flags, check_mode)
+      # Final status of the device (real runs this unconditionally, check
+      # mode included)
+      final = read_device_info(device, unit, parted_path)
+      return final if final.is_a?(PluginResult)
+
+      result = PluginResult.new(changed: changed, failed: false)
+      result.extra["disk"] = JSON::Any.new(final[:generic])
+      result.extra["partitions"] = JSON::Any.new(final[:partitions].map { |part| JSON::Any.new(part) })
+      result.extra["script"] = JSON::Any.new(output_script.map { |entry| JSON::Any.new(entry) })
+      result.key_order = PARTED_KEY_ORDER
+      result
     end
 
-    private def resolve_partition_params : {Int32?, String, String, String, String, String?}
+    private def resolve_partition_params : {Int32?, String, String, String, String?, Array(String)?, String, String?, String}
       number = @params["number"]?.try { |v| v.to_i? }
       part_start = @params["part_start"]? || "0%"
       part_end = @params["part_end"]? || "100%"
       label = @params["label"]? || "msdos"
-      fs_type = @params["fs_type"]? || "ext2"
-      flags = @params["flags"]? # comma/space-separated or single
-      {number, part_start, part_end, label, fs_type, flags}
+      fs_type = @params["fs_type"]?.try { |v| v.empty? ? nil : v }
+      flags = parse_flags
+      part_type = @params["part_type"]? || "primary"
+      name = @params["name"]?.try { |v| v.empty? ? nil : v }
+      align = @params["align"]? || "optimal"
+      {number, part_start, part_end, label, fs_type, flags, part_type, name, align}
     end
 
-    private def validate_unit_and_label(unit : String) : PluginResult?
-      unless PARTED_UNITS.includes?(unit)
+    # Real AnsibleModule's init-time choices validation, in its own
+    # declaration order (device required, then state/unit/label/
+    # part_type/align choices).
+    private def validate_module_choices(unit : String) : PluginResult?
+      unless PARTED_UNITS_ORDER.includes?(unit)
         return PluginResult.new(changed: false, failed: true,
-          msg: "value of unit must be one of: #{PARTED_UNITS.join(", ")}, got: #{unit}")
+          msg: "value of unit must be one of: #{PARTED_UNITS_ORDER.join(", ")}, got: #{unit}")
       end
 
       if label = @params["label"]?
@@ -114,200 +280,223 @@ module Krikri
             msg: "value of label must be one of: #{PARTED_LABELS.join(", ")}, got: #{label}")
         end
       end
+
+      if part_type = @params["part_type"]?
+        unless PARTED_PART_TYPES.includes?(part_type)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value of part_type must be one of: #{PARTED_PART_TYPES.join(", ")}, got: #{part_type}")
+        end
+      end
+
+      if align = @params["align"]?
+        unless PARTED_ALIGNS.includes?(align)
+          return PluginResult.new(changed: false, failed: true,
+            msg: "value of align must be one of: #{PARTED_ALIGNS.join(", ")}, got: #{align}")
+        end
+      end
       nil
     end
 
-    private def info_result(device : String, unit : String, parted_path : String) : PluginResult
-      result = read_partitions(device, unit, parted_path)
-      return result if result.is_a?(PluginResult)
-      PluginResult.new(changed: false, failed: false,
-        msg: "Current partitions on device:\n#{device}",
-        other: JSON.parse(%({"partitions": #{result.to_json}})))
+    private def parse_flags : Array(String)?
+      raw = @params["flags"]?
+      return nil unless raw
+      begin
+        if raw.lstrip.starts_with?('[')
+          JSON.parse(raw).as_a.map(&.as_s)
+        else
+          raw.split(/[\s,]+/).reject(&.empty?)
+        end
+      rescue JSON::ParseException
+        raw.split(/[\s,]+/).reject(&.empty?)
+      end
     end
 
-    # Real parted.py has NO separate device-existence check: get_device_info
-    # runs the parted script (`parted -s -m <device> -- unit <unit> print`)
-    # and, on a non-zero exit that is not an "unrecognised disk label"
-    # complaint, fails with that exact wrapper message plus rc/out/err.
-    private def stat_and_read(device : String, unit : String, parted_path : String) : Array(Hash(String, String)) | PluginResult
-      current = read_partitions(device, unit, parted_path)
-      return current if current.is_a?(PluginResult)
-      current
-    end
-
-    # Runs `parted -s <dev> -m unit <unit> print` and parses the
-    # -m output: line 1 is the disk header (dev:size:label:...),
-    # subsequent lines are partitions numbered by field 0
-    # (number:start:end:size:fs:flags...). Returns an array of
-    # {"number", "start", "end", "size", "fs", "flags"} hashes, or a
-    # failed PluginResult carrying real's get_device_info failure shape
-    # (wrapper msg plus rc/out/err) when the script itself fails.
-    private def read_partitions(device : String, unit : String, parted_path : String) : Array(Hash(String, String)) | PluginResult
-      # Real get_device_info passes an ARGV list to run_command and its
-      # failure message ' '.joins that list verbatim - no shell quoting
-      # in the echoed script (live-verified). The shell invocation still
-      # quotes; the message shows the raw join.
+    # Real get_device_info: `parted -s -m <device> -- unit <unit> print`.
+    # A non-zero exit that complains about an unrecognised disk label is
+    # NOT fatal - parted still printed the BYT;/disk header with table
+    # "unknown", which is parsed (this is the loop-device state the
+    # kop_storage parted_create probe starts from; the previous port
+    # turned it into a task failure real never produces). Any other
+    # failure fails with real's exact wrapper message plus rc/out/err.
+    private def read_device_info(device : String, unit : String, parted_path : String) : {generic: Hash(String, JSON::Any), partitions: Array(Hash(String, JSON::Any))} | PluginResult
       argv = [parted_path, "-s", "-m", device, "--", "unit", unit, "print"]
       result = remote_exec(argv.map { |arg| Shell.single_quote(arg) }.join(' '))
-      unless result[:exit_code] == 0
+      if result[:exit_code] != 0 && !result[:stderr].includes?("unrecognised disk label")
         return PluginResult.new(changed: false, failed: true,
           msg: "Error while getting device information with parted script: '#{argv.join(' ')}'",
-          rc: result[:exit_code], out: result[:stdout].to_s, err: result[:stderr].to_s)
+          rc: result[:exit_code], out: result[:stdout], err: result[:stderr],
+          key_order: PARTED_FAIL_KEY_ORDER)
       end
 
-      partitions = [] of Hash(String, String)
-      result[:stdout].each_line do |line|
-        fields = line.split(':')
-        next unless fields.size >= 5
-        num = fields[0]
-        # Header line starts with the device path; partition lines
-        # start with the partition number.
-        next unless num =~ /^\d+$/
-        flags = fields[6]? || ""
-        partitions << {
-          "number" => num,
-          "start"  => fields[1],
-          "end"    => fields[2],
-          "size"   => fields[3],
-          "fs"     => fields[4],
-          "flags"  => flags,
-        } of String => String
-      end
-      partitions
+      parse_partition_info(result[:stdout], unit)
     end
 
-    private def absent_partition(device : String, current : Array(Hash(String, String)), number : Int32?, check_mode : Bool) : PluginResult
-      # Real requires number for state=absent (required_if).
-      unless number
+    # Mirrors real parse_partition_info: line 1 is the disk header
+    # (dev:size:transport:logical:physical:table:model), the remaining
+    # lines are partitions (num:begin:end:size:fs:name:flags).
+    private def parse_partition_info(parted_output : String, unit : String) : {generic: Hash(String, JSON::Any), partitions: Array(Hash(String, JSON::Any))} | PluginResult # ameba:disable Metrics/CyclomaticComplexity
+      lines = parted_output.split('\n').reject { |line| line.strip.empty? }
+      if lines.size < 2
+        # parted produced nothing parseable; real would crash here -
+        # degrade to the get_device_info failure shape instead.
         return PluginResult.new(changed: false, failed: true,
-          msg: "state is absent but all of the following are missing: number")
+          msg: "Error while getting device information with parted script: (unparseable parted output)",
+          key_order: PARTED_FAIL_KEY_ORDER)
       end
 
-      unless current.any? { |part| part["number"] == number.to_s }
-        return PluginResult.new(changed: false, failed: false,
-          msg: "partition number #{number} not found on device #{device}")
+      generic_params = lines[1].rstrip(';').split(':')
+      size, parsed_unit = parse_unit(generic_params[1], unit)
+
+      generic = {
+        "dev"            => JSON::Any.new(generic_params[0]),
+        "size"           => JSON::Any.new(size),
+        "unit"           => JSON::Any.new(parsed_unit.downcase),
+        "table"          => JSON::Any.new(generic_params[5]? || ""),
+        "model"          => JSON::Any.new(generic_params[6]? || ""),
+        "logical_block"  => JSON::Any.new((generic_params[3]? || "0").to_i64? || 0i64),
+        "physical_block" => JSON::Any.new((generic_params[4]? || "0").to_i64? || 0i64),
+      } of String => JSON::Any
+
+      # CYL and CHS have an additional line in the output
+      if parsed_unit.in?("cyl", "chs")
+        chs_info = lines[2].rstrip(';').split(':')
+        cyl_size, cyl_unit = parse_unit(chs_info[3])
+        generic["chs_info"] = JSON::Any.new({
+          "cylinders"     => JSON::Any.new((chs_info[0]? || "0").to_i64? || 0i64),
+          "heads"         => JSON::Any.new((chs_info[1]? || "0").to_i64? || 0i64),
+          "sectors"       => JSON::Any.new((chs_info[2]? || "0").to_i64? || 0i64),
+          "cyl_size"      => JSON::Any.new(cyl_size),
+          "cyl_size_unit" => JSON::Any.new(cyl_unit.downcase),
+        })
+        lines = lines[1..]
       end
-      return PluginResult.new(changed: true, failed: false,
-        msg: "Partition #{number} on #{device} would be removed") if check_mode
 
-      result = remote_exec("parted -s #{Shell.single_quote(device)} rm #{number}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Error: parted rm failed: #{result[:stderr].strip}")
-      end
-      PluginResult.new(changed: true, failed: false,
-        msg: "Partition #{number} on #{device} removed")
-    end
+      parts = [] of Hash(String, JSON::Any)
+      lines[2..].each do |line|
+        part_params = line.rstrip(';').split(':')
 
-    private def present_partition(device : String, current : Array(Hash(String, String)), number : Int32?,
-                                  part_start : String, part_end : String, unit : String, label : String,
-                                  fs_type : String, flags : String?, check_mode : Bool) : PluginResult
-      changed = false
-      msgs = [] of String
-
-      existing = number ? current.find { |part| part["number"] == number.to_s } : nil
-
-      if existing.nil?
-        if failure = create_partition(device, unit, label, fs_type, part_start, part_end, check_mode, msgs)
-          return failure
+        if parsed_unit != "chs"
+          part_size, _ = parse_unit(part_params[3]? || "0")
+          fstype = part_params[4]? || ""
+          name = part_params[5]? || ""
+          flags = part_params[6]? || ""
+          size_json = JSON::Any.new(part_size)
+        else
+          # real emits the empty string (not a number) for the size of a
+          # CHS-parsed partition row
+          fstype = part_params[3]? || ""
+          name = part_params[4]? || ""
+          flags = part_params[5]? || ""
+          size_json = JSON::Any.new("")
         end
-        changed = true
-      elsif resize_enabled? && (existing["end"] != part_end)
-        if failure = resize_partition(device, unit, number, part_end, check_mode, msgs)
-          return failure
-        end
-        changed = true
+
+        parts << {
+          "num"    => JSON::Any.new((part_params[0]? || "0").to_i64? || 0i64),
+          "begin"  => JSON::Any.new(parse_unit(part_params[1]? || "0")[0]),
+          "end"    => JSON::Any.new(parse_unit(part_params[2]? || "0")[0]),
+          "size"   => size_json,
+          "fstype" => JSON::Any.new(fstype),
+          "name"   => JSON::Any.new(name),
+          "flags"  => JSON::Any.new(flags.split(", ").reject(&.empty?).map { |flag| JSON::Any.new(flag.strip) }),
+          "unit"   => JSON::Any.new(parsed_unit.downcase),
+        } of String => JSON::Any
       end
 
-      if flags
-        flag_result = apply_flags(device, number, flags, check_mode)
-        if flag_result.is_a?(String)
-          return PluginResult.new(changed: false, failed: true, msg: flag_result)
-        elsif flag_result
-          changed = true
-          msgs << "flags updated"
-        end
-      end
-
-      PluginResult.new(changed: changed, failed: false,
-        msg: msgs.empty? ? "" : "Partitions on #{device}: #{msgs.join(", ")}")
+      {generic: generic, partitions: parts}
     end
 
-    private def create_partition(device : String, unit : String, label : String, fs_type : String, part_start : String, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
-      return PluginResult.new(changed: true, failed: false,
-        msg: "Partition would be created on #{device}") if check_mode
-
-      mkpart_args = ["unit", unit, "mkpart"]
-      # msdos/dvh/amiga take a primary/extended/logical part type;
-      # GPT-family labels take no part type and the 3rd arg is the
-      # partition NAME (real passes fs_type there). msdos uses
-      # fs_type as the filesystem-type argument after the part type.
-      if ["msdos", "dvh", "amiga"].includes?(label)
-        mkpart_args << "primary" << fs_type
-      else
-        mkpart_args << fs_type
+    # Real parse_unit: "[-]<number>[<unit>]", the CHS triple aside (not
+    # needed for -m BYT output). Returns the numeric size and the unit
+    # string ("" when the value carried none - the caller's default unit
+    # is NOT substituted here for partition rows, matching real, whose
+    # parse_unit leaves unit untouched when the value has no suffix).
+    private def parse_unit(size_str : String, unit : String = "") : {Float64, String}
+      if matches = size_str.strip.match(/^(-?[\d.]+) *([\w%]+)?$/)
+        unit = matches[2] if matches[2]
+        size = matches[1].to_f64? || 0.0
+        return {size, unit}
       end
-      mkpart_args << part_start << part_end
-
-      result = remote_exec("parted -s #{Shell.single_quote(device)} #{mkpart_args.map { |a| Shell.single_quote(a) }.join(' ')}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Error: parted mkpart failed: #{result[:stderr].strip}")
-      end
-      msgs << "partition created"
-      nil
+      {0.0, unit}
     end
 
-    private def resize_partition(device : String, unit : String, number : Int32?, part_end : String, check_mode : Bool, msgs : Array(String)) : PluginResult?
-      return PluginResult.new(changed: true, failed: false,
-        msg: "Partition #{number} on #{device} would be resized") if check_mode
-
-      result = remote_exec("parted -s #{Shell.single_quote(device)} unit #{Shell.single_quote(unit)} resizepart #{number} #{Shell.single_quote(part_end)}")
-      unless result[:exit_code] == 0
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Error: parted resizepart failed: #{result[:stderr].strip}")
+    # Real convert_to_bytes: a bare number in *unit* to bytes.
+    private def convert_to_bytes(size : Float64, unit : String) : Int64
+      multiplier = 1i64
+      if UNITS_SI.includes?(unit)
+        multiplier = 1000i64 ** (UNITS_SI.index!(unit) + 1)
+      elsif UNITS_IEC.includes?(unit)
+        multiplier = 1024i64 ** (UNITS_IEC.index!(unit) + 1)
+      elsif unit.in?("", "compact", "cyl", "chs")
+        multiplier = 1000i64 ** (UNITS_SI.index!("MB") + 1)
       end
-      msgs << "partition resized"
-      nil
+      (size * multiplier).to_i64
+    end
+
+    private def part_exists?(partitions : Array(Hash(String, JSON::Any)), number : Int32?) : Bool
+      return false unless number
+      partitions.any? { |part| part["num"].as_i64? == number.to_i64 }
     end
 
     private def resize_enabled? : Bool
       true?(@params["resize"]?, default: false)
     end
 
-    # Applies `parted set <n> <flag> on/off` for each requested flag
-    # not already in the partition's current flag list. Returns true
-    # if anything changed, false if all flags already present, or an
-    # error message string. Real rejects unknown flags via parted's
-    # own error.
-    private def apply_flags(device : String, number : Int32?, flags : String, check_mode : Bool) : Bool | String
-      n = number
-      unless n
-        return "flags requires number to be set"
+    # Real parted_version(): `parted --version`, parsed once per run.
+    # Fails with real's exact message shapes when the binary cannot be
+    # run or the version cannot be parsed.
+    private def parted_version(parted_path : String) : Tuple(Int32, Int32, Int32) | PluginResult
+      if cached = @parted_version
+        return cached
       end
 
-      requested = flags.split(/[\s,]+/).reject(&.empty?)
-      requested.each do |flag|
-        next if PARTED_FLAGS.includes?(flag)
-        return "value of flags must be one of: #{PARTED_FLAGS.join(", ")}, got: #{flag}"
+      result = remote_exec("#{Shell.single_quote(parted_path)} --version")
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to get parted version.",
+          rc: result[:exit_code], out: result[:stdout], err: result[:stderr],
+          key_order: PARTED_FAIL_KEY_ORDER)
       end
 
-      probe = remote_exec("parted #{Shell.single_quote(device)} #{n} print 2>/dev/null | head -1")
-      current_flags = probe[:stdout].downcase
-
-      changed = false
-      requested.each do |flag|
-        # Real checks current state via `parted <dev> <n> print`'s
-        # "Flags:" line; a flag already listed is left alone.
-        next if current_flags.includes?(flag)
-        return true if check_mode
-        result = remote_exec("parted -s #{Shell.single_quote(device)} set #{n} #{Shell.single_quote(flag)} on")
-        unless result[:exit_code] == 0
-          return "Error: parted set flag #{flag} failed: #{result[:stderr].strip}"
-        end
-        changed = true
+      first_line = result[:stdout].split('\n').first? || ""
+      if matches = first_line.match(/^parted.+\s(\d+)\.(\d+)(?:\.(\d+))?/)
+        major = matches[1].to_i
+        minor = matches[2].to_i
+        rev = matches[3]?.try(&.to_i) || 0
+        version = {major, minor, rev}
+        @parted_version = version
+        version
+      else
+        PluginResult.new(changed: false, failed: true,
+          msg: "Failed to get parted version.",
+          rc: 0, out: result[:stdout],
+          key_order: PARTED_FAIL_KEY_ORDER)
       end
-      changed
+    end
+
+    # Real parted(): builds the actual command line and runs it unless in
+    # check mode. The script option is "-s -f" on parted >= 3.4.64 (the
+    # --fix flag), plain "-s" before that.
+    private def run_parted_script(script : Array(String), device : String, align : String, parted_path : String) : PluginResult?
+      check_mode = true?(@params["_ansible_check_mode"]?)
+      return nil if check_mode
+
+      version = parted_version(parted_path)
+      return version if version.is_a?(PluginResult)
+      major, minor, rev = version
+      script_option = (major > 3 || (major == 3 && (minor > 4 || (minor == 4 && rev >= 64)))) ? "-s -f" : "-s"
+      align_option = align == "undefined" ? "" : "-a #{align}"
+
+      argv = [parted_path] + script_option.split + ["-m"] +
+             (align_option.empty? ? [] of String : align_option.split) +
+             [device, "--"] + script
+      result = remote_exec(argv.map { |arg| Shell.single_quote(arg) }.join(' '))
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Error while running parted script: #{argv.join(' ').strip}",
+          rc: result[:exit_code], out: result[:stdout], err: result[:stderr],
+          key_order: PARTED_FAIL_KEY_ORDER)
+      end
+      nil
     end
   end
 end
