@@ -113,6 +113,22 @@ private def setup_table_play : String
   "        query: \"create table #{MYSQL_TEST_DB}.t1 (i int)\"\n        #{mysql_login_args(8)}\n"
 end
 
+private def drop_users_play(*names : String) : String
+  drops = names.map do |account|
+    "          - \"drop user if exists '#{account}'@'localhost'\""
+  end.join("\n")
+  "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
+  "    - name: drop users\n      community.mysql.mysql_query:\n        query:\n#{drops}\n" \
+  "        #{mysql_login_args(8)}\n"
+end
+
+private def create_user_play(name : String) : String
+  run_play(drop_users_play(name))
+  "- hosts: localhost\n  gather_facts: false\n  connection: local\n  tasks:\n" \
+  "    - name: create\n      community.mysql.mysql_user:\n        name: \"#{name}\"\n" \
+  "        #{mysql_login_args(8)}\n"
+end
+
 # Re-anchors an indented heredoc body (which arrives indented by an
 # arbitrary common amount) to the 4 spaces a `tasks:` list item needs.
 private def task_body(text : String) : String
@@ -277,5 +293,91 @@ describe "mysql_query plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed executed_queries query_result rowcount execution_time_ms failed])
     dump["changed"].as_bool.must_equal(false)
     dump["rowcount"].as_a.map(&.as_i).must_equal([0])
+  end
+end
+
+describe "mysql_user plugin result shape" do
+  # Real's own user_add branch: `user` is the `name:` param echoed
+  # verbatim, `password_changed` is true for the create, null for a
+  # check-mode create (nothing was attempted), and `attributes` is null
+  # unless `attributes:` was given. Each spec owns its own account, so
+  # minitest's randomized order cannot make one spec's setup land inside
+  # another's window.
+  it "registers a create as changed, user, msg, password_changed, attributes, failed" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_create@localhost"))
+            - name: create
+              community.mysql.mysql_user:
+                name: "kru_create@localhost"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump["changed"].as_bool.must_equal(true)
+    dump["user"].as_s.must_equal("kru_create@localhost")
+    dump["msg"].as_s.must_equal("User added")
+    dump["password_changed"].as_bool.must_equal(true)
+    dump["attributes"].raw.must_be_nil
+  end
+
+  it "registers the idempotent rerun as unchanged with password_changed false" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_rerun@localhost"))
+            - name: create again
+              community.mysql.mysql_user:
+                name: "kru_rerun@localhost"
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump["changed"].as_bool.must_equal(false)
+    dump["msg"].as_s.must_equal("User unchanged")
+    dump["password_changed"].as_bool.must_equal(false)
+  end
+
+  it "registers a delete and the already-absent no-op with real's wording" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), create_user_play("kru_delete@localhost"))
+            - name: delete
+              community.mysql.mysql_user:
+                name: "kru_delete@localhost"
+                state: absent
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump["changed"].as_bool.must_equal(true)
+    dump["msg"].as_s.must_equal("User deleted")
+    dump["password_changed"].as_bool.must_equal(false)
+
+    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_delete@localhost"))
+            - name: delete again
+              community.mysql.mysql_user:
+                name: "kru_delete@localhost"
+                state: absent
+                #{mysql_login_args(12)}
+              register: r
+    YAML
+    dump["changed"].as_bool.must_equal(false)
+    dump["msg"].as_s.must_equal("User doesn't exist")
+    dump["password_changed"].as_bool.must_equal(false)
+  end
+
+  # The check-mode create is the one path where real reports
+  # `password_changed` as null rather than a boolean.
+  it "registers a check-mode create with a null password_changed" do
+    skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
+    dump = registered_dump(task_body(<<-YAML), drop_users_play("kru_check@localhost"))
+            - name: create
+              community.mysql.mysql_user:
+                name: "kru_check@localhost"
+                #{mysql_login_args(12)}
+              register: r
+              check_mode: true
+    YAML
+    dump.as_h.keys.must_equal(%w[changed user msg password_changed attributes failed])
+    dump["changed"].as_bool.must_equal(true)
+    dump["user"].as_s.must_equal("kru_check@localhost")
+    dump["password_changed"].raw.must_be_nil
   end
 end
