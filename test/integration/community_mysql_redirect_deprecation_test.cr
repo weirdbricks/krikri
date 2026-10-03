@@ -97,8 +97,8 @@ describe "community.mysql redirect deprecation" do
     output.scan(deprecation_line("mysql_query")).size.must_equal(1)
     # Both stderr lines land before the play banner, like real's
     # task-load-time emission.
-    trailer_idx = output.index(TRAILER_LINE).not_nil!
-    play_idx = output.index("PLAY [localhost]").not_nil!
+    trailer_idx = output.index!(TRAILER_LINE)
+    play_idx = output.index!("PLAY [localhost]")
     (trailer_idx < play_idx).must_equal(true, output)
   end
 

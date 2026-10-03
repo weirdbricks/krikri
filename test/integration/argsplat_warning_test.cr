@@ -250,7 +250,7 @@ describe "argsplat warning" do
   end
 
   it "does not warn for a free-form module given a block-delimited string" do
-    success, output = run_play([
+    _, output = run_play([
       "    - name: free form block args",
       "      ansible.builtin.command: \"{% if true %}echo hi{% endif %}\"",
     ])

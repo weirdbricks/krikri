@@ -642,7 +642,7 @@ module Krikri
     def self.redirect_deprecation_result_entry(fqcn : String) : JSON::Any?
       target = COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS[fqcn]? || return nil
       JSON.parse({
-        "msg"            => "#{fqcn} has been deprecated. Use #{target} instead.",
+        "msg"             => "#{fqcn} has been deprecated. Use #{target} instead.",
         "collection_name" => "community.mysql",
         "version"         => "6.0.0",
         "deprecator"      => {

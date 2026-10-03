@@ -26,6 +26,8 @@ require "socket"
 #   and connection failures, which are plain fail_json and keep the
 #   shared default failed, msg, changed, exception order (not pinned
 #   here: that default has its own specs).
+#   Every community.mysql.* result also ends with `deprecations` (the
+#   collection-redirect deprecation entry real attaches to executed tasks).
 #
 # `deprecations`, which real's registered result also carries after
 # `failed`, is the collection-version redirect community.mysql ->
@@ -151,7 +153,7 @@ describe "mysql_variables plugin result key order (sweep9)" do
               content: |-
                 {{ r | to_json }}
     YAML
-    keys.must_equal(%w[msg changed queries failed])
+    keys.must_equal(%w[msg changed queries failed deprecations])
   end
 
   it "registers the already-set no-op as msg, changed, failed" do
@@ -184,7 +186,7 @@ describe "mysql_variables plugin result key order (sweep9)" do
                 login_password: krikri
               register: r
     YAML
-    keys.must_equal(%w[msg changed failed])
+    keys.must_equal(%w[msg changed failed deprecations])
   end
 
   # The read-only form's whole distinction is that `changed` trails
@@ -203,7 +205,7 @@ describe "mysql_variables plugin result key order (sweep9)" do
                 login_password: krikri
               register: r
     YAML
-    keys.must_equal(%w[msg failed changed])
+    keys.must_equal(%w[msg failed changed deprecations])
   end
 
   it "registers a check-mode run as skipped, msg, failed, changed" do
@@ -248,6 +250,6 @@ describe "mysql_variables plugin result key order (sweep9)" do
               content: |-
                 {{ r | to_json }}
     YAML
-    keys.must_equal(%w[changed failed msg exception])
+    keys.must_equal(%w[changed failed msg exception deprecations])
   end
 end
