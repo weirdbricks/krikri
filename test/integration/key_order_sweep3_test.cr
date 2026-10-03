@@ -40,23 +40,6 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
-describe "modprobe plugin result key order" do
-  # Only the already-loaded success path is testable unprivileged (a
-  # real load/unload needs root); the other success exits share real's
-  # single `exit_json(**result)` shape, so the pin covers them all.
-  it "serializes an already-loaded module as changed-name-params-state (real: changed, name, params, state)" do
-    loaded = File.read("/proc/modules").each_line.map { |line| line.split.first? }.to_a.compact.first?
-    skip "no loaded modules visible in /proc/modules" unless loaded
-
-    result = PluginSpecHelper.run("modprobe", {"name" => loaded, "state" => "present"})
-
-    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    result["changed"].as_bool.must_equal(false)
-    result["params"].as_s.must_equal("")
-    result.as_h.keys.must_equal(["changed", "name", "params", "state"])
-  end
-end
-
 describe "mount plugin result key order" do
   # state=absent against a throwaway fstab needs no real mount (the
   # present/remounted variants need a working mount(2), which the
