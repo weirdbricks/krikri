@@ -462,10 +462,10 @@ module Krikri
       end
       name_key, name_unhashable = include_vars_name_shape(task)
       unless task.include_vars_dir || task.include_vars_file
-        unless @include_vars_null_warned
-          STDERR.puts "[WARNING]: Invalid request to find a file that matches a \"null\" value"
-          @include_vars_null_warned = true
-        end
+        # The dataloader's "null lookup value" warning rides the
+        # result's own `warnings` key (printed by the result display,
+        # suppressed under ignore_errors: - live-verified vs 2.19.11),
+        # so it is NOT printed here.
         # Real's scope assignment (`scope[self.return_results_as_name] =
         # results`) happens AFTER _find_needle has already failed, so a
         # truthy unhashable `name:` supersedes the null-file failure
@@ -1117,7 +1117,7 @@ module Krikri
       end
 
       if suppressed
-        include_vars_suppressed_success(task, host)
+        include_vars_suppressed_success(task, host, include_vars_failure_detail(task, message))
         return
       end
 
@@ -1167,11 +1167,30 @@ module Krikri
       include_vars_failure_stats(task, host)
     end
 
+    # The `message:` value real's own failed include_vars: result
+    # carries, or nil when the failure is not a load failure (the
+    # undefined-var finalization shape carries no `message` key).
+    private def include_vars_failure_detail(task : Task, message : String) : String?
+      if message.starts_with?("include_vars: file not found: ")
+        include_vars_file_not_found_message(task, message.sub("include_vars: file not found: ", ""))
+      elsif message.ends_with?(" directory does not exist")
+        message
+      elsif message.starts_with?("include_vars: could not parse ")
+        # PyYAML's MarkedYAMLError text: "<While context> <problem>."
+        raw = message.sub(/\Ainclude_vars: could not parse [^:]*: /, "")
+        if m = raw.match(/\A(.*?) at line \d+, column \d+, (while [^,]*?) at line \d+, column \d+\z/)
+          "YAML parsing failed: #{m[2].capitalize} #{m[1]}."
+        else
+          "YAML parsing failed: #{raw}"
+        end
+      end
+    end
+
     # A suppressed (failed_when:-false) include_vars: failure still
     # defines the `name:` var as an empty hash and registers a
     # changed:false / failed:false result - real Ansible's own shapes
     # (see finish_include_vars_failure's history note).
-    private def include_vars_suppressed_success(task : Task, host : Host) : Nil
+    private def include_vars_suppressed_success(task : Task, host : Host, detail : String? = nil) : Nil
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
       name_key, _ = include_vars_name_shape(task)
       if store_key = include_vars_store_key(task, name_key)
@@ -1183,11 +1202,19 @@ module Krikri
       @hv_generation += 1
       if register_name = task.register
         unless register_name.empty?
-          @registered_vars[host.name][register_name] = JSON::Any.new({
-            "changed"       => JSON::Any.new(false),
-            "failed"        => JSON::Any.new(false),
-            "ansible_facts" => include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new),
-          } of String => JSON::Any)
+          # real 2.19.11 registers the SUPPRESSED failure result with
+          # the action's own load-failure keys - failed: false, the
+          # same `message`, and the failed_when: verdict - not the
+          # three-key shape this engine used to register (live-verified
+          # vs 2.19.11 with `failed_when: false`).
+          registered = Hash(String, JSON::Any).new
+          registered["failed"] = JSON::Any.new(false)
+          registered["message"] = JSON::Any.new(detail) if detail
+          registered["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
+          registered["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
+          registered["changed"] = JSON::Any.new(false)
+          registered["failed_when_result"] = JSON::Any.new(false)
+          @registered_vars[host.name][register_name] = JSON::Any.new(registered)
         end
       end
       puts "ok: [#{host.name}]".colorize(:green)
@@ -1232,22 +1259,15 @@ module Krikri
         h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
         h["_ansible_action_level"] = JSON::Any.new(true)
         h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
+        # real 2.19.11 carries a `warnings` entry LAST on THIS shape
+        # only (live-verified: `include_vars: {name: a.yml}` with no
+        # file/dir - the dataloader's "null lookup value" warning rides
+        # the registered result but never the fatal dump).
+        h["warnings"] = JSON::Any.new(["Invalid request to find a file that matches a \"null\" value"].map { |text| JSON::Any.new(text) })
         Krikri.mark_failed_key_order(JSON::Any.new(h), FAILED_KEY_ORDER_INCLUDE_VARS)
         result = JSON::Any.new(h)
       elsif message.starts_with?("include_vars: file not found: ") || message.starts_with?("include_vars: could not parse ") || message.ends_with?(" directory does not exist")
-        detail = if message.starts_with?("include_vars: file not found: ")
-                   "Could not find or access '#{message.sub("include_vars: file not found: ", "")}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
-                 elsif message.ends_with?(" directory does not exist")
-                   message
-                 else
-                   # PyYAML's MarkedYAMLError text: "<While context> <problem>."
-                   raw = message.sub(/\Ainclude_vars: could not parse [^:]*: /, "")
-                   if m = raw.match(/\A(.*?) at line \d+, column \d+, (while [^,]*?) at line \d+, column \d+\z/)
-                     "YAML parsing failed: #{m[2].capitalize} #{m[1]}."
-                   else
-                     "YAML parsing failed: #{raw}"
-                   end
-                 end
+        detail = include_vars_failure_detail(task, message) || message
         h["ansible_facts"] = include_vars_wrapped_facts(name_key, Hash(String, JSON::Any).new)
         h["ansible_included_var_files"] = JSON::Any.new([] of JSON::Any)
         h["changed"] = JSON::Any.new(false)
@@ -1264,7 +1284,42 @@ module Krikri
         emit_finalization_error_block(task, ex)
         result = finalization_failure_json(ex, task)
       end
+      # real registers the failed result like any other task failure
+      # (live-verified vs 2.19.11: `include_vars: {file: missing.yml}`
+      # with register:+ignore_errors: leaves r DEFINED as
+      # {failed, message, ansible_included_var_files, ansible_facts,
+      # changed, exception, msg} - the action's own failure result, NOT
+      # the bare "task never ran" shape a plain controller-side
+      # failure registers). register_result dups the hash before
+      # reordering/stripping, so the display below still sees the
+      # private _ansible_* markers.
+      if register_name = task.register
+        register_result(host, register_name, result) unless register_name.empty?
+      end
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
+    end
+
+    # The "Could not find or access '<file>'" message real 2.19.11
+    # builds for a relative include_vars: file that matched nowhere.
+    # An ABSOLUTE path gets no "Searched in:" list (the dataloader
+    # never searches for it); a relative one lists every candidate the
+    # search walked, in order, as "<base>/vars/<file>" then
+    # "<base>/<file>" per base - the task's basedir (its role's own
+    # root, or the play dir), the directory of the file the task was
+    # included from or the role's own tasks/ dir (whichever applies),
+    # A play-level task in a play dir therefore repeats the play-dir
+    # pair twice, exactly as real does (live-verified vs 2.19.11).
+    private def include_vars_file_not_found_message(task : Task, file : String) : String
+      tail = " on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
+      return "Could not find or access '#{file}'#{tail}" if file.starts_with?("/")
+      bases = [] of String
+      bases << (task.role_path || Dir.current)
+      (task.include_file_dir || (task.role_path.try { |role| File.join(role, "tasks") })).try { |dir| bases << dir }
+      bases << Dir.current
+      searched = bases.flat_map do |base|
+        [File.join(base, "vars", file), File.join(base, file)]
+      end
+      "Could not find or access '#{file}'\nSearched in:\n\t#{searched.join("\n\t")}#{tail}"
     end
 
     # RoleLoader's auto-synthesized "Validating arguments against arg
