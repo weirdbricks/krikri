@@ -8,7 +8,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     container:
-      image: crystallang/crystal:1.21.0
+      image: crystallang/crystal:1.21.1
 
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
         # openssl, pcre2, event, gmp, yaml, xml2) via pkg-config or -l
         # flags baked into its own @[Link] annotations. Every CI run
         # since v0.9.646 (17 in a row) failed at the build step because
-        # the crystallang/crystal:1.21.0 image is missing these dev
+        # the crystallang/crystal:1.21.1 image is missing these dev
         # packages - first surfaced as "cc: error: unrecognized
         # command-line option '--llzma'" (Crystal's own pkg-config-
         # fallback flag string for liblzma is a real typo, double-dash
@@ -41,7 +41,20 @@ jobs:
         # tests' own apt-get call logs), python3-debian (deb822_repository
         # imports debian.deb822 exactly like the real module and fails the
         # task without it; its tests pin a host where the module works),
-        # and docker.io +
+        # python3-pexpect / python3-lxml (the real expect and
+        # community.general.xml modules import exactly those libraries on
+        # the target host - without them every one of those specs gets
+        # real's "Failed to import the required Python library" task
+        # failure instead of the behavior it pins). NOTE: do NOT add
+        # python3-semantic-version here: the maven_artifact tests pin a
+        # host where that import FAILS (version_by_spec is rejected with
+        # the missing_required_lib boilerplate before the spec parser
+        # runs), so installing it makes those specs fail. acl (setfacl/
+        # getfacl for the acl module), parted and lvm2 (the parted/lvg/
+        # lvol modules' binaries), npm (the community.general npm
+        # module's binary, whose key-order and executable specs need a
+        # resolvable npm; the plain `nodejs` package ships no npm binary,
+        # so it has to be the `npm` package itself), and docker.io +
         # docker-compose-v2 for the live docker_compose_v2 tests (the
         # runner mounts the host docker socket into job containers, so
         # a client-side install is enough to reach it).
@@ -52,6 +65,8 @@ jobs:
             libevent-dev libgmp-dev libyaml-dev libxml2-dev zlib1g-dev \
             rsync iproute2 libcap2-bin kmod \
             python3 python3-pip python3-venv python3-apt python3-debian \
+            python3-pexpect python3-lxml \
+            acl parted lvm2 npm \
             curl zip unzip sudo \
             docker.io docker-compose-v2
 

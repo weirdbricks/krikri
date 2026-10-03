@@ -16,7 +16,7 @@ jobs:
   parity:
     runs-on: ubuntu-latest
     container:
-      image: crystallang/crystal:1.21.0
+      image: crystallang/crystal:1.21.1
 
     steps:
       - uses: actions/checkout@v4
