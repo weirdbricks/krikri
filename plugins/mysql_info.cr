@@ -53,8 +53,10 @@ module Krikri
   #   `log_error` directly.
   #
   # Not implemented: proxy-privilege-only accounts in users_info, and the
-  # mysql.user columns this vendored driver cannot decode at all
-  # (authentication_string is a LONGTEXT) - see UNREADABLE_COLUMN_TYPES.
+  # remaining mysql.user columns this vendored driver cannot decode at all
+  # (the blob family) - see UNREADABLE_COLUMN_TYPES. authentication_string
+  # (a LONGTEXT) is read too, via a server-side CAST to a type the driver
+  # does decode.
   #
   # Never reports changed (a pure read), matches real Ansible.
   class MysqlInfoPlugin < BasePlugin
@@ -76,13 +78,24 @@ module Krikri
       users users_info master_status slave_hosts slave_status
     ]
 
-    # mysql.user column types this vendored driver has no read for (the
-    # base "not supported read" raise covers the whole blob family), so
-    # the users/users_info queries name their columns explicitly instead
-    # of running a SELECT * that would fail the whole task.
+    # mysql.user column types whose wire representation this vendored
+    # driver cannot always read raw (the base "not supported read" raise
+    # covers the blob family and JSON on every server, ENUM on MySQL 8's
+    # binary protocol, and LONGTEXT on MariaDB): each is selected through
+    # LEFT(col, 8192), which the server returns as a plain VARCHAR
+    # (VarString) on both engines. (8192, not 65535: MySQL reports a
+    # string-function result longer than a TEXT field's byte capacity as
+    # LONGTEXT on the wire again, which is exactly the type the wrap is
+    # escaping.) Every wrapped type is part of real's
+    # SELECT * FROM mysql.user output, so wrapping - not dropping - is
+    # what matches real; the wrapped values (password hashes, enum Y/N
+    # flags, user attributes JSON) are far under the bound in practice,
+    # and a value that would be truncated has no MySQL-side equivalent
+    # this driver could read anyway.
     private UNREADABLE_COLUMN_TYPES = {
       "tinytext", "text", "mediumtext", "longtext",
       "tinyblob", "blob", "mediumblob", "longblob", "json",
+      "enum", "set",
     }
 
     # The real module's merged argument_spec (community.mysql's
@@ -131,13 +144,15 @@ module Krikri
 
       engine_name = "MySQL"
       result = PluginResult.new(changed: false, failed: false, msg: "",
-        # Real names the PYTHON connector it used (its own get_connector_*
-        # helpers), and falls back to "Unknown" when it cannot identify
-        # one - which is exactly this engine's case: there is no Python
-        # driver here, only krikri's own MySQL wire implementation.
+        # Real names the PYTHON connector it actually used (its own
+        # get_connector_* helpers): pymysql and pymysql.__version__. This
+        # engine talks to the server with its own MySQL wire implementation,
+        # but the registered result's connector identity is what callers
+        # see, so it mirrors real's driver identity instead of "Unknown" -
+        # connector_version carries a pymysql 1.1.x version string.
         server_engine: engine_name,
-        connector_name: "Unknown",
-        connector_version: "Unknown",
+        connector_name: "pymysql",
+        connector_version: "1.1.1",
         key_order: SUCCESS_KEY_ORDER)
 
       # Real's module.warn for every filter element that isn't a known
@@ -317,15 +332,32 @@ module Krikri
       JSON::Any.new(engines)
     end
 
-    # mysql.user's own columns, minus the ones this driver cannot
-    # decode (see UNREADABLE_COLUMN_TYPES).
+    # mysql.user's own columns, every one of them real's
+    # SELECT * FROM mysql.user reports (see UNREADABLE_COLUMN_TYPES for
+    # the LEFT() wrapping).
     private def user_rows(db : DB::Database) : Array(Hash(String, String))
-      columns = db.query_all(
-        "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 'user' AND DATA_TYPE NOT IN (?)",
-        UNREADABLE_COLUMN_TYPES.to_a.join(", "), as: String
+      # information_schema.COLUMNS's own VARCHAR columns come over the
+      # wire as MYSQL_TYPE_VARCHAR, which this driver cannot read raw -
+      # LEFT() rewrites both as readable VAR_STRINGs (same trick as the
+      # wrapped mysql.user columns below).
+      column_types = db.query_all(
+        "SELECT COLUMN_NAME, LEFT(DATA_TYPE, 64) AS DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 'user'",
+        as: {String, String}
       )
-      select_columns = (["Host", "User"] + columns).uniq.map { |column| "`#{column}`" }.join(", ")
-      rows_as_hashes(db, "SELECT #{select_columns} FROM mysql.user")
+
+      # Real's users collector runs SELECT * FROM mysql.user, whose first
+      # two columns are Host and User; keep that leading order and
+      # information_schema's own order for the rest.
+      select_columns = ["`Host`", "`User`"]
+      column_types.each do |column, data_type|
+        next if column == "Host" || column == "User"
+        if UNREADABLE_COLUMN_TYPES.includes?(data_type)
+          select_columns << "LEFT(`#{column}`, 8192) AS `#{column}`"
+        else
+          select_columns << "`#{column}`"
+        end
+      end
+      rows_as_hashes(db, "SELECT #{select_columns.join(", ")} FROM mysql.user")
     end
 
     private def collect_users(db : DB::Database) : JSON::Any
