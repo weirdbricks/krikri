@@ -534,7 +534,7 @@ describe "openssl_csr plugin result key order" do
     result.as_h.keys.must_equal([
       "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage",
       "basicConstraints", "ocspMustStaple", "name_constraints_permitted",
-      "name_constraints_excluded", "filename", "changed",
+      "name_constraints_excluded", "diff", "filename", "changed",
     ])
   end
 end

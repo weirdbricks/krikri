@@ -96,7 +96,11 @@ module Krikri
       state = @params["state"]? || "present"
 
       if path && !cert_alias
-        return failed_result("Using local path import from #{keystore_path || "None"} requires alias argument.")
+        # real: fail_json(changed=False, msg=...) - changed is a caller
+        # kwarg so it LEADS, before failed/msg.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Using local path import from #{keystore_path || "None"} requires alias argument.",
+          key_order: ["changed", "failed", "msg"])
       end
 
       # Real main() resolves openssl via get_bin_path('openssl', True)
@@ -118,8 +122,11 @@ module Krikri
       return PluginHelpers::RunCommandFailure.nonzero_exit(executable, keytool_check[:exit_code], keytool_check[:stdout], keytool_check[:stderr]) unless keytool_check[:exit_code] == 0
 
       if !keystore_create && !keystore_path.nil? && !remote_file_exists?(keystore_path.not_nil!)
+        # real: fail_json(changed=False, msg=...) - changed is a caller
+        # kwarg so it LEADS, before failed/msg.
         return PluginResult.new(changed: false, failed: true,
-          msg: "Module require existing keystore at keystore_path '#{keystore_path}'")
+          msg: "Module require existing keystore at keystore_path '#{keystore_path}'",
+          key_order: ["changed", "failed", "msg"])
       end
 
       check_mode = true?(@params["_ansible_check_mode"]?)
@@ -129,10 +136,13 @@ module Krikri
 
       if state == "absent"
         if alias_exists
-          return PluginResult.new(changed: true, failed: false, msg: "Certificate delete complete.") if check_mode
+          # real: exit_json(changed=True) - no msg at all
+          return PluginResult.new(changed: true, failed: false) if check_mode
           return delete_cert(executable, keystore_path.not_nil!, keystore_pass_str, cert_alias.not_nil!, keystore_type)
         end
-        return PluginResult.new(changed: false, failed: false, msg: "Certificate not present.")
+        # real: result stays the empty dict, exit_json(**result) backfills
+        # changed: false - registered shape is just [changed, failed]
+        return PluginResult.new(changed: false, failed: false)
       end
 
       # No cert_alias with state=present is what real runs too (its own
@@ -160,12 +170,16 @@ module Krikri
       return openssl_bin if openssl_bin.is_a?(PluginResult)
       begin
         if pkcs12_path
-          export = remote_exec(PluginHelpers::JavaCertCommand.with_stdin(
-            PluginHelpers::JavaCertCommand.export_pkcs12_cmd(executable, pkcs12_path, pkcs12_alias), [pkcs12_pass]
-          ))
+          export_argv = PluginHelpers::JavaCertCommand.export_pkcs12_cmd(executable, pkcs12_path, pkcs12_alias)
+          export = remote_exec(PluginHelpers::JavaCertCommand.with_stdin(export_argv.join(' '), [pkcs12_pass]))
+          # real: fail_json(msg=..., stderr=export_err, rc=export_rc) -
+          # kwargs lead (stderr before rc), failed/msg follow, the
+          # controller appends stderr_lines (stderr present, stdout not).
           return PluginResult.new(changed: false, failed: true,
             msg: "Internal module failure, cannot extract public certificate from PKCS12, message: #{export[:stdout]}",
-            stderr: export[:stderr]) unless export[:exit_code] == 0
+            stderr: export[:stderr], stderr_lines: export[:stderr].lines,
+            rc: export[:exit_code],
+            key_order: ["stderr", "rc", "failed", "msg", "stderr_lines"]) unless export[:exit_code] == 0
           File.write(new_tmp, export[:stdout])
         elsif path
           new_tmp = path.not_nil!
@@ -173,13 +187,16 @@ module Krikri
         elsif content
           File.write(new_tmp, content.not_nil!)
         elsif url
-          fetch = remote_exec(PluginHelpers::JavaCertCommand.fetch_url_cmd(
+          fetch_argv = PluginHelpers::JavaCertCommand.fetch_url_cmd(
             executable, url.not_nil!, port,
             PluginHelpers::JavaCertCommand.proxy_opts(ENV["https_proxy"]?, ENV["no_proxy"]?)
-          ))
+          )
+          fetch = remote_exec(fetch_argv.join(' '))
+          # real: fail_json(msg=..., rc=fetch_rc, cmd=fetch_cmd)
           return PluginResult.new(changed: false, failed: true,
             msg: "Internal module failure, cannot download certificate, error: #{fetch[:stderr]}",
-            cmd: PluginHelpers::JavaCertCommand.fetch_url_cmd(executable, url.not_nil!, port, [] of String)) unless fetch[:exit_code] == 0
+            rc: fetch[:exit_code], cmd: fetch_argv,
+            key_order: ["rc", "cmd", "failed", "msg"]) unless fetch[:exit_code] == 0
           File.write(new_tmp, fetch[:stdout])
         end
 
@@ -187,7 +204,8 @@ module Krikri
         return new_digest if new_digest.is_a?(PluginResult)
 
         if keystore_cert_digest != new_digest
-          return PluginResult.new(changed: true, failed: false, msg: "Certificate import complete.") if check_mode
+          # real: exit_json(changed=True) - no msg at all
+          return PluginResult.new(changed: true, failed: false) if check_mode
 
           if alias_exists
             delete_result = delete_cert(executable, keystore_path.not_nil!, keystore_pass_str, cert_alias_str, keystore_type)
@@ -202,8 +220,9 @@ module Krikri
           end
         end
 
-        PluginResult.new(changed: false, failed: false, msg: "Certificate already present.",
-          cmd: PluginHelpers::JavaCertCommand.check_cmd(executable, keystore_path.not_nil!, cert_alias_str, keystore_type))
+        # real: result stays the empty dict - registered [changed, failed],
+        # no msg, no cmd
+        PluginResult.new(changed: false, failed: false)
       ensure
         File.delete(new_tmp) rescue nil if cleanup
       end
@@ -256,68 +275,113 @@ module Krikri
     private def check_cert_present(executable : String, keystore_path : String, keystore_pass : String,
                                    cert_alias : String, keystore_type : String?) : {Bool, String}
       return {false, ""} if keystore_path.empty?
-      command = PluginHelpers::JavaCertCommand.with_stdin(
-        PluginHelpers::JavaCertCommand.check_cmd(executable, keystore_path, cert_alias, keystore_type), [keystore_pass]
-      )
+      argv = PluginHelpers::JavaCertCommand.check_cmd(executable, keystore_path, cert_alias, keystore_type)
+      command = PluginHelpers::JavaCertCommand.with_stdin(argv.join(' '), [keystore_pass])
       result = remote_exec(command)
       result[:exit_code] == 0 ? {true, result[:stdout]} : {false, ""}
     end
 
+    # delete_cert: real runs keytool with check_rc=True, so a non-zero
+    # exit surfaces through run_command's own failure shape (msg =
+    # rstripped stderr, cmd/rc/stdout/stderr lead); success returns
+    # dict(changed=True, msg=del_out, rc=, cmd=, stdout=, error=, diff=).
     private def delete_cert(executable : String, keystore_path : String, keystore_pass : String,
                             cert_alias : String, keystore_type : String?) : PluginResult
-      command = PluginHelpers::JavaCertCommand.with_stdin(
-        PluginHelpers::JavaCertCommand.delete_cmd(executable, keystore_path, cert_alias, keystore_type), [keystore_pass]
-      )
+      argv = PluginHelpers::JavaCertCommand.delete_cmd(executable, keystore_path, cert_alias, keystore_type)
+      command = PluginHelpers::JavaCertCommand.with_stdin(argv.join(' '), [keystore_pass])
       result = remote_exec(command)
       diff = JSON.parse({before: "#{cert_alias}\n", after: nil}.to_json)
-      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], stderr: result[:stderr], cmd: command) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: result[:stdout].strip, diff: diff)
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: result[:stderr].rstrip,
+          include_empty_msg: true,
+          cmd: argv, rc: result[:exit_code],
+          stdout: result[:stdout], stdout_lines: result[:stdout].lines,
+          stderr: result[:stderr], stderr_lines: result[:stderr].lines,
+          key_order: ["cmd", "rc", "stdout", "stderr", "failed", "msg",
+                      "stdout_lines", "stderr_lines", "changed", "exception"])
+      end
+      PluginResult.new(changed: true, failed: false,
+        msg: result[:stdout], include_empty_msg: true,
+        rc: result[:exit_code], cmd: argv,
+        stdout: result[:stdout], stdout_lines: result[:stdout].lines,
+        error: result[:stderr], diff: diff,
+        key_order: ["changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     end
 
+    # import_cert_path: real runs keytool with check_rc=False and fails
+    # through its own fail_json(msg=import_out, rc=, cmd=, error=) -
+    # no stdout/stderr keys, so the controller adds no *_lines.
     private def import_cert(executable : String, cert_path : String, keystore_path : String, keystore_pass : String,
                             cert_alias : String, keystore_type : String?, trust_cacert : Bool) : PluginResult
-      command = PluginHelpers::JavaCertCommand.with_stdin(
-        PluginHelpers::JavaCertCommand.import_cert_cmd(executable, cert_path, keystore_path, cert_alias, keystore_type, trust_cacert),
-        [keystore_pass, keystore_pass]
-      )
+      argv = PluginHelpers::JavaCertCommand.import_cert_cmd(executable, cert_path, keystore_path, cert_alias, keystore_type, trust_cacert)
+      command = PluginHelpers::JavaCertCommand.with_stdin(argv.join(' '), [keystore_pass, keystore_pass])
       result = remote_exec(command)
       diff = JSON.parse({before: "\n", after: "#{cert_alias}\n"}.to_json)
-      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], stderr: result[:stderr], cmd: command) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: result[:stdout].strip, diff: diff)
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: result[:stdout],
+          include_empty_msg: true,
+          rc: result[:exit_code], cmd: argv, error: result[:stderr],
+          key_order: ["rc", "cmd", "error", "failed", "msg"])
+      end
+      PluginResult.new(changed: true, failed: false,
+        msg: result[:stdout], include_empty_msg: true,
+        rc: result[:exit_code], cmd: argv,
+        stdout: result[:stdout], stdout_lines: result[:stdout].lines,
+        error: result[:stderr], diff: diff,
+        key_order: ["changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     end
 
     private def import_pkcs12(executable : String, pkcs12_path : String, pkcs12_pass : String, pkcs12_alias : String?,
                               keystore_path : String, keystore_pass : String, cert_alias : String,
                               keystore_type : String?) : PluginResult
-      command = PluginHelpers::JavaCertCommand.with_stdin(
-        PluginHelpers::JavaCertCommand.import_pkcs12_cmd(executable, pkcs12_path, pkcs12_alias, keystore_path, cert_alias, keystore_type),
+      argv = PluginHelpers::JavaCertCommand.import_pkcs12_cmd(executable, pkcs12_path, pkcs12_alias, keystore_path, cert_alias, keystore_type)
+      command = PluginHelpers::JavaCertCommand.with_stdin(argv.join(' '),
         !keystore_path.empty? && remote_file_exists?(keystore_path) ? [keystore_pass, pkcs12_pass] : [keystore_pass, keystore_pass, pkcs12_pass]
       )
       result = remote_exec(command)
       diff = JSON.parse({before: "\n", after: "#{cert_alias}\n"}.to_json)
-      return PluginResult.new(changed: false, failed: true, msg: result[:stdout], stderr: result[:stderr], cmd: command) unless result[:exit_code] == 0
-      PluginResult.new(changed: true, failed: false, msg: result[:stdout].strip, diff: diff)
+      unless result[:exit_code] == 0
+        return PluginResult.new(changed: false, failed: true, msg: result[:stdout],
+          include_empty_msg: true,
+          rc: result[:exit_code], cmd: argv, error: result[:stderr],
+          key_order: ["rc", "cmd", "error", "failed", "msg"])
+      end
+      PluginResult.new(changed: true, failed: false,
+        msg: result[:stdout], include_empty_msg: true,
+        rc: result[:exit_code], cmd: argv,
+        stdout: result[:stdout], stdout_lines: result[:stdout].lines,
+        error: result[:stderr], diff: diff,
+        key_order: ["changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     end
 
     # _get_digest_from_x509_file: extract the first certificate from
     # the chain (PEM, DER fallback), then sha256 it. Returns the hex
-    # digest, or a failure result.
+    # digest, or a failure result. Both failure shapes are the real
+    # module's fail_json(msg=..., rc=, cmd=) - kwargs lead, failed/msg
+    # follow, the controller adds no *_lines (no stdout/stderr kwargs).
     private def x509_digest(openssl_bin : String, cert_file : String) : (String | PluginResult)
       tmp_out = File.tempname("java-cert-x509")
       begin
-        extract = remote_exec(PluginHelpers::JavaCertCommand.extract_x509_cmd(openssl_bin, cert_file, tmp_out))
+        extract_argv = PluginHelpers::JavaCertCommand.extract_x509_cmd(openssl_bin, cert_file, tmp_out)
+        extract = remote_exec(extract_argv.join(' '))
         if extract[:exit_code] != 0
-          extract = remote_exec(PluginHelpers::JavaCertCommand.extract_x509_cmd(openssl_bin, cert_file, tmp_out, der_fallback: true))
+          extract_argv = PluginHelpers::JavaCertCommand.extract_x509_cmd(openssl_bin, cert_file, tmp_out, der_fallback: true)
+          extract = remote_exec(extract_argv.join(' '))
           if extract[:exit_code] != 0
             return PluginResult.new(changed: false, failed: true,
-              msg: "Internal module failure, cannot extract certificate, error: #{extract[:stderr]}")
+              msg: "Internal module failure, cannot extract certificate, error: #{extract[:stderr]}",
+              rc: extract[:exit_code], cmd: extract_argv,
+              key_order: ["rc", "cmd", "failed", "msg"])
           end
         end
 
-        dgst = remote_exec(PluginHelpers::JavaCertCommand.dgst_cmd(openssl_bin, tmp_out))
+        dgst_argv = PluginHelpers::JavaCertCommand.dgst_cmd(openssl_bin, tmp_out)
+        dgst = remote_exec(dgst_argv.join(' '))
         if dgst[:exit_code] != 0
           return PluginResult.new(changed: false, failed: true,
-            msg: "Internal module failure, cannot compute digest for certificate, error: #{dgst[:stderr]}")
+            msg: "Internal module failure, cannot compute digest for certificate, error: #{dgst[:stderr]}",
+            rc: dgst[:exit_code], cmd: dgst_argv,
+            key_order: ["rc", "cmd", "failed", "msg"])
         end
         dgst[:stdout].split(" ").first? || ""
       ensure

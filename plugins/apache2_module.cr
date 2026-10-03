@@ -99,20 +99,12 @@ module Krikri
       force_flag = !want_enabled && true?(@params["force"]?) ? "-f " : ""
       run = remote_exec("export LANGUAGE=C LC_ALL=C; #{Shell.quote_arg(a2mod_path[:stdout].strip.split("\n").first)} #{force_flag}#{shell_single_quote(name)}")
 
-      return a2mod_failure(a2mod_binary, name, run) if run[:exit_code] != 0
-
+      # Real _set_state has NO separate rc!=0 failure branch: it always
+      # re-checks the enable state through a fresh `apache2ctl -M` and
+      # only then decides changed vs the "Failed to set module" failure
+      # (which is what a bogus module name surfaces as, carrying a2enmod's
+      # rc/stdout/stderr).
       verify_change(name, state_string, identifier, want_enabled, run)
-    end
-
-    private def a2mod_failure(a2mod_binary : String, name : String, run) : PluginResult
-      PluginResult.new(
-        changed: false,
-        failed: true,
-        msg: "Failed to run #{a2mod_binary} for module #{name}:\n#{run[:stdout]}\n#{run[:stderr]}",
-        rc: run[:exit_code],
-        stdout: run[:stdout],
-        stderr: run[:stderr]
-      )
     end
 
     # Real _set_state's post-command verification: confirm via a fresh
@@ -136,7 +128,14 @@ module Krikri
           msg: "Failed to set module #{name} to #{state_string}:\n#{run[:stdout]}\nMaybe the module identifier (#{identifier}) was guessed incorrectly." + "Consider setting the \"identifier\" option.",
           rc: run[:exit_code],
           stdout: run[:stdout],
-          stderr: run[:stderr]
+          stderr: run[:stderr],
+          stdout_lines: run[:stdout].lines,
+          stderr_lines: run[:stderr].lines,
+          # real: fail_json(msg=, rc=, stdout=, stderr=) - kwargs lead,
+          # failed/msg follow, the controller appends the *_lines splits,
+          # then changed, then exception.
+          key_order: ["rc", "stdout", "stderr", "failed", "msg",
+                      "stdout_lines", "stderr_lines", "changed", "exception"]
         )
       end
     end

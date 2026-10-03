@@ -85,6 +85,22 @@ module Krikri
         return result
       end
 
+      # Real's dest_is_local edge case: delegate_to naming the task's OWN
+      # host (delegate_to: "{{ inventory_hostname }}" is the common
+      # spelling). Real's action plugin decides dest_is_local=true /
+      # use_delegate=true, keeps src/dest PLAIN local paths (no
+      # user@host: prefix, no --rsh, no private-key munging) and runs the
+      # module ON that host, where rsync syncs the two local paths
+      # directly. Mirror it by handing the params back to the executor
+      # unchanged: the synchronize module binary then runs on the host
+      # itself (same dispatch real's _execute_module does), producing the
+      # local-rsync cmd/rc/msg real registers. A remote push/pull WITHOUT
+      # this delegation (rsync run from the controller, remote end
+      # qualified user@host:) is unchanged below.
+      if (task_host = @task_host) && !local_connection? && task_host.name == @host.name
+        return ActionResult.success?(modified_params: @params)
+      end
+
       # The delegate-resolved host (@host) is the sync endpoint. When its
       # connection is local, both ends are plain local paths (rsync runs
       # entirely on this machine); otherwise the REMOTE end gets the

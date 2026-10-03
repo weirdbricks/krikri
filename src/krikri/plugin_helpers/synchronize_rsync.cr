@@ -127,6 +127,30 @@ module Krikri
       argv
     end
 
+    # The command STRING the real module reports as `cmd`: every element
+    # space-joined, with shlex.quote applied exactly where the real
+    # module applies it - the values of --rsh=, --rsync-path=,
+    # --out-format= and --link-dest=, plus the trailing src and dest
+    # (cmd.append(shlex_quote(source)) / cmd.append(shlex_quote(dest))).
+    # Safe tokens stay bare (Shell.quote_arg mirrors shlex.quote), so
+    # plain local paths render unquoted exactly like real's.
+    QUOTED_VALUE_PREFIXES = ["--rsh=", "--rsync-path=", "--out-format=", "--link-dest="]
+
+    def self.cmd_string(argv : Array(String)) : String
+      parts = argv.map do |arg|
+        if prefix = QUOTED_VALUE_PREFIXES.find { |p| arg.starts_with?(p) }
+          prefix + Shell.quote_arg(arg[prefix.size..])
+        else
+          arg
+        end
+      end
+      if parts.size >= 3
+        parts[-2] = Shell.quote_arg(parts[-2])
+        parts[-1] = Shell.quote_arg(parts[-1])
+      end
+      parts.join(" ")
+    end
+
     def self.run(argv : Array(String)) : RsyncResult
       out_io = IO::Memory.new
       err_io = IO::Memory.new

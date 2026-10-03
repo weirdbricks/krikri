@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/x509_cert_info"
 
 lib LibC
   fun umask(mask : ModeT) : ModeT
@@ -88,6 +89,7 @@ module Krikri
       end
 
       candidate = secure_tempfile(path, "csr-candidate")
+      existing_pem = File.read(path) if File.exists?(path)
       begin
         if error = generate(candidate, privatekey_path)
           return failure(error)
@@ -106,13 +108,13 @@ module Krikri
           # here rather than inherited from it.
           File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?
           apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
-          return result(true, path, privatekey_path, backup_file)
+          return result(true, path, privatekey_path, backup_file, existing_pem, path)
         end
 
-        return result(true, path, privatekey_path, nil) if changed
+        return result(true, path, privatekey_path, nil, existing_pem, candidate) if changed
 
         attrs_changed = apply_attrs(path)
-        result(attrs_changed, path, privatekey_path, nil)
+        result(attrs_changed, path, privatekey_path, nil, existing_pem, path)
       ensure
         File.delete(candidate) if File.exists?(candidate)
       end
@@ -131,6 +133,9 @@ module Krikri
       end
       res = PluginResult.new(changed: exists, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
+      # real remove(): set_existing(None) resets diff_before/diff_after to
+      # {} - an absent-state result's diff is empty on both sides.
+      res.extra["diff"] = JSON.parse("{\"before\": {}, \"after\": {}}")
       res.extra["backup_file"] = JSON::Any.new(backup_file) if backup_file
       res
     end
@@ -334,17 +339,20 @@ module Krikri
     # --- reporting ------------------------------------------------------
 
     private def result(changed : Bool, path : String, privatekey_path : String,
-                       backup_file : String?) : PluginResult
+                       backup_file : String?, existing_pem : String?, csr_source : String) : PluginResult
       res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["privatekey"] = JSON::Any.new(privatekey_path)
       res.extra["subject"] = JSON::Any.new(subject_pairs.map { |(key, value)|
         JSON::Any.new([JSON::Any.new(key), JSON::Any.new(value)])
       })
-      res.extra["subjectAltName"] = json_list(subject_alt_names)
-      res.extra["keyUsage"] = json_list(list_param("key_usage"))
-      res.extra["extendedKeyUsage"] = json_list(list_param("extended_key_usage"))
-      res.extra["basicConstraints"] = json_list(list_param("basic_constraints"))
+      # Real dump() passes the module params through: an extension the task
+      # did not set is None (JSON null), not an empty list. SAN is None
+      # unless a param (or the common-name fallback) produced entries.
+      res.extra["subjectAltName"] = param_list_or_nil("subject_alt_name", subject_alt_names)
+      res.extra["keyUsage"] = param_list_or_nil("key_usage")
+      res.extra["extendedKeyUsage"] = param_list_or_nil("extended_key_usage")
+      res.extra["basicConstraints"] = param_list_or_nil("basic_constraints")
       res.extra["ocspMustStaple"] = JSON::Any.new(true?(@params["ocsp_must_staple"]?))
       res.extra["name_constraints_permitted"] = json_list(list_param("name_constraints_permitted"))
       res.extra["name_constraints_excluded"] = json_list(list_param("name_constraints_excluded"))
@@ -352,7 +360,35 @@ module Krikri
       if true?(@params["return_content"]?) && File.exists?(path)
         res.extra["csr"] = JSON::Any.new(File.read(path))
       end
+      # Real dump(): diff = {before: info(existing csr) or {}, after:
+      # info(final csr) + can_parse_csr}. before/after carry the SAME full
+      # get_csr_info payload the info module returns.
+      res.extra["diff"] = JSON.parse({
+        before: csr_diff_info(existing_pem),
+        after:  csr_diff_info(csr_source),
+      }.to_json)
       res
+    end
+
+    # The real backend's _get_info: {} when there is no CSR to read,
+    # the full csr info + can_parse_csr: true when it parses, and
+    # {can_parse_csr: false} when it does not.
+    private def csr_diff_info(pem_source : String?) : JSON::Any
+      return JSON.parse("{}") if pem_source.nil?
+      pem = File.read(pem_source) rescue return JSON.parse("{\"can_parse_csr\": false}")
+      info = X509CertInfo.csr_info_ordered(pem)
+      return JSON.parse("{\"can_parse_csr\": false}") unless info
+      info["can_parse_csr"] = JSON::Any.new(true)
+      JSON::Any.new(info.to_h { |k, v| {k, v} })
+    end
+
+    # A list param the task did not set is real Python None; one it set
+    # (even to []) stays a list.
+    private def param_list_or_nil(name : String, values : Array(String)? = nil) : JSON::Any
+      unless @params.has_key?(name)
+        return JSON::Any.new(nil)
+      end
+      json_list(values || list_param(name))
     end
 
     private def json_list(values : Array(String)) : JSON::Any

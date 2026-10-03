@@ -5,9 +5,13 @@ module Krikri
     # helpers (_check_cert_present, delete_cert, import_cert_path,
     # import_pkcs12_path, _export_public_cert_from_pkcs12,
     # _download_cert_url, _get_digest_from_x509_file, and
-    # build_proxy_options). Pure string plumbing so the exact argv
-    # shapes are unit-testable without a JVM (or a keystore); the
-    # plugin itself executes them.
+    # build_proxy_options). Each builder returns the raw ARGV the real
+    # module passes to run_command - that argv is also what real reports
+    # as the result's `cmd` (a JSON list, not a string) - and callers
+    # shell-join it with `.join(' ')` where a command STRING is what gets
+    # executed. Pure string plumbing so the exact argv shapes are
+    # unit-testable without a JVM (or a keystore); the plugin itself
+    # executes them.
     module JavaCertCommand
       # _get_keystore_type_keytool_parameters
       def self.keystore_type_params(keystore_type : String?) : Array(String)
@@ -16,64 +20,64 @@ module Krikri
 
       # _check_cert_present: PEM dump of the alias to stdout; the
       # password goes over keytool's stdin, never argv.
-      def self.check_cmd(executable : String, keystore_path : String, cert_alias : String, keystore_type : String?) : String
+      def self.check_cmd(executable : String, keystore_path : String, cert_alias : String, keystore_type : String?) : Array(String)
         cmd = [executable, "-list", "-keystore", keystore_path, "-alias", cert_alias, "-rfc"]
         cmd += keystore_type_params(keystore_type)
-        cmd.join(' ')
+        cmd
       end
 
-      def self.delete_cmd(executable : String, keystore_path : String, cert_alias : String, keystore_type : String?) : String
+      def self.delete_cmd(executable : String, keystore_path : String, cert_alias : String, keystore_type : String?) : Array(String)
         cmd = [executable, "-delete", "-noprompt", "-keystore", keystore_path, "-alias", cert_alias]
         cmd += keystore_type_params(keystore_type)
-        cmd.join(' ')
+        cmd
       end
 
       # import_cert_path
       def self.import_cert_cmd(executable : String, cert_path : String, keystore_path : String,
-                               cert_alias : String, keystore_type : String?, trust_cacert : Bool) : String
+                               cert_alias : String, keystore_type : String?, trust_cacert : Bool) : Array(String)
         cmd = [executable, "-importcert", "-noprompt", "-keystore", keystore_path, "-file", cert_path, "-alias", cert_alias]
         cmd += keystore_type_params(keystore_type)
         cmd << "-trustcacerts" if trust_cacert
-        cmd.join(' ')
+        cmd
       end
 
       # import_pkcs12_path
       def self.import_pkcs12_cmd(executable : String, pkcs12_path : String, pkcs12_alias : String?,
-                                 keystore_path : String, cert_alias : String?, keystore_type : String?) : String
+                                 keystore_path : String, cert_alias : String?, keystore_type : String?) : Array(String)
         cmd = [executable, "-importkeystore", "-noprompt", "-srcstoretype", "pkcs12",
                "-srckeystore", pkcs12_path, "-destkeystore", keystore_path]
         cmd += ["-destalias", cert_alias] if cert_alias
         cmd += ["-srcalias", pkcs12_alias] if pkcs12_alias
         cmd += keystore_type_params(keystore_type)
-        cmd.join(' ')
+        cmd
       end
 
       # _export_public_cert_from_pkcs12 - no -noprompt (the real
       # module's export command doesn't pass it; the password goes over
       # stdin either way).
-      def self.export_pkcs12_cmd(executable : String, pkcs12_path : String, pkcs12_alias : String?) : String
+      def self.export_pkcs12_cmd(executable : String, pkcs12_path : String, pkcs12_alias : String?) : Array(String)
         cmd = [executable, "-list", "-keystore", pkcs12_path, "-storetype", "pkcs12", "-rfc"]
         cmd += ["-alias", pkcs12_alias] if pkcs12_alias
-        cmd.join(' ')
+        cmd
       end
 
       # _download_cert_url
-      def self.fetch_url_cmd(executable : String, url : String, port : Int32, proxy_opts : Array(String)) : String
-        ([executable, "-printcert", "-rfc", "-sslserver"] + proxy_opts + ["#{url}:#{port}"]).join(' ')
+      def self.fetch_url_cmd(executable : String, url : String, port : Int32, proxy_opts : Array(String)) : Array(String)
+        [executable, "-printcert", "-rfc", "-sslserver"] + proxy_opts + ["#{url}:#{port}"]
       end
 
       # _get_digest_from_x509_file's two steps: extract the first
       # certificate (PEM first, DER fallback), then hash it. Split
       # into the two commands so the plugin can branch on the extract
       # rc the way the real module does.
-      def self.extract_x509_cmd(openssl_bin : String, cert_file : String, out_file : String, der_fallback : Bool = false) : String
+      def self.extract_x509_cmd(openssl_bin : String, cert_file : String, out_file : String, der_fallback : Bool = false) : Array(String)
         cmd = [openssl_bin, "x509", "-in", cert_file, "-out", out_file]
         cmd << "-inform" << "der" if der_fallback
-        cmd.join(' ')
+        cmd
       end
 
-      def self.dgst_cmd(openssl_bin : String, cert_file : String) : String
-        [openssl_bin, "dgst", "-r", "-sha256", cert_file].join(' ')
+      def self.dgst_cmd(openssl_bin : String, cert_file : String) : Array(String)
+        [openssl_bin, "dgst", "-r", "-sha256", cert_file]
       end
 
       # build_proxy_options: honors https_proxy/no_proxy environment
