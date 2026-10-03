@@ -244,8 +244,10 @@ module Krikri
     end
 
     private def run_present(path : String, state : String, fstab : String, check_mode : Bool) : PluginResult
+      pre_lines = read_fstab(fstab)
       fstab_changed, backup_file = set_fstab_entry(path, fstab, check_mode)
       if state == "mounted"
+        path_existed = remote_file_exists?(path)
         mount_changed, error = ensure_mounted(path, check_mode)
         # Real mount's failures are all bare fail_json(msg=...) - no
         # name/fstab/backup_file echo, and NO changed either: fail_json's
@@ -253,7 +255,32 @@ module Krikri
         # entry was written still reports changed: false (the fstab edit
         # is not counted) - live-verified vs 2.19.11 with an unknown
         # fstype (mount(8) rejects it after the fstab write succeeded).
-        return PluginResult.new(changed: false, failed: true, msg: error || "mount failed") if error
+        if error
+          # Real mount.py restores the pre-edit fstab (write_fstab with
+          # the backup lines) and rmdirs the mountpoint dirs it created
+          # when the mount command fails - "A non-working fstab entry may
+          # break the system at the reboot, so undo all the changes if
+          # possible" (ansible/ansible#59183). Without the restore the
+          # entry lingers and a later state=absent cleanup task reports
+          # changed where real reports ok (round 993003 kop_storage cold
+          # recap: the /var/tmp/kop_mntfail cleanup loop item). Both
+          # undo steps swallow failures, as real's try/except does.
+          if fstab_changed && !check_mode
+            begin
+              write_fstab(fstab, pre_lines)
+            rescue
+              nil
+            end
+          end
+          if !path_existed && !check_mode
+            begin
+              remote_exec("rmdir #{shell_single_quote(path)}")
+            rescue
+              nil
+            end
+          end
+          return PluginResult.new(changed: false, failed: true, msg: error || "mount failed")
+        end
       else
         mount_changed = false
       end

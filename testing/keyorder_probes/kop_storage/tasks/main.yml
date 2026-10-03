@@ -387,6 +387,7 @@
       community.general.lvg:
         vg: kop_vg
         state: absent
+        force: true
       ignore_errors: true
 
     - name: Detach loop devices
