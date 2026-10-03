@@ -69,7 +69,11 @@ describe "yum: package-group install idempotency" do
       result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"})
       result["failed"]?.must_be_nil
       result["changed"].as_bool.must_equal(false)
-      result["msg"].as_s.must_include("already satisfied")
+      # real's no-op shape (dnf/yum exit_json(**response) with nothing
+      # resolved): msg "Nothing to do", empty results - NOT a prose
+      # summary naming the already-satisfied group.
+      result["msg"].as_s.must_equal("Nothing to do")
+      result["results"].as_a.must_equal([] of JSON::Any)
     end
   end
 
@@ -78,7 +82,10 @@ describe "yum: package-group install idempotency" do
       result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"})
       result["failed"]?.must_be_nil
       result["changed"].as_bool.must_equal(true)
-      result["msg"].as_s.must_include("Installed: @Development tools")
+      # A group has no NEVRA of its own, so real-shaped `results` names
+      # the requested spec.
+      result["msg"].as_s.must_equal("")
+      result["results"].as_a.first.as_s.must_equal("Installed: @Development tools")
     end
   end
 end
