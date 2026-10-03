@@ -181,25 +181,29 @@ module Krikri
       if order = @key_order
         emit_reordered(result, order, io)
       elsif @failed
-        # Default FAILED order - real's fail_json shape, live-verified
-        # across seven plugins' plain failures (slurp missing file, stat
-        # unsupported parameter, file bad state, fail:, service missing
-        # service, getent unknown database, mount unmkdirable path - all
-        # register exactly failed, msg, changed, exception). Modules that
-        # pass extra kwargs to fail_json keep them positioned by the
-        # kwargs-first rule (rc/elapsed/cmd lead), which needs per-plugin
-        # key_order; the default here only covers the plain shape.
-        failed_order = ["failed", "msg", "diff"]
-        result.each_key do |key|
-          next if key.in?("failed", "msg", "diff", "changed", "exception")
-          failed_order << key
-        end
-        failed_order << "changed"
-        failed_order << "exception"
-        emit_reordered(result, failed_order, io)
+        emit_reordered(result, failed_default_order(result), io)
       else
         result.to_json(io)
       end
+    end
+
+    # Default FAILED order - real's fail_json shape, live-verified across
+    # seven plugins' plain failures (slurp missing file, stat unsupported
+    # parameter, file bad state, fail:, service missing service, getent
+    # unknown database, mount unmkdirable path - all register exactly
+    # failed, msg, changed, exception). Modules that pass extra kwargs to
+    # fail_json keep them positioned by the kwargs-first rule (rc/elapsed/
+    # cmd lead), which needs per-plugin key_order; the default here only
+    # covers the plain shape.
+    private def failed_default_order(result : Hash(String, JSON::Any::Type)) : Array(String)
+      order = ["failed", "msg", "diff"]
+      result.each_key do |key|
+        next if key.in?("failed", "msg", "diff", "changed", "exception")
+        order << key
+      end
+      order << "changed"
+      order << "exception"
+      order
     end
 
     # Serializes *result* with the keys named in *order* first (absent ones
