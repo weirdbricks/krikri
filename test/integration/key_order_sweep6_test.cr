@@ -325,6 +325,33 @@ describe "x509_certificate_info plugin result key order" do
   end
 end
 
+describe "openssh_keypair plugin result key order" do
+  it "serializes a fresh rsa generation as size-type-filename-fingerprint-public_key-comment" do
+    dir = PluginSpecHelper.tmp_path("ko-ssh-1")
+    FileUtils.mkdir_p(dir)
+    result = PluginSpecHelper.run("openssh_keypair",
+      {"path" => File.join(dir, "id_test"), "type" => "rsa", "size" => "2048"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal([
+      "size", "type", "filename", "fingerprint", "public_key", "comment", "changed", "msg",
+    ])
+  end
+
+  it "keeps the same order on an idempotent unchanged rerun" do
+    dir = PluginSpecHelper.tmp_path("ko-ssh-2")
+    FileUtils.mkdir_p(dir)
+    params = {"path" => File.join(dir, "id_test"), "type" => "rsa", "size" => "2048"}
+    PluginSpecHelper.run("openssh_keypair", params)
+    result = PluginSpecHelper.run("openssh_keypair", params)
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal([
+      "size", "type", "filename", "fingerprint", "public_key", "comment", "changed", "msg",
+    ])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")

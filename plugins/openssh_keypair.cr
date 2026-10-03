@@ -27,6 +27,17 @@ module Krikri
 
     # The real module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (ansible-core 2.14's
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
+    # unchanged, check-mode and state=absent runs (the backend's _result
+    # dict always carries all six keys, then the controller adds
+    # changed). krikri's msg stays unlisted and trails, per the get_url
+    # convention for keys real doesn't emit.
+    SUCCESS_KEY_ORDER = %w[
+      size type filename fingerprint public_key comment changed ansible_facts
+      failed warnings
+    ]
+
     # FILE_COMMON_ARGUMENTS: the only alias is attributes->attr).
     SPEC = {
       "state"              => [] of String,
@@ -138,7 +149,7 @@ module Krikri
     end
 
     private def generate_or_preview(path : String, pub_path : String, type : String, size : Int32, comment : String?, passphrase : String, check_mode : Bool) : PluginResult
-      return PluginResult.new(changed: true, failed: false, msg: "Would generate SSH keypair at #{path} (check mode)", size: size, type: type, filename: path) if check_mode
+      return PluginResult.new(changed: true, failed: false, msg: "Would generate SSH keypair at #{path} (check mode)", key_order: SUCCESS_KEY_ORDER, size: size, type: type, filename: path) if check_mode
       generate(path, pub_path, type, size, comment, passphrase)
     end
 
@@ -367,6 +378,7 @@ module Krikri
         changed: changed,
         failed: false,
         msg: changed ? "SSH keypair generated/updated at #{path}" : "SSH keypair already present at #{path}",
+        key_order: SUCCESS_KEY_ORDER,
         size: size,
         type: type,
         filename: path,
@@ -378,12 +390,12 @@ module Krikri
 
     private def remove(path : String, pub_path : String, check_mode : Bool) : PluginResult
       exists = File.exists?(path) || File.exists?(pub_path)
-      return PluginResult.new(changed: exists, failed: false, msg: exists ? "Would remove #{path}/#{pub_path} (check mode)" : "already absent") if check_mode
-      return PluginResult.new(changed: false, failed: false, msg: "already absent") unless exists
+      return PluginResult.new(changed: exists, failed: false, msg: exists ? "Would remove #{path}/#{pub_path} (check mode)" : "already absent", key_order: SUCCESS_KEY_ORDER) if check_mode
+      return PluginResult.new(changed: false, failed: false, msg: "already absent", key_order: SUCCESS_KEY_ORDER) unless exists
 
       File.delete(path) if File.exists?(path)
       File.delete(pub_path) if File.exists?(pub_path)
-      PluginResult.new(changed: true, failed: false, msg: "Removed #{path} and #{pub_path}")
+      PluginResult.new(changed: true, failed: false, msg: "Removed #{path} and #{pub_path}", key_order: SUCCESS_KEY_ORDER)
     end
   end
 end
