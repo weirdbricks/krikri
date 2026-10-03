@@ -265,4 +265,108 @@ describe "dnf-family plugin result key order (sweep11)" do
     remove["changed"].as_bool.must_equal(true)
     remove["results"].as_a.first.as_s.must_match(/^Removed: sl-\d/)
   end
+  it "registers real's dnf_versionlock result shape" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "dvl")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - community.general.dnf_versionlock:
+            name: bash
+          register: r
+    #{dump_task("lock")}
+    YAML
+
+    # real community.general dnf_versionlock builds its response dict as
+    # changed/msg/locklist_pre/specs_toadd/specs_todelete and only then
+    # appends locklist_post - so the POST list comes last, not next to
+    # locklist_pre (live-verified against community.general on fedora:41).
+    lock = dumps["lock"]
+    lock.keys.must_equal(%w[changed msg locklist_pre specs_toadd specs_todelete locklist_post failed])
+    lock["changed"].as_bool.must_equal(true)
+    lock["locklist_pre"].as_a.must_equal([] of JSON::Any)
+    lock["specs_toadd"].as_a.size.must_equal(1)
+    lock["specs_todelete"].as_a.must_equal([] of JSON::Any)
+    lock["locklist_post"].as_a.must_equal(lock["specs_toadd"].as_a)
+  end
+
+  it "registers real's yum_versionlock result shape" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "yvl")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - community.general.yum_versionlock:
+            name: bash
+          register: r
+    #{dump_task("lock")}
+    YAML
+
+    # real exits exit_json(changed=changed, meta={"packages": ..., "state":
+    # ...}) - the requested specs and the resolved state come back under
+    # a single top-level "meta" key, whatever the module's docs say.
+    lock = dumps["lock"]
+    lock.keys.must_equal(%w[changed meta failed])
+    lock["changed"].as_bool.must_equal(true)
+    meta = lock["meta"].as_h
+    meta.keys.must_equal(%w[packages state])
+    meta["packages"].as_a.must_equal(["bash"])
+    meta["state"].as_s.must_equal("present")
+  end
+
+  it "registers real's rpm_key success shape (changed + the controller's failed)" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "rk")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - ansible.builtin.rpm_key:
+            key: e99d6ad1
+            state: present
+          register: r
+    #{dump_task("key")}
+    YAML
+
+    # real's rpm_key exit_json(changed=...) carries nothing else, so the
+    # registered result is exactly the module's `changed` plus the
+    # controller's `failed` (no msg, no stdout).
+    key = dumps["key"]
+    key.keys.must_equal(%w[changed failed])
+    key["changed"].as_bool.must_equal(false)
+  end
+
+  it "registers real's gem success shape" do
+    skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
+    dumps = fedora_play(<<-YAML, "gem")
+    ---
+    - hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - command: dnf -y install ruby
+          changed_when: false
+        - community.general.gem:
+            name: rake
+            state: present
+          register: r
+    #{dump_task("gem")}
+    YAML
+
+    # real community.general gem's success result carries no msg and no
+    # captured output - just what was asked for, plus changed. (The
+    # module's own dict orders them name/state/changed; the registered
+    # result hoists changed to the front, and krikri's executor appends
+    # failed last, which is where real's controller puts it too.)
+    gem = dumps["gem"]
+    gem.keys.must_equal(%w[changed name state failed])
+    gem["changed"].as_bool.must_equal(true)
+    gem["name"].as_s.must_equal("rake")
+    gem["state"].as_s.must_equal("present")
+  end
 end
