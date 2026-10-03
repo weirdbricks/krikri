@@ -1,0 +1,517 @@
+---
+# Key-order probes for deploy_helper, easy_install, maven_artifact,
+# current_container_facts and virt_net (community.general / community.docker /
+# community.libvirt). py_module is deliberately NOT probed: it is krikri's
+# runner for role-private custom modules and has no real-ansible module
+# equivalent (see README.md).
+# Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. Safe to run twice (cold + warm).
+
+# --- deploy_helper ---
+
+- name: Ensure deploy_helper project path is absent
+  ansible.builtin.file:
+    path: /var/tmp/kop_deploy
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_helper_cleanup
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_helper_cleanup|{{ r | to_json }}"
+
+- name: Create a new release (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR1
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_present
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_present|{{ r | to_json }}"
+
+- name: Create the same release again (ok)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR1
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_exists|{{ r | to_json }}"
+
+- name: Create a second release in check mode (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR2
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report deploy_helper_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_check|{{ r | to_json }}"
+
+- name: Block the current path with a regular file
+  ansible.builtin.copy:
+    content: "blocked\n"
+    dest: /var/tmp/kop_deploy/current
+    mode: "0644"
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_helper_block
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_helper_block|{{ r | to_json }}"
+
+- name: Create a release while current exists as a file (failure)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR3
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_fail|{{ r | to_json }}"
+
+- name: Remove the blocking file
+  ansible.builtin.file:
+    path: /var/tmp/kop_deploy/current
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_helper_unblock
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_helper_unblock|{{ r | to_json }}"
+
+- name: Create a third release (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR3
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_present_r3
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_present_r3|{{ r | to_json }}"
+
+- name: Mark the third release as unfinished
+  ansible.builtin.copy:
+    content: "unfinished\n"
+    dest: /var/tmp/kop_deploy/releases/kopR3/DEPLOY_UNFINISHED
+    mode: "0644"
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_helper_unfinished
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_helper_unfinished|{{ r | to_json }}"
+
+- name: Clean unfinished builds (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR3
+    state: clean
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_clean
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_clean|{{ r | to_json }}"
+
+- name: Finalize the deploy (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR3
+    state: finalize
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_finalize
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_finalize|{{ r | to_json }}"
+
+- name: Finalize the deploy again (ok)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    release: kopR3
+    state: finalize
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_finalize_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_finalize_again|{{ r | to_json }}"
+
+- name: Remove the whole project (changed)
+  community.general.deploy_helper:
+    path: /var/tmp/kop_deploy
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report deploy_helper_absent
+  ansible.builtin.debug:
+    msg: "KEYORDER|deploy_helper_absent|{{ r | to_json }}"
+
+- name: Ensure deploy_helper project path is absent again (cleanup)
+  ansible.builtin.file:
+    path: /var/tmp/kop_deploy
+    state: absent
+  ignore_errors: true
+
+# --- easy_install ---
+
+- name: Ensure python3-setuptools is installed (provides easy_install3)
+  ansible.builtin.apt:
+    name: python3-setuptools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report easy_install_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|easy_install_helper_install|{{ r | to_json }}"
+
+- name: Install six via easy_install (changed, or recorded failure)
+  community.general.easy_install:
+    name: six
+    executable: easy_install3
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report easy_install_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|easy_install_install|{{ r | to_json }}"
+
+- name: Install six via easy_install again (ok)
+  community.general.easy_install:
+    name: six
+    executable: easy_install3
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report easy_install_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|easy_install_exists|{{ r | to_json }}"
+
+- name: Install idna via easy_install in check mode (changed)
+  community.general.easy_install:
+    name: idna
+    executable: easy_install3
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report easy_install_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|easy_install_check|{{ r | to_json }}"
+
+- name: Install a nonexistent package via easy_install (failure)
+  community.general.easy_install:
+    name: kop_bogus_pkg_xyz
+    executable: easy_install3
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report easy_install_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|easy_install_fail|{{ r | to_json }}"
+
+# --- maven_artifact ---
+
+- name: Ensure maven and python3-lxml are installed
+  ansible.builtin.apt:
+    name:
+      - maven
+      - python3-lxml
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report maven_artifact_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_helper_install|{{ r | to_json }}"
+
+- name: Download junit from Maven Central (changed)
+  community.general.maven_artifact:
+    group_id: junit
+    artifact_id: junit
+    version: 4.13.2
+    dest: /var/tmp/kop_junit.jar
+  register: r
+  ignore_errors: true
+
+- name: Report maven_artifact_download
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_download|{{ r | to_json }}"
+
+- name: Download junit again (ok)
+  community.general.maven_artifact:
+    group_id: junit
+    artifact_id: junit
+    version: 4.13.2
+    dest: /var/tmp/kop_junit.jar
+  register: r
+  ignore_errors: true
+
+- name: Report maven_artifact_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_exists|{{ r | to_json }}"
+
+- name: Download junit to a new dest in check mode (changed)
+  community.general.maven_artifact:
+    group_id: junit
+    artifact_id: junit
+    version: 4.13.2
+    dest: /var/tmp/kop_junit2.jar
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report maven_artifact_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_check|{{ r | to_json }}"
+
+- name: Download a nonexistent artifact (failure)
+  community.general.maven_artifact:
+    group_id: kop.bogus
+    artifact_id: kop_bogus_artifact
+    version: "1.0"
+    dest: /var/tmp/kop_bogus.jar
+  register: r
+  ignore_errors: true
+
+- name: Report maven_artifact_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_fail|{{ r | to_json }}"
+
+- name: Remove the downloaded artifact (changed)
+  community.general.maven_artifact:
+    group_id: junit
+    artifact_id: junit
+    version: 4.13.2
+    dest: /var/tmp/kop_junit.jar
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report maven_artifact_absent
+  ansible.builtin.debug:
+    msg: "KEYORDER|maven_artifact_absent|{{ r | to_json }}"
+
+- name: Cleanup maven artifact files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/tmp/kop_junit.jar
+    - /var/tmp/kop_junit2.jar
+    - /var/tmp/kop_bogus.jar
+  ignore_errors: true
+
+# --- current_container_facts ---
+
+- name: Gather container facts (read-only, ok)
+  community.docker.current_container_facts:
+  register: r
+  ignore_errors: true
+
+- name: Report current_container_facts_run
+  ansible.builtin.debug:
+    msg: "KEYORDER|current_container_facts_run|{{ r | to_json }}"
+
+- name: Gather container facts again (ok)
+  community.docker.current_container_facts:
+  register: r
+  ignore_errors: true
+
+- name: Report current_container_facts_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|current_container_facts_again|{{ r | to_json }}"
+
+- name: Gather container facts in check mode (ok)
+  community.docker.current_container_facts:
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report current_container_facts_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|current_container_facts_check|{{ r | to_json }}"
+
+# --- virt_net (needs libvirtd; not runnable in a rootless container) ---
+
+- name: Ensure libvirt and its python bindings are installed
+  ansible.builtin.apt:
+    name:
+      - libvirt-daemon-system
+      - python3-libvirt
+      - python3-lxml
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_helper_install|{{ r | to_json }}"
+
+- name: Ensure libvirtd is running
+  ansible.builtin.service:
+    name: libvirtd
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_helper_service
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_helper_service|{{ r | to_json }}"
+
+- name: Define a probe network (changed)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    command: define
+    xml: |
+      <network>
+        <name>kop_probe_net</name>
+        <bridge name="kopbr0" stp="on" delay="0"/>
+        <ip address="10.99.99.1" netmask="255.255.255.0">
+          <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+        </ip>
+      </network>
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_define
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_define|{{ r | to_json }}"
+
+- name: Ensure the probe network is present (ok)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    state: present
+    xml: |
+      <network>
+        <name>kop_probe_net</name>
+        <bridge name="kopbr0" stp="on" delay="0"/>
+        <ip address="10.99.99.1" netmask="255.255.255.0">
+          <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+        </ip>
+      </network>
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_present
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_present|{{ r | to_json }}"
+
+- name: Start the probe network (changed)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    state: active
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_start
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_start|{{ r | to_json }}"
+
+- name: Start the probe network again (ok)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    state: active
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_start_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_start_again|{{ r | to_json }}"
+
+- name: Start a second network in check mode (changed)
+  community.libvirt.virt_net:
+    name: kop_probe_net2
+    state: active
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report virt_net_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_check|{{ r | to_json }}"
+
+- name: Get the probe network XML (ok)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    command: get_xml
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_get_xml
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_get_xml|{{ r | to_json }}"
+
+- name: Get XML of a nonexistent network (failure)
+  community.libvirt.virt_net:
+    name: kop_nosuch_net
+    command: get_xml
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_fail|{{ r | to_json }}"
+
+- name: Stop the probe network (changed)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    state: inactive
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_stop
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_stop|{{ r | to_json }}"
+
+- name: Undefine the probe network (cleanup)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    command: undefine
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_helper_undefine
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_helper_undefine|{{ r | to_json }}"
+
+- name: Ensure the probe network is absent (cleanup)
+  community.libvirt.virt_net:
+    name: kop_probe_net
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report virt_net_helper_absent
+  ansible.builtin.debug:
+    msg: "KEYORDER|virt_net_helper_absent|{{ r | to_json }}"
+
+- name: Stop libvirtd again (cleanup)
+  ansible.builtin.service:
+    name: libvirtd
+    state: stopped
+  ignore_errors: true

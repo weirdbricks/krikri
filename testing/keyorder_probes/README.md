@@ -55,7 +55,9 @@ five roles, Rocky Linux 9 for `kop_rocky` (see its row).
 | `kop_storage` | `community.general.lvg`, `community.general.lvol`, `community.general.parted`, `community.general.zfs`, `ansible.builtin.mount` (tmpfs mount/unmount only) | loop devices from sparse files under `/var/tmp` created and detached by the role; zfs probes a *dataset* on a `zpool create`d pool (`community.general.zfs` does not create pools) |
 | `kop_pkg_misc` | `ansible.posix.synchronize`, `ansible.builtin.subversion`, `community.general.apache2_module`, `community.general.java_cert`, `community.crypto.openssl_csr_info` | synchronize copies between two `/var/tmp` dirs in push mode, delegated to the host itself (`delegate_to: inventory_hostname`) so rsync reads and writes on the host and never needs the controller; subversion checks out from a local `svnadmin create` repo; apache2 (harmless modules: headers/rewrite/proxy_http) and default-jdk-headless are installed via apt first |
 | `kop_rocky` | `ansible.posix.selinux`, `ansible.posix.seboolean`, `community.general.sefcontext`, `community.general.seport`, `ansible.posix.firewalld` | Rocky Linux 9 only (needs a real SELinux/firewalld host; see `queue_rocky.txt`). SELinux is never set to `disabled` and never switched to `enforcing` from permissive - the `state: enforcing` probe and the cleanup restore only run when the host booted enforcing (`getenforce` guard via helper + `set_fact` + `when:`). firewalld is started first, the ssh service and the default zone are never touched, and every added rule (http service, 8789/tcp port, rich rule) is removed again; sefcontext/seport use throwaway paths (`/srv/kop_web(/.*)?`) and port 8789/tcp on `http_port_t` |
+| `kop_misc2` | `community.general.deploy_helper`, `community.general.easy_install`, `community.general.maven_artifact`, `community.docker.current_container_facts`, `community.libvirt.virt_net` | deploy_helper runs present/finalize/clean/absent plus check-mode and failure probes (a regular file blocking the `current` path) in `/var/tmp/kop_deploy`, with the unfinished-file (`DEPLOY_UNFINISHED`) handling probed via `state=clean`; easy_install installs `python3-setuptools` via apt first and probes `easy_install3` (easy_install is deprecated - whatever the host lets it do, including failures, is captured); maven_artifact installs `maven` + `python3-lxml` via apt and downloads `junit:junit:4.13.2` from Maven Central into `/var/tmp`; current_container_facts is read-only (on a bare VM it just reports not-in-container facts); virt_net installs `libvirt-daemon-system` + `python3-libvirt` + `python3-lxml`, starts libvirtd, then defines/starts/stops a tiny NAT network (`10.99.99.0/24`, `command: define` with inline XML) with idempotent/check/failure probes, and undefines everything in cleanup |
 | *(not probed)* | `community.general.snap`, `community.general.homebrew` | **deliberately skipped**: installing snapd via apt is slow and flaky in a fresh-VM round, and homebrew is macOS-only. Not worth the round time for a key-order probe. |
+| *(not probed)* | krikri's `py_module` runner | **deliberately skipped**: `py_module` is not a real Ansible module - it is krikri's transport for role-private custom `library/*.py` modules. Real Ansible invokes such a module by its own name, so there is no matching `py_module` result shape to diff key order against. |
 
 Note that several of these modules live in collections
 (`ansible.posix`, `community.general`, `community.crypto`); the probed set
@@ -107,12 +109,21 @@ bin/krikri-role-tester run testing/keyorder_probes/queue_rocky.txt \
   --backend atlantic --os rocky --atlantic-hosts N \
   --results-dir ~/scratch/krt-results --round-start <N>
 ```
+Additional queue files can round up a subset of the roles without re-running
+the whole set. `queue_misc2.txt` currently holds just the `kop_misc2` line:
+
+```
+local:$KRIKRI_ROOT/testing/keyorder_probes/kop_misc2
+```
+
+Run it the same way as `queue.txt` above (`bin/krikri-role-tester run
+testing/keyorder_probes/queue_misc2.txt --backend atlantic ...`).
 
 ## Local validation status
 
 Validated locally on the dev laptop (no root, no real kernel):
 
-- `ansible-playbook --syntax-check` (2.19.11) over all five roles via
+- `ansible-playbook --syntax-check` (2.19.11) over all seven roles via
   `syntax_check.yml` - pass.
 - krikri-playbook parse/syntax check (`--syntax-check` and `--list-tasks`)
   over the same wrapper - pass, task list matches real ansible.
@@ -149,6 +160,17 @@ KEYORDER set both runs (`ignored=8` = the deliberate failure probes):
   delegated to the host itself, so rsync runs entirely on the host), subversion (local svnadmin repo),
   apache2_module, java_cert (default-jdk-headless + self-signed cert),
   openssl_csr_info.
+- `kop_misc2` (deploy_helper, easy_install, maven_artifact,
+  current_container_facts) via its own `kop_misc2/smoke_wrapper.yml` +
+  `kop_misc2/smoke_inside.sh` (containers named `kp-misc2-*`, removed after
+  the run; apt-installs `python3-setuptools`, `maven`, `python3-lxml` and
+  the community.general/community.docker/community.libvirt collections).
+  Result: both runs rc=0, `failed=0`, identical 39-probe KEYORDER set both
+  runs. Inside the container the virt_net probes all fail (no libvirtd
+  socket) and are ignored - that is the expected container shape, the real
+  shapes come from the Atlantic.net round. easy_install may record failures
+  depending on what the deprecated `easy_install3` tool can still fetch
+  from PyPI - those are captured as-is by design.
 
 NOT smoke-tested locally (kernel-dependent; need a real root VM, exactly
 what the Atlantic.net round provides):
@@ -158,18 +180,28 @@ what the Atlantic.net round provides):
 - `kop_firewall` in full (ufw manipulates iptables/ufw state).
 - `kop_storage` in full (losetup/LVM/parted/zfs/mount need a real kernel
   and loop-device privileges; tmpfs mounts fail in a rootless container).
+- `kop_misc2`'s `virt_net` probes (libvirtd and its dnsmasq-driven NAT
+  networking do not work in a rootless container - exactly what the
+  Atlantic.net round provides).
 
 ## Files
 
 - `kop_*/tasks/main.yml` - the probe roles.
 - `roles/` - symlinks to the six roles (both ansible-playbook and
+- `roles/` - symlinks to the roles (both ansible-playbook and
   krikri-playbook resolve roles next to the playbook, so the wrapper
   playbooks need no `ANSIBLE_ROLES_PATH`).
 - `syntax_check.yml` - wrapper for `--syntax-check`/`--list-tasks` over all
-  five roles.
+  seven roles.
 - `smoke_wrapper.yml` + `smoke_inside.sh` - rootless-podman smoke test for
   the container-safe roles (containers named `km-probes-*`, removed after
   the run).
 - `queue.txt` - the five `local:` queue lines for `krikri-role-tester run`.
 - `queue_rocky.txt` - the `local:` queue line for the Rocky Linux 9
   `kop_rocky` round (backend/OS suffix: `atlantic rocky`).
+- `queue_misc2.txt` - queue file holding only the `kop_misc2` role (see
+  "Queueing a round" above).
+- `kop_misc2/smoke_wrapper.yml` + `kop_misc2/smoke_inside.sh` - rootless-
+  podman smoke test for kop_misc2's container-safe modules (deploy_helper,
+  easy_install, maven_artifact, current_container_facts; virt_net is not
+  container-runnable).

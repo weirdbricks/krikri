@@ -15,3 +15,4 @@
     - role: kop_storage
     - role: kop_pkg_misc
     - role: kop_rocky
+    - role: kop_misc2
