@@ -131,7 +131,15 @@ describe "deploy_helper plugin - clean/finalize crash and cleanup flow (kpg35)" 
     Dir.mkdir_p(File.join(releases, "r4"))
     File.symlink(File.join(releases, "r4"), File.join(root, "current"))
     sleep 1
-    File.write(File.join(releases, "r1"), "") unless File.directory?(File.join(releases, "r1"))
+    # Make r1 the NEWEST release so keep_releases=1 keeps r1 and deletes
+    # r4 - the release `current` points at. Cleanup sorts by ctime in
+    # whole seconds, so r1 must be made strictly newer than r4, not
+    # merely equal. Creating a child inside r1 bumps r1's own ctime (a
+    # write to the r1 PATH itself is skipped because r1 is a directory,
+    # which left r1/r4 tied on ctime and the outcome readdir-order
+    # dependent). The bump file sits at depth 2 so cleanup's depth-1
+    # directory/symlink filter ignores it.
+    File.write(File.join(releases, "r1", ".ctime-bump"), "")
 
     result = PluginSpecHelper.run("deploy_helper",
       {"path" => root, "state" => "clean", "keep_releases" => "1"})

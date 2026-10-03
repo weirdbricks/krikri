@@ -33,10 +33,21 @@ private DICT_VARS = [
   "  vars:",
   "    some_dict:",
   "      content: hello",
-  "      dest: /tmp/argsplat-warning-out.txt",
-]
+] of String
 
-private DICT_DEST = "/tmp/argsplat-warning-out.txt"
+# Appends a `dest:` line to the vars block pointing at a private,
+# never-reused path. Every test that runs a copy through some_dict needs
+# its OWN dest: they all run concurrently under `-- -p 4`, and two tests
+# writing the same file race (one re-creates the file between the other's
+# delete and its own copy, flipping that task's result from changed to
+# ok). Unique per test also means no test has to delete the dest at all.
+private def dict_vars_for(tag : String) : Array(String)
+  DICT_VARS + ["      dest: #{private_dest(tag)}"]
+end
+
+private def private_dest(tag : String) : String
+  "/tmp/argsplat-warning-#{tag}-#{Random::Secure.hex(6)}.txt"
+end
 
 private PLAY_HEADER = [
   "- hosts: localhost",
@@ -75,11 +86,10 @@ end
 
 describe "argsplat warning" do
   it "warns with an Origin at the templated args scalar for a vars-defined dict" do
-    File.delete(DICT_DEST)
     success, output = run_play([
       "    - name: templated args",
       "      ansible.builtin.copy: \"{{ some_dict }}\"",
-    ], DICT_VARS)
+    ], dict_vars_for("varsdict"))
     success.must_equal(true, output)
     warning_count(output).must_equal(1)
 
@@ -114,7 +124,7 @@ describe "argsplat warning" do
       "    - name: skipped",
       "      ansible.builtin.copy: \"{{ some_dict }}\"",
       "      when: false",
-    ], DICT_VARS)
+    ], dict_vars_for("whenfalse"))
     success.must_equal(true, output)
     warning_count(output).must_equal(0)
     output.includes?("skipping: [localhost]").must_equal(true)
@@ -143,7 +153,7 @@ describe "argsplat warning" do
       "    - name: check_mode",
       "      ansible.builtin.copy: \"{{ some_dict }}\"",
       "      check_mode: true",
-    ], DICT_VARS)
+    ], dict_vars_for("nolog"))
     success.must_equal(true, output)
     warning_count(output).must_equal(3)
   end
@@ -154,7 +164,7 @@ describe "argsplat warning" do
       "      ansible.builtin.copy: '{{ some_dict }}'",
       "    - name: short name",
       "      copy: \"{{ some_dict }}\"",
-    ], DICT_VARS)
+    ], dict_vars_for("quotes"))
     success.must_equal(true, output)
     warning_count(output).must_equal(2)
     # One past the opening quote, whichever quote was used; the short
@@ -168,7 +178,7 @@ describe "argsplat warning" do
       "      ansible.builtin.copy: >",
       "        {{ some_dict }}",
       "      ignore_errors: true",
-    ], DICT_VARS)
+    ], dict_vars_for("folded"))
     success.must_equal(true, output)
     warning_count(output).must_equal(0)
   end
@@ -179,7 +189,7 @@ describe "argsplat warning" do
       "      block:",
       "        - name: nested",
       "          ansible.builtin.copy: \"{{ some_dict }}\"",
-    ], DICT_VARS)
+    ], dict_vars_for("nested"))
     success.must_equal(true, output)
     warning_count(output).must_equal(1)
     warning_origin(output).not_nil!.must_equal({"12", "33"})

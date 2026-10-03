@@ -176,6 +176,12 @@ describe "package plugin result key order (sweep7)" do
     keys.must_equal(["changed", "stdout", "stderr", "diff", "cache_updated", "cache_update_time", "stdout_lines", "stderr_lines", "failed"])
   end
 
+  # The remove target must be a package that is PRESENT on every host
+  # running the suite (CI's job image and dev boxes alike), or apt's
+  # --simulate has nothing to remove and the bare no-op shape registers
+  # instead of the simulate one. `bash` is installed on both and is not
+  # apt-essential, so `apt-get -s remove bash` yields the real REMOVED
+  # plan. Check mode is read-only, so this touches no real package state.
   it "registers a check-mode remove as the --simulate shape too" do
     keys = run_registered_dump(<<-YAML)
       - name: repro
@@ -185,7 +191,7 @@ describe "package plugin result key order (sweep7)" do
         tasks:
           - name: check remove
             ansible.builtin.package:
-              name: 7zip
+              name: bash
               state: absent
             check_mode: true
             register: r
