@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1457`.**
+**Currently at `0.9.1458`.**
 
 ## Open gaps
 
@@ -73,27 +73,13 @@ and fixed and when.
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
 - **Console warnings real prints that krikri does not:** the `[WARNING]: Using a template for task args is unsafe ...`
-  block now matches real for `module: "{{ dict }}"`/`args: "{{ dict }}"` (once per task, not for templated values,
-  free-form modules or `when: false`), except for `{% ... %}`/`{# ... #}` string args (real warns; krikri does not -
-  those values already resolve differently) and handler tasks (krikri's handler args expansion fails earlier); and the
-  collection-redirect `[DEPRECATION WARNING]: community.mysql.<module> has been deprecated. Use ansible.mysql.<module>
-  instead ...` (with its `deprecations`/`warnings` result entries) for the redirected community.mysql modules, plus
-  the `Deprecation warnings can be disabled by setting deprecation_warnings=False in ansible.cfg.` trailer.
+  block is still missing for handler tasks (krikri's handler args expansion fails earlier).
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
   http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
   the fields krikri itself sends where real also records defaulted options; `docker_container`'s list options
   (`command`, `entrypoint`, `volumes`, `ports`) have their own JSON wire in the parser (other modules' YAML lists use
   the generic comma-joined wire - a list element containing a comma is ambiguous there).
-- **MySQL driver gaps found while verifying:** (1) `mysql_info` now honours `exclude_fields:` and
-  `filter:` as a YAML list (literal or passed through a variable/templated dict), comma string and `!name` exclusions and warns like real for an unknown element; still open:
-  `connector_name`/`connector_version` are `"Unknown"` (real reports its Python driver, `pymysql`/its version; krikri has none); `users`/`users_info` omit
-  `authentication_string`. (2) `mysql_user` with no `plugin:` succeeds on MySQL 8.4 where real fails (its default
-  `mysql_native_password` plugin no longer exists there).
-- **Missing keys in otherwise-pinned results:** `uri` lacks real's always-present `cookies`/`cookies_string`;
-  `archive` lacks `expanded_exclude_paths`; `git_config`'s write path lacks real's `diff`;
-  `get_certificate` returns the full `X509CertInfo` key set where real returns ten (extras trail);
-  `hostvars` of a host created by `add_host` lacks the ~20 magic variables real defines.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both
