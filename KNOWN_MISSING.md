@@ -45,14 +45,16 @@ and fixed and when.
     (`dnf`/`dnf5`/`yum`/`*_versionlock`) and `gem`/`rpm_key` are already verified this way (the rpm family and
     `gem` inside a fresh `krikri-fedora-compat` container per engine, real ansible-core 2.19.11 pip-installed
     there; real's `dnf` check mode additionally needs `python3-libdnf5` preinstalled in the container).
-  - *Needs a real host with root and a real kernel - verify on Atlantic.net via `krikri-role-tester`
-    (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
+  - *Needs a real host with root and a real kernel - verify on Atlantic.net (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
     `user`/`group`/`authorized_key`/`known_hosts` (real's `authorized_key` param-echo order also depends
     on the invocation), `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
     `lvg`/`lvol`/`parted`/`zfs`, `virt_net`, `mount_facts`, the real-mutation variants of
     `mount`/`modprobe`/`iptables` (their check-mode/stub shapes are already pinned), `synchronize`,
     `subversion`, `snap`/`homebrew`/`easy_install`/`maven_artifact`/`java_cert` (needs a JDK/keytool),
     `apache2_module`, `openssl_csr_info`.
+    Not startable today: `krikri-role-tester` only runs Galaxy roles and `report` only diffs PLAY RECAP counters, so
+    this first needs a harness - probe roles (one task per module, `register:` + `debug: {{ r | to_json }}`), a
+    queue entry form for a local role directory, and a compare step on the two engines' dumped result keys/order.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
     `nsupdate`, `rabbitmq_*`.
