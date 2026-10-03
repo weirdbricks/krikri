@@ -424,3 +424,48 @@ describe "yum_repository plugin result key order (sweep8)" do
     end
   end
 end
+describe "deb822_repository plugin result key order (sweep8)" do
+  # Real 2.19.11 deb822_repository.py exits both success paths with
+  # exit_json(repo=repo, changed=changed, dest=sources_filename,
+  # key_filename=signed_by_filename) - repo FIRST (it is the file
+  # content), no msg, and the SAME order on the present and absent
+  # exits: the absent one reports repo=None and leaves key_filename at
+  # the last probed ext (/etc/apt/keyrings/<slug>.gpg) even when nothing
+  # existed. key_filename is a real path only when signed_by was a URL.
+  # Live-verified on this host in check mode (unprivileged - the
+  # mutating /etc/apt/sources.list.d write needs root but shares this
+  # one exit_json per path). The "Would write ..."/"Repository
+  # added"/"already absent" msgs were krikri's own - dropped.
+
+  private DEB822_PLAY = <<-YAML
+    - name: repro
+      hosts: localhost
+      gather_facts: false
+      connection: local
+      tasks:
+        - name: deb822 task
+          ansible.builtin.deb822_repository:
+            name: "korepo-NAME"
+            types: [deb]
+            uris: ["https://example.invalid/ko"]
+            suites: [stable]
+            STATE_SLOT
+          check_mode: true
+          register: r
+        - name: dump
+          ansible.builtin.copy:
+            content: |-
+              {{ r | to_json }}
+            dest: KRIKRI_DUMP_PATH
+    YAML
+
+  it "registers a check-mode add as repo, changed, dest, key_filename" do
+    keys = run_registered_dump(DEB822_PLAY.gsub("STATE_SLOT", ""))
+    keys.must_equal(%w[repo changed dest key_filename failed])
+  end
+
+  it "registers an absent no-op in the same shape" do
+    keys = run_registered_dump(DEB822_PLAY.gsub("STATE_SLOT", "state: absent"))
+    keys.must_equal(%w[repo changed dest key_filename failed])
+  end
+end
