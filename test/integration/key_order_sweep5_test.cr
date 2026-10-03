@@ -208,3 +208,9 @@ describe "pamd plugin result key order" do
     result.as_h.keys.must_equal(["changed", "change_count", "backupdest"])
   end
 end
+
+# apt_key's order pins live in test/integration/apt_key_test.cr (they
+# need that file's apt-key shim + gpg fixtures; this host has no
+# apt-key binary at all - Debian 13 dropped it - and the gpg-backed
+# shim run against real ansible 2.19.11 confirmed the r-dict order
+# [changed, id, short_id, fp, key_id, before(, after)]).
