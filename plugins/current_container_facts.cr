@@ -53,7 +53,13 @@ module Krikri
         "ansible_module_container_id"         => JSON::Any.new(container_id),
         "ansible_module_container_type"       => JSON::Any.new(container_type),
       }
-      PluginResult.new(changed: false, failed: false, msg: "", ansible_facts: JSON::Any.new(facts))
+      # Real current_container_facts.py's single exit is
+      # module.exit_json(ansible_facts={...}) - no changed (round 994002
+      # kop_misc2 key-order capture: real registers ansible_facts, then
+      # the controller backfills failed, then changed).
+      PluginResult.new(changed: false, failed: false, msg: "",
+        omit_changed: true, ansible_facts: JSON::Any.new(facts),
+        key_order: ["ansible_facts"])
     end
 
     private def read_file(path : String) : String?

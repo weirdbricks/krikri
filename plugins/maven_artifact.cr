@@ -72,6 +72,21 @@ module Krikri
     end
 
     def execute : PluginResult
+      # Real maven_artifact passes no supports_check_mode=True to its
+      # AnsibleModule, so real Ansible's action plugin never runs the
+      # module under check mode at all - the task skips with "remote
+      # module (...) does not support check mode" (round 994002
+      # kop_misc2: registered skipped, msg, failed, changed; the recap
+      # shows skipping where this plugin used to run the download and
+      # count changed). Same shape as tempfile/wait_for's identical
+      # gate.
+      if true?(@params["_ansible_check_mode"]?)
+        invoked = @params["_module_name"]? || "community.general.maven_artifact"
+        return PluginResult.new(changed: false, failed: false,
+          msg: "remote module (#{invoked}) does not support check mode", skipped: true,
+          omit_changed: true, key_order: ["skipped", "msg"])
+      end
+
       group_id = @params["group_id"]?
       artifact_id = @params["artifact_id"]?
       dest = @params["dest"]?
@@ -202,15 +217,113 @@ module Krikri
         end
       end
 
-      return PluginResult.new(changed: false, failed: false, msg: "artifact already present",
-        dest: final_dest, state: "present") if prev_state == "present"
+      return artifact_result(final_dest, false, group_id, artifact_id,
+        version_str, classifier, extension, repository_url) if prev_state == "present"
 
-      download_result = download(artifact_url, final_dest, username, password, validate_certs, local, verify_download, checksum_alg)
+      download_result = download(artifact_url, final_dest, username, password, validate_certs, local, verify_download, checksum_alg,
+        "Failed to download artifact #{artifact_display(group_id.not_nil!, artifact_id.not_nil!, version_str, classifier, extension)}")
       return download_result if download_result.is_a?(PluginResult)
 
-      PluginResult.new(changed: true, failed: false, msg: "Artifact downloaded",
-        dest: final_dest, group_id: group_id, artifact_id: artifact_id,
-        version: version_str, repository_url: repository_url)
+      artifact_result(final_dest, true, group_id, artifact_id,
+        version_str, classifier, extension, repository_url)
+    end
+
+    # Real Artifact.__str__: g:a:version, with the extension spliced in
+    # when it is not jar and the classifier after it when given - the
+    # coordinate string the downloader's failure message echoes.
+    private def artifact_display(group_id : String, artifact_id : String, version : String,
+                                 classifier : String, extension : String) : String
+      if !classifier.empty?
+        "#{group_id}:#{artifact_id}:#{extension}:#{classifier}:#{version}"
+      elsif extension != "jar"
+        "#{group_id}:#{artifact_id}:#{extension}:#{version}"
+      else
+        "#{group_id}:#{artifact_id}:#{version}"
+      end
+    end
+
+    # Real main()'s two exit shapes: the changed download echoes the
+    # artifact coordinates before `changed`, the no-op exits with
+    # state/dest/changed only - then _return_formatted's add_path_info
+    # OVERWRITES `state` with the dest file's kind and appends the stat
+    # block (uid, gid, owner, group, mode, size) when the path exists
+    # (round 994002 kop_misc2: download registers state, dest,
+    # group_id, artifact_id, version, classifier, extension,
+    # repository_url, changed, uid, gid, owner, group, mode, size,
+    # failed; the no-op registers state, dest, changed, uid, ... -
+    # state "file" even when state=absent was requested, because real
+    # never deletes the file).
+    private def artifact_result(final_dest : String, changed : Bool, group_id : String?,
+                                artifact_id : String?, version : String, classifier : String,
+                                extension : String, repository_url : String) : PluginResult
+      order = if changed
+                ["state", "dest", "group_id", "artifact_id", "version", "classifier",
+                 "extension", "repository_url", "changed", "uid", "gid", "owner", "group", "mode", "size"]
+              else
+                ["state", "dest", "changed", "uid", "gid", "owner", "group", "mode", "size"]
+              end
+      result = PluginResult.new(changed: changed, failed: false, key_order: order)
+      if changed
+        result.extra["group_id"] = JSON::Any.new(group_id.not_nil!)
+        result.extra["artifact_id"] = JSON::Any.new(artifact_id.not_nil!)
+        result.extra["version"] = JSON::Any.new(version)
+        result.extra["classifier"] = JSON::Any.new(classifier)
+        result.extra["extension"] = JSON::Any.new(extension)
+        result.extra["repository_url"] = JSON::Any.new(repository_url)
+      end
+      result.extra["dest"] = JSON::Any.new(final_dest)
+      if stat = path_stat(final_dest)
+        result.extra["uid"] = JSON::Any.new(stat[:uid])
+        result.extra["gid"] = JSON::Any.new(stat[:gid])
+        result.extra["owner"] = JSON::Any.new(stat[:owner])
+        result.extra["group"] = JSON::Any.new(stat[:group])
+        result.extra["mode"] = JSON::Any.new(stat[:mode])
+        result.extra["size"] = JSON::Any.new(stat[:size])
+        result.extra["state"] = JSON::Any.new(stat[:kind])
+      else
+        result.extra["state"] = JSON::Any.new(@params["state"]? || "present")
+      end
+      result
+    end
+
+    # add_path_info's stat block, same '0%03o' octal-string rendering
+    # known_hosts.cr uses: uid/gid ints, owner/group names, size int,
+    # and the path kind (link/directory/hard/file) that overwrites the
+    # module's own state value. nil when the path is gone.
+    private def path_stat(path : String) : NamedTuple(uid: Int64, gid: Int64, owner: String, group: String, mode: String, size: Int64, kind: String)?
+      io = IO::Memory.new
+      err = IO::Memory.new
+      status = Process.run("stat", {"-c", "%u|%g|%U|%G|%s|%a|%h|%F", "--", path}, output: io, error: err)
+      return nil unless status.success?
+
+      parts = io.to_s.strip.split("|")
+      return nil unless parts.size == 8
+
+      uid = parts[0].to_i64?
+      gid = parts[1].to_i64?
+      size = parts[4].to_i64?
+      nlink = parts[6].to_i64?
+      return nil unless uid && gid && size && nlink
+
+      kind = if parts[7].starts_with?("symbolic link")
+               "link"
+             elsif parts[7].starts_with?("directory")
+               "directory"
+             elsif nlink > 1
+               "hard"
+             else
+               "file"
+             end
+
+      {
+        uid:   uid,
+        gid:   gid,
+        owner: parts[2],
+        group: parts[3],
+        mode:  "0" + parts[5].rjust(3, '0'),
+        size:  size,
+        kind:  kind,
+      }
     end
 
     private def fetch_metadata(base : String, url : String, local : Bool) : (String | PluginResult)
@@ -219,10 +332,16 @@ module Krikri
         return File.exists?(path) ? File.read(path) : PluginResult.new(changed: false, failed: true,
           msg: "Failed to retrieve the maven metadata file: #{path} because can not find file: #{url}")
       end
-      get(url, nil, nil, true)
+      # Real find_latest_version_available/find_uri_for_artifact's
+      # failmsg echoes the repo-relative metadata path, not the URL.
+      get(url, "Failed to retrieve the maven metadata file: #{url.lchop(base)}", nil, nil, true)
     end
 
-    private def get(url : String, username : String?, password : String?,
+    # Real MavenDownloader._request's failure: ValueError(failmsg +
+    # " because of " + info['msg'] + "for URL " + url_to_use) - note
+    # real's own missing space before "for URL" (round 994002
+    # kop_misc2), and fetch_url's "HTTP Error <code>: <reason>" msg.
+    private def get(url : String, failmsg : String, username : String?, password : String?,
                     required : Bool, validate_certs : Bool = true) : (String | PluginResult)
       uri = URI.parse(url)
       client = HTTP::Client.new(uri)
@@ -238,8 +357,9 @@ module Krikri
         end
         response = client.get(uri.path + (uri.query ? "?#{uri.query}" : ""), headers)
         return response.body if response.status_code == 200
+        reason = response.status.try(&.description) || ""
         required ? PluginResult.new(changed: false, failed: true,
-          msg: "Failed to retrieve #{url} because of #{response.status_code} for URL #{url}") : ""
+          msg: "#{failmsg} because of HTTP Error #{response.status_code}: #{reason}for URL #{url}") : ""
       ensure
         client.try(&.close)
       end
@@ -247,7 +367,7 @@ module Krikri
 
     private def download(url : String, dest : String, username : String?, password : String?,
                          validate_certs : Bool, local : Bool, verify_download : Bool,
-                         checksum_alg : String) : PluginResult?
+                         checksum_alg : String, failmsg : String) : PluginResult?
       tmp = File.tempname("maven-artifact")
       begin
         if local
@@ -255,10 +375,17 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "Cannot retrieve the artifact to destination: Can not find local file: #{path}") unless File.exists?(path)
           FileUtils.cp(path, tmp)
+          # Real's local branch uses shutil.copy2 - the SOURCE file's
+          # mode travels to dest through the tempfile.
+          File.chmod(tmp, File.info(path).permissions)
         else
-          content = get(url, username, password, true, validate_certs)
+          content = get(url, failmsg, username, password, true, validate_certs)
           return content if content.is_a?(PluginResult)
           File.write(tmp, content.as(String))
+          # Real downloads into a tempfile.mkstemp file (mode 0600) and
+          # shutil.move preserves it - the registered stat block's mode
+          # for an HTTP-downloaded artifact is 0600 (round 994002).
+          File.chmod(tmp, 0o600)
         end
 
         if verify_download
@@ -286,7 +413,7 @@ module Krikri
         path = URI.parse(artifact_url).path
         return File.exists?(path) ? file_checksum(path, checksum_alg) : ""
       end
-      remote = get("#{artifact_url}.#{checksum_alg}", username, password, false, validate_certs)
+      remote = get("#{artifact_url}.#{checksum_alg}", "Failed to fetch checksum #{artifact_url}.#{checksum_alg}", username, password, false, validate_certs)
       return remote if remote.is_a?(PluginResult)
       body = remote.as(String)
       return PluginResult.new(changed: false, failed: true,

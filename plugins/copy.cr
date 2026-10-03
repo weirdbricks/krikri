@@ -441,12 +441,17 @@ module Krikri
       unless Dir.exists?(dest_dir)
         # The trailing `checksum` is real's copy ACTION plugin injecting
         # local_checksum into any module result that lacks one, failed
-        # results included (live-verified vs 2.19.11).
+        # results included (live-verified vs 2.19.11). The action also
+        # seeds `diff: []` before the module runs and `result.update`s
+        # the module's failure into it, so the registered failure leads
+        # with diff, then failed, msg, checksum - changed and exception
+        # trail after (round 994002 kop_misc2 helper_unfinished).
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: "Destination directory #{dest_dir} does not exist",
-          checksum: content_sha1
+          checksum: content_sha1,
+          key_order: ["diff", "failed", "msg", "checksum"]
         )
       end
 
@@ -715,7 +720,8 @@ module Krikri
             changed: false,
             failed: true,
             msg: "Destination directory #{dest_dir} does not exist",
-            checksum: src_sha1
+            checksum: src_sha1,
+            key_order: ["diff", "failed", "msg", "checksum"]
           )
         end
       end

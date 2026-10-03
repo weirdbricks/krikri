@@ -133,27 +133,37 @@ module Krikri
             end
             return ok(false)
           when "create", "start"
-            return ok(false) if net_state(uri, name) == "active"
+            if net_state(uri, name) == "active"
+              return command_result(command, JSON::Any.new(nil))
+            end
+            if check_mode
+              # Real start()/create(): the check-mode branch exits INSIDE
+              # the method with exit_json(changed=True).
+              return ok(true)
+            end
             run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), "start network #{name}", check_mode)
-            return ok(true, command, JSON::Any.new(0))
+            return command_result(command, JSON::Any.new(0))
           when "stop", "destroy"
             if net_state(uri, name) == "active"
+              if check_mode
+                return ok(true)
+              end
               run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), "destroy network #{name}", check_mode)
-              return ok(true, command, JSON::Any.new(0))
+              return command_result(command, JSON::Any.new(0))
             end
-            return ok(false, command, JSON::Any.new(nil))
+            return command_result(command, JSON::Any.new(nil))
           when "undefine"
             if net_exists?(uri, name)
               run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), "undefine network #{name}", check_mode)
-              return ok(true, command, JSON::Any.new(0))
+              return command_result(command, JSON::Any.new(0))
             end
-            return ok(false, command, JSON::Any.new(nil))
+            return command_result(command, JSON::Any.new(nil))
           when "get_xml"
             rc, stdout_text, _ = capture(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-dumpxml", name))
             return fail("network '#{name}' not found") unless rc == 0
-            return ok(false, command, JSON::Any.new(stdout_text))
+            return command_result(command, JSON::Any.new(stdout_text))
           when "status"
-            return ok(false, command, JSON::Any.new(net_state(uri, name)))
+            return command_result(command, JSON::Any.new(net_state(uri, name)))
           end
         elsif HOST_COMMANDS.includes?(command)
           case command
@@ -208,6 +218,18 @@ module Krikri
       elsif facts_key && facts_value
         res.extra[facts_key] = facts_value
       end
+      res
+    end
+
+    # Real's ENTRY_COMMANDS command results are exit_json(**{command:
+    # value}) with NO `changed` key at all - core() only sets
+    # res['changed'] on the state branch and the define/modify branches
+    # (round 994002 kop_misc2 helper_undefine: registered undefine,
+    # failed, changed). The task executor backfills failed, then
+    # changed, at the tail.
+    private def command_result(command : String, value : JSON::Any) : PluginResult
+      res = PluginResult.new(changed: false, failed: false, omit_changed: true, key_order: [command])
+      res.extra[command] = value
       res
     end
 

@@ -116,19 +116,22 @@ module Krikri
       # Real main() publishes {"deploy_helper": []} for state=absent -
       # an empty list, its deliberate "destroy the facts" sentinel - on
       # every non-failed exit, including the nothing-to-remove no-op.
-      return PluginResult.new(changed: false, failed: false, msg: "",
-        ansible_facts: {"deploy_helper" => [] of String}) unless exists[:exit_code] == 0
-      return PluginResult.new(changed: true, failed: false,
-        msg: "path #{path} would be removed",
-        ansible_facts: {"deploy_helper" => [] of String}) if check_mode
+      # Real's result dict is {state, ansible_facts} + changed - no msg
+      # (round 994002 kop_misc2: registered state, ansible_facts,
+      # changed, failed).
+      return deploy_helper_result("absent", absent_facts, changed: false) unless exists[:exit_code] == 0
+      return deploy_helper_result("absent", absent_facts, changed: true) if check_mode
 
       result = remote_exec("rm -rf #{Shell.single_quote(path)}")
       unless result[:exit_code] == 0
         return PluginResult.new(changed: false, failed: true,
           msg: "failed to remove #{path}: #{result[:stderr].strip}")
       end
-      PluginResult.new(changed: true, failed: false, msg: "",
-        ansible_facts: {"deploy_helper" => [] of String})
+      deploy_helper_result("absent", absent_facts, changed: true)
+    end
+
+    private def absent_facts : JSON::Any
+      JSON::Any.new({"deploy_helper" => JSON::Any.new([] of JSON::Any)})
     end
 
     # Creates the directory layout. Real main() runs create_path exactly
@@ -159,9 +162,7 @@ module Krikri
       changed = !missing.empty?
 
       if check_mode
-        return PluginResult.new(changed: changed, failed: false,
-          msg: missing.empty? ? "" : "release #{release} would be created",
-          ansible_facts: {"deploy_helper" => facts})
+        return deploy_helper_result("present", facts_any(facts), changed: changed)
       end
 
       unless missing.empty?
@@ -172,8 +173,28 @@ module Krikri
         end
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: "release #{release} created", release: release, new_release: release,
-        ansible_facts: {"deploy_helper" => facts})
+      # Real main()'s result dict for state=present is exactly
+      # {state, ansible_facts} + changed - no msg, and no top-level
+      # release/new_release echo (they live only inside the facts;
+      # round 994002 kop_misc2: registered state, ansible_facts,
+      # changed, failed).
+      deploy_helper_result("present", facts_any(facts), changed: changed)
+    end
+
+    private def facts_any(facts : Hash(String, String?)) : JSON::Any
+      JSON::Any.new({"deploy_helper" => JSON.parse(facts.to_json)})
+    end
+
+    # Real main()'s exit shape for every non-failed state: the result
+    # dict starts with `state`, carries ansible_facts for
+    # present/query/absent only, then changed - failed is backfilled by
+    # the task executor.
+    private def deploy_helper_result(state : String, facts : JSON::Any?, changed : Bool) : PluginResult
+      result = PluginResult.new(changed: changed, failed: false,
+        key_order: ["state", "ansible_facts", "changed"])
+      result.extra["state"] = JSON::Any.new(state)
+      result.extra["ansible_facts"] = facts if facts
+      result
     end
 
     # Real remove_unfinished_link(path): deletes the
@@ -314,7 +335,8 @@ module Krikri
         return failure
       end
 
-      PluginResult.new(changed: step[:changes] > 0, failed: false, msg: "")
+      PluginResult.new(changed: step[:changes] > 0, failed: false, msg: "", key_order: ["state", "changed"],
+        state: "clean")
     end
 
     # The state=clean branch real main() runs for BOTH state=clean and
@@ -383,14 +405,10 @@ module Krikri
         changes += step[:changes]
       end
 
-      msg = if link[:already]
-              "current already points at #{target}"
-            elsif check_mode
-              "current would be pointed at #{target}"
-            else
-              "current points at #{target}"
-            end
-      PluginResult.new(changed: changes > 0, failed: false, msg: msg)
+      # Real main()'s state=finalize result: {state, changed} - no msg
+      # (round 994002 kop_misc2: registered state, changed, failed).
+      PluginResult.new(changed: changes > 0, failed: false, key_order: ["state", "changed"],
+        state: "finalize")
     end
 
     # Real remove_unfinished_file(new_release_path): drops the
@@ -505,11 +523,10 @@ module Krikri
       # carry the same prospective release a follow-up present would use.
       release ||= Time.utc.to_s("%Y%m%d%H%M%S")
       facts = gather_facts(path, releases_path, shared_path, current_path, release)
-      # Real query's result carries only state/changed/ansible_facts -
+      # Real query's result carries only state/ansible_facts/changed -
       # no top-level releases list (the releases are only ever visible
       # as a directory listing, not published).
-      PluginResult.new(changed: false, failed: false, msg: "",
-        ansible_facts: {"deploy_helper" => facts})
+      deploy_helper_result("query", facts_any(facts), changed: false)
     end
   end
 end
