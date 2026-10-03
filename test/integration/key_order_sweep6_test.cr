@@ -449,6 +449,59 @@ describe "xml plugin result key order" do
   end
 end
 
+describe "git_config plugin result key order" do
+  it "serializes a setting change as msg-changed" do
+    dir = PluginSpecHelper.tmp_path("ko-gitcfg-1")
+    FileUtils.mkdir_p(dir)
+    result = PluginSpecHelper.run("git_config", {
+      "name"  => "user.name",
+      "value" => "Test User",
+      "scope" => "file",
+      "file"  => File.join(dir, "gitconfig"),
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["msg", "changed"])
+  end
+
+  it "serializes a converged no-op as changed-msg with the empty msg key kept" do
+    dir = PluginSpecHelper.tmp_path("ko-gitcfg-2")
+    FileUtils.mkdir_p(dir)
+    params = {
+      "name"  => "user.name",
+      "value" => "Test User",
+      "scope" => "file",
+      "file"  => File.join(dir, "gitconfig"),
+    }
+    PluginSpecHelper.run("git_config", params)
+    result = PluginSpecHelper.run("git_config", params)
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["changed", "msg"])
+    result["msg"].as_s.must_equal("")
+  end
+
+  it "serializes an unset change as msg-changed too" do
+    dir = PluginSpecHelper.tmp_path("ko-gitcfg-3")
+    FileUtils.mkdir_p(dir)
+    PluginSpecHelper.run("git_config", {
+      "name"  => "user.name",
+      "value" => "Test User",
+      "scope" => "file",
+      "file"  => File.join(dir, "gitconfig"),
+    })
+    result = PluginSpecHelper.run("git_config", {
+      "name"  => "user.name",
+      "state" => "absent",
+      "scope" => "file",
+      "file"  => File.join(dir, "gitconfig"),
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["msg", "changed"])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")
