@@ -500,6 +500,12 @@ module Krikri
         msg: msg,
         status: status,
         name: name,
+        # Real 2.19.11 registered systemd result (live-verified, started
+        # changed and unchanged identical): name, changed, status, state,
+        # failed; with enabled: given, enabled lands between status and
+        # state (name, changed, status, enabled, state, ansible_facts,
+        # failed, warnings). msg is krikri-only and trails the pins.
+        key_order: ["name", "changed", "status", "enabled", "state"]
       )
       result.extra["enabled"] = JSON.parse(result_enabled.to_json) unless result_enabled.nil?
       result.extra["state"] = JSON.parse(result_state.to_json) unless result_state.nil?

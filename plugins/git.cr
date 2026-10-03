@@ -414,7 +414,14 @@ module Krikri
             else
               "Already up to date"
             end
-      PluginResult.new(changed: changed, failed: false, msg: msg, before: before, after: after)
+      # Real 2.19.11 registered git orders (live-verified): fresh clone -
+      # changed, before, after, failed; idempotent update - changed,
+      # before, remote_url_changed, after, failed (the update path always
+      # carries remote_url_changed, even when false; krikri doesn't emit
+      # that key yet). One order list covers both since absent keys are
+      # skipped. msg is krikri-only and trails the pins.
+      PluginResult.new(changed: changed, failed: false, msg: msg, before: before, after: after,
+        key_order: ["changed", "before", "remote_url_changed", "after"])
     end
 
     # Real AnsibleModule argument validation: mutually_exclusive pairs and

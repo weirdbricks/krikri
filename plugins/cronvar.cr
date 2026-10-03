@@ -114,7 +114,10 @@ module Krikri
         msg: change_msg(changed),
         name: name,
         vars: PluginHelpers::CronVar.var_names(new_content),
-        cron_file: path
+        cron_file: path,
+        # Real 2.19.11 registered cronvar result (live-verified, changed
+        # and unchanged identical): vars, changed, failed.
+        key_order: ["vars", "changed"]
       )
       # Real module includes backup_file only when a backup was actually
       # retained (changed && backup; its None default is dropped by
@@ -146,7 +149,8 @@ module Krikri
         msg: change_msg(changed),
         name: name,
         vars: PluginHelpers::CronVar.var_names(new_content),
-        state: state
+        state: state,
+        key_order: ["vars", "changed"]
       )
     end
 

@@ -119,7 +119,9 @@ module Krikri
       return PluginResult.new(changed: false, failed: false, msg: "Sudoers rule #{name} already absent") unless File.exists?(file)
 
       File.delete(file) unless check_mode
-      PluginResult.new(changed: true, failed: false, msg: "Removed sudoers rule #{name}")
+      # Real 2.19.11 registered sudoers create result (live-verified):
+      # changed, failed - the module's wire is just {changed}.
+      PluginResult.new(changed: true, failed: false, msg: "Removed sudoers rule #{name}", key_order: ["changed"])
     end
 
     private def write_rule(file : String, name : String, sudoers_path : String, check_mode : Bool) : PluginResult
@@ -143,7 +145,7 @@ module Krikri
       File.write(file, content.as(String))
       File.chmod(file, FILE_MODE)
 
-      PluginResult.new(changed: true, failed: false, msg: "Wrote sudoers rule #{name}")
+      PluginResult.new(changed: true, failed: false, msg: "Wrote sudoers rule #{name}", key_order: ["changed"])
     end
 
     private def build_validated_content : {String?, PluginResult?}

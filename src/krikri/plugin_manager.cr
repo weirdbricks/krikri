@@ -1478,6 +1478,15 @@ module Krikri
     def self.normalize_module_result(result : JSON::Any) : JSON::Any
       hash = result.as_h? || return result
 
+      # Module warnings are NOT part of the module's wire dict in the
+      # registered result: real 2.19.11 (live-verified: user create with a
+      # warning, systemd with enabled:) registers ... ansible_facts,
+      # failed, warnings - the executor backfills failed (and changed)
+      # onto the wire dict and the module's warnings land AFTER that
+      # backfill. krikri's plugins emit warnings in the wire, so pull it
+      # out and re-append it after the failed/changed backfill.
+      warnings = hash.delete("warnings")
+
       unless hash.has_key?("failed")
         rc = hash["rc"]?.try(&.as_i?) || hash["rc"]?.try(&.as_s?).try(&.to_i?)
         hash["failed"] = JSON::Any.new(!(rc.nil? || rc == 0))
@@ -1486,12 +1495,15 @@ module Krikri
       # exception shape ({failed, msg} only - see PluginResult#to_json's
       # omit_changed); backfilling it with changed: false here would
       # turn a registered variable's undefined `changed` into a defined
-      # one, diverging from real Ansible's failure surface. Module wire
-      # results (success AND fail_json) always carry changed themselves,
-      # so this only ever holds back the deliberate no-changed failures.
+      # one, diverging from real Ansible's failure surface. Modules whose
+      # exit_json passes no changed (ping/getent/wait_for/...) get it
+      # backfilled here on success exactly like real's task executor;
+      # the deliberate no-changed failures skip that.
       if !hash.has_key?("changed") && !hash["failed"].as_bool?
         hash["changed"] = JSON::Any.new(false)
       end
+
+      hash["warnings"] = warnings if warnings
 
       JSON::Any.new(hash)
     end
