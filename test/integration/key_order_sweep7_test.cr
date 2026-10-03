@@ -100,6 +100,65 @@ describe "make plugin result key order (sweep7)" do
   end
 end
 
+describe "htpasswd plugin result key order (sweep7)" do
+  # Real 2.19.11 community.general htpasswd exit_json's (msg=...,
+  # changed=...) with NO path key in the result - live-verified create
+  # (msg, changed), idempotent rerun (msg, changed), update and remove.
+  it "registers a fresh create as msg, changed" do
+    path = unique_tmp("htpasswd-order")
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: create it
+            community.general.htpasswd:
+              path: #{path}
+              name: user1
+              password: secret1
+            register: r
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["msg", "changed", "failed"])
+  end
+
+  it "registers an idempotent rerun in the same order" do
+    path = unique_tmp("htpasswd-order-unchanged")
+    keys = run_registered_dump(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        tasks:
+          - name: create it
+            community.general.htpasswd:
+              path: #{path}
+              name: user1
+              password: secret1
+            register: r1
+          - name: rerun
+            community.general.htpasswd:
+              path: #{path}
+              name: user1
+              password: secret1
+            register: r2
+          - name: dump
+            ansible.builtin.copy:
+              content: |-
+                {{ r2 | to_json }}
+              dest: KRIKRI_DUMP_PATH
+    YAML
+
+    keys.must_equal(["msg", "changed", "failed"])
+  end
+end
+
 describe "expect plugin result key order (sweep7)" do
   # Real 2.19.11 expect.py builds result = dict(cmd, stdout, rc, start,
   # end, delta, changed) and the creates:/removes: skip exits
