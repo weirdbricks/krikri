@@ -61,14 +61,20 @@ module Krikri
                         get_package_list
                       end
 
+      # Real's response dict is built as changed/msg/locklist_pre/
+      # specs_toadd/specs_todelete, with locklist_post appended LAST
+      # (only then does the module exit) - so the post-locklist belongs
+      # after the specs lists, not next to the pre-locklist.
       PluginResult.new(
         changed: changed,
         failed: false,
         msg: msg,
+        include_empty_msg: true,
         locklist_pre: locklist_pre,
-        locklist_post: locklist_post,
         specs_toadd: specs_toadd,
         specs_todelete: specs_todelete,
+        locklist_post: locklist_post,
+        key_order: %w[changed msg locklist_pre specs_toadd specs_todelete locklist_post],
       )
     end
 

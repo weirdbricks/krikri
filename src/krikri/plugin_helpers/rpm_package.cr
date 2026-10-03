@@ -25,6 +25,143 @@ module Krikri
 
       private alias BatchOutcome = NamedTuple(changed: Bool, message: String?, output: String, failure: PluginResult?)
 
+      # ------------------------------------------------------------------
+      # Real ansible-core 2.19.11 `ansible.builtin.dnf` registered-result
+      # shapes (live-verified inside a fedora:41 container through
+      # `{{ r | to_json }}` on a registered task, one FRESH container per
+      # engine so both engines saw identical host state):
+      #
+      #   install/remove/latest (the module's own `response` dict, which
+      #   it initializes msg/changed/results/rc and exits with via
+      #   exit_json(**response)): results, changed, msg, rc, failed - msg
+      #   "Nothing to do" on a no-op, "" on a real transaction, results
+      #   holding "Installed: <name>-<version>-<release>.<arch>" /
+      #   "Removed: <nevra>" entries.
+      #   update_cache only (a literal exit_json(msg=, changed=, results=,
+      #   rc=) call, so THAT path keeps the module's kwargs order): msg,
+      #   changed, results, rc, failed - msg "Cache updated".
+      #   `list:` (list_items' exit_json(msg="", results=results)): msg,
+      #   results, failed.
+      #   failure (failure_response = msg/failures/results/rc): msg,
+      #   failures, results, rc, failed.
+      #
+      # `ansible_facts` and `warnings` also appear in real's registered
+      # result (the interpreter-discovery warning and the fact the
+      # controller merges in) but have no krikri equivalent - same as
+      # every other plugin pinned in this sweep.
+      #
+      # dnf5 shares these shapes except its `list:` path, which also
+      # carries rc (its own exit_json(msg="", results=results, rc=0)) -
+      # see dnf5.cr's #list_result_key_order.
+      DNF_TRANSACTION_ORDER = %w[results changed msg rc failed]
+      DNF_CACHE_ORDER       = %w[msg changed results rc failed]
+      # `list:` - real's exit_json(msg="", results=results) carries no
+      # `changed`, so the CONTROLLER backfills it AFTER `failed`; `rc`
+      # rides along because the 2.19.11 module's own list path reports it
+      # (both observed live, in this order, on fedora:41).
+      DNF_LIST_ORDER        = %w[msg results rc failed changed]
+      DNF_FAILURE_ORDER     = %w[msg failures results rc failed]
+
+      # The key order an includer uses for a `list:` query result - dnf's
+      # own list_items() passes no rc, dnf5's does (plugins/dnf5.cr
+      # overrides this).
+      private def list_result_key_order : Array(String)
+        DNF_LIST_ORDER
+      end
+
+      # The msg real reports for a cache-only refresh. dnf and dnf5 both
+      # use "Cache updated" (their own run() early-exit).
+      private def cache_updated_msg : String
+        "Cache updated"
+      end
+
+      # Real's `results` entries are built from the RPM database, not
+      # from the requested spec: "Installed: sl-5.02-22.fc41.x86_64".
+      # Ask rpm for the installed NEVRA of `pkg` (name-version-release
+      # .arch, epoch omitted when zero) and fall back to the requested
+      # spec for anything rpm cannot name (a group, a URL/local RPM, a
+      # virtual provide) - a stable, deterministic string either way.
+      private def rpm_nevra(pkg : String) : String
+        result = remote_exec_tolerating_unknown_repo(
+          "rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' #{quote_package(pkg)}"
+        )
+        out = result[:stdout].strip
+        return pkg if result[:exit_code] != 0 || out.empty? || out.includes?("not installed")
+        out
+      end
+
+      # The transaction success shape: results, changed, msg, rc, failed.
+      # Real leaves msg EMPTY on a transaction it performed and says
+      # "Nothing to do" when the transaction resolved to nothing, so an
+      # empty msg must actually be emitted (include_empty_msg).
+      private def transaction_result(changed : Bool, results : Array(String) = [] of String) : PluginResult
+        PluginResult.new(
+          changed: changed,
+          failed: false,
+          msg: changed ? "" : "Nothing to do",
+          include_empty_msg: true,
+          results: results,
+          rc: 0,
+          key_order: DNF_TRANSACTION_ORDER
+        )
+      end
+
+      # Real's check-mode shape: the module runs the SAME transaction
+      # planning but stops before touching the host, so it reports what
+      # it WOULD have done - `results` naming the RPMs involved and msg
+      # "Check mode: No changes made, but would have if not in check
+      # mode" (dnf.py) - with the same key order as the real
+      # transaction. This engine used to run the transaction for real
+      # under --check (installing/removing packages on the target!), and
+      # reported the ordinary transaction msg on top of that.
+      private def check_mode? : Bool
+        true?(@params["_ansible_check_mode"]?)
+      end
+
+      private def check_mode_msg : String
+        "Check mode: No changes made, but would have if not in check mode"
+      end
+
+      # The NEVRA the backend WOULD settle on for `pkg`, without
+      # installing it: the installed one when the package is already
+      # there, otherwise the newest row `dnf list --available` reports.
+      private def candidate_nevra(pkg : String) : String
+        return rpm_nevra(pkg) if package_installed?(pkg)
+        listed = remote_exec("#{pkg_manager_binary} list --available #{quote_package(pkg)}")
+        row = parse_dnf_list_output(listed[:stdout]).first?
+        row && row["nevra"].as_s? ? row["nevra"].as_s : pkg
+      end
+
+      # The check-mode twin of #transaction_result: same keys and order,
+      # but the "would have" msg and, crucially, no host mutation.
+      private def check_mode_transaction_result(changed : Bool, results : Array(String) = [] of String) : PluginResult
+        return transaction_result(false) unless changed
+
+        PluginResult.new(
+          changed: true,
+          failed: false,
+          msg: check_mode_msg,
+          results: results,
+          rc: 0,
+          key_order: DNF_TRANSACTION_ORDER
+        )
+      end
+
+      # Real's failure shape: msg, failures, results, rc, failed. The
+      # backend's own error text is what goes in `failures`.
+      private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1) : PluginResult
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: msg,
+          include_empty_msg: true,
+          failures: failures,
+          results: [] of String,
+          rc: rc,
+          key_order: DNF_FAILURE_ORDER
+        )
+      end
+
       private def early_result_for_empty_names(names : Array(String)) : PluginResult?
         return nil unless names.empty?
 
@@ -37,7 +174,11 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: result[:exit_code] != 0,
-            msg: result[:exit_code] == 0 ? "Package cache updated" : "Failed to update package cache: #{result[:stderr]}"
+            msg: result[:exit_code] == 0 ? cache_updated_msg : "Failed to update package cache: #{result[:stderr]}",
+            include_empty_msg: true,
+            results: [] of String,
+            rc: 0,
+            key_order: DNF_CACHE_ORDER
           )
         end
 
@@ -55,7 +196,11 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: false,
-            msg: "Nothing to do"
+            msg: "Nothing to do",
+            include_empty_msg: true,
+            results: [] of String,
+            rc: 0,
+            key_order: DNF_TRANSACTION_ORDER
           )
         end
 
@@ -150,14 +295,40 @@ module Krikri
 
         result = remote_exec("#{pkg_manager_binary} #{list_args(query)}")
 
+        # The magic query words are POSITIONAL subcommands on the dnf4
+        # CLI, but Fedora 41's dnf4 (libdnf5-backed) rejects them -
+        # `dnf list installed` exits 1 with "No matching packages to
+        # list", where the equivalent FLAG form works. Real's dnf module
+        # goes through the libdnf API and lists the installed set either
+        # way, so retry the magic words as flags before giving up.
+        if result[:exit_code] != 0 && (flag = list_flag(query))
+          retry_result = remote_exec("#{pkg_manager_binary} list #{flag}")
+          result = retry_result if retry_result[:exit_code] == 0
+        end
+
         results = parse_dnf_list_output(result[:stdout])
 
         PluginResult.new(
           changed: false,
           failed: result[:exit_code] != 0,
           msg: result[:exit_code] == 0 ? "" : "Failed to list packages: #{result[:stderr]}",
-          results: results
+          include_empty_msg: true,
+          results: results,
+          rc: 0,
+          key_order: list_result_key_order
         )
+      end
+
+      # The flag spelling of dnf's magic list words, or nil for a plain
+      # package spec (which has no flag form).
+      private def list_flag(query : String) : String?
+        case query
+        when "installed"             then "--installed"
+        when "available"             then "--available"
+        when "updates", "upgrades"   then "--upgrades"
+        when "extras"                then "--extras"
+        when "obsoletes"             then "--obsoletes"
+        end
       end
 
       # Parses `dnf list <spec>` / `yum list <spec>` output into result
@@ -188,6 +359,16 @@ module Krikri
           end
 
           fields = stripped.split(/ {2,}|\t+/)
+          if fields.size < 2
+            # Fedora's dnf prints a spec query's columns separated by a
+            # SINGLE space (`bash.x86_64 5.2.32-1.fc41 @System`), where
+            # the aligned multi-column listing splits on runs of 2+
+            # spaces. Fall back to a single-space split, which is only
+            # safe because the first column was just validated as
+            # `name.arch` below.
+            single = stripped.split(' ')
+            fields = single if single.size >= 2
+          end
           next unless fields.size >= 2
 
           name_arch = fields[0]
@@ -213,20 +394,27 @@ module Krikri
 
           version, release = version_field.split("-", 2)
 
-          repo = fields[2]?.try(&.gsub(/\A@/, ""))
-          nevra = "#{name}-#{epoch ? "#{epoch}:" : ""}#{version}-#{release}.#{arch}"
+          repo = fields[2]?
+          nevra = "#{name}-#{version}-#{release}.#{arch}"
 
+          # Real's own per-package dict (dnf.py's _package_dict,
+          # live-verified against ansible-core 2.19.11 on fedora:41):
+          # name, arch, epoch (ALWAYS a string, "0" when unset), release,
+          # version, repo (the literal column value - "@System" for an
+          # installed row, NOT de-@'d), nevra/envra both spelled
+          # name-version-release.arch, and yumstate naming which side of
+          # the query matched the row - there is no "state" key.
           entry = {
-            "name"    => JSON::Any.new(name),
-            "arch"    => JSON::Any.new(arch),
-            "epoch"   => epoch ? JSON::Any.new(epoch) : JSON::Any.new(nil),
-            "version" => JSON::Any.new(version),
-            "release" => JSON::Any.new(release),
-            "repo"    => repo ? JSON::Any.new(repo) : JSON::Any.new(nil),
-            "nevra"   => JSON::Any.new(nevra),
-            "envra"   => JSON::Any.new(nevra),
+            "name"     => JSON::Any.new(name),
+            "arch"     => JSON::Any.new(arch),
+            "epoch"    => JSON::Any.new(epoch || "0"),
+            "release"  => JSON::Any.new(release),
+            "version"  => JSON::Any.new(version),
+            "repo"     => repo ? JSON::Any.new(repo) : JSON::Any.new(nil),
+            "nevra"    => JSON::Any.new(nevra),
+            "envra"    => JSON::Any.new(nevra),
+            "yumstate" => JSON::Any.new(state || "available"),
           }
-          entry["state"] = JSON::Any.new(state) if state
 
           results << JSON::Any.new(entry)
         end
@@ -259,10 +447,17 @@ module Krikri
         classified = classify_install_packages(names, update_only)
         to_install = classified[:to_install]
         to_update = classified[:to_update]
-        already_installed = classified[:already_installed]
+
+        # --check: report what the transaction WOULD have done without
+        # running it (real's module resolves the goal, then stops).
+        if check_mode?
+          pending = to_install + to_update
+          return transaction_result(false) if pending.empty?
+          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
+        end
 
         changed = false
-        messages = [] of String
+        installed = [] of String
         all_output = [] of String
 
         # Install new packages
@@ -273,9 +468,12 @@ module Krikri
           failure = outcome[:failure]
           return failure if failure
 
-          changed ||= outcome[:changed]
-          if message = outcome[:message]
-            messages << message
+          if outcome[:changed]
+            changed = true
+            # Real builds `results` from the transaction's own package
+            # set, i.e. the RPM NEVRA that actually landed - not the
+            # requested spec (see #rpm_nevra).
+            installed.concat(to_install.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
           end
         end
 
@@ -287,26 +485,17 @@ module Krikri
           failure = outcome[:failure]
           return failure if failure
 
-          changed ||= outcome[:changed]
-          if message = outcome[:message]
-            messages << message
+          if outcome[:changed]
+            changed = true
+            installed.concat(to_update.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
           end
         end
 
-        # Report already installed
-        unless already_installed.empty?
-          messages << "Already installed: #{already_installed.join(", ")}"
-        end
-
-        msg = messages.empty? ? "No changes needed" : messages.join("; ")
-
-        PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          stdout: all_output.join("\n"),
-          exit_code: 0
-        )
+        # Real's no-op path reports NOTHING about the packages that were
+        # already there (msg "Nothing to do", empty results) - the
+        # "Already installed: ..." summary this used to build is a
+        # krikri-only shape, dropped to match.
+        transaction_result(changed, installed)
       end
 
       private def classify_install_packages(names : Array(String), update_only : Bool) : NamedTuple(to_install: Array(String), to_update: Array(String), already_installed: Array(String))
@@ -345,30 +534,31 @@ module Krikri
 
       private def handle_remove(names : Array(String), options : String) : PluginResult
         to_remove = [] of String
-        already_absent = [] of String
 
         # Check which packages need to be removed
         names.each do |pkg|
           if package_group?(pkg)
             # For groups, always try to remove (dnf handles if not installed)
             to_remove << pkg
-          else
-            if package_installed?(pkg)
-              to_remove << pkg
-            else
-              already_absent << pkg
-            end
+          elsif package_installed?(pkg)
+            to_remove << pkg
           end
         end
 
-        # Nothing to do
+        # Nothing to do - real's no-op shape (results [], msg "Nothing to
+        # do", rc 0), which says nothing about which packages were already
+        # absent.
         if to_remove.empty?
-          return PluginResult.new(
-            changed: false,
-            failed: false,
-            msg: "All packages already absent",
-            exit_code: 0
-          )
+          return transaction_result(false)
+        end
+
+        # Real's `results` entries name the RPM that was removed, so the
+        # NEVRA has to be read BEFORE the transaction erases it.
+        nevras = {} of String => String
+        to_remove.each { |pkg| nevras[pkg] = rpm_nevra(pkg) }
+
+        if check_mode?
+          return check_mode_transaction_result(true, to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" })
         end
 
         # Build remove command
@@ -381,24 +571,20 @@ module Krikri
         success = result[:exit_code] == 0
 
         if success
-          msg_parts = ["Removed: #{to_remove.join(", ")}"]
-          msg_parts << "Already absent: #{already_absent.join(", ")}" unless already_absent.empty?
-
           PluginResult.new(
             changed: true,
             failed: false,
-            msg: msg_parts.join("; "),
-            stdout: result[:stdout],
-            exit_code: 0
+            msg: "",
+            include_empty_msg: true,
+            results: to_remove.map { |pkg| "Removed: #{nevras[pkg]? || pkg}" },
+            rc: 0,
+            key_order: DNF_TRANSACTION_ORDER
           )
         else
-          PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to remove packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
+          failure_result(
+            "Failed to remove packages",
+            error_lines(result),
+            result[:exit_code] == 0 ? 1 : result[:exit_code]
           )
         end
       end
@@ -428,8 +614,14 @@ module Krikri
           end
         end
 
+        if check_mode?
+          pending = to_install + to_update
+          return transaction_result(false) if pending.empty?
+          return check_mode_transaction_result(true, pending.map { |pkg| "Installed: #{candidate_nevra(pkg)}" })
+        end
+
         changed = false
-        messages = [] of String
+        installed = [] of String
         all_output = [] of String
 
         unless to_install.empty?
@@ -439,9 +631,9 @@ module Krikri
           failure = outcome[:failure]
           return failure if failure
 
-          changed ||= outcome[:changed]
-          if message = outcome[:message]
-            messages << message
+          if outcome[:changed]
+            changed = true
+            installed.concat(to_install.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
           end
         end
 
@@ -452,21 +644,16 @@ module Krikri
           failure = outcome[:failure]
           return failure if failure
 
-          changed ||= outcome[:changed]
-          if message = outcome[:message]
-            messages << message
+          if outcome[:changed]
+            changed = true
+            installed.concat(to_update.map { |pkg| "Installed: #{rpm_nevra(pkg)}" })
           end
         end
 
-        msg = messages.empty? ? "Packages already at latest version" : messages.join("; ")
-
-        PluginResult.new(
-          changed: changed,
-          failed: false,
-          msg: msg,
-          stdout: all_output.join("\n"),
-          exit_code: 0
-        )
+        # `state: latest` on an already-latest host is real's ordinary
+        # no-op (results [], msg "Nothing to do") - not a "Packages
+        # already at latest version" summary of this engine's own making.
+        transaction_result(changed, installed)
       end
 
       private def run_install_batch(to_install : Array(String), options : String) : BatchOutcome
@@ -476,14 +663,7 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
-          return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to install packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )}
+          return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
         end
 
         # A requested name can be a virtual package already satisfied
@@ -548,14 +728,7 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
-          return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to update packages",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )}
+          return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to update packages", error_lines(result), result[:exit_code])}
         end
 
         # Check if anything was actually updated
@@ -564,6 +737,17 @@ module Krikri
         else
           {changed: false, message: nil, output: result[:stdout], failure: nil}
         end
+      end
+
+      # Real's failure shape carries the backend's own error lines in
+      # `failures` (failure_response['failures'] is appended to as the
+      # transaction goes wrong) - stderr first, then any stdout error
+      # lines, each stripped, so the list is deterministic.
+      private def error_lines(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Array(String)
+        lines = [] of String
+        result[:stderr].each_line { |line| lines << line.strip }
+        result[:stdout].each_line { |line| lines << line.strip }
+        lines.reject(&.empty?)
       end
 
       # The package-manager command each includer shells out to ("yum"
@@ -585,8 +769,16 @@ module Krikri
       # dnf5 - whose `list` takes `--installed`/`--available`/`--upgrades`
       # FLAGS instead - can override it. Default keeps the existing
       # single-quoted-positional behavior byte-for-byte.
+      # remote_exec hands the command to an ARGV splitter, not to a
+      # shell, so shell-quoting the query here passed the literal quotes
+      # through to dnf as part of the package spec: `list: installed`
+      # became `dnf list 'installed'`, which matches nothing ("No
+      # matching packages to list"), and `list: bash` silently returned
+      # an EMPTY results list instead of the package real's own
+      # `dnf list bash` reports (both live-verified against
+      # ansible-core 2.19.11 on fedora:41). Pass the spec through bare.
       private def list_args(query : String) : String
-        "list #{shell_single_quote(query)}"
+        "list #{query}"
       end
 
       private def remote_exec_tolerating_unknown_repo(cmd : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
@@ -647,26 +839,22 @@ module Krikri
 
         if success
           changed = result[:stdout].includes?("Removed:")
-
-          msg = changed ? "Removed unneeded packages" : "No unneeded packages to remove"
-
-          PluginResult.new(
-            changed: changed,
-            failed: false,
-            msg: msg,
-            stdout: result[:stdout],
-            exit_code: 0
-          )
+          # Real's autoremove has no prose summary of its own: it goes
+          # through the very same transaction result as any other dnf
+          # call, so a removal reports its `results` entries and a no-op
+          # reports "Nothing to do".
+          transaction_result(changed, autoremove_results(result[:stdout]))
         else
-          PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Autoremove failed",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
+          failure_result("Autoremove failed", error_lines(result), result[:exit_code])
         end
+      end
+
+      # The packages an autoremove/upgrade transaction reported removing,
+      # in real's `results` spelling. The dnf transaction summary lists
+      # them as "Removed:  <name>-<version>-<release>.<arch>", which is
+      # already exactly the string real's results array carries.
+      private def autoremove_results(output : String) : Array(String)
+        output.each_line.map(&.strip).select { |line| line.starts_with?("Removed:") }.map { |line| line.sub(/^Removed:\s*/, "") }.reject(&.empty?).to_a
       end
 
       private def handle_upgrade_all : PluginResult
@@ -680,26 +868,18 @@ module Krikri
         if success
           changed = result[:stdout].includes?("Upgraded:") ||
                     result[:stdout].includes?("Installed:")
-
-          msg = changed ? "System upgraded" : "All packages already up to date"
-
-          PluginResult.new(
-            changed: changed,
-            failed: false,
-            msg: msg,
-            stdout: result[:stdout],
-            exit_code: 0
-          )
+          transaction_result(changed, upgrade_results(result[:stdout]))
         else
-          PluginResult.new(
-            changed: false,
-            failed: true,
-            msg: "Failed to upgrade system",
-            stdout: result[:stdout],
-            stderr: result[:stderr],
-            exit_code: result[:exit_code]
-          )
+          failure_result("Failed to upgrade system", error_lines(result), result[:exit_code])
         end
+      end
+
+      # The packages an upgrade transaction touched, in real's `results`
+      # spelling - the transaction summary's own "Upgraded:" /
+      # "Installed:" lines, which are already the exact strings real
+      # puts in that array.
+      private def upgrade_results(output : String) : Array(String)
+        output.each_line.map(&.strip).select { |line| line.starts_with?("Upgraded:") || line.starts_with?("Installed:") }.reject(&.empty?).to_a
       end
 
       private def build_dnf_options : String

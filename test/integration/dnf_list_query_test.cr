@@ -60,7 +60,9 @@ describe "dnf/yum list: query mode" do
       first["version"].as_s.must_equal("5.14.0")
       first["release"].as_s.must_equal("427.13.1.el9_4")
       first["repo"].as_s.must_equal("baseos")
-      first["epoch"].as_s?.must_be_nil
+      # real's _package_dict reports epoch as a STRING always ("0" when
+      # unset) and spells nevra/envra WITHOUT it.
+      first["epoch"].as_s.must_equal("0")
       first["nevra"].as_s.must_equal("kernel-5.14.0-427.13.1.el9_4.x86_64")
 
       with_epoch = results[2].as_h
@@ -68,7 +70,7 @@ describe "dnf/yum list: query mode" do
       with_epoch["epoch"].as_s.must_equal("1")
       with_epoch["version"].as_s.must_equal("1.1.1k")
       with_epoch["release"].as_s.must_equal("9.el8_7")
-      with_epoch["nevra"].as_s.must_equal("openssl-libs-1:1.1.1k-9.el8_7.x86_64")
+      with_epoch["nevra"].as_s.must_equal("openssl-libs-1.1.1k-9.el8_7.x86_64")
     end
   end
 

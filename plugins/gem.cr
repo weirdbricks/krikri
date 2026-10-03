@@ -255,17 +255,21 @@ module Krikri
     # "already installed" texts and the raw gem output were krikri's own
     # borrows; dropped, npm-style). Live-verified in a Fedora 41
     # container for the changed install, the unchanged rerun and check
-    # mode (all register exactly {name, state, changed, failed}); the
-    # version-echo position is from module source (result["version"]
-    # only when truthy).
+    # mode (all register exactly {name, state, changed, failed}). The
+    # key ORDER pinned here is what real's REGISTERED result carries: the
+    # controller hoists `changed`/`failed` to the front of the task
+    # result, ahead of the module's own name/state/version keys (its
+    # module dict itself is still name/state/version/changed - see the
+    # source reading above); `warnings`/`ansible_facts` land between
+    # `failed` and `name` and have no krikri equivalent.
     private def gem_success(changed : Bool, name : String, version : String?) : PluginResult
       state = @params["state"]? || "present"
       if version
         PluginResult.new(changed: changed, failed: false, name: name, state: state, version: version,
-          key_order: %w[name state version changed])
+          key_order: %w[changed failed name state version])
       else
         PluginResult.new(changed: changed, failed: false, name: name, state: state,
-          key_order: %w[name state changed])
+          key_order: %w[changed failed name state])
       end
     end
 
