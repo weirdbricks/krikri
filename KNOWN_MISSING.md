@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1454`.**
+**Currently at `0.9.1455`.**
 
 ## Open gaps
 
@@ -72,12 +72,13 @@ and fixed and when.
   frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order. The PostgreSQL
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
-- **Console warnings real prints that krikri does not:** `[WARNING]: Using a template for task args is unsafe in some
-  situations (see ...#argsplat-unsafe)` for any task whose module args are a single templated value
-  (`module: "{{ some_dict }}"`); the collection-redirect `[DEPRECATION WARNING]: community.mysql.<module> has been
-  deprecated. Use ansible.mysql.<module> instead ...` (and the matching `deprecations`/`warnings` result entries) for
-  the redirected community.mysql modules; and the `Deprecation warnings can be disabled by setting
-  deprecation_warnings=False in ansible.cfg.` trailer that follows any deprecation.
+- **Console warnings real prints that krikri does not:** the `[WARNING]: Using a template for task args is unsafe ...`
+  block now matches real for `module: "{{ dict }}"`/`args: "{{ dict }}"` (once per task, not for templated values,
+  free-form modules or `when: false`), except for `{% ... %}`/`{# ... #}` string args (real warns; krikri does not -
+  those values already resolve differently) and handler tasks (krikri's handler args expansion fails earlier); and the
+  collection-redirect `[DEPRECATION WARNING]: community.mysql.<module> has been deprecated. Use ansible.mysql.<module>
+  instead ...` (with its `deprecations`/`warnings` result entries) for the redirected community.mysql modules, plus
+  the `Deprecation warnings can be disabled by setting deprecation_warnings=False in ansible.cfg.` trailer.
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
   http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
