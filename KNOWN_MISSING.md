@@ -34,37 +34,31 @@ and fixed and when.
 
 ## Open gaps
 
-- **Registered-result key order is verified per plugin, not engine-wide.** `PluginResult#key_order`
-  pins a plugin's keys to real 2.19.11's order (live-verified with `{{ r | to_json }}` dumps on both
-  engines); a plugin without it emits krikri's historical `changed`-first shape
-  (`grep -L key_order plugins/*.cr`; `setup`/`gather_facts`/`wait_for_connection` are handled outside
-  their plugin files). What is still unpinned, by how it can be verified:
-  - *Doable on the dev box with rootless podman (a throwaway container runs the service or distro; both
-    engines run against it):* nothing left. The Docker plugins, `docker_image_build` (BuildKit via rootless buildkitd and a
-    buildx `remote` driver), `podman_image`, the rpm family
-    (`dnf`/`dnf5`/`yum`/`*_versionlock`) and `gem`/`rpm_key` are already verified this way (the rpm family and
-    `gem` inside a fresh `krikri-fedora-compat` container per engine, real ansible-core 2.19.11 pip-installed
-    there; real's `dnf` check mode additionally needs `python3-libdnf5` preinstalled in the container).
-  - *Needs a real host with root and a real kernel - verify on Atlantic.net (the dev box has no passwordless sudo and rootless containers have no netfilter/mount/modprobe):*
-    `user`/`group`/`authorized_key`/`known_hosts` (real's `authorized_key` param-echo order also depends
-    on the invocation), `sysctl`, `selinux`/`seboolean`/`sefcontext`/`seport`, `ufw`/`firewalld`,
-    `lvg`/`lvol`/`parted`/`zfs`, `virt_net`, `mount_facts`, the real-mutation variants of
-    `mount`/`modprobe`/`iptables` (their check-mode/stub shapes are already pinned), `synchronize`,
-    `subversion`, `snap`/`homebrew`/`easy_install`/`maven_artifact`/`java_cert` (needs a JDK/keytool),
-    `apache2_module`, `openssl_csr_info`.
-    Not startable today: `krikri-role-tester` only runs Galaxy roles and `report` only diffs PLAY RECAP counters, so
-    this first needs a harness - probe roles (one task per module, `register:` + `debug: {{ r | to_json }}`), a
-    queue entry form for a local role directory, and a compare step on the two engines' dumped result keys/order.
+- **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
+  omit-`changed` wire) pins a plugin's keys to real 2.19.11's order. Everything below was compared against
+  real on the same host, cold and warm, with `{{ r | to_json }}` probe roles
+  (`testing/keyorder_probes/kop_*`, run through `krikri-role-tester run` with `local:` queue entries and compared
+  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1465: 168 probes on 7 roles, all identical on
+  Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN). Verified on real hosts: `user`, `group`,
+  `authorized_key`, `known_hosts`, `sysctl`, `mount_facts`, `modprobe`, `ufw`, `apt` (install/no-op),
+  `lvg`, `lvol`, `parted`, `zfs`, `mount`, `synchronize`, `subversion`, `apache2_module`, `java_cert`,
+  `openssl_csr`, `openssl_csr_info`, `deploy_helper`, `easy_install`, `maven_artifact`,
+  `current_container_facts`, `virt_net`, `selinux`, `seboolean`, `sefcontext`, `seport`, `firewalld`,
+  `service` (systemd path), `dnf`, `copy` (failure shapes) - and, on the dev box in containers, the Docker
+  plugins, `docker_image_build`, `podman_image`, the rpm family and `gem`/`rpm_key`. Some of these have no
+  literal `key_order` call (`grep -L key_order plugins/*.cr` lists them) because their shape comes from an
+  omit-`changed` wire or the controller backfill; `setup`/`gather_facts`/`wait_for_connection`/`fail` are
+  handled outside their plugin files. Not verified, and why:
+  - `snap` (snapd is too heavy for a probe round) and `homebrew` (macOS-only): deliberately not probed.
+  - The real-mutation variants of `iptables` (its check-mode/stub shapes are pinned); not probed.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
     `nsupdate`, `rabbitmq_*`.
-- **FAILED-result key order and `exception` now match real for plugin-path, argspec-validation and action-level
-  failures** (`command`/`shell`, `slurp`, `lineinfile`, `blockinfile`, `replace`, `wait_for`, `file`/`stat`,
-  `fail`, `assert`, `copy`, `template`, `unarchive`, `add_host`, `group_by`, `set_fact`, `debug`; real's per-module
-  orders: `fail`/`slurp`: `failed, msg, changed, exception`; `assert`: `failed, evaluated_to, assertion, msg, changed,
-  exception`; `copy`/`template`: `failed, msg, exception, changed`; `unarchive`: `failed, exception, msg, changed`).
-  `include_vars` failures (missing file/dir, `Searched in:` list, `name:` warning) and `set_fact`'s invalid-name error block
-  now match real's registered result and console output as well.
+  - Known value (not shape) differences left as they are: `ufw`'s `commands` list omits the `ufw --version`
+    and state-path commands real runs; `apt`'s check-mode `stdout` is empty where real captures the
+    `--simulate` output; `apt` install/remove *failure* wording has no capture; `openssl_csr_info`
+    `public_key_fingerprints` lacks `shake_128`/`shake_256`, and `openssl_csr`'s `diff.after.public_key_fingerprints`
+    carries the full set where real carries only `sha256`.
 - **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
   now print/register real's deprecation; connection failures use libpq's own wording (refused, wrong password,
   missing database, missing unix socket - byte-identical to real); `postgresql_query` without a database name warns

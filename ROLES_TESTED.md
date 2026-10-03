@@ -9712,3 +9712,17 @@ All clean, cold and warm, static musl release build. Exercises `add_host` hostva
 | `geerlingguy.git` | ubuntu | ✅ clean (round 991007, 0.9.1459 release). Times: cold py 9.57s vs cr 4.60s; warm py 9.33s vs cr 0.92s. |
 | `geerlingguy.postgresql` | ubuntu | ✅ clean (round 991008, 0.9.1459 release). Times: cold py 75.44s vs cr 58.57s; warm py 23.72s vs cr 1.79s. |
 | `geerlingguy.mysql` | ubuntu | ✅ clean (round 991009, 0.9.1459 release). Times: cold py 100.43s vs cr 66.05s; warm py 22.94s vs cr 0.97s. |
+
+## Round 995000-995006 (2026-10-03): result key-order probe roles (testing/keyorder_probes), 0.9.1465
+
+Local probe roles, not Galaxy roles: each probed task registers its result and dumps it as `KEYORDER|<probe>|<json>`; `krikri-role-tester keyorder` compares the ordered top-level keys between real ansible-core 2.19.11 and krikri. All 168 probes identical cold and warm, every PLAY RECAP CLEAN. Earlier rounds 992000-994003 found the divergences these fixes closed (see `git log`).
+
+| Role | OS | Status |
+|---|---|---|
+| `kop_accounts` | ubuntu | ✅ clean, 22/22 probes identical cold and warm (round 995000, 0.9.1465 release). Times: cold py 28.72s vs cr 5.56s; warm py 30.49s vs cr 1.13s. |
+| `kop_kernel` | ubuntu | ✅ clean, 12/12 probes identical cold and warm (round 995001, 0.9.1465 release). Times: cold py 23.07s vs cr 5.51s; warm py 16.85s vs cr 1.05s. |
+| `kop_firewall` | ubuntu | ✅ clean, 8/8 probes identical cold and warm (round 995002, 0.9.1465 release). Times: cold py 17.66s vs cr 7.16s; warm py 21.48s vs cr 2.83s. |
+| `kop_storage` | ubuntu | ✅ clean, 24/24 probes identical cold and warm (round 995003, 0.9.1465 release). Times: cold py 77.05s vs cr 29.64s; warm py 55.10s vs cr 3.82s. |
+| `kop_pkg_misc` | ubuntu | ✅ clean, 31/31 probes identical cold and warm (round 995004, 0.9.1465 release). Times: cold py 116.26s vs cr 66.83s; warm py 62.61s vs cr 13.89s. |
+| `kop_misc2` | ubuntu | ✅ clean, 39/39 probes identical cold and warm (round 995005, 0.9.1465 release). Times: cold py 133.85s vs cr 90.67s; warm py 56.72s vs cr 3.76s. |
+| `kop_rocky` | rocky | ✅ clean, 32/32 probes identical cold and warm (round 995006, 0.9.1465 release). Times: cold py 62.34s vs cr 34.40s; warm py 51.16s vs cr 20.52s. |
