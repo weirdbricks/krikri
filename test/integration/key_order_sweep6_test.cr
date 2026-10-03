@@ -126,6 +126,30 @@ describe "openssl_publickey_info plugin result key order" do
   end
 end
 
+describe "openssl_dhparam plugin result key order" do
+  it "serializes a fresh 512-bit generation as size-filename-changed" do
+    dir = PluginSpecHelper.tmp_path("ko-dh1")
+    FileUtils.mkdir_p(dir)
+    result = PluginSpecHelper.run("openssl_dhparam",
+      {"path" => File.join(dir, "dh.pem"), "size" => "512"})
+
+    result["changed"].as_bool.must_equal(true)
+    result.as_h.keys.must_equal(["size", "filename", "changed", "msg"])
+  end
+
+  it "keeps the same order on an idempotent unchanged rerun" do
+    dir = PluginSpecHelper.tmp_path("ko-dh2")
+    FileUtils.mkdir_p(dir)
+    PluginSpecHelper.run("openssl_dhparam",
+      {"path" => File.join(dir, "dh.pem"), "size" => "512"})
+    result = PluginSpecHelper.run("openssl_dhparam",
+      {"path" => File.join(dir, "dh.pem"), "size" => "512"})
+
+    result["changed"].as_bool.must_equal(false)
+    result.as_h.keys.must_equal(["size", "filename", "changed", "msg"])
+  end
+end
+
 describe "openssl_csr plugin result key order" do
   it "serializes a generated CSR with extension keys in real's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")

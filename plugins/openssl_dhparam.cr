@@ -64,6 +64,13 @@ module Krikri
       "unsafe_writes"         => [] of String,
     }
 
+    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
+    # unchanged, check-mode and state=absent runs (real emits no msg key
+    # at all here; krikri's msg stays unlisted and trails, per the
+    # get_url convention for keys real doesn't emit).
+    SUCCESS_KEY_ORDER = %w[size filename changed failed warnings]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -109,10 +116,10 @@ module Krikri
 
       if valid
         changed = apply_attrs(path)
-        return PluginResult.new(changed: changed, failed: false, msg: "DH parameters already valid at #{path}", size: size, filename: path)
+        return PluginResult.new(changed: changed, failed: false, msg: "DH parameters already valid at #{path}", key_order: SUCCESS_KEY_ORDER, size: size, filename: path)
       end
 
-      return PluginResult.new(changed: true, failed: false, msg: "Would generate DH parameters at #{path} (check mode)", size: size, filename: path) if check_mode
+      return PluginResult.new(changed: true, failed: false, msg: "Would generate DH parameters at #{path} (check mode)", key_order: SUCCESS_KEY_ORDER, size: size, filename: path) if check_mode
 
       if backend == "cryptography"
         # cryptography's dh.generate_parameters raises ValueError for
@@ -171,7 +178,7 @@ module Krikri
         File.delete(tmp) if File.exists?(tmp)
       end
       apply_attrs(path)
-      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", size: size, filename: path)
+      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", key_order: SUCCESS_KEY_ORDER, size: size, filename: path)
     end
 
     BIO_CTRL_INFO = 3
@@ -231,12 +238,12 @@ module Krikri
 
     private def remove(path : String, check_mode : Bool) : PluginResult
       exists = File.exists?(path)
-      return PluginResult.new(changed: exists, failed: false, msg: exists ? "Would remove #{path} (check mode)" : "#{path} already absent") if check_mode
-      return PluginResult.new(changed: false, failed: false, msg: "#{path} already absent") unless exists
+      return PluginResult.new(changed: exists, failed: false, msg: exists ? "Would remove #{path} (check mode)" : "#{path} already absent", key_order: SUCCESS_KEY_ORDER) if check_mode
+      return PluginResult.new(changed: false, failed: false, msg: "#{path} already absent", key_order: SUCCESS_KEY_ORDER) unless exists
 
       backup(path)
       File.delete(path)
-      PluginResult.new(changed: true, failed: false, msg: "Removed #{path}")
+      PluginResult.new(changed: true, failed: false, msg: "Removed #{path}", key_order: SUCCESS_KEY_ORDER)
     end
 
     # Mirrors DHParameterOpenSSL#_check_params_valid, natively: parse the
@@ -319,7 +326,7 @@ module Krikri
         File.delete(tmp) if File.exists?(tmp)
       end
       apply_attrs(path)
-      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", size: size, filename: path)
+      PluginResult.new(changed: true, failed: false, msg: "Generated DH parameters at #{path}", key_order: SUCCESS_KEY_ORDER, size: size, filename: path)
     end
 
     private def cli_failure_stderr(size : Int32) : String
