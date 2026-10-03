@@ -125,3 +125,23 @@ describe "openssl_publickey_info plugin result key order" do
     ])
   end
 end
+
+describe "openssl_csr plugin result key order" do
+  it "serializes a generated CSR with extension keys in real's order" do
+    dir = PluginSpecHelper.tmp_path("ko-csr1")
+    FileUtils.mkdir_p(dir)
+    key = File.join(dir, "key.pem")
+    PluginSpecHelper.run("openssl_privatekey", {"path" => key, "size" => "2048"})
+    result = PluginSpecHelper.run("openssl_csr", {
+      "path"           => File.join(dir, "req.csr"),
+      "privatekey_path" => key,
+      "common_name"    => "test.example.com",
+    })
+
+    result.as_h.keys.must_equal([
+      "privatekey", "subject", "subjectAltName", "keyUsage", "extendedKeyUsage",
+      "basicConstraints", "ocspMustStaple", "name_constraints_permitted",
+      "name_constraints_excluded", "filename", "changed",
+    ])
+  end
+end
