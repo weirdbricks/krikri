@@ -233,8 +233,31 @@ describe "sudoers plugin result key order" do
   end
 end
 
+# Whether this host's `systemctl show` answers for a real unit. True on a
+# dev box; false on a container with no systemd (no systemctl binary, or
+# one that cannot reach the system bus). Used by the systemd key-order pin
+# to skip rather than assert against a play that correctly cannot reach
+# its check-mode state here.
+private def systemd_show_works?(unit : String = "cron.service") : Bool
+  return false unless systemctl = Process.find_executable("systemctl")
+  output = IO::Memory.new
+  Process.run(systemctl, ["show", "--property=ActiveState", unit],
+    output: output, error: Process::Redirect::Close)
+  output.to_s.includes?("ActiveState")
+end
+
 describe "systemd plugin result key order" do
+  # The systemd module predicts its check-mode state from what the host's
+  # own `systemctl show <unit>` reports (it needs a real ActiveState for
+  # cron.service). A container with no service manager - the GitHub CI job
+  # image - has no usable systemctl, so the module reports "unknown state"
+  # and the play fails, which is correct module behavior but not what this
+  # key-order pin is about. systemd_test.cr covers the module on such hosts
+  # by injecting a fake systemctl via PATH; that env injection can't reach
+  # a real playbook run here, so this pin skips precisely when systemctl
+  # cannot answer, and stays strict wherever it can.
   it "registers name, changed, status, enabled, state (real 2.19.11 check mode: name, changed, status, enabled, state, failed)" do
+    skip "no usable systemctl on this host to report cron.service's real ActiveState" unless systemd_show_works?
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local

@@ -25,6 +25,10 @@ FEDORA_BIN    = File.expand_path("../../bin", __DIR__)
 FEDORA_PREFIX = "krikri-kp-fed-s11"
 
 def fedora_image? : Bool
+  # No podman at all (CI's job container) would raise File::NotFoundError
+  # out of Process.run, which minitest reports as an error rather than a
+  # skip - so the CLI's presence is the first question asked.
+  return false unless PluginSpecHelper.container_cli_available?
   output = IO::Memory.new
   Process.run("podman", ["image", "exists", FEDORA_IMAGE], output: output, error: output)
   $?.success?

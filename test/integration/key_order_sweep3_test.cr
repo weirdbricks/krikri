@@ -40,6 +40,22 @@ private def unique_tmp(*parts : String) : String
   PluginSpecHelper.tmp_path("#{parts.join("-")}-#{Random::Secure.hex(4)}")
 end
 
+# Whether a locale is actually present in the host's locale archive -
+# the locale_gen unchanged path is only reachable when it already is.
+private def locale_generated?(name : String) : Bool
+  return false unless locale = Process.find_executable("locale")
+  output = IO::Memory.new
+  Process.run(locale, ["-a"], output: output, error: Process::Redirect::Close)
+  output.to_s.each_line.any? { |line| normalize_locale(line.chomp).includes?(normalize_locale(name)) }
+end
+
+# `locale -a` renders the archive names the platform's own way
+# ("en_US.utf8" where the module arg says "en_US.UTF-8"), so both sides
+# are case-folded and dash-stripped before comparing.
+private def normalize_locale(name : String) : String
+  name.downcase.gsub("-", "")
+end
+
 describe "mount plugin result key order" do
   # state=absent against a throwaway fstab needs no real mount (the
   # present/remounted variants need a working mount(2), which the
@@ -112,6 +128,11 @@ describe "locale_gen plugin result key order" do
   # root-only), so this pin is testable unprivileged; the changed and
   # check-mode orders were live-verified identical to it.
   it "serializes an already-generated locale as changed-name-ubuntu_mode-mechanism (real-verified)" do
+    # This pin is the UNCHANGED path, which requires the locale to exist
+    # already; a slim container image that never ran locale-gen cannot
+    # reach it (and generating one needs root, which this spec
+    # deliberately does not require).
+    skip "en_US.UTF-8 is not generated on this host, so the unchanged path is unreachable" unless locale_generated?("en_US.UTF-8")
     result = PluginSpecHelper.run("locale_gen", {"name" => "en_US.UTF-8", "state" => "present"})
 
     result["failed"]?.must_be_nil
@@ -180,8 +201,22 @@ describe "dpkg_selections plugin result key order" do
   end
 end
 
+# Whether `debconf-show` already records `question` at `value`. The
+# debconf specs' unchanged-path pin is only reachable where the host's
+# debconf database is in that state to begin with (a slim container
+# image never configured locales).
+private def debconf_value_set?(pkg : String, question : String, value : String) : Bool
+  return false unless show = Process.find_executable("debconf-show")
+  output = IO::Memory.new
+  Process.run(show, [pkg], output: output, error: Process::Redirect::Close)
+  output.to_s.each_line.any? do |line|
+    line.starts_with?("*") && line.includes?(question) && line.includes?(value)
+  end
+end
+
 describe "debconf plugin result key order" do
   it "serializes an already-set question as changed-msg (real: changed, msg, current)" do
+    skip "locales/default_environment_locale is not already en_US.UTF-8 in this host's debconf database" unless debconf_value_set?("locales", "locales/default_environment_locale", "en_US.UTF-8")
     result = PluginSpecHelper.run("debconf", {
       "name"     => "locales",
       "question" => "locales/default_environment_locale",
@@ -230,6 +265,11 @@ end
 
 describe "acl plugin result key order" do
   it "serializes a present-ACL success as changed-msg-acl (real: changed, msg, acl)" do
+    # A filesystem that refuses setfacl (tmpfs/fuse mounts without acl
+    # support, e.g. inside a job container) makes real's acl task fail
+    # identically, so this success-order pin needs a host that can
+    # actually record an ACL.
+    skip "no ACL support on this filesystem (setfacl is rejected)" unless PluginSpecHelper.setfacl_supported?
     target = unique_tmp("acl-order-target")
     File.write(target, "x\n")
 

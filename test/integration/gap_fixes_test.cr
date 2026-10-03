@@ -76,6 +76,10 @@ end
 
 describe "find unreadable path handling" do
   it "records a chmod-000 directory in skipped_paths silently" do
+    # uid 0 walks straight through a 000 directory (no EACCES to record,
+    # so real find reports no skipped path either). CI's job container
+    # runs as root; the behavior is identical on any non-root host.
+    skip "permission-denial path: root can walk a chmod-000 directory" if PluginSpecHelper.running_as_root?
     base = PluginSpecHelper.tmp_path("find-unreadable")
     Dir.mkdir_p(base)
     hidden = File.join(base, "locked")

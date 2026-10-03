@@ -217,6 +217,33 @@ module PluginSpecHelper
     LibC.getuid == 0
   end
 
+  # Whether a container engine CLI the specs shell out to is installed
+  # at all. `Process.run("podman", ...)` raises File::NotFoundError -
+  # which minitest reports as an Error, not a Skip - when the binary is
+  # absent, so specs that need a container image check this first and
+  # skip instead. (A `podman image exists` probe alone cannot answer
+  # that question: it never gets far enough to run.)
+  def self.container_cli_available?(name : String = "podman") : Bool
+    !Process.find_executable(name).nil?
+  end
+
+  # Whether the environment can apply POSIX ACLs at all: a real
+  # `setfacl` on a throwaway file succeeds. Needs root or CAP_FOWNER
+  # plus a filesystem mounted with acl support (tmpfs and most fuse
+  # overlay mounts reject it outright), and on such a host real Ansible
+  # fails the acl task identically - so the acl specs that pin the
+  # success path probe this first and skip rather than assert a change
+  # the filesystem can never record.
+  def self.setfacl_supported?(dir : String? = nil) : Bool
+    return false unless Process.find_executable("setfacl")
+    probe = dir ? File.join(dir, "setfacl-probe-#{rand(10_000_000)}") : File.tempname("setfacl-probe")
+    File.write(probe, "")
+    Process.run("setfacl", ["-m", "u:0:r--", probe],
+      output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+  ensure
+    File.delete(probe) if probe && File.exists?(probe)
+  end
+
   # Whether the environment can apply file capabilities at all: a real
   # `setcap` on a throwaway file succeeds. Needs root or CAP_SETFCAP;
   # rootless containers reject every setcap operation, and on such an

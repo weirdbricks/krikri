@@ -709,6 +709,11 @@ describe "get_url plugin" do
     end
 
     it "reports an unwritable destination directory after the download, not as a download failure" do
+      # Root bypasses permission bits entirely: real get_url's own
+      # writability check passes and the download lands, so there is no
+      # denial to reproduce. The behavior is identical on any non-root
+      # host.
+      skip "permission-denial path: root bypasses the 0555 directory mode" if PluginSpecHelper.running_as_root?
       # Real get_url stages in its own remote tmp dir, so the download
       # itself succeeds and only get_url.py's own destination check
       # fails - with the full post-download result dict.
@@ -734,6 +739,9 @@ describe "get_url plugin" do
     end
 
     it "reports an unwritable existing dest, and an unreadable one, in real's own wording" do
+      # Same reason as the directory case above: 0444/0200 mean nothing
+      # to uid 0.
+      skip "permission-denial path: root bypasses the 0444/0200 file modes" if PluginSpecHelper.running_as_root?
       dest = File.tempname("get-url-spec")
       File.write(dest, "old content\n")
       File.chmod(dest, 0o444)
