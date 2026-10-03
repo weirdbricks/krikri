@@ -14,3 +14,4 @@
     - role: kop_firewall
     - role: kop_storage
     - role: kop_pkg_misc
+    - role: kop_misc2

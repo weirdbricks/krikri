@@ -1,0 +1,14 @@
+---
+# Smoke wrapper for the kop_misc2 cases that can run inside a rootless podman
+# ubuntu:22.04 container as root with ansible_connection=local. Run with:
+#   podman run --rm --name kp-misc2-probes-smoke \
+#     -v <this role dir>:/probes:Z -w /probes ubuntu:22.04 \
+#     bash /probes/smoke_inside.sh
+# virt_net is NOT smoke-tested this way (no libvirt in a rootless container);
+# see testing/keyorder_probes/README.md.
+- name: Smoke test container-runnable kop_misc2 keyorder probes
+  hosts: localhost
+  gather_facts: true
+  connection: local
+  roles:
+    - role: kop_misc2
