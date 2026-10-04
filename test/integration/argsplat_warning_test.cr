@@ -76,6 +76,28 @@ private def warning_count(output : String) : Int32
   output.scan(WARNING_LINE).size
 end
 
+# Like run_play, but with a `handlers:` section whose handler is notified
+# by the play's only task, and with stderr kept separate: the argsplat
+# warning is the one thing a handler path can print that no stdout line
+# would reveal, and the parity claim under test is specifically about
+# real's stderr.
+private def run_play_with_handler(tasks : Array(String), handler_lines : Array(String)) : {Bool, String, String}
+  playbook = File.tempname("argsplat-warning-handler", ".yml")
+  body = PLAY_HEADER.dup
+  body.concat(dict_vars_for("handlerdict"))
+  body << "  tasks:"
+  body.concat(tasks)
+  body << "  handlers:"
+  body.concat(handler_lines)
+  File.write(playbook, body.join("\n") + "\n")
+  stdout = IO::Memory.new
+  stderr = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr, input: IO::Memory.new)
+  {status.success?, stdout.to_s, stderr.to_s}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
 # The warning's Origin LINE:COL, nil when the task printed no warning.
 private def warning_origin(output : String) : Tuple(String, String)?
   idx = output.index(WARNING_LINE)
@@ -257,5 +279,23 @@ describe "argsplat warning" do
     # The literal command text fails in real too (free-form modules take
     # the string verbatim); only the WARNING count is the parity surface.
     warning_count(output).must_equal(0)
+  end
+
+  # A handler's args are finalized like a task's, so real warns there too -
+  # the handler path built its params without the same wrapping the task
+  # path does, so the warning never fired for a notified handler.
+  it "warns once for a notified handler with templated args" do
+    success, stdout, stderr = run_play_with_handler([
+      "    - name: notify handler",
+      "      ansible.builtin.command: /bin/true",
+      "      notify: templated args handler",
+    ], [
+      "    - name: templated args handler",
+      "      ansible.builtin.copy: \"{{ some_dict }}\"",
+    ])
+    success.must_equal(true, stdout + stderr)
+    warning_count(stderr).must_equal(1)
+    warning_count(stdout).must_equal(0)
+    stdout.includes?("RUNNING HANDLER").must_equal(true)
   end
 end
