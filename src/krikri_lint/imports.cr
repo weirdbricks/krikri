@@ -79,9 +79,11 @@ module Krikri
 
       # Relative to the working directory when under it, absolute
       # otherwise (upstream's Lintable keeps an outside-cwd path as-is).
+      # Symlinks are resolved: a role discovered through a symlinked
+      # roles/<name> entry is reported by its real path, as upstream does.
       def self.relative(path : String) : String
-        absolute = File.expand_path(path)
-        cwd = File.expand_path(Dir.current)
+        absolute = File.exists?(path) ? File.realpath(path) : File.expand_path(path)
+        cwd = File.realpath(Dir.current)
         return absolute unless absolute.starts_with?(cwd + "/")
         absolute[(cwd.size + 1)..]
       end

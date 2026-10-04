@@ -131,5 +131,19 @@ module Krikri::Lint
         FileUtils.rm_rf(root)
       end
     end
+
+    it "resolves symlinked role paths to their real location, like upstream" do
+      root = File.tempname("lintimports")
+      write(root, "real_role/tasks/main.yml", "---\n- name: R\n  ansible.builtin.command: echo r\n")
+      Dir.mkdir(File.join(root, "roles"))
+      File.symlink("../real_role", File.join(root, "roles", "role"))
+      begin
+        found = Imports.expand([File.join(root, "roles/role/tasks/main.yml")])
+        found.map { |path| path.sub(root + "/", "") }.must_equal(
+          ["real_role/tasks/main.yml"])
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
   end
 end
