@@ -78,15 +78,14 @@ and fixed and when.
   the Python SDK's error wording (`500 Server Error for http+docker://...`) is reproduced only for
   `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own `Code: 500 Message: ...`
   text after real's prefixes.
-- **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
-  975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
-  within 30 minutes on this role even on a fresh host (`rc=124` both
-  attempts) - too slow to establish parity either way, not a krikri
-  signal. After krikri's own cold run completed (modulo the then-unfixed
-  `systemd` query-only gap), the host became SSH-unreachable for the warm run; whether
-  that's a krikri-specific regression or simply this hardening role's own
-  SSH/firewall changes taking effect (which real Ansible never got far
-  enough to also demonstrate) is unresolved.
+- **`konstruktoid.hardening` cold-run divergences** (round 999001, 2026-10-04; real and krikri both completed the cold run
+  on fresh Ubuntu 22.04: real `ok=304 changed=160 skipped=101`, krikri `ok=306 changed=164 skipped=108`). The warm run cannot
+  be compared: the role's own UFW/conntrack changes make SSH unreachable on BOTH hosts after the cold run (ICMP up, TCP 22
+  closed), so the earlier "krikri warm lost SSH" was the role, not a krikri regression. Open: `Disable kdump service`,
+  `Disable systemd-journal-remote` and `Mask atd` (`systemd_service` with `masked: true` on units that do not exist) report
+  `changed` on krikri where real reports `ok`; krikri skips 7 more tasks than real (per-item skip handling in loops, e.g.
+  `Enable the PowerTools repository`, `Remove 'nullok'`); `Allow sshd port from administrator networks` changed-vs-ok
+  differs on one host.
 
 ## Deliberate limits (decided, not defects)
 

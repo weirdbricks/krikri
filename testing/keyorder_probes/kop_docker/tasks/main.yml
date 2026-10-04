@@ -1,0 +1,294 @@
+---
+# Key-order + value probes for community.docker.docker_container /
+# docker_network / docker_image against a real docker.io daemon. Targets the
+# KNOWN_MISSING.md Docker gaps: check-mode create_parameters (real records
+# defaulted options), list options whose elements contain commas, and the
+# error wording after real's own prefixes.
+# Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>".
+# ignore_errors everywhere; all names are kop_-prefixed so cold+warm are safe.
+
+- name: Install docker and the SDK
+  ansible.builtin.apt:
+    name: [docker.io, python3-docker, python3-requests]
+    state: present
+    update_cache: true
+
+- name: Start docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+
+- name: Remove leftovers from an earlier run
+  ansible.builtin.command: docker rm -f kop_c1 kop_c2 kop_c3
+  changed_when: false
+  failed_when: false
+
+- name: Remove leftover network
+  ansible.builtin.command: docker network rm kop_net1
+  changed_when: false
+  failed_when: false
+
+- name: Pull the test image
+  community.docker.docker_image:
+    name: alpine
+    tag: "3.19"
+    source: pull
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_pull
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_pull|{{ r | to_json }}"
+
+- name: Create in check mode (create_parameters)
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: started
+  register: r
+  ignore_errors: true
+  check_mode: true
+
+- name: Report docker_container_check_create
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_check_create|{{ r | to_json }}"
+
+- name: Create in check mode with many options
+  community.docker.docker_container:
+    name: kop_c2
+    image: alpine:3.19
+    command: [sleep, '300']
+    env:
+      A: b
+    ports: ['18080:80']
+    volumes: ['/tmp:/kop_tmp:ro']
+    labels:
+      kop: '1'
+    hostname: kophost
+    restart_policy: unless-stopped
+    state: started
+  register: r
+  ignore_errors: true
+  check_mode: true
+
+- name: Report docker_container_check_create_opts
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_check_create_opts|{{ r | to_json }}"
+
+- name: Create and start
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_create
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_create|{{ r | to_json }}"
+
+- name: Create again (ok)
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_exists|{{ r | to_json }}"
+
+- name: Command list with a comma element
+  community.docker.docker_container:
+    name: kop_c3
+    image: alpine:3.19
+    command: [sh, -c, 'echo a,b; sleep 300']
+    entrypoint: ['/bin/sh', '-c']
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_comma_command
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_comma_command|{{ r | to_json }}"
+
+- name: Same comma command again (ok)
+  community.docker.docker_container:
+    name: kop_c3
+    image: alpine:3.19
+    command: [sh, -c, 'echo a,b; sleep 300']
+    entrypoint: ['/bin/sh', '-c']
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_comma_command_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_comma_command_again|{{ r | to_json }}"
+
+- name: Change image option in check mode
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    env:
+      Z: y
+    state: started
+  register: r
+  ignore_errors: true
+  check_mode: true
+
+- name: Report docker_container_check_recreate
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_check_recreate|{{ r | to_json }}"
+
+- name: Stop
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: stopped
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_stop
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_stop|{{ r | to_json }}"
+
+- name: Stop again (ok)
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: stopped
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_stop_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_stop_again|{{ r | to_json }}"
+
+- name: Image that does not exist
+  community.docker.docker_container:
+    name: kop_c4
+    image: kop.invalid/nope:1
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_missing_image
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_missing_image|{{ r | to_json }}"
+
+- name: Unsupported parameter
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    zz_nope: 1
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_bad_param
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_bad_param|{{ r | to_json }}"
+
+- name: Create without image
+  community.docker.docker_container:
+    name: kop_c5
+    state: started
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_no_image
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_no_image|{{ r | to_json }}"
+
+- name: Remove
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_remove|{{ r | to_json }}"
+
+- name: Remove again (ok)
+  community.docker.docker_container:
+    name: kop_c1
+    image: alpine:3.19
+    command: [sleep, '300']
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report docker_container_remove_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_container_remove_again|{{ r | to_json }}"
+
+- name: Create network
+  community.docker.docker_network:
+    name: kop_net1
+  register: r
+  ignore_errors: true
+
+- name: Report docker_network_create
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_network_create|{{ r | to_json }}"
+
+- name: Create network again (ok)
+  community.docker.docker_network:
+    name: kop_net1
+  register: r
+  ignore_errors: true
+
+- name: Report docker_network_exists
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_network_exists|{{ r | to_json }}"
+
+- name: Remove network in check mode
+  community.docker.docker_network:
+    name: kop_net1
+    state: absent
+  register: r
+  ignore_errors: true
+  check_mode: true
+
+- name: Report docker_network_check_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_network_check_remove|{{ r | to_json }}"
+
+- name: Remove network
+  community.docker.docker_network:
+    name: kop_net1
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report docker_network_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_network_remove|{{ r | to_json }}"
+
+- name: Remove network again (ok)
+  community.docker.docker_network:
+    name: kop_net1
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report docker_network_remove_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_network_remove_again|{{ r | to_json }}"
+
+- name: Final cleanup
+  ansible.builtin.command: docker rm -f kop_c1 kop_c2 kop_c3 kop_c4 kop_c5
+  changed_when: false
+  failed_when: false
