@@ -48,10 +48,14 @@ module Krikri
         apply_warn_list(kept.map { |v| describe(v, task_names) })
       end
 
-      # Upstream's matchtask attaches the enclosing task's description to
-      # every match it produces ("Task/Handler: <name>"), and the default
-      # formatter prints it dimmed after the position.
+      # Upstream's matchtask enrichment (_enrich_matcherror_with_task_details)
+      # attaches the enclosing task's description ("Task/Handler: <name>")
+      # to every match it produces, but only when the match carries no
+      # details of its own - a rule that reported one (fqcn[action-core],
+      # jinja[spacing]) keeps it, and the default formatter prints it
+      # dimmed after the position instead.
       private def describe(v : Violation, task_names : Hash(String, Hash(Int32, String))) : Violation
+        return v unless v.details.empty?
         return v unless line = v.task_line
         return v unless name = (task_names[v.path]? || {} of Int32 => String)[line]?
         v.with_details("Task/Handler: #{name}")

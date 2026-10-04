@@ -58,7 +58,8 @@ module Krikri
               violations << Violation.new(file.path, line, column,
                 "jinja[spacing]", severity,
                 "Jinja2 spacing could be improved: #{value} -> #{reformatted}",
-                task.line)
+                task.line, false,
+                "Jinja2 template rewrite recommendation: `#{reformatted}`.")
             end
           end
         end

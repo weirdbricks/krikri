@@ -81,7 +81,8 @@ module Krikri
           next if module_name == resolved || module_name == legacy_module
           violations << Violation.new(
             file.path, task.action_line, task.action_column, id, severity,
-            "Use FQCN for builtin module actions (#{module_name}).", task.line
+            "Use FQCN for builtin module actions (#{module_name}).", task.line,
+            false, "Use `#{resolved}` or `#{legacy_module}` instead."
           )
         end
       end

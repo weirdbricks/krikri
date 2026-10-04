@@ -251,22 +251,20 @@ module Krikri
     module Outcome
       extend self
 
-      # Matches sorted the way upstream lists them: by position, then by
-      # the rule that produced the match (upstream's rule execution order
-      # is the rule ids' alphabetical order). The two load-failure matches
-      # of a missing target keep upstream's own order, not the ids'.
+      # Matches sorted the way upstream sorts them (MatchError.__lt__ over
+      # _hash_key: filename, lineno, str(rule.id), message, details, and
+      # column, where a match with no column sorts before any column via
+      # its -1 placeholder). The rule id is the rule family, not the
+      # sub-tagged id, so same-family sub-tags (yaml[commas] vs
+      # yaml[brackets], name[missing] vs name[casing]) tie on the rule
+      # and are ordered by message. Upstream's two load-failure matches
+      # for a missing target come out with not-found first through that
+      # same message comparison ("File or directory not found." sorts
+      # before "[Errno 2] ...").
       def sort(violations : Array(Violation)) : Array(Violation)
         violations.sort_by! do |v|
-          {v.path, v.line, v.column, load_failure_seq(v.rule_id), v.rule_id}
-        end
-      end
-
-      private def load_failure_seq(rule_id : String) : Int32
-        case rule_id
-        when "load-failure[not-found]"         then 0
-        when "load-failure[filenotfounderror]" then 1
-        when "load-failure[runtimeerror]"      then 2
-        else                                        3
+          {v.path, v.line, v.family, v.message, v.details,
+           v.column == 0 ? -1 : v.column}
         end
       end
 
