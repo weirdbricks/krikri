@@ -243,9 +243,16 @@ module Krikri::Lint
     unless quiet || format == "json"
       unless violations.empty?
         warning("Listing #{violations.size} violation(s) that are fatal", colored)
-        STDERR.puts "Read #{Console.link(Report::IGNORE_DOC_URL, "documentation", colored)} for instructions on how to ignore specific rule violations."
       end
+      STDERR.puts "Read #{Console.link(Report::IGNORE_DOC_URL, "documentation", colored)} for instructions on how to ignore specific rule violations." if Outcome.skippable?(violations, registry)
       report.lines(colored).each { |line| STDERR.puts line }
+    end
+
+    # Upstream reports a clean run that analyzed no files at all as a
+    # failure, to catch misconfigured targets.
+    if report.failures == 0 && file_count == 0
+      STDERR.puts "CRITICAL Linter finished without analyzing any file, check configuration and arguments given."
+      exit 5
     end
 
     STDOUT.print(matches_out.to_s)
