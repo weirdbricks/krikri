@@ -85,14 +85,17 @@ module Krikri
       # firewalld_fail). `--zone=<zone> --list-services` is what
       # firewall-cmd itself documents as "List services added" for that
       # zone (firewalld's own daemon comment on getServices: "because
-      # is called by firewall-cmd --zone --list-services"), and it prints
-      # one service name per line.
+      # is called by firewall-cmd --zone --list-services"). It prints the
+      # names SPACE-SEPARATED on ONE line (`dhcpv6-client http ssh`), live
+      # on Rocky 9 - the first version of #service_list assumed one per
+      # line and so never saw an enabled service, reporting `changed`
+      # on every idempotent re-enable (round 997006).
       def self.zone_service_list_command(zone : String, binary : String = "firewall-cmd") : String
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --list-services"
       end
 
       def self.service_list(stdout : String) : Array(String)
-        stdout.lines.map(&.strip).reject(&.empty?)
+        stdout.split.reject(&.empty?)
       end
 
       def self.add_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String

@@ -104,10 +104,10 @@ FW_FIREWALLD_STATEFUL_SHIM = <<-SHIM
   case "$action" in
     list)
       # real's ServiceTransaction reads the zone's whole service list
-      # (`service in self.fw.getServices(zone)`) - one name per line -
+      # (`service in self.fw.getServices(zone)`) - space-separated on one line (like firewall-cmd) -
       # never --query-service, which rejects an undefined service name.
       if [ -f "$KRIKRI_FW_STATE" ]; then
-        grep -F "$zone|" "$KRIKRI_FW_STATE" | cut -d'|' -f2
+        grep -F "$zone|" "$KRIKRI_FW_STATE" | cut -d'|' -f2 | tr '\n' ' '; echo
       fi
       exit 0
       ;;

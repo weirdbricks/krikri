@@ -303,4 +303,15 @@ describe Krikri::PluginHelpers::FirewalldCommand do
       )
     end
   end
+
+  describe "service_list (firewall-cmd --list-services output)" do
+    it "splits the space-separated one-line output real firewall-cmd prints" do
+      Krikri::PluginHelpers::FirewalldCommand.service_list("dhcpv6-client http ssh\n")
+        .must_equal(["dhcpv6-client", "http", "ssh"])
+    end
+
+    it "treats empty output as no services" do
+      Krikri::PluginHelpers::FirewalldCommand.service_list("\n").must_equal([] of String)
+    end
+  end
 end
