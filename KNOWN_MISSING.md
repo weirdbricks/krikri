@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1475`.**
+**Currently at `0.9.1476`.**
 
 ## Open gaps
 
@@ -81,12 +81,12 @@ and fixed and when.
   the Python SDK's error wording (`500 Server Error for http+docker://...`) is reproduced only for
   `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own `Code: 500 Message: ...`
   text after real's prefixes.
-- **`konstruktoid.hardening` cold-run divergences** (round 999001, 2026-10-04; real and krikri both completed the cold run
-  on fresh Ubuntu 22.04: real `ok=304 changed=160 skipped=101`, krikri `ok=306 changed=164 skipped=108`). The warm run cannot
-  be compared: the role's own UFW/conntrack changes make SSH unreachable on BOTH hosts after the cold run (ICMP up, TCP 22
-  closed), so the earlier "krikri warm lost SSH" was the role, not a krikri regression. Open: krikri skips 7 more tasks than real (per-item skip handling in loops, e.g.
-  `Enable the PowerTools repository`, `Remove 'nullok'`); `Allow sshd port from administrator networks` changed-vs-ok
-  differs on one host.
+- **`konstruktoid.hardening` real-host parity is only verified up to `Configure sudo user password`** (rounds 999001/999010,
+  2026-10-04): real's cold run does not finish within 30 minutes, and the role's own UFW/conntrack changes make SSH
+  unreachable on BOTH hosts after the cold run (ICMP up, TCP 22 closed), so no warm comparison exists. Everything real
+  reached matches krikri task-for-task (the `systemd` missing-unit, array-wrapped `loop:` and one-task `ufw` enable+rule/default
+  divergences found here are fixed). Open: krikri's `skipped` recap count (110) is higher than real's earlier 101 and
+  cannot be re-checked until a real cold run completes (try `--timeout-mins 60`).
 
 ## Deliberate limits (decided, not defects)
 

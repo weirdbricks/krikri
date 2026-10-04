@@ -111,6 +111,7 @@ module Krikri
     @bins = Hash(String, String).new
     @searched_paths = ""
     @commands = [] of String
+    @changed = false
 
     def initialize(config : JSON::Any)
       super(config)
@@ -160,6 +161,20 @@ module Krikri
       result
     end
 
+    # Real ufw.py's own `command_keys`, in ITS declaration order.
+    # Every one of these that a task sets is a command real runs, in
+    # this order, inside ONE invocation - this plugin used to dispatch
+    # first-match-wins with an early return per key, so a task
+    # combining `state:` with a `rule:`/`default:`/`logging:` (the
+    # one-task "activate everything" shape konstruktoid.hardening
+    # uses) ran `ufw -f enable` and silently DROPPED the rest: real
+    # installs the rule/sets the default/logging, this engine reported
+    # success having applied none of it, so `changed`, `commands` and
+    # `msg` all diverged (round 1000, ufw_active_* real-host captures).
+    # `log:`/`direction:`/`comment:` are modifiers of the rule branch,
+    # not commands of their own.
+    COMMAND_KEYS = %w[state default rule logging]
+
     private def dispatch : PluginResult
       resolve_required_binaries
 
@@ -172,30 +187,57 @@ module Krikri
       pre_state = ufw_exec("#{@bins["ufw"]} status verbose")
       pre_rules = current_rule_tuples
 
-      if state = @params["state"]?
-        return run_state(state, pre_state, pre_rules)
+      # Real ufw.py's `commands = {key: params[key] for key in
+      # command_keys if params[key]}` - a falsy value drops out, so only
+      # the keys a task actually requested reach the loop.
+      requested = COMMAND_KEYS.each_with_object({} of String => String) do |key, commands|
+        value = @params[key]?
+        commands[key] = value if value && value != ""
+      end
+      if requested.empty?
+        return PluginResult.new(changed: false, failed: true, msg: "one of state, logging, default, or rule is required")
       end
 
-      if logging = @params["logging"]?
-        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), pre_state, pre_rules, ufw_state_key: "logging", ufw_state_value: logging)
+      @changed = false
+      requested.each do |command, value|
+        # A branch returning a PluginResult aborts the whole task, which
+        # is how real's in-loop fail_json() calls behave.
+        if failure = run_command(command, value, pre_state, pre_rules)
+          return failure
+        end
       end
 
-      if default_value = @params["default"]?
-        # `policy` reaches this as `default` via PARAM_ALIASES - found
-        # via Oefenweb.ufw (round 196), whose tasks use the newer
-        # `policy:`/`direction:` pair; this plugin only knew `default:`
-        # and rejected the task with "one of state, logging, default, or
-        # rule is required" where real ansible rc=0'd.
-        direction = @params["direction"]? || "incoming"
-        cmd = PluginHelpers::UfwCommand.default_command(default_value, @params["direction"]?)
-        return run_simple(cmd, pre_state, pre_rules, ufw_state_key: "default-#{direction}", ufw_state_value: default_value)
+      # Real ufw.py's tail: check mode exits right after the loop with
+      # no post probes and no msg key at all; normal mode takes ONE
+      # post `ufw status verbose` snapshot (the msg= exit value) and,
+      # only while nothing has counted as changed yet, ONE post tuples
+      # read whose diff against the single pre snapshot decides
+      # `changed`.
+      if true?(@params["_ansible_check_mode"]?)
+        return PluginResult.new(changed: @changed, failed: false)
       end
 
-      if @params["rule"]?
-        return run_rule(pre_state, pre_rules)
+      post_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      unless @changed
+        post_rules = current_rule_tuples
+        @changed = pre_state != post_state || pre_rules != post_rules
       end
 
-      PluginResult.new(changed: false, failed: true, msg: "one of state, logging, default, or rule is required")
+      PluginResult.new(changed: @changed, failed: false, msg: post_state.rstrip)
+    end
+
+    # Real ufw.py's `for (command, value) in commands.items()` body, one
+    # branch per command key. Every branch folds its own verdict into the
+    # loop-wide `changed` accumulator - real sets that one flag across
+    # all commands, it is never per-command - and may return a
+    # PluginResult to abort.
+    private def run_command(command : String, value : String, pre_state : String, pre_rules : String) : PluginResult?
+      case command
+      when "state"   then apply_state(value, pre_state)
+      when "default" then apply_default(value, pre_state)
+      when "rule"    then apply_rule(pre_rules)
+      when "logging" then apply_logging(value, pre_state)
+      end
     end
 
     # Real community.general.ufw's full AnsibleModule setup surface,
@@ -315,95 +357,62 @@ module Krikri
       nil
     end
 
-    private def run_state(state : String, pre_state : String, pre_rules : String) : PluginResult
+    # Real ufw.py's state branch: reloaded/reset always count as changed
+    # (`if value in ['reloaded', 'reset']: changed = True`,
+    # unconditionally and BEFORE the check-mode branch, so in check mode
+    # too). Check mode decides enabled/disabled from the PRE state's
+    # ` active` marker alone and never runs the command; normal mode
+    # runs `ufw -f <verb>`.
+    private def apply_state(state : String, pre_state : String) : PluginResult?
       cmd = PluginHelpers::UfwCommand.state_command(state)
       unless cmd
         return PluginResult.new(changed: false, failed: true, msg: "state must be one of enabled, disabled, reloaded, reset")
       end
 
-      # reloaded/reset always count as changed (real ufw.py: `if value in
-      # ['reloaded', 'reset']: changed = True` unconditionally - in CHECK
-      # mode too, it runs before the check-mode branch).
-      changed = state == "reloaded" || state == "reset"
+      @changed = true if state == "reloaded" || state == "reset"
 
       if true?(@params["_ansible_check_mode"]?)
-        # Real ufw.py's check-mode branch NEVER executes the state
-        # command - the commands list stops at the pre probes - and
-        # decides enabled/disabled changed from the PRE state's
-        # ` active` marker alone.
-        unless changed
-          ufw_enabled = pre_state.includes?(" active")
-          changed = (state == "disabled" && ufw_enabled) || (state == "enabled" && !ufw_enabled)
-        end
-        return PluginResult.new(changed: changed, failed: false)
+        # "active" would also match "inactive", hence the space
+        ufw_enabled = pre_state.includes?(" active")
+        @changed = true if (state == "disabled" && ufw_enabled) || (state == "enabled" && !ufw_enabled)
+        return nil
       end
 
       ufw_exec(ufw_bin_cmd(cmd))
-      # Real ufw.py's tail ALWAYS snapshots `ufw status verbose` after the
-      # action, and the exit's msg is that snapshot rstripped
-      # ("Status: inactive" in the round-995002 captures) - never the
-      # action command's own output. When nothing so far counts as
-      # changed, it also re-reads the rule tuples and diffs BOTH the
-      # state text and the tuples against the pre probes
-      # (`changed = (pre_state != post_state) or (pre_rules !=
-      # post_rules)`) - reloaded/reset skip that re-read because their
-      # changed is already true.
-      post_state = ufw_exec("#{@bins["ufw"]} status verbose")
-      unless changed
-        post_rules = current_rule_tuples
-        changed = pre_state != post_state || pre_rules != post_rules
-      end
-      PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
+      nil
     end
 
-    private def run_simple(cmd : String, pre_state : String, pre_rules : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
+    # Real ufw.py's logging branch: `changed` comes from the PRE state
+    # alone, in check mode and out of it alike, because `ufw logging
+    # <same-level>` is a no-op ufw reports no differently - an earlier
+    # post-diff approach matched only one of the two (Oefenweb.ufw round
+    # 196: warm changed=4 vs 0, then cold logging changed=0 vs real 1).
+    private def apply_logging(logging : String, pre_state : String) : PluginResult?
+      @changed = true if logging_changed?(true, logging, pre_state)
+
+      unless true?(@params["_ansible_check_mode"]?)
+        ufw_exec(ufw_bin_cmd(PluginHelpers::UfwCommand.logging_command(logging)))
+      end
+      nil
+    end
+
+    # Real ufw.py's default branch: normal mode just runs
+    # `ufw default <value> [<direction>]` and leaves `changed` alone -
+    # the tail's pre/post whole-state + rule-tuple diff decides it -
+    # while check mode decides `changed` from the PRE state's Default
+    # line. (`policy` reaches this as `default` via PARAM_ALIASES -
+    # found via Oefenweb.ufw round 196, whose tasks use the newer
+    # `policy:`/`direction:` pair.)
+    private def apply_default(value : String, pre_state : String) : PluginResult?
+      direction = @params["direction"]?
+
       if true?(@params["_ansible_check_mode"]?)
-        # Real ufw.py's check mode never executes the command; changed
-        # comes from the PRE state alone, per command type:
-        # - logging: from the "Logging:" line - "off" -> anything is a
-        #   change, and a requested level != the current level is a
-        #   change even though `ufw logging <same-level>` no-ops;
-        # - default: from the "Default: ... (incoming), ... (outgoing),
-        #   ... (routed)" line - no extract at all means changed, and a
-        #   current direction value that is neither the requested value
-        #   nor "disabled" means changed.
-        changed = if ufw_state_key == "logging" && (value = ufw_state_value)
-                    logging_changed?(true, value, pre_state)
-                  elsif ufw_state_key && ufw_state_value
-                    default_check_mode_changed?(pre_state, ufw_state_value, @params["direction"]?)
-                  else
-                    false
-                  end
-        return PluginResult.new(changed: changed, failed: false)
+        @changed = true if default_check_mode_changed?(pre_state, value, direction)
+        return nil
       end
 
-      # Real community.general.ufw computes `changed` differently per
-      # command type (verified against the module's own source):
-      # - logging: from the PRE state alone (see the check-mode branch);
-      # - default: NOT inside the loop at all - it stays false and the
-      #   tail's pre/post whole-state + rule-tuple diff decides it.
-      # The earlier pre-check-skip and post-diff approaches each matched
-      # only one of the two (Oefenweb.ufw round 196: warm changed=4 vs 0,
-      # then cold logging changed=0 vs real 1).
-      changed = if ufw_state_key == "logging" && (value = ufw_state_value)
-                  logging_changed?(true, value, pre_state)
-                else
-                  false
-                end
-
-      ufw_exec(ufw_bin_cmd(cmd))
-
-      # Real ufw.py's tail always snapshots `ufw status verbose` after the
-      # action - it is the msg=post_state.rstrip() exit value, and when
-      # nothing so far counts as changed it also re-reads the rule tuples
-      # and diffs both against the pre probes.
-      post_state = ufw_exec("#{@bins["ufw"]} status verbose")
-      unless changed
-        post_rules = current_rule_tuples
-        changed = pre_state != post_state || pre_rules != post_rules
-      end
-
-      PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
+      ufw_exec(ufw_bin_cmd(PluginHelpers::UfwCommand.default_command(value, direction)))
+      nil
     end
 
     # Real ufw.py's check-mode branch for `default:`: the Default line
@@ -442,15 +451,35 @@ module Krikri
     # lines - the authoritative record of what ufw actually holds, and
     # the only thing that distinguishes "re-applied an identical rule"
     # from "changed one".
-    private def run_rule(pre_state : String, pre_rules : String) : PluginResult
+    #
+    # Real ufw.py's rule branch: it calls ufw_version() before running
+    # the rule command - the `ufw --version` probe (it feeds the
+    # comment-support version gate, and it is recorded in commands like
+    # every other invocation, inside whatever place the rule sits in the
+    # command loop). A non-parsing `ufw --version` output fails the
+    # module with real's own wording. In CHECK MODE the dry-run output
+    # is compared against the pre rules to set `changed`; in NORMAL mode
+    # the branch itself never sets `changed` at all - the tail's
+    # pre/post state + tuple diff does, after the loop.
+    #
+    # Real community.general does NOT read `changed` out of the ufw
+    # command's own output for a rule: it snapshots `ufw status verbose`
+    # AND the rule tuples before and after, and reports changed only if
+    # either actually moved (`changed = (pre_state != post_state) or
+    # (pre_rules != post_rules)`). Parsing the command's stdout instead
+    # - which this did - makes `changed` depend on ufw's wording
+    # ("Rule added" vs "Skipping adding existing rule"), which is only
+    # equivalent while the rule text is byte-identical to what is
+    # already installed; any difference at all, including one this
+    # engine introduced, then reads as a real change forever. All three
+    # probes go through #ufw_exec: a failing pre/post `ufw status
+    # verbose` (no CAP_NET_ADMIN, missing ufw, ...) fails the task with
+    # real ufw.py's execute() behavior instead of reading as an empty
+    # snapshot.
+    private def apply_rule(pre_rules : String) : PluginResult?
       check_mode = true?(@params["_ansible_check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
 
-      # Real ufw.py's rule branch calls ufw_version() before running the
-      # rule command - the `ufw --version` probe (it feeds the
-      # comment-support version gate, and it is recorded in commands
-      # like every other invocation). A non-parsing `ufw --version`
-      # output fails the module with real's own wording.
       version_out = ufw_exec("#{@bins["ufw"]} --version")
       unless PluginHelpers::UfwCommand.version_parses?(version_out)
         # Real ufw_version()'s own failure: fail_json(msg="Failed to get
@@ -462,20 +491,6 @@ module Krikri
           key_order: ["rc", "out", "failed", "msg"])
       end
 
-      # Real community.general does NOT read `changed` out of the ufw
-      # command's own output for a rule: in normal mode it snapshots
-      # `ufw status verbose` AND the rule tuples before and after, and
-      # reports changed only if either actually moved
-      # (`changed = (pre_state != post_state) or (pre_rules !=
-      # post_rules)`). Parsing the command's stdout instead - which this
-      # did - makes `changed` depend on ufw's wording ("Rule added" vs
-      # "Skipping adding existing rule"), which is only equivalent while
-      # the rule text is byte-identical to what is already installed;
-      # any difference at all, including one this engine introduced, then
-      # reads as a real change forever. All three probes go through
-      # #ufw_exec: a failing pre/post `ufw status verbose` (no
-      # CAP_NET_ADMIN, missing ufw, ...) fails the task with real ufw.py's
-      # execute() behavior instead of reading as an empty snapshot.
       # The pre-probes run in CHECK MODE too (real takes them before its
       # command loop unconditionally - the container oracle caught this
       # engine reporting a dry-run success where real failed the task on
@@ -492,18 +507,10 @@ module Krikri
         # `### tuple` lines of the dry-run output are diffed against the
         # pre rules (ipv4/ipv6-filtered when the rule addresses an ip
         # literal of that family).
-        changed = PluginHelpers::UfwCommand.check_mode_rule_changed?(result[:stdout], pre_rules,
-          @params["from_ip"]? || "any", @params["to_ip"]? || "any")
-        # Real ufw.py's check-mode exit_json carries NO msg - the dry-run
-        # output only feeds changed:, never the result.
-        PluginResult.new(changed: changed, failed: false)
-      else
-        post_state = ufw_exec("#{@bins["ufw"]} status verbose")
-        changed = pre_state != post_state || pre_rules != current_rule_tuples
-        # msg=post_state.rstrip() - the FINAL status snapshot, not the
-        # rule command's own output.
-        PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
+        @changed = true if PluginHelpers::UfwCommand.check_mode_rule_changed?(result[:stdout], pre_rules,
+                             @params["from_ip"]? || "any", @params["to_ip"]? || "any")
       end
+      nil
     end
 
     # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
