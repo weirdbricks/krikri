@@ -6,7 +6,7 @@
 /bin/
 
 # Crystal dependencies (installed via shards)
-/lib/
+/lib
 
 # Codegen output from build.sh's build_fat_plugin - regenerated every
 # build, never hand-edited.
