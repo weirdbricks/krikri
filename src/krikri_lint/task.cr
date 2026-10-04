@@ -83,6 +83,36 @@ module Krikri
         end
       end
 
+      # Upstream's Task.__str__: the task's name, falling back to the module
+      # it calls plus its free-form arguments. Used for the
+      # "Task/Handler: ..." detail the default formatter appends.
+      def display_name : String
+        if (task_name = name)
+          return task_name
+        end
+        args = action_args
+        return bare_module if args.empty?
+        "#{bare_module} #{args}"
+      end
+
+      # The task's arguments as upstream's Task.__str__ renders them for
+      # an unnamed task: free-form arguments verbatim, a mapping action
+      # as `key=value` pairs.
+      private def action_args : String
+        if (free_form = NodeUtil.scalar_value(action_node))
+          return free_form
+        end
+        return "" unless mapping = action_node.as?(YAML::Nodes::Mapping)
+        pairs = [] of String
+        NodeUtil.each_entry(mapping) do |key_node, value_node|
+          key = NodeUtil.scalar_value(key_node)
+          value = NodeUtil.scalar_value(value_node)
+          next unless key && value
+          pairs << "#{key}=#{value}"
+        end
+        pairs.join(' ')
+      end
+
       def param(key : String) : String?
         [action_node, args_node].each do |source|
           mapping = source.as?(YAML::Nodes::Mapping) || next

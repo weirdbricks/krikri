@@ -16,6 +16,8 @@ require "./task"
 require "./fixer"
 require "./rules/*"
 require "./runner"
+require "./console"
+require "./report"
 
 module Krikri
   module Lint

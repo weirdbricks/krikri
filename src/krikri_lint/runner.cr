@@ -14,18 +14,26 @@ module Krikri
         violations = [] of Violation
         noqa_maps = {} of String => Hash(Int32, Noqa::Entry)
         task_spans = {} of String => Array({Int32, Int32})
+        task_names = {} of String => Hash(Int32, String)
+        needs_tasks = rules.any?(&.task_scoped?)
         paths.each do |path|
           next if excluded?(path)
           file = PositionedFile.load(path)
           source = File.exists?(path) ? File.read(path) : ""
           noqa_maps[path] = Noqa.build_map(source)
+          # Collected once per file, on first need: the enclosing-task
+          # spans a task-scoped rule's violations belong to, and the task
+          # names those violations are described with.
+          if needs_tasks && !task_spans.has_key?(path)
+            tasks = TaskWalker.collect_tasks(file)
+            covered = YamlText.scalar_continuation_lines(file)
+            task_spans[path] = tasks.map { |task| {task.line, task.end_line(covered)} }
+            task_names[path] = tasks.each_with_object({} of Int32 => String) do |task, map|
+              map[task.line] = task.display_name
+            end
+          end
           rules.each do |rule|
             next unless rule.applies?(file)
-            # Collected once per file, on first need: the enclosing-task
-            # spans a task-scoped rule's violations belong to.
-            if rule.task_scoped? && !task_spans.has_key?(path)
-              task_spans[path] = task_spans_for(file)
-            end
             rule.check(file, violations)
           end
         end
@@ -36,12 +44,17 @@ module Krikri
           scoped << rule.id
           scoped << rule.id.split("[").first
         end
-        apply_warn_list(violations.reject { |v| suppressed?(v, scoped, noqa_maps, task_spans) })
+        kept = violations.reject { |v| suppressed?(v, scoped, noqa_maps, task_spans) }
+        apply_warn_list(kept.map { |v| describe(v, task_names) })
       end
 
-      private def task_spans_for(file : PositionedFile) : Array({Int32, Int32})
-        covered = YamlText.scalar_continuation_lines(file)
-        TaskWalker.collect_tasks(file).map { |task| {task.line, task.end_line(covered)} }
+      # Upstream's matchtask attaches the enclosing task's description to
+      # every match it produces ("Task/Handler: <name>"), and the default
+      # formatter prints it dimmed after the position.
+      private def describe(v : Violation, task_names : Hash(String, Hash(Int32, String))) : Violation
+        return v unless line = v.task_line
+        return v unless name = (task_names[v.path]? || {} of Int32 => String)[line]?
+        v.with_details("Task/Handler: #{name}")
       end
 
       # A violation goes away when the config skips its rule, or when a
@@ -102,10 +115,7 @@ module Krikri
       end
 
       private def excluded?(path : String) : Bool
-        @config.exclude_paths.any? do |ex|
-          pattern = ex.ends_with?("/") ? ex : ex + "/"
-          path.starts_with?(pattern) || path.starts_with?(File.expand_path(pattern))
-        end
+        @config.excluded?(path)
       end
     end
   end

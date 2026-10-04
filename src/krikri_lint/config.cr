@@ -18,6 +18,15 @@ module Krikri
                      @config_dir = ".")
       end
 
+      # Excluded paths are dropped before linting, so they are neither
+      # reported nor counted in the summary's file total.
+      def excluded?(path : String) : Bool
+        @exclude_paths.any? do |ex|
+          pattern = ex.ends_with?("/") ? ex : ex + "/"
+          path.starts_with?(pattern) || path.starts_with?(File.expand_path(pattern))
+        end
+      end
+
       # Searches cwd upward for a .ansible-lint file, like upstream's
       # project-dir discovery.
       def self.discover : LintConfig

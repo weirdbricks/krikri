@@ -6,7 +6,7 @@ module Krikri
     # whatever user, not the one named. Two sub-tags:
     # partial-become[play] on a play, partial-become[task] on a task.
     class PartialBecomeRule < Rule
-      MESSAGE = "`become_user` should have a corresponding `become` " \
+      MESSAGE = "``become_user`` should have a corresponding ``become`` " \
                 "at the same level as itself."
 
       def id : String

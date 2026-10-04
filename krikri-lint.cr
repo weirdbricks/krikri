@@ -165,6 +165,7 @@ module Krikri::Lint
     end
 
     files = FileDiscovery.discover(targets)
+    file_count = files.size
 
     runner = Runner.new(registry, config)
     violations = begin
@@ -193,31 +194,49 @@ module Krikri::Lint
 
     violations.sort_by! { |v| {v.path, v.line, v.column} }
 
-    failures = violations.reject(&.warning?)
-    if failures.empty?
-      exit 0
-    end
+    colored = Console.color_enabled?(force_color, nocolor)
 
-    use_color = !nocolor && (force_color || STDOUT.tty?)
-
-    case
-    when format == "json"
-      puts Violation.to_json(violations)
+    # Matches go to stdout, the summary to stderr. CPython block-buffers
+    # stdout whenever it is not a tty and only flushes it at exit, so the
+    # stderr block lands *before* the matches in a redirected or piped
+    # run - and after them on a terminal. Mirroring that buffering keeps
+    # `2>&1` comparisons against real ansible-lint byte-identical.
+    matches_out = IO::Memory.new
+    case format
+    when "json"
+      matches_out << Violation.to_json(violations) << '\n'
     else
       violations.each do |v|
-        if parseable
-          puts "#{v.path}:#{v.line}:#{v.column} #{v.rule_id} #{v.severity.to_s.downcase} #{v.message}"
-        elsif use_color
-          puts "#{v.path}:#{v.line}: #{v.rule_id.colorize(:yellow)}: #{v.message}"
-        else
-          puts "#{v.path}:#{v.line}: #{v.rule_id}: #{v.message}"
-        end
-      end
-      unless parseable || quiet
-        puts "Read documentation for instructions on how to ignore specific rule violations."
+        line = if parseable
+                 Formatter.parseable(v, colored)
+               elsif format == "quiet"
+                 Formatter.quiet(v, colored)
+               else
+                 Formatter.brief(v, colored)
+               end
+        matches_out << line << '\n'
       end
     end
-    exit 2
+
+    report = Report.new(violations, registry, file_count, cli_profile)
+    unless quiet || format == "json"
+      unless violations.empty?
+        warning("Listing #{violations.size} violation(s) that are fatal", colored)
+        STDERR.puts "Read #{Console.link(Report::IGNORE_DOC_URL, "documentation", colored)} for instructions on how to ignore specific rule violations."
+      end
+      report.lines(colored).each { |line| STDERR.puts line }
+    end
+
+    STDOUT.print(matches_out.to_s)
+    exit(report.failures > 0 ? 2 : 0)
+  end
+
+  # Python's logging handler renders a WARNING record dimmed, with the
+  # level name padded to eight columns.
+  private def warning(message : String, colored : Bool)
+    prefix = colored ? Console::DIM : ""
+    suffix = colored ? Console::RESET : ""
+    STDERR.puts "#{prefix}WARNING  #{message}#{suffix}"
   end
 end
 

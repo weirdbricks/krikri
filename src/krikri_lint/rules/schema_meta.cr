@@ -12,6 +12,17 @@ module Krikri
       SCHEMA_TEXT = {{ read_file("#{__DIR__}/../schemas/meta.json") }}
       SCHEMA      = JSON.parse(SCHEMA_TEXT)
 
+      # Upstream's ValidateSchemaRule.description, printed as the match's
+      # details: the schema validator does not report line numbers, and
+      # the rule is not skippable.
+      DETAILS = " Returned errors will not include exact line numbers, but they will mention\n" \
+                "the schema name being used as a tag, like ``schema[playbook]``,\n" \
+                "``schema[tasks]``.\n\n" \
+                "This rule is not skippable and stops further processing of the file.\n\n" \
+                "If incorrect schema was picked, you might want to either:\n\n" \
+                "* move the file to standard location, so its file is detected correctly.\n" \
+                "* use ``kinds:`` option in linter config to help it pick correct file type.\n"
+
       def id : String
         "schema[meta]"
       end
@@ -43,7 +54,8 @@ module Krikri
                     "#{err.formatted_path} #{err.formatted_instance} should not be valid under #{err.formatted_clause}"
                   end
         violations << Violation.new(file.path, 1, 0, id, severity,
-          "#{message}. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
+          "#{message}. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies",
+          nil, false, DETAILS)
       end
 
       # Upstream only schema-validates meta when the file belongs to a

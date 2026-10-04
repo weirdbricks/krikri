@@ -161,5 +161,46 @@ module Krikri::Lint
         File.delete(path)
       end
     end
+
+    it "describes a task-scoped match with its task, like upstream" do
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- name: Play\n  hosts: localhost\n  tasks:\n" \
+                        + "    - name: Install pkg\n      ansible.builtin.apt:\n" \
+                           + "        name: nginx\n        state: latest\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        latest = violations.find { |v| v.rule_id == "package-latest" }
+        raise "no package-latest violation" unless latest
+        latest.details.must_equal("Task/Handler: Install pkg")
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "leaves file-level matches without a task detail" do
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- name:  Play\n  hosts: localhost\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        yaml_match = violations.find { |v| v.rule_id == "yaml[colons]" }
+        raise "no yaml[colons] violation" unless yaml_match
+        yaml_match.details.must_equal("")
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "falls back to the module and free-form args for an unnamed task" do
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- hosts: localhost\n  tasks:\n    - import_tasks: tasks/x.yml\n")
+      begin
+        file = PositionedFile.load(path)
+        task = TaskWalker.collect_tasks(file).first
+        raise "no task found" unless task
+        task.display_name.must_equal("import_tasks tasks/x.yml")
+      ensure
+        File.delete(path)
+      end
+    end
   end
 end

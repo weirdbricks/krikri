@@ -32,9 +32,8 @@ REPO = Path(__file__).resolve().parents[2]
 
 # ansible-lint -p line: path:line:col: rule-id[qualifier]: message;
 # some matches (e.g. name[missing]) print without a column.
+# krikri-lint -p emits the same line shape, so both are parsed the same way.
 ANSIBLE_RE = re.compile(r"^(?P<path>[^:]+):(?P<line>\d+)(?::(?P<col>\d+))?: (?P<rule>\S+?): ")
-# krikri-lint -p line: path:line:col rule-id severity message
-KRIKRI_RE = re.compile(r"^(?P<path>[^:]+):(?P<line>\d+):(?P<col>\d+) (?P<rule>\S+) (?P<sev>\w+) ")
 
 
 def parse_ansible(text: str):
@@ -50,12 +49,7 @@ def parse_ansible(text: str):
 
 
 def parse_krikri(text: str):
-    out = []
-    for line in text.splitlines():
-        m = KRIKRI_RE.match(line)
-        if m:
-            out.append((m["path"], int(m["line"]), int(m["col"]), m["rule"]))
-    return out
+    return parse_ansible(text)
 
 
 def run(cmd):

@@ -13,7 +13,7 @@ module Krikri::Lint
                           "      become_user: root\n")
       v.map(&.rule_id).must_equal(["partial-become[task]"])
       v.first.line.must_equal(5)
-      v.first.message.must_include("`become_user` should have a corresponding `become`")
+      v.first.message.must_include("``become_user`` should have a corresponding ``become``")
     end
 
     it "accepts become_user alongside become in the same task" do
