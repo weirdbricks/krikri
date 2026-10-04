@@ -611,8 +611,13 @@ module Krikri
       # task args failed" rescue as execute_task_once/prepare_batch_step
       # (see there) - a handler has no equivalent before this, so a
       # strict: UndefinedVariableError would have crashed the whole run.
+      # expand_templated_args for the same reason prepare_batch_step calls
+      # it: a handler's args are finalized exactly like a task's, so real
+      # emits its "unsafe template for task args" warning here too - it did
+      # not, so a notified handler with `copy: "{{ d }}"` silently diverged
+      # from real's stderr.
       begin
-        substituted_params = substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name)
+        substituted_params = expand_templated_args(substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name), handler)
         substituted_env = substitute_task_environment(handler, substitutor)
       rescue ex
         result = finalization_failure_json(ex, handler)
