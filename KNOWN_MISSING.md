@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1480`.**
+**Currently at `0.9.1481`.**
 
 ## Open gaps
 
@@ -75,9 +75,6 @@ and fixed and when.
   (live-verified on postgres:17 / mysql:8.4); The PostgreSQL
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
-- **`with_nested:` / `with_together:` with a LITERAL string term** (`with_nested: [cd, [1]]`): real iterates the
-  string per character (`c`, `d`); krikri keeps `cd` whole. Template-sourced string terms (`"{{ word }}"`) already
-  match real.
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
   the Python SDK's error wording (`500 Server Error for http+docker://...`) is reproduced only for
   `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own `Code: 500 Message: ...`

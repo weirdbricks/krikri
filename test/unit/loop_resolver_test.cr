@@ -32,6 +32,28 @@ describe Krikri::LoopResolver do
     end
   end
 
+  describe ".source_term_elements" do
+    it "splits a string term into one element per character" do
+      # Real Ansible's nested/together lookups iterate each term directly
+      # as a sequence, so a literal string term is itself a sequence
+      # (live-verified against ansible-core 2.19.11: `with_nested: [cd,
+      # [1]]` yields [c,1] then [d,1]).
+      terms = Krikri::LoopResolver.source_term_elements(s("cd"))
+      terms.map(&.as_s).must_equal(["c", "d"])
+    end
+
+    it "returns a list term's own elements unchanged" do
+      list = JSON::Any.new([s("a"), s("b")])
+      Krikri::LoopResolver.source_term_elements(list).must_equal([s("a"), s("b")])
+    end
+
+    it "wraps a non-string scalar term as a single element" do
+      terms = Krikri::LoopResolver.source_term_elements(JSON::Any.new(5_i64))
+      terms.size.must_equal(1)
+      terms.first.raw.must_equal(5_i64)
+    end
+  end
+
   describe ".with_together" do
     it "zips lists elementwise with the first list's elements first" do
       items = Krikri::LoopResolver.with_together([[s("a"), s("b")], [s("x"), s("y")]])

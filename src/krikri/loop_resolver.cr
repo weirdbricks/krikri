@@ -17,6 +17,25 @@ module Krikri
       end
     end
 
+    # The element list ONE with_nested:/with_together: term contributes:
+    # a list term contributes its own elements, a STRING term contributes
+    # one element per CHARACTER (real Ansible's nested/together lookups
+    # iterate each term directly as a sequence, live-verified against
+    # ansible-core 2.19.11: `with_nested: [cd, [1]]` yields [c,1] then
+    # [d,1], `with_together: [cd, [1]]` yields [c,1] then [d,None]), and
+    # any other scalar contributes itself once. Non-string scalars are a
+    # deliberate divergence: real hard-fails them ("'_AnsibleTaggedInt'
+    # object is not iterable"), kept here as a one-element list.
+    def self.source_term_elements(value : JSON::Any) : Array(JSON::Any)
+      if list = value.as_a?
+        list
+      elsif str = value.as_s?
+        str.chars.map { |char| JSON::Any.new(char.to_s) }
+      else
+        [value]
+      end
+    end
+
     # with_nested: [[a, b], [x, y]] -> [[a,x], [a,y], [b,x], [b,y]]
     # The first list varies slowest (outermost loop), matching Ansible.
     # Access in a task via item[0], item[1], ...

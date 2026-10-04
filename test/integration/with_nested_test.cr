@@ -112,4 +112,97 @@ describe "with_nested: templated scalar sources" do
     status.success?.must_equal(true)
     output.must_include("All assertions passed")
   end
+
+  it "iterates a literal string term one element per character" do
+    # Real ansible-core 2.19.11 (live-verified): the nested lookup
+    # iterates each term directly as a sequence, so a literal string
+    # term contributes one element per CHARACTER - `with_nested: [cd,
+    # [1]]` yields [c,1] then [d,1], where krikri used to keep "cd"
+    # whole as a one-element factor.
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: nested loop over a literal string term
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}-{{ item.1 }}"
+            with_nested: [cd, [1]]
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 2
+                - result.results[0].msg == "c-1"
+                - result.results[1].msg == "d-1"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
+
+  it "iterates a substituted embedded-template literal per character too" do
+    # The deferred-source path (a literal entry with embedded {{ }}): real
+    # Ansible templates the term and THEN iterates the resulting string
+    # per character (live-verified: "a-{{ x }}-b" over x=12 iterates
+    # a,-,1,2,-,b), so krikri's executor fallback must char-split the
+    # substituted string, not keep it as one element.
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          x: "12"
+        tasks:
+          - name: nested loop over an embedded-template literal
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}"
+            with_nested:
+              - "a-{{ x }}-b"
+              - [1]
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 6
+                - result.results[0].item.0 == "a"
+                - result.results[1].item.0 == "-"
+                - result.results[2].item.0 == "1"
+                - result.results[3].item.0 == "2"
+                - result.results[4].item.0 == "-"
+                - result.results[5].item.0 == "b"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
+
+  it "expands a direct scalar source's string terms per character" do
+    # The DIRECT scalar form (`with_nested: "{{ var }}"`) resolves to the
+    # term LIST at runtime; real Ansible then iterates each term as a
+    # sequence (live-verified: over combos = ["cd", [1]] it yields [c,1]
+    # then [d,1]).
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          combos: ["cd", [1]]
+        tasks:
+          - name: nested loop from a scalar source
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}-{{ item.1 }}"
+            with_nested: "{{ combos }}"
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 2
+                - result.results[0].msg == "c-1"
+                - result.results[1].msg == "d-1"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
 end

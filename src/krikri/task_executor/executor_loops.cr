@@ -307,12 +307,20 @@ module Krikri
         return nil unless hash
         LoopResolver.with_dict(hash.transform_keys(&.to_s))
       when "with_nested"
-        # Only the DIRECT scalar form (`with_nested: "{{ var }}"`) still
-        # reaches here - the one-element ARRAY form is routed to
-        # resolve_loop_nested by the parser, which iterates the resolved
-        # source's own elements the same way.
-        lists = loop_source_terms(value).map { |entry| entry.as_a? || [entry] }
+        # Only the DIRECT scalar forms (`with_nested: "{{ var }}"` /
+        # `with_together: "{{ var }}"`) still reach here - the array forms
+        # are routed to resolve_loop_nested/resolve_loop_together by the
+        # parser. Each resolved TERM is itself the sequence that gets
+        # iterated (see LoopResolver.source_term_elements): a string term
+        # contributes one element per CHARACTER, live-verified against
+        # ansible-core 2.19.11 (`with_nested: "{{ combos }}"` and
+        # `with_together: "{{ combos }}"` over ["cd", [1]] yield [c,1]/[d,1]
+        # and [c,1]/[d,None], same as the literal array form).
+        lists = loop_source_terms(value).map { |entry| loop_source_terms(entry) }
         LoopResolver.with_nested(lists)
+      when "with_together"
+        lists = loop_source_terms(value).map { |entry| loop_source_terms(entry) }
+        LoopResolver.with_together(lists)
       when "with_indexed_items"
         list = value.as_a?
         return nil unless list
@@ -616,13 +624,7 @@ module Krikri
     # (live-verified against ansible-core 2.19.11: `with_nested: [ruby]`
     # really does iterate 'r', 'u', 'b', 'y', one item per character).
     private def loop_source_terms(value : JSON::Any) : Array(JSON::Any)
-      if list = value.as_a?
-        list
-      elsif str = value.as_s?
-        str.chars.map { |char| JSON::Any.new(char.to_s) }
-      else
-        [value]
-      end
+      LoopResolver.source_term_elements(value)
     end
 
     # with_nested: resolve each raw source string (a `{{ var }}` list
@@ -666,7 +668,17 @@ module Krikri
           if substituted.starts_with?('[') && (parsed = (JSON.parse(substituted).as_a? rescue nil))
             parsed
           else
-            [JSON::Any.new(substituted)]
+            # The whole-string "undefined" sentinel keeps the old one-item
+            # shape (the engine-has-no-value sentinel resolve_loop_flattened
+            # also skips); a literal that substituted to a plain STRING term
+            # is iterated per CHARACTER, same as the parse-time literal path
+            # (live-verified against ansible-core 2.19.11: with x=12,
+            # `with_nested: ["a-{{ x }}-b", [1]]` iterates a,-,1,2,-,b).
+            if substituted == "undefined"
+              [JSON::Any.new(substituted)]
+            else
+              LoopResolver.source_term_elements(JSON::Any.new(substituted))
+            end
           end
         end
       end
@@ -707,7 +719,13 @@ module Krikri
           if substituted.starts_with?('[') && (parsed = (JSON.parse(substituted).as_a? rescue nil))
             parsed
           else
-            [JSON::Any.new(substituted)]
+            # Same string-term-per-character semantics as the nested branch
+            # above; the whole-string "undefined" sentinel stays one item.
+            if substituted == "undefined"
+              [JSON::Any.new(substituted)]
+            else
+              LoopResolver.source_term_elements(JSON::Any.new(substituted))
+            end
           end
         end
       end

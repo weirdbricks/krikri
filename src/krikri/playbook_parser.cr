@@ -2895,9 +2895,10 @@ module Krikri
         # whole-list variable reference), not a literal one-item list - its
         # real size is only knowable once the variable context exists, so
         # defer the whole cartesian product to the executor
-        # (resolve_loop_nested). Only a fully-literal array (or one whose
-        # templated scalars are embedded in longer literals, which stay
-        # one item each after substitution) resolves at parse time below.
+        # (resolve_loop_nested). Only a fully-literal array resolves at
+        # parse time below; an embedded-template literal defers too, and
+        # its substituted string is iterated per character by the
+        # executor, exactly like the literal string terms handled here.
         if with_nested.any? { |entry| (str = entry.as_s?) && str.includes?("{{") }
           task.loop_nested_sources = with_nested.map do |entry|
             if entry.as_a?
@@ -2908,10 +2909,14 @@ module Krikri
           end
         else
           lists = with_nested.map do |entry|
-            if entry.as_a?
-              entry.as_a.map { |item| JSON.parse(item.to_json) }
+            if sub = entry.as_a?
+              sub.map { |item| JSON.parse(item.to_json) }
             else
-              [JSON.parse(entry.to_json)]
+              # A literal STRING term is itself the sequence real Ansible
+              # iterates - one element per CHARACTER (`with_nested: [cd,
+              # [1]]` yields [c,1] then [d,1], live-verified against
+              # ansible-core 2.19.11), not the whole string as one element.
+              LoopResolver.source_term_elements(JSON.parse(entry.to_json))
             end
           end
           task.loop_items = LoopResolver.with_nested(lists)
@@ -2933,10 +2938,13 @@ module Krikri
           end
         else
           lists = with_together.map do |entry|
-            if entry.as_a?
-              entry.as_a.map { |item| JSON.parse(item.to_json) }
+            if sub = entry.as_a?
+              sub.map { |item| JSON.parse(item.to_json) }
             else
-              [JSON.parse(entry.to_json)]
+              # Same per-CHARACTER string-term iteration as with_nested
+              # above (`with_together: [cd, [1]]` yields [c,1] then
+              # [d,None], live-verified against ansible-core 2.19.11).
+              LoopResolver.source_term_elements(JSON.parse(entry.to_json))
             end
           end
           task.loop_items = LoopResolver.with_together(lists)

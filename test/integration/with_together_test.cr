@@ -82,4 +82,63 @@ describe "with_together: templated scalar sources" do
     status.success?.must_equal(true)
     output.must_include("All assertions passed")
   end
+
+  it "iterates a literal string term one element per character" do
+    # Real ansible-core 2.19.11 (live-verified): the together lookup
+    # iterates each term directly as a sequence, so a literal string term
+    # contributes one element per CHARACTER - `with_together: [cd, [1]]`
+    # zips to [c,1] then [d,None], where krikri used to keep "cd" whole
+    # as a one-element column.
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: together loop over a literal string term
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}-{{ item.1 }}"
+            with_together: [cd, [1]]
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 2
+                - result.results[0].msg == "c-1"
+                - result.results[1].item.0 == "d"
+                - result.results[1].item.1 is none
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
+
+  it "zips a direct scalar source's string terms per character" do
+    # The DIRECT scalar form (`with_together: "{{ var }}"`) resolves to
+    # the term LIST at runtime and real Ansible zips each term as a
+    # sequence (live-verified: over combos = ["cd", [1]] it yields [c,1]
+    # then [d,None]). krikri used to leave this form with no resolver at
+    # all - the task ran once with `item` unbound and failed.
+    status, output = run_playbook(<<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        vars:
+          combos: ["cd", [1]]
+        tasks:
+          - name: together loop from a scalar source
+            ansible.builtin.debug:
+              msg: "{{ item.0 }}-{{ item.1 }}"
+            with_together: "{{ combos }}"
+            register: result
+          - name: assert
+            ansible.builtin.assert:
+              that:
+                - result.results | length == 2
+                - result.results[0].msg == "c-1"
+                - result.results[1].item.1 is none
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("All assertions passed")
+  end
 end
