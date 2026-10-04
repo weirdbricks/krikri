@@ -1,0 +1,134 @@
+---
+# Probes for ufw with `state: enabled` combined with a rule or a default in
+# ONE task, exactly as konstruktoid.hardening's ufw.yml does (round 999010
+# found: `Set default deny` outgoing reported changed by real and ok by
+# krikri, and a second `Allow sshd port from administrator networks` rule
+# changed by real and ok by krikri). Unlike kop_firewall this ENABLES ufw, so
+# an `allow 22/tcp` helper rule goes in first and everything is reset and
+# disabled again at the end. Convention: every probed task registers r and
+# is followed by a debug emitting "KEYORDER|<case>|<registered result>".
+
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Reset ufw to a known state
+  ansible.builtin.command: ufw --force reset
+  changed_when: false
+
+- name: Keep SSH reachable while ufw is enabled
+  ansible.builtin.command: ufw allow 22/tcp
+  changed_when: false
+
+- name: First admin-net rule, also enabling ufw
+  community.general.ufw:
+    rule: allow
+    from_ip: "192.168.0.0/24"
+    to_port: 22
+    proto: tcp
+    comment: ansible managed
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_rule_a
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_rule_a|{{ r | to_json }}"
+
+- name: Second admin-net rule (ufw already enabled)
+  community.general.ufw:
+    rule: allow
+    from_ip: "192.168.1.0/24"
+    to_port: 22
+    proto: tcp
+    comment: ansible managed
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_rule_b
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_rule_b|{{ r | to_json }}"
+
+- name: Second admin-net rule again (ok)
+  community.general.ufw:
+    rule: allow
+    from_ip: "192.168.1.0/24"
+    to_port: 22
+    proto: tcp
+    comment: ansible managed
+    state: enabled
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_rule_b_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_rule_b_again|{{ r | to_json }}"
+
+- name: Default deny incoming
+  community.general.ufw:
+    state: enabled
+    direction: incoming
+    default: deny
+    log: true
+    logging: low
+    comment: ansible managed
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_default_in
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_default_in|{{ r | to_json }}"
+
+- name: Default deny outgoing
+  community.general.ufw:
+    state: enabled
+    direction: outgoing
+    default: deny
+    log: true
+    logging: low
+    comment: ansible managed
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_default_out
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_default_out|{{ r | to_json }}"
+
+- name: Default deny outgoing again (ok)
+  community.general.ufw:
+    state: enabled
+    direction: outgoing
+    default: deny
+    log: true
+    logging: low
+    comment: ansible managed
+  register: r
+  ignore_errors: true
+
+- name: Report ufw_active_default_out_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_default_out_again|{{ r | to_json }}"
+
+- name: Default allow outgoing in check mode
+  community.general.ufw:
+    state: enabled
+    direction: outgoing
+    default: allow
+    log: true
+    logging: low
+    comment: ansible managed
+  register: r
+  ignore_errors: true
+  check_mode: true
+
+- name: Report ufw_active_default_out_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|ufw_active_default_out_check|{{ r | to_json }}"
+
+- name: Reset ufw and disable it again
+  ansible.builtin.command: ufw --force reset
+  changed_when: false
