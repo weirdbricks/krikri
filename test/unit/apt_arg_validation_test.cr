@@ -47,7 +47,13 @@ describe "apt plugin argument validation" do
     # attempt; it only bounds the retry window.
     ["absent", "build-dep", "fixed", "latest", "present"].each do |state|
       result = PluginSpecHelper.run("apt", {"name" => "krikri-arg-validation-probe", "state" => state, "lock_timeout" => "1"})
-      result["msg"].as_s.wont_include("value of state must be one of")
+      # `result["msg"]?`, not `result["msg"]`: an accepted `state` does not
+      # guarantee a msg key. `state: absent` on a package that is not
+      # installed takes real remove()'s empty-pkg_list exit, a bare
+      # `changed=False` with no msg at all (live-verified against
+      # ansible-core 2.19.11), so requiring the key would fail on a
+      # correctly-accepted state.
+      result["msg"]?.try(&.as_s).to_s.wont_include("value of state must be one of")
     end
   end
 

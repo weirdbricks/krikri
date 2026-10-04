@@ -39,8 +39,10 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
         echo "POLICY-DURING-OP:absent" >> "$KRIKRI_APT_CALLS"
       fi
     fi
-    case "$1" in
-      install|remove|upgrade|dist-upgrade|autoremove|autoclean)
+    # Real apt.py builds `apt-get -y <options> <verb> <specs>`, so the
+    # verb is NOT $1 any more - match it anywhere in the argument list.
+    case " $* " in
+      *" install "*|*" remove "*|*" upgrade "*|*" dist-upgrade "*|*" autoremove "*|*" autoclean "*|*" build-dep "*)
         if [ -n "$KRIKRI_APT_FAIL" ]; then
           echo "E: Krikri simulated apt failure." >&2
           exit 100
@@ -91,21 +93,33 @@ private def read_log(log : String) : Array(String)
   File.exists?(log) ? File.read_lines(log) : [] of String
 end
 
+# Real apt.py's command layout is `apt-get -y <options> <verb> <specs>`
+# (apt.py's install()/remove()/upgrade() format strings), so the verb is
+# the first ARGUMENT SLOT carrying that verb, not the start of the line.
+private def call_with_verb(log : String, verb : String) : String?
+  read_log(log).find { |line| line.split(' ').includes?(verb) }
+end
+
 private def install_call(log : String) : String?
-  read_log(log).find(&.starts_with?("install"))
+  call_with_verb(log, "install")
 end
 
 private def remove_call(log : String) : String?
-  read_log(log).find(&.starts_with?("remove"))
+  call_with_verb(log, "remove")
 end
 
 private def upgrade_call(log : String) : String?
-  read_log(log).find { |line| line.includes?("dist-upgrade") || line.includes?("upgrade --with-new-pkgs") }
+  call_with_verb(log, "dist-upgrade") || call_with_verb(log, "upgrade")
 end
 
-# apt.py's default: dpkg_options=dict(default=DPKG_OPTIONS) where
-# DPKG_OPTIONS = 'force-confdef,force-confold'.
-DEFAULT_DPKG_OPTIONS = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+# Real apt.py's main() builds `dpkg_options = expand_dpkg_options(
+# p['dpkg_options']) + " -o DPkg::Lock::Timeout=<lock_timeout>"` and
+# passes THAT to install/remove/upgrade/cleanup (the shim logs args only,
+# so real's double quotes around the Dpkg::Options values never reach the
+# log). Live-verified against ansible-core 2.19.11: `apt-get -y -o
+# Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o
+# DPkg::Lock::Timeout=60 install tree=2.0.2-1`.
+DEFAULT_DPKG_OPTIONS = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60"
 
 describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
   # Real ansible-playbook 2.19.11, live-verified in check mode
@@ -174,12 +188,15 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
       PluginSpecHelper.run("apt", {"name" => "['krikri-fake-pkg', 'krikri-fake-pkg2']", "state" => "present", "_environment" => env})
       call = install_call(log) || ""
       call.wont_equal("")
-      # The RAW comma-split garbage tokens (bracket remnants verbatim,
-      # re-quoted for apt-get by the install command's per-package
-      # shell_single_quote), not the repaired/re-parsed clean name pair
-      # real Ansible never sees:
-      call.must_include("['krikri-fake-pkg'")
-      call.must_include("'krikri-fake-pkg2']")
+      # The RAW comma-split garbage tokens (bracket remnants verbatim),
+      # NOT the repaired/re-parsed clean name pair real Ansible never
+      # sees. Real apt.py wraps each spec in naive `'%s'` quoting with no
+      # shell escaping, so the shim's log (which records argv after the
+      # shell has dequoted it) shows the bracket remnants unquoted - each
+      # token still carrying the candidate version install() resolved onto
+      # it.
+      call.must_include("[krikri-fake-pkg=1.0-1")
+      call.must_include("krikri-fake-pkg2]=1.0-1")
     end
   end
 end
@@ -190,7 +207,7 @@ describe "apt plugin - parameter coverage" do
       with_apt_param_shims("un") do |env, log|
         result = PluginSpecHelper.run("apt", {"name" => "krikri-fake-pkg", "state" => "present", "_environment" => env})
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1")
       end
     end
 
@@ -203,7 +220,7 @@ describe "apt plugin - parameter coverage" do
           "_environment" => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-config krikri-fake-pkg")
+        install_call(log).must_equal("-y -o Dpkg::Options::=--force-confnew -o Dpkg::Options::=--force-config -o DPkg::Lock::Timeout=60 install krikri-fake-pkg=1.0-1")
       end
     end
   end
@@ -219,7 +236,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"       => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} --force-yes --no-remove krikri-fake-pkg")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} --force-yes --no-remove install krikri-fake-pkg=1.0-1")
       end
     end
 
@@ -234,7 +251,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"               => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg --allow-unauthenticated --allow-downgrades --allow-change-held-packages")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1 --allow-unauthenticated --allow-downgrades --allow-change-held-packages")
       end
     end
 
@@ -247,7 +264,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"    => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -t stable-backports")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1 -t stable-backports")
       end
     end
 
@@ -260,7 +277,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"       => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -o APT::Install-Recommends=no")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1 -o APT::Install-Recommends=no")
       end
     end
 
@@ -273,7 +290,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"       => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg -o APT::Install-Recommends=yes")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1 -o APT::Install-Recommends=yes")
       end
     end
 
@@ -308,7 +325,11 @@ describe "apt plugin - parameter coverage" do
           "_environment" => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} --only-upgrade krikri-fake-pkg")
+        # Real's state=latest runs the SAME install() as state=present
+        # (apt.py main(): state_upgrade=True), so --only-upgrade is a
+        # leading flag in the same slot - verified live against
+        # ansible-core 2.19.11.
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} --only-upgrade install krikri-fake-pkg=1.0-1")
       end
     end
   end
@@ -324,7 +345,7 @@ describe "apt plugin - parameter coverage" do
           "_environment" => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        remove_call(log).must_equal("remove -y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes krikri-fake-pkg")
+        remove_call(log).must_equal("-q -y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes remove krikri-fake-pkg")
       end
     end
 
@@ -337,7 +358,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"               => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        remove_call(log).must_equal("remove -y #{DEFAULT_DPKG_OPTIONS} --allow-change-held-packages krikri-fake-pkg")
+        remove_call(log).must_equal("-q -y #{DEFAULT_DPKG_OPTIONS} --allow-change-held-packages remove krikri-fake-pkg")
       end
     end
 
@@ -428,7 +449,7 @@ describe "apt plugin - parameter coverage" do
           "_environment"  => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        install_call(log).must_equal("install -y #{DEFAULT_DPKG_OPTIONS} krikri-fake-pkg")
+        install_call(log).must_equal("-y #{DEFAULT_DPKG_OPTIONS} install krikri-fake-pkg=1.0-1")
       end
     end
 

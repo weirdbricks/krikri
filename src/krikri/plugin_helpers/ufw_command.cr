@@ -15,10 +15,10 @@ module Krikri
     module UfwCommand
       def self.state_command(state : String) : String?
         case state
-        when "enabled"  then "ufw --force enable"
-        when "disabled" then "ufw disable"
-        when "reloaded" then "ufw --force reload"
-        when "reset"    then "ufw --force reset"
+        when "enabled"  then "ufw -f enable"
+        when "disabled" then "ufw -f disable"
+        when "reloaded" then "ufw -f reload"
+        when "reset"    then "ufw -f reset"
         end
       end
 
@@ -136,20 +136,70 @@ module Krikri
         ["true", "yes", "1", "on"].includes?(value.downcase)
       end
 
-      # Real ufw prints a line containing "Skipping" (e.g. "Skipping
-      # adding existing rule") and exits 0 when a rule command is a
-      # no-op - verified against community.general's actual ufw.py
-      # source, which checks for exactly this substring
-      # (`filter_line_that_contains("Skipping", rules_dry)`) to decide
-      # `changed` in check mode. Used here as the changed signal for a
-      # real (non-dry-run) application too, since replicating ufw's full
-      # rule-tuple diffing logic would need actually-working netfilter
-      # access to verify - not available in this project's Docker-based
-      # compat harness (rootless podman container), so this is
-      # source-verified but not further behavior-verified end-to-end the
-      # way every other plugin in this codebase has been.
-      def self.changed_from_output?(output : String) : Bool
-        !output.includes?("Skipping")
+      # Real ufw.py's ufw_version(): parses the first non-empty line of
+      # `ufw --version` ("ufw 0.36.2") for major.minor[.rev]; anything
+      # else fails the module with real's own fail_json wording
+      # ("Failed to get ufw version.").
+      def self.version_parses?(output : String) : Bool
+        line = output.lines.find { |text| !text.strip.empty? }
+        return false unless line
+        /^ufw.+(\d+)\.(\d+)(?:\.(\d+))?.*$/.matches?(line)
+      end
+
+      # Real ufw.py's check-mode rule decision over `ufw --dry-run ...`
+      # output, ported line-for-line (including its inverted-named
+      # filter_line_that_not_start_with, which actually KEEPS the lines
+      # that start with the pattern - the module's own bug, and the
+      # behavior the pre/post tuple diff silently depends on):
+      #
+      # - when every line of the dry-run output contains "Skipping",
+      #   ufw made no change (e.g. "Skipping adding existing rule") -
+      #   changed stays false;
+      # - otherwise the dry-run output's `### tuple ...` lines are
+      #   compared against the pre-probe grep - filtered to lines
+      #   containing an ipv4/ipv6 literal when the rule's from/to ip
+      #   STARTS with one of that family (Python re.match, i.e. anchored
+      #   at the start), compared whole otherwise.
+      def self.check_mode_rule_changed?(dry_run_output : String, pre_rules : String, from_ip : String, to_ip : String) : Bool
+        lines = splitlines_keepends(dry_run_output)
+        skipping = lines.count(&.includes?("Skipping"))
+        return false if skipping > 0 && skipping == lines.size
+
+        dry_tuples = lines.select(&.starts_with?("### tuple")).join
+        if starts_by_ip?(IPV4_RE, from_ip) || starts_by_ip?(IPV4_RE, to_ip)
+          filter_by_ip(IPV4_RE, pre_rules) != filter_by_ip(IPV4_RE, dry_tuples)
+        elsif starts_by_ip?(IPV6_RE, from_ip) || starts_by_ip?(IPV6_RE, to_ip)
+          filter_by_ip(IPV6_RE, pre_rules) != filter_by_ip(IPV6_RE, dry_tuples)
+        else
+          pre_rules != dry_tuples
+        end
+      end
+
+      # Python str.splitlines(keepends=True) over \n-separated text
+      # (ufw/grep output): a trailing newline terminates a line, a final
+      # chunk without one is still a line, and "" has no lines.
+      def self.splitlines_keepends(s : String) : Array(String)
+        return [] of String if s.empty?
+        parts = s.split('\n')
+        last = parts.pop
+        lines = parts.map &.+("\n")
+        lines << last unless last.empty?
+        lines
+      end
+
+      private IPV4_RE = /((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])/
+      private IPV6_RE = /(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))/
+
+      # Python re.match semantics - anchored at the START of the string
+      # (Crystal's Regex#match is unanchored search).
+      private def self.starts_by_ip?(regex : Regex, ip : String) : Bool
+        /^#{regex.source}/.matches?(ip)
+      end
+
+      # Python filter_line_that_match_func(search, content): keep the
+      # keepends lines the regex finds ANYWHERE in.
+      private def self.filter_by_ip(regex : Regex, content : String) : String
+        splitlines_keepends(content).select { |line| regex.matches?(line) }.join
       end
 
       # Real ufw.py's execute() fails with `module.fail_json(msg=err or

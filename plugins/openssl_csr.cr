@@ -373,11 +373,22 @@ module Krikri
     # The real backend's _get_info: {} when there is no CSR to read,
     # the full csr info + can_parse_csr: true when it parses, and
     # {can_parse_csr: false} when it does not.
+    #
+    # Real calls get_csr_info(..., prefer_one_fingerprint=True) here:
+    # PREFERRED_FINGERPRINTS[0] is "sha256", so the diff payload's
+    # public_key_fingerprints carries exactly ONE entry (sha256) -
+    # unlike the info module's own result, which carries the full
+    # hashlib.algorithms_guaranteed set (round-995004
+    # openssl_csr_info_helper_csr capture: after.fingerprints =
+    # {"sha256": ...} only).
     private def csr_diff_info(pem_source : String?) : JSON::Any
       return JSON.parse("{}") if pem_source.nil?
       pem = File.read(pem_source) rescue return JSON.parse("{\"can_parse_csr\": false}")
       info = X509CertInfo.csr_info_ordered(pem)
       return JSON.parse("{\"can_parse_csr\": false}") unless info
+      if (fp = info["public_key_fingerprints"]?) && (sha = fp.as_h?.try(&.[]?("sha256")))
+        info["public_key_fingerprints"] = JSON::Any.new({"sha256" => sha}.to_h)
+      end
       info["can_parse_csr"] = JSON::Any.new(true)
       JSON::Any.new(info.to_h { |k, v| {k, v} })
     end
