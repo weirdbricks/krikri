@@ -60,8 +60,7 @@ and fixed and when.
     have run); a task using one stops with the unimplemented-module error.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `nsupdate`, `rabbitmq_*`.
-  - Known value (not shape) differences left as they are: the order of the `public_key_fingerprints` entries
-    (real builds them from a Python set, so its order is nondeterministic) and `ufw`'s `commands`/`apt`'s failure
+  - Known value (not shape) differences left as they are: `ufw`'s `commands`/`apt`'s failure
     results on the mutating paths, which are verified against real's command construction and wording but not yet
     end-to-end on a real host after 0.9.1470. `krikri-role-tester keyorder --values` over a probe round is how
     any remaining value difference is found; host-specific noise (apt output text, per-host keys, snap revisions)
@@ -72,8 +71,7 @@ and fixed and when.
   like real. Still different: a *temporary* resolver failure prints the EAI_NONAME wording (Crystal's
   `Addrinfo::Error` carries no gai code) and strerror texts are glibc's. `postgresql_*` and
   `mysql_db`/`mysql_query`/`mysql_user`/`mysql_variables` results and accepted-parameter sets otherwise match real
-  (live-verified on postgres:17 / mysql:8.4); real builds `postgresql_privs`'s privilege list from a Python
-  frozenset, so its multi-privilege ordering is nondeterministic and krikri keeps declared order. The PostgreSQL
+  (live-verified on postgres:17 / mysql:8.4); The PostgreSQL
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
@@ -188,6 +186,10 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   non-string scalars and lists with a non-string member are reproduced (same class as the `output_encoding`
   entry above). A `debconf` multiselect list mixing strings and ints raises real's order-dependent
   `'<' not supported` TypeError first and is not reproduced either.
+- Python-set iteration order in results: `openssl_csr`/`openssl_certificate` `public_key_fingerprints` entries and
+  `postgresql_privs`'s multi-privilege list are built by real from a Python set/frozenset, so their order is
+  randomized per real process (nondeterministic across real runs themselves). krikri keeps a fixed order
+  (fingerprints: real's declared algorithm order; privileges: declared order).
 - Other `ansible-core` releases may differ in wording or edge cases; 2.19.11 is the reference.
 
 ### Differential-fuzz residual leniency between the two Jinja evaluators
