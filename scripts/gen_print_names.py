@@ -58,8 +58,6 @@ ARGS = {
     "community.crypto.openssh_keypair": {"path": "/tmp/argval-probe/id_probe"},
     "community.crypto.get_certificate": {"host": "127.0.0.1", "port": 1},
     "community.general.java_cert": {"path": "/tmp/argval-probe/k.pem", "dest": "/tmp/argval-probe/js"},
-    "community.general.redhat_subscription": {"state": "absent"},
-    "ovirt.ovirt.ovirt_auth": {},
     "containers.podman.podman_image": {"name": "probe"},
     "community.general.maven_artifact": {"group_id": "g", "artifact_id": "a", "dest": "/tmp/argval-probe/m"},
     "community.general.nsupdate": {"key_name": "k", "key_secret": "s", "key_algorithm": "hmac-md5"},

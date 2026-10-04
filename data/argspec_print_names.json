@@ -2600,45 +2600,6 @@
   "supported": null,
   "unsupported": null
  },
- "community.general.redhat_subscription|community.general.redhat_subscription": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "Unsupported parameters for (community.general.redhat_subscription) module: zznope. Supported parameters include: activationkey, auto_attach, consumer_id, consumer_name, consumer_type, environment, force_register, org_id, password, pool_ids, release, rhsm_baseurl, rhsm_repo_ca_cert, server_hostname, server_insecure, server_port, server_prefix, server_proxy_hostname, server_proxy_password, server_proxy_port, server_proxy_scheme, server_proxy_user, state, syspurpose, token, username."
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (community.general.redhat_subscription) module: zznope. Supported parameters include: activationkey, auto_attach, consumer_id, consumer_name, consumer_type, environment, force_register, org_id, password, pool_ids, release, rhsm_baseurl, rhsm_repo_ca_cert, server_hostname, server_insecure, server_port, server_prefix, server_proxy_hostname, server_proxy_password, server_proxy_port, server_proxy_scheme, server_proxy_user, state, syspurpose, token, username.",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.general.rhsm_release|community.general.rhsm_release": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "Unsupported parameters for (community.general.rhsm_release) module: zznope. Supported parameters include: release."
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (community.general.rhsm_release) module: zznope. Supported parameters include: release.",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "community.general.rhsm_repository|community.general.rhsm_repository": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "missing required arguments: name"
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
  "community.general.sefcontext|community.general.sefcontext": {
   "dump": {
    "ansible_facts": {
@@ -2908,19 +2869,6 @@
    "msg": "Unsupported parameters for (containers.podman.podman_image) module: zznope. Supported parameters include: arch, auth_file, build, ca_cert_dir, executable, force, name, password, path, pull, pull_extra_args, push, push_args, quadlet_dir, quadlet_file_mode, quadlet_filename, quadlet_options, state, tag, username, validate_certs (authfile, build_args, buildargs, tls_verify, tlsverify)."
   },
   "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (containers.podman.podman_image) module: zznope. Supported parameters include: arch, auth_file, build, ca_cert_dir, executable, force, name, password, path, pull, pull_extra_args, push, push_args, quadlet_dir, quadlet_file_mode, quadlet_filename, quadlet_options, state, tag, username, validate_certs (authfile, build_args, buildargs, tls_verify, tlsverify).",
-  "printed_name": null,
-  "supported": null,
-  "unsupported": null
- },
- "ovirt.ovirt.ovirt_auth|ovirt.ovirt.ovirt_auth": {
-  "dump": {
-   "ansible_facts": {
-    "discovered_interpreter_python": "/usr/bin/python3.13"
-   },
-   "changed": false,
-   "msg": "Unsupported parameters for (ovirt.ovirt.ovirt_auth) module: zznope. Supported parameters include: ca_file, compress, headers, hostname, insecure, kerberos, ovirt_auth, password, state, timeout, token, url, username."
-  },
-  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (ovirt.ovirt.ovirt_auth) module: zznope. Supported parameters include: ca_file, compress, headers, hostname, insecure, kerberos, ovirt_auth, password, state, timeout, token, url, username.",
   "printed_name": null,
   "supported": null,
   "unsupported": null

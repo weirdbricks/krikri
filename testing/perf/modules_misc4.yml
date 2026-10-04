@@ -3,19 +3,19 @@
 # playbooks (modules_files.yml, modules_packages.yml, modules_security.yml,
 # modules_systems.yml, modules_data.yml, modules_xml.yml,
 # modules_files_storage.yml, modules_misc2.yml, modules_misc3.yml).
-# Theme: the Docker-family, dynamic-DNS, ZFS and Red Hat subscription
+# Theme: the Docker-family, dynamic-DNS and ZFS
 # modules that had no synthetic coverage yet:
 #   docker_container, docker_image, docker_image_build, docker_login,
 #   docker_network, docker_network_info, docker_compose_v2,
-#   nsupdate, zfs, redhat_subscription
+#   nsupdate, zfs
 #
 # SAFETY CONTRACT FOR THIS BATCH - STRONGER THAN THE SIBLINGS':
-# EVERYTHING here is LOCAL-ONLY. No AWS, no Red Hat subscription
+# EVERYTHING here is LOCAL-ONLY. No AWS,
 # servers, no Docker Hub, no real registry, no network service beyond
 # localhost/loopback is ever contacted for mutation. Every section
 # gates on local capability probes and is EXPECTED to skip cleanly on
 # most stock containers (a clean all-skip run on a plain Ubuntu or
-# Rocky container with none of docker/zfs/bind/subscription-manager
+# Rocky container with none of docker/zfs/bind
 # installed is the correct outcome, not a shortcoming - this playbook
 # must produce ZERO failed tasks there).
 #
@@ -59,22 +59,6 @@
 #   (same pattern as the block-device family), and everything -
 #   dataset, snapshot, pool, loop attachment, image file - is torn
 #   down again at the end.
-# - redhat_subscription: the MODULE itself is deliberately NEVER
-#   invoked, and this is a documented permanent skip, not a gap. Its
-#   only states are mutating ones - state=present (register + attach
-#   subscriptions, which contacts real Red Hat subscription
-#   infrastructure and mutates host entitlement state) and state=absent
-#   (unregister, which destroys real entitlement state) - with no
-#   read-only mode at all, so there is NO synthetic exercise of the
-#   module that does not either touch a real RHN server or
-#   unregister/deregister a possibly-real host. What IS exercised,
-#   behind a `which subscription-manager` probe, is read-only
-#   information gathering via the CLI (`subscription-manager status`
-#   and `identity`, failed_when: false) purely for cross-engine output
-#   comparison. That the module is implemented at all is confirmed by
-#   its AVAILABLE_PLUGINS registration (community.general
-#   .redhat_subscription in src/krikri/playbook_parser.cr) - verified,
-#   not assumed, when this playbook was written.
 #
 # Same conventions as the sibling playbooks: run-scoped vars derived
 # from the epoch run id, all mutations confined to
@@ -273,13 +257,6 @@
       failed_when: false
       changed_when: false
 
-    # redhat_subscription: read-only CLI probe only (see header).
-    - name: Probe subscription-manager CLI
-      ansible.builtin.command: which subscription-manager
-      register: mm4_submgr_probe
-      failed_when: false
-      changed_when: false
-
     # ---------------------------------------------------------------
     # Skip notices - one clean debug per skipped section, never a
     # failure. This is what a plain Ubuntu/Rocky container run should
@@ -314,11 +291,6 @@
       ansible.builtin.debug:
         msg: "skipping zfs section: zpool/zfs absent, /dev/zfs absent (host kernel has no zfs module) or loop devices unavailable"
       when: mm4_zpool_probe.rc != 0 or mm4_zfs_probe.rc != 0 or mm4_devzfs_probe.rc != 0 or mm4_loop_probe.rc != 0
-
-    - name: Notice redhat_subscription CLI queries skipped
-      ansible.builtin.debug:
-        msg: "skipping subscription-manager queries: subscription-manager absent (not a Red Hat-registered system)"
-      when: mm4_submgr_probe.rc != 0
 
     # ---------------------------------------------------------------
     # docker_container: one throwaway run_id-scoped container from the
@@ -799,35 +771,6 @@
           - mm4_zfs_snapshot_create.changed
           - mm4_zfs_snapshot_create_again.changed == false
       when: mm4_zpool_probe.rc == 0 and mm4_zfs_probe.rc == 0 and mm4_devzfs_probe.rc == 0 and mm4_loop_probe.rc == 0 and (mm4_pool_check.rc | default(1) == 0 or mm4_pool_create.rc | default(1) == 0)
-
-    # ---------------------------------------------------------------
-    # redhat_subscription: the module itself is NEVER invoked (mutating
-    # only - see header). Read-only CLI information gathering when the
-    # subscription-manager CLI happens to exist.
-    # ---------------------------------------------------------------
-    - name: Query subscription-manager status (read-only)
-      ansible.builtin.command: subscription-manager status
-      register: mm4_submgr_status
-      failed_when: false
-      changed_when: false
-      when: mm4_submgr_probe.rc == 0
-
-    - name: Query subscription-manager identity (read-only)
-      ansible.builtin.command: subscription-manager identity
-      register: mm4_submgr_identity
-      failed_when: false
-      changed_when: false
-      when: mm4_submgr_probe.rc == 0
-
-    - name: Debug subscription-manager read-only queries
-      ansible.builtin.debug:
-        msg: "subscription-manager status rc={{ mm4_submgr_status.rc | default('?') }}: {{ (mm4_submgr_status.stdout | default('')) | trim | default(mm4_submgr_status.stderr | default('')) | trim }}; identity rc={{ mm4_submgr_identity.rc | default('?') }}"
-      when: mm4_submgr_probe.rc == 0
-
-    - name: Notice redhat_subscription module permanent skip
-      ansible.builtin.debug:
-        msg: "redhat_subscription module deliberately not invoked: its only states are mutating (register/unregister against real Red Hat infrastructure); read-only CLI queries above cover what can be covered safely"
-      when: mm4_submgr_probe.rc == 0
 
     # ---------------------------------------------------------------
     # Cleanup: every throwaway object removed again, most-specific

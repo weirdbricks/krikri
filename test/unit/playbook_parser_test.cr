@@ -2314,41 +2314,6 @@ describe Krikri::PlaybookParser do
       {% end %}
     end
 
-    # ovirt_auth is registered under both spellings real oVirt roles
-    # write: the bare legacy short name (which the ovirt.ovirt
-    # collection keeps redirecting) and the FQCN. The cluster-upgrade /
-    # disaster-recovery / manageiq rounds (300133/300144/310133) all
-    # hard-stopped on the bare `ovirt_auth:` because only the FQCN was
-    # registered.
-    describe "ovirt_auth short name" do
-      it "resolves bare `ovirt_auth:` (registered verbatim)" do
-        task = single_task(<<-YAML)
-          - name: t
-            ovirt_auth:
-              url: https://engine.example.com/ovirt-engine/api
-              username: admin@internal
-              password: x
-          YAML
-        task.module_name.must_equal("ovirt_auth")
-      end
-
-      it "resolves the FQCN `ovirt.ovirt.ovirt_auth:` unchanged" do
-        task = single_task(<<-YAML)
-          - name: t
-            ovirt.ovirt.ovirt_auth:
-              url: https://engine.example.com/ovirt-engine/api
-              username: admin@internal
-              password: x
-          YAML
-        task.module_name.must_equal("ovirt.ovirt.ovirt_auth")
-      end
-
-      it "dispatches both spellings to the same `ovirt_auth` plugin binary" do
-        Krikri::PluginManager.simple_plugin_name("ovirt_auth").must_equal("ovirt_auth")
-        Krikri::PluginManager.simple_plugin_name("ovirt.ovirt.ovirt_auth").must_equal("ovirt_auth")
-      end
-    end
-
     # authorized_key is registered under both spellings real playbooks
     # write: the FQCN (ansible.posix, where the implementation lives) and
     # `ansible.builtin.authorized_key`, which real ansible-core keeps

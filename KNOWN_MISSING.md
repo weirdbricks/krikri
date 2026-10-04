@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1469`.**
+**Currently at `0.9.1470`.**
 
 ## Open gaps
 
@@ -38,7 +38,7 @@ and fixed and when.
   omit-`changed` wire) pins a plugin's keys to real 2.19.11's order. Everything below was compared against
   real on the same host, cold and warm, with `{{ r | to_json }}` probe roles
   (`testing/keyorder_probes/kop_*`, run through `krikri-role-tester run` with `local:` queue entries and compared
-  by `krikri-role-tester keyorder`; rounds 997000-997006 and 998000, 0.9.1468/0.9.1469: 168 probes on 7 roles, all
+  by `krikri-role-tester keyorder`; rounds 997000-997006 and 998000, 0.9.1468/0.9.1470: 168 probes on 7 roles, all
   identical on Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN; `keyorder --values` also compares the values, and
   what is left there is host noise - apt/dnf output text, per-host keys/UUIDs, snap loop devices, mount and systemd
   dependency ordering). Verified on real hosts: `user`, `group`,
@@ -52,16 +52,18 @@ and fixed and when.
   omit-`changed` wire or the controller backfill; `setup`/`gather_facts`/`wait_for_connection`/`fail` are
   handled outside their plugin files. Not verified, and why:
   - `snap`: snapd is too heavy for a probe round, so it is deliberately not probed.
-  - `homebrew`, `homebrew_cask` and `homebrew_tap` are not supported (dropped 0.9.1469: macOS-first, under 1.5% of the roles we have
+  - `homebrew`, `homebrew_cask` and `homebrew_tap` are not supported (dropped 0.9.1466: macOS-first, under 1.5% of the roles we have
     run, and nearly all of those only on macOS-only code paths); a task using one stops with the unimplemented-module error.
   - The real-mutation variants of `iptables` (its check-mode/stub shapes are pinned); not probed.
+  - `ovirt_auth`, `redhat_subscription`, `rhsm_repository` and `rhsm_release` are not supported (dropped 0.9.1470: each needs
+    a live oVirt engine or a Red Hat entitlement to run for real, and together they appear in under 0.3% of the roles we
+    have run); a task using one stops with the unimplemented-module error.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
-    close without credentials):* `ec2_*`, `iam_user_info`, `ovirt_auth`, `redhat_subscription`/`rhsm_*`,
-    `nsupdate`, `rabbitmq_*`.
+    close without credentials):* `ec2_*`, `iam_user_info`, `nsupdate`, `rabbitmq_*`.
   - Known value (not shape) differences left as they are: the order of the `public_key_fingerprints` entries
     (real builds them from a Python set, so its order is nondeterministic) and `ufw`'s `commands`/`apt`'s failure
     results on the mutating paths, which are verified against real's command construction and wording but not yet
-    end-to-end on a real host after 0.9.1469. `krikri-role-tester keyorder --values` over a probe round is how
+    end-to-end on a real host after 0.9.1470. `krikri-role-tester keyorder --values` over a probe round is how
     any remaining value difference is found; host-specific noise (apt output text, per-host keys, snap revisions)
     shows up there and is not a krikri difference.
 - **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
@@ -408,15 +410,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   Ubuntu 22.04; every one calls at least one of these for real logic, so
   this author's roles will keep diverging. Not worth re-testing more of
   them expecting a different outcome.
-
-  (The bullet that used to live here - `community.general.
-  redhat_subscription`, `community.rabbitmq.rabbitmq_plugin/_user`,
-  `ansible.mariadb.mariadb_db/_user` - is gone: the first two were
-  natively ported back in round 196/0.9.631 but this entry was never
-  updated (mrlesmithjr.rabbitmq and linux-system-roles.rhc have been
-  re-verified clean since), and ansible.mariadb's modules turned out to
-  be functionally identical forks of the already-implemented
-  community.mysql ones - aliased onto them as of 0.9.825.)
 
 ### SELinux security-context relabeling is not implemented
 

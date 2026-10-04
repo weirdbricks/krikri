@@ -273,23 +273,11 @@ module Krikri
       # keytool (no live round found - implemented from the real
       # module's semantics, digest-compare import included).
       "community.general.java_cert",
-      # ovirt_auth (0.9.933): oVirt/RHV SSO token acquisition for the
-      # ovirt_vm-infra/ovirt_infra rounds (210319/210777 etc). The
-      # collection has always shipped a legacy short-name redirect for
-      # this module, and real oVirt roles write the bare spelling
-      # overwhelmingly (ovirt.cluster-upgrade 300133, ovirt
-      # disaster-recovery 300144, ovirt.manageiq 310133 all hard-stopped
-      # on the bare `ovirt_auth:` while real ansible-playbook ran them
-      # fine), so both spellings are registered - simple_plugin_name
-      # strips the FQCN to the same `ovirt_auth` plugin binary.
-      "ovirt_auth",
-      "ovirt.ovirt.ovirt_auth",
       # virt_net (0.9.954): libvirt network management via the virsh CLI
       # (mattgeddes.libvirt_kvm round 410102 and ovirt.hosted_engine_setup
       # round 410038 both hard-stopped on the bare `virt_net:` spelling).
-      # Registered bare like ovirt_auth above - community.libvirt is not
-      # in simple_plugin_name's strip list - with the FQCN spelling
-      # mapped through MODULE_ALIASES.
+      # Registered bare - community.libvirt is not in simple_plugin_name's
+      # strip list - with the FQCN spelling mapped through MODULE_ALIASES.
       "virt_net",
       # maven_artifact (0.9.934): Maven artifact download
       # (lean_delivery.jmeter round 210778 hard-stopped on it).
@@ -299,18 +287,6 @@ module Krikri
       # DNS server, so only the parameter-validation failures are
       # unit-spec'd.
       "community.general.nsupdate",
-      # rhsm_repository (0.9.938): RHSM repository enable/disable via
-      # subscription-manager (zaxos.docker-ce-ansible-role round 310195
-      # hard-stopped on it where real ansible ran the role cleanly). The
-      # pre-10.0 present/absent state spellings are accepted alongside
-      # enabled/disabled - controllers still on community.general 9.x
-      # pass those through.
-      "community.general.rhsm_repository",
-      # rhsm_release (0.9.939): RHSM minor-release lock via
-      # subscription-manager release --set/--unset (linux-system-roles.rhc
-      # round 300037 calls it). No state param in the real module - an
-      # omitted/null release IS the unset.
-      "community.general.rhsm_release",
       # easy_install (0.9.941): legacy Python library installs via
       # easy_install, virtualenv support included (cchurch.virtualenv
       # round 300033 calls it). install-only by nature - the real module
@@ -434,7 +410,6 @@ module Krikri
       # ansible ran them - mrlesmithjr.rabbitmq and linux-system-roles.rhc).
       "community.rabbitmq.rabbitmq_plugin",
       "community.rabbitmq.rabbitmq_user",
-      "community.general.redhat_subscription",
       # The arbitrary-Python-module runner's internal dispatch name -
       # NOT a module real playbooks call. A task whose module resolves
       # to nothing keeps the graceful unavailable_module path (since

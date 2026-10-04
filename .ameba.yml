@@ -13,7 +13,6 @@ Lint/Formatting:
   - plugins/lvol.cr
   - plugins/maven_artifact.cr
   - plugins/nsupdate.cr
-  - plugins/ovirt_auth.cr
   - plugins/package.cr
   - plugins/postgresql_query.cr
   - plugins/shell.cr
@@ -59,7 +58,6 @@ Lint/NotNil:
   - plugins/lvol.cr
   - plugins/maven_artifact.cr
   - plugins/nsupdate.cr
-  - plugins/ovirt_auth.cr
   - plugins/postgresql_query.cr
   - plugins/replace.cr
   - plugins/sefcontext.cr
@@ -82,7 +80,6 @@ Lint/NotNil:
   - test/unit/ec2_vpc_subnet_info_test.cr
   - test/unit/iam_user_info_test.cr
   - test/unit/lvol_size_test.cr
-  - test/unit/rhsm_repository_test.cr
   - test/unit/template_action_plugin_plus_modifier_test.cr
   - test/unit/virt_net_test.cr
   - src/krikri/variable_substitutor/expression_evaluator.cr
@@ -125,7 +122,6 @@ Metrics/CyclomaticComplexity:
   - plugins/nsupdate.cr
   - plugins/openssl_csr.cr
   - plugins/openssl_publickey.cr
-  - plugins/ovirt_auth.cr
   - plugins/package.cr
   - plugins/package_facts.cr
   - plugins/pam_limits.cr
@@ -168,7 +164,6 @@ Metrics/CyclomaticComplexity:
   - src/krikri/plugin_helpers/iptables_command.cr
   - src/krikri/plugin_helpers/lvol_size.cr
   - src/krikri/plugin_helpers/nsupdate_message.cr
-  - src/krikri/plugin_helpers/rhsm_repository.cr
   - src/krikri/plugin_helpers/rpm_package.cr
   - src/krikri/plugin_helpers/synchronize_rsync.cr
   - src/krikri/plugin_helpers/x509_cert_info.cr
@@ -306,7 +301,6 @@ Style/HeredocIndent:
   - test/unit/modprobe_command_test.cr
   - test/unit/proc_net_tcp_test.cr
   - test/unit/systemd_restart_failure_wording_test.cr
-  - test/unit/rhsm_repository_test.cr
   - test/unit/service_facts_parser_test.cr
   - src/krikri/batch_script.cr
   - src/krikri/task_executor/executor_display_misc.cr

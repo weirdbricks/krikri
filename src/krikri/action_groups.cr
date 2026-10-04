@@ -33,7 +33,6 @@ module Krikri
       "k8s"    => ["community.kubernetes.k8s", "community.general.k8s",
                 "community.kubevirt.k8s", "community.okd.k8s", "kubernetes.core.k8s"],
       "os"        => ["openstack.cloud.os"],
-      "ovirt"     => ["ovirt.ovirt.ovirt", "community.general.ovirt"],
       "vmware"    => ["community.vmware.vmware"],
       "testgroup" => ["testns.testcoll.testgroup", "testns.testcoll.anothergroup",
                       "testns.boguscoll.testgroup"],

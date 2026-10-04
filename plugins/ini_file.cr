@@ -175,7 +175,7 @@ module Krikri
 
     # `values` arrives as the JSON-stringified list form (params are
     # flattened to strings by BasePlugin); same parse convention as
-    # rhsm_repository.cr's name list. Real's type=list conversion also
+    # the other list-valued params. Real's type=list conversion also
     # accepts a plain string (comma-split, check_type_list) and a bare
     # number (single-element list), so those wire shapes map to lists
     # too; a genuinely malformed container value stays nil (the argspec
