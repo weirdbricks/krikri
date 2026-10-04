@@ -3,6 +3,7 @@
 require "json"
 require "docr"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_ref"
 require "../src/krikri/plugin_helpers/docker_ports"
 require "../src/krikri/plugin_helpers/docker_client"
@@ -56,8 +57,10 @@ module Krikri
   #   Ansible's own comma-separated conversion (NOT shell-split), which
   #   is why `entrypoint: /bin/sh -c` stays one argv element (verified
   #   live against 2.19.11 + community.docker 5.2.1).
-  # - env: dict of environment variables
-  # - labels: dict of labels
+  # - env: dict of environment variables (real Ansible also accepts the
+  #   list-of-`KEY=VALUE` form its own dict conversion handles, which
+  #   travels on the same JSON wire as the other list options below)
+  # - labels: dict of labels (same list form as env:, below)
   # - ports: comma-separated list of docker_ports.cr-syntax mappings
   #   ("8080:80", "127.0.0.1:8080:80/udp", ...)
   # - volumes: comma-separated list of "host_path:container_path[:mode]"
@@ -330,23 +333,34 @@ module Krikri
       facts = removed ? nil : container_inspect_json(api, name)
       final = PluginResult.new(changed: result.changed?, failed: false, failed_flag: false)
       final.key_order = KEY_ORDER
-      final.extra["actions"] = check_mode_actions(result.msg.to_s, name, previous_id) if check_mode || debug_mode
+      final.extra["actions"] = check_mode_actions(result.msg.to_s, name, previous_id,
+        existing.try(&.state) == "running") if check_mode || debug_mode
       final.extra["container"] = facts if facts
       final
     end
 
     # Real's action dicts, per operation. They carry the parameters real
-    # would have sent to the daemon; the create action's payload here is
-    # the subset krikri itself sends (real's additionally records the
-    # options it defaults but does not act on - e.g. AttachStdin/OpenStdin
-    # handling above this layer).
-    private def check_mode_actions(msg : String, name : String, previous_id : String?) : JSON::Any
+    # would have sent to the daemon; the create action's payload is the
+    # set of options the task actually gave, each under its own
+    # Docker-API key, plus the stdio flags real itself always sends (its
+    # AttachStdin/OpenStdin handling above this layer). An option the
+    # task never mentioned contributes no key at all - which is why a
+    # plain create records only Cmd..OpenStdin, Image and ExposedPorts.
+    private def check_mode_actions(
+      msg : String, name : String, previous_id : String?, previous_running : Bool,
+    ) : JSON::Any
       actions = [] of JSON::Any
 
       if msg.includes?("would be created") || msg.includes?("would be recreated")
         # Real records a create as ONE action - starting a freshly
-        # created container is part of it, not a separate entry.
-        actions << removed_action(previous_id) if msg.includes?("recreated")
+        # created container is part of it, not a separate entry. A
+        # recreate over a RUNNING container stops it first, and records
+        # that stop as its own action ahead of the removal (a container
+        # that is already stopped gets no stopped action at all).
+        if msg.includes?("recreated")
+          actions << stopped_action(previous_id) if previous_running
+          actions << removed_action(previous_id)
+        end
         actions << created_action(name)
       elsif msg.includes?("would be stopped")
         actions << stopped_action(previous_id)
@@ -372,8 +386,13 @@ module Krikri
       JSON::Any.new({"started" => JSON::Any.new(container_id || "")})
     end
 
+    # Real's own `timeout` is the stop_timeout: option, which has no
+    # default - a task that never set it records an explicit null.
     private def stopped_action(container_id : String?) : JSON::Any
-      JSON::Any.new({"stopped" => JSON::Any.new(container_id || "")})
+      JSON::Any.new({
+        "stopped" => JSON::Any.new(container_id || ""),
+        "timeout" => JSON::Any.new(@params["stop_timeout"]?),
+      })
     end
 
     private def created_action(name : String) : JSON::Any
@@ -384,20 +403,130 @@ module Krikri
       })
     end
 
-    # The create payload real records: the command as a list plus the
-    # stdio flags krikri itself sets on every create.
+    # The create payload real records in check mode: its own argv list,
+    # the stdio flags real always sends itself, and then - for every
+    # option the task actually gave - that option's Docker-API key with
+    # the very value the non-check create path sends. Key order is real's
+    # own option order (its OptionGroup list in module_utils), not this
+    # plugin's internal one, and an option the task never gave is simply
+    # absent - so a plain create records only Cmd..OpenStdin, Image and
+    # the always-present ExposedPorts (real's port preprocess seeds that
+    # one even with no ports at all, hence `{}` rather than a missing key).
     private def create_parameters(name : String) : JSON::Any
       params = {
-        "Cmd"          => JSON::Any.new((parse_command || [] of String).map { |arg| JSON::Any.new(arg) }),
+        "Cmd"          => json_string_list(parse_command || [] of String),
         "AttachStdout" => JSON::Any.new(true),
         "AttachStderr" => JSON::Any.new(true),
         "AttachStdin"  => JSON::Any.new(false),
         "StdinOnce"    => JSON::Any.new(false),
         "OpenStdin"    => JSON::Any.new(nil),
-        "Image"        => JSON::Any.new(@params["image"]? || ""),
-        "ExposedPorts" => JSON.parse("{}"),
       }
+      if env = container_env
+        params["Env"] = json_string_list(env)
+      end
+      params["Hostname"] = JSON::Any.new(@params["hostname"]) if @params["hostname"]?
+      params["Image"] = JSON::Any.new(@params["image"]? || "")
+      if labels = parsed_key_value_param("labels")
+        params["Labels"] = json_string_map(labels)
+      end
+      params["HostConfig"] = create_host_config if create_host_config_given?
+      # Bind mounts land in HostConfig.Binds; real still records the
+      # (empty) Volumes mapping for them.
+      params["Volumes"] = JSON.parse("{}") if @params["volumes"]?
+      params["ExposedPorts"] = json_exposed_ports
       JSON::Any.new(params)
+    end
+
+    private def json_string_list(values : Array(String)) : JSON::Any
+      JSON::Any.new(values.map { |value| JSON::Any.new(value) })
+    end
+
+    private def json_string_map(values : Hash(String, String)) : JSON::Any
+      JSON::Any.new(values.map { |key, value| {key, JSON::Any.new(value)} }.to_h)
+    end
+
+    private def json_exposed_ports : JSON::Any
+      exposed, _bindings = build_ports
+      JSON::Any.new(exposed.map { |key, _| {key, JSON.parse("{}")} }.to_h)
+    end
+
+    # True when the task gave at least one option real would place in
+    # the create payload's HostConfig - real only emits that key at all
+    # once something lands in it.
+    private def create_host_config_given? : Bool
+      %w[auto_remove cpuset_cpus cpuset_mems cpu_shares cpus memory memory_reservation
+        memory_swap memory_swappiness network_mode oom_kill_disable oom_score_adj pids_limit
+        privileged restart_policy volumes ports].any? { |field| @params[field]? }
+    end
+
+    # Real's HostConfig for the create payload, in real's own option
+    # order (its OptionGroup list). Same rule as the outer dict: an
+    # option the task never mentioned contributes no key.
+    private def create_host_config : JSON::Any
+      config = {} of String => JSON::Any
+      config["AutoRemove"] = JSON::Any.new(true?(@params["auto_remove"]?)) if @params["auto_remove"]?
+      add_resource_limits(config)
+      add_process_limits(config)
+      add_bind_and_policy_entries(config)
+      JSON::Any.new(config)
+    end
+
+    private def add_resource_limits(config : Hash(String, JSON::Any)) : Nil
+      config["CpusetCpus"] = JSON::Any.new(@params["cpuset_cpus"]) if @params["cpuset_cpus"]?
+      config["CpusetMems"] = JSON::Any.new(@params["cpuset_mems"]) if @params["cpuset_mems"]?
+      if cpu_shares = @params["cpu_shares"]?
+        config["CpuShares"] = JSON::Any.new(cpu_shares.to_i64)
+      end
+      if cpus = @params["cpus"]?
+        config["NanoCpus"] = JSON::Any.new(PluginHelpers::DockerResources.cpus_to_nano_cpus(cpus.to_f))
+      end
+      if memory = @params["memory"]?
+        config["Memory"] = JSON::Any.new(PluginHelpers::DockerResources.human_to_bytes(memory))
+      end
+      if memory_reservation = @params["memory_reservation"]?
+        config["MemoryReservation"] = JSON::Any.new(PluginHelpers::DockerResources.human_to_bytes(memory_reservation))
+      end
+      if memory_swap = @params["memory_swap"]?
+        config["MemorySwap"] = JSON::Any.new(PluginHelpers::DockerResources.memory_swap_to_bytes(memory_swap))
+      end
+      if memory_swappiness = @params["memory_swappiness"]?
+        config["MemorySwappiness"] = JSON::Any.new(memory_swappiness.to_i64)
+      end
+    end
+
+    private def add_process_limits(config : Hash(String, JSON::Any)) : Nil
+      config["NetworkMode"] = JSON::Any.new(@params["network_mode"]) if @params["network_mode"]?
+      config["OomKillDisable"] = JSON::Any.new(true?(@params["oom_kill_disable"]?)) if @params["oom_kill_disable"]?
+      if oom_score_adj = @params["oom_score_adj"]?
+        config["OomScoreAdj"] = JSON::Any.new(oom_score_adj.to_i64)
+      end
+      if pids_limit = @params["pids_limit"]?
+        config["PidsLimit"] = JSON::Any.new(pids_limit.to_i64)
+      end
+      config["Privileged"] = JSON::Any.new(true?(@params["privileged"]?)) if @params["privileged"]?
+    end
+
+    private def add_bind_and_policy_entries(config : Hash(String, JSON::Any)) : Nil
+      if restart_policy = @params["restart_policy"]?
+        config["RestartPolicy"] = JSON::Any.new({
+          "Name"              => JSON::Any.new(restart_policy),
+          "MaximumRetryCount" => JSON::Any.new(nil),
+        })
+      end
+      config["Binds"] = json_string_list(parse_volumes(@params["volumes"]?) || [] of String) if @params["volumes"]?
+      if @params["ports"]?
+        _exposed, port_bindings = build_ports
+        bindings = Hash(String, JSON::Any).new
+        port_bindings.each do |port, port_entries|
+          bindings[port] = JSON::Any.new(port_entries.map do |binding|
+            JSON::Any.new({
+              "HostIp"   => JSON::Any.new(binding.host_ip.presence || "0.0.0.0"),
+              "HostPort" => JSON::Any.new(binding.host_port),
+            })
+          end)
+        end
+        config["PortBindings"] = JSON::Any.new(bindings)
+      end
     end
 
     private def container_inspect_json(api : Docr::API, name : String) : JSON::Any?
@@ -430,8 +559,12 @@ module Krikri
     end
 
     private def missing_image_result(needs_create : Bool, needs_recreate : Bool, image_ref : String?) : PluginResult?
-      if (needs_create || needs_recreate) && !image_ref
-        return PluginResult.new(changed: false, failed: true, msg: "image is required to create a new container")
+      if needs_create && !image_ref
+        return PluginResult.new(changed: false, failed: true, msg: "Cannot create container when image is not specified!")
+      end
+      if needs_recreate && !image_ref
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Cannot recreate container when image is not specified or cannot be extracted from current container!")
       end
       nil
     end
@@ -744,7 +877,7 @@ module Krikri
       mode = comparison_mode("env", "allow_more_present")
       return true if mode == "ignore"
 
-      expected = expected_env(api, image_ref, env_json)
+      expected = expected_env(api, image_ref, parsed_key_value_param("env") || Hash(String, String).new)
       actual = (config.env || [] of String).to_set
       mode == "strict" ? actual == expected : expected.subset_of?(actual)
     end
@@ -755,7 +888,7 @@ module Krikri
       mode = comparison_mode("labels", "allow_more_present")
       return true if mode == "ignore"
 
-      requested = Hash(String, String).from_json(labels_json)
+      requested = parsed_key_value_param("labels") || Hash(String, String).new
       actual = config.labels || Hash(String, String).new
       mode == "strict" ? actual == requested : dict_subset?(requested, actual)
     end
@@ -981,7 +1114,7 @@ module Krikri
     # whatever `env:` the task itself lists doesn't cause a false
     # mismatch on every single run - `env:`-given keys win over the
     # image's own value for the same key.
-    private def expected_env(api : Docr::API, image_ref : String?, env_json : String) : Set(String)
+    private def expected_env(api : Docr::API, image_ref : String?, requested : Hash(String, String)) : Set(String)
       expected = Hash(String, String).new
       if image_ref
         image_env = api.images.inspect(image_ref).config.env || [] of String
@@ -990,7 +1123,7 @@ module Krikri
           expected[key] = value
         end
       end
-      Hash(String, String).from_json(env_json).each { |k, v| expected[k] = v }
+      requested.each { |k, v| expected[k] = v }
       expected.map { |k, v| "#{k}=#{v}" }.to_set
     end
 
@@ -1087,18 +1220,115 @@ module Krikri
     end
 
     # Real wraps a failed pull in its own wording ("Error pulling image
-    # <ref> - ..."); everything else escaping the module body gets the
-    # generic DockerException wrapper. Only the prefix is reproducible -
-    # the wrapped text is the SDK's own formatting.
+    # <ref> - ...") around the Docker Python SDK's APIError text; both
+    # halves are reproduced here by #pull_image! below. Everything else
+    # escaping the module body gets the generic DockerException wrapper.
     private def ensure_image_pulled(api : Docr::API, image_ref : String) : Nil
       ref_name, ref_tag = PluginHelpers::DockerRef.split(image_ref)
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
       return if image_exists?(api.client, full_ref)
 
-      begin
-        api.images.create(ref_name, ref_tag)
-      rescue ex : Docr::Errors::DockerAPIError
-        raise ImagePullError.new("Error pulling image #{image_ref} - #{ex.message}")
+      pull_image!(api.client, image_ref, ref_name, ref_tag)
+    end
+
+    # Real's client POSTs the pull itself and wraps any failure in its
+    # own prefix, so the wrapped text is the SDK's APIError rendering -
+    # "<code> {Client|Server} Error for <url>: <reason>" plus the
+    # daemon's own message in quotes (its errors.py). That URL is the
+    # versioned pull URL the SDK builds, while `docr` calls every
+    # endpoint unversioned and its own DockerAPIError keeps neither the
+    # status reason phrase nor the URL - so the pull goes out here
+    # directly, to keep the exact text real reports.
+    private def pull_image!(client : Docr::Client, image_ref : String, repository : String, tag : String) : Nil
+      query = "tag=#{form_url_encode(tag)}&fromImage=#{form_url_encode(repository)}"
+
+      status = 0
+      body = ""
+      client.exec("POST", "/images/create?#{query}") do |response|
+        status = response.status_code
+        # The success body is a JSON progress STREAM - drain it to EOF
+        # so the shared keep-alive connection's framing stays in sync.
+        body = response.body_io?.try(&.gets_to_end) || ""
+      end
+      return if 200 <= status < 300
+
+      # The versioned URL is only ever needed to render the failure, so
+      # the extra /version round trip stays off the success path.
+      request_url = "#{sdk_base_url(client)}/v#{negotiated_api_version(client)}/images/create?#{query}"
+      raise ImagePullError.new("Error pulling image #{image_ref} - #{api_error_text(status, request_url, body)}")
+    end
+
+    # The Docker Python SDK's APIError.__str__ (its errors.py): the
+    # request line's own reason phrase, then the daemon's own message -
+    # the `message` field of its JSON error body, or the raw body when it
+    # isn't JSON - in quotes.
+    private def api_error_text(status : Int32, url : String, body : String) : String
+      kind = 400 <= status < 500 ? "Client" : "Server"
+      text = "#{status} #{kind} Error for #{url}: #{status_reason(status)}"
+      explanation = daemon_message(body)
+      explanation ? "#{text} (\"#{explanation}\")" : text
+    end
+
+    # The status line's reason phrase, which Crystal's HTTP::Client
+    # doesn't keep - its own HTTP::Status enum name is the closest
+    # stand-in, and for the codes a Docker daemon actually answers with
+    # ("Internal Server Error" on a 500) it is the very same text real's
+    # message quotes.
+    private def status_reason(status : Int32) : String
+      HTTP::Status.new(status).to_s.split('_').map(&.capitalize).join(' ')
+    rescue ArgumentError
+      ""
+    end
+
+    private def daemon_message(body : String) : String?
+      return nil if body.strip.empty?
+
+      parsed = JSON.parse(body).as_h?
+      message = parsed.try { |fields| fields["message"]?.try { |value| value.as_s? } }
+      message || body.strip
+    rescue JSON::ParseException
+      body.strip
+    end
+
+    # real's SDK derives the API version it puts in every endpoint URL
+    # from the daemon's own /version reply (its _retrieve_server_version),
+    # which `docr` never asks for since it calls every endpoint
+    # unversioned.
+    private def negotiated_api_version(client : Docr::Client) : String
+      api_version = ""
+      client.call("GET", "/version") do |response|
+        api_version = JSON.parse(response.body_io.gets_to_end)["ApiVersion"].as_s
+      end
+      api_version
+    end
+
+    # real's SDK base_url, the literal host part of every URL it quotes
+    # in an error message: the http+docker:// placeholder it mounts its
+    # UNIX-socket adapter under, or scheme://host:port for a TCP(+TLS)
+    # daemon.
+    private def sdk_base_url(client : Docr::Client) : String
+      docker_host = @params["docker_host"]? || ENV["DOCKER_HOST"]?
+      tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
+      return "http+docker://localhost" unless tcp
+
+      "#{client.tls? ? "https" : "http"}://#{client.host}:#{client.port}"
+    end
+
+    # How Python's requests form-encodes a query value (its urlencode):
+    # everything outside the unreserved set percent-encoded, so a `/` in
+    # a repository name becomes %2F exactly like real's own pull URL.
+    private def form_url_encode(value : String) : String
+      String.build do |io|
+        value.each_byte do |byte|
+          char = byte.chr
+          if char.ascii_alphanumeric? || "-._~".includes?(char)
+            io << char
+          elsif char == ' '
+            io << '+'
+          else
+            io << '%' << byte.to_s(16).upcase.rjust(2, '0')
+          end
+        end
       end
     end
 
@@ -1122,8 +1352,8 @@ module Krikri
     private def build_container_config(image_ref : String) : Docr::Types::CreateContainerConfig
       command = parse_command
       entrypoint = parse_entrypoint
-      env = @params["env"]?.try { |json| Hash(String, String).from_json(json).map { |k, v| "#{k}=#{v}" } }
-      labels = @params["labels"]?.try { |json| Hash(String, String).from_json(json) }
+      env = container_env
+      labels = parsed_key_value_param("labels")
 
       exposed_ports, port_bindings = build_ports
 
@@ -1163,6 +1393,15 @@ module Krikri
         exposed_ports: exposed_ports.empty? ? nil : exposed_ports,
         host_config: host_config,
         healthcheck: healthcheck,
+        # Real only sets StopSignal/StopTimeout when the task gave the
+        # stop_signal:/stop_timeout: options, so a container it created
+        # has neither. `docr`'s own config type defaults them to
+        # SIGTERM/10, which would show up in the created container's
+        # registered Config and make it differ from real's - sent as
+        # nulls (which the daemon reads as "unset", same as the absent
+        # keys real sends).
+        stop_signal: nil,
+        stop_timeout: nil,
       )
     end
 
@@ -1215,6 +1454,29 @@ module Krikri
       parsed = JSON.parse(raw) rescue nil
       return nil unless (items = parsed.try(&.as_a?))
       items.map { |item| item.as_s? || item.raw.to_s }
+    end
+
+    # real's `env:`/`labels:` are dict-typed options, which real
+    # Ansible also accepts written as a list of `KEY=VALUE` strings (its
+    # own dict type conversion) - and a `KEY=VALUE` element may contain a
+    # comma, so that list form travels on the same JSON wire the other
+    # docker_container list options use (see #literal_list_param). Both
+    # shapes mean the same dict here.
+    private def parsed_key_value_param(name : String) : Hash(String, String)?
+      raw = @params[name]?
+      return nil unless raw
+      return Hash(String, String).from_json(raw) unless items = literal_list_param(raw)
+
+      items.each_with_object(Hash(String, String).new) do |item, parsed|
+        key, _, value = item.partition('=')
+        parsed[key] = value
+      end
+    end
+
+    # The `Env` list the daemon gets: real's own "KEY=VALUE" strings.
+    private def container_env : Array(String)?
+      env = parsed_key_value_param("env")
+      env.try { |parsed| parsed.map { |key, value| "#{key}=#{value}" } }
     end
 
     # real's `command`: a list verbatim, a string shell-split

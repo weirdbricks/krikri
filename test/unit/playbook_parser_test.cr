@@ -2655,6 +2655,28 @@ describe Krikri::PlaybookParser do
       parsed[0]["name"].as_s.must_equal("solo-net")
     end
 
+    # community.docker's env/labels are dict-typed options that real
+    # Ansible also accepts written as a list of KEY=VALUE strings, and
+    # such an element may legitimately contain a comma (a JSON blob, a
+    # shell snippet, a CSV value) - on the generic comma-joined wire that
+    # one element would arrive plugin-side split in two.
+    it "JSON-encodes a list-form docker_container env:/labels: so a comma survives" do
+      task = single_task(<<-YAML)
+        - name: t
+          community.docker.docker_container:
+            name: c
+            env:
+              - "PLAIN=1"
+              - "JSON=one,two"
+            labels:
+              - "single=one"
+              - "pair=a,b"
+        YAML
+
+      JSON.parse(task.params["env"]).as_a.must_equal(["PLAIN=1", "JSON=one,two"])
+      JSON.parse(task.params["labels"]).as_a.must_equal(["single=one", "pair=a,b"])
+    end
+
     it "recovers the octal digit text for an unquoted mode: value" do
       # Real bug found benchmarking cloudalchemy.prometheus's own
       # directory/file tasks (mode: 0770, mode: 0644, unquoted - the way

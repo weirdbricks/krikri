@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1472`.**
+**Currently at `0.9.1473`.**
 
 ## Open gaps
 
@@ -75,11 +75,9 @@ and fixed and when.
   live tests on port 15432 need a postgres:16 server (the host's pg_dump is 16; a 17 server fails the dump/restore
   test).
 - **Docker plugin gaps found while verifying** (results otherwise match real on podman's Docker-API socket):
-  the text wrapped after real's own error prefixes is the Python SDK's wording (`500 Server Error for
-  http+docker://...`) where krikri's client prints `Code: 500 Message: ...`; check-mode `create_parameters` carries only
-  the fields krikri itself sends where real also records defaulted options; `docker_container`'s list options
-  (`command`, `entrypoint`, `volumes`, `ports`) have their own JSON wire in the parser (other modules' YAML lists use
-  the generic comma-joined wire - a list element containing a comma is ambiguous there).
+  the Python SDK's error wording (`500 Server Error for http+docker://...`) is reproduced only for
+  `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own `Code: 500 Message: ...`
+  text after real's prefixes.
 - **`konstruktoid.hardening` real-host parity is unconfirmed** (rounds
   975062/978000, 2026-09-26): real `ansible-playbook` doesn't complete
   within 30 minutes on this role even on a fresh host (`rc=124` both

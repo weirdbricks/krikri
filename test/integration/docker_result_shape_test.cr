@@ -405,6 +405,220 @@ describe "docker result shape: docker_container" do
     result["msg"].as_s.must_include("Error pulling image krikri-kp-dk-nosuchimage:9 - ")
     remove_krikri_kp_dk_container(name)
   end
+
+  # real (community.docker 5.2.1, module.py's own fail_json): a task
+  # that needs to create a container but named no image at all.
+  it "fails a container-less create with real's own wording" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-noimage"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Cannot create container when image is not specified!")
+  end
+
+  # real wraps a failed pull in its own prefix around the Docker Python
+  # SDK's APIError text, which quotes the versioned pull URL (the `/` in
+  # the repository percent-encoded) and the daemon's own message.
+  it "reports a failed pull in real's own SDK wording" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-pull"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "image" => "kop.invalid/nope:1", "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result["failed"].as_bool.must_equal(true)
+    msg = result["msg"].as_s
+    msg.starts_with?("Error pulling image kop.invalid/nope:1 - ").must_equal(true, msg)
+    msg.must_include("Server Error for http+docker://localhost/v")
+    msg.must_include("/images/create?tag=1&fromImage=kop.invalid%2Fnope: ")
+    # the daemon's own message, quoted, is the tail of real's rendering
+    msg.ends_with?("\")").must_equal(true, msg)
+    msg.wont_include("Code: ")
+  end
+
+  # real's create payload never carries StopSignal/StopTimeout unless
+  # the task set stop_signal:/stop_timeout:, so the container it
+  # registers has neither - `docr`'s own config defaults would show up
+  # here as SIGTERM/10.
+  it "creates a container whose Config sets neither StopSignal nor StopTimeout" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-stopcfg"
+    remove_krikri_kp_dk_container(name)
+    result = PluginSpecHelper.run("docker_container", {
+      "name" => name, "image" => CONTAINER_IMAGE, "command" => "sleep 30",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result["changed"].as_bool.must_equal(true)
+    config = result["container"]["Config"]
+    # A Docker Engine daemon registers an empty StopSignal (and a null
+    # StopTimeout) for a container real created; Podman's compat API
+    # reports its own "15"/10 defaults either way, so the SIGTERM
+    # spelling docr would have sent is what a regression guard can key
+    # on here.
+    config["StopSignal"].as_s.wont_include("SIGTERM")
+    remove_krikri_kp_dk_container(name)
+  end
+end
+
+# Real's check_mode create action records the create payload real would
+# have sent: the argv list and stdio flags it always sets, plus a key per
+# option the task actually gave - and no key at all for one it didn't
+# (live-verified against 2.19.11 + community.docker 5.2.1: a plain
+# create records only Cmd..OpenStdin, Image and ExposedPorts).
+def docker_shape_create_payload(name : String, extra : Hash(String, JSON::Any)) : JSON::Any
+  PluginSpecHelper.run_raw("docker_container",
+    {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+     "command" => JSON::Any.new("sleep 30"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
+     "_ansible_check_mode" => JSON::Any.new(true)}.merge(extra))["actions"].as_a[0]["create_parameters"]
+end
+
+describe "docker result shape: docker_container check-mode create payload" do
+  serial!
+
+  it "records only the stdio flags, image and exposed ports for a plain create" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-plain")
+    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-plain", {} of String => JSON::Any)
+    payload.as_h.keys.to_a.must_equal(
+      ["Cmd", "AttachStdout", "AttachStderr", "AttachStdin", "StdinOnce", "OpenStdin", "Image", "ExposedPorts"])
+    payload["ExposedPorts"].as_h.must_be_empty
+  end
+
+  it "records each given option under real's own key, in real's own order" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-full")
+    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-full", {
+      "env"            => JSON::Any.new(%({"A":"b"})),
+      "hostname"       => JSON::Any.new("kophost"),
+      "labels"         => JSON::Any.new(%({"kop":"1"})),
+      "restart_policy" => JSON::Any.new("unless-stopped"),
+      "volumes"        => JSON::Any.new(%(["/tmp:/kop_tmp:ro"])),
+      "ports"          => JSON::Any.new(%(["18080:80"])),
+    })
+
+    payload.as_h.keys.to_a.must_equal([
+      "Cmd", "AttachStdout", "AttachStderr", "AttachStdin", "StdinOnce", "OpenStdin",
+      "Env", "Hostname", "Image", "Labels", "HostConfig", "Volumes", "ExposedPorts",
+    ])
+    payload["Env"].as_a.map(&.as_s).must_equal(["A=b"])
+    payload["Hostname"].as_s.must_equal("kophost")
+    payload["Labels"].as_h.must_equal({"kop" => JSON::Any.new("1")})
+    host_config = payload["HostConfig"]
+    host_config.as_h.keys.to_a.must_equal(["RestartPolicy", "Binds", "PortBindings"])
+    host_config["RestartPolicy"].as_h.must_equal({
+      "Name" => JSON::Any.new("unless-stopped"), "MaximumRetryCount" => JSON::Any.new(nil),
+    })
+    host_config["Binds"].as_a.map(&.as_s).must_equal(["/tmp:/kop_tmp:ro"])
+    host_config["PortBindings"]["80/tcp"].as_a.must_equal([
+      {"HostIp" => JSON::Any.new("0.0.0.0"), "HostPort" => JSON::Any.new("18080")},
+    ])
+    payload["Volumes"].as_h.must_be_empty
+    payload["ExposedPorts"].as_h.keys.to_a.must_equal(["80/tcp"])
+    payload["ExposedPorts"]["80/tcp"].as_h.must_be_empty
+  end
+
+  # env: alone lands between OpenStdin and Image - the order real's own
+  # option list gives it, not alphabetical order.
+  it "puts a lone env: right after the stdio flags" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    remove_krikri_kp_dk_container("krikri-kp-dk-shape-cp-env")
+    payload = docker_shape_create_payload("krikri-kp-dk-shape-cp-env", {"env" => JSON::Any.new(%({"Z":"y"}))})
+    payload.as_h.keys.to_a.must_equal([
+      "Cmd", "AttachStdout", "AttachStderr", "AttachStdin", "StdinOnce", "OpenStdin",
+      "Env", "Image", "ExposedPorts",
+    ])
+    payload["Env"].as_a.map(&.as_s).must_equal(["Z=y"])
+  end
+end
+
+# Real stops a RUNNING container before removing it for a recreate, and
+# records that stop as its own action ahead of the removal; a container
+# that is already stopped gets no stopped action at all.
+def docker_shape_started(name : String) : JSON::Any
+  PluginSpecHelper.run_raw("docker_container",
+    {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+     "command" => JSON::Any.new("sleep 30"), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET)})
+end
+
+def docker_shape_recreate(name : String, env : String) : Array(JSON::Any)
+  PluginSpecHelper.run_raw("docker_container",
+    {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+     "env" => JSON::Any.new(env), "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET),
+     "_ansible_check_mode" => JSON::Any.new(true)})["actions"].as_a
+end
+
+describe "docker result shape: docker_container check-mode recreate" do
+  serial!
+
+  it "leads with real's stopped action for a running container" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-rec1"
+    remove_krikri_kp_dk_container(name)
+    begin
+      container_id = docker_shape_started(name)["container"]["Id"].as_s
+      actions = docker_shape_recreate(name, %({"DRIFTED":"1"}))
+      actions.size.must_equal(3)
+      actions[0].as_h.keys.to_a.must_equal(["stopped", "timeout"])
+      actions[0]["stopped"].as_s.must_equal(container_id)
+      # stop_timeout: has no default, so real records an explicit null
+      actions[0]["timeout"].raw.must_be_nil
+      actions[1].as_h.keys.to_a.must_equal(["removed", "volume_state", "link", "force"])
+      actions[1]["removed"].as_s.must_equal(container_id)
+      actions[2]["created"].as_s.must_equal("Created container")
+    ensure
+      remove_krikri_kp_dk_container(name)
+    end
+  end
+
+  it "records no stopped action for an already stopped container" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-rec2"
+    remove_krikri_kp_dk_container(name)
+    begin
+      PluginSpecHelper.run("docker_container", {
+        "name" => name, "image" => "docker.io/library/alpine:latest", "command" => "sleep 30",
+        "state" => "stopped", "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+      })
+      actions = docker_shape_recreate(name, %({"DRIFTED":"1"}))
+      actions.size.must_equal(2)
+      actions[0].as_h.keys.to_a.must_equal(["removed", "volume_state", "link", "force"])
+      actions[1]["created"].as_s.must_equal("Created container")
+    ensure
+      remove_krikri_kp_dk_container(name)
+    end
+  end
+end
+
+# real's env:/labels: are dict-typed options that real Ansible also
+# accepts as a list of KEY=VALUE strings; an element containing a comma
+# must survive as one entry (the parser JSON-encodes that list form - see
+# the docker_container list branch in playbook_parser).
+describe "docker result shape: docker_container list-form env" do
+  serial!
+
+  it "keeps a comma-carrying env element whole" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    name = "krikri-kp-dk-shape-envlist"
+    remove_krikri_kp_dk_container(name)
+    begin
+      result = PluginSpecHelper.run_raw("docker_container",
+        {"name" => JSON::Any.new(name), "image" => JSON::Any.new("docker.io/library/alpine:latest"),
+         "command" => JSON::Any.new("sleep 30"), "env" => JSON::Any.new(%(["PLAIN=1","JSON=one,two"])),
+         "labels" => JSON::Any.new(%(["pair=a,b"])),
+         "docker_host" => JSON::Any.new(DOCKER_RESULT_SHAPE_SOCKET)})
+      env = result["container"]["Config"]["Env"].as_a.map(&.as_s)
+      env.must_include("PLAIN=1")
+      env.must_include("JSON=one,two")
+      result["container"]["Config"]["Labels"].as_h.must_equal({"pair" => JSON::Any.new("a,b")})
+    ensure
+      remove_krikri_kp_dk_container(name)
+    end
+  end
 end
 
 # The same registered-result SHAPE, reached through a list-valued
