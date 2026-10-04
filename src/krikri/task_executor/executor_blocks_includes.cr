@@ -1601,6 +1601,16 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
+        # Real's loop-aggregate rule for a looped include_tasks: (same rule
+        # finish_looped_task applies to a looped module task): the whole
+        # looped task recaps ONCE - skipped=1 only when EVERY iteration's
+        # when: was false (plus the bare trailing "skipping:" line real
+        # prints for that shape, byte-verified vs ansible-core 2.19.11),
+        # ok once any iteration actually ran, failed=1 when any item's
+        # conditional raised (booked below from the :failed statuses).
+        # The per-item "skipping: => (item=...)" lines above are display
+        # only, exactly like a looped module task's per-item skip lines.
+        any_iteration_ran = false
         deferred_iterations = [] of Array(Task)
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
@@ -1637,9 +1647,9 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          unless run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
-            looped_when_failed = true
-          end
+          status = run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
+          looped_when_failed = true if status == :failed
+          any_iteration_ran = true unless status == :skipped
         end
         if looped_when_failed
           # One aggregate failure for the whole looped include task, not
@@ -1652,6 +1662,9 @@ module Krikri
           else
             @results[host.name]["failed"] += 1
           end
+        elsif !any_iteration_ran
+          puts "skipping: [#{host.name}]".colorize(:cyan)
+          @results[host.name]["skipped"] += 1
         end
         # Real Ansible runs a looped include in two phases: every
         # iteration's `included: ... => (item=...)` line prints under the
@@ -1691,7 +1704,7 @@ module Krikri
       end
     end
 
-    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil) : Bool
+    private def run_include_tasks_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?, defer_when_stats : Bool = false, defer_run : Bool = false, collected : Array(Array(Task))? = nil) : Symbol
       if task.when_condition
         begin
           when_result = evaluate_when_items(task, vars_context, host)
@@ -1706,15 +1719,24 @@ module Krikri
           # call site has no aggregation around it and keeps
           # swallow_when_error's own direct booking.
           swallow_when_error(task, host, ex, item_label: item_label, defer_stats: defer_when_stats)
-          return false
+          return :failed
         end
 
         unless when_result
           connection_host = host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
-          @results[host.name]["skipped"] += 1
-          return true
+          # defer_when_stats (the looped caller): the per-item skip must NOT
+          # bump the recap per iteration - real Ansible recaps a looped
+          # include task ONCE, and only as skipped when EVERY iteration was
+          # when:-skipped (any executed iteration makes the whole task ok).
+          # konstruktoid.hardening's looped "Ensure restrict compilers access
+          # via DNF post-transaction-actions Plugin" (when:-gated on RedHat,
+          # so every item skips on Debian) previously booked one skipped per
+          # item: recap skipped=110 where real says 101 (rounds 999040/
+          # 999050). The looped caller books the single aggregate.
+          @results[host.name]["skipped"] += 1 unless defer_when_stats
+          return :skipped
         end
       end
 
@@ -1742,7 +1764,7 @@ module Krikri
       # failed=1 with only the original task's error.
       if @halted_hosts.includes?(host.name)
         @results[host.name]["ok"] += 1
-        return true
+        return :ok
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -1751,7 +1773,7 @@ module Krikri
 
       unless File.exists?(resolved_path)
         fail_include_tasks_file_not_found(task, host, resolved_path)
-        return true
+        return :ok
       end
 
       text = Vault.maybe_decrypt(File.read(resolved_path))
@@ -1764,11 +1786,11 @@ module Krikri
       # counts `ok`.
       if yaml.raw.nil?
         @results[host.name]["ok"] += 1
-        return true
+        return :ok
       end
       unless yaml.as_a?
         fail_include(task, host, "Included tasks file must be a YAML list: #{resolved_path}")
-        return true
+        return :ok
       end
 
       inherited = Play.new("", "")
@@ -1885,17 +1907,17 @@ module Krikri
 
       if defer_run
         collected.try(&.push(included_tasks))
-        return true
+        return :ok
       end
 
       run_task_list(included_tasks, host)
-      true
+      :ok
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
       raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")
-      true
+      :ok
     end
 
     private def fail_include(task : Task, host : Host, message : String) : Nil
