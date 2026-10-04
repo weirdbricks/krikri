@@ -509,6 +509,146 @@ describe "round 994002 kop_misc2 registered key order" do
     end
   end
 
+  describe "community.libvirt.virt_net state: msg carries real's libvirt rc (round 996005)" do
+    # Real's core() puts the libvirt return value itself into `msg` on
+    # every state branch that changed anything:
+    # `res['msg'] = v.start(name)` / `v.destroy(name)` /
+    # v.undefine(name), each of which returns what libvirt's
+    # network.create()/destroy()/undefine() returned - the error code 0,
+    # as a NATIVE int. The round996005 cold_py.out capture registered
+    # exactly {changed: true, msg: 0, failed: false} for both
+    # virt_net_start (state: active) and virt_net_stop (state: inactive);
+    # krikri registered [changed, failed] with no msg at all. The
+    # check-mode branch keeps NO msg (real's conn.create/destroy exit
+    # from inside the method there, round994002 virt_net_check), and an
+    # already-converged state keeps no msg either.
+    private def stateful_virsh_shim_env
+      shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim-state")
+      Dir.mkdir_p(shim_dir)
+      defined_path = File.join(shim_dir, "net-defined")
+      active_path = File.join(shim_dir, "net-active")
+      File.write(defined_path, "kop_probe_net\n")
+      File.write(File.join(shim_dir, "virsh"), <<-SH)
+      #!/bin/sh
+      # "virsh --connect <uri> <subcommand> <name> ..." against a
+      # libvirt daemon holding exactly one defined network.
+      case "$3" in
+        net-info)
+          [ -f "$KRIKRI_VIRSH_DEFINED" ] || exit 1
+          if [ -f "$KRIKRI_VIRSH_ACTIVE" ]; then a=yes; else a=no; fi
+          printf 'Name:           kop_probe_net\\n'
+          printf 'UUID:           8abce183-25f4-42f4-883f-473f8509aa41\\n'
+          printf 'Active:         %s\\n' "$a"
+          printf 'Autostart:      no\\n'
+          printf 'Persistent:     yes\\n'
+          printf 'Bridge:         kopbr0\\n'
+          exit 0 ;;
+        net-dumpxml)
+          [ -f "$KRIKRI_VIRSH_DEFINED" ] || exit 1
+          printf '<network>\\n  <name>kop_probe_net</name>\\n</network>\\n'
+          exit 0 ;;
+        net-list)
+          [ -f "$KRIKRI_VIRSH_DEFINED" ] && echo kop_probe_net
+          exit 0 ;;
+        net-start)
+          [ -f "$KRIKRI_VIRSH_DEFINED" ] || exit 1
+          touch "$KRIKRI_VIRSH_ACTIVE"
+          exit 0 ;;
+        net-destroy)
+          rm -f "$KRIKRI_VIRSH_ACTIVE"
+          exit 0 ;;
+        net-undefine)
+          rm -f "$KRIKRI_VIRSH_DEFINED"
+          exit 0 ;;
+      esac
+      exit 1
+      SH
+      File.chmod(File.join(shim_dir, "virsh"), 0o755)
+      env = {
+        "PATH"                 => "#{shim_dir}:#{ENV["PATH"]}",
+        "KRIKRI_VIRSH_DEFINED" => defined_path,
+        "KRIKRI_VIRSH_ACTIVE"  => active_path,
+      }
+      {env: env, active: active_path}
+    end
+
+    it "registers state=active as changed, msg 0, failed" do
+      shim = stateful_virsh_shim_env
+      value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env])
+        - name: start the probe network (changed)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: active
+          register: KRIKRI_REGISTER
+      YAML
+      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value["changed"].as_bool.must_equal(true)
+      value["msg"].raw.must_equal(0_i64)
+      value["failed"].as_bool.must_equal(false)
+    end
+
+    it "registers an already-active rerun as changed, failed with no msg" do
+      shim = stateful_virsh_shim_env
+      value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env])
+        - name: start the probe network (changed)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: active
+          register: setup
+        - name: start it again (no-op)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: active
+          register: KRIKRI_REGISTER
+      YAML
+      value.as_h.keys.must_equal(["changed", "failed"])
+      value["changed"].as_bool.must_equal(false)
+      value.as_h.has_key?("msg").must_equal(false)
+    end
+
+    it "registers state=inactive with msg 0 too" do
+      shim = stateful_virsh_shim_env
+      File.write(shim[:active], "")
+      value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env])
+        - name: stop the probe network (changed)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: inactive
+          register: KRIKRI_REGISTER
+      YAML
+      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value["changed"].as_bool.must_equal(true)
+      value["msg"].raw.must_equal(0_i64)
+    end
+
+    it "registers state=absent with msg 0 (real's undefine return)" do
+      shim = stateful_virsh_shim_env
+      value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env])
+        - name: undefine the probe network (changed)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: absent
+          register: KRIKRI_REGISTER
+      YAML
+      value.as_h.keys.must_equal(["changed", "msg", "failed"])
+      value["changed"].as_bool.must_equal(true)
+      value["msg"].raw.must_equal(0_i64)
+    end
+
+    it "keeps the check-mode state change msg-less (real exits from inside the method)" do
+      shim = stateful_virsh_shim_env
+      value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env], check_mode: true)
+        - name: start the probe network in check mode (changed)
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: active
+          register: KRIKRI_REGISTER
+      YAML
+      value.as_h.keys.must_equal(["changed", "failed"])
+      value["changed"].as_bool.must_equal(true)
+    end
+  end
+
   describe "ansible.builtin.copy missing destination directory failure" do
     it "leads with diff, then failed, msg, checksum, changed, exception" do
       missing_parent = File.join(PluginSpecHelper.tmp_path("kop-missing-dest"), "sub")

@@ -94,12 +94,43 @@ FW_FIREWALLD_STATEFUL_SHIM = <<-SHIM
   for arg in "$@"; do
     case "$arg" in
       --zone=*) zone="${arg#--zone=}";;
+      --list-services) action="list";;
+      --query-service=*) action="query_service"; value="${arg#--query-service=}";;
       --query-*) action="query"; value="${arg#*=}";;
       --add-*) action="add"; value="${arg#*=}";;
       --remove-*) action="remove"; value="${arg#*=}";;
     esac
   done
   case "$action" in
+    list)
+      # real's ServiceTransaction reads the zone's whole service list
+      # (`service in self.fw.getServices(zone)`) - one name per line -
+      # never --query-service, which rejects an undefined service name.
+      if [ -f "$KRIKRI_FW_STATE" ]; then
+        grep -F "$zone|" "$KRIKRI_FW_STATE" | cut -d'|' -f2
+      fi
+      exit 0
+      ;;
+    query_service)
+      # Real firewall-cmd rejects --query-service=<name> for a name no
+      # service XML defines: "Error: INVALID_SERVICE: <name>" on stderr,
+      # exit code firewalld's INVALID_SERVICE (not 0/1) - firewalld
+      # 1.2.3's firewall/command.py exception_handler. That rejection is
+      # exactly what krikri's old --query-service probe tripped over on
+      # the round996006 host.
+      for d in /usr/lib/firewalld/services /etc/firewalld/services; do
+        [ -f "$d/$value.xml" ] && found=1
+      done
+      if [ -z "$found" ]; then
+        echo "Error: INVALID_SERVICE: $value" >&2
+        exit 2
+      fi
+      found=""
+      if [ -f "$KRIKRI_FW_STATE" ] && grep -Fxq "$zone|$value" "$KRIKRI_FW_STATE"; then
+        exit 0
+      fi
+      exit 1
+      ;;
     query)
       if [ -f "$KRIKRI_FW_STATE" ] && grep -Fxq "$zone|$value" "$KRIKRI_FW_STATE"; then
         exit 0
@@ -167,6 +198,19 @@ describe "firewalld registered shapes (round994003, podman container)" do
           ansible.builtin.file:
             path: /etc/firewalld/zones
             state: directory
+        - name: seed firewalld's service catalogue dir
+          ansible.builtin.file:
+            path: /usr/lib/firewalld/services
+            state: directory
+        - name: seed the two service definitions the play uses
+          ansible.builtin.copy:
+            dest: "/usr/lib/firewalld/services/{{ item }}.xml"
+            content: |
+              <?xml version="1.0" encoding="utf-8"?>
+              <service><short>{{ item }}</short></service>
+          loop:
+            - http
+            - https
         - name: write the public zone file
           ansible.builtin.copy:
             dest: /etc/firewalld/zones/public.xml
@@ -252,6 +296,14 @@ describe "firewalld registered shapes (round994003, podman container)" do
           register: r
           ignore_errors: true
     #{dump_task("fw-fail", "/work/dumps")}
+        - name: read the zone file back (the bogus service must never land in it)
+          ansible.builtin.slurp:
+            src: /etc/firewalld/zones/public.xml
+          register: zone_xml
+        - name: dump the zone file
+          ansible.builtin.copy:
+            content: "{{ zone_xml.content | b64decode }}"
+            dest: /work/dumps/out-fw-zone-xml.txt
         - name: cleanup guard - ensure http service is disabled again (changed on real)
           ansible.posix.firewalld:
             service: http
@@ -341,6 +393,15 @@ describe "firewalld registered shapes (round994003, podman container)" do
       "Services are defined by port/tcp relationship and named as they are in /etc/services (on most systems)")
     fw_fail["changed"].as_bool.must_equal(false)
     fw_fail["exception"].as_s.must_equal("(traceback unavailable)")
+
+    # The zone file must still hold only the services real would have
+    # written: real's own permanent addService/update() rejects a name
+    # no service XML defines (firewalld's check_config), so krikri
+    # writing a <service name="kop_nosuch_svc"/> entry here is its own
+    # bug, not a difference from real.
+    zone_xml = File.read(File.join(dump_dir, "out-fw-zone-xml.txt"))
+    zone_xml.includes?("kop_nosuch_svc").must_equal(false)
+    zone_xml.includes?("<service name=\"http\"/>").must_equal(true)
 
     # The bug that failed this task on the real host: firewall-cmd has no
     # --remove-service-from-zone option (the offline-cmd-only quirk flag

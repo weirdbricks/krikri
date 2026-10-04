@@ -28,6 +28,11 @@ module Krikri
   # - `command: define` on an already-defined network is a silent
   #   no-op (only defines when the network is missing), and
   #   `command: modify` defines it too when missing.
+  # - every state branch that changed something registers real's own
+  #   `msg`: `res['msg'] = v.start/destroy/undefine(name)`, i.e. the
+  #   libvirt error code 0 as a NATIVE int, positioned right after
+  #   `changed` (round996005 virt_net_start/virt_net_stop registered
+  #   {changed: true, msg: 0, failed: false}).
   # - modify implements the real module's only supported section: a
   #   single `<host mac=... name=... ip=.../>` DHCP entry added last
   #   (virsh net-update), idempotent on mac; anything else fails with
@@ -80,6 +85,18 @@ module Krikri
         return fail("state change requires a specified name") unless name
 
         changed = false
+        # Real's core() puts the libvirt return value itself into `msg`
+        # on every state branch that changed anything:
+        # `res['msg'] = v.start(name)` / `v.destroy(name)` /
+        # v.undefine(name) - each of those returns what
+        # network.create()/destroy()/undefine() returned, i.e. the
+        # libvirt error code 0 as a NATIVE int (round996005
+        # virt_net_start/virt_net_stop: registered
+        # {changed: true, msg: 0, failed: false}). Never set in check
+        # mode: real's conn.create/destroy/undefine exit_json(changed=
+        # True) from INSIDE the method there, so no msg key exists at
+        # all (round994002 virt_net_check).
+        libvirt_rc : JSON::Any? = nil
         case state
         when "active"
           if net_state(uri, name) != "active"
@@ -87,6 +104,7 @@ module Krikri
             if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), check_mode)
               return res
             end
+            libvirt_rc = JSON::Any.new(0) unless check_mode
           end
         when "present"
           unless net_exists?(uri, name)
@@ -102,6 +120,7 @@ module Krikri
             if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), check_mode)
               return res
             end
+            libvirt_rc = JSON::Any.new(0) unless check_mode
           end
         when "absent", "undefined"
           if net_exists?(uri, name)
@@ -114,12 +133,13 @@ module Krikri
             if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), check_mode)
               return res
             end
+            libvirt_rc = JSON::Any.new(0) unless check_mode
           end
         else
           return fail("unexpected state #{state}")
         end
 
-        return ok(changed)
+        return ok(changed, nil, nil, nil, nil, libvirt_rc)
       end
 
       if command
@@ -238,8 +258,12 @@ module Krikri
       end
     end
 
-    private def ok(changed : Bool, command : String? = nil, command_value : JSON::Any? = nil, facts_key : String? = nil, facts_value : JSON::Any? = nil) : PluginResult
-      res = PluginResult.new(changed: changed, failed: false, msg: "")
+    # msg_native carries real's NATIVE-typed `msg` (the libvirt error
+    # code integer its state branches pass straight through); nil keeps
+    # the string msg (which PluginResult then drops when empty, exactly
+    # like real's absent msg key).
+    private def ok(changed : Bool, command : String? = nil, command_value : JSON::Any? = nil, facts_key : String? = nil, facts_value : JSON::Any? = nil, msg_native : JSON::Any? = nil) : PluginResult
+      res = PluginResult.new(changed: changed, failed: false, msg: "", native_msg: msg_native)
       if command && command_value
         res.extra[command] = command_value
       elsif facts_key && facts_value

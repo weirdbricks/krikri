@@ -44,12 +44,44 @@ private def with_fake_firewall_cmd(&)
     for arg in "$@"; do
       case "$arg" in
         --zone=*) zone="${arg#--zone=}";;
+        --list-services) action="list";;
+        --query-service=*) action="query_service"; value="${arg#--query-service=}";;
         --query-*) action="query"; value="${arg#*=}";;
         --add-*) action="add"; value="${arg#*=}";;
         --remove-*) action="remove"; value="${arg#*=}";;
       esac
     done
     case "$action" in
+      list)
+        # real's ServiceTransaction reads the zone's whole service list
+        # (`service in self.fw.getServices(zone)`), one name per line -
+        # NOT a --query-service probe, which rejects an undefined name.
+        if [ -f "$KRIKRI_FW_STATE" ]; then
+          grep -F "$zone|" "$KRIKRI_FW_STATE" | cut -d'|' -f2
+        fi
+        exit 0
+        ;;
+      query_service)
+        # Real firewall-cmd REJECTS --query-service=<name> for a name no
+        # service XML defines: "Error: INVALID_SERVICE: <name>" on
+        # stderr with firewalld's own INVALID_SERVICE exit code (not
+        # 0/1). Reproduced from firewalld 1.2.3's
+        # firewall/command.py exception_handler - this is what made
+        # krikri's old --query-service probe fail early on the round996006
+        # host instead of reporting real's zone-context error.
+        for d in /usr/lib/firewalld/services /etc/firewalld/services; do
+          [ -f "$d/$value.xml" ] && found=1
+        done
+        if [ -z "$found" ]; then
+          echo "Error: INVALID_SERVICE: $value" >&2
+          exit 2
+        fi
+        found=""
+        if [ -f "$KRIKRI_FW_STATE" ] && grep -Fxq "$zone|$value" "$KRIKRI_FW_STATE"; then
+          exit 0
+        fi
+        exit 1
+        ;;
       query)
         if [ -f "$KRIKRI_FW_STATE" ] && grep -Fxq "$zone|$value" "$KRIKRI_FW_STATE"; then
           exit 0
@@ -176,6 +208,27 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
       # the shim logs post-shell-quoting argv, so the value arrives unquoted
       calls.includes?("--zone=public --remove-service=http").must_equal(true)
       calls.includes?("remove-service-from-zone").must_equal(false)
+    end
+  end
+
+  it "reads the zone's service LIST to probe a service, like real's getServices membership test" do
+    # Real's ServiceTransaction.get_enabled_immediate is
+    # `service in self.fw.getServices(self.zone)` - the whole zone list,
+    # never `--query-service=<name>`. That is observable in krikri too:
+    # firewall-cmd's --query-service REJECTS a name that is not a
+    # defined service ("Error: INVALID_SERVICE: <name>", no zone
+    # context), so probing with it made an unknown service fail before
+    # real's transaction ever appends its context msg - the round996006
+    # firewalld_fail divergence, where real registered
+    # INVALID_SERVICE: Zone 'public': 'kop_nosuch_svc' not among
+    # existing services.
+    with_fake_firewall_cmd do |env, log, state|
+      File.write(state, "public|http\n")
+      run_fw(env, {"zone" => "public", "service" => "https", "state" => "enabled"})
+
+      calls = File.read(log)
+      calls.includes?("--zone=public --list-services").must_equal(true)
+      calls.includes?("--query-service").must_equal(false)
     end
   end
 

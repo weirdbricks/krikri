@@ -73,6 +73,28 @@ module Krikri
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
+      # Real's ServiceTransaction asks the daemon for the ZONE'S WHOLE
+      # service list and tests membership (`service in
+      # self.fw.getServices(self.zone)`) - it never asks "is this one
+      # service enabled". That is observable: `--query-service=<name>`
+      # rejects a name that is not a defined service outright ("Error:
+      # INVALID_SERVICE: <name>", with no zone context), so using it as
+      # the idempotency probe made krikri fail EARLY - before real's
+      # transaction appends its context msg and before the permanent leg
+      # reports the daemon's own zone-context error (round996006
+      # firewalld_fail). `--zone=<zone> --list-services` is what
+      # firewall-cmd itself documents as "List services added" for that
+      # zone (firewalld's own daemon comment on getServices: "because
+      # is called by firewall-cmd --zone --list-services"), and it prints
+      # one service name per line.
+      def self.zone_service_list_command(zone : String, binary : String = "firewall-cmd") : String
+        "#{binary} --zone=#{Shell.quote_if_needed(zone)} --list-services"
+      end
+
+      def self.service_list(stdout : String) : Array(String)
+        stdout.lines.map(&.strip).reject(&.empty?)
+      end
+
       def self.add_command(zone : String, thing : String, value : String, binary : String = "firewall-offline-cmd") : String
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --add-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end

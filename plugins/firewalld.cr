@@ -104,6 +104,10 @@ module Krikri
     USR_ZONE_DIR = "/usr/lib/firewalld/zones"
     ETC_CONF_DIR = "/etc/firewalld"
     USR_CONF_DIR = "/usr/lib/firewalld"
+    # firewalld's own service catalogue: the service XMLs it defines
+    # (and the only names a zone may reference) - the same two dirs its
+    # fw_service.py loads, /etc winning over /usr/lib.
+    SERVICE_DIRS = ["/usr/lib/firewalld/services", "/etc/firewalld/services"]
 
     # Which change contexts the current request touches, set by
     # #validate_permanent_immediate (see its own comment).
@@ -466,12 +470,24 @@ module Krikri
       permanent_plan : NamedTuple(content: String, element: String, attrs: Hash(String, String), present: Bool)? = nil
 
       if @do_runtime
-        query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))
-        # firewall-cmd's query flags exit 0 ("yes")/1 ("no"); anything
-        # else is a real error and is what real Ansible's
-        # action_handler would have caught.
-        return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
-        runtime_present = query[:exit_code] == 0
+        if key == "service"
+          # Real's ServiceTransaction.get_enabled_immediate reads the
+          # zone's whole service LIST and tests membership, so a name
+          # that is not a defined service simply reads as "not
+          # enabled" here - the failure comes from the later add, with
+          # the daemon's own zone context. See
+          # FirewalldCommand.zone_service_list_command's comment.
+          query = remote_exec(PluginHelpers::FirewalldCommand.zone_service_list_command(zone, "firewall-cmd"))
+          return command_failure_result(query) unless query[:exit_code] == 0
+          runtime_present = PluginHelpers::FirewalldCommand.service_list(query[:stdout]).includes?(value)
+        else
+          query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))
+          # firewall-cmd's query flags exit 0 ("yes")/1 ("no"); anything
+          # else is a real error and is what real Ansible's
+          # action_handler would have caught.
+          return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
+          runtime_present = query[:exit_code] == 0
+        end
       end
 
       if @do_permanent
@@ -490,6 +506,27 @@ module Krikri
 
       append_operation_context_msg
       changed = false
+
+      # Real's transaction adds PERMANENTLY before immediately, and the
+      # permanent add is what validates the service name: real firewalld's
+      # own config-zone addService -> update() runs check_config, which
+      # raises INVALID_SERVICE "Zone '<zone>': '<service>' not among
+      # existing services" for a name no service XML defines (firewalld
+      # src/firewall/core/io/policy.py's common_check_config; the message
+      # reaches the module as the D-Bus error
+      # org.fedoraproject.FirewallD1.Exception - round996006
+      # firewalld_fail, which registered the context msg above plus the
+      # module's own /etc/services hint). Krikri writes the zone XML
+      # itself, so it has to run that check explicitly: without it this
+      # plugin silently wrote a <service name="kop_nosuch_svc"/> entry
+      # into the zone file instead of failing. Never in check mode:
+      # real exits_json(changed=True) right after the context msg there,
+      # before the permanent leg ever runs.
+      if !check_mode && key == "service" && want_present && (plan = permanent_plan) && !plan[:present]
+        unless service_defined?(value)
+          return firewalld_exception_failure("INVALID_SERVICE: Zone '#{zone}': '#{value}' not among existing services")
+        end
+      end
 
       runtime_present.try do |present|
         next if present == want_present
@@ -541,6 +578,16 @@ module Krikri
         return File.read(path) if File.exists?(path)
       end
       nil
+    end
+
+    # Does firewalld define this service at all (a service XML in
+    # either catalogue dir)? The check real's own permanent
+    # config-zone update() performs before it accepts a zone that
+    # references the name - see the INVALID_SERVICE comment in #run.
+    private def service_defined?(name : String) : Bool
+      return false if name.empty? || name.includes?("/") || name.includes?("..")
+
+      SERVICE_DIRS.any? { |dir| File.exists?(File.join(dir, "#{name}.xml")) }
     end
 
     # `zone:` (real Ansible's own doc: "the default zone can be

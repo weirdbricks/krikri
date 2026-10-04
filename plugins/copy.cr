@@ -931,10 +931,16 @@ module Krikri
     # real's shape (round 995005 deploy_helper_helper_block: real
     # /root/.ansible/tmp/ansible-tmp-.../.source, krikri its own
     # .krikri-playbook-copy-<hex>.tmp next to the dest).
+    # The `~` MUST go through BasePlugin#expand_tilde ($HOME first, then
+    # the passwd entry - the same order Python's os.path.expanduser uses
+    # for it): Crystal's own File.expand_path does NOT expand a leading
+    # tilde at all, so it joined the LITERAL "~" onto the plugin's
+    # working directory and this echo came out as
+    # /root/~/.ansible/tmp/ansible-tmp-.../.source on a root target
+    # (round996005 deploy_helper_helper_block).
     private def staged_src_echo(dest : String) : String
-      home = File.expand_path("~")
       random = Random.rand(100_000_000_000_000..999_999_999_999_999)
-      "#{home}/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}"
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}")
     end
 
     private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : {failure: PluginResult?, staged: String?}
