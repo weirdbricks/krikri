@@ -37,6 +37,32 @@ module Krikri::Lint
     cli_tags = [] of String
     cli_fix : Array(String)? = nil
 
+    # Upstream's --fix takes an optional comma-separated rule list; when
+    # the argument after it is an existing path and no targets were seen
+    # yet, that argument is a lintable, not the rule list.
+    fix_value_options = %w[-f --format --profile -x --skip-list -w --warn-list
+      --enable-list -t --tags -c --config-file --fix]
+    argv.each_with_index do |arg, i|
+      next unless arg == "--fix"
+      value = argv[i + 1]?
+      next if value.nil? || value.starts_with?("-")
+      positionals_before = [] of String
+      j = 0
+      while j < i
+        a = argv[j]
+        if a.starts_with?("-")
+          j += fix_value_options.includes?(a) ? 2 : 1
+        else
+          positionals_before << a
+          j += 1
+        end
+      end
+      next unless positionals_before.empty? && File.exists?(value)
+      targets << value
+      cli_fix = ["all"]
+      argv[i + 1] = "krikri-lint-fix-consumed"
+    end
+
     OptionParser.parse(argv) do |parser|
       parser.banner = "Usage: krikri-lint [options] TARGET [TARGET ...]"
       parser.on("-p", "--parseable", "One result per line: path:line:col rule-id severity message") do
@@ -76,7 +102,7 @@ module Krikri::Lint
         cli_tags.concat(value.split(',').map(&.strip))
       end
       parser.on("--fix [RULES]", "Auto-fix violations; optional comma-separated rule ids/tags to limit it ('all' is the default scope, 'none' disables)") do |value|
-        if value.nil? || value.empty?
+        if value == "krikri-lint-fix-consumed" || value.nil? || value.empty?
           cli_fix = ["all"]
         else
           cli_fix = value.split(',').map(&.strip).reject(&.empty?)
