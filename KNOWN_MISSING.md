@@ -60,9 +60,10 @@ and fixed and when.
     have run); a task using one stops with the unimplemented-module error.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
     close without credentials):* `ec2_*`, `iam_user_info`, `nsupdate`, `rabbitmq_*`.
-  - Known value (not shape) differences left as they are: `ufw`'s `commands`/`apt`'s failure
-    results on the mutating paths, which are verified against real's command construction and wording but not yet
-    end-to-end on a real host after 0.9.1470. `krikri-role-tester keyorder --values` over a probe round is how
+  - `ufw` is verified end-to-end on real hosts, `commands` and `msg` included, for single rules and for a task combining
+    `state: enabled` with a rule/default/logging (`kop_firewall`, `kop_ufw_active`, round 999030, 0.9.1476). Known value
+    (not shape) difference left as it is: `apt`'s failure results on the mutating paths, which are verified against real's
+    command construction and wording but not yet end-to-end on a real host. `krikri-role-tester keyorder --values` over a probe round is how
     any remaining value difference is found; host-specific noise (apt output text, per-host keys, snap revisions)
     shows up there and is not a krikri difference.
 - **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
