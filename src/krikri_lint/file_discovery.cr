@@ -26,6 +26,13 @@ module Krikri
         files.sort!
       end
 
+      # Targets that were directories rather than files. Upstream keeps a
+      # walked directory in its lintable set (with no kind, so no rules
+      # run on it), which makes it count towards the "on N files" total.
+      def directory_targets(targets : Array(String)) : Array(String)
+        targets.select { |target| File.directory?(target) }
+      end
+
       # Upstream classifies files under roles/<name>/ by the role's
       # well-known subdirectories; anything else inside a role (scripts
       # dirs, distribution data, etc.) is not a lintable lintable.

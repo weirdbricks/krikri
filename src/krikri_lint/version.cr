@@ -1,4 +1,4 @@
-KRIKRI_LINT_VERSION = "0.8.0"
+KRIKRI_LINT_VERSION = "0.8.1"
 
 # The exact ansible-lint release every rule here was verified against,
 # live, via testing/lint/parity.py. Debian ships it as

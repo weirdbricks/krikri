@@ -164,8 +164,14 @@ module Krikri::Lint
       exit 3
     end
 
-    files = FileDiscovery.discover(targets)
-    file_count = files.size
+    # Real ansible-lint walks each target's import graph before linting,
+    # so imported task files and playbooks are linted too and counted in
+    # the "on N files" summary.
+    files = Imports.expand(FileDiscovery.discover(targets))
+      .reject { |path| config.excluded?(path) }
+    # A directory target is walked but yields no matches; upstream still
+    # counts it, so the summary's file total has to include it.
+    file_count = files.size + FileDiscovery.directory_targets(targets).size
 
     runner = Runner.new(registry, config)
     violations = begin

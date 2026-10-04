@@ -18,6 +18,7 @@ require "./rules/*"
 require "./runner"
 require "./console"
 require "./report"
+require "./imports"
 
 module Krikri
   module Lint
