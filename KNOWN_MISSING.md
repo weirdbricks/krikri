@@ -38,6 +38,23 @@ defect moves down or gets deleted.
 - **Docker plugins:** real's Python-SDK error wording (`500 Server Error for http+docker://...`) is
   reproduced only for `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own
   `Code: 500 Message: ...` after real's prefixes.
+- **`-k`/`-K`/`--connection-password-file`/`--become-password-file` are accepted but inert.** The value
+  lands in `ansible_password`/`ansible_become_password` but nothing consumes it: SSH goes through the
+  system `ssh` client (key/`~/.ssh/config` auth only) and become is `sudo -n` only. A user can believe
+  password auth is active when it isn't. Fixing it means real support (e.g. sshpass, `sudo -S`); failing
+  loudly would break the common `-K` with passwordless sudo, and a warning breaks stderr parity.
+- **`mysql_db`/`mysql_user` password on the client argv** when `config_file:` is given together with
+  `login_password:`: the 0600 `--defaults-extra-file` staging is skipped for that combination, so
+  `--password=<pw>` is visible in the target's `ps`. The normal path never puts it on argv.
+- **Performance, profile first** (`--timing-profile`, warm run, `--forks 1`): not yet done and not worth
+  starting without a profile showing the bucket - `ip` forks per interface in `gather_network_facts`
+  (`ip -j` shape must be pinned against real output) and the Python-interpreter spawn in
+  `gather_python_facts` (`type`/`has_sslcontext` need it); the vars-hash dup in
+  `VarSubstitutor#ensure_owned!` and the second substitutor in `JinjaRenderer#jinja_resolver`;
+  `ConditionalEvaluator` re-parsing and fully converting the vars hash per call instead of caching a
+  compiled condition; `ENV` re-converted on every jinja render; the daemon path parsing then
+  re-serializing the plugin config; a local daemon for `ansible_connection=local` (one fork per task
+  today). Short-circuit `and`/`or`, unknown-test failure and strict-undefined must survive any change.
 
 ## Deliberate limits (decided, not defects)
 
