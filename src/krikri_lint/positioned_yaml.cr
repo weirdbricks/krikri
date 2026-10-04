@@ -4,7 +4,7 @@ module Krikri
   module Lint
     # A lint target file with position-aware YAML available.
     # Files that fail to parse carry `parse_error` instead of `root`;
-    # the syntax-check rule reports them.
+    # the load-failure rule reports them.
     class PositionedFile
       getter path : String
       getter file_type : FileType

@@ -10,16 +10,22 @@ module Krikri
       getter severity : Severity
       getter message : String
       # Enclosing task's first line, for noqa range matching. Nil for
-      # file-level rules (yaml[*], syntax-check).
+      # file-level rules (yaml[*], load-failure).
       getter task_line : Int32?
       # Upstream's MatchError.details: the enclosing task's description,
       # rendered as "Task/Handler: <name>" for matches produced by a
       # task-scoped rule. Empty for file-level rules (yaml[*]).
       getter details : String
       getter? warning : Bool
+      # Upstream's MatchError.level. Display level only: a match can be
+      # shown as a warning (load-failure) while still counting as a
+      # failure for the outcome line and the exit code.
+      getter level : String
 
       def initialize(@path, @line, @column, @rule_id, @severity, @message,
-                     @task_line = nil, @warning = false, @details = "")
+                     @task_line = nil, @warning = false, @details = "",
+                     level : String? = nil)
+        @level = level || (@warning ? "warning" : "error")
       end
 
       def as_warning : Violation
@@ -29,12 +35,7 @@ module Krikri
 
       def with_details(details : String) : Violation
         Violation.new(path, line, column, rule_id, severity, message,
-          task_line, warning?, details)
-      end
-
-      # Upstream's MatchError.level.
-      def level : String
-        warning? ? "warning" : "error"
+          task_line, warning?, details, level)
       end
 
       # Upstream's MatchError.position: "line", or "line:column" when

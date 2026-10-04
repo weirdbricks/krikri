@@ -70,7 +70,7 @@ module Krikri
         map = noqa_maps[v.path]? || {} of Int32 => Noqa::Entry
         # A task-scoped rule's violations belong to an enclosing task, so
         # a `# noqa:` anywhere in that task's body suppresses them. A
-        # file-level rule (yaml[*], syntax-check) only honours a comment
+        # file-level rule (yaml[*], load-failure) only honours a comment
         # on the violation's own line.
         return Noqa.suppresses?(map, v.line, nil, v.rule_id) unless task_scoped.includes?(family)
         span = enclosing_span(task_spans[v.path]? || [] of {Int32, Int32}, v.line)

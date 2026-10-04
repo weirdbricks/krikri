@@ -90,14 +90,27 @@ module Krikri::Lint
         File.delete(path)
       end
     end
+
+    it "reports a missing target instead of exiting" do
+      dir = File.tempname("lintdisc")
+      Dir.mkdir(dir)
+      begin
+        missing = FileDiscovery.missing_targets([File.join(dir, "gone.yml")])
+        missing.must_equal([File.join(dir, "gone.yml")])
+        FileDiscovery.discover([File.join(dir, "gone.yml")]).must_be_empty
+        FileDiscovery.missing_targets([dir]).must_be_empty
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
   end
 
-  describe SyntaxCheckRule do
+  describe LoadFailureRule do
     private def rule
-      SyntaxCheckRule.new
+      LoadFailureRule.new
     end
 
-    it "reports a syntax error at the failing line" do
+    it "reports a parse failure as a warning-level load-failure on line 1" do
       path = File.tempname("lintspec", ".yml")
       File.write(path, "tasks:\n  - name: bad\n  [oops\n")
       begin
@@ -106,31 +119,20 @@ module Krikri::Lint
         rule.check(file, violations)
         violations.size.must_equal(1)
         v = violations.first
-        v.rule_id.must_equal("syntax-check")
-        v.path.must_equal(path)
-        v.line.must_equal(4)
+        v.rule_id.must_equal("load-failure[runtimeerror]")
+        v.line.must_equal(1)
+        v.column.must_equal(0)
+        v.level.must_equal("warning")
+        v.warning?.must_equal(false) # still counts as a failure
+        v.message.must_equal("Failed to load YAML file: #{File.expand_path(path)}")
       ensure
         File.delete(path)
       end
     end
 
-    it "reports an empty file" do
+    it "stays silent on a clean or empty file" do
       path = File.tempname("lintspec", ".yml")
       File.write(path, "")
-      begin
-        file = PositionedFile.load(path)
-        violations = [] of Violation
-        rule.check(file, violations)
-        violations.size.must_equal(1)
-        violations.first.line.must_equal(1)
-      ensure
-        File.delete(path)
-      end
-    end
-
-    it "stays silent on a clean file" do
-      path = File.tempname("lintspec", ".yml")
-      File.write(path, "---\n- name: ok\n")
       begin
         file = PositionedFile.load(path)
         violations = [] of Violation
@@ -142,10 +144,38 @@ module Krikri::Lint
     end
   end
 
+  describe Outcome do
+    it "breaks same-position ties by rule id, like upstream" do
+      a = Violation.new("p.yml", 9, 0, "no-changed-when", Severity::HIGH, "m")
+      b = Violation.new("p.yml", 9, 0, "name[missing]", Severity::MEDIUM, "m")
+      c = Violation.new("p.yml", 9, 0, "command-instead-of-shell", Severity::HIGH, "m")
+      Outcome.sort([a, b, c]).map(&.rule_id).must_equal([
+        "command-instead-of-shell", "name[missing]", "no-changed-when",
+      ])
+    end
+
+    it "keeps a missing target's load-failure pair in upstream order" do
+      a = Violation.new("gone.yml", 1, 0, "load-failure[filenotfounderror]", Severity::VERY_HIGH, "m", nil, false, "None", "warning")
+      b = Violation.new("gone.yml", 1, 0, "load-failure[not-found]", Severity::VERY_HIGH, "m", nil, false, "", "warning")
+      Outcome.sort([a, b]).map(&.rule_id).must_equal([
+        "load-failure[not-found]", "load-failure[filenotfounderror]",
+      ])
+    end
+
+    it "only reports skippable rules as printable ignore-docs targets" do
+      registry = RuleRegistry.default
+      load_failure = [Violation.new("gone.yml", 1, 0, "load-failure[not-found]",
+        Severity::VERY_HIGH, "m", nil, false, "", "warning")]
+      Outcome.skippable?(load_failure, registry).must_equal(false)
+      yaml = [Violation.new("a.yml", 1, 0, "yaml[colons]", Severity::LOW, "m")]
+      Outcome.skippable?(yaml, registry).must_equal(true)
+    end
+  end
+
   describe RuleRegistry do
     it "lists rules with ids" do
       registry = RuleRegistry.default
-      registry.find("syntax-check").wont_be_nil
+      registry.find("load-failure").wont_be_nil
       registry.find("nope").must_be_nil
     end
   end

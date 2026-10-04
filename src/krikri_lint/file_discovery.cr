@@ -17,9 +17,6 @@ module Krikri
             files.concat(search_dir(target))
           elsif File.file?(target)
             files << target
-          else
-            STDERR.puts "krikri-lint: target not found: #{target}"
-            exit 2
           end
         end
         files.uniq!
@@ -31,6 +28,12 @@ module Krikri
       # run on it), which makes it count towards the "on N files" total.
       def directory_targets(targets : Array(String)) : Array(String)
         targets.select { |target| File.directory?(target) }
+      end
+
+      # Targets that are neither files nor directories. Upstream lints
+      # these instead of erroring: each yields load-failure matches.
+      def missing_targets(targets : Array(String)) : Array(String)
+        targets.reject { |target| File.file?(target) || File.directory?(target) }
       end
 
       # Upstream classifies files under roles/<name>/ by the role's

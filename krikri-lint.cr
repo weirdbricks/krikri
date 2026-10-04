@@ -169,9 +169,12 @@ module Krikri::Lint
     # the "on N files" summary.
     files = Imports.expand(FileDiscovery.discover(targets))
       .reject { |path| config.excluded?(path) }
+    missing = FileDiscovery.missing_targets(targets)
     # A directory target is walked but yields no matches; upstream still
-    # counts it, so the summary's file total has to include it.
-    file_count = files.size + FileDiscovery.directory_targets(targets).size
+    # counts it, so the summary's file total has to include it. Missing
+    # targets count too - they lint as load-failure matches.
+    file_count = files.size +
+                 FileDiscovery.directory_targets(targets).size + missing.size
 
     runner = Runner.new(registry, config)
     violations = begin
@@ -198,7 +201,19 @@ module Krikri::Lint
       end
     end
 
-    violations.sort_by! { |v| {v.path, v.line, v.column} }
+    # Upstream lints a missing target instead of erroring: a generic
+    # not-found match and the Python exception it ran into, both shown
+    # as warnings but counted as failures.
+    missing.each do |path|
+      violations << Violation.new(path, 1, 0, "load-failure[not-found]",
+        Severity::VERY_HIGH, "File or directory not found.",
+        nil, false, "", "warning")
+      violations << Violation.new(path, 1, 0, "load-failure[filenotfounderror]",
+        Severity::VERY_HIGH, "[Errno 2] No such file or directory: '#{File.expand_path(path)}'",
+        nil, false, "None", "warning")
+    end
+
+    Outcome.sort(violations)
 
     colored = Console.color_enabled?(force_color, nocolor)
 

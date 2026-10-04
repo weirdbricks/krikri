@@ -17,11 +17,11 @@ module Krikri
       # the rule id hyperlinked, the path in magenta and the optional
       # task description dimmed, followed by a blank line.
       def self.brief(v : Violation, colored : Bool) : String
-        level = v.warning? ? Console::YELLOW : Console::RED
+        level = v.level == "warning" ? Console::YELLOW : Console::RED
         String.build do |io|
           unless colored
             io << v.rule_id << ": " << v.message
-            io << " (warning)" if v.warning?
+            io << " (warning)" if v.level == "warning"
             io << '\n' << v.path << ':' << v.position
             if v.details != ""
               io << ' ' << v.details
@@ -33,7 +33,7 @@ module Krikri
           io << level << Console.link(rule_url(v), v.rule_id)
           io << Console::DIM << ':' << Console::RESET
           io << ' ' << level << v.message << Console::RESET
-          io << ' ' << Console::DIM << level << "(warning)" << Console::RESET if v.warning?
+          io << ' ' << Console::DIM << level << "(warning)" << Console::RESET if v.level == "warning"
           io << '\n'
           io << Console::MAGENTA << v.path << Console::RESET << ':' << v.position
           if v.details != ""
@@ -48,7 +48,7 @@ module Krikri
           # Upstream's markup leaves one level tag unclosed for an error
           # and two for a warning; the renderer closes them at the end,
           # after the final newline.
-          resets = v.warning? ? 2 : 1
+          resets = v.level == "warning" ? 2 : 1
           resets += 1 if v.details != "" && bracketed?(v.details)
           io << (Console::RESET * resets)
         end
@@ -63,7 +63,7 @@ module Krikri
       # Upstream's ParseableFormatter (aka `-p`).
       def self.parseable(v : Violation, colored : Bool) : String
         return "#{v.path}:#{v.position}: #{rule_id(v)}: #{v.message}" unless colored
-        level = v.warning? ? Console::YELLOW : Console::RED
+        level = v.level == "warning" ? Console::YELLOW : Console::RED
         String.build do |io|
           io << Console::MAGENTA << v.path << Console::RESET
           io << Console::DIM << ':' << v.position << ':' << Console::RESET
@@ -102,7 +102,7 @@ module Krikri
       # Upstream's QuietFormatter (`-f quiet`): rule id, space, position.
       def self.quiet(v : Violation, colored : Bool) : String
         return "#{v.family} #{v.path}:#{v.position}" unless colored
-        level = v.warning? ? Console::YELLOW : Console::RED
+        level = v.level == "warning" ? Console::YELLOW : Console::RED
         String.build do |io|
           io << level << v.family << Console::RESET
           io << ' ' << Console::MAGENTA << v.path << Console::RESET
@@ -239,6 +239,40 @@ module Krikri
       # tag stat, and drops the rating when it lands outside 1..5.
       private def stars? : Bool
         !@tag_stats.empty? && @rating > 0 && @rating < 6
+      end
+    end
+
+    # Presentation helpers the CLI driver applies to the whole match list.
+    module Outcome
+      extend self
+
+      # Matches sorted the way upstream lists them: by position, then by
+      # the rule that produced the match (upstream's rule execution order
+      # is the rule ids' alphabetical order). The two load-failure matches
+      # of a missing target keep upstream's own order, not the ids'.
+      def sort(violations : Array(Violation)) : Array(Violation)
+        violations.sort_by! do |v|
+          {v.path, v.line, v.column, load_failure_seq(v.rule_id), v.rule_id}
+        end
+      end
+
+      private def load_failure_seq(rule_id : String) : Int32
+        case rule_id
+        when "load-failure[not-found]"         then 0
+        when "load-failure[filenotfounderror]" then 1
+        when "load-failure[runtimeerror]"      then 2
+        else                                        3
+        end
+      end
+
+      # Upstream only prints the ignore-docs hint when at least one
+      # skippable rule matched; unskippable matches (load-failure) alone
+      # suppress it.
+      def skippable?(violations : Array(Violation), registry : RuleRegistry) : Bool
+        violations.any? do |v|
+          next false unless rule = registry.rules.find { |cand| cand.id == v.rule_id || cand.id == v.family }
+          !rule.tags.includes?("unskippable")
+        end
       end
     end
   end
