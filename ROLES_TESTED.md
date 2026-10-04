@@ -9715,7 +9715,7 @@ All clean, cold and warm, static musl release build. Exercises `add_host` hostva
 
 ## Round 995000-995006 (2026-10-03): result key-order probe roles (testing/keyorder_probes), 0.9.1465
 
-Local probe roles, not Galaxy roles: each probed task registers its result and dumps it as `KEYORDER|<probe>|<json>`; `krikri-role-tester keyorder` compares the ordered top-level keys between real ansible-core 2.19.11 and krikri. All 168 probes identical cold and warm, every PLAY RECAP CLEAN. Earlier rounds 992000-994003 found the divergences these fixes closed (see `git log`).
+Local probe roles, not Galaxy roles: each probed task registers its result and dumps it as `KEYORDER|<probe>|<json>`; `krikri-role-tester keyorder` compares the ordered top-level keys between real ansible-core 2.19.11 and krikri. All 168 probes identical cold and warm, every PLAY RECAP CLEAN (re-verified after later fixes at 0.9.1468/0.9.1469: rounds 997000-997006 and 998000). Earlier rounds 992000-994003 found the divergences these fixes closed (see `git log`).
 
 | Role | OS | Status |
 |---|---|---|

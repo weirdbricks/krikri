@@ -38,8 +38,10 @@ and fixed and when.
   omit-`changed` wire) pins a plugin's keys to real 2.19.11's order. Everything below was compared against
   real on the same host, cold and warm, with `{{ r | to_json }}` probe roles
   (`testing/keyorder_probes/kop_*`, run through `krikri-role-tester run` with `local:` queue entries and compared
-  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1469: 168 probes on 7 roles, all identical on
-  Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN). Verified on real hosts: `user`, `group`,
+  by `krikri-role-tester keyorder`; rounds 997000-997006 and 998000, 0.9.1468/0.9.1469: 168 probes on 7 roles, all
+  identical on Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN; `keyorder --values` also compares the values, and
+  what is left there is host noise - apt/dnf output text, per-host keys/UUIDs, snap loop devices, mount and systemd
+  dependency ordering). Verified on real hosts: `user`, `group`,
   `authorized_key`, `known_hosts`, `sysctl`, `mount_facts`, `modprobe`, `ufw`, `apt` (install/no-op),
   `lvg`, `lvol`, `parted`, `zfs`, `mount`, `synchronize`, `subversion`, `apache2_module`, `java_cert`,
   `openssl_csr`, `openssl_csr_info`, `deploy_helper`, `easy_install`, `maven_artifact`,
