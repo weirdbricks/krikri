@@ -970,6 +970,88 @@ describe Krikri::PlaybookParser do
       )
     end
 
+    it "parses with_list: like loop:, without with_items:'s flatten flag" do
+      # with_list: is loop: under its legacy name in real Ansible (it is
+      # rewritten to the same loop machinery), so its literal value is
+      # already the item list - unlike with_items:, which still flattens
+      # one level at execution time.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_list: [a, b, c]
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["a", "b", "c"])
+      task.loop_items_needs_flatten?.must_equal(false)
+    end
+
+    it "parses a scalar with_list: literal as a single loop item" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_list: foo
+        YAML
+
+      task.loop_items.try(&.map(&.as_s)).must_equal(["foo"])
+    end
+
+    it "parses a single-element-array with_list: holding a template as a loop template" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_list:
+            - "{{ my_list }}"
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_template_kind.must_equal("with_list")
+      task.loop_template.must_equal("{{ my_list }}")
+      task.loop_template_array_wrapped?.must_equal(true)
+    end
+
+    it "defers a one-element-array with_nested: source to runtime instead of reading it as a list-producing template" do
+      # with_nested:'s value is a list of independent cartesian factors,
+      # not an item list, so its one-element array is a single SOURCE to
+      # be resolved by resolve_loop_nested at execution time - the same
+      # defer the two-or-more-source shape above uses. The array-wrapped
+      # loop-template shape used to claim it first, which ran with_nested:
+      # through the wrong resolver (a cartesian product over the resolved
+      # list's elements as individual factors, e.g. 8 rows for a
+      # three-element list where real Ansible iterates three one-element
+      # rows).
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_nested:
+            - "{{ users }}"
+        YAML
+
+      task.loop_template_kind.must_be_nil
+      task.loop_items.must_be_nil
+      task.loop_nested_sources.must_equal(["{{ users }}"])
+    end
+
+    it "defers a one-element-array with_together: source to runtime instead of reading it as a list-producing template" do
+      # Same defer as with_nested: above - and with_together: had no
+      # resolver on that path at all, so the task ran ONCE with `item`
+      # unbound instead of zipping the resolved source.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_together:
+            - "{{ users }}"
+        YAML
+
+      task.loop_template_kind.must_be_nil
+      task.loop_items.must_be_nil
+      task.loop_together_sources.must_equal(["{{ users }}"])
+    end
+
     it "parses loop_control.loop_var onto the task" do
       task = single_task(<<-YAML)
         - name: t

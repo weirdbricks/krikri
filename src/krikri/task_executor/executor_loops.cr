@@ -162,7 +162,14 @@ module Krikri
           # already flattened it to a scalar package name.
           parsed = flatten_with_items_one_level(parsed)
         end
-        return parsed unless parsed.nil?
+        if parsed
+          # A filter chain reaching this path resolved the whole one-element
+          # source array, so loop:/with_list: keep it as ONE iteration whose
+          # item is that list - the same rule the direct-resolution path
+          # below applies (`loop: ["{{ bl | sort }}"]` really is one item).
+          return [JSON::Any.new(parsed)] if task.loop_template_array_wrapped? && (kind == "loop" || kind == "with_list")
+          return parsed
+        end
         # A filtered single-element array source (`with_items: ["{{ x |
         # dirname }}"]`, Oefenweb.ssh_keys, round 196) evaluates to a
         # SCALAR - parse_list_result only recognizes list shapes, so it
@@ -208,7 +215,7 @@ module Krikri
         else
           [value]
         end
-      when "loop"
+      when "loop", "with_list"
         # A single-element array holding one bare `{{ var }}` span
         # (`loop: ["{{ scalar_var }}"]`) is what routed this whole task
         # here in the first place (see find_loop_template's own
@@ -224,13 +231,31 @@ module Krikri
         # single-element ARRAY-WRAPPED source as exactly one iteration
         # with that scalar as `item`.
         #
-        # That flatten-to-one-item leniency is only real for the
-        # array-wrapped source form above - task.loop_template_array_
-        # wrapped is false for the DIRECT scalar form (`loop: "{{ var
-        # }}"`, no square brackets in the YAML at all), and there real
-        # Ansible hard-fails a non-list resolution instead: round174
-        # differential matrix scenarios 11a (`null`) / 11c (a scalar
-        # string), live-verified against ansible-core 2.19.12 -
+        # Real Ansible's loop: is `items = template(the whole source
+        # list)`: the source LIST is the item list, so a one-element
+        # array whose element templates to a list stays exactly ONE
+        # iteration whose item is that whole list - never its elements.
+        # Live-verified against ansible-core 2.19.11 (found on a real
+        # konstruktoid.hardening round, whose
+        # `loop: ["{{ suid_sgid_blocklist }}"]` runs over a 411-element
+        # list): `loop: ["{{ bl }}"]` is one item `['a','b','c']`, while
+        # the DIRECT scalar form (`loop: "{{ bl }}"`, no square brackets
+        # in the YAML at all) really does iterate the list - there the
+        # templated value IS the item list.
+        #
+        # with_list: is loop: under its legacy name (real Ansible
+        # rewrites it to the same `loop:` machinery), with exactly one
+        # difference: it tolerates a scalar in EITHER shape - live-
+        # verified against 2.19.11, `with_list: "{{ myscalar }}"` runs
+        # once with that scalar as `item`, where loop: hard-fails (see
+        # the raise below).
+        #
+        # The array-wrapped leniency that strict-fails is only real for
+        # the loop: form above - task.loop_template_array_wrapped is
+        # false for the DIRECT scalar form, and there real Ansible hard-
+        # fails a non-list resolution instead: round174 differential
+        # matrix scenarios 11a (`null`) / 11c (a scalar string),
+        # live-verified against ansible-core 2.19.12 -
         # `The \`loop\` value must resolve to a 'list', not 'NoneType'.`
         # / `...not 'str'.`. Reuses UndefinedVariableError (not a new
         # exception type) purely so it flows through the exact same
@@ -239,8 +264,8 @@ module Krikri
         # isn't really an "undefined variable" here, just a convenient
         # existing raise-and-get-rescued channel.
         if list = value.as_a?
-          list
-        elsif task.loop_template_array_wrapped?
+          task.loop_template_array_wrapped? ? [value] : list
+        elsif kind == "with_list" || task.loop_template_array_wrapped?
           [value]
         else
           raise UndefinedVariableError.new(
@@ -282,9 +307,11 @@ module Krikri
         return nil unless hash
         LoopResolver.with_dict(hash.transform_keys(&.to_s))
       when "with_nested"
-        list = value.as_a?
-        return nil unless list
-        lists = list.map { |entry| entry.as_a? || [entry] }
+        # Only the DIRECT scalar form (`with_nested: "{{ var }}"`) still
+        # reaches here - the one-element ARRAY form is routed to
+        # resolve_loop_nested by the parser, which iterates the resolved
+        # source's own elements the same way.
+        lists = loop_source_terms(value).map { |entry| entry.as_a? || [entry] }
         LoopResolver.with_nested(lists)
       when "with_indexed_items"
         list = value.as_a?
@@ -581,6 +608,23 @@ module Krikri
       result
     end
 
+    # The element list one resolved with_nested:/with_together: source
+    # contributes: a resolved list contributes its own elements, a scalar
+    # contributes one element, and a resolved STRING contributes one
+    # element per CHARACTER - real Ansible's nested/together lookups
+    # iterate their terms directly, so a string term is itself a sequence
+    # (live-verified against ansible-core 2.19.11: `with_nested: [ruby]`
+    # really does iterate 'r', 'u', 'b', 'y', one item per character).
+    private def loop_source_terms(value : JSON::Any) : Array(JSON::Any)
+      if list = value.as_a?
+        list
+      elsif str = value.as_s?
+        str.chars.map { |char| JSON::Any.new(char.to_s) }
+      else
+        [value]
+      end
+    end
+
     # with_nested: resolve each raw source string (a `{{ var }}` list
     # reference, a filter chain, a literal scalar, or a JSON-serialized
     # literal sub-array - see loop_nested_sources) against the variable
@@ -612,7 +656,7 @@ module Krikri
         end
 
         if value
-          value.as_a? || [value]
+          loop_source_terms(value)
         else
           # A literal source (possibly with embedded {{ }} text) - substituted
           # as one string; only when the substitution renders to JSON array
@@ -657,7 +701,7 @@ module Krikri
         end
 
         if value
-          value.as_a? || [value]
+          loop_source_terms(value)
         else
           substituted = substitutor.substitute(raw).strip
           if substituted.starts_with?('[') && (parsed = (JSON.parse(substituted).as_a? rescue nil))

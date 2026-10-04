@@ -66,7 +66,18 @@ describe "loop:/with_items: single-element list holding a template that resolves
     output.must_include("All assertions passed")
   end
 
-  it "still flattens a genuine list correctly (no regression)" do
+  it "keeps a wrapped list template as ONE iteration whose item is the whole list" do
+    # The other half of real Ansible's rule for a one-element array
+    # source, and the half that used to be wrong the other way: `loop:`
+    # templates the whole source LIST, so the array IS the item list and
+    # a list-producing element stays a single item. Live-verified against
+    # ansible-core 2.19.11 - `loop: ["{{ list_var }}"]` is one iteration
+    # with `item=['a', 'b', 'c']`, while the DIRECT scalar form
+    # (`loop: "{{ list_var }}"`, no square brackets in the YAML at all)
+    # really does iterate the list, which the sibling test below keeps
+    # doing. Found on a real konstruktoid.hardening round, whose
+    # `loop: ["{{ suid_sgid_blocklist }}"]` (a 411-element list) ran 411
+    # times in this engine and exactly once in real.
     status, output = run_playbook(<<-YAML)
       - name: repro
         hosts: localhost
@@ -83,9 +94,9 @@ describe "loop:/with_items: single-element list holding a template that resolves
           - name: assert
             ansible.builtin.assert:
               that:
-                - result.results | length == 3
-                - result.results[0].msg == "a"
-                - result.results[2].msg == "c"
+                - result.results | length == 1
+                - result.results[0].item == ['a', 'b', 'c']
+                - result.results[0].msg == ['a', 'b', 'c']
       YAML
 
     status.success?.must_equal(true)

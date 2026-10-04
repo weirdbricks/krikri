@@ -2256,7 +2256,26 @@ module Krikri
     # parse time, in the same priority order used when picking a loop
     # source in parse_task. Checked here for a scalar "{{ ... }}" template
     # value once none of them matched literally.
-    LOOP_TEMPLATE_KEYS = %w[loop with_items with_dict with_nested with_together with_indexed_items]
+    LOOP_TEMPLATE_KEYS = %w[loop with_items with_list with_dict with_nested with_together with_indexed_items]
+
+    # The subset of those keywords whose YAML value IS the loop's item list
+    # (loop:, with_items:, with_list:, with_dict:, with_indexed_items:), and
+    # for which a single-element ARRAY holding one bare `{{ ... }}` is that
+    # list with the template standing in for its whole content - the
+    # resolver decides at runtime whether that turns into the list itself
+    # (loop:, with_list:) or into the list's own elements (with_items:).
+    #
+    # with_nested:/with_together: are deliberately absent: their value is a
+    # list of independent factors/columns, not an item list, and their own
+    # parse branches already defer a `{{ }}` entry to the executor's
+    # cartesian/zip resolvers. Reading their one-element array as
+    # "the whole source is secretly a list-producing template" instead ran
+    # them through the generic loop-template resolver, which took the
+    # wrong cartesian product for with_nested: and matched no resolver at
+    # all for with_together: - the task then ran ONCE with `item` unbound
+    # ("'item' is undefined"), where real Ansible zips/iterates the
+    # resolved list.
+    LOOP_ARRAY_WRAPPED_TEMPLATE_KEYS = %w[loop with_items with_list with_dict with_indexed_items]
 
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
@@ -2275,6 +2294,10 @@ module Krikri
         # holding a template that expands to a list becomes that list.
         # dev-sec os_hardening's yum gpg-check writes it this way, with a
         # `map(attribute='path')` / `difference(...)` filter chain inside.
+        # Only for the keywords whose value IS the item list - see
+        # LOOP_ARRAY_WRAPPED_TEMPLATE_KEYS for why with_nested:/with_together:
+        # are handled by their own branches instead.
+        next unless LOOP_ARRAY_WRAPPED_TEMPLATE_KEYS.includes?(key)
         #
         # Only when the element IS one bare `{{ ... }}` expression (after
         # stripping whitespace) - not merely *contains* one. A real, quite
@@ -2305,6 +2328,20 @@ module Krikri
         end
       end
       nil
+    end
+
+    # The loop items of a LITERAL with_list: value, shared by every
+    # task-parsing entry point. with_list: is loop: under its legacy name -
+    # real Ansible rewrites it to the same `loop:` machinery (live-verified
+    # against ansible-core 2.19.11), so unlike with_items: its value is
+    # already the item list with no flattening, and a scalar literal is a
+    # single item.
+    private def self.parse_with_list_items(value : YAML::Any) : Array(JSON::Any)
+      if arr = value.as_a?
+        arr.map { |item| JSON.parse(item.to_json) }
+      else
+        [JSON.parse(value.to_json)]
+      end
     end
 
     # Loop keywords consumed by their own dedicated parser branches above
@@ -2846,6 +2883,9 @@ module Krikri
         task.loop = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
         task.loop_items_needs_flatten = true
+      elsif with_list = task_hash["with_list"]?
+        # with_list: IS loop: under its legacy name - see parse_with_list_items.
+        task.loop_items = parse_with_list_items(with_list)
       elsif with_dict = task_hash["with_dict"]?.try(&.as_h?)
         hash = Hash(String, JSON::Any).new
         with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
@@ -3424,6 +3464,9 @@ module Krikri
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
         task.loop_template_array_wrapped = template_loop[2]
+      elsif with_list = task_hash["with_list"]?
+        # with_list: IS loop: under its legacy name - see parse_with_list_items.
+        task.loop_items = parse_with_list_items(with_list)
       elsif generic_lookup = find_generic_lookup_loop(task_hash)
         task.loop_lookup_plugin = generic_lookup[0]
         task.loop_lookup_terms = generic_lookup[1]
@@ -4155,6 +4198,9 @@ module Krikri
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items_needs_flatten = true
+      elsif with_list = task_hash["with_list"]?
+        # with_list: IS loop: under its legacy name - see parse_with_list_items.
+        task.loop_items = parse_with_list_items(with_list)
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
@@ -4356,6 +4402,9 @@ module Krikri
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
         task.loop_items = with_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items_needs_flatten = true
+      elsif with_list = task_hash["with_list"]?
+        # with_list: IS loop: under its legacy name - see parse_with_list_items.
+        task.loop_items = parse_with_list_items(with_list)
       elsif generic_lookup = find_generic_lookup_loop(task_hash)
         task.loop_lookup_plugin = generic_lookup[0]
         task.loop_lookup_terms = generic_lookup[1]
