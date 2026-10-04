@@ -84,26 +84,36 @@ module Krikri
         when "active"
           if net_state(uri, name) != "active"
             changed = true
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), "start network #{name}", check_mode)
+            if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), check_mode)
+              return res
+            end
           end
         when "present"
           unless net_exists?(uri, name)
             return fail("network '#{name}' not present, but xml not specified") unless xml
-            define_network(uri, xml, check_mode)
+            if res = define_network(uri, xml, check_mode)
+              return res
+            end
             changed = true
           end
         when "inactive"
           if net_exists?(uri, name) && net_state(uri, name) != "inactive"
             changed = true
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), "destroy network #{name}", check_mode)
+            if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), check_mode)
+              return res
+            end
           end
         when "absent", "undefined"
           if net_exists?(uri, name)
             if net_state(uri, name) != "inactive"
-              run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), "destroy network #{name}", check_mode)
+              if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), check_mode)
+                return res
+              end
             end
             changed = true
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), "undefine network #{name}", check_mode)
+            if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), check_mode)
+              return res
+            end
           end
         else
           return fail("unexpected state #{state}")
@@ -120,7 +130,9 @@ module Krikri
           when "define", "modify"
             return fail("#{command} requires xml argument") unless xml
             unless net_exists?(uri, name)
-              define_network(uri, xml, check_mode)
+              if res = define_network(uri, xml, check_mode)
+                return res
+              end
               res = ok(true)
               res.extra["created"] = JSON::Any.new(name)
               return res
@@ -141,28 +153,43 @@ module Krikri
               # the method with exit_json(changed=True).
               return ok(true)
             end
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), "start network #{name}", check_mode)
+            if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-start", name), check_mode)
+              return res
+            end
             return command_result(command, JSON::Any.new(0))
           when "stop", "destroy"
             if net_state(uri, name) == "active"
               if check_mode
                 return ok(true)
               end
-              run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), "destroy network #{name}", check_mode)
+              if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-destroy", name), check_mode)
+                return res
+              end
               return command_result(command, JSON::Any.new(0))
             end
             return command_result(command, JSON::Any.new(nil))
           when "undefine"
             if net_exists?(uri, name)
-              run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), "undefine network #{name}", check_mode)
+              if res = run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-undefine", name), check_mode)
+                return res
+              end
               return command_result(command, JSON::Any.new(0))
             end
             return command_result(command, JSON::Any.new(nil))
           when "get_xml"
-            rc, stdout_text, _ = capture(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-dumpxml", name))
-            return fail("network '#{name}' not found") unless rc == 0
+            rc, stdout_text, err = capture(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-dumpxml", name))
+            return fail(virsh_error_msg(err)) unless rc == 0
             return command_result(command, JSON::Any.new(stdout_text))
           when "status"
+            # Real get_status(): non-check mode lets find_entry's
+            # EntryNotFound escape to fail_json ("network %s not found"),
+            # while the check-mode branch catches it and answers with
+            # ENTRY_STATE_ACTIVE_MAP.get("inactive", "unknown") - and
+            # since the map's keys are 0/1, that fallback is "unknown".
+            unless net_exists?(uri, name)
+              return command_result(command, JSON::Any.new("unknown")) if check_mode
+              return fail("network #{name} not found")
+            end
             return command_result(command, JSON::Any.new(net_state(uri, name)))
           end
         elsif HOST_COMMANDS.includes?(command)
@@ -187,10 +214,10 @@ module Krikri
 
         current = net_info(uri, name)[:autostart]
         if current != autostart
-          if autostart
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-autostart", name), "enable autostart", check_mode)
-          else
-            run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-autostart", name, "--disable"), "disable autostart", check_mode)
+          cmd = Krikri::PluginHelpers::VirshNet.virsh(uri, "net-autostart", name)
+          cmd << "--disable" unless autostart
+          if res = run!(cmd, check_mode)
+            return res
           end
           return ok(true)
         end
@@ -254,13 +281,13 @@ module Krikri
       stdout_text.split("\n").map(&.strip).reject(&.empty?)
     end
 
-    private def define_network(uri : String, xml : String, check_mode : Bool) : Nil
-      return if check_mode
+    private def define_network(uri : String, xml : String, check_mode : Bool) : PluginResult?
+      return nil if check_mode
       tmp = File.tempfile("krikri-virt-net", ".xml")
       tmp.print(xml)
       tmp.close
       begin
-        run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-define", tmp.path), "define network", false)
+        run!(Krikri::PluginHelpers::VirshNet.virsh(uri, "net-define", tmp.path), false)
       ensure
         File.delete?(tmp.path)
       end
@@ -283,7 +310,7 @@ module Krikri
 
       cmd = Krikri::PluginHelpers::VirshNet.net_update_command(uri, name, xml, net_state(uri, name) == "active")
       raise "updating this is not supported yet #{xml}" unless cmd
-      run!(cmd, "update network #{name}", check_mode)
+      run!(cmd, check_mode)
       true
     end
 
@@ -320,10 +347,29 @@ module Krikri
       {status.success? ? 0 : 1, out_io.to_s, err_io.to_s}
     end
 
-    private def run!(cmd : Array(String), what : String, check_mode : Bool) : Nil
-      return if check_mode
+    # Real talks to libvirt through its python bindings and reports
+    # libvirt's own error text verbatim (EntryNotFound's
+    # "network %s not found" for a missing network, str(libvirtError)
+    # for everything else). virsh instead wraps the same errors as
+    # "error: " lines, with an extra "Failed to ... from <tmpfile>"
+    # headline on the define path - strip those wrappers so the
+    # registered msg matches real's (round 995005 virt_net_define/
+    # start/get_xml/fail).
+    private def virsh_error_msg(err : String) : String
+      lines = err.strip.split("\n").map(&.sub(/^error: /, "")).reject(&.empty?)
+      if line = lines.find(&.starts_with?("failed to get network '"))
+        if name = line[/\Afailed to get network '(.*)'\z/, 1]
+          return "network #{name} not found"
+        end
+      end
+      lines.reject(&.starts_with?("Failed to ")).join("\n")
+    end
+
+    private def run!(cmd : Array(String), check_mode : Bool) : PluginResult?
+      return nil if check_mode
       rc, _, err = capture(cmd)
-      raise "#{what} failed: #{err.strip}" unless rc == 0
+      return nil if rc == 0
+      fail(virsh_error_msg(err))
     end
   end
 end

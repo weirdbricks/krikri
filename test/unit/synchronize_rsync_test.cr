@@ -189,7 +189,17 @@ describe Krikri::SynchronizeRsync do
   describe "clean_output" do
     it "keeps one line per real change with markers and blanks stripped" do
       Krikri::SynchronizeRsync.clean_output("<<CHANGED>>>f.st...... a\n\n<<CHANGED>>cd+++++++++ b\n")
-        .must_equal(">f.st...... a\ncd+++++++++ b")
+        .must_equal(">f.st...... a\ncd+++++++++ b\n")
+    end
+
+    it "keeps real's trailing newline on the msg but not on an empty capture" do
+      # Real's msg is out.replace(changed_marker, '') - rsync's raw
+      # stdout, trailing newline included (round 995004
+      # synchronize_push). An empty stdout stays empty (the idempotent
+      # rerun's msg key must keep its "" value).
+      Krikri::SynchronizeRsync.clean_output("<<CHANGED>>>f+++++++++ a\n")
+        .must_equal(">f+++++++++ a\n")
+      Krikri::SynchronizeRsync.clean_output("").must_equal("")
     end
   end
 

@@ -156,7 +156,7 @@ module Krikri
       if alias_exists
         openssl_bin = require_openssl
         return openssl_bin if openssl_bin.is_a?(PluginResult)
-        old_tmp = File.tempname("java-cert-old")
+        old_tmp = mkstemp_name
         File.write(old_tmp, alias_exists_output)
         digest = x509_digest(openssl_bin.as(String), old_tmp)
         File.delete(old_tmp) rescue nil
@@ -164,7 +164,7 @@ module Krikri
         keystore_cert_digest = digest.as(String)
       end
 
-      new_tmp = File.tempname("java-cert-new")
+      new_tmp = mkstemp_name
       cleanup = true
       openssl_bin = require_openssl
       return openssl_bin if openssl_bin.is_a?(PluginResult)
@@ -354,13 +354,29 @@ module Krikri
         key_order: ["changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     end
 
+    # tempfile.mkstemp() with no arguments: $TMPDIR (python's gettempdir
+    # order) + "tmp" + 8 random chars from its [a-z0-9_] charset - the
+    # name real reports inside failing `cmd` arrays (round 995004
+    # java_cert_fail: real cmd[5] = /tmp/tmpbkn918i1, krikri's
+    # File.tempname shape leaked a date-pid-prefixed name instead).
+    private def mkstemp_name : String
+      charset = "abcdefghijklmnopqrstuvwxyz0123456789_"
+      dir = ENV["TMPDIR"]?.try { |v| v.empty? ? nil : v } ||
+            ENV["TEMP"]?.try { |v| v.empty? ? nil : v } ||
+            ENV["TMP"]?.try { |v| v.empty? ? nil : v } || "/tmp"
+      suffix = String.build(8) do |io|
+        8.times { io << charset[Random.rand(charset.size)] }
+      end
+      File.join(dir, "tmp#{suffix}")
+    end
+
     # _get_digest_from_x509_file: extract the first certificate from
     # the chain (PEM, DER fallback), then sha256 it. Returns the hex
     # digest, or a failure result. Both failure shapes are the real
     # module's fail_json(msg=..., rc=, cmd=) - kwargs lead, failed/msg
     # follow, the controller adds no *_lines (no stdout/stderr kwargs).
     private def x509_digest(openssl_bin : String, cert_file : String) : (String | PluginResult)
-      tmp_out = File.tempname("java-cert-x509")
+      tmp_out = mkstemp_name
       begin
         extract_argv = PluginHelpers::JavaCertCommand.extract_x509_cmd(openssl_bin, cert_file, tmp_out)
         extract = remote_exec(extract_argv.join(' '))

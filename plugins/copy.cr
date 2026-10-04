@@ -327,29 +327,14 @@ module Krikri
           # file-common stat fields, no checksum (live-verified vs
           # 2.19.11 at -v; src is real's random staged tempfile - the
           # action always stages the content before the module's force
-          # check exits, so krikri stages-and-deletes one temp of its own
-          # to echo).
-          temp = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
-          begin
-            create_staging_temp(temp, 0o600)
-            File.write(temp, content, perm: 0o600)
-          rescue File::Error
-            # The echo is best-effort: real's src is a random staged path
-            # no consumer can match anyway, so a staging failure just
-            # leaves the key off rather than failing a would-be no-op.
-            return PluginResult.new(
-              changed: false,
-              failed: false,
-              dest: dest,
-              key_order: NOOP_KEY_ORDER
-            )
-          end
-          File.delete(temp) if File.exists?(temp)
+          # check exits). The echo is reported in real's shape via
+          # staged_src_echo; no staging temp of krikri's own is needed
+          # to produce it.
           return PluginResult.new(
             changed: false,
             failed: false,
             dest: dest,
-            src: temp,
+            src: staged_src_echo(dest),
             key_order: NOOP_KEY_ORDER
           )
         end
@@ -473,10 +458,11 @@ module Krikri
         failed: false,
         diff: diff_data,
         dest: dest,
-        # Real's src is the action's staged content tempfile (.source.txt,
-        # live-verified) - krikri's own staging temp is the same thing: a
-        # now-renamed-away path that held exactly these bytes.
-        src: staged || dest,
+        # Real's src is the action's staged content tempfile (.source,
+        # live-verified) - krikri's own staging temp is where the bytes
+        # actually travelled, but the echo is reported in real's shape
+        # (staged_src_echo) so registered values compare.
+        src: staged ? staged_src_echo(dest) : dest,
         checksum: content_sha1,
         md5sum: content_md5,
         key_order: CHANGED_KEY_ORDER
@@ -934,6 +920,23 @@ module Krikri
     # through). Returns {failure: PluginResult?, staged: String?} -
     # failure is set on error, staged is the temp path the content was
     # written to (always set on success).
+    # The registered src echo for content copies, in real's shape: the
+    # copy action plugin stages the content on the target as
+    # <remote_tmp>/ansible-tmp-<epoch.micro>-<pid>-<random>/.source
+    # (action/copy.py: tmp_src = join(shell.tmpdir, '.source'), with the
+    # dest's extension appended when it has one) and the module echoes
+    # that path back. remote_tmp defaults to ~/.ansible/tmp of the
+    # remote user - the user the plugin process runs as. Krikri's write
+    # flow stages wherever it needs to, but the ECHO is reported in
+    # real's shape (round 995005 deploy_helper_helper_block: real
+    # /root/.ansible/tmp/ansible-tmp-.../.source, krikri its own
+    # .krikri-playbook-copy-<hex>.tmp next to the dest).
+    private def staged_src_echo(dest : String) : String
+      home = File.expand_path("~")
+      random = Random.rand(100_000_000_000_000..999_999_999_999_999)
+      "#{home}/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{random}/.source#{File.extname(dest)}"
+    end
+
     private def write_with_optional_validate(content : String, dest : String, content_sha1 : String) : {failure: PluginResult?, staged: String?}
       validate_cmd = @params["validate"]?
       unless validate_cmd

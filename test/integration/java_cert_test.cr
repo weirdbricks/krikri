@@ -96,4 +96,34 @@ describe "java_cert plugin" do
     result["rc"].as_i.must_equal(2)
     result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'coacvd'")
   end
+
+  # Round 995004 java_cert_fail: real's failing openssl extract command
+  # carries a python tempfile.mkstemp() path (/tmp/tmp + 8 chars from
+  # [a-z0-9_]) as cmd[5]; krikri's File.tempname leaked a
+  # date-pid-prefixed name instead. Shim keytool (bare probe exits 0,
+  # the -list alias check exits nonzero) and a failing openssl to reach
+  # the extract path without a JVM.
+  it "reports a python-mkstemp-shaped temp path in the failing extract cmd" do
+    shim_dir = PluginSpecHelper.tmp_path("java-cert-mkstemp-shim")
+    Dir.mkdir_p(shim_dir)
+    File.write(File.join(shim_dir, "keytool"), "#!/bin/sh\n[ $# -eq 0 ] && exit 0\nexit 1\n")
+    File.write(File.join(shim_dir, "openssl"), "#!/bin/sh\necho 'fake openssl failure' >&2\nexit 1\n")
+    %w[keytool openssl].each { |bin| File.chmod(File.join(shim_dir, bin), 0o755) }
+    env = {"PATH" => "#{shim_dir}:#{ENV["PATH"]}"}
+
+    result = PluginSpecHelper.run("java_cert", {
+      "cert_path"       => "/nonexistent/kop_nosuch.pem",
+      "keystore_path"   => "/nonexistent/kop_ks.jks",
+      "keystore_pass"   => "kopKeystorePass1",
+      "keystore_create" => "true",
+      "cert_alias"      => "kopfail",
+      "state"           => "present",
+    }, env: env)
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include("cannot extract certificate")
+    cmd = result["cmd"].as_a.map(&.as_s)
+    (cmd.size > 5).must_equal(true)
+    cmd[5].must_match(/\A\/tmp\/tmp[a-z0-9_]{8}\z/)
+  end
 end

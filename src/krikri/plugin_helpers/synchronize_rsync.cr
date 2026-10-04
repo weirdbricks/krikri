@@ -60,6 +60,10 @@ module Krikri
       argv << "--delay-updates" << "-F" if bool(params["delay_updates"]?, default: true)
       argv << "--compress" if bool(params["compress"]?, default: true)
       argv << "--timeout=#{params["rsync_timeout"]}" if int?(params["rsync_timeout"]?)
+      # Real module appends --dry-run right here, immediately after the
+      # timeout flag and BEFORE the delete/archive flags
+      # (synchronize.py:503-504) - not at the tail of the argv.
+      argv << "--dry-run" if bool(params["_ansible_check_mode"]?)
       argv << "--delete-after" if bool(params["delete"]?)
       argv << "--existing" if bool(params["existing_only"]?)
       argv << "--checksum" if bool(params["checksum"]?)
@@ -109,10 +113,6 @@ module Krikri
       argv << "--rsync-path=#{params["rsync_path"]}" if params["rsync_path"]? && !params["rsync_path"].empty?
       argv.concat(parse_list(params["rsync_opts"]?))
       argv << "--partial" if bool(params["partial"]?)
-      # Real module: `if module.check_mode: cmd.append('--dry-run')` -
-      # the predicted changes still itemize (so changed: true still
-      # registers), nothing is written.
-      argv << "--dry-run" if bool(params["_ansible_check_mode"]?)
 
       unless link_dest.empty?
         argv << "-H"
@@ -205,11 +205,17 @@ module Krikri
 
     # Strips the markers back off, keeping one itemize line (marker
     # removed) per real change - the real module's msg/stdout_lines/diff
-    # payload.
+    # payload. Real's msg is `out.replace(changed_marker, '')`: the raw
+    # rsync stdout WITH its trailing newline (round 995004
+    # synchronize_push: real msg ends 'a\\n', a join("\n") loses that).
+    # stdout_lines still drops empty lines, exactly like real's split +
+    # remove-'' loop.
     def self.clean_output(output : String) : String
-      output.lines.reject(&.empty?).map do |line|
+      cleaned = output.lines.reject(&.empty?).map do |line|
         line.starts_with?(CHANGED_MARKER) ? line[CHANGED_MARKER.size..] : line
       end.join("\n")
+      cleaned = cleaned + "\n" if output.includes?("\n") && !cleaned.empty?
+      cleaned
     end
 
     # _format_rsync_rsh_target - builds `user@host:path` for the remote

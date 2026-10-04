@@ -619,8 +619,15 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
     dump["changed"].as_bool.must_equal(true)
+    # Real's msg is `out.replace(changed_marker, '')`: the raw rsync
+    # stdout INCLUDING its trailing newline (round 995004: real msg ends
+    # 'a\n', a join of itemize lines loses that). The itemize lines are
+    # asserted, not the whole string - rsync's optional "created
+    # directory" line is version-dependent (kept in the msg, filtered
+    # out of stdout_lines below, same as before).
     dump["msg"].as_s.must_include("cd+++++++++ ./")
     dump["msg"].as_s.must_include(">f+++++++++ a")
+    dump["msg"].as_s.ends_with?("\n").must_equal(true)
     dump["rc"].as_i.must_equal(0)
     cmd = dump["cmd"].as_s
     cmd.must_include("--delay-updates -F --compress --archive")
@@ -662,7 +669,10 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
     dump["changed"].as_bool.must_equal(false)
-    dump["cmd"].as_s.must_include("--dry-run")
+    # Real synchronize.py appends --dry-run right after --compress/
+    # --timeout and BEFORE --archive (round 995004 synchronize_check).
+    dump["cmd"].as_s.must_include("--delay-updates -F --compress --dry-run --archive")
+    dump["cmd"].as_s.wont_include("--compress --archive --dry-run")
   end
 
   it "registers the missing-source failure as [rc, cmd, failed, msg, changed, exception]" do

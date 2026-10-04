@@ -412,6 +412,103 @@ describe "round 994002 kop_misc2 registered key order" do
     end
   end
 
+  describe "community.libvirt.virt_net failure msgs match real (round 995005)" do
+    # Real talks to libvirt through its python bindings and reports
+    # libvirt's own error text ("network %s not found" for a missing
+    # network, the raw libvirt XML error for a bad define). Krikri shells
+    # out to virsh, whose stderr wraps the same errors as "error: " lines
+    # with an extra "Failed to ..." headline - the shim reproduces those
+    # wrappers so the mapped plugin msgs can be pinned to real's.
+    it "maps a missing network on start to real's 'network NAME not found'" do
+      value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
+        - name: start a network that does not exist
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            state: active
+          register: KRIKRI_REGISTER
+          ignore_errors: true
+      YAML
+      value["failed"].as_bool.must_equal(true)
+      value["msg"].as_s.must_equal("network kop_probe_net not found")
+    end
+
+    it "maps a missing network on get_xml to real's 'network NAME not found'" do
+      value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
+        - name: get xml of a network that does not exist
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            command: get_xml
+          register: KRIKRI_REGISTER
+          ignore_errors: true
+      YAML
+      value["failed"].as_bool.must_equal(true)
+      value["msg"].as_s.must_equal("network kop_probe_net not found")
+    end
+
+    it "maps a missing network on status to real's 'network NAME not found'" do
+      value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
+        - name: status of a network that does not exist
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            command: status
+          register: KRIKRI_REGISTER
+          ignore_errors: true
+      YAML
+      value["failed"].as_bool.must_equal(true)
+      value["msg"].as_s.must_equal("network kop_probe_net not found")
+    end
+
+    it "passes the libvirt XML error through verbatim on a define failure" do
+      value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
+        - name: define a network with bad xml
+          community.libvirt.virt_net:
+            name: kop_probe_net
+            command: define
+            xml: |
+              <network>
+                <name>kop_probe_net</name>
+                <ip address="10.99.99.1" netmask="255.255.255.0">
+                  <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+                </ip>
+              </network>
+          register: KRIKRI_REGISTER
+          ignore_errors: true
+      YAML
+      value["failed"].as_bool.must_equal(true)
+      # str(libvirtError) verbatim: virsh's "error: " prefixes and its
+      # "Failed to define network from <tmpfile>" headline are stripped.
+      value["msg"].as_s.must_equal(<<-MSG)
+      (network_definition):5: Specification mandates value for attribute range
+          <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+      ----------------^
+      MSG
+    end
+
+    private def missing_net_shim_env
+      shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim-missing")
+      Dir.mkdir_p(shim_dir)
+      shim = File.join(shim_dir, "virsh")
+      File.write(shim, <<-SH)
+      #!/bin/sh
+      case "$3" in
+        net-info|net-dumpxml|net-start)
+          echo "error: failed to get network '$4'" >&2
+          echo "error: Network not found: no network with matching name '$4'" >&2
+          exit 1 ;;
+        net-define)
+          echo "error: Failed to define network from $4" >&2
+          echo "error: (network_definition):5: Specification mandates value for attribute range" >&2
+          echo '    <dhcp range start="10.99.99.10" end="10.99.99.20"/>' >&2
+          echo "----------------^" >&2
+          exit 1 ;;
+        *) exit 1 ;;
+      esac
+      SH
+      File.chmod(shim, 0o755)
+      {"PATH" => "#{shim_dir}:#{ENV["PATH"]}"}
+    end
+  end
+
   describe "ansible.builtin.copy missing destination directory failure" do
     it "leads with diff, then failed, msg, checksum, changed, exception" do
       missing_parent = File.join(PluginSpecHelper.tmp_path("kop-missing-dest"), "sub")

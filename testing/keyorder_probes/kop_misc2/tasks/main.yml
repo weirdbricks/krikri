@@ -392,7 +392,9 @@
         <name>kop_probe_net</name>
         <bridge name="kopbr0" stp="on" delay="0"/>
         <ip address="10.99.99.1" netmask="255.255.255.0">
-          <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+          <dhcp>
+            <range start="10.99.99.10" end="10.99.99.20"/>
+          </dhcp>
         </ip>
       </network>
   register: r
@@ -411,7 +413,9 @@
         <name>kop_probe_net</name>
         <bridge name="kopbr0" stp="on" delay="0"/>
         <ip address="10.99.99.1" netmask="255.255.255.0">
-          <dhcp range start="10.99.99.10" end="10.99.99.20"/>
+          <dhcp>
+            <range start="10.99.99.10" end="10.99.99.20"/>
+          </dhcp>
         </ip>
       </network>
   register: r
