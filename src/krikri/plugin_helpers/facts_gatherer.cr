@@ -42,6 +42,27 @@ lib LibC
   fun getgid : GidT
   fun geteuid : UidT
   fun getegid : GidT
+
+  # statvfs(2) replaces the old per-mount `stat -f` subprocess in the
+  # mount-space facts (same numbers, no fork). The layout is glibc/musl
+  # x86_64 + aarch64's struct statvfs; the trailing __f_spare padding is
+  # declared so the libc write never runs past the allocation.
+  struct Statvfs
+    f_bsize : ULong
+    f_frsize : ULong
+    f_blocks : ULong
+    f_bfree : ULong
+    f_bavail : ULong
+    f_files : ULong
+    f_ffree : ULong
+    f_favail : ULong
+    f_fsid : ULong
+    f_flag : ULong
+    f_namemax : ULong
+    __f_spare : StaticArray(UInt32, 6)
+  end
+
+  fun statvfs(path : Char*, buf : Statvfs*) : Int32
 end
 
 module Krikri
@@ -96,6 +117,16 @@ module Krikri
       output = IO::Memory.new
       Process.run(command, args, output: output, error: output)
       output.to_s.strip
+    rescue
+      ""
+    end
+
+    # The /proc and /sys file reads that used to go through
+    # `capture("cat", ...)` now read directly - no fork for what is a
+    # plain read(2). The contract is `capture("cat", ...)`'s exactly:
+    # stripped content, or "" when the file is missing or unreadable.
+    def read_file_stripped(path : String) : String
+      File.read(path).strip
     rescue
       ""
     end
@@ -741,7 +772,7 @@ module Krikri
       # shape some other facts use here: a string "False" is truthy
       # under Jinja2 semantics and ternary would then pick the FIPS
       # branch on every host.
-      facts["ansible_fips"] = capture("cat", ["/proc/sys/crypto/fips_enabled"]).strip == "1"
+      facts["ansible_fips"] = read_file_stripped("/proc/sys/crypto/fips_enabled") == "1"
 
       # ansible_selinux.status - real Ansible's SelinuxFactCollector
       # (module_utils/facts/system/selinux.py) decides this by loading
@@ -928,7 +959,7 @@ module Krikri
 
       # Non-systemd fallbacks: the DMI chassis type for VMs, and /proc/self for
       # a few container runtimes that don't leave the markers above.
-      dmi = capture("cat", ["/sys/class/dmi/id/product_name"])
+      dmi = read_file_stripped("/sys/class/dmi/id/product_name")
       if dmi.includes?("KVM") || dmi.includes?("QEMU")
         return "kvm"
       elsif dmi.includes?("VMware")
@@ -1652,30 +1683,29 @@ module Krikri
     # an undefined field and either crashed or - worse - silently never
     # actually checked anything, since the role's own `when: mount.name ==
     # item.mount` guard still matched the real mountpoint correctly; the
-    # comparison inside the assert is what broke. Uses `stat -f` (present on
-    # every target this repo benchmarks) rather than a raw statvfs(2) FFI
-    # binding - matches the same fields real Ansible's own `os.statvfs()`
-    # reads, just fetched via a subprocess instead of a syscall:
-    #   %S block_size (statvfs.f_frsize)   %b block_total (f_blocks)
-    #   %f block_free, all users (f_bfree) %a block_available, non-root (f_bavail)
-    #   %c inode_total (f_files)           %d inode_free, non-root (f_favail)
-    # Returned as strings (matching this plugin's existing Hash(String,String)
-    # mount-entry shape) - real Ansible's own `| int` filter chain in the
-    # role already coerces the field before comparing, so a numeric-looking
-    # string round-trips identically to a real int for that purpose.
+    # comparison inside the assert is what broke. Reads statvfs(2) directly
+    # through LibC (declared at the top of this file next to uname) instead
+    # of forking a `stat -f` subprocess per mount - identical numbers, just
+    # fetched via a syscall instead of a subprocess. Same fields real
+    # Ansible's own `os.statvfs()` reads:
+    #   block_size (f_frsize, what `stat -f %S` reports)
+    #   block_total (f_blocks)   block_free, all users (f_bfree)
+    #   block_available, non-root (f_bavail)
+    #   inode_total (f_files)    inode_free, non-root (f_favail)
     def gather_mount_space_stats(mountpoint : String) : Hash(String, Int64 | String)
-      output = IO::Memory.new
-      status = Process.run("stat", ["-f", "--format=%S %b %f %a %c %d", mountpoint], output: output, error: Process::Redirect::Close)
-      return {} of String => Int64 | String unless status.success?
+      buf = LibC::Statvfs.new
+      return {} of String => Int64 | String unless LibC.statvfs(mountpoint, pointerof(buf)) == 0
 
-      parts = output.to_s.strip.split(" ")
-      return {} of String => Int64 | String unless parts.size == 6
-
-      block_size, block_total, block_free, block_available, inode_total, inode_free =
-        parts.map(&.to_i64?)
-
-      return {} of String => Int64 | String if block_size.nil? || block_total.nil? || block_free.nil? ||
-                                               block_available.nil? || inode_total.nil? || inode_free.nil?
+      # `stat -f %S` reports the fundamental block size, f_frsize - which is
+      # also what real Ansible's os.statvfs() multiplication uses - not
+      # f_bsize (the preferred I/O size, which may differ, e.g. on some
+      # network filesystems).
+      block_size = buf.f_frsize.to_i64
+      block_total = buf.f_blocks.to_i64
+      block_free = buf.f_bfree.to_i64
+      block_available = buf.f_bavail.to_i64
+      inode_total = buf.f_files.to_i64
+      inode_free = buf.f_favail.to_i64
 
       # Real Ansible's own ansible_mounts entries carry the space/inode
       # stats as INTEGERS, not strings - roles do real arithmetic on them
