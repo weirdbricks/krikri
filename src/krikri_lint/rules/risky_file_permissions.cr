@@ -54,8 +54,9 @@ module Krikri
           next unless MODULES.includes?(task.module_name) ||
                       MODULES_WITH_CREATE.has_key?(task.module_name)
           bare = task.bare_module
+          mode = mode_param(task)
 
-          if mode = task.param("mode")
+          if mode
             next if mode == "preserve" && MODULES_WITH_PRESERVE.includes?(task.module_name)
             # mode: preserve on a module that doesn't support it is itself
             # a violation, handled below via the mode check.
@@ -64,14 +65,13 @@ module Krikri
           default_create = MODULES_WITH_CREATE[task.module_name]?
           unless default_create.nil?
             create = truthy?(task.param("create"), default_create)
-            if !create || task.param("mode")
+            if !create || mode
               next
             end
             violations << violation_for(task, file)
             next
           end
 
-          mode = task.param("mode")
           if mode == "preserve" && !MODULES_WITH_PRESERVE.includes?(task.module_name)
             violations << violation_for(task, file)
             next
@@ -90,15 +90,39 @@ module Krikri
         end
       end
 
+      # Upstream sees a plain null scalar (mode: null / ~ / a bare key)
+      # as Python None, so "mode is None" behaves like the parameter
+      # being absent; a quoted "null" stays a string, and a non-scalar
+      # value (mapping/sequence) still counts as a present mode.
+      private def mode_param(task : LintTask) : String?
+        [task.action_node, task.args_node].each do |source|
+          mapping = source.as?(YAML::Nodes::Mapping) || next
+          if (entry = NodeUtil.entry(mapping, "mode"))
+            node = entry[1]
+            return "" unless node.is_a?(YAML::Nodes::Scalar)
+            value = node.value
+            return nil if node.style == YAML::ScalarStyle::PLAIN &&
+                          (value.nil? || NULL_LITERALS.includes?(value))
+            return value
+          end
+        end
+        nil
+      end
+
       private def truthy?(value : String?, default : Bool) : Bool
         return default if value.nil?
         %w[true yes on 1].includes?(value.downcase)
       end
 
+      NULL_LITERALS = ["null", "Null", "NULL", "~"]
+
       private def violation_for(task : LintTask, file : PositionedFile) : Violation
+        # Upstream's matchtask returns True, so the match message is the
+        # rule's shortdesc; the long description is doc-only.
         Violation.new(
           file.path, task.line, 0, id, severity,
-          "Missing or unsupported mode parameter can cause unexpected file permissions based on version of Ansible being used. Be explicit, like `mode: 0644` to avoid hitting this rule. Special `preserve` value is accepted only by `copy`, `template` modules."
+          "File permissions unset or incorrect.",
+          task.line
         )
       end
     end

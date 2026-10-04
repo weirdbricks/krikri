@@ -64,13 +64,14 @@ module Krikri
       # A violation goes away when the config skips its rule, or when a
       # `# noqa:` covers it. A skip/warn entry may name the rule family
       # ("run-once") or a specific sub-tag ("run-once[task]"); upstream
-      # accepts both.
+      # accepts both, and also matches either list against the rule's
+      # declared category tags (a warn entry of "experimental" demotes
+      # every rule tagged experimental, not just ones named exactly).
       private def suppressed?(v : Violation, task_scoped : Set(String),
                               noqa_maps : Hash(String, Hash(Int32, Noqa::Entry)),
                               task_spans : Hash(String, Array({Int32, Int32}))) : Bool
         family = v.rule_id.split("[").first
-        return true if @config.skip_list.includes?(v.rule_id) ||
-                       @config.skip_list.includes?(family)
+        return true if list_matches?(@config.skip_list, v)
         map = noqa_maps[v.path]? || {} of Int32 => Noqa::Entry
         # A task-scoped rule's violations belong to an enclosing task, so
         # a `# noqa:` anywhere in that task's body suppresses them. A
@@ -86,13 +87,23 @@ module Krikri
       # violation is never demoted on its way out.
       private def apply_warn_list(violations : Array(Violation)) : Array(Violation)
         violations.map do |v|
-          family = v.rule_id.split("[").first
-          if @config.warn_list.includes?(v.rule_id) || @config.warn_list.includes?(family)
+          if list_matches?(@config.warn_list, v)
             v.as_warning
           else
             v
           end
         end
+      end
+
+      # Upstream's membership test for skip/warn entries: a match is
+      # covered when its full tag ("jinja[spacing]"), its rule id
+      # ("jinja"), or any of the rule's category tags is listed.
+      private def list_matches?(entries : Array(String), v : Violation) : Bool
+        family = v.family
+        return true if entries.includes?(v.rule_id) || entries.includes?(family)
+        rule = @registry.rules.find { |reg_rule| reg_rule.id == family }
+        return false unless rule
+        rule.tags.any? { |tag| entries.includes?(tag) }
       end
 
       # Innermost task span containing the line.

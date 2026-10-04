@@ -11,11 +11,24 @@ module Krikri
       getter exclude_paths : Array(String)
       getter profile : String
       getter config_dir : String
+      # The warn_list a config file defined, nil when it had none (and
+      # the defaults stand); lets the CLI merge reproduce upstream's
+      # "CLI list, extended with the file's" behavior exactly.
+      getter file_warn_list : Array(String)?
 
-      def initialize(@skip_list = [] of String, @warn_list = [] of String,
+      # Upstream's DEFAULT_WARN_LIST (ansiblelint/config.py): rules in
+      # here render as warnings and count under warnings in the summary
+      # instead of as failures, unless a config file provides its own
+      # warn_list (which replaces the defaults wholesale; upstream's
+      # merge_config extends only a CLI-provided list onto the file's).
+      DEFAULT_WARN_LIST = ["experimental", "jinja[spacing]", "fqcn[deep]"]
+
+      def initialize(@skip_list = [] of String,
+                     @warn_list = DEFAULT_WARN_LIST.dup,
                      @enable_list = [] of String, @tags = [] of String,
                      @exclude_paths = [] of String, @profile = "production",
-                     @config_dir = ".")
+                     @config_dir = ".",
+                     @file_warn_list : Array(String)? = nil)
       end
 
       # Excluded paths are dropped before linting, so they are neither
@@ -55,22 +68,24 @@ module Krikri
         if (v = data["exclude_paths"]?) && v.as_a?
           config = LintConfig.new(config.skip_list, config.warn_list,
             config.enable_list, config.tags,
-            v.as_a.map(&.as_s), config.profile, config.config_dir)
+            v.as_a.map(&.as_s), config.profile, config.config_dir,
+            config.file_warn_list)
         end
         if (v = data["skip_list"]?) && v.as_a?
           config = LintConfig.new(v.as_a.map(&.as_s), config.warn_list,
             config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir)
+            config.profile, config.config_dir, config.file_warn_list)
         end
         if (v = data["warn_list"]?) && v.as_a?
-          config = LintConfig.new(config.skip_list, v.as_a.map(&.as_s),
+          list = v.as_a.map(&.as_s)
+          config = LintConfig.new(config.skip_list, list,
             config.enable_list, config.tags, config.exclude_paths,
-            config.profile, config.config_dir)
+            config.profile, config.config_dir, list)
         end
         if (v = data["profile"]?) && v.as_s?
           config = LintConfig.new(config.skip_list, config.warn_list,
             config.enable_list, config.tags, config.exclude_paths,
-            v.as_s, config.config_dir)
+            v.as_s, config.config_dir, config.file_warn_list)
         end
         config
       end

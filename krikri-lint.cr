@@ -179,9 +179,18 @@ module Krikri::Lint
         exit 2
       end
       config = LintConfig.new(config.skip_list, config.warn_list,
-        config.enable_list, config.tags, config.exclude_paths, p, config.config_dir)
+        config.enable_list, config.tags, config.exclude_paths, p,
+        config.config_dir, config.file_warn_list)
     end
-    config = LintConfig.new(config.skip_list + cli_skip, config.warn_list + cli_warn,
+    # Upstream's merge_config: a --warn-list on the command line extends
+    # the config file's own list; with no file list, the CLI list
+    # replaces the DEFAULT_WARN_LIST defaults entirely.
+    warn_list = if cli_warn.empty?
+                  config.warn_list
+                else
+                  cli_warn + (config.file_warn_list || [] of String)
+                end
+    config = LintConfig.new(config.skip_list + cli_skip, warn_list,
       config.enable_list + cli_enable, config.tags + cli_tags,
       config.exclude_paths, config.profile, config.config_dir)
 

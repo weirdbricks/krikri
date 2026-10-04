@@ -62,7 +62,11 @@ module Krikri
 
       # Upstream's ParseableFormatter (aka `-p`).
       def self.parseable(v : Violation, colored : Bool) : String
-        return "#{v.path}:#{v.position}: #{rule_id(v)}: #{v.message}" unless colored
+        unless colored
+          line = "#{v.path}:#{v.position}: #{rule_id(v)}: #{v.message}"
+          line += " (warning)" if v.level == "warning"
+          return line
+        end
         level = v.level == "warning" ? Console::YELLOW : Console::RED
         String.build do |io|
           io << Console::MAGENTA << v.path << Console::RESET
@@ -75,6 +79,14 @@ module Krikri
           io << Console::RESET unless sub_tagged?(v.rule_id)
           io << ": #{v.message}" << Console::RESET
           io << Console::RESET if sub_tagged?(v.rule_id)
+          # ParseableFormatter appends " [dim][warning](warning)[/][/]" to
+          # every non-error match; the markup renderer turns [warning]
+          # into its yellow style and the unbalanced [/] pairs leave one
+          # more reset than the dim+yellow pair alone explains.
+          if v.level == "warning"
+            io << ' ' << Console::DIM << Console::YELLOW << "(warning)"
+            io << Console::RESET * (sub_tagged?(v.rule_id) ? 3 : 2)
+          end
         end
       end
 

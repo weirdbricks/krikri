@@ -66,6 +66,23 @@ module Krikri::Lint
       )
     end
 
+    it "appends (warning) to parseable warning lines like upstream" do
+      Formatter.parseable(violation(rule_id: "no-changed-when", warning: true), true).must_equal(
+        "\e[35mtest-node.yml\e[0m\e[2m:64:\e[0m \e[33m\e[1mno-changed-when\e[0m" \
+        ": Too many spaces after comma\e[0m \e[2m\e[33m(warning)\e[0m\e[0m"
+      )
+      Formatter.parseable(violation(rule_id: "no-changed-when", warning: true), false).must_equal(
+        "test-node.yml:64: no-changed-when: Too many spaces after comma (warning)"
+      )
+    end
+
+    it "adds a third reset for sub-tagged parseable warnings like upstream" do
+      Formatter.parseable(violation(warning: true), true).must_equal(
+        "\e[35mtest-node.yml\e[0m\e[2m:64:\e[0m \e[33m\e[1myaml[commas][/]" \
+        ": Too many spaces after comma\e[0m\e[0m \e[2m\e[33m(warning)\e[0m\e[0m\e[0m"
+      )
+    end
+
     it "leaves a hyphenated sub-tag alone, as upstream's parser does" do
       v = violation(rule_id: "yaml[new-line-at-end-of-file]",
         message: "No new line character at the end of file")
