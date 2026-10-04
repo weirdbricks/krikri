@@ -225,4 +225,42 @@ describe "htpasswd plugin" do
     result["changed"].as_bool.must_equal(true)
     File.read(path).must_equal("johndoe:{SHA}GpHWL3ymc5liWkNopqtdSjuqYHM=\n")
   end
+
+  # The crypt schemes' random salt must keep the exact shape the schemes
+  # define (sha512_crypt: 16 chars from the crypt alphabet) - the hash is
+  # only ever verified by recomputing with the salt extracted from the
+  # stored line, so the shape is the observable contract.
+  it "generates a sha512_crypt salt of the right shape" do
+    path = PluginSpecHelper.tmp_path("htpasswd-salt-shape")
+    File.delete(path) if File.exists?(path)
+
+    result = PluginSpecHelper.run("htpasswd", {
+      "path" => path, "name" => "johndoe", "password" => "pw", "hash_scheme" => "sha512_crypt",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    hash = File.read(path).strip.split(":")[1]
+    hash.starts_with?("$6$").must_equal(true)
+    salt = hash["$6$".size..].split("$").first
+    salt.size.must_equal(16)
+    salt.each_char.all? { |c| "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".includes?(c) }.must_equal(true)
+  end
+
+  # Two fresh hashes of the same password must not reuse a salt: the salt
+  # comes from Random::Secure, so identical consecutive salts are
+  # astronomically unlikely (64^16 space).
+  it "does not reuse the same random salt across runs" do
+    salts = 2.times.map do |i|
+      path = PluginSpecHelper.tmp_path("htpasswd-salt-fresh-#{i}")
+      File.delete(path) if File.exists?(path)
+      PluginSpecHelper.run("htpasswd", {
+        "path" => path, "name" => "johndoe", "password" => "pw", "hash_scheme" => "sha512_crypt",
+      })
+      salt = File.read(path).strip.split(":")[1]["$6$".size..].split("$").first
+      File.delete(path)
+      salt
+    end.to_a
+
+    (salts[0] != salts[1]).must_equal(true)
+  end
 end

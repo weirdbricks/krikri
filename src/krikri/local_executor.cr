@@ -60,8 +60,19 @@ module Krikri
       end
     end
 
-    # Execute command locally
-    def self.exec(command : String, force_shell : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
+    # *env* carries the task's `environment:` (BasePlugin#remote_exec), applied
+    # through the child process's own environment the way real Ansible hands
+    # the dict to subprocess - never through a string prefix in the command
+    # itself, which would put the values in the shell's argv where any local
+    # user's `ps` can read them. Crystal merges a non-nil env over this
+    # process's inherited environment (nil values unset), which is exactly the
+    # overlay the old `export K='V';` prefix produced; with *env* present the
+    # shell path is always taken, because the argv fast path resolves argv[0]
+    # with execvp against the PARENT's PATH while a `environment: PATH: ...`
+    # override must govern the lookup (the shell the child became resolves
+    # with its own, overridden PATH - the same semantics the export prefix
+    # had).
+    def self.exec(command : String, force_shell : Bool = false, env : Hash(String, String)? = nil) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       # Passing argv directly (no shell: true) skips the extra sh -> bash
       # hop a shell-escaped string would need, and needs no quote-escaping
       # since the command travels as a single argv element, not a string
@@ -97,10 +108,11 @@ module Krikri
 
       begin
         process =
-          if force_shell || needs_shell?(command)
+          if force_shell || env || needs_shell?(command)
             Process.new(
               "/bin/bash",
               ["-c", command],
+              env: env,
               output: stdout_child_end,
               error: stderr_child_end
             )
@@ -109,6 +121,7 @@ module Krikri
             Process.new(
               argv[0],
               argv[1..],
+              env: env,
               output: stdout_child_end,
               error: stderr_child_end
             )

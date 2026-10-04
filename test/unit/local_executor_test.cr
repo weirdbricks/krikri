@@ -55,6 +55,64 @@ describe Krikri::LocalExecutor do
       result[:stdout].must_equal("--opt=value\n")
     end
 
+    # Security regression for the old `export K='V'; <cmd>` environment:
+    # prefix: the prefix lived INSIDE the bash -c string, i.e. in the
+    # shell process's argv, where any local user's `ps` could read secret
+    # values while the task ran. The task environment now travels through
+    # the child process's own environment (Process.new's env:, exactly how
+    # real Ansible hands the dict to subprocess), so the child still sees
+    # the byte-exact value...
+    it "applies env through the child environment, byte-exact, including shell metacharacters" do
+      secret = "s3cr3t'x\"y\$z`w -dash\nline2"
+      result = Krikri::LocalExecutor.exec(
+        "printf '%s' \"$KRIKRI_TEST_SECRET\"",
+        force_shell: true,
+        env: {"KRIKRI_TEST_SECRET" => secret}
+      )
+      result[:exit_code].must_equal(0)
+      result[:stdout].must_equal(secret)
+    end
+
+    # ...while the shell process's argv (read back via the shell's own
+    # /proc/<pid>/cmdline) carries only the command - never the value.
+    it "keeps an env value out of the spawned shell's argv" do
+      result = Krikri::LocalExecutor.exec(
+        "tr '\\0' ' ' < /proc/$$/cmdline",
+        force_shell: true,
+        env: {"KRIKRI_TEST_SECRET" => "sekrit-ps-value"}
+      )
+      result[:exit_code].must_equal(0)
+      result[:stdout].includes?("sekrit-ps-value").must_equal(false)
+      # Sanity: the shell really was a `bash -c` (its argv is visible above)
+      result[:stdout].includes?("bash").must_equal(true)
+    end
+
+    # Real Ansible overlays the task environment ONTO the module process's
+    # inherited environment (the old export prefix inherited it too), so an
+    # override must not wipe the rest of the environment.
+    it "merges env over the inherited environment instead of replacing it" do
+      result = Krikri::LocalExecutor.exec(
+        "echo \"HOME=$HOME KRIKRI_TEST_SECRET=$KRIKRI_TEST_SECRET\"",
+        force_shell: true,
+        env: {"KRIKRI_TEST_SECRET" => "v"}
+      )
+      result[:stdout].includes?("KRIKRI_TEST_SECRET=v").must_equal(true)
+      result[:stdout].matches?(/HOME=\S/).must_equal(true)
+    end
+
+    # With an `environment: PATH: ...` override the executable lookup must
+    # use the OVERRIDDEN PATH (the shell the child became resolves with its
+    # own env), not the parent's - which is why an env-bearing command is
+    # always routed through the shell path even when it has no
+    # metacharacters.
+    it "resolves the executable against an env PATH override" do
+      result = Krikri::LocalExecutor.exec(
+        "true",
+        env: {"PATH" => "/usr/bin:/bin"}
+      )
+      result[:exit_code].must_equal(0)
+    end
+
     # Regression test for a stdout-truncation flake seen in CI: used to
     # spawn with Process::Redirect::Pipe and call Process#wait right after
     # starting the drain fibers, but wait's own `ensure` closes the

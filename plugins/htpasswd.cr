@@ -324,7 +324,7 @@ module Krikri
 
     private def random_salt(len : Int32) : String
       String.build do |str|
-        len.times { str << SALT_CHARS[Random.rand(SALT_CHARS.size)] }
+        len.times { str << SALT_CHARS[Random::Secure.rand(SALT_CHARS.size)] }
       end
     end
 

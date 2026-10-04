@@ -559,52 +559,89 @@ module Krikri
     # whole job is retrying a short, bounded connection probe rather
     # than waiting the normal hour-long ceiling on each attempt.
     protected def remote_exec(command : String, timeout : Int32? = nil, force_shell : Bool = false) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      command = with_environment(command)
+      env = task_environment
       if local_connection?
         # Execute locally
-        LocalExecutor.exec(command, force_shell: force_shell)
+        LocalExecutor.exec(command, force_shell: force_shell, env: env)
       else
         # Execute via SSH - use ansible_host if set
-        SSHManager.exec(
-          get_connection_host,
-          @host.user || "root",
-          command,
-          @host.port,
-          timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
-          identity_file: get_identity_file
-        )
+        if env
+          # No argv-free way exists to hand an environment through a plain
+          # `ssh host <string>`: the string IS an argv element, on the local
+          # ssh process and on the remote side's `bash -c` alike, so a
+          # secret `environment:` value would be readable in any local
+          # user's `ps` on both machines. `exec_script` instead feeds the
+          # whole thing - export prefix plus command - as a script over
+          # that invocation's own stdin (`ssh ... bash -s`), where the
+          # values never appear in any argv; the exports are the same
+          # single-quoted form the local path used to prefix, so the
+          # values stay byte-exact.
+          SSHManager.exec_script(
+            get_connection_host,
+            @host.user || "root",
+            with_environment_prefix(env, command),
+            @host.port,
+            timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
+            identity_file: get_identity_file
+          )
+        else
+          SSHManager.exec(
+            get_connection_host,
+            @host.user || "root",
+            command,
+            @host.port,
+            timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
+            identity_file: get_identity_file
+          )
+        end
       end
     end
 
-    # Prefixes *command* with `export K='V'; ...` for each entry in the
-    # task's `environment:` (real Ansible's per-task env-var keyword,
+    # The task's `environment:` (real Ansible's per-task env-var keyword,
     # forwarded here as a JSON blob under the `_environment` param key by
-    # TaskExecutor#build_plugin_config, already {{ }}-substituted). One
-    # shared implementation so every plugin that shells out via
+    # TaskExecutor#build_plugin_config, already {{ }}-substituted) as a
+    # plain Hash, or nil when the task sets none. Applied through the
+    # child process's environment (LocalExecutor's `env:`, or the
+    # stdin-fed export script on the SSH path) rather than a command-string
+    # prefix: an `export K='V';` prefix lives in the shell's argv, where
+    # any local user on the machine can read secret values with `ps` while
+    # the task runs - real Ansible passes the dict to the module process's
+    # env and it never touches an argv.
+    # One shared implementation so every plugin that shells out via
     # #remote_exec gets `environment:` support automatically rather than
     # each plugin needing its own wiring.
-    private def with_environment(command : String) : String
+    private def task_environment : Hash(String, String)?
       env_json = @params["_environment"]?
-      return command unless env_json
+      return nil unless env_json
 
       env = Hash(String, String).from_json(env_json)
-      return command if env.empty?
+      return nil if env.empty?
 
-      # The KEY must be a valid POSIX identifier before it can be
-      # interpolated into the export list: the export string is executed by
-      # a real shell (LocalExecutor falls through to /bin/bash -c, and the
-      # remote side runs `ssh host <string>`), so a task-controlled key like
-      # `X; touch /tmp/pwned; #` would execute there. The VALUE side is
-      # safe (Shell.single_quote below); real Ansible hands the dict to
-      # subprocess's env and cannot execute through a key, so any key it
-      # would have honored as a real env name passes this check too.
-      exports = env.map do |key, value|
+      # The KEY must be a valid POSIX identifier before it can reach a
+      # shell: on the SSH path the key is interpolated into an
+      # `export` line (executed by a real bash reading the script from
+      # stdin), so a task-controlled key like `X; touch /tmp/pwned; #`
+      # would execute there. The VALUE side is safe (Shell.single_quote
+      # below); real Ansible hands the dict to subprocess's env and cannot
+      # execute through a key, so any key it would have honored as a real
+      # env name passes this check too.
+      env.each_key do |key|
         unless key.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
           raise ArgumentError.new(
             "Invalid environment variable name #{key.inspect} in task " \
             "environment: keys must match [A-Za-z_][A-Za-z0-9_]*"
           )
         end
+      end
+      env
+    end
+
+    # Builds the stdin-fed script for the SSH path: `export K='V'; ...`
+    # followed by *command*, exactly the string the old command-line prefix
+    # produced - but fed to `bash -s` over the SSH process's stdin instead
+    # of riding in an argv element (see #remote_exec).
+    private def with_environment_prefix(env : Hash(String, String), command : String) : String
+      exports = env.map do |key, value|
         "export #{key}=#{shell_single_quote(value)}"
       end.join("; ")
       "#{exports}; #{command}"
