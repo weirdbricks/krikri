@@ -4,6 +4,7 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/systemd_enabled_state"
 require "../src/krikri/plugin_helpers/systemd_cli_flags"
+require "../src/krikri/plugin_helpers/systemd_unit_found"
 
 module Krikri
   # Systemd Plugin - Manage systemd units
@@ -227,16 +228,41 @@ module Krikri
       # no_block+force → "/usr/bin/systemctl --no-block --force",
       # scope user+force → "/usr/bin/systemctl --user --force").
       # (a unit with a SysV init script counts as found and skips this)
-      if name && !File.exists?("/etc/init.d/#{name.to_s.sub(/\.service\z/, "")}")
-        probe = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
-        if no_bus_failure?(probe[:stderr])
-          bin = remote_exec("command -v systemctl")[:stdout].strip
-          bin = "/usr/bin/systemctl" if bin.empty?
-          err = probe[:stderr]
-          return PluginResult.new(changed: false, failed: true, msg: err.strip,
-            cmd: "#{bin}#{scope_flag}#{no_block_flag}#{force_flag}", rc: probe[:exit_code],
-            stdout: probe[:stdout], stdout_lines: probe[:stdout].lines.map(&.chomp),
-            stderr: err, stderr_lines: err.lines.map(&.chomp))
+      #
+      # real also computes its one-and-only `found` decision right here
+      # (systemd_service.py: `found = is_systemd or is_initd`, BEFORE the
+      # masked block), from this same `systemctl show` probe plus the
+      # SysV init-script check. It used to be missing entirely from this
+      # plugin: nothing here ever asked whether the unit existed, so a
+      # `systemd_service: {name: <absent unit>, enabled: false, state:
+      # stopped, masked: true}` task masked a unit that isn't installed
+      # (which real does too - `systemctl mask` happily creates the /etc/
+      # systemd/system symlink for a never-installed unit) and then
+      # disable'd/stop'd it, reporting `changed`, where real fails the
+      # enabled:/state: steps through fail_if_missing and reports nothing
+      # but the swallowed "Could not find the requested service" message.
+      # Found via konstruktoid.hardening's kdump.service / kdump-tools.
+      # service / systemd-journal-remote.* / atd tasks on Ubuntu 22.04,
+      # each of which pairs a failed_when that swallows that exact message
+      # (rounds 999001).
+      found = true
+      if name
+        # real's is_initd (its sysv_exists(), /etc/init.d/<name> minus a
+        # trailing .service) - a SysV script alone makes the unit "found"
+        # even with no systemd unit file at all.
+        is_initd = File.exists?("/etc/init.d/#{name.to_s.sub(/\.service\z/, "")}")
+        unless is_initd
+          probe = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
+          if no_bus_failure?(probe[:stderr])
+            bin = remote_exec("command -v systemctl")[:stdout].strip
+            bin = "/usr/bin/systemctl" if bin.empty?
+            err = probe[:stderr]
+            return PluginResult.new(changed: false, failed: true, msg: err.strip,
+              cmd: "#{bin}#{scope_flag}#{no_block_flag}#{force_flag}", rc: probe[:exit_code],
+              stdout: probe[:stdout], stdout_lines: probe[:stdout].lines.map(&.chomp),
+              stderr: err, stderr_lines: err.lines.map(&.chomp))
+          end
+          found = SystemdUnitFound.found?(probe[:exit_code], probe[:stdout].to_s, false)
         end
       end
 
@@ -255,6 +281,19 @@ module Krikri
               messages << "Unit masked"
               changed = true
             else
+              # real's mask/unmask failure path: fail_if_missing runs
+              # FIRST, so on a unit systemd doesn't know about the missing
+              # -service message is what surfaces, and the action-specific
+              # wording ("Failed to mask/unmask the service (...)") is
+              # only for a unit that does exist and failed for some other
+              # reason. `systemctl mask` normally succeeds even for a
+              # never-installed unit (that is how a role can pre-mask
+              # something a package might install later), so this branch is
+              # rarely taken - but when it is, the wording is real's.
+              if !found
+                return PluginResult.new(changed: false, failed: true,
+                  msg: SystemdUnitFound.missing_service_message(name.to_s))
+              end
               return PluginResult.new(
                 changed: false,
                 failed: true,
@@ -272,6 +311,10 @@ module Krikri
               messages << "Unit unmasked"
               changed = true
             else
+              if !found
+                return PluginResult.new(changed: false, failed: true,
+                  msg: SystemdUnitFound.missing_service_message(name.to_s))
+              end
               return PluginResult.new(
                 changed: false,
                 failed: true,
@@ -280,6 +323,27 @@ module Krikri
             end
           end
         end
+      end
+
+      # real's fail_if_missing(module, found, unit, msg='host'), called at
+      # the top of the `enabled:` block and again at the top of the
+      # `state:` one - presence-based (a given-but-false `enabled:` counts),
+      # enabled's check first, and mode-independent (real runs it in check
+      # mode too). Deliberately placed AFTER the masked block: real masks a
+      # unit before it ever checks whether that unit exists, and the mask
+      # side effect must have happened by the time this failure is returned.
+      # A masked-only task on an absent unit is therefore still a success
+      # with changed=true, exactly as real leaves it. fail_json carries only
+      # the message (real's fail_if_missing passes no `changed`), so the
+      # swallowed failure renders `ok` - which is what konstruktoid.
+      # hardening's failed_when expects.
+      if enabled && !found
+        return PluginResult.new(changed: false, failed: true,
+          msg: SystemdUnitFound.missing_service_message(name.to_s))
+      end
+      if state && !found
+        return PluginResult.new(changed: false, failed: true,
+          msg: SystemdUnitFound.missing_service_message(name.to_s))
       end
 
       name_for_active = name

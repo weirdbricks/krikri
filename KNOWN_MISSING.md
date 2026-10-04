@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1473`.**
+**Currently at `0.9.1474`.**
 
 ## Open gaps
 
@@ -81,9 +81,7 @@ and fixed and when.
 - **`konstruktoid.hardening` cold-run divergences** (round 999001, 2026-10-04; real and krikri both completed the cold run
   on fresh Ubuntu 22.04: real `ok=304 changed=160 skipped=101`, krikri `ok=306 changed=164 skipped=108`). The warm run cannot
   be compared: the role's own UFW/conntrack changes make SSH unreachable on BOTH hosts after the cold run (ICMP up, TCP 22
-  closed), so the earlier "krikri warm lost SSH" was the role, not a krikri regression. Open: `Disable kdump service`,
-  `Disable systemd-journal-remote` and `Mask atd` (`systemd_service` with `masked: true` on units that do not exist) report
-  `changed` on krikri where real reports `ok`; krikri skips 7 more tasks than real (per-item skip handling in loops, e.g.
+  closed), so the earlier "krikri warm lost SSH" was the role, not a krikri regression. Open: krikri skips 7 more tasks than real (per-item skip handling in loops, e.g.
   `Enable the PowerTools repository`, `Remove 'nullok'`); `Allow sshd port from administrator networks` changed-vs-ok
   differs on one host.
 

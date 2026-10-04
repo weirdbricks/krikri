@@ -33,9 +33,13 @@ private def with_systemd_shim(active_state : String, change_rc : Int32, &)
         # Real systemctl's `show X --property=ActiveState --value`
         # prints the bare state; the state-change verbs must be
         # observable failing with real systemctl's job-failure stderr.
+        # LoadState=loaded as well: real's module decides up front whether
+        # the unit exists at all and refuses the state: step outright for one
+        # that doesn't, so a spec about the VERB an existing unit gets has to
+        # present a unit that exists.
         case "$*" in
           *--value*) printf '%s\n' "$KRIKRI_ACTIVE_STATE" ;;
-          *) printf 'ActiveState=%s\n' "$KRIKRI_ACTIVE_STATE" ;;
+          *) printf 'LoadState=loaded\nActiveState=%s\n' "$KRIKRI_ACTIVE_STATE" ;;
         esac
         exit 0
         ;;

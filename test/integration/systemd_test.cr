@@ -36,11 +36,20 @@ private def systemd_run(params : Hash(String, String)) : JSON::Any
             echo "inactive"
             exit 0;;
         esac
-        # A not-found unit still yields a full property dump from a real
-        # systemd (LoadState=not-found, ActiveState=inactive).
+        # A unit that exists but has never been started still yields a full
+        # property dump (LoadState=loaded, ActiveState=inactive); a unit
+        # with no file at all yields the same dump with LoadState=not-found
+        # instead. Real Ansible's module tells those two apart ONCE, up
+        # front (`found = is_systemd or is_initd`), and refuses the
+        # enabled:/state: steps for the not-found one - so a fake unit has
+        # to be able to answer both ways. Only units named
+        # nonexistent-* are absent; everything else exists but is inactive.
         echo "Id=$unit"
         echo "Names=$unit"
-        echo "LoadState=not-found"
+        case "$unit" in
+          nonexistent-*) echo "LoadState=not-found";;
+          *)              echo "LoadState=loaded";;
+        esac
         echo "ActiveState=inactive"
         echo "SubState=dead"
         echo "UnitFileState="
@@ -124,7 +133,7 @@ describe "systemd plugin" do
 
   it "accepts force: with enabled: in check mode (flags only affect the real invocations)" do
     result = systemd_run({
-      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "name"                => "inactive-krikri-playbook-unit.service",
       "enabled"             => "true",
       "force"               => "true",
       "_ansible_check_mode" => "true",
@@ -136,7 +145,7 @@ describe "systemd plugin" do
 
   it "accepts no_block: with state: started in check mode (flags only affect the real invocations)" do
     result = systemd_run({
-      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "name"                => "inactive-krikri-playbook-unit.service",
       "state"               => "started",
       "no_block"            => "yes",
       "_ansible_check_mode" => "true",
@@ -181,7 +190,7 @@ describe "systemd plugin" do
   end
 
   it "rejects an invalid state" do
-    result = systemd_run({"name" => "foo.service", "state" => "frobnitz"})
+    result = systemd_run({"name" => "krikri-playbook-unit.service", "state" => "frobnitz"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].to_s.must_include("Invalid state")
   end
@@ -211,12 +220,15 @@ describe "systemd plugin" do
 
   it "predicts a start for a stopped unit in check mode" do
     result = systemd_run({
-      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "name"                => "inactive-krikri-playbook-unit.service",
       "state"               => "started",
       "_ansible_check_mode" => "true",
     })
-    # This is a unit that almost certainly does not exist (is-active fails),
-    # so check mode predicts a change — and never actually runs systemctl.
+    # This is a unit that exists (LoadState=loaded) but has never been
+    # started, so check mode predicts a change — and never actually runs
+    # systemctl. A unit that does NOT exist would fail outright with real
+    # Ansible's "Could not find the requested service ...: host" instead,
+    # which the specs further down cover.
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(true)
   end
@@ -237,7 +249,7 @@ describe "systemd plugin" do
   # convention.
   it "accepts scope: user without rejecting the parameter" do
     result = systemd_run({
-      "name"                => "nonexistent-krikri-playbook-user-unit.service",
+      "name"                => "inactive-krikri-playbook-user-unit.service",
       "state"               => "started",
       "scope"               => "user",
       "_ansible_check_mode" => "true",
@@ -256,11 +268,11 @@ describe "systemd plugin" do
   # error krikri's handler died with); krikri ran the reload
   # unconditionally and failed. Same semantics plugins/service.cr already
   # implements for the `service` module's `state: reloaded`. Check mode
-  # on a nonexistent (hence inactive) unit must therefore predict a
-  # START, not a reload.
+  # on an existing-but-inactive unit must therefore predict a START, not a
+  # reload.
   it "predicts a start (not a reload) for an inactive unit with state: reloaded in check mode" do
     result = systemd_run({
-      "name"                => "nonexistent-krikri-playbook-unit.service",
+      "name"                => "inactive-krikri-playbook-unit.service",
       "state"               => "reloaded",
       "_ansible_check_mode" => "true",
     })
@@ -282,7 +294,7 @@ describe "systemd plugin" do
   describe "top-level result fields (real Ansible's systemd_service shape)" do
     it "exposes enabled as a top-level bool when the enabled param was given" do
       result = systemd_run({
-        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "name"                => "inactive-krikri-playbook-unit.service",
         "enabled"             => "true",
         "_ansible_check_mode" => "true",
       })
@@ -291,14 +303,14 @@ describe "systemd plugin" do
       # the post-change one (real Ansible sets result['enabled'] = not
       # enabled outside its check_mode guard)
       result["enabled"].as_bool.must_equal(true)
-      result["name"].as_s.must_equal("nonexistent-krikri-playbook-unit.service")
+      result["name"].as_s.must_equal("inactive-krikri-playbook-unit.service")
       # status is always a dict on success (real: result = dict(status=dict()))
       result["status"].as_h?.wont_be_nil
     end
 
     it "exposes the requested state as a top-level string when state was given" do
       result = systemd_run({
-        "name"                => "nonexistent-krikri-playbook-unit.service",
+        "name"                => "inactive-krikri-playbook-unit.service",
         "state"               => "started",
         "_ansible_check_mode" => "true",
       })
@@ -314,7 +326,7 @@ describe "systemd plugin" do
       # never survives verbatim
       {"restarted", "reloaded"}.each do |requested|
         result = systemd_run({
-          "name"                => "nonexistent-krikri-playbook-unit.service",
+          "name"                => "inactive-krikri-playbook-unit.service",
           "state"               => requested,
           "_ansible_check_mode" => "true",
         })
@@ -406,5 +418,183 @@ describe "systemd plugin - no-service-manager failure cmd" do
     result = with_fake_systemctl({"name" => "ssh.service", "state" => "started", "force" => "true"})
     result["failed"].as_bool.must_equal(true)
     result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
+  end
+end
+
+# A throwaway fake `systemctl` for a host where the unit the task names has
+# NO unit file at all: `show` answers the full property dump real's systemd
+# gives for an absent unit (LoadState=not-found), is-enabled answers
+# "not-found", and every state-changing verb is logged so the ORDER of
+# operations is observable - the dev machine's own systemd is never
+# touched (nothing here ever reaches a real systemctl binary).
+private def with_missing_unit_systemctl(params : Hash(String, String), &)
+  bin_dir = PluginSpecHelper.tmp_path("missing-unit-systemctl-bin")
+  FileUtils.mkdir_p(bin_dir)
+  log = File.join(bin_dir, "calls.log")
+  fake = File.join(bin_dir, "systemctl")
+  File.write(fake, <<-SH)
+    #!/bin/sh
+    echo "$@" >> "$KRIKRI_SYSTEMD_CALLS"
+    verb=""
+    for arg in "$@"; do
+      case "$arg" in
+        -*) continue;;
+      esac
+      if [ -z "$verb" ]; then verb="$arg"; fi
+    done
+
+    case "$verb" in
+      show)
+        case "$*" in
+          *--property=ActiveState*) echo "inactive"; exit 0;;
+        esac
+        # A unit with no file at all still yields a full property dump on a
+        # real systemd host - LoadState=not-found is the only difference.
+        echo "Id=missing-krikri-playbook-unit.service"
+        echo "LoadState=not-found"
+        echo "ActiveState=inactive"
+        exit 0;;
+      is-enabled)
+        echo "not-found"
+        exit 1;;
+      *)
+        # mask/unmask/disable/stop all "succeed" here, exactly as they do on
+        # a real host for a unit that isn't installed - which is the whole
+        # point: only real's fail_if_missing stands between this and a
+        # `changed` report.
+        exit 0;;
+    esac
+  SH
+  File.chmod(fake, 0o755)
+  result = PluginSpecHelper.run("systemd", params,
+    env: {"PATH" => "#{bin_dir}:#{ENV["PATH"]? || "/usr/bin:/bin"}", "KRIKRI_SYSTEMD_CALLS" => log})
+  yield result, File.exists?(log) ? File.read_lines(log) : [] of String
+end
+
+# Real Ansible's systemd module computes `found = is_systemd or is_initd`
+# ONCE, before it acts on the unit, and calls fail_if_missing(module, found,
+# unit, msg='host') at the top of both the `enabled:` and the `state:`
+# block (systemd_service.py; the message itself is
+# module_utils/service.py:117-118). It never did that here, so a task
+# naming a unit no package installs came back `changed` where real's own
+# failed_when - konstruktoid.hardening's kdump.service / kdump-tools.service
+# / systemd-journal-remote.* / atd tasks, all of which swallow exactly this
+# message - turned it into `ok`. Found on real Ubuntu 22.04 hosts, round
+# 999001.
+describe "systemd plugin - unit that systemd does not know" do
+  it "fails the enabled: step with real's missing-service message, without ever disabling" do
+    with_missing_unit_systemctl({
+      "name"    => "missing-krikri-playbook-unit.service",
+      "enabled" => "false",
+    }) do |result, calls|
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].to_s.must_equal(
+        "Could not find the requested service missing-krikri-playbook-unit.service: host")
+      calls.compact_map { |line| line.split(" ")[0]? }.wont_include("disable")
+    end
+  end
+
+  it "fails the state: step with the same message" do
+    with_missing_unit_systemctl({
+      "name"  => "missing-krikri-playbook-unit.service",
+      "state" => "stopped",
+    }) do |result, calls|
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].to_s.must_equal(
+        "Could not find the requested service missing-krikri-playbook-unit.service: host")
+      calls.compact_map { |line| line.split(" ")[0]? }.wont_include("stop")
+    end
+  end
+
+  it "still masks the absent unit before failing (real's order: mask block, then fail_if_missing)" do
+    # `systemctl mask` succeeds for a unit that isn't installed - it just
+    # drops the symlink in /etc/systemd/system - and real Ansible really
+    # does mask it, so the side effect has to have happened by the time the
+    # enabled:/state: failure comes back. This is the exact task shape
+    # konstruktoid.hardening runs on kdump.service.
+    with_missing_unit_systemctl({
+      "name"    => "missing-krikri-playbook-unit.service",
+      "masked"  => "true",
+      "enabled" => "false",
+      "state"   => "stopped",
+    }) do |result, calls|
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].to_s.must_equal(
+        "Could not find the requested service missing-krikri-playbook-unit.service: host")
+      verbs = calls.compact_map { |line| line.split(" ")[0]? }
+      verbs.must_include("mask")
+      verbs.wont_include("disable")
+      verbs.wont_include("stop")
+    end
+  end
+
+  it "leaves a masked-only task on an absent unit successful and changed" do
+    # No enabled:/state: means no fail_if_missing at all - real Ansible's
+    # own comment on the mask block says so ("can operate on services
+    # before they are installed"), so masking something not yet installed
+    # is a supported thing to do, not an error.
+    with_missing_unit_systemctl({
+      "name"   => "missing-krikri-playbook-unit.service",
+      "masked" => "true",
+    }) do |result, calls|
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      calls.compact_map { |line| line.split(" ")[0]? }.must_include("mask")
+    end
+  end
+
+  it "fails the same way in check mode (real's fail_if_missing is mode-independent)" do
+    with_missing_unit_systemctl({
+      "name"                => "missing-krikri-playbook-unit.service",
+      "enabled"             => "false",
+      "_ansible_check_mode" => "true",
+    }) do |result, calls|
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].to_s.must_equal(
+        "Could not find the requested service missing-krikri-playbook-unit.service: host")
+      calls.compact_map { |line| line.split(" ")[0]? }.wont_include("disable")
+    end
+  end
+
+  it "treats a MASKED unit as found - masking is what creates it" do
+    # LoadState=masked is still a unit systemd knows about (real's check is
+    # only for "not-found"), so an enabled:/state: task on it must run
+    # normally rather than report the unit missing.
+    bin_dir = PluginSpecHelper.tmp_path("masked-unit-systemctl-bin")
+    FileUtils.mkdir_p(bin_dir)
+    fake = File.join(bin_dir, "systemctl")
+    File.write(fake, <<-SH)
+      #!/bin/sh
+      verb=""
+      for arg in "$@"; do
+        case "$arg" in
+          -*) continue;;
+        esac
+        if [ -z "$verb" ]; then verb="$arg"; fi
+      done
+      case "$verb" in
+        show)
+          case "$*" in
+            *--property=ActiveState*) echo "inactive"; exit 0;;
+          esac
+          echo "Id=masked-krikri-playbook-unit.service"
+          echo "LoadState=masked"
+          echo "ActiveState=inactive"
+          exit 0;;
+        is-enabled)
+          echo "masked"
+          exit 1;;
+        *) exit 0;;
+      esac
+    SH
+    File.chmod(fake, 0o755)
+    result = PluginSpecHelper.run("systemd", {
+      "name"                => "masked-krikri-playbook-unit.service",
+      "state"               => "stopped",
+      "_ansible_check_mode" => "true",
+    }, env: {"PATH" => "#{bin_dir}:#{ENV["PATH"]? || "/usr/bin:/bin"}"})
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 end
