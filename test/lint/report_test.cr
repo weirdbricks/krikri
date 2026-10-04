@@ -175,6 +175,20 @@ module Krikri::Lint
       ])
     end
 
+    it "never appends the fixed-issues clause, like upstream's CLI" do
+      # Upstream's app.py has an `if summary.fixed` branch, but its fix()
+      # pops fixed matches from the result before count_results runs, so
+      # the ", and fixed N issue(s)" clause can never be reached (verified
+      # against real ansible-lint 25.2.1 with --fix). krikri drops fixed
+      # matches the same way and must not print the clause either.
+      lines = report([pkg_violation], 1, nil, 1).lines(false)
+      lines.join("\n").wont_match(/and fixed/)
+      lines.last.must_equal(
+        "Failed: 1 failure(s), 0 warning(s) on 1 files. " \
+        "Last profile that met the validation criteria was 'moderate'. Rating: 2/5 star"
+      )
+    end
+
     it "prints the Modified line in colored mode without markup of its own" do
       lines = report([pkg_violation], 1, nil, 2).lines(true)
       lines[1].must_equal("Modified 2 files.")

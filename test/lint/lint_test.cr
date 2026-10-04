@@ -232,5 +232,34 @@ module Krikri::Lint
         File.delete(path)
       end
     end
+
+    it "renders an argumentless unnamed task with upstream's trailing space" do
+      # Upstream joins f"{module} {' '.join(args)}", so the space after
+      # the module stays even with no arguments. Verified against real
+      # ansible-lint 25.2.1: "Task/Handler: ping ".
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- hosts: localhost\n  tasks:\n    - ping:\n")
+      begin
+        file = PositionedFile.load(path)
+        task = TaskWalker.collect_tasks(file).first
+        raise "no task found" unless task
+        task.display_name.must_equal("ping ")
+      ensure
+        File.delete(path)
+      end
+    end
+
+    it "attaches the trailing-space detail to an unnamed task's matches" do
+      path = File.tempname("lintspec", ".yml")
+      File.write(path, "---\n- hosts: localhost\n  tasks:\n    - ansible.builtin.ping:\n")
+      begin
+        violations = Runner.new(RuleRegistry.default).run([path])
+        missing = violations.find { |v| v.rule_id == "name[missing]" }
+        raise "no name[missing] violation" unless missing
+        missing.details.must_equal("Task/Handler: ping ")
+      ensure
+        File.delete(path)
+      end
+    end
   end
 end

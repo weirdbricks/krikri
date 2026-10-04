@@ -90,9 +90,10 @@ module Krikri
         if (task_name = name)
           return task_name
         end
-        args = action_args
-        return bare_module if args.empty?
-        "#{bare_module} #{args}"
+        # Upstream joins as f"{module} {' '.join(args)}", so the space
+        # after the module is always present, even with no arguments
+        # (leaving a trailing space in the rendered detail).
+        "#{bare_module} #{action_args}"
       end
 
       # The task's arguments as upstream's Task.__str__ renders them for
