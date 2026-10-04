@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1482`.**
+**Currently at `0.9.1483`.**
 
 ## Open gaps
 
@@ -79,15 +79,6 @@ and fixed and when.
   the Python SDK's error wording (`500 Server Error for http+docker://...`) is reproduced only for
   `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own `Code: 500 Message: ...`
   text after real's prefixes.
-- **`konstruktoid.hardening` PLAY RECAP `skipped=` over-counts by 9** (rounds 999040/999050, 2026-10-04, krikri 0.9.1476/0.9.1477):
-  real's cold run does not reliably finish within 30 minutes, and the role's own UFW/conntrack changes make SSH unreachable
-  on BOTH hosts afterwards (ICMP up, TCP 22 closed), so there is no warm comparison. Everything real reached matches krikri
-  task-for-task and `ok=304 changed=160` are identical. Open: krikri's recap says `skipped=110` where real says `101`, while
-  the printed `skipping:` task occurrences are identical (101 each, same tasks) - so krikri counts 9 skips it never prints.
-  Ruled out: the registered shape of skipped loops (fixed, did not change the count) and every `loop`/`with_items`/`when:`/`block`
-  shape reproducible on localhost (all match real's recap). Suspect: a recap bump on a path only reached against a REMOTE host
-  (the batched-loop `skipped_items`/`defer_stats` path in `executor_loops.cr`, or one of the `["skipped"] += 1` sites in
-  `executor_blocks_includes.cr`), so the next step is a probe role on an Atlantic pair that diffs `skipped=` per task shape.
 
 ## Deliberate limits (decided, not defects)
 
