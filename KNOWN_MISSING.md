@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1467`.**
+**Currently at `0.9.1468`.**
 
 ## Open gaps
 
@@ -38,7 +38,7 @@ and fixed and when.
   omit-`changed` wire) pins a plugin's keys to real 2.19.11's order. Everything below was compared against
   real on the same host, cold and warm, with `{{ r | to_json }}` probe roles
   (`testing/keyorder_probes/kop_*`, run through `krikri-role-tester run` with `local:` queue entries and compared
-  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1467: 168 probes on 7 roles, all identical on
+  by `krikri-role-tester keyorder`; round 995000-995006, 0.9.1468: 168 probes on 7 roles, all identical on
   Ubuntu 22.04 and Rocky 9, every role's PLAY RECAP CLEAN). Verified on real hosts: `user`, `group`,
   `authorized_key`, `known_hosts`, `sysctl`, `mount_facts`, `modprobe`, `ufw`, `apt` (install/no-op),
   `lvg`, `lvol`, `parted`, `zfs`, `mount`, `synchronize`, `subversion`, `apache2_module`, `java_cert`,
@@ -50,7 +50,7 @@ and fixed and when.
   omit-`changed` wire or the controller backfill; `setup`/`gather_facts`/`wait_for_connection`/`fail` are
   handled outside their plugin files. Not verified, and why:
   - `snap`: snapd is too heavy for a probe round, so it is deliberately not probed.
-  - `homebrew`, `homebrew_cask` and `homebrew_tap` are not supported (dropped 0.9.1467: macOS-first, under 1.5% of the roles we have
+  - `homebrew`, `homebrew_cask` and `homebrew_tap` are not supported (dropped 0.9.1468: macOS-first, under 1.5% of the roles we have
     run, and nearly all of those only on macOS-only code paths); a task using one stops with the unimplemented-module error.
   - The real-mutation variants of `iptables` (its check-mode/stub shapes are pinned); not probed.
   - *Needs an external account or appliance neither engine can reach from either host (not a gap to
@@ -59,7 +59,7 @@ and fixed and when.
   - Known value (not shape) differences left as they are: the order of the `public_key_fingerprints` entries
     (real builds them from a Python set, so its order is nondeterministic) and `ufw`'s `commands`/`apt`'s failure
     results on the mutating paths, which are verified against real's command construction and wording but not yet
-    end-to-end on a real host after 0.9.1467. `krikri-role-tester keyorder --values` over a probe round is how
+    end-to-end on a real host after 0.9.1468. `krikri-role-tester keyorder --values` over a probe round is how
     any remaining value difference is found; host-specific noise (apt output text, per-host keys, snap revisions)
     shows up there and is not a krikri difference.
 - **PostgreSQL gaps found while verifying:** the aliases real deprecates (`port`, `host`, `login`, `unix_socket`, `db`)
