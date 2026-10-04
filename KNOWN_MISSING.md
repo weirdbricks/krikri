@@ -30,7 +30,7 @@ it does not linger at the top. This file carries no per-round
 narrative or fix history - `git log` is the record of what was found
 and fixed and when.
 
-**Currently at `0.9.1476`.**
+**Currently at `0.9.1477`.**
 
 ## Open gaps
 
@@ -84,9 +84,9 @@ and fixed and when.
 - **`konstruktoid.hardening` real-host parity is only verified up to `Configure sudo user password`** (rounds 999001/999010,
   2026-10-04): real's cold run does not finish within 30 minutes, and the role's own UFW/conntrack changes make SSH
   unreachable on BOTH hosts after the cold run (ICMP up, TCP 22 closed), so no warm comparison exists. Everything real
-  reached matches krikri task-for-task (the `systemd` missing-unit, array-wrapped `loop:` and one-task `ufw` enable+rule/default
-  divergences found here are fixed). Open: krikri's `skipped` recap count (110) is higher than real's earlier 101 and
-  cannot be re-checked until a real cold run completes (try `--timeout-mins 60`).
+  reached matches krikri task-for-task (the `systemd` missing-unit, array-wrapped `loop:`, one-task `ufw` enable+rule/default
+  and skipped-loop registered-shape divergences found here are fixed). Round 999040 gave identical `ok=304 changed=160`;
+  krikri's `skipped=110` vs real's 101 came from that last bug and awaits one more full cold run to confirm.
 
 ## Deliberate limits (decided, not defects)
 

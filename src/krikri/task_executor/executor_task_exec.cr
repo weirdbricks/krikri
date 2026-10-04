@@ -331,14 +331,21 @@ module Krikri
       return if register_name.nil? || register_name.empty?
 
       # false_condition: the when: expression that evaluated False (the bare
-      # literal `false` stays a bool, like YAML gives real)
+      # literal `false` stays a bool, like YAML gives real).
+      #
+      # Key order is real's own (task_executor.py builds
+      # `dict(changed=False, skipped=True,
+      # skip_reason='Conditional result was False') | result_context`,
+      # the conditional's false_condition landing last): a later
+      # `to_json` of a skipped register - or a loop over a registered
+      # loop's `results` - renders it verbatim.
       condition = @last_false_condition
       false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
       register_result(host, register_name, JSON::Any.new({
         "changed"         => JSON::Any.new(false),
-        "false_condition" => false_condition,
         "skipped"         => JSON::Any.new(true),
         "skip_reason"     => JSON::Any.new("Conditional result was False"),
+        "false_condition" => false_condition,
       } of String => JSON::Any))
     end
 

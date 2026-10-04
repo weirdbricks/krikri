@@ -968,12 +968,13 @@ module Krikri
       # "skipping:" line in iteration order alongside the executed items,
       # not during the batch-prep loop (which runs before the shared SSH
       # round trip, so its eager prints would lead the later-executed
-      # items - a display-order divergence from real). Keyed idx -> the
-      # already-computed item label; left empty by the one-at-a-time path,
-      # which prints its own skips in order inside execute_task_once.
-      skipped_labels = Hash(Int32, String).new
+      # items - a display-order divergence from real). Keyed idx -> what
+      # finish_looped_task needs to replay the item's real registered
+      # result; left empty by the one-at-a-time path, which prints its own
+      # skips in order inside execute_task_once.
+      skipped_items = Hash(Int32, SkippedLoopItem).new
       item_results = if loop_batch_eligible?(task, host, exec_host, base_vars_context)
-                       execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_labels)
+                       execute_looped_task_batched(task, host, base_vars_context, rendered_items, skipped_items)
                      else
                        # A running (not re-dup'd-from-base) vars_context
                        # carries each iteration's ansible_facts forward
@@ -1098,7 +1099,7 @@ module Krikri
                              true # execute_task_once re-evaluates and turns the raise into a real failed result
                            end
                            unless passes
-                             skipped_labels[idx] = item_label
+                             skipped_items[idx] = SkippedLoopItem.new(item_label, @last_false_condition)
                              next nil
                            end
                          end
@@ -1119,7 +1120,7 @@ module Krikri
                        end
                      end
 
-      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_labels)
+      finish_looped_task(task, host, rendered_items, item_results, fact_hosts, base_vars_context, delegate_hosts, skipped_items)
     end
 
     # Whether execute_looped_task can send every surviving item through
@@ -1177,7 +1178,7 @@ module Krikri
       host : Host,
       base_vars_context : Hash(String, JSON::Any),
       loop_items : Array(JSON::Any),
-      skipped_labels : Hash(Int32, String),
+      skipped_items : Hash(Int32, SkippedLoopItem),
     ) : Array(JSON::Any?)
       item_results = Array(JSON::Any?).new(loop_items.size, nil)
       item_contexts = Hash(Int32, Hash(String, JSON::Any)).new
@@ -1232,7 +1233,7 @@ module Krikri
             # in iteration order with the executed items (real's ordering);
             # printing here (during batch-prep, before the shared round
             # trip) would put skips ahead of the changed/ok lines.
-            skipped_labels[idx] = item_lbl
+            skipped_items[idx] = SkippedLoopItem.new(item_lbl, @last_false_condition)
             next
           end
         rescue ex : WhenEvaluationError
@@ -1278,11 +1279,19 @@ module Krikri
       item_results
     end
 
+    # One iterated item whose `when:` evaluated false: everything
+    # finish_looped_task needs to replay real Ansible's registered shape for
+    # it - the label its `skipping:` line shows, and the expression real
+    # reports as that item's own `false_condition` (which is per-item, not
+    # per-task: a `when:` LIST's failing clause, or the single condition
+    # itself, evaluated against THIS item's bindings).
+    private record SkippedLoopItem, label : String, false_condition : String?
+
     # Shared aggregation for a completed loop's per-item results (used by
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
     # transport produced the results.
-    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_labels : Hash(Int32, String) = Hash(Int32, String).new) : Nil
+    private def finish_looped_task(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), fact_hosts : Array(Host)? = nil, base_vars_context : Hash(String, JSON::Any)? = nil, delegate_hosts : Array(Host)? = nil, skipped_items : Hash(Int32, SkippedLoopItem) = Hash(Int32, SkippedLoopItem).new) : Nil
       results = [] of JSON::Any
       any_changed = false
       any_failed = false
@@ -1321,14 +1330,18 @@ module Krikri
         # A per-item `when:`-false iteration (batched path only - the
         # one-at-a-time path prints its own skips inline in execute_task_
         # once): print it here, in iteration order, so the "skipping:" line
-        # interleaves with the executed items exactly as real does. It is
-        # display-only: a when:-skipped loop item is not a recap "skipped"
-        # task and never entered the registered `results`, so leaving it
-        # out of both below preserves every count and the register shape.
-        if (sk_lbl = skipped_labels[idx]?)
+        # interleaves with the executed items exactly as real does.
+        if (skipped = skipped_items[idx]?)
           connection_host = host.name
-          shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : sk_lbl
+          shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : skipped.label
           puts "skipping: [#{connection_host}] => (item=#{shown}) #{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
+          # Real records EVERY iterated item in the registered `results`,
+          # the when:-false ones included - dropping them left a later
+          # `loop: "{{ registered.results }}"` iterating an empty list and
+          # printing a single bare `skipping:` where real prints one line
+          # per skipped item (konstruktoid.hardening's audit loop over an
+          # earlier all-skipped loop's results).
+          results << JSON::Any.new(loop_item_skip_result(task, item, idx, skipped.false_condition))
           next
         end
 
@@ -1424,26 +1437,16 @@ module Krikri
         # per-item results land in the registered aggregate, and real
         # Ansible never exposes `_ansible_*` keys there.
         result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
-        # loop_control.loop_var REPLACES "item" - real ansible-core's
-        # registered per-item result carries the CUSTOM key only (plus
-        # ansible_loop_var), never "item" (live-verified against 2.19.11:
-        # out.results[0].keys() with loop_var: p is
-        # ['msg', 'failed', 'changed', 'p', 'ansible_loop_var']).
-        # Found benchmarking githubixx.containerd's own "Set
-        # modprobe_location" (`loop_control: { loop_var: path }` +
-        # `modprobe_locations.results | ... | map(attribute='path')`).
-        result_hash["ansible_loop_var"] = JSON::Any.new(task.loop_var || "item")
-        if index_var = task.index_var
-          result_hash["ansible_index_var"] = JSON::Any.new(index_var)
-          result_hash[index_var] = JSON::Any.new(idx.to_i64)
-        end
-        if loop_var = task.loop_var
-          result_hash[loop_var] = item
-        else
-          result_hash["item"] = item
-        end
+        append_loop_item_bindings(task, result_hash, item, idx)
         results << JSON::Any.new(result_hash)
       end
+
+      # Real's own aggregate rule (task_executor.py): the loop result
+      # starts out skipped and any item that did NOT report itself skipped
+      # clears the flag - an item result with no `skipped` key at all
+      # counts as executed. Both shapes of when:-skip (all items vs some)
+      # and a plugin-side per-item skip fall out of that single rule.
+      all_items_skipped = results.all? { |entry| entry.as_h["skipped"]?.try(&.as_bool) == true }
 
       # Aggregate the whole loop into ONE recap entry, matching real
       # Ansible: a looped task counts once, not once per item.
@@ -1469,7 +1472,7 @@ module Krikri
         # (by when: or by a check-mode/plugin-side skip) carries
         # {"changed": false, "msg": "All items skipped"} (live-verified
         # vs 2.19.11).
-        all_skipped = !skipped_labels.empty? ||
+        all_skipped = !skipped_items.empty? ||
                       item_results.any? { |res| res.try { |entry| entry["skipped"]?.try(&.as_bool) == true } }
         puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(all_skipped: all_skipped)}".colorize(:cyan)
         @results[host.name]["skipped"] += 1
@@ -1510,33 +1513,103 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
-          # Real Ansible's loop-aggregate register shape (ansible-core's
-          # itemized-task handler): `failed` is only present when an item
-          # actually failed (same on-failure-only rule as a module's own
-          # wire result), and `msg` is "All items completed" / "One or
-          # more items failed" - a loop aggregate that always carried
+          # Real's loop-aggregate register shape, in real's own insertion
+          # order (ansible-core's itemized-task handler builds it key by
+          # key, and the order is observable - a later `to_json` of the
+          # register, or a loop over its `results`, prints it verbatim):
+          # `results` first, then `skipped`, then whatever any item
+          # contributed (`changed` when an item changed, `failed` +
+          # `msg` on a failure), then `msg`, and only LAST the
+          # `changed: false` fallback - which is why a loop that changed
+          # nothing reads {results, skipped, msg, changed} while a
+          # changing one reads {results, skipped, changed, ...}.
+          #
+          # A zero-item loop never reaches that at all: real returns the
+          # "No items in the list" shape instead, with `changed` FIRST, a
+          # `skipped_reason` (not `skip_reason`), and no `msg` - so the
+          # empty case is built separately rather than by the flags below.
+          # `failed` is only present when an item actually failed (same
+          # on-failure-only rule as a module's own wire result), and
+          # `msg` is "All items completed" / "All items skipped" / "One
+          # or more items failed" - an aggregate that always carried
           # failed: false made `r.failed | default('none')` print False
           # where real prints None (live-verified, git_config GC14).
-          aggregate = {
-            "changed" => JSON::Any.new(any_changed),
-            "results" => JSON::Any.new(results),
-          }
-          if any_failed
-            aggregate["failed"] = JSON::Any.new(true)
-            aggregate["msg"] = JSON::Any.new("One or more items failed")
-          elsif executed_count == 0 && !results.empty?
-            aggregate["msg"] = JSON::Any.new("All items skipped")
+          aggregate = {} of String => JSON::Any
+          if loop_items.empty?
+            aggregate["changed"] = JSON::Any.new(false)
             aggregate["skipped"] = JSON::Any.new(true)
+            aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
+            aggregate["results"] = JSON::Any.new(results)
           else
-            aggregate["msg"] = JSON::Any.new("All items completed")
+            aggregate["results"] = JSON::Any.new(results)
+            aggregate["skipped"] = JSON::Any.new(all_items_skipped)
+            aggregate["changed"] = JSON::Any.new(true) if any_changed
+            if any_failed
+              aggregate["failed"] = JSON::Any.new(true)
+              aggregate["msg"] = JSON::Any.new("One or more items failed")
+            end
+            unless aggregate.has_key?("msg")
+              aggregate["msg"] = JSON::Any.new(all_items_skipped ? "All items skipped" : "All items completed")
+            end
+            aggregate["changed"] = JSON::Any.new(any_changed) unless aggregate.has_key?("changed")
           end
-          aggregate["skipped"] = JSON::Any.new(false) if executed_count > 0
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end
       end
 
       halt_if_failed(task, host, any_failed && !any_unreachable)
+    end
+
+    # The registered `results` entry for one iterated item whose `when:`
+    # evaluated false. Real Ansible's per-item conditional skip is the SAME
+    # dict its non-looped task skip uses
+    # (`dict(changed=False, skipped=True, skip_reason='Conditional
+    # result was False') | result_context`, the conditional's own
+    # false_condition landing last) with this item's loop bindings appended
+    # - live-verified against 2.19.11 for the all-skipped and mixed loops
+    # alike, so the key order here is fixed by real, not chosen.
+    private def loop_item_skip_result(task : Task, item : JSON::Any, idx : Int32, condition : String?) : Hash(String, JSON::Any)
+      # The bare literal `false` stays a bool, exactly as in the non-looped
+      # shape (register_skip_result): a false_condition is the EXPRESSION
+      # real echoes, and `false` was a bool before it was ever a string.
+      false_condition = condition == "false" ? JSON::Any.new(false) : JSON::Any.new(condition || "")
+      entry = {
+        "changed"         => JSON::Any.new(false),
+        "skipped"         => JSON::Any.new(true),
+        "skip_reason"     => JSON::Any.new("Conditional result was False"),
+        "false_condition" => false_condition,
+      } of String => JSON::Any
+      append_loop_item_bindings(task, entry, item, idx)
+      entry
+    end
+
+    # The loop bindings real appends to EVERY registered per-item result -
+    # the item under its loop variable, then `ansible_loop_var`, then the
+    # index pair - in that order (live-verified against 2.19.11: an
+    # executed `debug` item reads msg/failed/changed/item/
+    # ansible_loop_var, with index_var's `i`/`ansible_index_var` after
+    # them when loop_control sets one).
+    #
+    # loop_control.loop_var REPLACES "item" - real ansible-core's
+    # registered per-item result carries the CUSTOM key only (plus
+    # ansible_loop_var), never "item" (live-verified against 2.19.11:
+    # out.results[0].keys() with loop_var: p is
+    # ['msg', 'failed', 'changed', 'p', 'ansible_loop_var']).
+    # Found benchmarking githubixx.containerd's own "Set
+    # modprobe_location" (`loop_control: { loop_var: path }` +
+    # `modprobe_locations.results | ... | map(attribute='path')`).
+    private def append_loop_item_bindings(task : Task, entry : Hash(String, JSON::Any), item : JSON::Any, idx : Int32) : Nil
+      if loop_var = task.loop_var
+        entry[loop_var] = item
+      else
+        entry["item"] = item
+      end
+      entry["ansible_loop_var"] = JSON::Any.new(task.loop_var || "item")
+      if index_var = task.index_var
+        entry[index_var] = JSON::Any.new(idx.to_i64)
+        entry["ansible_index_var"] = JSON::Any.new(index_var)
+      end
     end
 
     # Render a loop item for display purposes (Ansible shows `(item=...)`).
