@@ -36,6 +36,15 @@ module Krikri
         true
       end
 
+      def transformable? : Bool
+        true
+      end
+
+      # Upstream's fqcn transform rewrites the action key and marks the match fixed. so no "not applied" is logged for it.
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
         TaskWalker.each_task(file) do |task|
           next unless task.action_line == violation.line &&

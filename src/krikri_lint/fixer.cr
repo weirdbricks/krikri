@@ -133,6 +133,12 @@ module Krikri
     # --fix write list get fixed; fixed matches are dropped from the
     # report and do not affect the exit code.
     class Fixer
+      # The log renderer's tag pattern recognizes `[\w.]+` groups as
+      # (unknown) markup tags; sub-tags with other characters (like
+      # yaml[trailing-spaces]) are printed verbatim without the stray
+      # closing-tag artifact.
+      BRACKETED_SUB_TAG = /\[[\w.]+\]/
+
       @registry : RuleRegistry
       @write_set : Set(String)
 
@@ -168,6 +174,61 @@ module Krikri
         end
       end
 
+      # Sub-rule ids map to their family rule regardless of whether the
+      # rule carries a line fix; the upstream transformer is keyed on
+      # the rule class (TransformMixin), not on fixability.
+      private def rule_by_id(rule_id : String) : Rule?
+        @registry.rules.find do |rule|
+          rule.id == rule_id || rule_id.starts_with?(rule.id + "[")
+        end
+      end
+
+      # Whether upstream's transform marks this violation fixed: such
+      # matches are dropped from the post-fix report even when krikri's
+      # own line edits differ from upstream's re-serialization.
+      def marked_fixed?(v : Violation) : Bool
+        return false unless rule = rule_by_id(v.rule_id)
+        rule.transformable? && enabled_in_write_set?(rule) && rule.marks_fixed?(v)
+      end
+
+      # The matches upstream's transformer would log
+      # "Rule specific fix not applied for:" for: ones whose rule is
+      # TransformMixin (transformable?), enabled under the --fix write
+      # set, and not marked fixed by the transform. Mirrors the
+      # transformer's per-file sorted(matches) order.
+      def not_applied(violations : Array(Violation)) : Array(Violation)
+        result = [] of Violation
+        violations.each do |v|
+          next unless rule = rule_by_id(v.rule_id)
+          next unless rule.transformable?
+          next unless enabled_in_write_set?(rule)
+          next if rule.marks_fixed?(v)
+          result << v
+        end
+        result.sort_by! { |v| {v.path, v.line, v.rule_id, v.message, v.details, v.column} }
+        result
+      end
+
+      # Upstream's match id for the transformer's not-applied log line:
+      # "{tag}/{match_type} {filename}:{lineno}". The tag's bracketed
+      # sub-tag is unknown markup to the log renderer, which prints the
+      # wrapper's closing [/] literally at the end of the line.
+      def self.not_applied_id(v : Violation) : String
+        id = "#{v.rule_id}/#{match_type(v)} #{v.path}:#{v.line}"
+        id + (v.rule_id.matches?(BRACKETED_SUB_TAG) ? "[/]" : "")
+      end
+
+      # Upstream derives the match type from the rule's match method:
+      # yaml[*] rules lint the document (yaml), key-order and name
+      # report play-level matches (play), task-scoped rules matchtask
+      # (task), anything else is a line match.
+      private def self.match_type(v : Violation) : String
+        return "yaml" if v.rule_id.starts_with?("yaml[")
+        return "play" if v.rule_id.ends_with?("[play]")
+        return "task" if v.task_line
+        "line"
+      end
+
       # Applies rule fixes to violations' files and writes back the
       # changed ones. Mirrors upstream's Transformer: matches whose
       # rule is fixable and whose rule id/tags intersect the --fix
@@ -189,9 +250,15 @@ module Krikri
         by_path.each do |path, indices|
           next unless File.exists?(path)
           source = File.read(path)
+          root = begin
+            YAML::Nodes.parse(source).nodes.first?
+          rescue YAML::ParseException
+            # The upstream transformer skips files it cannot parse: no
+            # transforms are attempted on them and they are not written.
+            next
+          end
           buffer = FixBuffer.new(source)
-          file = PositionedFile.new(path, FileType.from_path(path),
-            YAML::Nodes.parse(source).nodes.first?, nil)
+          file = PositionedFile.new(path, FileType.from_path(path), root, nil)
           indices.each do |idx|
             rule = rule_for(violations[idx].rule_id)
             next unless rule
@@ -207,10 +274,14 @@ module Krikri
       private def fixable_under_write_set?(rule_id : String) : Bool
         rule = rule_for(rule_id)
         return false unless rule && rule.fixable?
+        enabled_in_write_set?(rule)
+      end
+
+      # The transformer attempts a rule's transform when the rule id or
+      # any of its tags intersect the --fix write list ("all" enables
+      # everything; a "none"-only list enables nothing).
+      private def enabled_in_write_set?(rule : Rule) : Bool
         return true if @write_set.includes?("all")
-        # The family name (fqcn for fqcn[action-core], name, yaml) is
-        # also accepted in a --fix list, matching upstream's single-rule
-        # ids for these families.
         rule_definition = Set.new(rule.tags + [rule.id, rule.id.split("[")[0]])
         !(rule_definition & @write_set).empty?
       end

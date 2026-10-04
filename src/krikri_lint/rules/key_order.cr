@@ -28,6 +28,17 @@ module Krikri
         true
       end
 
+      # Upstream's key-order transform reorders the keys and marks the
+      # match fixed for the play and task sub-tags, so no "not applied"
+      # is logged.
+      def transformable? : Bool
+        true
+      end
+
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         root = file.root || return
         list = root.as?(YAML::Nodes::Sequence) || return

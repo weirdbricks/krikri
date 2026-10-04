@@ -32,6 +32,17 @@ module Krikri
         true
       end
 
+      # Upstream's jinja transform only fixes jinja[spacing] (and only
+      # when it can locate the templated value); jinja[invalid] gets the
+      # "not applied" ERROR.
+      def transformable? : Bool
+        true
+      end
+
+      def marks_fixed?(violation : Violation) : Bool
+        violation.rule_id == "jinja[spacing]"
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           found = [] of {String, Int32, Int32}

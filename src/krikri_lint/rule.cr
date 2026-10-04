@@ -36,6 +36,22 @@ module Krikri
       def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool
         false
       end
+
+      # Upstream's TransformMixin: the --fix transformer attempts a
+      # rule-specific transform for matches of these rules, even when
+      # krikri has no line fix of its own (upstream's yaml transform is
+      # a documented no-op, yet every yaml[*] match gets a "Rule
+      # specific fix not applied for" ERROR from it).
+      def transformable? : Bool
+        false
+      end
+
+      # Whether upstream's transform marks the given violation fixed.
+      # Transformable rules that do not mark it fixed get an
+      # "Rule specific fix not applied for" ERROR logged for the match.
+      def marks_fixed?(violation : Violation) : Bool
+        false
+      end
     end
   end
 end

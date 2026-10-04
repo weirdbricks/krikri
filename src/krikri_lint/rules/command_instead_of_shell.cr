@@ -27,6 +27,16 @@ module Krikri
         true
       end
 
+      def transformable? : Bool
+        true
+      end
+
+      # Upstream's transform rewrites the task's module key and marks the
+      # match fixed, so no "not applied" is logged for it.
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       # True when this rule's fix (renaming the key to
       # ansible.builtin.command) supersedes an fqcn fix on the same
       # key, so the fqcn rule's fix should stand down. Mirrors the

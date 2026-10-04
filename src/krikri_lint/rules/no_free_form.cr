@@ -52,6 +52,16 @@ module Krikri
         true
       end
 
+      # Upstream's transform rewrites the free-form module call and
+      # marks the match fixed, so no "not applied" is logged.
+      def transformable? : Bool
+        true
+      end
+
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           next if INCLUSION_ACTIONS.includes?(task.module_name)

@@ -210,16 +210,59 @@ module Krikri::Lint
       exit 3
     end
 
+    colored = Console.color_enabled?(force_color, nocolor)
+    changed_files = 0
+
     if write_list = cli_fix
       begin
-        changed = Fixer.new(registry, write_list).apply(violations)
+        fixer = Fixer.new(registry, write_list)
+        # Upstream bails out of the whole transformer when the yaml rule
+        # is skipped: no re-serialization, no rule-specific transforms,
+        # no transformer diagnostics.
+        unless config.skip_list.includes?("yaml")
+          # The upstream transformer logs these to stderr before
+          # anything else: a load failure per file it cannot parse, and
+          # a not-applied line per match whose rule-specific transform
+          # did not mark it fixed.
+          bad_files = Set(String).new
+          violations.each { |v| bad_files << v.path if v.rule_id == "load-failure[runtimeerror]" }
+          bad_files.each { log_error("Invalid yaml, verify the file contents and try again.", colored) }
+          # The transformer skips files it cannot parse, so their
+          # matches never get a not-applied line.
+          not_applied = fixer.not_applied(violations)
+          not_applied.reject! { |v| bad_files.includes?(v.path) }
+          not_applied.each do |v|
+            log_error("Rule specific fix not applied for: #{Fixer.not_applied_id(v)}", colored)
+          end
+        end
+        changed = [] of String
+        marked_fixed = false
+        if !config.skip_list.includes?("yaml")
+          changed = fixer.apply(violations)
+          marked_fixed = true
+        end
+        changed_files = changed.size
+        # Mirror upstream's post-fix match set: matches its transform
+        # marked fixed are dropped (independently of whether krikri
+        # actually wrote the file), yaml matches are re-checked against
+        # the rewritten files (only the yaml rule is re-run, and only
+        # to drop matches it resolved - new matches are never added),
+        # and every other match is reported exactly as found before
+        # the fix, even when a fix rewrote the enclosing task text.
+        changed_set = Set.new(changed)
+        post_yaml = Set({String, Int32, String, String, String, Int32}).new
         if changed.present?
-          # Re-report from the fixed files so the output reflects the
-          # post-fix state (fixed matches disappear; anything resolved
-          # incidentally by another rule's fix disappears too).
-          changed_set = Set.new(changed)
-          unchanged = violations.reject { |v| changed_set.includes?(v.path) }
-          violations = unchanged + runner.run(changed)
+          runner.run(changed).each do |v|
+            post_yaml << v.report_key if v.rule_id.starts_with?("yaml[")
+          end
+        end
+        violations = violations.reject do |v|
+          next true if marked_fixed && fixer.marked_fixed?(v)
+          if v.rule_id.starts_with?("yaml[") && changed_set.includes?(v.path)
+            !post_yaml.includes?(v.report_key)
+          else
+            false
+          end
         end
       rescue ex
         STDERR.puts "krikri-lint: internal error: #{ex.message}"
@@ -240,8 +283,6 @@ module Krikri::Lint
     end
 
     Outcome.sort(violations)
-
-    colored = Console.color_enabled?(force_color, nocolor)
 
     # Matches go to stdout, the summary to stderr. CPython block-buffers
     # stdout whenever it is not a tty and only flushes it at exit, so the
@@ -265,7 +306,7 @@ module Krikri::Lint
       end
     end
 
-    report = Report.new(violations, registry, file_count, cli_profile)
+    report = Report.new(violations, registry, file_count, cli_profile, changed_files)
     unless quiet || format == "json"
       unless violations.empty?
         warning("Listing #{violations.size} violation(s) that are fatal", colored)
@@ -291,6 +332,14 @@ module Krikri::Lint
     prefix = colored ? Console::DIM : ""
     suffix = colored ? Console::RESET : ""
     STDERR.puts "#{prefix}WARNING  #{message}#{suffix}"
+  end
+
+  # Same handler, for ERROR records (the transformer's not-applied and
+  # invalid-yaml diagnostics): dimmed, level padded to eight columns.
+  private def log_error(message : String, colored : Bool)
+    prefix = colored ? Console::DIM : ""
+    suffix = colored ? Console::RESET : ""
+    STDERR.puts "#{prefix}ERROR    #{message}#{suffix}"
   end
 end
 

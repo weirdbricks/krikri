@@ -31,6 +31,13 @@ module Krikri
         true
       end
 
+      # Upstream's yaml transform is a documented no-op (the
+      # reformatting happens in the data dumper), so it never marks a
+      # match fixed; every yaml[*] match gets a "not applied" ERROR.
+      def transformable? : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         return unless File.exists?(file.path)
         content = File.read(file.path)

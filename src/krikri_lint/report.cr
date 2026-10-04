@@ -131,7 +131,9 @@ module Krikri
       getter rating : Int32
 
       def initialize(violations : Array(Violation), registry : RuleRegistry,
-                     @files_count : Int32, required_profile : String? = nil)
+                     @files_count : Int32, required_profile : String? = nil,
+                     modified_files : Int32 = 0)
+        @modified_files = modified_files
         @required_profile = required_profile
         @failures = 0
         @warnings = 0
@@ -189,6 +191,9 @@ module Krikri
       # The whole stderr block, each entry one line.
       def lines(colored : Bool) : Array(String)
         result = [""]
+        # Upstream prints this before the summary table whenever any
+        # file was rewritten by --fix, in both colored and plain mode.
+        result << "Modified #{@modified_files} files." if @modified_files > 0
         unless @tag_stats.empty?
           result << "# Rule Violation Summary"
           result << ""

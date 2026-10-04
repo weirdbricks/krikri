@@ -50,6 +50,12 @@ module Krikri
         rule_id.split("[").first
       end
 
+      # Upstream's MatchError._hash_key: the key the --fix yaml re-run
+      # uses to decide a match was "still found" in the rewritten file.
+      def report_key
+        {path, line, rule_id, message, details, column}
+      end
+
       def self.to_json(violations : Array(Violation)) : String
         JSON.build do |json|
           json.array do

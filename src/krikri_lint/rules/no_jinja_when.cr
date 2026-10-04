@@ -26,6 +26,15 @@ module Krikri
         true
       end
 
+      def transformable? : Bool
+        true
+      end
+
+      # Upstream's transform strips the Jinja template and marks the match fixed. so no "not applied" is logged for it.
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       # Upstream's transform strips {{ }} from when/changed_when and
       # failed_when values (RE_JINJA = {{ (.*?) }}), preserving the
       # scalar's quoting. List values are left alone (upstream's

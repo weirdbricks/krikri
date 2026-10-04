@@ -33,6 +33,15 @@ module Krikri
         true
       end
 
+      def transformable? : Bool
+        true
+      end
+
+      # Upstream's fqcn transform rewrites the action key and marks the match fixed. so no "not applied" is logged for it.
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       # Rewrites the module key in place with its resolved FQCN, like
       # upstream's fqcn transform.
       def fix(buffer : FixBuffer, file : PositionedFile, violation : Violation) : Bool

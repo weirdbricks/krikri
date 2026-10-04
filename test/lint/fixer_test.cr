@@ -109,6 +109,102 @@ module Krikri::Lint
     ensure
       File.delete(path) if path
     end
+
+    it "skips files the parser rejects, without raising or writing" do
+      source = "a: 1   \nb: [unclosed\n"
+      path = File.tempname("lintfix", ".yml")
+      File.write(path, source)
+      registry = RuleRegistry.new([YamlTrailingSpacesRule.new] of Rule)
+      violations = [Violation.new(path, 1, 0, "yaml[trailing-spaces]",
+        Severity::LOW, "Trailing spaces")]
+      fixer = Fixer.new(registry, ["all"])
+      fixer.apply(violations).must_be_empty
+      File.read(path).must_equal(source)
+    ensure
+      File.delete(path) if path
+    end
+
+    describe "#not_applied" do
+      it "flags transformable rules whose transform does not mark the match fixed" do
+        registry = RuleRegistry.default
+        fixer = Fixer.new(registry, ["all"])
+        violations = [
+          Violation.new("p.yml", 4, 0, "name[missing]", Severity::MEDIUM,
+            "All tasks should be named.", 4),
+          Violation.new("p.yml", 5, 8, "name[casing]", Severity::MEDIUM,
+            "All names should start with an uppercase letter.", 5),
+          Violation.new("f.yml", 1, 0, "yaml[trailing-spaces]", Severity::LOW,
+            "Trailing spaces"),
+          Violation.new("p.yml", 4, 0, "no-changed-when", Severity::HIGH,
+            "Commands should not change things if nothing needs doing.", 4),
+          Violation.new("p.yml", 4, 0, "command-instead-of-shell", Severity::HIGH,
+            "Use shell only when shell functionality is required.", 4),
+        ]
+        fixer.not_applied(violations).map(&.rule_id).must_equal([
+          "yaml[trailing-spaces]",
+          "name[missing]",
+        ])
+      end
+
+      it "respects the write list" do
+        registry = RuleRegistry.default
+        fixer = Fixer.new(registry, ["name"])
+        violations = [
+          Violation.new("p.yml", 4, 0, "name[missing]", Severity::MEDIUM,
+            "All tasks should be named.", 4),
+          Violation.new("f.yml", 1, 0, "yaml[trailing-spaces]", Severity::LOW,
+            "Trailing spaces"),
+        ]
+        fixer.not_applied(violations).map(&.rule_id).must_equal(["name[missing]"])
+      end
+
+      it "reports nothing when the write list is none" do
+        registry = RuleRegistry.default
+        fixer = Fixer.new(registry, ["none"])
+        fixer.not_applied([
+          Violation.new("f.yml", 1, 0, "yaml[colons]", Severity::LOW,
+            "Too many spaces before colon"),
+        ]).must_be_empty
+      end
+    end
+
+    describe "#marked_fixed?" do
+      it "marks the sub-tags upstream's transforms rewrite" do
+        registry = RuleRegistry.default
+        fixer = Fixer.new(registry, ["all"])
+        casing = Violation.new("p.yml", 5, 8, "name[casing]", Severity::MEDIUM, "m", 5)
+        missing = Violation.new("p.yml", 4, 0, "name[missing]", Severity::MEDIUM, "m", 4)
+        shell = Violation.new("p.yml", 4, 0, "command-instead-of-shell",
+          Severity::HIGH, "m", 4)
+        spaces = Violation.new("f.yml", 1, 0, "yaml[trailing-spaces]", Severity::LOW, "m")
+        fixer.marked_fixed?(casing).must_equal(true)
+        fixer.marked_fixed?(missing).must_equal(false)
+        fixer.marked_fixed?(shell).must_equal(true)
+        fixer.marked_fixed?(spaces).must_equal(false)
+      end
+    end
+
+    describe ".not_applied_id" do
+      it "uses the task match type for task-scoped sub-tags" do
+        v = Violation.new("p.yml", 4, 0, "name[missing]", Severity::MEDIUM, "m", 4)
+        Fixer.not_applied_id(v).must_equal("name[missing]/task p.yml:4[/]")
+      end
+
+      it "uses the yaml match type for yaml sub-tags" do
+        v = Violation.new("f.yml", 1, 0, "yaml[trailing-spaces]", Severity::LOW, "m")
+        Fixer.not_applied_id(v).must_equal("yaml[trailing-spaces]/yaml f.yml:1")
+      end
+
+      it "adds the stray closing tag only for word-only sub-tags" do
+        v = Violation.new("f.yml", 2, 0, "yaml[colons]", Severity::LOW, "m")
+        Fixer.not_applied_id(v).must_equal("yaml[colons]/yaml f.yml:2[/]")
+      end
+
+      it "uses the play match type for play-level matches" do
+        v = Violation.new("p.yml", 1, 1, "name[play]", Severity::MEDIUM, "m", 1)
+        Fixer.not_applied_id(v).must_equal("name[play]/play p.yml:1[/]")
+      end
+    end
   end
 
   describe "rule fixes" do

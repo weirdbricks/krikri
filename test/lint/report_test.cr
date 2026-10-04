@@ -98,8 +98,8 @@ module Krikri::Lint
   end
 
   describe Report do
-    private def report(violations, files_count = 1, profile = nil)
-      Report.new(violations, RuleRegistry.default, files_count, profile)
+    private def report(violations, files_count = 1, profile = nil, modified_files = 0)
+      Report.new(violations, RuleRegistry.default, files_count, profile, modified_files)
     end
 
     private def pkg_violation(warning = false)
@@ -160,6 +160,28 @@ module Krikri::Lint
         "Passed: 0 failure(s), 0 warning(s) on 2 files. " \
         "Last profile that met the validation criteria was 'production'.",
       ])
+    end
+
+    it "prints a plain Modified line after the leading blank, before the table" do
+      report([pkg_violation], 1, nil, 1).lines(false).must_equal([
+        "",
+        "Modified 1 files.",
+        "# Rule Violation Summary",
+        "",
+        "  1 package-latest profile:safety tags:idempotency",
+        "",
+        "Failed: 1 failure(s), 0 warning(s) on 1 files. " \
+        "Last profile that met the validation criteria was 'moderate'. Rating: 2/5 star",
+      ])
+    end
+
+    it "prints the Modified line in colored mode without markup of its own" do
+      lines = report([pkg_violation], 1, nil, 2).lines(true)
+      lines[1].must_equal("Modified 2 files.")
+    end
+
+    it "omits the Modified line when no file was rewritten" do
+      report([pkg_violation], 1, nil, 0).lines(false)[1].must_equal("# Rule Violation Summary")
     end
 
     it "counts yaml sub-tags separately, ordered by profile position" do

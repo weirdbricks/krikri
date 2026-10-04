@@ -31,6 +31,16 @@ module Krikri
         true
       end
 
+      # Upstream's transform rewrites the become/become_user pair and
+      # marks the match fixed, so no "not applied" is logged.
+      def transformable? : Bool
+        true
+      end
+
+      def marks_fixed?(violation : Violation) : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         root = file.root
         plays = root.as?(YAML::Nodes::Sequence)

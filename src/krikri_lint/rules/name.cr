@@ -87,6 +87,16 @@ module Krikri
         true
       end
 
+      # Upstream's name transform only rewrites name[casing] matches and
+      # marks them fixed; the other sub-tags get the "not applied" ERROR.
+      def transformable? : Bool
+        true
+      end
+
+      def marks_fixed?(violation : Violation) : Bool
+        violation.rule_id == "name[casing]"
+      end
+
       # Mirrors upstream's name[casing] transform: capitalize the first
       # character of the name (prefix "file | " names keep their prefix)
       # and update any handler notify references using the old name.
