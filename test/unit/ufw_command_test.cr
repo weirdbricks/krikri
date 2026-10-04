@@ -9,10 +9,10 @@ require "../../src/krikri/plugin_helpers/ufw_command"
 describe Krikri::PluginHelpers::UfwCommand do
   describe ".state_command" do
     it "maps each state to its ufw subcommand" do
-      Krikri::PluginHelpers::UfwCommand.state_command("enabled").must_equal("ufw --force enable")
-      Krikri::PluginHelpers::UfwCommand.state_command("disabled").must_equal("ufw disable")
-      Krikri::PluginHelpers::UfwCommand.state_command("reloaded").must_equal("ufw --force reload")
-      Krikri::PluginHelpers::UfwCommand.state_command("reset").must_equal("ufw --force reset")
+      Krikri::PluginHelpers::UfwCommand.state_command("enabled").must_equal("ufw -f enable")
+      Krikri::PluginHelpers::UfwCommand.state_command("disabled").must_equal("ufw -f disable")
+      Krikri::PluginHelpers::UfwCommand.state_command("reloaded").must_equal("ufw -f reload")
+      Krikri::PluginHelpers::UfwCommand.state_command("reset").must_equal("ufw -f reset")
     end
 
     it "returns nil for an unknown state" do
@@ -107,13 +107,67 @@ describe Krikri::PluginHelpers::UfwCommand do
     end
   end
 
-  describe ".changed_from_output?" do
-    it "is false when the output contains 'Skipping' (ufw's own no-op signal)" do
-      Krikri::PluginHelpers::UfwCommand.changed_from_output?("Skipping adding existing rule").must_equal(false)
+  # Real ufw.py's check-mode rule decision and its ufw_version() parse,
+  # ported from community.general's actual ufw.py source (including its
+  # inverted-named filter_line_that_not_start_with, which KEEPS the
+  # lines that start with the pattern - the module's own bug, and the
+  # behavior the pre/post tuple diff silently depends on).
+  describe ".check_mode_rule_changed?" do
+    it "is false when every dry-run line says Skipping" do
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?("Skipping adding existing rule\n", "", "any", "any").must_equal(false)
     end
 
-    it "is true otherwise" do
-      Krikri::PluginHelpers::UfwCommand.changed_from_output?("Rule added").must_equal(true)
+    it "is false when every dry-run line says Skipping, with a non-empty pre-rules grep" do
+      output = "Skipping adding existing rule\nSkipping adding existing rule (v6)\n"
+      pre = "### tuple allow tcp 8080 0.0.0.0/0 any - - -\n"
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?(output, pre, "any", "any").must_equal(false)
+    end
+
+    it "is true when the dry-run tuple lines differ from the pre rules" do
+      pre = "### tuple allow tcp 8080 0.0.0.0/0 any - - -\n"
+      output = "Rules updated\n### tuple allow tcp 8080 0.0.0.0/0 any - - -\n### tuple allow tcp 8081 0.0.0.0/0 any - - -\n"
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?(output, pre, "any", "any").must_equal(true)
+    end
+
+    it "is false when the dry-run tuple lines match the pre rules (no Skipping lines at all)" do
+      pre = "### tuple allow tcp 8080 0.0.0.0/0 any - - -\n"
+      output = "Rules updated\n### tuple allow tcp 8080 0.0.0.0/0 any - - -\n"
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?(output, pre, "any", "any").must_equal(false)
+    end
+
+    it "filters by ipv4 when the rule's from/to ip starts with an ipv4 literal" do
+      pre = "### tuple allow tcp 8080 10.0.0.0/8 any - - -\n### tuple allow tcp 8080 ::/0 any - - -\n"
+      output = "Rules updated\n### tuple allow tcp 8080 10.0.0.0/8 any - - -\n### tuple allow tcp 8080 ::/0 any - - -\n### tuple allow tcp 8081 10.0.0.5 any - - -\n"
+      # the v6 tuple lines are filtered out on both sides; the new ipv4
+      # tuple differs -> changed
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?(output, pre, "192.168.1.1", "any").must_equal(true)
+    end
+
+    it "ignores tuple differences outside the filtered family" do
+      pre = "### tuple allow tcp 8080 10.0.0.0/8 any - - -\n"
+      output = "Rules updated\n### tuple allow tcp 8080 10.0.0.0/8 any - - -\n### tuple allow tcp 8081 ::/0 any - - -\n"
+      Krikri::PluginHelpers::UfwCommand.check_mode_rule_changed?(output, pre, "10.0.0.1", "any").must_equal(false)
+    end
+  end
+
+  describe ".version_parses?" do
+    it "accepts a real `ufw --version` first line" do
+      Krikri::PluginHelpers::UfwCommand.version_parses?("ufw 0.36.2\n").must_equal(true)
+      Krikri::PluginHelpers::UfwCommand.version_parses?("ufw 0.36\n").must_equal(true)
+    end
+
+    it "rejects empty or non-ufw output (real's 'Failed to get ufw version.' failure)" do
+      Krikri::PluginHelpers::UfwCommand.version_parses?("").must_equal(false)
+      Krikri::PluginHelpers::UfwCommand.version_parses?("not ufw\n").must_equal(false)
+    end
+  end
+
+  describe ".splitlines_keepends" do
+    it "mirrors Python splitlines(keepends=True) for the shapes the dry-run diff consumes" do
+      Krikri::PluginHelpers::UfwCommand.splitlines_keepends("").must_equal([] of String)
+      Krikri::PluginHelpers::UfwCommand.splitlines_keepends("a\n").must_equal(["a\n"])
+      Krikri::PluginHelpers::UfwCommand.splitlines_keepends("a\nb").must_equal(["a\n", "b"])
+      Krikri::PluginHelpers::UfwCommand.splitlines_keepends("a\nb\n").must_equal(["a\n", "b\n"])
     end
   end
 

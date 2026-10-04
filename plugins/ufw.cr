@@ -163,12 +163,21 @@ module Krikri
     private def dispatch : PluginResult
       resolve_required_binaries
 
+      # Real ufw.py's main() captures the pre state and the rule tuples
+      # ONCE, right after get_bin_path and before the command loop - the
+      # first two entries of every probe's commands list
+      # (round-995002 captures: "ufw status verbose" then the
+      # `grep -h '^### tuple' ...` sweep, for state/default/logging/rule
+      # alike).
+      pre_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      pre_rules = current_rule_tuples
+
       if state = @params["state"]?
-        return run_state(state)
+        return run_state(state, pre_state, pre_rules)
       end
 
       if logging = @params["logging"]?
-        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), ufw_state_key: "logging", ufw_state_value: logging)
+        return run_simple(PluginHelpers::UfwCommand.logging_command(logging), pre_state, pre_rules, ufw_state_key: "logging", ufw_state_value: logging)
       end
 
       if default_value = @params["default"]?
@@ -179,11 +188,11 @@ module Krikri
         # rule is required" where real ansible rc=0'd.
         direction = @params["direction"]? || "incoming"
         cmd = PluginHelpers::UfwCommand.default_command(default_value, @params["direction"]?)
-        return run_simple(cmd, ufw_state_key: "default-#{direction}", ufw_state_value: default_value)
+        return run_simple(cmd, pre_state, pre_rules, ufw_state_key: "default-#{direction}", ufw_state_value: default_value)
       end
 
       if @params["rule"]?
-        return run_rule
+        return run_rule(pre_state, pre_rules)
       end
 
       PluginResult.new(changed: false, failed: true, msg: "one of state, logging, default, or rule is required")
@@ -306,92 +315,110 @@ module Krikri
       nil
     end
 
-    private def run_state(state : String) : PluginResult
+    private def run_state(state : String, pre_state : String, pre_rules : String) : PluginResult
       cmd = PluginHelpers::UfwCommand.state_command(state)
       unless cmd
         return PluginResult.new(changed: false, failed: true, msg: "state must be one of enabled, disabled, reloaded, reset")
       end
 
       # reloaded/reset always count as changed (real ufw.py: `if value in
-      # ['reloaded', 'reset']: changed = True` unconditionally); enabled/
-      # disabled only actually change anything if the firewall wasn't
-      # already in that state - matches ufw.py's own pre-state comparison
-      # (`ufw_enabled = pre_state.find(" active") != -1`, checked against
-      # both real and check-mode runs). Previously this used the state
-      # COMMAND's own exit code as "changed" - `ufw enable` exits 0
-      # whether or not anything actually changed (real ufw prints
-      # "Firewall is active and enabled on system startup" and exits 0
-      # even when already enabled), so `state: enabled`/`disabled`
-      # reported changed: true on every single run, never converging.
-      # Found benchmarking robertdebock.firewall's own "Enable ufw" task.
-      changed = if state == "reloaded" || state == "reset"
-                  true
-                else
-                  currently_enabled = ufw_currently_enabled?
-                  (state == "enabled" && !currently_enabled) || (state == "disabled" && currently_enabled)
-                end
+      # ['reloaded', 'reset']: changed = True` unconditionally - in CHECK
+      # mode too, it runs before the check-mode branch).
+      changed = state == "reloaded" || state == "reset"
 
       if true?(@params["_ansible_check_mode"]?)
+        # Real ufw.py's check-mode branch NEVER executes the state
+        # command - the commands list stops at the pre probes - and
+        # decides enabled/disabled changed from the PRE state's
+        # ` active` marker alone.
+        unless changed
+          ufw_enabled = pre_state.includes?(" active")
+          changed = (state == "disabled" && ufw_enabled) || (state == "enabled" && !ufw_enabled)
+        end
         return PluginResult.new(changed: changed, failed: false)
       end
 
       ufw_exec(ufw_bin_cmd(cmd))
       # Real ufw.py's tail ALWAYS snapshots `ufw status verbose` after the
       # action, and the exit's msg is that snapshot rstripped
-      # ("Status: inactive" in the round-992002 captures) - never the
-      # action command's own output.
+      # ("Status: inactive" in the round-995002 captures) - never the
+      # action command's own output. When nothing so far counts as
+      # changed, it also re-reads the rule tuples and diffs BOTH the
+      # state text and the tuples against the pre probes
+      # (`changed = (pre_state != post_state) or (pre_rules !=
+      # post_rules)`) - reloaded/reset skip that re-read because their
+      # changed is already true.
       post_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      unless changed
+        post_rules = current_rule_tuples
+        changed = pre_state != post_state || pre_rules != post_rules
+      end
       PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
     end
 
-    # "Status: active" (verbose) / a bare "active" appearing in `ufw
-    # status` - matches ufw.py's own `pre_state.find(" active") != -1`
-    # check (the leading space is deliberate there too: "active" alone
-    # would also match "inactive"). The probe goes through #ufw_exec,
-    # so a failing `ufw status verbose` (no CAP_NET_ADMIN, missing
-    # ufw...) fails the task instead of reading as "not enabled".
-    private def ufw_currently_enabled? : Bool
-      ufw_exec("#{@bins["ufw"]} status verbose").includes?(" active")
-    end
-
-    private def run_simple(cmd : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
+    private def run_simple(cmd : String, pre_state : String, pre_rules : String, ufw_state_key : String? = nil, ufw_state_value : String? = nil) : PluginResult
       if true?(@params["_ansible_check_mode"]?)
-        return PluginResult.new(changed: true, failed: false)
+        # Real ufw.py's check mode never executes the command; changed
+        # comes from the PRE state alone, per command type:
+        # - logging: from the "Logging:" line - "off" -> anything is a
+        #   change, and a requested level != the current level is a
+        #   change even though `ufw logging <same-level>` no-ops;
+        # - default: from the "Default: ... (incoming), ... (outgoing),
+        #   ... (routed)" line - no extract at all means changed, and a
+        #   current direction value that is neither the requested value
+        #   nor "disabled" means changed.
+        changed = if ufw_state_key == "logging" && (value = ufw_state_value)
+                    logging_changed?(true, value, pre_state)
+                  elsif ufw_state_key && ufw_state_value
+                    default_check_mode_changed?(pre_state, ufw_state_value, @params["direction"]?)
+                  else
+                    false
+                  end
+        return PluginResult.new(changed: changed, failed: false)
       end
 
       # Real community.general.ufw computes `changed` differently per
       # command type (verified against the module's own source):
-      # - default: pre vs post `ufw status verbose` Default-line diff;
-      # - logging: from the PRE state alone - "Logging: off" -> anything
-      #   non-off is changed, and a requested level != the current level
-      #   is changed, even though `ufw logging <same-level>` no-ops.
+      # - logging: from the PRE state alone (see the check-mode branch);
+      # - default: NOT inside the loop at all - it stays false and the
+      #   tail's pre/post whole-state + rule-tuple diff decides it.
       # The earlier pre-check-skip and post-diff approaches each matched
       # only one of the two (Oefenweb.ufw round 196: warm changed=4 vs 0,
       # then cold logging changed=0 vs real 1).
-      pre_status = ufw_exec("#{@bins["ufw"]} status verbose")
+      changed = if ufw_state_key == "logging" && (value = ufw_state_value)
+                  logging_changed?(true, value, pre_state)
+                else
+                  false
+                end
 
       ufw_exec(ufw_bin_cmd(cmd))
 
       # Real ufw.py's tail always snapshots `ufw status verbose` after the
-      # action - it feeds the default-policy changed diff AND is the
-      # msg=post_state.rstrip() exit value.
-      post_status = ufw_exec("#{@bins["ufw"]} status verbose")
+      # action - it is the msg=post_state.rstrip() exit value, and when
+      # nothing so far counts as changed it also re-reads the rule tuples
+      # and diffs both against the pre probes.
+      post_state = ufw_exec("#{@bins["ufw"]} status verbose")
+      unless changed
+        post_rules = current_rule_tuples
+        changed = pre_state != post_state || pre_rules != post_rules
+      end
 
-      changed = compute_changed(true, ufw_state_key, ufw_state_value, pre_status, post_status)
-
-      PluginResult.new(changed: changed, failed: false, msg: post_status.rstrip)
+      PluginResult.new(changed: changed, failed: false, msg: post_state.rstrip)
     end
 
-    private def compute_changed(ran_ok : Bool, ufw_state_key : String?, ufw_state_value : String?, pre_status : String, post_status : String) : Bool
-      if ufw_state_key == "logging" && (value = ufw_state_value)
-        logging_changed?(ran_ok, value, pre_status)
-      elsif ufw_state_key
-        ran_ok &&
-          extract_status_fragment(pre_status, ufw_state_key) !=
-            extract_status_fragment(post_status, ufw_state_key)
-      else
-        ran_ok
-      end
+    # Real ufw.py's check-mode branch for `default:`: the Default line
+    # regex over the PRE state; a missing line means changed, and the
+    # current value for the requested direction counts as unchanged only
+    # when it equals the requested value or is "disabled".
+    private def default_check_mode_changed?(pre_state : String, value : String, direction : String?) : Bool
+      m = /Default: (deny|allow|reject) \(incoming\), (deny|allow|reject) \(outgoing\), (deny|allow|reject|disabled) \(routed\)/.match(pre_state)
+      return true unless m
+      current = case direction || "incoming"
+                when "outgoing" then m[2]
+                when "routed"   then m[3]
+                else                 m[1]
+                end
+      !(current == value || current == "disabled")
     end
 
     private def logging_changed?(ran_ok : Bool, value : String, pre_status : String) : Bool
@@ -411,27 +438,29 @@ module Krikri
       end
     end
 
-    # Returns the status line relevant to *key* ("Default: ..." for a
-    # default-<direction> key, "Logging: ..." for logging), or "" when
-    # absent (e.g. "Status: inactive" has no Default line at all).
-    private def extract_status_fragment(status : String, key : String) : String
-      status.each_line do |line|
-        if key.starts_with?("default-") && line.includes?("Default:")
-          return line.strip
-        elsif key == "logging" && line.includes?("Logging:")
-          return line.strip
-        end
-      end
-      ""
-    end
-
     # The rule files real community.general greps for its `### tuple`
     # lines - the authoritative record of what ufw actually holds, and
     # the only thing that distinguishes "re-applied an identical rule"
     # from "changed one".
-    private def run_rule : PluginResult
+    private def run_rule(pre_state : String, pre_rules : String) : PluginResult
       check_mode = true?(@params["_ansible_check_mode"]?)
       cmd = PluginHelpers::UfwCommand.rule_command(resolved_insert_params, dry_run: check_mode)
+
+      # Real ufw.py's rule branch calls ufw_version() before running the
+      # rule command - the `ufw --version` probe (it feeds the
+      # comment-support version gate, and it is recorded in commands
+      # like every other invocation). A non-parsing `ufw --version`
+      # output fails the module with real's own wording.
+      version_out = ufw_exec("#{@bins["ufw"]} --version")
+      unless PluginHelpers::UfwCommand.version_parses?(version_out)
+        # Real ufw_version()'s own failure: fail_json(msg="Failed to get
+        # ufw version.", rc=0, out=out) - kwargs first, then failed/msg,
+        # changed backfilled last.
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Failed to get ufw version.",
+          rc: 0, out: version_out,
+          key_order: ["rc", "out", "failed", "msg"])
+      end
 
       # Real community.general does NOT read `changed` out of the ufw
       # command's own output for a rule: in normal mode it snapshots
@@ -451,9 +480,6 @@ module Krikri
       # command loop unconditionally - the container oracle caught this
       # engine reporting a dry-run success where real failed the task on
       # the failing pre-status probe).
-      pre_state = ufw_exec("#{@bins["ufw"]} status verbose")
-      pre_rules = current_rule_tuples
-
       result = remote_exec(ufw_bin_cmd(cmd))
       @commands << ufw_bin_cmd(cmd)
       if result[:exit_code] != 0
@@ -461,7 +487,13 @@ module Krikri
       end
 
       if check_mode
-        changed = PluginHelpers::UfwCommand.changed_from_output?(result[:stdout])
+        # Real ufw.py's check-mode rule logic: when EVERY line of the
+        # dry-run output says "Skipping" nothing changes; otherwise the
+        # `### tuple` lines of the dry-run output are diffed against the
+        # pre rules (ipv4/ipv6-filtered when the rule addresses an ip
+        # literal of that family).
+        changed = PluginHelpers::UfwCommand.check_mode_rule_changed?(result[:stdout], pre_rules,
+          @params["from_ip"]? || "any", @params["to_ip"]? || "any")
         # Real ufw.py's check-mode exit_json carries NO msg - the dry-run
         # output only feeds changed:, never the result.
         PluginResult.new(changed: changed, failed: false)
@@ -477,10 +509,12 @@ module Krikri
     # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
     # `get_current_rules()`, verbatim including the file list and the
     # `-h` (no filename prefixes, so the comparison is over rule text
-    # alone). ignore_error=True there: a no-rules-yet grep exiting 1 is
-    # normal, not a failure.
+    # alone) - and WITHOUT a stderr redirect: real's captured commands
+    # list shows the bare grep, and its failure tolerance comes from
+    # ignore_error=True (a no-rules-yet grep exiting 1 is normal, not a
+    # failure).
     private def current_rule_tuples : String
-      ufw_exec("#{@bins["grep"]} -h '^### tuple' #{USER_RULES_FILES.join(' ')} 2>/dev/null", ignore_error: true)
+      ufw_exec("#{@bins["grep"]} -h '^### tuple' #{USER_RULES_FILES.join(' ')}", ignore_error: true)
     end
 
     # `insert_relative_to:` other than the default `zero` needs to query

@@ -108,7 +108,13 @@ describe "apt plugin result key order" do
     result = PluginSpecHelper.run("apt", {"name" => "krikri-not-a-package-xyz", "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
-    result.as_h.keys.must_equal(["changed", "msg", "cache_updated"])
+    # Real apt.py's remove() exits from INSIDE itself with a bare
+    # exit_json(changed=False) when no package needs removing, so neither
+    # msg nor the cache keys main() would otherwise assign onto the
+    # retvals ever land on the result. Live-verified against
+    # ansible-core 2.19.11: the registered result is {"changed": false}
+    # plus the controller's own `failed` backfill.
+    result.as_h.keys.must_equal(["changed"])
   end
 
   it "serializes a check-mode cache-update claim in real's cache-keys order" do

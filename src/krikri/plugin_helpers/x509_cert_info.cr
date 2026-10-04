@@ -25,10 +25,18 @@ module Krikri
   # implemented - see parse_extensions_by_oid - so openssl_csr_info's
   # result carries the full real key set.
   module X509CertInfo
-    # hashlib.algorithms_guaranteed minus the two SHAKE XOFs, which
-    # OpenSSL exposes only with a caller-chosen output length and
-    # Crystal's Digest does not surface - everything else is emitted
-    # under the real module's Python algorithm names.
+    # hashlib.algorithms_guaranteed - ALL of it, including the two SHAKE
+    # XOFs: the real module emits them too (its bare hexdigest() call
+    # raises TypeError on the XOFs and falls back to hexdigest(32), i.e.
+    # 32 BYTES for both shake_128 and shake_256). Crystal's
+    # OpenSSL::Digest cannot finalize an XOF (EVP_DigestFinal_ex has no
+    # XOF length knob - live-verified: it errors on both), so the SHAKE
+    # pair goes through the `openssl dgst -shakeN -xoflen 32` CLI
+    # instead (OpenSSL 3.0+, jammy's 3.0.2 included). On an older
+    # openssl the CLI call fails and the two entries are omitted - the
+    # same graceful degradation the hash loop's rescue already applies.
+    # Everything else is emitted under the real module's Python
+    # algorithm names.
     FINGERPRINT_ALGORITHMS = {
       "md5"      => "md5",
       "sha1"     => "sha1",
@@ -42,6 +50,14 @@ module Krikri
       "sha3_512" => "sha3-512",
       "blake2b"  => "blake2b512",
       "blake2s"  => "blake2s256",
+    }
+
+    # The two SHAKE XOFs under their real-module (hashlib) names. The
+    # digest length is fixed at 32 bytes - the real module's
+    # `hexdigest(32)` fallback, not the XOF's nominal block size.
+    SHAKE_ALGORITHMS = {
+      "shake_128" => "shake128",
+      "shake_256" => "shake256",
     }
 
     # A value that fits Int64 stays a JSON number (matching the real
@@ -89,9 +105,25 @@ module Krikri
         hex = OpenSSL::Digest.new(ossl_name).update(data).final.hexstring
         result[py_name] = JSON::Any.new(hex.chars.each_slice(2).map(&.join).join(":"))
       end
+      SHAKE_ALGORITHMS.each do |py_name, ossl_name|
+        hex = shake_hexstring(ossl_name, data)
+        result[py_name] = JSON::Any.new(hex.chars.each_slice(2).map(&.join).join(":")) if hex
+      end
       result
     rescue
       {} of String => JSON::Any
+    end
+
+    # `openssl dgst -shakeN -xoflen 32 -hex` over the raw bytes: the
+    # output line's last "="-separated field is the hex digest. nil when
+    # the local openssl predates the XOF flags (pre-3.0).
+    private def self.shake_hexstring(ossl_name : String, data : Bytes) : String?
+      stdout_io = IO::Memory.new
+      status = Process.run("openssl", ["dgst", "-#{ossl_name}", "-xoflen", "32", "-hex"],
+        input: IO::Memory.new(data), output: stdout_io, error: IO::Memory.new)
+      return nil unless status.success?
+      hex = stdout_io.to_s.split("=").last?.to_s.strip
+      hex.empty? ? nil : hex
     end
 
     def self.fingerprints_any(data : Bytes) : JSON::Any

@@ -139,6 +139,7 @@ module Krikri
     # tri-state `install_recommends` stays nil when unset so the OS
     # default (normally install-recommends=yes) applies untouched.
     @dpkg_options = "force-confdef,force-confold"
+    @apt_get_bin : String? = nil
     @policy_rc_d : Int32? = nil
     @purge = false
     @force = false
@@ -529,10 +530,18 @@ module Krikri
         # configuration files"). `apt-get clean` is the exception: real
         # Ansible's aptclean() runs the bare command with no options at
         # all, so it stays bare here.
-        cleanup_flags = [expand_dpkg_options, (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil)].compact.join(" ")
+        # Real Ansible's main() builds its `dpkg_options` ONCE - the
+        # expanded list PLUS the lock-timeout override - and passes that
+        # same value to cleanup(), install(), remove() and upgrade()
+        # alike, so the lock timeout rides along on the cleanup command
+        # too (live-verified against ansible-core 2.19.11: `apt-get -y
+        # -o Dpkg::Options::=--force-confdef -o
+        # Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60
+        # --purge --force-yes autoremove`).
+        cleanup_flags = [real_dpkg_options(lock_timeout), (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil)].compact.join(" ")
         {
-          {autoremove, "apt-get -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
-          {autoclean, "apt-get -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
+          {autoremove, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
+          {autoclean, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
           {clean, "apt-get clean", "cache cleaned"},
         }.each do |(enabled, cmd, label)|
           next unless enabled
@@ -595,48 +604,57 @@ module Krikri
       # through via the `stdout:` kwarg the same way the package-install
       # path below already does.
       upgrade_stdout = ""
+      upgrade_stderr = ""
+      upgrade_zero_effect = false
       if upgrade
         dist = upgrade == "dist" || upgrade == "full"
-        # Same command shape real Ansible builds on its apt-get path
-        # (use_apt_get): DEBIAN_FRONTEND=noninteractive, the
-        # force-confdef/force-confold dpkg options (overridable via
-        # dpkg_options:), and `--with-new-pkgs` on the non-dist modes so
-        # new dependencies of upgraded packages install like real
-        # Ansible's `upgrade --with-new-pkgs`. Real Ansible's upgrade()
-        # also passes force/fail_on_autoremove/allow_unauthenticated/
-        # allow_downgrade and appends -t <default_release> - mirrored in
-        # apt_upgrade_flags/upgrade_trailing_flags below (upgrade() takes
-        # no only_upgrade/install_recommends/allow_change_held_packages,
-        # so those are deliberately absent here).
+        # Real upgrade()'s EXACT command format: "%s -y %s %s %s %s %s %s
+        # %s" over (apt_cmd_path, dpkg_options, force_yes,
+        # fail_on_autoremove, allow_unauthenticated, allow_downgrade,
+        # check_arg, upgrade_command) - the empty flag fields KEEP their
+        # separators, and upgrade_command itself carries a trailing space
+        # whenever autoremove is unset ("dist-upgrade " / "upgrade
+        # --with-new-pkgs "). That exact string is what real's failure
+        # msg quotes ("'%s %s' failed: %s" over APT_GET_CMD and
+        # upgrade_command), so the spacing is load-bearing for wording
+        # parity, not cosmetics. Like install(), the command RUNS in
+        # check mode too - with --simulate - and its output is the
+        # registered stdout (round-99500x apt_check_upgrade capture).
         subcmd = dist ? "dist-upgrade" : "upgrade --with-new-pkgs"
-        auto_remove = autoremove ? " --auto-remove" : ""
-        cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options}#{apt_upgrade_flags} #{subcmd}#{auto_remove}#{upgrade_trailing_flags}".squeeze(' ')
+        upgrade_command = "#{subcmd} #{autoremove ? "--auto-remove" : ""}"
+        cmd = "#{apt_get_bin} -y #{real_dpkg_options(lock_timeout)} #{@force ? "--force-yes" : ""} #{@fail_on_autoremove ? "--no-remove" : ""} #{@allow_unauthenticated ? "--allow-unauthenticated" : ""} #{@allow_downgrade ? "--allow-downgrades" : ""} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
+        cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
 
-        if @check_mode
-          messages << "Would run: #{cmd}"
-          changed = true
-        else
-          # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
-          # wrap with lock_timeout retry (same rationale as the
-          # autoremove/autoclean wrap above), inside the same
-          # policy-rc.d lifecycle real Ansible's upgrade() uses.
-          result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
-          if result[:exit_code] != 0
-            return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
-          end
-
-          upgrade_stdout = result[:stdout]
-          # Real Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
-          # newly installed, 0 to remove" with a LEADING newline. The
-          # previous check here omitted the newline, so any summary
-          # whose upgraded-count ends in 0 ("10 upgraded, 0 newly
-          # installed, 0 to remove ...") matched the zero-string at
-          # offset 1 and falsely reported a no-op upgrade.
-          unless result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
-            changed = true
-          end
-          messages << result[:stdout]
+        # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
+        # wrap with lock_timeout retry (same rationale as the
+        # autoremove/autoclean wrap above), inside the same
+        # policy-rc.d lifecycle real Ansible's upgrade() uses.
+        result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}", lock_timeout, ->remote_exec(String)) }
+        if result[:exit_code] != 0
+          # Real upgrade() failure: fail_json(msg="'%s %s' failed: %s"
+          # % (apt_cmd, upgrade_command, err), stdout=out, rc=rc) - NO
+          # stderr key at all (round-99500x capture).
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "'#{apt_get_bin} #{upgrade_command}' failed: #{result[:stderr]}",
+            stdout: result[:stdout],
+            rc: result[:exit_code],
+            key_order: ["stdout", "rc", "failed", "msg"]
+          )
         end
+
+        upgrade_stdout = result[:stdout]
+        upgrade_stderr = result[:stderr]
+        # Real Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
+        # newly installed, 0 to remove" with a LEADING newline. The
+        # previous check here omitted the newline, so any summary
+        # whose upgraded-count ends in 0 ("10 upgraded, 0 newly
+        # installed, 0 to remove ...") matched the zero-string at
+        # offset 1 and falsely reported a no-op upgrade.
+        upgrade_zero_effect = result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
+        changed = !upgrade_zero_effect
+        messages << result[:stdout]
       end
 
       # `deb:` - install a local .deb file (or a URL, downloaded first),
@@ -673,15 +691,30 @@ module Krikri
           )
         elsif update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
-          # Real apt.py: an upgrade requested flows through upgrade()'s
-          # msg/stdout/stderr/diff shape (live-verified against real
-          # 2.19.11).
+          if upgrade_requested
+            # Real upgrade()'s two success exits (round-99500x captures
+            # apt_check_upgrade / apt_check_upgrade_zero): the
+            # APT_GET_ZERO no-effect exit is exit_json(changed=False,
+            # msg=out, stdout=out, stderr=err) with NO diff key at all;
+            # anything else is exit_json(changed=True, msg=out,
+            # stdout=out, stderr=err, diff=diff).
+            exit_keys = upgrade_zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
+            return PluginResult.new(
+              changed: changed,
+              failed: false,
+              msg: msg,
+              stdout: upgrade_stdout,
+              stderr: upgrade_stderr,
+              diff: upgrade_zero_effect ? nil : apt_install_diff(upgrade_stdout),
+              key_order: exit_keys
+            )
+          end
           return PluginResult.new(
             changed: changed,
             failed: false,
             msg: msg,
             stdout: upgrade_stdout,
-            key_order: upgrade_requested ? ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"] : ["changed", "cache_updated", "cache_update_time"]
+            key_order: ["changed", "cache_updated", "cache_update_time"]
           )
         else
           # Bookworm's apt.py (the harness reference) has NO
@@ -729,15 +762,30 @@ module Krikri
           )
         elsif update_cache || has_cache_valid_time || autoremove || autoclean || clean || upgrade
           msg = messages.empty? ? "Cache up to date" : messages.join(", ")
-          # Real apt.py: an upgrade requested flows through upgrade()'s
-          # msg/stdout/stderr/diff shape (live-verified against real
-          # 2.19.11).
+          if upgrade_requested
+            # Real upgrade()'s two success exits (round-99500x captures
+            # apt_check_upgrade / apt_check_upgrade_zero): the
+            # APT_GET_ZERO no-effect exit is exit_json(changed=False,
+            # msg=out, stdout=out, stderr=err) with NO diff key at all;
+            # anything else is exit_json(changed=True, msg=out,
+            # stdout=out, stderr=err, diff=diff).
+            exit_keys = upgrade_zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
+            return PluginResult.new(
+              changed: changed,
+              failed: false,
+              msg: msg,
+              stdout: upgrade_stdout,
+              stderr: upgrade_stderr,
+              diff: upgrade_zero_effect ? nil : apt_install_diff(upgrade_stdout),
+              key_order: exit_keys
+            )
+          end
           return PluginResult.new(
             changed: changed,
             failed: false,
             msg: msg,
             stdout: upgrade_stdout,
-            key_order: upgrade_requested ? ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"] : ["changed", "cache_updated", "cache_update_time"]
+            key_order: ["changed", "cache_updated", "cache_update_time"]
           )
         else
           # Same no-name-ok behavior for the empty-name-list case (see
@@ -769,7 +817,7 @@ module Krikri
       when "present"
         handle_install(packages, messages, false, lock_timeout)
       when "absent"
-        handle_remove(packages, messages, false, lock_timeout)
+        handle_remove(packages, lock_timeout)
       when "latest"
         # `name: "*"` is real Ansible's apt.py spelling for "upgrade
         # everything installed" (its own `all_installed = '*' in
@@ -878,19 +926,40 @@ module Krikri
       idx ? {pkg[0...idx], pkg[(idx + 1)..]} : {pkg, nil}
     end
 
+    # Real install()'s spec construction for one package: a pinned spec
+    # keeps its pin, a plain name gets the resolved candidate version
+    # pinned on ("tree" -> "tree=2.0.2-1"), and a purely virtual name
+    # (Candidate: (none)) stays bare - real's version_installable=True
+    # path. Wildcard pins keep their raw pattern (real resolves them
+    # through package_best_match's fnmatch; the raw pin is the same
+    # string for the exact-pin common case).
+    private def install_spec(pkg : String, candidates : Hash(String, String?)) : String
+      base_name, pinned_version = split_name_version(pkg)
+      version = pinned_version || candidates[base_name]?
+      version ? "#{base_name}=#{version}" : base_name
+    end
+
     # Real install()'s per-spec candidate probe: does this package name
-    # exist in the apt cache at all? Real does the lookup in-process
-    # (python-apt's cache[pkgname] + get_providing_packages for virtual
-    # names) with NO apt-get invocation at all, so `apt-cache policy` is
-    # the CLI stand-in. The stanza's Candidate: line is the tell: an
-    # unknown name prints no stanza at all, while a known name carries
-    # one - "Candidate: <version>" for a real package, "Candidate:
-    # (none)" for a purely virtual one, the same let-apt-get-sort-it-out
-    # treatment real gives virtual names (package_status returns
-    # version_installable=True for them).
-    private def package_resolvable?(name : String) : Bool
+    # exist in the apt cache at all, and what candidate version does it
+    # resolve to? Real does the lookup in-process (python-apt's
+    # cache[pkgname] + get_providing_packages for virtual names) with NO
+    # apt-get invocation at all, so `apt-cache policy` is the CLI
+    # stand-in. The stanza's Candidate: line is the tell: an unknown
+    # name prints no stanza at all (resolvable: false), a known real
+    # package carries "Candidate: <version>", and a purely virtual one
+    # "Candidate: (none)" (resolvable: true, version nil - the same
+    # let-apt-get-sort-it-out treatment real gives virtual names).
+    private def apt_candidate(name : String) : {Bool, String?}
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)} 2>/dev/null")
-      probe[:stdout].includes?("Candidate:")
+      return {false, nil} unless probe[:stdout].includes?("Candidate:")
+      probe[:stdout].each_line do |line|
+        stripped = line.strip
+        if stripped.starts_with?("Candidate:")
+          version = stripped.lchop("Candidate:").strip
+          return {true, version.empty? || version == "(none)" ? nil : version}
+        end
+      end
+      {true, nil}
     end
 
     # Real install()'s pinned-version probe: version_installable in
@@ -1012,6 +1081,32 @@ module Krikri
     # shared by the URL (downloaded temp path) and local-file cases so a
     # local deb: path never gains URL-only behavior.
     private def install_deb_file(path : String, lock_timeout : Int32) : PluginResult
+      # python-apt's DebPackage construction is the FIRST thing real
+      # install_deb does, and its SystemError text IS the registered
+      # failure msg ("Unable to install package: <e>" - round-99500x
+      # captures apt_fail_deb_missing/_corrupt/_dir):
+      #   - a missing file:  E:Could not open file <path> - open (2: No such file or directory)
+      #   - a directory:     E:Read error - read (21: Is a directory)
+      #   - a non-archive:   E:Invalid archive signature (the 8-byte ar
+      #     magic "!<arch>\n" is the first thing apt_pkg validates)
+      unless File.exists?(path)
+        return unable_to_install("E:Could not open file #{path} - open (2: No such file or directory)")
+      end
+      if File.directory?(path)
+        return unable_to_install("E:Read error - read (21: Is a directory)")
+      end
+      magic = Bytes.new(8)
+      begin
+        File.open(path, "r") { |io| io.read_fully(magic) }
+      rescue File::Error
+        # an unreadable file lets the metadata read below produce the
+        # failure, as before
+        magic = "!<arch>\n".to_slice
+      end
+      unless magic == "!<arch>\n".to_slice
+        return unable_to_install("E:Invalid archive signature")
+      end
+
       # Read the .deb's own control metadata to find its real package
       # name/version, the same identity real Ansible's apt module checks
       # against dpkg's installed-package database for idempotency.
@@ -1037,34 +1132,90 @@ module Krikri
       if pkg_name && pkg_version
         check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
         if check_result[:exit_code] == 0 && installed_version(check_result[:stdout]) == pkg_version
-          # Real apt.py's install_deb path: exit_json(changed=...,
-          # stdout=out, stderr=err, diff=diff) on every deb success
-          # (live-verified against real 2.19.11; the controller appends
-          # stdout_lines/stderr_lines).
-          return PluginResult.new(changed: false, failed: false, msg: "#{pkg_name} already at version #{pkg_version}", key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+          # Real install_deb's already-installed exit: the deps install
+          # produced no retvals, so exit_json(changed=False,
+          # stdout='', stderr='', diff='') - diff is the EMPTY STRING,
+          # not a dict (round-99500x apt_real_deb_again capture), and
+          # there is no msg key.
+          return PluginResult.new(changed: false, failed: false,
+            stdout: "", stderr: "", diff: JSON::Any.new(""),
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
         end
       end
 
-      if @check_mode
-        return PluginResult.new(changed: true, failed: false, msg: "Would install #{path}", key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+      # Real install_deb's dpkg invocation: `dpkg <options> -i <debs>`
+      # with options = the raw dpkg_options: list as --flags, plus
+      # --simulate in check mode and --force-all under force:. The exact
+      # string is the registered failure msg ("<cmd> failed" - no err
+      # text, no quotes, no rc key; round-99500x apt_fail_deb_preinst
+      # capture), so it is built verbatim.
+      dpkg_flags = @dpkg_options.split(",").map(&.strip).reject(&.empty?)
+        .map { |opt| "--#{opt}" }.join(" ")
+      dpkg_flags += " --simulate" if @check_mode
+      dpkg_flags += " --force-all" if @force
+      dpkg_cmd = "dpkg #{dpkg_flags} -i #{path}"
+
+      # Check mode: real still RUNS the command - with --simulate - and
+      # registers its output (round-99500x apt_check_deb capture:
+      # changed=True, the simulate output as stdout, parse_diff ALWAYS
+      # applied here - install_deb has no m._diff guard, unlike
+      # install()/remove()).
+      deb_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive dpkg #{dpkg_flags} -i #{shell_single_quote(path)}", lock_timeout, ->remote_exec(String)) }
+      if deb_result[:exit_code] == 0 || @check_mode
+        unless deb_result[:exit_code] == 0
+          # a --simulate run failing is real's same "<cmd> failed" shape
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "#{dpkg_cmd} failed",
+            stdout: deb_result[:stdout],
+            stderr: deb_result[:stderr],
+            key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
+          )
+        end
+        # Real install_deb's success exit: exit_json(changed=True,
+        # stdout=stdout, stderr=stderr, diff=diff) - changed is
+        # unconditionally true once the dpkg command ran, and diff is
+        # parse_diff(out) with NO diff-mode guard.
+        return PluginResult.new(changed: true, failed: false,
+          stdout: deb_result[:stdout],
+          stderr: deb_result[:stderr],
+          diff: apt_install_diff(deb_result[:stdout]),
+          key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
       end
 
-      # `apt-get install` of a .deb contends for the dpkg lock - wrap
-      # with lock_timeout retry, matching real Ansible's behavior. The
-      # dpkg_options: options apply here too (real Ansible's install_deb
-      # passes them to its dependency resolution install(); its own
-      # dpkg -i invocation is below our apt-get-install abstraction),
-      # and the whole thing sits inside the policy-rc.d lifecycle.
-      install_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{shell_single_quote(path)}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
-      if install_result[:exit_code] != 0
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Failed to install #{path}: #{install_result[:stderr]}"
-        )
+      # dpkg -i cannot resolve the .deb's own dependencies - real
+      # pre-installs them through python-apt's missing_deps and its own
+      # install() first. Without a dependency resolver here, fall back
+      # to `apt-get install <deb>`, which resolves them (its output then
+      # differs from real's deps-then-dpkg concatenation - a known
+      # residual); when that also fails, real's dpkg failure shape is
+      # what a no-dependency .deb (e.g. a failing preinst script)
+      # produces, so it is what gets registered.
+      fallback_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{shell_single_quote(path)}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
+      if fallback_result[:exit_code] == 0
+        unless apt_summary_had_no_effect?(fallback_result[:stdout])
+          return PluginResult.new(changed: true, failed: false,
+            stdout: fallback_result[:stdout],
+            stderr: fallback_result[:stderr],
+            diff: @diff_mode ? apt_install_diff(fallback_result[:stdout]) : JSON.parse("{}"),
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+        end
       end
+      PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: "#{dpkg_cmd} failed",
+        stdout: deb_result[:stdout],
+        stderr: deb_result[:stderr],
+        key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
+      )
+    end
 
-      PluginResult.new(changed: true, failed: false, msg: "Installed #{pkg_name || path}", stdout: install_result[:stdout], key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+    # Real install_deb's DebPackage-construction failure: fail_json with
+    # the plain kwargs-first shape ([failed, msg, changed, exception]).
+    private def unable_to_install(detail : String) : PluginResult
+      PluginResult.new(changed: false, failed: true, msg: "Unable to install package: #{detail}")
     end
 
     # Handle installing packages. build_dep: is real apt.py's
@@ -1111,6 +1262,13 @@ module Krikri
       # and wrapped them in a "Failed to install ...: <stderr>" msg -
       # entirely different wording, and the same wrong-first-error for a
       # name LIST where real fails on the first unsatisfiable spec.
+      # Real install()'s spec construction resolves each plain name to
+      # its candidate version and pins it onto the apt-get spec
+      # ("'tree=2.0.2-1'"), so the resolved candidate is captured here
+      # alongside the resolvability check. A name whose Candidate: is
+      # "(none)" (purely virtual) stays bare, matching real's
+      # version_installable=True path.
+      candidates = {} of String => String?
       unless build_dep
         packages.each do |pkg|
           base_name, pinned_version = split_name_version(pkg)
@@ -1121,19 +1279,29 @@ module Krikri
           next if @only_upgrade && !installed_probe
           if pinned_version
             unless pinned_version_installable?(base_name, pinned_version)
+              # Real's failure travels through install()'s retvals into
+              # fail_json - main() appends the cache keys BEFORE the
+              # failed/msg pair lands (round-99500x apt_fail_candidate
+              # capture: [cache_updated, cache_update_time, failed, msg,
+              # changed]).
               return PluginResult.new(
                 changed: false,
                 failed: true,
                 msg: "no available installation candidate for #{pkg}",
-                cache_update_time: @cache_update_time
+                cache_update_time: @cache_update_time,
+                key_order: ["cache_updated", "cache_update_time", "failed", "msg"]
               )
             end
-          elsif !package_resolvable?(base_name)
-            return PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: "No package matching '#{base_name}' is available"
-            )
+          else
+            resolvable, candidate = apt_candidate(base_name)
+            unless resolvable
+              return PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "No package matching '#{base_name}' is available"
+              )
+            end
+            candidates[base_name] = candidate
           end
         end
       end
@@ -1157,65 +1325,101 @@ module Krikri
       end
       to_install = packages if build_dep
 
-      # Install packages that aren't already installed
+      # Install packages that aren't already installed - in CHECK MODE
+      # too: real apt.py builds the same command with `--simulate` in
+      # check_arg's slot, RUNS it, and registers its output as stdout
+      # (round-99500x apt_check_install capture: the simulate output,
+      # stderr "", diff {}, the cache keys, the *_lines pairs).
       unless to_install.empty?
-        if @check_mode
-          messages << "Would install #{to_install.join(", ")}"
-          changed = true
-        else
-          pkg_list = to_install.map { |pkg| shell_single_quote(pkg) }.join(" ")
-          # `apt-get install` of named packages contends for the dpkg lock
-          # - wrap with lock_timeout retry, matching real Ansible's
-          # `apt` module behavior. The DEBIAN_FRONTEND=noninteractive +
-          # force-confdef/force-confold flags carry over verbatim (the
-          # latter now overridable via dpkg_options:, defaulting to
-          # exactly this pair); the retry layer only governs lock
-          # contention and leaves the actual install behavior untouched.
-          # Also wraps real Ansible's implicit recovery from a corrupt/
-          # unparseable on-disk package index: on that specific failure
-          # (not a plain locate-miss on a valid cache) the whole install
-          # is retried once behind an implicit `apt-get update` (see
-          # apt_install_with_implicit_cache_retry).
-          install_cmd = if build_dep
-                          "DEBIAN_FRONTEND=noninteractive apt-get build-dep -y #{expand_dpkg_options} #{pkg_list}".squeeze(' ')
-                        else
-                          fixed_flag = fixed_state ? " --fix-broken" : ""
-                          "DEBIAN_FRONTEND=noninteractive apt-get install -y#{fixed_flag} #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
-                        end
-          install_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(install_cmd, lock_timeout, ->remote_exec(String)) }
-          install_stdout = install_result[:stdout]
-          install_stderr = install_result[:stderr]
-          if install_result[:exit_code] == 0
-            # A requested name can be a virtual package already satisfied
-            # by something else installed (`rubygems` - not a real
-            # package on modern Debian/Ubuntu at all, only a virtual one
-            # `ruby`'s own package Provides: - apt-get install then
-            # genuinely does nothing) - dpkg -l's own is-it-already-
-            # installed pre-check above only ever looks up the literal
-            # requested name, which a purely virtual package never has a
-            # real dpkg entry for, so it always fell through to "needs
-            # install" here. Real apt-get's own exit code is 0 either
-            # way, so trusting exit_code alone previously always
-            # reported changed: true even when apt's own summary line
-            # shows "0 upgraded, 0 newly installed" - real Ansible's own
-            # apt module (python-apt bindings, not this CLI-based
-            # shell-out) correctly resolves the Provides: relationship
-            # and reports changed: false here.
-            # changed stays false when apt's own summary shows nothing was
-            # actually installed (see the virtual-package comment above).
-            unless apt_summary_had_no_effect?(install_result[:stdout])
-              changed = true
-            end
-          else
-            return PluginResult.new(
-              changed: changed,
-              failed: true,
-              msg: "Failed to install #{to_install.join(", ")}: #{install_result[:stderr]}",
-              stdout: install_result[:stdout],
-              stderr: install_result[:stderr],
-              cache_update_time: @cache_update_time
-            )
+        # Real install()'s spec quoting: plain Python "'%s'" wrapping,
+        # no shell escaping - and each plain (unpinned) name carries its
+        # resolved candidate version ("'tree=2.0.2-1'"), captured above.
+        # build_dep passes every spec through verbatim (quoted, no
+        # version pin).
+        pkg_list = to_install.map { |pkg| naive_single_quote(build_dep ? pkg : install_spec(pkg, candidates)) }.join(" ")
+
+        # Real install()'s EXACT command format: "%s -y %s %s %s %s %s
+        # %s %s install %s" over (APT_GET_CMD, dpkg_options,
+        # only_upgrade, fixed, force_yes, autoremove, fail_on_autoremove,
+        # check_arg, packages) - the empty flag fields KEEP their
+        # separators, so the default shape carries the seven-space run
+        # before "install" that real's "'cmd' failed" msg shows
+        # (round-99500x apt_fail_install_dpkgopt capture). build_dep's
+        # own format has no autoremove slot ("%s -y %s %s %s %s %s %s
+        # build-dep %s").
+        flags = [
+          real_dpkg_options(lock_timeout),
+          @only_upgrade ? "--only-upgrade" : "",
+          fixed_state ? "--fix-broken" : "",
+          @force ? "--force-yes" : "",
+        ] of String
+        flags << (true?(@params["autoremove"]?) ? "--auto-remove" : "") unless build_dep
+        flags << (@fail_on_autoremove ? "--no-remove" : "")
+        flags << (@check_mode ? "--simulate" : "")
+        install_cmd = "#{apt_get_bin} -y #{flags.join(" ")} #{build_dep ? "build-dep" : "install"} #{pkg_list}#{apt_install_trailing_flags}"
+
+        # Real sets DEBIAN_FRONTEND (and DEBIAN_PRIORITY/LC_*) via
+        # run_command_environ_update, NOT in the command string - the
+        # env prefix here is execution plumbing only and never reaches a
+        # registered msg.
+        exec_cmd = "DEBIAN_FRONTEND=noninteractive #{install_cmd}"
+        # `apt-get install` of named packages contends for the dpkg lock
+        # - wrap with lock_timeout retry, matching real Ansible's
+        # `apt` module behavior. Also wraps real Ansible's implicit
+        # recovery from a corrupt/unparseable on-disk package index: on
+        # that specific failure (not a plain locate-miss on a valid
+        # cache) the whole install is retried once behind an implicit
+        # `apt-get update` - real only does that at cache-acquisition
+        # time, and check mode never runs the update, so check mode gets
+        # the plain lock retry only.
+        install_result = if @check_mode
+                           with_policy_rc_d { apt_with_lock_retry(exec_cmd, lock_timeout, ->remote_exec(String)) }
+                         else
+                           with_policy_rc_d { apt_install_with_implicit_cache_retry(exec_cmd, lock_timeout, ->remote_exec(String)) }
+                         end
+        install_stdout = install_result[:stdout]
+        install_stderr = install_result[:stderr]
+        if install_result[:exit_code] == 0
+          # A requested name can be a virtual package already satisfied
+          # by something else installed (`rubygems` - not a real
+          # package on modern Debian/Ubuntu at all, only a virtual one
+          # `ruby`'s own package Provides: - apt-get install then
+          # genuinely does nothing) - dpkg -l's own is-it-already-
+          # installed pre-check above only ever looks up the literal
+          # requested name, which a purely virtual package never has a
+          # real dpkg entry for, so it always fell through to "needs
+          # install" here. Real apt-get's own exit code is 0 either
+          # way, so trusting exit_code alone previously always
+          # reported changed: true even when apt's own summary line
+          # shows "0 upgraded, 0 newly installed" - real Ansible's own
+          # apt module (python-apt bindings, not this CLI-based
+          # shell-out) correctly resolves the Provides: relationship
+          # and reports changed: false here.
+          # changed stays false when apt's own summary shows nothing was
+          # actually installed (see the virtual-package comment above);
+          # check mode matches real's unconditional changed=True for a
+          # reached-apt-get install.
+          if @check_mode || !apt_summary_had_no_effect?(install_result[:stdout])
+            changed = true
           end
+        else
+          # Real install() failure: data = dict(msg="'%s' failed: %s" %
+          # (cmd, err), stdout=out, stderr=err, rc=rc), then main()
+          # appends cache_updated/cache_update_time, and fail_json puts
+          # the kwargs FIRST and failed/msg after them (round-99500x
+          # apt_fail_install_dpkgopt capture: [stdout, stderr, rc,
+          # cache_updated, cache_update_time, failed, msg, stdout_lines,
+          # stderr_lines]).
+          return PluginResult.new(
+            changed: changed,
+            failed: true,
+            msg: "'#{install_cmd}' failed: #{install_result[:stderr]}",
+            stdout: install_result[:stdout],
+            stderr: install_result[:stderr],
+            rc: install_result[:exit_code],
+            cache_update_time: @cache_update_time,
+            key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
+          )
         end
       end
 
@@ -1285,9 +1489,8 @@ module Krikri
     end
 
     # Handle removing packages
-    private def handle_remove(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
+    private def handle_remove(packages : Array(String), lock_timeout : Int32) : PluginResult
       to_remove = [] of String
-      already_absent = [] of String
 
       # Check which packages need removal - state: absent removes by
       # NAME regardless of any `=version` pin (matching real apt-get
@@ -1304,60 +1507,75 @@ module Krikri
         installed, _, abbrev = installed_status[base_name]?.try { |triple| triple } || {false, nil, ""}
         if installed || (@purge && !installed && abbrev.includes?('c'))
           to_remove << pkg
-        else
-          already_absent << pkg
         end
       end
 
-      # Remove packages that are installed
-      unless to_remove.empty?
-        if @check_mode
-          messages << "Would remove #{to_remove.join(", ")}"
-          changed = true
-        else
-          pkg_list = to_remove.join(" ")
-          # `apt-get remove` contends for the dpkg lock - wrap with
-          # lock_timeout retry, matching real Ansible's behavior. The
-          # purge:/force:/allow_change_held_packages: flags and the
-          # dpkg_options: options mirror real Ansible's remove() command
-          # construction (apt.py: `apt-get -q -y <dpkg_options> <purge>
-          # <force_yes> ... remove <packages>` with
-          # --allow-change-held-packages), and the whole thing sits
-          # inside the policy-rc.d lifecycle.
-          remove_flags = [expand_dpkg_options, (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil), (@allow_change_held_packages ? "--allow-change-held-packages" : nil)].compact.join(" ")
-          remove_cmd = "DEBIAN_FRONTEND=noninteractive apt-get remove -y#{remove_flags.empty? ? "" : " " + remove_flags} #{pkg_list}".squeeze(' ')
-          remove_result = with_policy_rc_d { apt_with_lock_retry(remove_cmd, lock_timeout, ->remote_exec(String)) }
-          if remove_result[:exit_code] == 0
-            messages << "Package#{to_remove.size > 1 ? "s" : ""} #{to_remove.join(", ")} removed"
-            changed = true
-          else
-            return PluginResult.new(
-              changed: changed,
-              failed: true,
-              msg: "Failed to remove #{to_remove.join(", ")}: #{remove_result[:stderr]}"
-            )
-          end
-        end
+      # Real remove(): an empty pkg_list exits with the BARE
+      # exit_json(changed=False) - no msg, no stdout, no cache keys
+      # (round-99500x apt_absent_noop capture: {"changed": false};
+      # re-verified live against ansible-core 2.19.11, whose registered
+      # result carries only `changed` plus the controller's own `failed`).
+      # That m.exit_json() fires from INSIDE remove(), before main() gets
+      # to assign cache_updated/cache_update_time onto the retvals - so
+      # the engine-wide backfill in #execute must be suppressed here too,
+      # or the key order comes out as [changed, cache_updated] where real
+      # emits [changed].
+      if to_remove.empty?
+        @omit_cache_updated = true
+        return PluginResult.new(changed: false, failed: false, key_order: ["changed"])
       end
 
-      # Report already absent packages
-      unless already_absent.empty?
-        messages << "Package#{already_absent.size > 1 ? "s" : ""} #{already_absent.join(", ")} not installed"
+      # Real remove()'s spec quoting: plain Python "'%s'" wrapping over
+      # the raw specs (pin included).
+      pkg_list = to_remove.map { |pkg| naive_single_quote(pkg) }.join(" ")
+
+      # Real remove()'s EXACT command format: "%s -q -y %s %s %s %s %s
+      # %s remove %s" over (APT_GET_CMD, dpkg_options, purge, force_yes,
+      # autoremove, check_arg, allow_change_held_packages, packages) -
+      # empty flag fields keep their separators, and the command RUNS in
+      # check mode too (with --simulate), its output becoming the
+      # registered stdout (round-99500x apt_check_remove capture). The
+      # `apt-get remove` lock retry and policy-rc.d lifecycle wrap mirror
+      # the install path.
+      flags = [
+        real_dpkg_options(lock_timeout),
+        @purge ? "--purge" : "",
+        @force ? "--force-yes" : "",
+        true?(@params["autoremove"]?) ? "--auto-remove" : "",
+        @check_mode ? "--simulate" : "",
+        @allow_change_held_packages ? "--allow-change-held-packages" : "",
+      ]
+      remove_cmd = "#{apt_get_bin} -q -y #{flags.join(" ")} remove #{pkg_list}"
+      remove_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{remove_cmd}", lock_timeout, ->remote_exec(String)) }
+      if remove_result[:exit_code] != 0
+        # Real remove() failure: fail_json(msg="'apt-get remove %s'
+        # failed: %s" % (packages, err), stdout=out, stderr=err, rc=rc)
+        # - the msg quotes "apt-get remove" plus the quoted package
+        # list, NOT the full command, and the remove path never gains
+        # the cache keys (round-99500x apt_fail_remove_dpkgopt capture:
+        # [stdout, stderr, rc, failed, msg, stdout_lines, stderr_lines,
+        # changed, exception]).
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "'apt-get remove #{pkg_list}' failed: #{remove_result[:stderr]}",
+          stdout: remove_result[:stdout],
+          stderr: remove_result[:stderr],
+          rc: remove_result[:exit_code],
+          key_order: ["stdout", "stderr", "rc", "failed", "msg", "stdout_lines", "stderr_lines"]
+        )
       end
 
-      msg = messages.empty? ? "No changes needed" : messages.join(", ")
-      if @check_mode && changed
-        msg += " (check mode)"
-      end
-
-      # Real apt.py's remove(): exit_json(changed=True, stdout=out,
-      # stderr=err, diff=diff) after a real removal, or the bare
-      # exit_json(changed=False) no-op (live-verified against real
-      # 2.19.11; the controller appends stdout_lines/stderr_lines).
+      # Real remove() success: exit_json(changed=True, stdout=out,
+      # stderr=err, diff=diff) - changed unconditionally true once
+      # apt-get ran, no msg key at all, diff only in diff mode
+      # (round-99500x captures).
       PluginResult.new(
-        changed: changed,
+        changed: true,
         failed: false,
-        msg: msg,
+        stdout: remove_result[:stdout],
+        stderr: remove_result[:stderr],
+        diff: @diff_mode ? apt_install_diff(remove_result[:stdout]) : JSON.parse("{}"),
         key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
       )
     end
@@ -1378,34 +1596,42 @@ module Krikri
     # reports a clean upgrade. Found via MonolithProjects.system_update's
     # own "Update Debian/Ubuntu system" task (round 601048).
     private def handle_wildcard_latest(messages : Array(String), autoremove : Bool, lock_timeout : Int32) : PluginResult
-      auto_remove = autoremove ? " --auto-remove" : ""
-      cmd = "DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options}#{apt_upgrade_flags} upgrade --with-new-pkgs#{auto_remove}#{upgrade_trailing_flags}".squeeze(' ')
+      # Same real-upgrade() command shape as the `upgrade:` block above
+      # (identical format string, `upgrade --with-new-pkgs <autoremove>`
+      # upgrade_command included).
+      upgrade_command = "upgrade --with-new-pkgs #{autoremove ? "--auto-remove" : ""}"
+      cmd = "#{apt_get_bin} -y #{real_dpkg_options(lock_timeout)} #{@force ? "--force-yes" : ""} #{@fail_on_autoremove ? "--no-remove" : ""} #{@allow_unauthenticated ? "--allow-unauthenticated" : ""} #{@allow_downgrade ? "--allow-downgrades" : ""} #{@check_mode ? "--simulate" : ""} #{upgrade_command}"
+      cmd += " -t #{naive_single_quote(@default_release.not_nil!)}" if @default_release
 
-      if @check_mode
-        messages << "Would run: #{cmd}"
-        return PluginResult.new(changed: true, failed: false, msg: messages.join(", "))
-      end
-
-      result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
+      result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}", lock_timeout, ->remote_exec(String)) }
       if result[:exit_code] != 0
-        return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "'#{apt_get_bin} #{upgrade_command}' failed: #{result[:stderr]}",
+          stdout: result[:stdout],
+          rc: result[:exit_code],
+          key_order: ["stdout", "rc", "failed", "msg"]
+        )
       end
 
       # Same APT_GET_ZERO screenscrape as the `upgrade:` command path
       # above - a leading-newline match so a summary whose upgraded
       # count ends in 0 ("10 upgraded, 0 newly installed, 0 to remove")
       # doesn't false-match at an inner offset.
-      was_upgraded = !result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
+      zero_effect = result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
       messages << result[:stdout]
       # Real apt.py's upgrade(): exit_json(changed=True, msg=out,
       # stdout=out, stderr=err, diff=diff) or its APT_GET_ZERO no-effect
-      # exit without diff (live-verified against real 2.19.11).
+      # exit without diff (round-99500x captures).
       PluginResult.new(
-        changed: was_upgraded,
+        changed: !zero_effect,
         failed: false,
         msg: messages.join(", "),
         stdout: result[:stdout],
-        key_order: ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
+        stderr: result[:stderr],
+        diff: zero_effect ? nil : apt_install_diff(result[:stdout]),
+        key_order: zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
       )
     end
 
@@ -1453,7 +1679,6 @@ module Krikri
           messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
         end
       else
-        pkg_list = packages.join(" ")
         # `--only-upgrade` skips a package that isn't ALREADY installed
         # entirely ("Skipping grafana, it is not installed and only
         # upgrades are requested" - exit 0, "0 upgraded, 0 newly
@@ -1475,7 +1700,32 @@ module Krikri
         # / --allow-* flags all mirror real Ansible's install() command
         # construction (state: latest flows through install() there
         # with upgrade=True), inside the policy-rc.d lifecycle.
-        latest_cmd = "DEBIAN_FRONTEND=noninteractive apt-get install -y #{expand_dpkg_options}#{apt_install_leading_flags} #{pkg_list}#{apt_install_trailing_flags}".squeeze(' ')
+        # Real's state=latest routes through the SAME install() as
+        # state=present (apt.py main(): `state_upgrade = True` for
+        # latest, then one install() call), so the command is real's
+        # install() shape verbatim - `-y <dpkg_options> <only_upgrade>
+        # install <specs><trailing>` with the lock-timeout-augmented
+        # dpkg_options and the resolved candidate pinned onto each spec
+        # (live-verified: `apt-get -y -o Dpkg::Options::=--force-confdef
+        # -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60
+        # install tree=2.0.2-1`). The plugin previously built its own
+        # `apt-get install -y <opts> <flags> <name>` line, which no real
+        # capture or apt.py format string produces.
+        spec_list = packages.map do |pkg|
+          base_name, pinned_version = split_name_version(pkg)
+          _resolvable, candidate = apt_candidate(base_name)
+          version = pinned_version || candidate
+          version ? "#{base_name}=#{version}" : base_name
+        end
+        pkg_list = spec_list.map { |spec| naive_single_quote(spec) }.join(" ")
+        flags = [
+          real_dpkg_options(lock_timeout),
+          @only_upgrade ? "--only-upgrade" : "",
+          @force ? "--force-yes" : "",
+          true?(@params["autoremove"]?) ? "--auto-remove" : "",
+          @fail_on_autoremove ? "--no-remove" : "",
+        ]
+        latest_cmd = "#{apt_get_bin} -y #{flags.join(" ")} install #{pkg_list}#{apt_install_trailing_flags}"
         upgrade_result = with_policy_rc_d { apt_install_with_implicit_cache_retry(latest_cmd, lock_timeout, ->remote_exec(String)) }
 
         # apt-get exits 100 when a package can't be located at all
@@ -1534,6 +1784,40 @@ module Krikri
     private def expand_dpkg_options : String
       @dpkg_options.split(",").map(&.strip).reject(&.empty?)
         .map { |opt| "-o Dpkg::Options::=--#{opt}" }.join(" ")
+    end
+
+    # Real main()'s dpkg_options value - expand_dpkg_options' output
+    # (with REAL's double-quoted -o values, not the unquoted form
+    # #expand_dpkg_options builds) plus the lock-timeout override it
+    # appends: `-o "Dpkg::Options::=--force-confdef" -o
+    # "Dpkg::Options::=--force-confold" -o DPkg::Lock::Timeout=60`. The
+    # exact text is quoted verbatim inside real's "'cmd' failed" failure
+    # msg, so the quoting is load-bearing.
+    private def real_dpkg_options(lock_timeout : Int32) : String
+      opts = @dpkg_options.split(",").map(&.strip).reject(&.empty?)
+        .map { |opt| "-o \"Dpkg::Options::=--#{opt}\"" }.join(" ")
+      "#{opts} -o DPkg::Lock::Timeout=#{lock_timeout}"
+    end
+
+    # Real apt.py quotes package specs and -t releases with plain Python
+    # "'%s'" formatting - no shell escaping at all. Reproduced verbatim,
+    # since the quoted text is part of the registered failure msgs.
+    private def naive_single_quote(value : String) : String
+      "'#{value}'"
+    end
+
+    # Real apt.py's APT_GET_CMD: get_bin_path("apt-get") - the RESOLVED
+    # absolute path ("/usr/bin/apt-get" in the captures), which is what
+    # the "'cmd' failed" failure msgs quote. Resolved through the remote
+    # PATH the same way; falls back to the bare name when not found (the
+    # /usr/bin/apt-get existence guard above already covered the
+    # non-Debian case).
+    private def apt_get_bin : String
+      @apt_get_bin ||= begin
+        probe = remote_exec("command -v apt-get")
+        path = probe[:stdout].strip
+        path.empty? ? "apt-get" : path
+      end
     end
 
     # The flags real Ansible's install() places BEFORE the package list
