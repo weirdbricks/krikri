@@ -55,6 +55,12 @@ module Krikri
         FileType.values
       end
 
+      # Task-oriented: violations belong to an enclosing task, so a
+      # `# noqa:` anywhere in that task's body suppresses them.
+      def task_scoped? : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         TaskWalker.each_task(file) do |task|
           next unless COMMAND_MODULES.includes?(task.bare_module)

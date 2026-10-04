@@ -20,6 +20,12 @@ module Krikri
         FileType.values
       end
 
+      # Task-oriented: violations belong to an enclosing task, so a
+      # `# noqa:` anywhere in that task's body suppresses them.
+      def task_scoped? : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         if TaskWalker.playbook_root?(file)
           list = file.root.as(YAML::Nodes::Sequence)

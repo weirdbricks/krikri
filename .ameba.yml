@@ -99,6 +99,7 @@ Metrics/CyclomaticComplexity:
   - plugins/assemble.cr
   - src/krikri/task_executor/executor_facts_register.cr
   - src/krikri_lint/rules/args_module.cr
+  - src/krikri_lint/yaml_tokens.cr
   - plugins/blockinfile.cr
   - plugins/command.cr
   - plugins/copy.cr

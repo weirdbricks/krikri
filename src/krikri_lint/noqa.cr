@@ -25,16 +25,27 @@ module Krikri
         map
       end
 
-      # task_line is the enclosing task's first line, when known.
-      def self.suppresses?(map : Hash(Int32, Entry), line : Int32, task_line : Int32?, rule_id : String) : Bool
+      # The enclosing task's line span, when known: a `# noqa:` anywhere
+      # between the task's first and last line suppresses its
+      # violations, matching upstream, which walks every comment in the
+      # task's YAML subtree.
+      def self.suppresses?(map : Hash(Int32, Entry), line : Int32,
+                           task_line : Int32?, rule_id : String,
+                           task_end_line : Int32? = nil) : Bool
         lines = [line]
         if tl = task_line
-          (tl..line).each { |number| lines << number }
+          last = task_end_line || line
+          (tl..last).each { |number| lines << number }
         end
+        family = rule_id.split("[").first
         lines.each do |line_number|
           if (entry = map[line_number]?)
             return true if entry.all
             return true if entry.ids.includes?(rule_id)
+            # A comment naming the rule family ("# noqa: run-once")
+            # suppresses every sub-tag it emits ("run-once[task]"),
+            # the same way upstream skips the whole rule up front.
+            return true if entry.ids.includes?(family)
           end
         end
         false

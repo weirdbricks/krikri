@@ -84,7 +84,8 @@ module Krikri
       # recursive yield-based implementation hits Crystal's recursive
       # block-inlining limit).
       def walk(node : YAML::Nodes::Node, &) : Nil
-        stack = [node]
+        stack = [] of YAML::Nodes::Node
+        stack << node
         while current = stack.pop?
           yield current
           case current

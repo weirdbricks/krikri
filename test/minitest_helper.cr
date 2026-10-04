@@ -285,6 +285,17 @@ ensure
   File.delete(path) if path
 end
 
+# Runner-level helper running an arbitrary set of rules, for noqa and
+# skip/warn-list behaviour that spans more than one rule.
+def run_rules_yaml(yaml : String, rules : Array(Krikri::Lint::Rule),
+                   config : Krikri::Lint::LintConfig = Krikri::Lint::LintConfig.new) : Array(Krikri::Lint::Violation)
+  path = File.tempname("lintrunner", ".yml")
+  File.write(path, yaml)
+  Krikri::Lint::Runner.new(Krikri::Lint::RuleRegistry.new(rules), config).run([path])
+ensure
+  File.delete(path) if path
+end
+
 # crystal spec's truthiness matchers have no minitest equivalent, so the
 # converter routes `should be_truthy` / `should be_falsey` through these.
 def truthy?(value) : Bool

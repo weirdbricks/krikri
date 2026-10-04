@@ -25,6 +25,21 @@ module Krikri::Lint
       Noqa.suppresses?(map, 2, 1, "fqcn[action-core]").must_equal(true)
       Noqa.suppresses?(map, 2, 1, "name[casing]").must_equal(false)
     end
+
+    it "suppresses on a comment below the violation line, inside the task" do
+      # Upstream walks every comment in a task's YAML subtree, so a
+      # noqa at the bottom of the body still covers the task.
+      map = Noqa.build_map("- name: t\n  command: ls\n  # noqa: no-changed-when\n")
+      Noqa.suppresses?(map, 1, 1, "no-changed-when", 3).must_equal(true)
+      Noqa.suppresses?(map, 1, 1, "risky-shell-pipe", 3).must_equal(false)
+    end
+
+    it "accepts the rule family as well as the full tag" do
+      map = Noqa.build_map("x  # noqa: run-once\n")
+      Noqa.suppresses?(map, 1, nil, "run-once[task]").must_equal(true)
+      Noqa.suppresses?(map, 1, nil, "run-once[play]").must_equal(true)
+      Noqa.suppresses?(map, 1, nil, "risky-octal").must_equal(false)
+    end
   end
 
   describe LintConfig do
@@ -74,6 +89,45 @@ module Krikri::Lint
       yaml = "---\n- hosts: all\n  tasks:\n    - apt: x\n"
       config = LintConfig.new(profile: "min", enable_list: ["fqcn[action-core]"])
       run_fqcn_yaml(yaml, config).size.must_equal(1)
+    end
+
+    it "drops a rule named by family in the skip_list" do
+      yaml = "---\n- hosts: all\n  tasks:\n    - apt: x\n"
+      config = LintConfig.new(skip_list: ["fqcn"])
+      run_fqcn_yaml(yaml, config).must_be_empty
+    end
+
+    it "warns a rule named by family in the warn_list" do
+      yaml = "---\n- hosts: all\n  tasks:\n    - apt: x\n"
+      config = LintConfig.new(warn_list: ["fqcn"])
+      v = run_fqcn_yaml(yaml, config)
+      v.size.must_equal(1)
+      v.first.warning?.must_equal(true)
+    end
+
+    it "suppresses a violation from a noqa anywhere in the task body" do
+      yaml = "---\n- hosts: all\n  tasks:\n    - name: t\n" \
+             "      ansible.builtin.command: echo hi # noqa: no-changed-when\n"
+      rules = [NoChangedWhenRule.new] of Rule
+      run_rules_yaml(yaml, rules).must_be_empty
+    end
+
+    it "still reports a different rule in the same task" do
+      yaml = "---\n- hosts: all\n  tasks:\n    - name: t\n" \
+             "      ansible.builtin.shell: echo hi | cat # noqa: risky-shell-pipe\n"
+      rules = [NoChangedWhenRule.new, RiskyShellPipeRule.new] of Rule
+      v = run_rules_yaml(yaml, rules)
+      v.map(&.rule_id).must_equal(["no-changed-when"])
+    end
+
+    it "does not let a task-scoped noqa silence a file-level rule" do
+      # yaml[line-length] is a matchyaml rule upstream: only a comment on
+      # the violation's own line counts, not one elsewhere in the file.
+      yaml = "---\n- hosts: all\n  tasks:\n    - name: t  # noqa: yaml[line-length]\n" \
+             "      ansible.builtin.command: echo " + ("x" * 200) + "\n"
+      rules = [YamlLineLengthRule.new] of Rule
+      v = run_rules_yaml(yaml, rules)
+      v.map(&.rule_id).must_equal(["yaml[line-length]"])
     end
   end
 end

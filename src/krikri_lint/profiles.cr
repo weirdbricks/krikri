@@ -34,6 +34,10 @@ module Krikri
         "yaml[key-duplicates]"          => "basic",
         "yaml[new-line-at-end-of-file]" => "basic",
         "yaml[octal-values]"            => "basic",
+        "yaml[commas]"                  => "basic",
+        "yaml[colons]"                  => "basic",
+        "partial-become"                => "basic",
+        "no-free-form"                  => "basic",
         "schema[meta]"                  => "basic",
       }
 

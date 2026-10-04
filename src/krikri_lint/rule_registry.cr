@@ -28,6 +28,8 @@ module Krikri
           YamlTruthyRule.new,
           YamlCommentsRule.new,
           YamlEmptyLinesRule.new,
+          YamlCommasRule.new,
+          YamlColonsRule.new,
           YamlHyphensRule.new,
           YamlIndentationRule.new,
           YamlKeyDuplicatesRule.new,
@@ -40,6 +42,8 @@ module Krikri
           PackageLatestRule.new,
           FqcnCanonicalRule.new,
           ArgsModuleRule.new,
+          PartialBecomeRule.new,
+          NoFreeFormRule.new,
         ])
       end
 

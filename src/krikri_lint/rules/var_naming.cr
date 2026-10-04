@@ -61,6 +61,12 @@ module Krikri
          FileType::VARS, FileType::DEFAULTS]
       end
 
+      # Task-oriented: violations belong to an enclosing task, so a
+      # `# noqa:` anywhere in that task's body suppresses them.
+      def task_scoped? : Bool
+        true
+      end
+
       def check(file : PositionedFile, violations : Array(Violation)) : Nil
         root = file.root || return
         if (mapping = root.as?(YAML::Nodes::Mapping)) &&
@@ -109,8 +115,14 @@ module Krikri
               end
             end
           end
-          if (reg = task.task_value("register")) && reg.matches?(/^[a-zA-Z_]/)
-            check_ident(violations, file, reg, line: task.line, column: 0,
+          if (entry = NodeUtil.entry(task.node, "register")) &&
+             (reg = NodeUtil.scalar_value(entry[1])) && reg.matches?(/^[a-zA-Z_]/)
+            # Upstream reports the task's first line but keeps the
+            # column the scalar itself carries (create_matcherror
+            # derives it from the value's source position, and only
+            # lineno is later overridden with task.line).
+            check_ident(violations, file, reg, line: task.line,
+              column: NodeUtil.column(entry[1]),
               source: "register", task_line: task.line,
               prefix: prefix, from_fqcn: from_fqcn)
           end

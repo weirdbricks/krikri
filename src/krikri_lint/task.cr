@@ -44,6 +44,39 @@ module Krikri
         NodeUtil.line(@node)
       end
 
+      # Last line belonging to this task, as a human reads it: the task's
+      # body runs until a blank line or a dedent back to its own
+      # indentation. Node end marks cannot be used - a scalar's end
+      # mark points at the *next* token, so neighbouring tasks would
+      # come out overlapping.
+      #
+      # Blank lines inside a block scalar belong to the task and do not
+      # end it; `covered` (see YamlText.scalar_continuation_lines) marks
+      # them.
+      def end_line(covered : Set(Int32)? = nil) : Int32
+        lines = YamlText.physical_lines(@file.path)
+        start = line
+        indent = indent_of(lines[start - 1]?)
+        last = start
+        idx = start + 1
+        while idx <= lines.size
+          text = lines[idx - 1]?
+          if text.nil? || text.strip.empty?
+            break if covered.nil? || !covered.includes?(idx)
+          elsif idx > start && indent_of(text) <= indent
+            break
+          end
+          last = idx
+          idx += 1
+        end
+        last
+      end
+
+      private def indent_of(text : String?) : Int32
+        return 0 unless text
+        text.size - text.lstrip.size
+      end
+
       def name : String?
         if (entry = NodeUtil.entry(@node, "name")) && (v = NodeUtil.scalar_value(entry[1]))
           v

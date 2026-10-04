@@ -11,6 +11,17 @@ module Krikri
         applies_to.includes?(file.file_type)
       end
 
+      # Whether this rule's violations belong to an enclosing task, and
+      # so are suppressed by a `# noqa:` appearing anywhere inside that
+      # task's body. Upstream separates these: matchtask results are
+      # filtered by the task's own skip list, while matchyaml results
+      # (the yaml[*] family, syntax-check) only honour a comment on the
+      # violation's own line. Rules that walk tasks (TaskWalker) are
+      # task-scoped; file-level rules are not.
+      def task_scoped? : Bool
+        false
+      end
+
       # Autofix support, mirroring upstream's TransformMixin: a rule
       # opts in by overriding fixable? (and carrying the "autofix" tag
       # like upstream does) and implementing fix. fix must only make
