@@ -1,0 +1,73 @@
+# Round 1100002 (atlantic_local kop_apt_fail) apt failure-path shapes,
+# verified against real ansible-core in the harness container. The real
+# side runs under the venv's ansible-core 2.19.13 (apt219 case prefix,
+# same venv the deb822/dpkg_selections cases use) because the pinned
+# shapes come from a 2.19.11 capture - bookworm's 2.14 apt.py differs in
+# warning handling. Three cases: a failed deb: (cache keys must be
+# absent), a no-name state=fixed ok (cache keys present,
+# cache_update_time = the lists/stamp mtime), and update_cache against a
+# bogus sources entry (python-apt's Cache.update() raises a BARE
+# FetchFailedException - empty reason - and fails after the retry
+# budget, while the CLI apt-get update exits 0 on the same failure, so
+# the failure must be detected from the W:/Err: output). Volatile values
+# (mtime epochs, retry sleep jitter) are printed as normalized flags.
+# The bogus source is dropped inside the case and removed in always:.
+# Prefix: AF.
+- hosts: all
+  # gather_facts MUST be on: with gather_facts: false the interpreter
+  # discovery runs lazily at the first module task and the controller
+  # attaches its discovered_interpreter_python ansible_facts + warning to
+  # those task results - engine-level noise unrelated to the apt shapes
+  # this case pins (the round-1100002 probe ran with facts gathered).
+  gather_facts: true
+
+  tasks:
+    - name: "AF1 install a nonexistent local deb (failure)"
+      ansible.builtin.apt:
+        deb: /var/tmp/kop-nonexistent-keyorder.deb
+        state: present
+      register: af1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AF1 full={{ af1 | to_json }}"
+
+    - name: "AF2 fix broken dependencies on a healthy system (ok)"
+      ansible.builtin.apt:
+        state: fixed
+      register: af2
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AF2 full={{ af2 | to_json | regex_replace('\"cache_update_time\": [0-9]+', '\"cache_update_time\": N') }}"
+
+    - name: "AF3 no-name state=absent stays bare (remove() exits early)"
+      ansible.builtin.apt:
+        state: absent
+      register: af3
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: "AF3 keys={{ af3.keys() | list | to_json }}"
+
+    - name: bogus source update + teardown block
+      block:
+        - name: "AF4 drop a bogus sources entry"
+          ansible.builtin.copy:
+            content: "deb https://kop-bogus.invalid/apt jammy main\n"
+            dest: /etc/apt/sources.list.d/kop-bogus.list
+            mode: "0644"
+
+        - name: "AF5 update the cache against the bogus sources entry (failure)"
+          ansible.builtin.apt:
+            update_cache: true
+            update_cache_retries: 2
+            update_cache_retry_max_delay: 4
+          register: af5
+          ignore_errors: true
+        - ansible.builtin.debug:
+            msg: "AF5 keys={{ af5.keys() | list | to_json }} failed={{ af5.failed }} changed={{ af5.changed }} msg={{ af5.msg }} warns={{ af5.warnings | length }} w0={{ af5.warnings[0] }} w1={{ af5.warnings[1] | regex_replace('[0-9]+', 'N') }} w2={{ af5.warnings[2] }} w3={{ af5.warnings[3] | regex_replace('[0-9]+', 'N') }}"
+
+      always:
+        - name: remove the bogus sources entry again
+          ansible.builtin.file:
+            path: /etc/apt/sources.list.d/kop-bogus.list
+            state: absent
+          ignore_errors: true

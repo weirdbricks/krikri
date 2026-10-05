@@ -438,25 +438,21 @@ module Krikri
             # regardless of mtime movement.
             pre_update_mtime = cache_mtime
             update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
-            if update_result[:exit_code] == 0
-              messages << "APT cache updated"
-              @cache_updated = cache_mtime != pre_update_mtime
-              @cache_update_time = cache_mtime
-            else
-              return PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to update apt cache: #{update_result[:stderr]}"
-              )
+            if failure = settle_update_cache_failure(update_result, update_cache_retries, update_cache_retry_max_delay)
+              return failure
             end
+            messages << "APT cache updated"
+            @cache_updated = cache_mtime != pre_update_mtime
+            @cache_update_time = cache_mtime
           else
             # Ansible's apt module wraps the cache update with
             # `update_cache_retries` + `update_cache_retry_max_delay`
-            # (defaults 5 and 12): retries on failure with exponential
-            # backoff, doubled each attempt, capped at the max delay. We
-            # approximate the same retry-on-lock-contention behavior;
-            # non-lock errors (broken repo, network failure, signature
-            # mismatch) still fail-fast on the first attempt.
+            # (defaults 5 and 12): dpkg-lock contention is retried by
+            # apt_get_update_with_retry above, and a fetch failure -
+            # python-apt's bare FetchFailedException, which the CLI's
+            # exit-0-but-W:-lines output maps to - goes through
+            # settle_update_cache_failure's own apt.py-shaped retry loop
+            # (warnings included) instead of failing fast.
             #
             # Ansible's own get_updated_cache_time() stats the same
             # update-success-stamp/lists-dir mtime BEFORE and AFTER
@@ -476,19 +472,14 @@ module Krikri
             # build): py reported `ok`, cr `changed`.
             pre_update_mtime = cache_mtime
             update_result = apt_get_update_with_retry("apt-get update", update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
-            if update_result[:exit_code] == 0
-              messages << "APT cache updated"
-              post_update_mtime = cache_mtime
-              changed = true if cache_update_is_sole_operation && post_update_mtime != pre_update_mtime
-              @cache_updated = post_update_mtime != pre_update_mtime
-              @cache_update_time = post_update_mtime
-            else
-              return PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to update apt cache: #{update_result[:stderr]}"
-              )
+            if failure = settle_update_cache_failure(update_result, update_cache_retries, update_cache_retry_max_delay)
+              return failure
             end
+            messages << "APT cache updated"
+            post_update_mtime = cache_mtime
+            changed = true if cache_update_is_sole_operation && post_update_mtime != pre_update_mtime
+            @cache_updated = post_update_mtime != pre_update_mtime
+            @cache_update_time = post_update_mtime
           end
         end
       end
@@ -670,6 +661,14 @@ module Krikri
       # though a real install target (`deb:`) was given.
       deb_param = @params["deb"]?
       if deb_param
+        # install_deb exits through its own fail_json/exit_json calls
+        # before main() ever assigns cache_updated/cache_update_time, so
+        # a deb: result carries neither key on ANY exit (the round-
+        # 1100002 kop_apt_fail apt_fail_deb capture: a failed deb: is
+        # [failed, msg, changed, exception], while the engine-wide
+        # backfill below was inserting cache_updated between msg and
+        # changed). Suppress the backfill for the whole deb path.
+        @omit_cache_updated = true
         return handle_deb(deb_param, messages, changed, lock_timeout)
       end
 
@@ -725,11 +724,27 @@ module Krikri
           # "Missing required parameter: name (unless using
           # update_cache)" failure was this engine's own invention.
           # Real apt.py: exit_json(changed=False) - the bare
-          # no-name/no-operations ok.
+          # no-name/no-operations ok. That bare ok comes from install()'s
+          # empty-spec retvals, so main() still assigns
+          # cache_updated/cache_update_time onto it for the
+          # install-family states ('latest', 'present', 'build-dep',
+          # 'fixed') - only state=absent's remove() exits inside its own
+          # function and stays bare (round-99500x apt_absent_noop;
+          # round 1100002's apt_fixed capture pins the cache-keyed shape:
+          # [changed, cache_updated, cache_update_time, failed]).
+          if state == "absent"
+            @omit_cache_updated = true
+            return PluginResult.new(
+              changed: false,
+              failed: false,
+              key_order: ["changed"]
+            )
+          end
           return PluginResult.new(
             changed: false,
             failed: false,
-            key_order: ["changed"]
+            cache_update_time: @cache_update_time,
+            key_order: ["changed", "cache_updated", "cache_update_time"]
           )
         end
       end
@@ -792,11 +807,22 @@ module Krikri
           # the branch above) - Ansible's install()/remove() no-ops
           # exit_json with nothing to say, not a "Nothing to do" msg.
           # Real apt.py: exit_json(changed=False) - the bare
-          # no-name/no-operations ok.
+          # no-name/no-operations ok, with the same state split as the
+          # branch above (install-family states gain the cache keys from
+          # main()'s retvals assignment, state=absent stays bare).
+          if state == "absent"
+            @omit_cache_updated = true
+            return PluginResult.new(
+              changed: false,
+              failed: false,
+              key_order: ["changed"]
+            )
+          end
           return PluginResult.new(
             changed: false,
             failed: false,
-            key_order: ["changed"]
+            cache_update_time: @cache_update_time,
+            key_order: ["changed", "cache_updated", "cache_update_time"]
           )
         end
       end
@@ -1932,6 +1958,47 @@ module Krikri
       else
         remote_exec("rm -f #{shell_single_quote(@policy_rc_d_path)}")[:exit_code] == 0
       end
+    end
+
+    # Shared tail of both cache-update branches (python3-apt present and
+    # the respawn-emulation fallback): routes an `apt-get update` result
+    # to the failure shape it maps to in real apt.py. A failed-fetch
+    # result (python-apt's bare FetchFailedException - the CLI's exit-0
+    # W:-lines output, or a nonzero exit that is not lock contention)
+    # goes through apt.py's own FetchFailedException retry loop and, once
+    # the update_cache_retries budget is exhausted, fails with its exact
+    # wording and the warn-pair warnings (round 1100002 kop_apt_fail
+    # apt_fail_bogus_source: krikri trusted the CLI's exit 0 and reported
+    # changed=true where Ansible fails). Lock-contention and other
+    # nonzero exits keep the previous "Failed to update apt cache:"
+    # shape. Returns nil when the update succeeded or was recovered by a
+    # retry attempt - the caller then proceeds to its normal post-update
+    # mtime bookkeeping.
+    private def settle_update_cache_failure(update_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), update_cache_retries : Int32, update_cache_retry_max_delay : Int32) : PluginResult?
+      fetch_failed = apt_fetch_failed?(update_result) &&
+                     (update_result[:exit_code] == 0 || !apt_lock_held?(update_result[:stderr]))
+      if fetch_failed
+        outcome = apt_fetch_failed_update_retry(update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
+        return nil if outcome[:recovered]
+        # a fail_json exit carries no cache keys (the retvals assignment
+        # in main() never runs) - suppress the engine-wide backfill
+        @omit_cache_updated = true
+        result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to update apt cache after #{update_cache_retries} retries: #{outcome[:warnings].empty? ? "unknown reason" : ""}",
+        )
+        result.extra["warnings"] = JSON.parse(outcome[:warnings].to_json) unless outcome[:warnings].empty?
+        return result
+      end
+      if update_result[:exit_code] != 0
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to update apt cache: #{update_result[:stderr]}"
+        )
+      end
+      nil
     end
 
     # Check if cache should be updated based on validity time

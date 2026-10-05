@@ -122,7 +122,7 @@ fi
 # krikri matches 2.16+, so dpkg_selections cases run under the same
 # venv's current ansible-playbook.
 DEB822_ANSIBLE=""
-if printf '%s\n' "${cases[@]}" | grep -qE '^(deb822|dpkg_selections)'; then
+if printf '%s\n' "${cases[@]}" | grep -qE '^(deb822|dpkg_selections|apt219)'; then
   log "installing venv ansible-core (>=2.15) for deb822/dpkg_selections cases (+ python3-debian for deb822)"
   podman exec "$NAME_A" bash -c "apt-get install -y -qq --no-install-recommends python3-venv python3-debian >/dev/null && python3 -m venv /opt/ansible215 && /opt/ansible215/bin/pip install -q ansible-core==2.19.13" \
     || { log "FATAL: venv ansible-core install failed"; exit 1; }
@@ -596,7 +596,7 @@ for case_file in "${cases[@]}"; do
   case_ansible="ansible-playbook"
   if [[ -n "$IPTABLES_ANSIBLE" && "$case_name" == iptables* ]]; then
     case_ansible="$IPTABLES_ANSIBLE"
-  elif [[ -n "$DEB822_ANSIBLE" && "$case_name" =~ ^(deb822|dpkg_selections) ]]; then
+  elif [[ -n "$DEB822_ANSIBLE" && "$case_name" =~ ^(deb822|dpkg_selections|apt219) ]]; then
     case_ansible="$DEB822_ANSIBLE"
   fi
   podman exec "$NAME_A" bash -c \

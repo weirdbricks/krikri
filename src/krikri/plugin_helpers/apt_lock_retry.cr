@@ -89,6 +89,61 @@ module Krikri
       result
     end
 
+    # python-apt's Cache.update() - what real apt.py's update_cache pass
+    # actually runs - raises a bare FetchFailedException() the moment ANY
+    # acquire item failed, while the CLI `apt-get update` this plugin
+    # shells out to treats that same partial failure as WARNING-level and
+    # still exits 0 (verified on jammy's apt 2.4: a sources.list.d entry
+    # pointing at an unresolvable host prints "W: Failed to fetch ..." /
+    # "W: Some index files failed to download." and exits 0 - even when it
+    # is the only configured source). Trusting the exit code alone made
+    # `update_cache: true` against a bogus repo report success where
+    # Ansible fails after its retries (round 1100002 kop_apt_fail
+    # apt_fail_bogus_source). The CLI-observable equivalent of
+    # python-apt's "res == failed" check is the failed-item markers apt
+    # itself prints: an `Err:` line per failed item plus the W: summary.
+    def apt_fetch_failed?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
+      combined = "#{result[:stdout]}#{result[:stderr]}"
+      combined.includes?("Err:") ||
+        combined.includes?("W: Failed to fetch") ||
+        combined.includes?("W: Some index files failed to download")
+    end
+
+    # apt.py's FetchFailedException retry loop verbatim: `for retry in
+    # range(update_cache_retries)` around cache.update(), exponential
+    # backoff (2**retry plus a random sub-second jitter, capped at
+    # update_cache_retry_max_delay plus jitter), one warn pair per failed
+    # attempt (the fail warn before the sleep, the sleeping warn after
+    # it). python-apt raises FetchFailedException() BARE - str() is the
+    # empty string - so both the warning's "due to <e>" and the final
+    # msg's reason come out EMPTY (round 1100002's py capture: "due to ,
+    # retrying" / "Failed to update apt cache after 5 retries: "); the
+    # 'unknown reason' fallback in apt.py's msg only fires when no
+    # attempt ever raised (update_cache_retries=0 leaves err == '').
+    # The caller only enters here after an attempt already failed, so
+    # iteration 0's "after 1 retries" warn refers to that attempt.
+    # Returns recovered: true as soon as an attempt succeeds, with the
+    # warnings emitted so far (they persist in the registered result
+    # exactly like module.warn() texts do in Ansible).
+    def apt_fetch_failed_update_retry(retries : Int32, retry_max_delay : Int32,
+                                      exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+      warnings = [] of String
+      recovered = false
+      retries.times do |attempt|
+        warnings << "Failed to update cache after #{attempt + 1} retries due to , retrying"
+        delay = 2.0 ** attempt + (rand(1000) / 1000.0)
+        delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
+        ::sleep(delay.seconds)
+        warnings << "Sleeping for #{delay.round.to_i} seconds, before attempting to refresh the cache again"
+        result = exec_remote.call("apt-get update")
+        if result[:exit_code] == 0 && !apt_fetch_failed?(result)
+          recovered = true
+          break
+        end
+      end
+      {recovered: recovered, warnings: warnings}
+    end
+
     # Detects the CLI-observable signature of a genuinely corrupt/
     # unparseable on-disk package index - NOT a plain "package doesn't
     # exist in an otherwise-valid cache" miss.
