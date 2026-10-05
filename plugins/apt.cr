@@ -991,17 +991,42 @@ module Krikri
     # Real install()'s pinned-version probe: version_installable in
     # package_status() is "does this exact version exist in the apt
     # cache" - apt-cache policy's own version table is the CLI-equivalent
-    # source. Wildcard pins (name=1.19*) are left to apt-get itself (real
-    # fnmatches them, but any pin that matches nothing fails in apt-get
-    # the same way).
+    # source. A wildcard pin (name=16.*) is fnmatched against every
+    # version in that table, like real's fnmatch over the cache's
+    # versions (a wildcard that matches nothing fails with the same
+    # "no available installation candidate" msg); it used to be rejected
+    # outright, failing every `nodejs=16.*`-style pin on a host where the
+    # candidate existed.
     private def pinned_version_installable?(name : String, version : String) : Bool
-      return false if version.includes?('*')
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)}")
-      probe[:exit_code] == 0 && probe[:stdout].split('\n').any? do |line|
+      return false unless probe[:exit_code] == 0
+      probe[:stdout].split('\n').any? do |line|
         tokens = line.strip.split
         tokens.delete("***")
-        tokens.first? == version
+        next false unless first = tokens.first?
+        version_pin_matches?(version, first)
       end
+    end
+
+    # fnmatch.fnmatch semantics for an apt version pin: `*`, `?` and
+    # `[...]` classes; a pin without a wildcard is an exact comparison.
+    private def version_pin_matches?(pin : String, candidate : String) : Bool
+      return pin == candidate unless pin.matches?(/[*?\[]/)
+      regex = String.build do |io|
+        io << "\\A"
+        pin.each_char do |char|
+          case char
+          when '*' then io << ".*"
+          when '?' then io << '.'
+          when '[', ']' then io << char
+          else          io << Regex.escape(char.to_s)
+          end
+        end
+        io << "\\z"
+      end
+      Regex.new(regex).matches?(candidate)
+    rescue Regex::Error
+      pin == candidate
     end
 
     # Parses the version column (3rd whitespace-separated field) out of
@@ -1301,7 +1326,7 @@ module Krikri
           installed_probe, installed_ver_probe = installed_status[base_name]?.try { |pair| pair } || {false, nil}
           # installed specs never reach the candidate check (Ansible's
           # installed_version short-circuit)
-          next if installed_probe && (pinned_version.nil? || installed_ver_probe == pinned_version)
+          next if installed_probe && (pinned_version.nil? || ((iv = installed_ver_probe) && version_pin_matches?(pinned_version, iv)))
           next if @only_upgrade && !installed_probe
           if pinned_version
             unless pinned_version_installable?(base_name, pinned_version)

@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.1500-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.1501-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)

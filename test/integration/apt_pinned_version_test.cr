@@ -73,4 +73,32 @@ describe "apt plugin pinned-version validation" do
       install_calls.empty?.must_equal(true)
     end
   end
+
+  # A wildcard pin matches against the cache's version table instead of
+  # being rejected outright (round 1200000: nodejs=16.*, git=100:2.52.0*,
+  # ntp=1:4.2.* all failed on hosts where the candidate existed).
+  it "accepts a wildcard pin that matches a version in the cache table" do
+    with_bad_pin_shim("pkgname=never-used") do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "pkgname=1.*",
+        "state"        => "present",
+        "_environment" => env,
+      })
+
+      (result["failed"]?.try(&.as_bool?) || false).must_equal(false)
+    end
+  end
+
+  it "still fails a wildcard pin that matches no version in the cache table" do
+    with_bad_pin_shim("pkgname=never-used") do |env, _log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "pkgname=9.*",
+        "state"        => "present",
+        "_environment" => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("no available installation candidate for pkgname=9.*")
+    end
+  end
 end
