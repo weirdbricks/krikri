@@ -1576,6 +1576,62 @@ module Krikri
       Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
     end
 
+    # Whole-single-span template leaves of a JSON-container set_fact
+    # param evaluate structurally (same semantics as #native_typed_value,
+    # per leaf); any leaf that isn't a clean whole-single-span template,
+    # or whose native evaluation yields omit, bails the whole param back
+    # to the flat string substitution.
+    private def native_typed_container_value(substitutor : VarSubstitutor, stripped_value : String) : String?
+      return nil unless stripped_value.starts_with?('{') || stripped_value.starts_with?('[')
+      parsed = begin
+        JSON.parse(stripped_value)
+      rescue JSON::ParseException
+        return nil
+      end
+      typed = rewrite_native_json_leaves(substitutor, parsed)
+      return nil unless typed
+      Krikri::NATIVE_TYPED_PREFIX + typed.to_json
+    end
+
+    private def rewrite_native_json_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any?
+      case raw = node.raw
+      when String
+        stripped = raw.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+          typed = native_typed_value(substitutor, stripped)
+          return nil unless typed && typed.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+          begin
+            JSON.parse(typed[Krikri::NATIVE_TYPED_PREFIX.size..])
+          rescue JSON::ParseException
+            nil
+          end
+        elsif raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+          nil
+        else
+          node
+        end
+      when Array
+        items = [] of JSON::Any
+        raw.each do |item|
+          typed = rewrite_native_json_leaves(substitutor, item)
+          return nil unless typed
+          items << typed
+        end
+        JSON::Any.new(items)
+      when Hash
+        result = JSON::Any.new(Hash(String, JSON::Any).new)
+        hash = result.as_h
+        raw.each do |key, value|
+          typed = rewrite_native_json_leaves(substitutor, value)
+          return nil unless typed
+          hash[key.to_s] = typed
+        end
+        result
+      else
+        node
+      end
+    end
+
     private def substitute_task_params(
       params : Hash(String, String),
       substitutor : VarSubstitutor,
@@ -1645,6 +1701,20 @@ module Krikri
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
           native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+          unless native_typed
+            # A set_fact param whose parse-time wire is a JSON container
+            # with template leaves (a dict-valued set_fact: stringify_value
+            # encoded the Hash to JSON at parse time, leaves intact) keeps
+            # its leaf TYPES the way ansible-core templates each mapping
+            # value natively - `is_mariadb: "{{ item | regex_search('X')
+            # is not none }}"` is a real bool in the fact, not the
+            # "True"/"False" text the flat string substitution produces
+            # (xolyu.mariadb round-1300026 "Define mariadb_version.").
+            # Only whole-single-span leaves are natively typed here; any
+            # other templated leaf (mixed text, block tags) falls back to
+            # the flat substitution, which owns those shapes.
+            native_typed = native_containers ? native_typed_container_value(substitutor, stripped_value) : nil
+          end
           substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
         rescue e : UndefinedVariableError
           # ansible-core 2.19 wraps every undefined module-arg

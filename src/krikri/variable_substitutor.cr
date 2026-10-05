@@ -2668,6 +2668,7 @@ module Krikri
       property depth = 0
       property quote : Char? = nil
       property? escaped = false
+      property? outside_escaped = false
 
       def closes_at?(text : String, j : Int32) : Bool
         char = text[j]
@@ -2682,7 +2683,29 @@ module Krikri
           return false
         end
 
+        if outside_escaped?
+          self.outside_escaped = false
+          return false
+        end
+
         case char
+        when '\\'
+          # A backslash-escaped quote OUTSIDE any string literal is
+          # literal data, not a string opener - the scanner must consume
+          # the pair. Without this, the JSON wire encoding of a Hash/list
+          # task param (parse-time `to_json` escapes every inner quote to
+          # `\"`, so a nested template arg's `default("")` reaches this
+          # scanner as `default(\"\")`) opened a phantom quote that
+          # swallowed the span's real `}}` and failed the whole value
+          # with "Syntax error in template: unexpected '}'"
+          # (xolyu.mariadb round-1300026: "Define mariadb_version.").
+          # Real ansible never re-scans a dict as mustache text - it
+          # templates the leaves natively - and Jinja2's own lexer treats
+          # `\"` inside a literal the same way this now does.
+          if j + 1 < text.size && (text[j + 1] == '\'' || text[j + 1] == '"')
+            self.outside_escaped = true
+          end
+          false
         when '\'', '"'
           self.quote = char
           false

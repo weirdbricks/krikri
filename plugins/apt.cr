@@ -1287,8 +1287,46 @@ module Krikri
           alternatives.each { |alternative| unsatisfied_alt_names << alternative.name }
         end
         candidates = apt_candidates_batch(unsatisfied_alt_names.to_a)
+
+        # python-apt's provider paths for a name the apt cache knows only
+        # as virtual (Provides:), e.g. jammy's check-mk-raw Depends:
+        # "libffi8ubuntu1" where the archive only has libffi8 (=
+        # 3.4.2-4), Provides: libffi8ubuntu1 - round-1300024/1300039
+        # checkmk_server failed "Dependency is not satisfiable:
+        # libffi8ubuntu1" here while real ansible's DebPackage satisfied
+        # the group through the installed provider. showpkg's Reverse
+        # Provides section is the only CLI window onto apt_pkg's provider
+        # table, so the provider walks batch there. Upstream semantics
+        # mirrored: _is_or_group_satisfied treats an INSTALLED provider
+        # as satisfying the group outright (ignoring the version
+        # constraint - upstream's virtual check never consults it), both
+        # for a purely-virtual name and for an unversioned name that is
+        # real-but-uninstalled; _satisfy_or_group installs a purely
+        # virtual name's EXACTLY ONE provider (constraint checked
+        # against that provider's candidate like any other alternative),
+        # and skips names with more than one provider (upstream's
+        # len(providers) != 1 guard).
+        provider_probe_names = Set(String).new
+        unsatisfied.each do |alternatives|
+          alternatives.each do |alternative|
+            res = candidates[alternative.name]?
+            next unless res && res[0]
+            provider_probe_names << alternative.name if res[1].nil? || !alternative.oper
+          end
+        end
+        providers_map = apt_reverse_provides_batch(provider_probe_names.to_a)
+        provider_names = Set(String).new
+        providers_map.each_value do |providers|
+          providers.each do |provider|
+            provider_names << provider.split(":").first
+          end
+        end
+        provider_statuses = provider_names.empty? ? Hash(String, {Bool, String?, String}).new : dpkg_installed_status(provider_names.to_a)
+        provider_candidates = provider_names.empty? ? Hash(String, {Bool, String?}).new : apt_candidates_batch(provider_names.to_a)
+
         res_pairs = [] of {String, String, String}
         res_pair_slot = Hash({Int32, Int32}, Int32).new
+        prov_pair_slot = Hash({Int32, Int32}, Int32).new
         unsatisfied.each_with_index do |alternatives, group_idx|
           alternatives.each_with_index do |alternative, alt_idx|
             res = candidates[alternative.name]?
@@ -1298,18 +1336,63 @@ module Krikri
             res_pairs << {res[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
           end
         end
+        unsatisfied.each_with_index do |alternatives, group_idx|
+          alternatives.each_with_index do |alternative, alt_idx|
+            res = candidates[alternative.name]?
+            next unless res && res[0] && res[1].nil?
+            next unless alternative.oper && alternative.version
+            providers = providers_map[alternative.name]?
+            next unless providers && providers.size == 1
+            provider = providers[0].split(":").first
+            next if provider_statuses[provider]?.try(&.[0])
+            pres = provider_candidates[provider]?
+            next unless pres && pres[0] && pres[1]
+            prov_pair_slot[{group_idx, alt_idx}] = res_pairs.size
+            res_pairs << {pres[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+          end
+        end
         res_answers = dpkg_version_compares(res_pairs)
 
         unsatisfied.each_with_index do |alternatives, group_idx|
+          # _is_or_group_satisfied runs before _satisfy_or_group for the
+          # WHOLE group, so an installed provider on ANY alternative
+          # preempts the install-a-provider walk of an earlier one.
+          provider_satisfied = alternatives.any? do |alternative|
+            res = candidates[alternative.name]?
+            next false unless res && res[0]
+            next false unless res[1].nil? || !alternative.oper
+            providers = providers_map[alternative.name]?
+            providers && providers.any? { |provider| provider_statuses[provider.split(":").first]?.try(&.[0]) }
+          end
+          next if provider_satisfied
           pick : String? = nil
           alternatives.each_with_index do |alternative, alt_idx|
             res = candidates[alternative.name]?
-            next unless res && res[0] && res[1]
-            if pi = res_pair_slot[{group_idx, alt_idx}]?
-              next unless res_answers[pi]
+            next unless res && res[0]
+            if res[1]
+              if alternative.oper && alternative.version
+                if pi = res_pair_slot[{group_idx, alt_idx}]?
+                  pick = alternative.name if res_answers[pi]
+                end
+              else
+                pick = alternative.name
+              end
+            else
+              # purely virtual: only a single provider can be picked
+              providers = providers_map[alternative.name]?
+              next unless providers && providers.size == 1
+              provider = providers[0].split(":").first
+              pres = provider_candidates[provider]?
+              next unless pres && pres[0] && pres[1]
+              if alternative.oper && alternative.version
+                if pi = prov_pair_slot[{group_idx, alt_idx}]?
+                  pick = provider if res_answers[pi]
+                end
+              else
+                pick = provider
+              end
             end
-            pick = alternative.name
-            break
+            break if pick
           end
           unless pick
             # DebPackage._satisfy_or_group's own failure: the ONLY
@@ -1560,6 +1643,43 @@ module Krikri
         elsif (cur = current) && line.strip.starts_with?("Candidate:")
           version = line.split("Candidate:")[1]?.try(&.strip) || ""
           result[cur] = {true, version.empty? || version == "(none)" ? nil : version}
+        end
+      end
+      result
+    end
+
+    # Batched form of python-apt's get_providing_packages, for the deb:
+    # dependency provider walks: one `apt-cache showpkg` round trip per
+    # batch of names, marker lines between probes. Every "name version
+    # (= ver)" entry under a probe's "Reverse Provides:" section yields
+    # one provider name (arch-qualified entries collapse to their base
+    # name, and duplicates drop out); a probe with no Reverse Provides
+    # section, or with none listed, has no providers.
+    private def apt_reverse_provides_batch(names : Array(String)) : Hash(String, Array(String))
+      result = {} of String => Array(String)
+      return result if names.empty?
+      probes = names.map do |name|
+        "echo #{shell_single_quote("==KRIKRI-PROVIDES== #{name}")}; apt-cache showpkg #{shell_single_quote(name)} 2>/dev/null"
+      end.join("; ")
+      probe = remote_exec(probes)
+      current : String? = nil
+      in_reverse = false
+      probe[:stdout].each_line do |line|
+        if line.starts_with?("==KRIKRI-PROVIDES== ")
+          current = line.lchop("==KRIKRI-PROVIDES== ").strip
+          result[current] = [] of String
+          in_reverse = false
+        elsif cur = current
+          if line.strip == "Reverse Provides:"
+            in_reverse = true
+          elsif in_reverse
+            if line.strip.empty?
+              in_reverse = false
+            elsif provider = line.strip.split[0]?
+              name = provider.split(":").first
+              result[cur] << name unless result[cur].includes?(name)
+            end
+          end
         end
       end
       result

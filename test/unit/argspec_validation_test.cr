@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "../../src/krikri/argspec_validator"
+require "../../src/krikri/run_options"
 require "../../src/krikri/task_executor/output_routing"
 require "../../src/krikri/playbook_parser"
 require "../../src/krikri/task_executor/result_display"
@@ -187,6 +188,26 @@ describe Krikri::ArgspecValidator do
       "copy", "ansible.builtin.copy",
       {"src" => "/tmp/.krikri-playbook-copy-scratch", "dest" => "/tmp/x",
        "__cleanup_after_copy" => "true", "__cleanup_after_copy_dir" => "true"}, vars)
+    failure.must_be_nil
+  end
+
+  it "skips the checksum-first precomputed-match markers the copy fast path injects" do
+    # TaskExecutor#precomputed_copy_match proves the destination already
+    # holds identical content and marks the copy plugin with these wire
+    # keys instead of staging src at all - engine-internal bookkeeping
+    # Ansible's copy module never sees as task args, so they must not
+    # trip copy's Unsupported-parameters validation (found via
+    # KAMI911.java_open_jdk11 / cloudalchemy.memcached_exporter /
+    # ecgalaxy.aws_workspace_tweaks, round 1300010+: every IDEMPOTENT
+    # re-run's already-identical copy failed with "Unsupported
+    # parameters for (ansible.legacy.copy) module:
+    # __precomputed_checksum, __precomputed_match").
+    failure = Krikri::ArgspecValidator.validate(
+      "copy", "ansible.builtin.copy",
+      {"src" => "/tmp/some-local-file", "dest" => "/tmp/x",
+       "__precomputed_match" => "true",
+       "__precomputed_checksum" => "1f05d3cc1f208461cc132d0d20a909932d3a32f8",
+       "__original_src_basename" => "some-local-file"}, vars)
     failure.must_be_nil
   end
 

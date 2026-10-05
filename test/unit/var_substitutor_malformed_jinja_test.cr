@@ -51,5 +51,17 @@ describe "Krikri::VarSubstitutor (var_substitutor_malformed_jinja_test.cr)" do
             "{{ \"'{{ if .Version }}{{ .Version }}{{ else }}{{ .Client.SemVer }}{{ end }}'\" }}"
       sub.substitute(arg, strict: true, output: true).must_equal("/usr/local/bin/helm version --client --template '{{ if .Version }}{{ .Version }}{{ else }}{{ .Client.SemVer }}{{ end }}'")
     end
+
+    it "renders a JSON-encoded dict wire value whose template leaf carries backslash-escaped quotes (the mariadb shape)" do
+      # Round-1300026 xolyu.mariadb: a dict-valued set_fact reaches the
+      # substitution as the parse-time to_json wire text, so a leaf's
+      # `default("")` arrives as `default(\"\")`. The scanner opened a
+      # phantom string at that first escaped quote, swallowed the span's
+      # real `}}`, and failed the whole value with "unexpected '}'"
+      # while ansible (which templates the leaves natively, never
+      # re-scanning the dict text) succeeded.
+      sub = Krikri::VarSubstitutor.new(vars: jvars({"v" => "x"}))
+      sub.substitute("{\"version\":\"{{ v | default(\\\"\\\") }}\"}").must_equal("{\"version\":\"x\"}")
+    end
   end
 end

@@ -184,4 +184,35 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
   ensure
     File.delete(counter) if counter && File.exists?(counter)
   end
+
+  it "keeps a dict-valued set_fact's bool leaf native (xolyu.mariadb round-1300026)" do
+    # The role's "Define mariadb_version." set_fact maps template leaves
+    # over the mysql --version output. ansible-core templates each
+    # mapping value natively, so the `is not none` leaf lands in the
+    # fact as a real bool; the flat string substitution produced the
+    # text "True" (live-verified vs ansible-playbook 2.19.11: both
+    # engines then print M=bool V=str).
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          item: "mysql  Ver 15.1 Distrib 10.6.7-MariaDB, for Linux (x86_64) using readline 5.1"
+        tasks:
+          - set_fact:
+              mariadb_version:
+                is_mariadb: "{{ item | regex_search('MariaDB') is not none }}"
+                version: '{{ item | regex_findall(''(\\d+\\.\\d+\\.\\d+)-MariaDB'') | first | default("") }}'
+                major: '{{ ( item | regex_findall(_regex_ver_components) ).0.0 | default("") }}'
+            vars:
+              _regex_ver_components: '(\\d+)\\.(\\d+)\\.(\\d+)-MariaDB'
+          - debug:
+              msg: "M={{ mariadb_version.is_mariadb | type_debug }} V={{ mariadb_version.version | type_debug }} J={{ mariadb_version.major | type_debug }}"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("M=bool")
+    output.must_include("V=str")
+    output.must_include("J=str")
+  end
 end

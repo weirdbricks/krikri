@@ -37,7 +37,9 @@ require "file_utils"
 # pre-set status-line set (driving the dependency resolver's installed
 # status probe); `apt-cache` answers `policy <name>` with a
 # "Candidate: 1.0" line for a configurable name list (nothing for any
-# other name = an unknown name); `apt-get` logs, prints optional
+# other name = an unknown name), "Candidate: (none)" for a configurable
+# purely-virtual name list, and `showpkg <name>` with a Reverse Provides
+# list ("name:provider1,provider2" entries) for the provider walks; `apt-get` logs, prints optional
 # stdout/stderr and exits with a configurable code. Real /usr/bin
 # binaries stay reachable behind the shim dir, so `dpkg-deb -f` runs
 # for real against the fixture. Yields the `_environment` JSON param,
@@ -46,6 +48,7 @@ require "file_utils"
 private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : String? = nil, dpkg_install_exit : Int32 = 0,
                                    depends : String? = nil, recommends : String? = nil,
                                    dpkg_query_lines : String? = nil, apt_candidate_names : String? = nil,
+                                   apt_virtual_names : String? = nil, apt_provides : String? = nil,
                                    apt_get_exit : Int32 = 0, apt_get_stdout : String = "", apt_get_stderr : String = "", &)
   dir = File.join(Dir.tempdir, "krikri-apt-deb-#{Random.rand(1_000_000)}")
   shims = File.join(dir, "shims")
@@ -109,6 +112,24 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
     SHIM
   File.write(File.join(shims, "apt-cache"), <<-SHIM)
     #!/bin/sh
+    if [ "$1" = "showpkg" ]; then
+      for n in $KRIKRI_APT_PROVIDES; do
+        name="${n%%:*}"
+        if [ "$name" = "$2" ]; then
+          echo "Reverse Provides: "
+          rest="${n#*:}"
+          oldIFS="$IFS"; IFS=","
+          for p in $rest; do echo "$p"; done
+          IFS="$oldIFS"
+        fi
+      done
+      exit 0
+    fi
+    for n in $KRIKRI_APT_VIRTUAL_NAMES; do
+      if [ "$n" = "$2" ]; then
+        echo "Candidate: (none)"
+      fi
+    done
     for n in $KRIKRI_APT_CANDIDATE_NAMES; do
       if [ "$n" = "$2" ]; then
         echo "Candidate: 1.0"
@@ -144,6 +165,8 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
     "KRIKRI_DPKG_INSTALLED_LINE" => dpkg_installed_line.to_s,
     "KRIKRI_DPKG_QUERY_LINES"    => dpkg_query_lines.to_s,
     "KRIKRI_APT_CANDIDATE_NAMES" => apt_candidate_names.to_s,
+    "KRIKRI_APT_VIRTUAL_NAMES"   => apt_virtual_names.to_s,
+    "KRIKRI_APT_PROVIDES"        => apt_provides.to_s,
     "KRIKRI_APT_GET_EXIT"        => apt_get_exit.to_s,
     "KRIKRI_APT_GET_STDOUT"      => apt_get_stdout,
     "KRIKRI_APT_GET_STDERR"      => apt_get_stderr,
@@ -412,6 +435,85 @@ describe "apt plugin deb: dependency pre-install" do
       apt_calls.size.must_equal(1)
       apt_calls.first.must_include("dep-a=1.0")
       apt_calls.first.wont_include("dep-b")
+    end
+  end
+
+  it "satisfies a purely virtual dependency through the installed provider (checkmk libffi8ubuntu1)" do
+    # round-1300024/1300039 checkmk_server: jammy's check-mk-raw Depends:
+    # "libffi8ubuntu1" is purely virtual on the archive (only libffi8
+    # (= 3.4.2-4) exists, Provides: libffi8ubuntu1) and libffi8 is
+    # already installed on the base image. python-apt's
+    # _is_or_group_satisfied answers satisfied through the installed
+    # provider; the old engine (which only consulted installed names and
+    # apt candidates) failed "Dependency is not satisfiable:
+    # libffi8ubuntu1" while real ansible succeeded on the same host.
+    with_deb_fixture_shims(depends: "libffi8ubuntu1",
+      dpkg_query_lines: "ii 3.4.2-4 libffi8",
+      apt_virtual_names: "libffi8ubuntu1",
+      apt_provides: "libffi8ubuntu1:libffi8") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["msg"]?.must_be_nil
+      # The group is satisfied by the installed provider, so NOTHING is
+      # pre-installed and the dpkg -i run goes straight through.
+      File.exists?(apt_log).must_equal(false)
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
+    end
+  end
+
+  it "installs a purely virtual dependency's single provider when nothing provides it yet" do
+    # _satisfy_or_group's provider path: a purely-virtual name with
+    # EXACTLY ONE provider installs that provider (python-apt's "just
+    # pick that, like apt" rule), still through install()'s machinery.
+    with_deb_fixture_shims(depends: "kra-virt-a",
+      apt_virtual_names: "kra-virt-a",
+      apt_provides: "kra-virt-a:kra-provider",
+      apt_candidate_names: "kra-provider") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      apt_calls = File.exists?(apt_log) ? File.read_lines(apt_log) : [] of String
+      apt_calls.size.must_equal(1)
+      apt_calls.first.must_include("kra-provider=1.0")
+      apt_calls.first.wont_include("kra-virt-a")
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
+    end
+  end
+
+  it "still fails with DebPackage's wording for a multi-provider virtual dependency nothing provides" do
+    # python-apt's _satisfy_or_group skips a purely-virtual name with
+    # MORE than one provider (no lone provider to auto-pick), so the
+    # group fails check() with the same unsatisfiable wording.
+    with_deb_fixture_shims(depends: "kra-virt-b",
+      apt_virtual_names: "kra-virt-b",
+      apt_provides: "kra-virt-b:kra-provider-1,kra-provider-2") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Dependency is not satisfiable: kra-virt-b\n")
+      File.exists?(apt_log).must_equal(false)
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
     end
   end
 
