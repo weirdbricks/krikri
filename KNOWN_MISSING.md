@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1493`.**
+**Currently at `0.9.1494`.**
 
 ## Open gaps
 
@@ -39,9 +39,14 @@ defect moves down or gets deleted.
   ECONNRESET/EHOSTUNREACH/ENETUNREACH) and Crystal's raw `read (#<TCPSocket:0x...>): Connection reset by
   peer`. crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
   on port 15432 need a **postgres:16** server.
-- **Docker plugins:** Ansible's Python-SDK error wording (`500 Server Error for http+docker://...`) is
-  reproduced only for `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own
-  `Code: 500 Message: ...` after Ansible's prefixes.
+- **Docker plugins:** API failures (`docker_container`/`docker_image` pulls, `docker_network`,
+  `docker_login`, `docker_image_build`) render Ansible's Python-SDK wording, verified byte-for-byte
+  against community.docker 5.2.1 on a podman socket for pull, network-create and login failures. Still
+  different: `docker_container` does not report container *start* failures (real: `Error starting
+  container <id>: <SDK text>` on e.g. a port conflict); daemon-unreachable wording (real: `Error
+  connecting: Error while fetching server API version: ...`) differs in every module; `docker_network`
+  has no `ipam_config`. `docker_image_build`'s SDK-error path could not be provoked (podman has no
+  buildx, real fails at its own probe first), so that wording is aligned but unverified live.
 - **Performance, profile first** (`--timing-profile`, warm run, `--forks 1`): not yet done and not worth
   starting without a profile showing the bucket - `ip` forks per interface in `gather_network_facts`
   (`ip -j` shape must be pinned against real output) and the Python-interpreter spawn in

@@ -1,5 +1,6 @@
 require "docr"
 require "openssl"
+require "./docker_sdk_error"
 
 module Krikri
   module PluginHelpers

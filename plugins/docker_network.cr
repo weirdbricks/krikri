@@ -112,9 +112,9 @@ module Krikri
     # why a normal create/rerun registers only changed/network/failed.
     KEY_ORDER = %w[changed actions network diff failed]
 
-    # Ansible's own wrapper for a DockerException escaping the module body.
-    # Only the prefix is reproduced verbatim; the wrapped message after it
-    # is the python SDK's own formatting, which docr words differently.
+    # Ansible's own wrapper for a DockerException escaping the module body;
+    # the wrapped text is the Python SDK's own APIError rendering, which
+    # PluginHelpers::DockerSdkError reproduces.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     def execute : PluginResult
@@ -145,7 +145,7 @@ module Krikri
         ensure_absent(api, name, existing, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end

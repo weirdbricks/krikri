@@ -261,10 +261,10 @@ module Krikri
 
       dispatch_state(state, api, name, existing, image_ref, pull, needs_create,
         needs_recreate, parsed_networks, healthy_max_wait, check_mode)
-    rescue ex : ImagePullError
+    rescue ex : PluginHelpers::DockerSdkError::ImagePullError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
@@ -1228,7 +1228,10 @@ module Krikri
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
       return if image_exists?(api.client, full_ref)
 
-      pull_image!(api.client, image_ref, ref_name, ref_tag)
+      # Real's pull_image failure message quotes "name:tag" (its
+      # f"Error pulling image {name}:{tag}"), with the tag defaulted -
+      # not the raw image param.
+      pull_image!(api.client, full_ref, ref_name, ref_tag)
     end
 
     # Ansible's client POSTs the pull itself and wraps any failure in its
@@ -1240,101 +1243,7 @@ module Krikri
     # status reason phrase nor the URL - so the pull goes out here
     # directly, to keep the exact text Ansible reports.
     private def pull_image!(client : Docr::Client, image_ref : String, repository : String, tag : String) : Nil
-      query = "tag=#{form_url_encode(tag)}&fromImage=#{form_url_encode(repository)}"
-
-      status = 0
-      body = ""
-      client.exec("POST", "/images/create?#{query}") do |response|
-        status = response.status_code
-        # The success body is a JSON progress STREAM - drain it to EOF
-        # so the shared keep-alive connection's framing stays in sync.
-        body = response.body_io?.try(&.gets_to_end) || ""
-      end
-      return if 200 <= status < 300
-
-      # The versioned URL is only ever needed to render the failure, so
-      # the extra /version round trip stays off the success path.
-      request_url = "#{sdk_base_url(client)}/v#{negotiated_api_version(client)}/images/create?#{query}"
-      raise ImagePullError.new("Error pulling image #{image_ref} - #{api_error_text(status, request_url, body)}")
-    end
-
-    # The Docker Python SDK's APIError.__str__ (its errors.py): the
-    # request line's own reason phrase, then the daemon's own message -
-    # the `message` field of its JSON error body, or the raw body when it
-    # isn't JSON - in quotes.
-    private def api_error_text(status : Int32, url : String, body : String) : String
-      kind = 400 <= status < 500 ? "Client" : "Server"
-      text = "#{status} #{kind} Error for #{url}: #{status_reason(status)}"
-      explanation = daemon_message(body)
-      explanation ? "#{text} (\"#{explanation}\")" : text
-    end
-
-    # The status line's reason phrase, which Crystal's HTTP::Client
-    # doesn't keep - its own HTTP::Status enum name is the closest
-    # stand-in, and for the codes a Docker daemon actually answers with
-    # ("Internal Server Error" on a 500) it is the very same text Ansible's
-    # message quotes.
-    private def status_reason(status : Int32) : String
-      HTTP::Status.new(status).to_s.split('_').map(&.capitalize).join(' ')
-    rescue ArgumentError
-      ""
-    end
-
-    private def daemon_message(body : String) : String?
-      return nil if body.strip.empty?
-
-      parsed = JSON.parse(body).as_h?
-      message = parsed.try { |fields| fields["message"]?.try { |value| value.as_s? } }
-      message || body.strip
-    rescue JSON::ParseException
-      body.strip
-    end
-
-    # Ansible's SDK derives the API version it puts in every endpoint URL
-    # from the daemon's own /version reply (its _retrieve_server_version),
-    # which `docr` never asks for since it calls every endpoint
-    # unversioned.
-    private def negotiated_api_version(client : Docr::Client) : String
-      api_version = ""
-      client.call("GET", "/version") do |response|
-        api_version = JSON.parse(response.body_io.gets_to_end)["ApiVersion"].as_s
-      end
-      api_version
-    end
-
-    # Ansible's SDK base_url, the literal host part of every URL it quotes
-    # in an error message: the http+docker:// placeholder it mounts its
-    # UNIX-socket adapter under, or scheme://host:port for a TCP(+TLS)
-    # daemon.
-    private def sdk_base_url(client : Docr::Client) : String
-      docker_host = @params["docker_host"]? || ENV["DOCKER_HOST"]?
-      tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
-      return "http+docker://localhost" unless tcp
-
-      "#{client.tls? ? "https" : "http"}://#{client.host}:#{client.port}"
-    end
-
-    # How Python's requests form-encodes a query value (its urlencode):
-    # everything outside the unreserved set percent-encoded, so a `/` in
-    # a repository name becomes %2F exactly like Ansible's own pull URL.
-    private def form_url_encode(value : String) : String
-      String.build do |io|
-        value.each_byte do |byte|
-          char = byte.chr
-          if char.ascii_alphanumeric? || "-._~".includes?(char)
-            io << char
-          elsif char == ' '
-            io << '+'
-          else
-            io << '%' << byte.to_s(16).upcase.rjust(2, '0')
-          end
-        end
-      end
-    end
-
-    # Raised for a pull the daemon rejected, so the failure message can
-    # keep Ansible's own wording instead of the generic API-error one.
-    class ImagePullError < Exception
+      PluginHelpers::DockerSdkError.pull_image!(client, @params, repository, tag, image_ref)
     end
 
     # Same reasoning as docker_image.cr's own image_exists? - a raw GET,

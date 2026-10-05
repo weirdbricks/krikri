@@ -87,7 +87,7 @@ module Krikri
       PluginResult.new(changed: false, failed: false, failed_flag: false,
         key_order: KEY_ORDER, exists: true, network: JSON.parse(raw))
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Error connecting: Cannot connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end

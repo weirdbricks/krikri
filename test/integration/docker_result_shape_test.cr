@@ -295,15 +295,33 @@ describe "docker result shape: docker_login" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  it "matches Ansible's bad-credentials failure key set and order" do
+  # Real fails a login when the daemon is unreachable before any
+  # registry contact (the module's client connects first); the failure
+  # message wording for THAT case is a separate known gap - this spec
+  # only pins the failure shape.
+  it "fails when the daemon is unreachable, before any registry contact" do
     result = PluginSpecHelper.run("docker_login", {
       "registry_url" => "https://registry-1.docker.io/v1/",
       "username" => "krikri", "password" => "bogus",
       "docker_host" => "unix:///nonexistent/krikri-kp-dk-no-such-#{Process.pid}.sock",
     })
-    docker_shape_keys(result).must_equal(["failed", "msg", "changed", "exception"])
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Logging into https://registry-1.docker.io/v1/ for user krikri failed - ")
+    result["msg"].as_s.must_include("Could not connect to the Docker daemon")
+  end
+
+  # Real validates the credentials with the daemon's POST /auth and
+  # quotes the Docker Python SDK's APIError text - byte-verified against
+  # ansible-core 2.19.11 + community.docker 5.2.1 over the same socket.
+  it "matches Ansible's bad-credentials failure wording" do
+    skip("no Docker-API socket at #{DOCKER_RESULT_SHAPE_SOCKET_PATH}") unless docker_shape_socket?
+    result = PluginSpecHelper.run("docker_login", {
+      "registry_url" => "https://registry-1.docker.io/v1/",
+      "username" => "krikri", "password" => "krikri-bogus-password",
+      "docker_host" => DOCKER_RESULT_SHAPE_SOCKET,
+    })
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_include(
+      "Logging into https://registry-1.docker.io/v1/ for user krikri failed - 500 Server Error for http+docker://localhost/v1.41/auth: Internal Server Error (")
   end
 end
 

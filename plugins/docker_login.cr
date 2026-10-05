@@ -19,9 +19,12 @@
 # - state=present: existing auths[<registry>] entry decoding to the same
 #   username AND password with no reauthorize is a no-op (changed=false,
 #   no registry round trip - the Ansible module returns the stored authcfg
-#   immediately); otherwise the credentials are validated and stored via
-#   `docker login` (which is what the Ansible module's daemon /auth call +
-#   DockerFileStore.store achieve together), changed=true.
+#   immediately); otherwise the credentials are validated with the
+#   daemon's POST /auth (exactly what the Ansible module's _login does -
+#   its failure is what the "Logging into ... failed - ..." message quotes,
+#   in the Docker Python SDK's own APIError wording), then stored via
+#   `docker login` (what the Ansible module's DockerFileStore.store
+#   achieves), changed=true.
 # - state=absent: the registry's auth entry is erased from the config
 #   file (0600, like the real DockerFileStore._write) when present,
 #   changed=false otherwise - no docker binary needed.
@@ -98,6 +101,16 @@ module Krikri
         end
       end
 
+      # Real validates the credentials with the daemon's POST /auth (its
+      # _login) and fails with the SDK's own APIError wording - the CLI
+      # below only runs once the daemon accepted them, so a wrong password
+      # never produces the CLI's own error text.
+      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      if err = PluginHelpers::DockerSdkError.registry_auth_error(client, @params, registry_url, username, password)
+        return censor(PluginResult.new(changed: false, failed: true,
+          msg: "Logging into #{registry_url} for user #{username} failed - #{err}"), password)
+      end
+
       config_dir = File.dirname(config_path)
       # Docker's CLI wants a config DIRECTORY; the default hub URL is
       # also its own default, so the registry argument is omitted there.
@@ -106,6 +119,8 @@ module Krikri
         msg: "Logging into #{registry_url} for user #{username} failed - #{login[:stderr].strip.presence || login[:stdout].strip.presence || "docker login returned #{login[:exit_code]}"}"), password) if login[:exit_code] != 0
 
       censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
+    rescue ex : Socket::ConnectError
+      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
 
     # A successful login/logout carries no msg: Ansible's `actions` list

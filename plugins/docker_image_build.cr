@@ -54,6 +54,11 @@ module Krikri
       "tls_hostname"   => %w[],
       "validate_certs" => %w[tls_verify],
     }
+    # Ansible's own wrapper for a DockerException escaping the module body
+    # (docker_image_build.py's main); the wrapped text is the Python SDK's
+    # own APIError rendering, which PluginHelpers::DockerSdkError reproduces.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
     # Engine-internal executor keys that never reach the Ansible module's
     # params (see apt.cr's same exclusion list).
     INTERNAL_PARAMS = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
@@ -169,7 +174,7 @@ module Krikri
       result.key_order = SUCCESS_KEY_ORDER
       result
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "Docker API error: #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end

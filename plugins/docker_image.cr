@@ -103,8 +103,10 @@ module Krikri
       else
         absent_result(client, api, full_ref, exists, check_mode)
       end
+    rescue ex : PluginHelpers::DockerSdkError::ImagePullError
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
@@ -162,7 +164,11 @@ module Krikri
         result.key_order = KEY_ORDER
         result
       else
-        api.images.create(ref_name, ref_tag)
+        # Ansible's client POSTs the pull itself and wraps any failure in
+        # its own "Error pulling image <name>:<tag>" prefix around the
+        # SDK's APIError text (AnsibleDockerClientBase.pull_image) - the
+        # shared pull helper reproduces both halves.
+        PluginHelpers::DockerSdkError.pull_image!(client, @params, ref_name, ref_tag, full_ref)
         # force_source: re-pulling an image that resolves to the
         # exact same digest it already had is a real no-op - see
         # #image_id's own doc comment for why this matters and what
