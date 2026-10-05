@@ -740,6 +740,17 @@ rescue ex : Krikri::ConflictingActionStatementsError
     STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   end
   exit 4
+rescue ex : Krikri::InvalidTaskAttributeError
+  # `static:` beside a non-include action is Ansible's own attribute-
+  # validation refusal - the same rc=4 stderr [ERROR]+Origin shape as
+  # the conflict above (live-verified vs 2.19.11: `- debug:` +
+  # `static: no`).
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
   # dependency) naming a role not found on disk is Ansible's own

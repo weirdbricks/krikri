@@ -109,8 +109,14 @@ module Krikri
           argv += ["--slave", str["link"].as_s, str["name"].as_s, str["path"].as_s]
         end
       end
-      return run_check_rc(argv) unless check_mode
+      # The message records the change in BOTH modes - check mode only
+      # skips the RUN, not the changed reporting (this used to append
+      # only in check mode, so every real mutation reported changed:
+      # false - found via CyVerse-Ansible.ansible_go round 1200072,
+      # where real's cold run marked the go/gofmt installs changed and
+      # krikri answered ok on the identical fresh host).
       messages << "Install alternative '#{path}' for '#{name}'."
+      return run_check_rc(argv) unless check_mode
       nil
     end
 
@@ -132,14 +138,14 @@ module Krikri
       if state == "selected" && !(is_same_path || is_same_family)
         arg = path || family
         argv = [bin, "--set", name, arg.to_s]
-        return run_check_rc(argv) unless check_mode
         messages << "Set alternative '#{arg}' for '#{name}'."
+        return run_check_rc(argv) unless check_mode
       end
 
       if state == "auto" && current_mode == "manual"
         argv = [bin, "--auto", name]
-        return run_check_rc(argv) unless check_mode
         messages << "Set alternative to auto for '#{name}'."
+        return run_check_rc(argv) unless check_mode
       end
 
       nil
@@ -150,8 +156,8 @@ module Krikri
       return nil unless path && current_alternatives.has_key?(path)
 
       argv = [bin, "--remove", name, path]
-      return run_check_rc(argv) unless check_mode
       messages << "Remove alternative '#{path}' from '#{name}'."
+      return run_check_rc(argv) unless check_mode
       nil
     end
 

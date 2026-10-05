@@ -2080,12 +2080,14 @@ module Krikri
     #   E (the "Error while resolving value for 'key': ..." inner error)
     #   Origin: f.yml:7:23           <- the param's value token
     #
-    # The parser doesn't track per-task source positions, so each level
-    # is located by scanning the playbook file (same best-effort approach
-    # the old task_arg_error_context used); if the task isn't found there
-    # (role/include-sourced task), no block is printed.
+    # The parser doesn't track per-task source positions reliably enough to
+    # point straight at the param, so each level is located by scanning the
+    # task's OWN source file (the playbook for playbook tasks, the role or
+    # included tasks file otherwise - ansible-core prints the block with
+    # the task's defining file either way, live-captured on a role task);
+    # when the task can't be located there, no block is printed.
     private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
-      path = @playbook_file
+      path = task.source_file || @playbook_file
       return unless path && File.file?(path)
 
       lines = File.read_lines(path)
@@ -2122,7 +2124,7 @@ module Krikri
         # A task without `name:` starts at its module key: the task-level
         # and module-level origins are the same line, so Ansible prints two
         # levels - "Task failed: Finalization ... failed." then the cause.
-        return unless task.source_line > 0
+        return unless task.source_line > 0 && task.source_line <= lines.size
         module_idx = task.source_line - 1
         module_col = task.source_col > 0 ? task.source_col : (lines[module_idx].size - lines[module_idx].lstrip.size + 1)
         name_idx, name_col = module_idx, module_col
@@ -2166,7 +2168,7 @@ module Krikri
     @@groupby_storage_warnings = Set(String).new
 
     private def warn_groupby_storage(task : Task) : Nil
-      path = @playbook_file
+      path = task.source_file || @playbook_file
       return unless path && File.file?(path)
       task.params.each do |key, value|
         next unless groupby_reaches_storage?(value)
@@ -2380,7 +2382,7 @@ module Krikri
     end
 
     private def conditional_deprecation_text(task : Task, key : String, raw : String) : String
-      path = @playbook_file
+      path = task.source_file || @playbook_file
       return "" unless path && File.file?(path)
 
       lines = File.read_lines(path)
@@ -2490,7 +2492,7 @@ module Krikri
     # task vars") keep their pre-existing display shape.
     private def conditional_evaluation_failure?(msg : String) : Bool
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
-      inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (")
+      inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (") || inner.starts_with?("Syntax error in expression:")
     end
 
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
@@ -2516,7 +2518,7 @@ module Krikri
       msg = decorate_conditional_value_origin(task, msg)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       return unless conditional_evaluation_failure?(msg)
-      path = @playbook_file
+      path = task.source_file || @playbook_file
       return unless path && File.file?(path)
 
       lines = File.read_lines(path)
@@ -2527,7 +2529,7 @@ module Krikri
         # A nameless task's origin is the module key line itself (Ansible's
         # two-level shape: "Task failed." + Origin at the module key) -
         # the same fallback emit_finalization_error_block uses.
-        return unless task.source_line > 0
+        return unless task.source_line > 0 && task.source_line <= lines.size
         name_idx = task.source_line - 1
         name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
       end
@@ -2545,7 +2547,14 @@ module Krikri
         io << inner << "\n"
         io << origin_context_block(path, lines, key_idx + 1, key_col)
         io << "\n"
-        unless inner.starts_with?("Error while evaluating conditional:")
+        # Real prints the ALLOW_BROKEN_CONDITIONALS hint after the chain
+        # for every conditional failure EXCEPT the two compile/runtime
+        # wording classes that don't get it (live-verified vs 2.19.11:
+        # an undefined reference and a "Syntax error in expression:"
+        # filter/test-name failure both end the block at the Origin; the
+        # non-bool "Conditional result" failure carries the hint).
+        unless inner.starts_with?("Error while evaluating conditional:") ||
+               inner.starts_with?("Syntax error in expression:")
           io << "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.\n"
           io << "\n"
         end

@@ -364,7 +364,17 @@ module Krikri
         check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", exec_host.port, identity_file: identity_file)
         if (output = check[:stdout].strip).size > 0
           if status = (JSON.parse(output) rescue nil)
-            return status
+            # The file can still hold the synchronous launch stub
+            # (started: 1, finished: 0) - when the worker dies with the
+            # session or simply outlives a poll tick, that stub is NOT
+            # the job's result. Returning it here reported a
+            # still-running (or dead) job as an ok: task (found via
+            # Aplyca.AnsibleTower's async setup.sh round: Ansible polled
+            # the job to its rc=1 failure while krikri answered with the
+            # stub). Only a finished status is final; keep polling to
+            # the deadline, then the same async-timeout failure
+            # ansible-core reports.
+            return status if AsyncJobs.finished?(status)
           end
         end
         break if Time.instant >= deadline

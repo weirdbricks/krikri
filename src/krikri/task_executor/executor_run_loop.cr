@@ -787,6 +787,16 @@ module Krikri
         # "Error while evaluating conditional: " shape (assert:'s own
         # identical split lives in assert_action_plugin.cr).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
+        # A compile-time-rejected filter/test name gets Ansible's own
+        # "Syntax error in expression: " wording - Jinja's compiler
+        # rejects the name when it COMPILES the template, a different
+        # failure class from a runtime conditional-evaluation problem
+        # (live-verified vs 2.19.11: `when: x|version_compare(...)`
+        # and `when: x is list` both fatal "Task failed: Syntax error
+        # in expression: No filter/test named '...'.", found via
+        # adarnimrod.apache's assert: version_compare preflight).
+        raise WhenEvaluationError.new("Task failed: Syntax error in expression: #{ex.message}")
       rescue ex
         raise WhenEvaluationError.new("Task failed: Error while evaluating conditional: #{ex.message}")
       end

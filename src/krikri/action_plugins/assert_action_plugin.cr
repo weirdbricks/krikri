@@ -102,6 +102,19 @@ module Krikri
         # which that: item failed - the [ERROR] block's second Origin points at it
         result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
         return ActionResult.final(result)
+      rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
+        # A compile-time-rejected filter/test name in a `that:` item is
+        # Ansible's "Syntax error in expression: " failure class, not
+        # the undefined-reference one - live-verified vs 2.19.11
+        # (`assert: that: "x | version_compare('1', '>=')"` → fatal
+        # "Task failed: Syntax error in expression: No filter named
+        # 'version_compare'."). Before this rescue the raise escaped
+        # the plugin uncaught and killed the whole process (found via
+        # adarnimrod.apache's ca-store Assertions preflight).
+        result = ActionResult.conditional_error_result_json(
+          "Task failed: Syntax error in expression: #{ex.message}")
+        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+        return ActionResult.final(result)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while

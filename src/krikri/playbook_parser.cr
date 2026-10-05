@@ -1034,6 +1034,28 @@ module Krikri
     end
   end
 
+  # A pre-2.x include-timeout hint attribute (`static:`) sitting beside a
+  # NON-include action. ansible-core's ModuleArgsParser resolves `static`
+  # as a task attribute (it belongs to TaskInclude/IncludeRole only), so
+  # it never conflicts with the action - the "conflicting action
+  # statements" shape was wrong for it (found via AerisCloud.repos's
+  # `- include: amazon.yml` + `static: no`, where the include-removed
+  # error must win instead). Beside any other module, ansible-core's own
+  # attribute validation refuses the whole playbook (rc=4, live-verified
+  # vs 2.19.11: `- debug:` + `static: no`):
+  #   'static' is not a valid attribute for a Task
+  #   This error can be suppressed as a warning using the
+  #   "invalid_task_attribute_failed" configuration
+  # with the Origin at the `static:` key itself. Carries the rendered
+  # stderr block for krikri-playbook.cr to print verbatim.
+  class InvalidTaskAttributeError < Exception
+    getter render : String
+
+    def initialize(message : String, @render : String)
+      super(message)
+    end
+  end
+
   # A bad argument on an include/include-role directive (`include_role:`,
   # `import_role:`, `import_tasks:`, `include_tasks:`), rejected by
   # ansible-core at PLAYBOOK-LOAD time - TaskInclude.check_options /
@@ -1458,6 +1480,10 @@ module Krikri
             raise ex
           rescue ex : ConflictingActionStatementsError
             raise ex
+          rescue ex : InvalidTaskAttributeError
+            # Same bypass - an invalid task attribute is Ansible's own
+            # playbook-load refusal (rc=4), not a per-task degradation.
+            raise ex
           rescue ex : HandlerNotFoundError
             raise ex
           rescue ex : StaticImportRoleUndefinedError
@@ -1498,6 +1524,10 @@ module Krikri
           raise ex
         rescue ex : ConflictingActionStatementsError
           # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : InvalidTaskAttributeError
+          # Same bypass - an invalid task attribute is Ansible's own
+          # playbook-load refusal (rc=4), not a per-task degradation.
           raise ex
         rescue ex : HandlerNotFoundError
           # Same bypass as RemovedActionError above - see that class's
@@ -1893,6 +1923,10 @@ module Krikri
           raise ex
         rescue ex : ConflictingActionStatementsError
           # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : InvalidTaskAttributeError
+          # Same bypass - an invalid task attribute is Ansible's own
+          # playbook-load refusal (rc=4), not a per-task degradation.
           raise ex
         rescue ex : StaticImportRoleUndefinedError
           raise ex
@@ -2561,6 +2595,16 @@ module Krikri
         key_str = key.to_s
         if legacy_conflicting_keys.includes?(key_str)
           legacy_conflict_key = key_str
+        elsif key_str == "static"
+          # `static:` is a pre-2.x include-timeout hint that ansible-core
+          # still parses as a TASK ATTRIBUTE (it belongs to TaskInclude/
+          # IncludeRole), never a conflicting action - so it must not
+          # trigger the conflict above nor be taken as the module itself
+          # (AerisCloud.repos's `- include: amazon.yml` + `static: no`
+          # wrongly died as "conflicting action statements: include,
+          # static" instead of the include-removed error). Validated
+          # against the resolved action after the loop below.
+          next
         elsif !SPECIAL_KEYS.includes?(key_str) && !key_str.starts_with?("with_")
           # with_-prefixed keys are legacy LOOP keywords in Ansible
           # (any `with_<lookup>:`), never a module name - excluding them
@@ -2702,6 +2746,37 @@ module Krikri
           "The 'ansible.builtin.include' action plugin has been removed. " \
           "Use include_tasks or import_tasks instead. This feature was " \
           "removed from ansible-core in a release after 2023-05-16.")
+      end
+
+      # A `static:` beside a NON-include action is ansible-core's own
+      # attribute-validation refusal (rc=4; live-verified vs 2.19.11:
+      # `- debug:` + `static: no` → "'static' is not a valid attribute
+      # for a Task" + the invalid_task_attribute_failed suppression
+      # line, Origin at the static: key). The include-family forms are
+      # NOT handled here: bare `include:` already died as removed above
+      # (that error wins in Ansible too), and include_tasks:/import_-
+      # tasks:/include_role: reach their own TaskInclude/IncludeRole
+      # attribute validation in their own parse paths.
+      if task_hash["static"]? && module_name
+        static_message = "'static' is not a valid attribute for a Task\n" \
+                         "This error can be suppressed as a warning using the " \
+                         "\"invalid_task_attribute_failed\" configuration"
+        # The source map records the static: entry's VALUE position;
+        # Ansible's Origin points at the KEY itself (live-verified:
+        # `      static: no` → column 7, the 's'), so walk back to the
+        # key's own column on the same line.
+        static_pos = source_map.try(&.at?("#{task_source_prefix(source_prefix, index)}/static")).try do |pos|
+          line = pos[0]
+          src_line = nil
+          if line > 0 && source_file && File.file?(source_file)
+            src_line = File.read_lines(source_file)[line - 1]?
+          end
+          key_idx = src_line.try(&.index("static:"))
+          key_idx ? {line, key_idx + 1} : pos
+        end
+        static_render = origin_error_render_at(
+          static_message, source_file, source_map, static_pos)
+        raise InvalidTaskAttributeError.new(static_message, static_render)
       end
 
       # Check if plugin is available - resolving a bare (non-FQCN) name
@@ -3845,6 +3920,30 @@ module Krikri
     # source lines + the target line (right-aligned line-number labels,
     # tabs echoed as spaces) and a caret under the column. Best-effort:
     # without a source position only the [ERROR] line is rendered.
+    # Same render as origin_error_render, but pointed at an EXPLICIT
+    # source position instead of a task-prefix lookup - for errors whose
+    # Origin is a specific sibling KEY inside the task (the `static:`
+    # attribute refusal points at the static: line itself, not the task).
+    private def self.origin_error_render_at(message : String, path : String?, source_map : YamlSourceMap?, pos : YamlSourceMap::Pos?) : String
+      String.build do |io|
+        io << "[ERROR]: " << message << "\n"
+        if path && pos && File.file?(path)
+          line, col = pos
+          lines = File.read_lines(path)
+          io << "Origin: " << File.expand_path(path) << ":" << line << ":" << col << "\n"
+          io << "\n"
+          label_width = line.to_s.size
+          start_idx = Math.max(0, (line - 1) - 2)
+          (start_idx..(line - 1)).each do |idx|
+            src = lines[idx].chomp.gsub('\t', ' ')
+            io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
+          end
+          io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+        end
+        io << "\n"
+      end
+    end
+
     private def self.origin_error_render(message : String, path : String?, source_map : YamlSourceMap?, prefix : String) : String
       String.build do |io|
         io << "[ERROR]: " << message << "\n"

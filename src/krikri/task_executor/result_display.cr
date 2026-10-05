@@ -516,7 +516,9 @@ module Krikri
       # Origin pointing at the failing that: item (index carried in the
       # internal _ansible_that_index key; when: failures are emitted by
       # TaskExecutor's own emit_when_error_chain instead).
-      if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) && msg.starts_with?("Task failed: Error while evaluating conditional")
+      if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) &&
+         (msg.starts_with?("Task failed: Error while evaluating conditional") ||
+         msg.starts_with?("Task failed: Syntax error in expression"))
         emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i)
         return
       end
@@ -524,8 +526,11 @@ module Krikri
       # Non-boolean conditional failures are likewise emitted by
       # emit_when_error_chain (with the when: value's own Origin); a
       # second block here would duplicate it wrapped in a bogus
-      # "Module failed:" segment.
-      return if msg.includes?("Conditional result")
+      # "Module failed:" segment. The compile-time filter/test-name
+      # wording is the same story (conditional_evaluation_failure?
+      # now recognizes it there).
+      return if msg.includes?("Conditional result") ||
+                msg.includes?("Syntax error in expression")
 
       origin = error_origin_context(source_task)
       return unless origin
