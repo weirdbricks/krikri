@@ -142,9 +142,8 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
 
 - A `src` whose `..` components carry the composed `dest/<host>/<src>` path outside `dest`
   fails with "Detected directory traversal, expected to be contained in ..." instead of writing
-  there. Real 2.19.11 writes through: its CVE-2019-3828 guard (`is_subpath(dest, original_dest)` in
-  `action/fetch.py`) runs before the path is composed, so it compares `dest` with itself and never
-  fires. Deliberate: `src` can come from host-controlled data (e.g. `find:` results) and a
+  there. Real 2.19.11 writes through: its CVE-2019-3828 traversal guard never fires in this case
+  (observed behavior). Deliberate: `src` can come from host-controlled data (e.g. `find:` results) and a
   controller-side write outside `dest` is exactly that CVE. Non-escaping paths match real
   byte-for-byte.
 
@@ -342,7 +341,7 @@ because anyone intends to fix them.
   throughout, and they negotiate fine against current Docker/Podman.
 - `meta:` - every action in real's `meta` choices list is supported (`clear_facts`, `flush_handlers`,
   `end_host`, `end_play`, `clear_host_errors`, `noop`, `refresh_inventory`, `end_batch`, `end_role`,
-  `reset_connection`), each ported from real's own `_execute_meta`. Non-obvious ones: `end_play` and
+  `reset_connection`), each matched to real's observed behavior. Non-obvious ones: `end_play` and
   `clear_host_errors` are genuinely GLOBAL (every currently-active / every-failed host, even one whose
   `when:` skipped the meta task), while `end_host` is per-host only; `clear_host_errors` exempts a host
   from later plays and from the run's exit code but does NOT resume it in the CURRENT play;
@@ -372,7 +371,7 @@ because anyone intends to fix them.
 - `community.general.zypper_repository` - unimplemented; same cosmetic parse-time-drop class, no
   zypper/openSUSE host ever tested.
 - `ansible.posix.firewalld` - `zone:` defaults to the system default zone (`firewall-offline-cmd
-  --get-default-zone`) and real's `permanent`/`immediate`/`offline` validation is ported exactly, so
+  --get-default-zone`) and real's `permanent`/`immediate`/`offline` validation is matched to real's observed behavior, so
   `offline: true, permanent: true` isn't required explicitly. A running firewalld daemon (auto-detected
   via `firewall-cmd --state`) plus a requested or defaulted `immediate:` change is serviced through
   `firewall-cmd` (the D-Bus client CLI), and a `target:` operation in the immediate context fails with
