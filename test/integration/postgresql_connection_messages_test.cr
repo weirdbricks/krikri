@@ -36,12 +36,12 @@ require "socket"
 # {failed, msg, changed, exception} - krikri emits no deprecations key
 # for these (no alias param is set in any of these cases).
 #
-# Deliberate limit: an unresolvable host prints libpq's DNS wording
-# ("could not translate host name ... to address: Name or service not
-# known\n") from the EAI_NONAME case only - Crystal's
-# Socket::Addrinfo::Error carries no gai code, so a TEMPORARY resolver
-# failure ("Temporary failure in name resolution" in real) is
-# indistinguishable here. Likewise the strerror strings above are
+# Deliberate limit: the unresolvable-host wording is libpq's DNS text
+# for whichever getaddrinfo code the connection actually failed with
+# ("Name or service not known" for EAI_NONAME, "Temporary failure in
+# name resolution" for EAI_AGAIN, etc. - re-derived through a direct
+# LibC.getaddrinfo call, since Crystal's Socket::Addrinfo::Error
+# carries no gai code). Likewise the strerror strings above are
 # libc's, so a non-glibc host prints this host's own translations.
 private def pg2_reachable? : Bool
   sock = TCPSocket.new("127.0.0.1", 35433, connect_timeout: 1)

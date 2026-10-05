@@ -130,12 +130,51 @@ module Krikri
           severity = cause.field_message(:severity) || "FATAL"
           "#{target_prefix(target)} failed: #{severity}:  #{cause.message}\n"
         when Socket::Addrinfo::Error
-          "could not translate host name \"#{target[:host]}\" to address: Name or service not known\n"
+          libpq_dns_error(target[:host], target[:port])
         when IO::Error
           "#{target_prefix(target)} failed: #{connect_strerror(cause, target)}\n\t#{hint(target)}\n"
         else
           "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
         end
+      end
+
+      # libpq's own DNS-failure wording. Crystal's Socket::Addrinfo::Error
+      # carries no gai code, so the exact getaddrinfo failure is
+      # re-derived by re-running getaddrinfo on the same node/service the
+      # plugin dialed (the same AF_UNSPEC/STREAM hints crystal-pg
+      # resolves with) and printing that code's own gai_strerror text.
+      # Should the re-check find the host resolvable (the failure was
+      # transient and recovered before this re-check ran), EAI_NONAME's
+      # text stands in as the overwhelmingly more common wording for a
+      # failed lookup.
+      private def self.libpq_dns_error(host : String?, port : String) : String
+        host ||= ""
+        hints = LibC::Addrinfo.new
+        hints.ai_family = LibC::AF_UNSPEC
+        hints.ai_socktype = LibC::SOCK_STREAM
+        code = LibC.getaddrinfo(host, port, pointerof(hints), out addrs)
+        LibC.freeaddrinfo(addrs) if addrs && code == 0
+        gai_error_text(host, code == 0 ? LibC::EAI_NONAME : code)
+      end
+
+      # libpq's "could not translate host name" wording for an EAI_*
+      # code: gai_strerror's text for the code itself, except EAI_SYSTEM
+      # which libpq's connectDBStart words with strerror(errno) instead
+      # (glibc's gai_strerror would say "System error").
+      def self.gai_error_text(host : String, code : Int32) : String
+        detail =
+          if code == LibC::EAI_SYSTEM
+            Errno.value.message
+          else
+            gai_strerror_text(code)
+          end
+        "could not translate host name \"#{host}\" to address: #{detail}\n"
+      end
+
+      # gai_strerror(3)'s text for an EAI_* code - glibc's on this
+      # platform, which is what libpq prints verbatim.
+      def self.gai_strerror_text(code : Int32) : String
+        String.new(LibC.gai_strerror(code))
       end
 
       # crystal-pg wraps every connect-stage failure in a

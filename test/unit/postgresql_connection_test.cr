@@ -1,4 +1,5 @@
 require "../minitest_helper"
+require "socket"
 require "../../src/krikri/plugin_helpers/postgresql_connection"
 
 describe Krikri::PluginHelpers::PostgresqlConnection do
@@ -89,6 +90,57 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       resolved[:port].must_equal("5432")
       resolved[:user].must_equal("canonical-user")
       resolved[:unix_socket].must_equal("/canonical/socket")
+    end
+  end
+
+  # libpq words a failed getaddrinfo with the code's own gai_strerror
+  # text (its connectDBStart branch: "could not translate host name
+  # \"%s\" to address: %s", %s = strerror(errno) for EAI_SYSTEM,
+  # gai_strerror(code) otherwise). Crystal's Socket::Addrinfo::Error
+  # carries no gai code, so the plugin re-derives the code with a
+  # direct LibC.getaddrinfo call and prints this wording - every
+  # expected text below is glibc's gai_strerror on this machine, and
+  # the EAI_NONAME/EAI_AGAIN pair was additionally live-verified
+  # against psql 16.14 and real ansible-core 2.19.11 +
+  # community.postgresql 4.2.0 (no network needed here: these tests
+  # exercise the code->message mapping directly).
+  describe ".gai_strerror_text" do
+    it "maps every glibc EAI_* code to its gai_strerror text" do
+      map = {
+        LibC::EAI_NONAME   => "Name or service not known",
+        LibC::EAI_AGAIN    => "Temporary failure in name resolution",
+        LibC::EAI_FAIL     => "Non-recoverable failure in name resolution",
+        LibC::EAI_NODATA   => "No address associated with hostname",
+        LibC::EAI_FAMILY   => "ai_family not supported",
+        LibC::EAI_SOCKTYPE => "ai_socktype not supported",
+        LibC::EAI_SERVICE  => "Servname not supported for ai_socktype",
+        LibC::EAI_MEMORY   => "Memory allocation failure",
+        LibC::EAI_OVERFLOW => "Result too large for supplied buffer",
+      }
+      map.each do |code, text|
+        Krikri::PluginHelpers::PostgresqlConnection.gai_strerror_text(code).must_equal(text)
+      end
+    end
+  end
+
+  describe ".gai_error_text" do
+    it "wraps a gai code in libpq's could-not-translate wording" do
+      Krikri::PluginHelpers::PostgresqlConnection.gai_error_text("nosuchhost.invalid", LibC::EAI_NONAME).must_equal(
+        "could not translate host name \"nosuchhost.invalid\" to address: Name or service not known\n"
+      )
+      Krikri::PluginHelpers::PostgresqlConnection.gai_error_text("example.org", LibC::EAI_AGAIN).must_equal(
+        "could not translate host name \"example.org\" to address: Temporary failure in name resolution\n"
+      )
+    end
+
+    it "words EAI_SYSTEM with strerror(errno), not gai_strerror" do
+      # glibc's gai_strerror would say "System error" here; libpq
+      # special-cases EAI_SYSTEM to strerror(errno) instead (source, not
+      # live-verified - a deterministic EAI_SYSTEM needs a broken
+      # resolver socket, not worth a contrived harness).
+      text = Krikri::PluginHelpers::PostgresqlConnection.gai_error_text("host", LibC::EAI_SYSTEM)
+      text.must_equal("could not translate host name \"host\" to address: #{Errno.value.message}\n")
+      text.wont_equal("could not translate host name \"host\" to address: System error\n")
     end
   end
 end

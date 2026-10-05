@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1492`.**
+**Currently at `0.9.1493`.**
 
 ## Open gaps
 
@@ -31,10 +31,14 @@ defect moves down or gets deleted.
     (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is
     not a krikri difference.
 - **PostgreSQL:** the deprecated aliases (`port`, `host`, `login`, `unix_socket`, `db`) register
-  Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical), and
-  `postgresql_query` without a database name warns like real. Still different: a *temporary* resolver
-  failure prints the EAI_NONAME wording (Crystal's `Addrinfo::Error` carries no gai code) and
-  strerror texts are glibc's. The live tests on port 15432 need a **postgres:16** server.
+  Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
+  every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
+  Still different: a server that accepts and immediately closes the connection. Real prints `server
+  closed the connection unexpectedly ...`; krikri flaps between `Connection refused ...` (RST lands on
+  `connect()`; `connect_strerror` hardcodes that text for every `Socket::ConnectError`, masking
+  ECONNRESET/EHOSTUNREACH/ENETUNREACH) and Crystal's raw `read (#<TCPSocket:0x...>): Connection reset by
+  peer`. crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
+  on port 15432 need a **postgres:16** server.
 - **Docker plugins:** Ansible's Python-SDK error wording (`500 Server Error for http+docker://...`) is
   reproduced only for `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own
   `Code: 500 Message: ...` after Ansible's prefixes.
