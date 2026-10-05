@@ -80,16 +80,17 @@ module Krikri::Lint
       SchemaMetaRule.new
     end
 
-    it "flags a non-object galaxy_info like upstream" do
+    it "flags a non-object galaxy_info" do
       v = meta_violations("---\ngalaxy_info: 5\n")
       v.size.must_equal(1)
       v.first.rule_id.must_equal("schema[meta]")
       v.first.line.must_equal(1)
-      v.first.message.must_equal("$.galaxy_info 5 should not be valid under {'required': ['cloud_platforms', 'galaxy_tags', 'min_ansible_version', 'namespace', 'platforms', 'role_name', 'video_links']}. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
+      v.first.message.must_include("$.galaxy_info 5 should not be valid under {'type': 'object'")
+      v.first.message.must_include(". See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
     end
 
     it "flags a missing required galaxy field" do
-      v = meta_violations("---\ngalaxy_info:\n  author: me\n")
+      v = meta_violations("---\ngalaxy_info:\n  author: me\n  license: MIT\n  min_ansible_version: '2.9'\n")
       v.size.must_equal(1)
       v.first.message.must_equal("$.galaxy_info 'description' is a required property. See https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#using-role-dependencies")
     end

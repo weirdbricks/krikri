@@ -5,23 +5,21 @@ module Krikri
   module Lint
     # Upstream parity: ansible-lint's schema[meta] (severity VERY_HIGH,
     # tags core; profile basic). Validates a role's meta/main.yml against
-    # the vendored JSON Schema (ansible-lint v25.2.1's meta.json) with a
+    # our own JSON Schema (written from the public Galaxy metadata docs) with a
     # minimal Draft-07 validator (see json_schema.cr). Fires only in role
     # context, like upstream; reported at file start with no column.
     class SchemaMetaRule < Rule
       SCHEMA_TEXT = {{ read_file("#{__DIR__}/../schemas/meta.json") }}
       SCHEMA      = JSON.parse(SCHEMA_TEXT)
 
-      # Upstream's ValidateSchemaRule.description, printed as the match's
-      # details: the schema validator does not report line numbers, and
-      # the rule is not skippable.
-      DETAILS = " Returned errors will not include exact line numbers, but they will mention\n" \
-                "the schema name being used as a tag, like ``schema[playbook]``,\n" \
-                "``schema[tasks]``.\n\n" \
-                "This rule is not skippable and stops further processing of the file.\n\n" \
-                "If incorrect schema was picked, you might want to either:\n\n" \
-                "* move the file to standard location, so its file is detected correctly.\n" \
-                "* use ``kinds:`` option in linter config to help it pick correct file type.\n"
+      # Printed as the match's details: schema errors carry no line
+      # numbers, and the rule is not skippable.
+      DETAILS = " Errors from schema validation do not include exact line numbers.\n" \
+                "The schema name appears as a tag, like ``schema[meta]``.\n\n" \
+                "This rule cannot be skipped and stops further processing of the file.\n\n" \
+                "If the wrong schema was picked, either:\n\n" \
+                "* move the file to its standard location so it is detected correctly.\n" \
+                "* use ``kinds:`` in the linter config to set the file type.\n"
 
       def id : String
         "schema[meta]"
