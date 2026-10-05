@@ -11,8 +11,8 @@
 
 require "option_parser"
 require "colorize"
-require "./src/krikri/differential_fuzz/generator"
-require "./src/krikri/differential_fuzz/runner"
+require "../src/krikri/differential_fuzz/generator"
+require "../src/krikri/differential_fuzz/runner"
 
 module Krikri::DifferentialFuzz
   extend self

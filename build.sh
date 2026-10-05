@@ -606,7 +606,7 @@ echo ""
 echo -e "${YELLOW}🔨 Building differential_fuzz...${NC}"
 
 FUZZ_BINARY="$OUTPUT_DIR/differential_fuzz"
-FUZZ_SOURCE="differential_fuzz.cr"
+FUZZ_SOURCE="scripts/differential_fuzz.cr"
 
 NEEDS_BUILD=false
 
