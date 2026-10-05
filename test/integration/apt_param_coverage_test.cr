@@ -433,6 +433,34 @@ describe "apt plugin - parameter coverage" do
         lines.must_include("-y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes autoclean")
       end
     end
+
+    # apt.py main(): the `if not packages: if autoclean/autoremove:
+    # cleanup(...)` tail only fires on an EMPTY package list - with
+    # packages present, state=absent folds autoremove into the remove
+    # command itself and no standalone cleanup runs. Previously this
+    # plugin ran `apt-get -y ... --purge autoclean` alongside the list,
+    # which modern apt-get rejects ("Command line option --purge is not
+    # understood in combination with the other options") -
+    # andrelohmann.docker's "Apt | Remove distribution packages" task
+    # (round 1300020).
+    it "never runs standalone autoremove/autoclean when a package list is present (apt.py: cleanup only on `not packages`)" do
+      with_apt_param_shims("ii") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "name"         => "krikri-fake-pkg",
+          "state"        => "absent",
+          "purge"        => "true",
+          "autoremove"   => "true",
+          "autoclean"    => "true",
+          "_environment" => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        read_log(log).each do |line|
+          line.split(' ').wont_include("autoremove")
+          line.split(' ').wont_include("autoclean")
+        end
+        remove_call(log).must_equal("-q -y #{DEFAULT_DPKG_OPTIONS} --purge --auto-remove remove krikri-fake-pkg")
+      end
+    end
   end
 
   describe "documented no-ops" do

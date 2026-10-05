@@ -512,6 +512,24 @@ module Krikri
       # standalone autoremove removed them - so warm reruns reported
       # `changed: true` forever where Ansible reported `ok`
       # (entanet_devops.common / entanet_devops.upgrade, rounds 73358+).
+      # Ansible's apt module only ever reaches cleanup() for
+      # autoremove/autoclean when NO packages were requested (`if not
+      # packages: if autoclean: cleanup(...); if autoremove:
+      # cleanup(...)` in main()) - with a package list present,
+      # state=absent folds autoremove into the remove command itself
+      # (`--auto-remove`, remove()'s own autoremove flag) and state=
+      # present never cleans, in both cases exiting before the cleanup
+      # tail. Previously this plugin ran the standalone cleanups
+      # alongside a package list too: `purge: true` + `autoclean: true`
+      # produced `apt-get -y ... --purge autoclean`, which modern
+      # apt-get rejects outright ("Command line option --purge is not
+      # understood in combination with the other options") -
+      # andrelohmann.docker's "Apt | Remove distribution packages" task
+      # (purge+autoclean+autoremove+name, round 1300020) failed on every
+      # run where Ansible just purged the packages.
+      # `clean` stays unconditional: real aptclean() runs before the
+      # package dispatch with or without packages (its early-exit only
+      # short-circuits the RESULT, not the `apt-get clean` run).
       if (autoremove || autoclean || clean) && !upgrade
         # Ansible's cleanup() builds `apt-get -y <dpkg_options>
         # <purge> <force_yes> <operation>` - the purge/force flags and
@@ -531,8 +549,8 @@ module Krikri
         # --purge --force-yes autoremove`).
         cleanup_flags = [real_dpkg_options(lock_timeout), (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil)].compact.join(" ")
         {
-          {autoremove, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
-          {autoclean, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
+          {autoremove && no_effective_packages, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
+          {autoclean && no_effective_packages, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
           {clean, "apt-get clean", "cache cleaned"},
         }.each do |(enabled, cmd, label)|
           next unless enabled

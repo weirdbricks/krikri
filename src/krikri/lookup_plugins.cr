@@ -41,6 +41,26 @@ module Krikri
       role_path ? File.join(role_path, "files", path) : path
     end
 
+    # Real template lookup's file search: find_file_in_search_path(
+    # variables, 'templates', term) - the role's templates/ directory
+    # comes FIRST, then the rest of the role-relative search path
+    # (files/, role root). resolve_lookup_path above only ever looked
+    # under files/, so a lookup('template', 'redis.conf.j2') inside a
+    # role never found the role's own template and its missing-file
+    # fallback got written straight into task targets (hifis.redis,
+    # round 1300014: blockinfile wrote the literal string "undefined"
+    # into /etc/redis/redis.conf, and redis-server then refused to
+    # start with "Bad directive or wrong number of arguments").
+    def self.resolve_template_lookup_path(path : String, role_path : String?) : String
+      return path if path.starts_with?('/') || role_path.nil?
+      candidates = [
+        File.join(role_path, "templates", path),
+        File.join(role_path, "files", path),
+        File.join(role_path, path),
+      ]
+      candidates.find { |candidate| File.exists?(candidate) } || File.join(role_path, path)
+    end
+
     # A relative first_found `paths:` entry can resolve against either
     # the role's own ROOT directory OR (buluma.confluence's own `paths:
     # ['../vars']` idiom, Ansible resolves this relative to tasks/,

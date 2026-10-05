@@ -55,6 +55,31 @@ describe "sysctl plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  # Crystal's YAML layer demotes u64-range integers to Float64, so a
+  # role's `kernel.shmall: 18446744073692774399` reaches this plugin as
+  # the string "1.8446744073692774e+19" - `sysctl -w` rejects the
+  # exponent notation ("Invalid argument") where real Ansible writes
+  # plain digits (jtprogru.sysctl, round 1300003).
+  it "writes a scientific-notation u64 value as plain decimal digits" do
+    conf = fresh_conf("big-int.conf", "kernel.shmall=18446744073692774399\n")
+
+    result = PluginSpecHelper.run("sysctl", {
+      "name" => "kernel.shmall", "value" => "1.8446744073692774e+19",
+      "sysctl_file" => conf, "reload" => "false",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(conf).must_equal("kernel.shmall=18446744073692774400\n")
+  end
+
+  it "keeps a below-Int64-max scientific-notation value as the float renders it (real str(float) behavior)" do
+    conf = fresh_conf("small-float.conf", "vm.swappiness=1e3\n")
+
+    PluginSpecHelper.run("sysctl", {"name" => "vm.swappiness", "value" => "1e3", "sysctl_file" => conf, "reload" => "false"})
+
+    File.read(conf).must_equal("vm.swappiness=1e3\n")
+  end
+
   it "creates the file from scratch when it doesn't exist yet" do
     conf = PluginSpecHelper.tmp_path("new-file.conf")
     File.delete(conf) if File.exists?(conf)

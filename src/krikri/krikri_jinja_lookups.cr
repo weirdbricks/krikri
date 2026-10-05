@@ -202,7 +202,7 @@ module Krikri
 
     private def self.lookup_template(ctx : KrikriJinja::Context, path : String,
                                      kwargs : Hash(String, AnyValue), role_path : String?) : AnyValue
-      resolved = LookupPlugins.resolve_lookup_path(path, role_path)
+      resolved = LookupPlugins.resolve_template_lookup_path(path, role_path)
       return AnyValue.new(nil) unless File.exists?(resolved)
       content = File.read(resolved)
       first_line_end = content.index('\n')

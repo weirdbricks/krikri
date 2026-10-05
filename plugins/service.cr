@@ -557,7 +557,11 @@ module Krikri
       if result[:exit_code] == 0
         changed("Service #{should_enable ? "enabled" : "disabled"}")
       else
-        failure("Failed to #{action} service: #{result[:stderr]}")
+        # Real systemd_service.py's enabled branch: "Unable to %s service
+        # %s: %s" over (action, unit, out + err) - out AND err combined,
+        # unlike the state branch which uses err alone (Oefenweb.
+        # rstudio_server round 1300029 wording comparison).
+        failure("Unable to #{action} service #{name}: #{result[:stdout]}#{result[:stderr]}")
       end
     end
 
@@ -808,6 +812,15 @@ module Krikri
 
       if result[:exit_code] == 0
         changed(success_message)
+      elsif @manager == Manager::Systemd
+        # Real systemd_service.py's state branch: "Unable to %s service
+        # %s: %s" over (action, unit, err) - err ALONE, not the out
+        # fallback the non-systemd wording below uses, and no
+        # start/restart verb mangling ("Failed to start service:" was
+        # never Ansible's wording; Oefenweb.rstudio_server round 1300029
+        # failed through handler and start task with both wordings side
+        # by side).
+        failure("Unable to #{action} service #{name}: #{result[:stderr]}")
       else
         verb = action == "start" ? "start" : action
         failure("Failed to #{verb} service: #{result[:stderr].to_s.empty? ? result[:stdout] : result[:stderr]}")

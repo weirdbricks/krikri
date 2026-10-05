@@ -118,7 +118,7 @@ module Krikri
         # newline the way Jinja2's own template rendering leaves one).
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
-        resolved_path = resolve_lookup_path(path)
+        resolved_path = resolve_template_lookup_path(path)
 
         # template_vars=dict(...) - Ansible's own template lookup
         # plugin merges this kwarg's dict into the vars available to
@@ -323,6 +323,26 @@ module Krikri
         return path unless role_path
         files_prefixed = File.join(role_path, "files", path)
         File.exists?(files_prefixed) ? files_prefixed : File.join(role_path, path)
+      end
+
+      # The template lookup's own search, mirroring real
+      # find_file_in_search_path(variables, 'templates', term): the
+      # role's templates/ dir FIRST, then files/, then the role root.
+      # resolve_lookup_path above (files/-only) is correct for the file
+      # lookup but left lookup('template', 'redis.conf.j2') unable to
+      # see the role's own template - its missing-file rescue then
+      # yielded the literal "undefined" that blockinfile wrote into
+      # /etc/redis/redis.conf (hifis.redis, round 1300014).
+      private def resolve_template_lookup_path(path : String) : String
+        return path if path.starts_with?('/')
+        role_path = @vars["role_path"]?.try(&.as_s?)
+        return path unless role_path
+        candidates = [
+          File.join(role_path, "templates", path),
+          File.join(role_path, "files", path),
+          File.join(role_path, path),
+        ]
+        candidates.find { |candidate| File.exists?(candidate) } || File.join(role_path, path)
       end
     end
   end

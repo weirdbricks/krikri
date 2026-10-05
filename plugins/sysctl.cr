@@ -131,7 +131,25 @@ module Krikri
       lower = value.downcase
       return "1" if {"y", "yes", "on", "1", "t", "true"}.includes?(lower)
       return "0" if {"n", "no", "off", "0", "f", "false"}.includes?(lower)
-      value.strip
+      expand_whole_u64_float(value.strip)
+    end
+
+    # Crystal's YAML parser (and JSON::Any after it) has no unsigned-64
+    # integer: a YAML int beyond Int64's range falls back to Float64.
+    # That is exactly the scale sysctl tuning roles use
+    # (jtprogru.sysctl round 1300003: `kernel.shmall: 18446744073692774399`
+    # reached this plugin as the string "1.8446744073692774e+19", and
+    # `sysctl -w kernel.shmall=1.84...e+19` fails "Invalid argument"
+    # where real Ansible's PyYAML integer becomes plain decimal digits
+    # and succeeds). Expand a scientific-notation value that denotes a
+    # whole number at or beyond Int64's range into plain digits. Small
+    # integral strings ("65535") round-trip unchanged; anything below
+    # 2^63 keeps the float rendering a genuine YAML float literal would
+    # have ("1e3" stays "1e3", like real's str(float)).
+    private def expand_whole_u64_float(value : String) : String
+      f = value.to_f64?
+      return value if f.nil? || f != f.trunc || f <= Int64::MAX || f > UInt64::MAX
+      f.to_u64.to_s
     end
 
     # Real _values_is_equal: whitespace-split token comparison, order

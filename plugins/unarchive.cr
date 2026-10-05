@@ -660,8 +660,29 @@ module Krikri
     # this one - a real, separate use of the same param). Empty when
     # every extra_opts entry is a flag (the overwhelmingly common case),
     # meaning "no member filter, everything tar actually extracted counts".
+    # The SPLIT flag-with-value form is not a member name either:
+    # 0x0I.elasticsearch's own
+    # `extra_opts: [--strip-components, '1']` put the VALUE "1" (a
+    # non-flag element) into this filter, which no member matches
+    # ("1" or "1/" appears in no archive), so the whole attribute pass
+    # saw an empty member list and silently skipped chown/chgrp/chmod -
+    # the extracted tree kept the archive's own uid/gid (round 1300009:
+    # a later `file: state: directory` task had to fix the config dir's
+    # ownership, reporting changed: true where Ansible reported ok).
     private def extra_opts_member_filter : Array(String)
-      parse_list_param(@params["extra_opts"]?).reject(&.starts_with?("-"))
+      opts = parse_list_param(@params["extra_opts"]?)
+      member_names = [] of String
+      value_next = false
+      opts.each do |opt|
+        if value_next
+          value_next = false
+        elsif opt.starts_with?("-")
+          value_next = opt == "--strip-components"
+        else
+          member_names << opt
+        end
+      end
+      member_names
     end
 
     # Maps an archive-listing member path to its on-disk path under dest
@@ -720,18 +741,24 @@ module Krikri
           next nil
         end
         stripped = stripped_member(member, strip)
-        next nil if stripped.nil?
+        # A member that collapses onto dest itself under stripping (the
+        # wrapper dir of a GitHub-release tarball, or the leading "./" of
+        # a `-C src .` archive): tar extracts NOTHING there, but the
+        # attribute list must still include dest - Ansible lists the
+        # archive with `--show-transformed-names` + extra_opts, and a
+        # fully-stripped member comes out as "" (file member) or "/"
+        # (directory member), both of which its leading-'/' strip turns
+        # into "" and `os.path.join(dest, "")` puts dest itself on the
+        # attribute list (live-verified against ansible-core 2.19.11:
+        # mode: "0750" over --strip-components=1 ends with dest itself
+        # at 0750, exactly like every extracted member). Only the
+        # EXtraction skips it - tar refuses a member left with no name.
+        next dest if stripped.nil?
         # Containment FIRST: a member like `../../etc` (or an absolute
         # one) normalizes outside dest and must never reach find/chown/
         # chmod as a start argument - see contained_member_path.
         path = contained_member_path(dest, stripped)
         next nil if path.nil?
-        # With stripping active, a member that collapses onto dest itself
-        # (the "./" self-reference shape) is exactly what tar skips - it
-        # extracts nothing there. Without stripping, the "./" member
-        # deliberately KEEPS dest as its own path (see the "./" comment
-        # above - Ansible applies the requested mode to dest there).
-        next nil if strip.positive? && path == dest
         shell_single_quote(path)
       end
     end

@@ -568,6 +568,39 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ lookup('template', '#{path}') }})).must_equal("value is computed")
   end
 
+  # Real find_file_in_search_path(variables, 'templates', term): a
+  # RELATIVE lookup term resolves against the role's templates/ dir
+  # first, then files/, then the role root - the previous files/-only
+  # resolution returned nil for a role's own template and the nil
+  # rendered as "undefined" into whatever consumed the lookup
+  # (hifis.redis round 1300014: blockinfile wrote that literal into
+  # /etc/redis/redis.conf, redis-server then failed "Bad directive").
+  it "resolves a relative lookup('template', ...) term against the role's templates/ dir first" do
+    role_dir = PluginSpecHelper.tmp_path("crinja_lookup_template_role_spec")
+    Dir.mkdir_p(File.join(role_dir, "templates"))
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    File.write(File.join(role_dir, "templates", "redis.conf.j2"), "from templates dir\n")
+    File.write(File.join(role_dir, "files", "redis.conf.j2"), "from files dir\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ lookup('template', 'redis.conf.j2') }})).must_equal("from templates dir")
+  end
+
+  it "falls back to the role's files/ dir and role root for a relative lookup('template', ...) term" do
+    role_dir = PluginSpecHelper.tmp_path("crinja_lookup_template_role_fallback_spec")
+    Dir.mkdir_p(File.join(role_dir, "files"))
+    File.write(File.join(role_dir, "files", "plain.txt"), "from files dir\n")
+    File.write(File.join(role_dir, "root.txt"), "from role root\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ lookup('template', 'plain.txt') }})).must_equal("from files dir")
+    renderer.render(%({{ lookup('template', 'root.txt') }})).must_equal("from role root")
+  end
+
   it "renders lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
     # Round 849, bimdata.ferm: Ansible's template lookup plugin
     # merges template_vars=dict(...) into the vars available to the

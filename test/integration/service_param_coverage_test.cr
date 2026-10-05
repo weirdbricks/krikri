@@ -92,6 +92,42 @@ private def read_calls(log : String) : Array(String)
   File.exists?(log) ? File.read_lines(log) : [] of String
 end
 
+# Same shim layout as with_service_shims, but the systemctl UNIT
+# actions (anything but the `show` status probe) exit 1 with a fake
+# stderr - for asserting the failure-wording the plugin wraps around
+# them (ansible's systemd_service.py "Unable to %s service %s: %s").
+private def with_failing_service_shims(&)
+  dir = File.join(Dir.tempdir, "krikri-service-fail-#{Random.rand(1_000_000)}")
+  log = File.join(dir, "calls.log")
+  FileUtils.mkdir_p(dir)
+
+  File.write(File.join(dir, "systemctl"), <<-'SHIM')
+    #!/bin/sh
+    echo "$@" >> "$KRIKRI_SVC_CALLS"
+    case "$1" in
+      show)
+        printf 'LoadState=loaded\nActiveState=inactive\n'
+        ;;
+      *)
+        echo "Job for krikri-fake-svc.service failed because the control process exited with error code." >&2
+        exit 1
+        ;;
+    esac
+  SHIM
+
+  %w[systemctl].each do |shim|
+    File.chmod(File.join(dir, shim), 0o755)
+  end
+
+  env = {
+    "PATH"             => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_SVC_CALLS" => log,
+  }.to_json
+  yield env, log
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
 SYSTEMD_PATTERN_WARNING   = "Ignoring \"pattern\" as it is not used in \"systemd\""
 SYSTEMD_SLEEP_WARNING     = "Ignoring \"sleep\" as it is not used in \"systemd\""
 SYSTEMD_ARGUMENTS_WARNING = "Ignoring \"arguments\" as it is not used in \"systemd\""
@@ -216,6 +252,63 @@ describe "service plugin - parameter coverage" do
         # No sleep call: Ansible's OpenRC restart is native, no
         # stop-then-start split to sleep between.
         calls.join("\n").wont_include("sleep ")
+      end
+    end
+  end
+
+  # Real systemd_service.py wraps every failed systemctl unit action in
+  # "Unable to %s service %s: %s" - state branch with (action, unit,
+  # err), enabled branch with (action, unit, out + err). The plugin
+  # previously said "Failed to start service:" / "Failed to restart
+  # service:" (Oefenweb.rstudio_server round 1300029 surfaced both
+  # wordings side by side: real's start task vs krikri's restart
+  # handler).
+  describe "systemd failure wording (systemd_service.py: Unable to %s service %s)" do
+    it "uses Unable-to wording with the unit name on a failed state: started" do
+      with_failing_service_shims do |env, _log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => "krikri-fake-svc",
+          "state"        => "started",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal(
+          "Unable to start service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
+        )
+      end
+    end
+
+    it "uses Unable-to wording with the unit name on a failed state: restarted" do
+      with_failing_service_shims do |env, _log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => "krikri-fake-svc",
+          "state"        => "restarted",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal(
+          "Unable to restart service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
+        )
+      end
+    end
+
+    it "uses Unable-to wording with stdout AND stderr on a failed enabled: yes" do
+      with_failing_service_shims do |env, _log|
+        result = PluginSpecHelper.run("service", {
+          "name"         => "krikri-fake-svc",
+          "enabled"      => "true",
+          "use"          => "systemd",
+          "_environment" => env,
+        })
+
+        result["failed"].as_bool.must_equal(true)
+        result["msg"].as_s.must_equal(
+          "Unable to enable service krikri-fake-svc: Job for krikri-fake-svc.service failed because the control process exited with error code.\n"
+        )
       end
     end
   end

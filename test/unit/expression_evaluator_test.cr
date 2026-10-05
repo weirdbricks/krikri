@@ -754,6 +754,22 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('template', '#{path}'))).must_equal("value is computed")
   end
 
+  # Real find_file_in_search_path(variables, 'templates', term): a
+  # RELATIVE lookup term resolves against the role's templates/ dir
+  # first - the previous files/-only resolution rescued the failed
+  # File.read into the literal "undefined" that blockinfile then wrote
+  # into /etc/redis/redis.conf (hifis.redis, round 1300014).
+  it "resolves a relative lookup('template', ...) term against the role's templates/ dir first" do
+    role_dir = PluginSpecHelper.tmp_path("lookup_template_role_spec")
+    Dir.mkdir_p(File.join(role_dir, "templates"))
+    File.write(File.join(role_dir, "templates", "redis.conf.j2"), "from templates dir\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate(%(lookup('template', 'redis.conf.j2'))).must_equal("from templates dir")
+  end
+
   it "strips a leading #jinja2: directive line from lookup('template', path)'s rendered output" do
     # Real bug found benchmarking bimdata.ferm: its own get_vars.j2
     # opens with `#jinja2: lstrip_blocks: True` (a per-template Jinja2

@@ -288,6 +288,37 @@ describe "unarchive plugin" do
     File.read(File.join(dest, "index.php")).must_equal("<?php")
   end
 
+  it "applies mode: to extracted members even when the strip-components extra_opt arrives in the SPLIT flag/value form" do
+    # Real bug found benchmarking 0x0I.elasticsearch (round 1300009):
+    # the role's own `extra_opts: [--strip-components, '1']` is the
+    # SPLIT form (flag and value as separate list elements - tar accepts
+    # both shapes). The member filter treated the non-flag VALUE
+    # element ("1") as a positional member NAME, which no archive
+    # member matches, so the attribute pass's member list came out
+    # empty and the whole chown/chgrp/chmod pass silently no-oped -
+    # the extracted tree kept the archive's own uid/gid/mode, and a
+    # later `file: state: directory` task in the role had to fix the
+    # config dir's ownership, reporting changed: true where Ansible
+    # reported ok.
+    dest = fresh_dest("tar-strip-components-split-form")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "archive.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => %(["--strip-components", "1"]),
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    File.read(File.join(dest, "a.txt")).must_equal("hello")
+    File.read(File.join(dest, "sub", "b.txt")).must_equal("nested")
+    (File.info(File.join(dest, "sub")).permissions.value & 0o777).must_equal(0o700)
+    (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).must_equal(0o700)
+    # The fully-stripped top member transforms to "/" (dir) or "" (file)
+    # in tar's own transformed listing, and Ansible's os.path.join(dest,
+    # "") puts dest itself on the attribute list - live-verified.
+    (File.info(dest).permissions.value & 0o777).must_equal(0o700)
+  end
+
   it "is idempotent on a --strip-components=1 rerun despite tar --compare's own benign warning" do
     # Real bug found benchmarking robertdebock.phpmyadmin: GNU tar
     # --compare always emits a bogus "Cannot stat: No such file or
@@ -340,7 +371,6 @@ describe "unarchive plugin" do
     pre_existing = File.join(dest, "pre-existing.txt")
     File.write(pre_existing, "already here before the archive\n")
     File.chmod(pre_existing, 0o644)
-    dest_mode_before = File.info(dest).permissions.value & 0o777
 
     result = PluginSpecHelper.run("unarchive", {
       "src"        => File.join(TMP_DIR, "wrapped.tar.gz"),
@@ -352,8 +382,13 @@ describe "unarchive plugin" do
     result["changed"].as_bool.must_equal(true)
     # Every stripped member got the requested mode...
     (File.info(File.join(dest, "index.php")).permissions.value & 0o777).must_equal(0o700)
-    # ...while dest and the non-member sibling were never touched.
-    (File.info(dest).permissions.value & 0o777).must_equal(dest_mode_before)
+    # ...dest itself too (live-verified against ansible-core 2.19.11:
+    # the fully-stripped top member transforms to "/" in tar's own
+    # transformed listing, and Ansible's os.path.join(dest, "") puts
+    # dest on the attribute list - 0.9.1049 briefly pinned this as
+    # "never touched", which contradicted ansible-playbook itself),
+    # while the non-member sibling was never touched.
+    (File.info(dest).permissions.value & 0o777).must_equal(0o700)
     (File.info(pre_existing).permissions.value & 0o777).must_equal(0o644)
 
     # And the member re-apply stays idempotent on a warm rerun.
