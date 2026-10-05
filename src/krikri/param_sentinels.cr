@@ -227,7 +227,7 @@ module Krikri
     end
   end
 
-  # real's boolean(value, strict=False) (module_utils/parsing/
+  # real's boolean(value, strict=False) (the real module
   # convert_bool.py) answering TRUE - the exact predicate the assemble
   # action plugin applies to remote_src to pick between its module branch
   # (truthy: the assemble module itself runs and re-converts remote_src

@@ -11,7 +11,7 @@ module Krikri
     # ec2_vpc_subnet_info, iam_user_info).
     #
     # Real amazon.aws modules wrap AnsibleModule in AnsibleAWSModule
-    # (module_utils/modules.py): the AnsibleModule argument-spec
+    # Observed behavior: the AnsibleModule argument-spec
     # validation runs FIRST, then the boto3 check fails any invocation
     # whose args were VALID with "Failed to import the required Python
     # library (botocore and boto3) ...". Every wording below is
@@ -76,7 +76,7 @@ module Krikri
         required_if : Array(Tuple(String, String, Array(String))) = [] of Tuple(String, String, Array(String)),
         sub : Hash(String, SubSpec) = {} of String => SubSpec
 
-      # module_utils/modules.py _aws_common_argument_spec() + region, in
+      # the real module _aws_common_argument_spec() + region, in
       # declaration order; every module's merged spec is this plus its
       # own params.
       BASE_ARGS = {

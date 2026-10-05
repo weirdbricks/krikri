@@ -126,8 +126,8 @@ module Krikri
         # and runs the standard host-pattern machinery over it. The
         # `groups` magic var is already in every task's vars context
         # (TaskExecutor#build_vars_context), so this needs no inventory
-        # plumbing at all. Pattern semantics ported from
-        # lib/ansible/inventory/manager.py: comma-separated (colon
+        # plumbing at all. Pattern semantics behavior matched to
+        # the real module: comma-separated (colon
         # fallback) terms, `&` intersection / `!` exclusion applied after
         # the regular terms, fnmatch glob over group names first and host
         # names only when no group matched (or the pattern carries glob

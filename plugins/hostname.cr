@@ -76,7 +76,7 @@ module Krikri
       @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
-    # Real Ansible's STRATS dict (ansible/modules/hostname.py), in its own
+    # Real Ansible's STRATS dict, in its own
     # insertion order - used both for choice validation (exact error text)
     # and strategy dispatch.
     private USE_CHOICES = %w[alpine debian freebsd generic macos macosx darwin

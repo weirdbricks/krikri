@@ -1,7 +1,7 @@
 require "../vault"
 
 module Krikri
-  # Byte-for-byte port of ansible-core 2.19's task-failure error-block
+  # Matches ansible-core 2.19's task-failure error-block
   # rendering: `Display._error` -> `_display_utils.format_message` ->
   # `_event_formatting.format_event`/`format_event_verbose_message`, over
   # an `Event` tree whose source context comes from
@@ -95,7 +95,7 @@ module Krikri
       @@seen.includes?(text)
     end
 
-    # Port of `_event_formatting.format_event` (no traceback).
+    # Matches `_event_formatting.format_event` (no traceback).
     def self.format_event(event : Node) : String
       msg = format_event_verbose_message(event)
       msg = msg.strip
@@ -103,7 +103,7 @@ module Krikri
       msg
     end
 
-    # Port of `_event_formatting.format_event_verbose_message`.
+    # Matches `_event_formatting.format_event_verbose_message`.
     #
     # A Node owns its outgoing chain link (`chain`/`chain_reason`/
     # `chain_follow` mirror `EventChain.event`/`msg_reason`/`follow`),
@@ -165,7 +165,7 @@ module Krikri
       {messages, link}
     end
 
-    # Port of `_event_utils.deduplicate_message_parts`.
+    # Matches `_event_utils.deduplicate_message_parts`.
     def self.deduplicate_message_parts(parts : Array(String)) : String
       message_parts = parts.reverse
       message = message_parts.shift
@@ -181,7 +181,7 @@ module Krikri
       message
     end
 
-    # Port of `_event_utils.format_event_brief_message`.
+    # Matches `_event_utils.format_event_brief_message`.
     def self.brief_message(event : Node) : String
       parts = [] of String
       loop do
@@ -193,12 +193,12 @@ module Krikri
       deduplicate_message_parts(parts)
     end
 
-    # Port of `_text_utils.concat_message`.
+    # Matches `_text_utils.concat_message`.
     def self.concat_message(left : String, right : String) : String
       "#{left.rstrip(". ")}: #{right}"
     end
 
-    # Port of `_event_formatting._get_message_lines`.
+    # Matches `_event_formatting._get_message_lines`.
     def self.message_lines(message : String, help_text : String?, source_context : String?) : Array(String)
       if help_text && !source_context && !message.includes?('\n') && !help_text.includes?('\n')
         return ["#{message} #{help_text}"]
@@ -213,7 +213,7 @@ module Krikri
       lines
     end
 
-    # Port of `_error_utils.SourceContext.from_origin` + `#to_s`:
+    # Matches `_error_utils.SourceContext.from_origin` + `#to_s`:
     # `Origin: path:line:col`, a blank line, then up to 2 lines of
     # context before the target line (right-aligned line numbers, tabs
     # collapsed to single spaces, 120-column truncation with a `...`

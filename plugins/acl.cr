@@ -6,8 +6,8 @@ require "../src/krikri/plugin_helpers/acl_command"
 
 module Krikri
   # ansible.posix.acl - manages POSIX ACL entries on a file or
-  # directory via getfacl(1)/setfacl(1). Ported from the real Python
-  # module (ansible.posix plugins/modules/acl.py) - same parameter
+  # directory via getfacl(1)/setfacl(1). Behavior matched to the real Python
+  # module - same parameter
   # handling (path/name alias, entry: shorthand vs entity/etype/
   # permissions, default: for directory default ACLs, recursive:,
   # follow:, recalculate_mask:, use_nfsv4_acls:), same command

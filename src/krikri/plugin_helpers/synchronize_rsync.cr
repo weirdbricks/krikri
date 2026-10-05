@@ -13,7 +13,7 @@ module Krikri
   #     `--async`/manual invocation on whatever host the "local" rsync end
   #     is - same split as debug/pause)
   #
-  # Ported from real ansible.posix's plugins/modules/synchronize.py (the
+  # Behavior matched to real ansible.posix's the real module (the
   # module half; the action-plugin half only munges src/dest into remote
   # `user@host:path` form and resolves the private key/port before handing
   # over). Argument order, flag spelling, and the itemize-changes protocol

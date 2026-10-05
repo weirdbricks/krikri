@@ -477,7 +477,7 @@ module Krikri
       nil
     end
 
-    # uri's controller-side action plugin (plugins/action/uri.py), in its
+    # uri's controller-side action plugin, in its
     # own order, both before the module validates anything - which is why
     # they are action-level failures here and not module-side checks in
     # plugins/uri.cr:
@@ -1210,7 +1210,7 @@ module Krikri
       end
 
       json = (JSON.parse(raw) rescue nil)
-      kind = value_kind(raw, json) # :str | :bool | :list | :dict
+      kind = value_kind(raw, json) # Observed behavior: str | :bool | :list | :dict
 
       conversion_type_error(name, wanted, raw, kind, native)
     end
@@ -1268,7 +1268,7 @@ module Krikri
         return "argument '#{name}' is of type #{kind} and we were unable to convert to bool: " \
                "<class '#{kind}'> cannot be converted to a bool"
       end
-      # :bool - already a boolean, nothing to convert.
+      # Observed behavior: bool - already a boolean, nothing to convert.
       nil
     end
 
@@ -1320,7 +1320,7 @@ module Krikri
     end
 
     # debug's `var:` rides the _check_type_str_no_conversion CALLABLE
-    # (plugins/action/debug.py:44), not the 'str' type name: the checker
+    # (the real module:44), not the 'str' type name: the checker
     # accepts a string and NOTHING else - no int()/str() coercion - so any
     # natively-typed value is rejected outright, with the checker's own
     # repr in the "we were unable to convert to <name>" slot and its

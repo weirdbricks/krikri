@@ -380,7 +380,7 @@ module Krikri
     end
 
     # Real url_get's own branches for a request that never produced a
-    # usable body (module_utils/urls.py's fetch_url folds every failure
+    # usable body (the real module's fetch_url folds every failure
     # into `info`, and get_url.py branches on info['status'] alone):
     #
     #   * status != 200 and != 304 -> fail_json(msg="Request failed",
@@ -791,7 +791,7 @@ module Krikri
       headers = HTTP::Headers.new
       headers["User-Agent"] = @params["http_agent"]? || "ansible-httpget"
 
-      # Real fetch_url's cache-control branch (module_utils/urls.py):
+      # Real fetch_url's cache-control branch:
       # a forced request carries "cache-control: no-cache"; an unforced
       # one whose dest already exists carries If-Modified-Since (dest's
       # mtime, RFC 1123 with seconds precision, like real's

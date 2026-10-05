@@ -22,7 +22,7 @@ module Krikri
   # strategy - the file's own hex encoding (byte-reversed IP octets, a
   # plain 4-digit hex port, and a two-digit connection-state code) was
   # verified against this machine's own real /proc/net/tcp output, and
-  # the state-code mapping against ansible/modules/wait_for.py's own
+  # the state-code mapping against the real module's own
   # source, not assumed. `active_connection_states:` (default
   # ESTABLISHED/FIN_WAIT1/FIN_WAIT2/SYN_RECV/SYN_SENT/TIME_WAIT, matching
   # real Ansible's own default) and `exclude_hosts:` (IPv4 literals only,
@@ -33,7 +33,7 @@ module Krikri
   # explicitly) - fails clearly rather than silently matching nothing.
   #
   # `search_regex` also works against an open socket, not just a file -
-  # verified against real ansible/modules/wait_for.py's own source:
+  # verified against observed behavior:
   # connects, then reads (accumulating bytes) until the regex matches,
   # the connection closes, or the poll iteration's own remaining timeout
   # budget passes - see `#check_port_regex`'s own doc comment for the
@@ -268,8 +268,8 @@ module Krikri
     end
 
     # search_regex matched against data read from an open socket, not
-    # just a file - verified against real ansible/modules/wait_for.py's
-    # own source: connects, then reads (accumulating bytes) until the
+    # just a file - verified against the real module's
+    # observed behavior: connects, then reads (accumulating bytes) until the
     # regex matches, the connection closes, or *deadline* (this poll
     # iteration's own overall timeout budget, not a fresh per-call one)
     # passes - matching real Ansible's own single-connection read loop

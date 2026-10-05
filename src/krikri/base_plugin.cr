@@ -162,7 +162,7 @@ module Krikri
       # _ansible_key_order marker TaskExecutor#register_result applies)
       # covers, not its presence.
       result["exception"] = "(traceback unavailable)" if @failed
-      # Real Ansible's module protocol (module_utils/basic.py) only adds
+      # Real Ansible's module protocol only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
       # (not a display-layer strip; callbacks pass the dict through).
@@ -340,7 +340,7 @@ module Krikri
     end
 
     # Directories searched beyond $PATH by real Ansible's get_bin_path
-    # (module_utils/common/process.py): PATH first, then /sbin,
+    # Observed behavior: PATH first, then /sbin,
     # /usr/sbin, /usr/local/sbin.
     private BIN_EXTRA_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
 
@@ -893,7 +893,7 @@ module Krikri
       digest.final.hexstring
     end
 
-    # Real Ansible's AnsibleModule.add_path_info (module_utils/basic.py),
+    # Real Ansible's AnsibleModule.add_path_info,
     # which its _return_formatted runs over EVERY module result (both
     # exit_json and fail_json): any result whose `path` (or `dest`) key
     # points at a path that STILL EXISTS at module-exit time gets the
@@ -993,7 +993,7 @@ module Krikri
     end
 
     # Helper to check if a parameter is truthy - real Ansible's own
-    # BOOLEANS_TRUE (module_utils/parsing/convert_bool.py): y/yes/on/1/
+    # BOOLEANS_TRUE: y/yes/on/1/
     # true/t.
     protected def true?(value : String?, default : Bool = false) : Bool
       return default unless value

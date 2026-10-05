@@ -53,7 +53,7 @@ module Krikri
       # message around.
       #
       # fetch_url never raises for a failed request - it catches
-      # everything and folds it into `info` (module_utils/urls.py):
+      # everything and folds it into `info`:
       #
       #   * urllib.error.HTTPError  -> info['status'] = the code,
       #     info['msg'] = "HTTP Error <code>: <reason>"  (Kind::HttpError)

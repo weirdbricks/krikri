@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # parted plugin - creates, resizes, flags, or removes disk partitions
-  # via `parted -s`, a native port of community.general.parted.
+  # via `parted -s`, a native reimplementation of community.general.parted.
   #
   # Implemented against real parted.py's control flow, including its
   # result shapes (round 992003 kop_storage captures):

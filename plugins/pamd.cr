@@ -9,7 +9,7 @@ module Krikri
   # match community.general.pamd's own Python logic (linked-list-of-
   # rules model, control normalization, insert-skip-comments behavior)
   # rather than a simplified reimplementation - verified against the
-  # real module source (ansible_collections/community/general/plugins/
+  # real module source (ansible_collections/the real module
   # modules/pamd.py).
   #
   # A PAM config line has the shape `TYPE CONTROL MODULE_PATH
@@ -36,7 +36,7 @@ module Krikri
     property control : String # already normalized
     property path : String
     property args : Array(String)
-    property kind : Symbol # :rule, :comment, :empty, :include, :unparsed
+    property kind : Symbol # Observed behavior: rule, :comment, :empty, :include, :unparsed
     property raw : String  # verbatim text for non-rule kinds
 
     def initialize(@rule_type, control : String, @path, @args = [] of String, @kind = :rule, @raw = "")

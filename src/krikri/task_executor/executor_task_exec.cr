@@ -150,7 +150,7 @@ module Krikri
         if value.nil?
           # Real Ansible applies spec defaults with set_default=False
           # before check_required_arguments (ansible-core's
-          # module_utils/common/parameters.py _set_defaults), so only a
+          # the real module _set_defaults), so only a
           # default whose value is not None stands in for a missing
           # option - a spec declaring `default: null` alongside
           # `required: true` does NOT satisfy the requirement

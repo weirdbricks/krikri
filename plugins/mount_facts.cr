@@ -15,7 +15,7 @@ module Krikri
   # (source file + raw source line) it came from.
   #
   # Implementation notes on real Ansible's behavior this mirrors
-  # (ansible/modules/mount_facts.py + module_utils/facts/utils.py):
+  # (the real module + the real module):
   #   - default `sources` is ["all"] -> DYNAMIC_SOURCES (/etc/mtab,
   #     /proc/mounts, /etc/mnttab) then STATIC_SOURCES (/etc/fstab,
   #     /etc/vfstab, /etc/filesystems); repeat sources (including a

@@ -24,7 +24,7 @@ module Krikri
   #
   # get_mime/get_attributes both shell out - not a missed native-conversion
   # opportunity like stat's own core fields used to be, but the same thing
-  # real Ansible's own module_utils/basic.py does: neither `file` nor
+  # real Ansible's own the real module does: neither `file` nor
   # `lsattr` has a native Crystal (or Python stdlib) equivalent. Parsing
   # logic lives in `plugin_helpers/file_attributes.cr` (unit tested); this
   # plugin only runs the two commands via the existing local/remote

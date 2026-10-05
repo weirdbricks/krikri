@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/locale_gen_command"
 
 module Krikri
-  # locale_gen plugin - a native port of community.general.locale_gen
+  # locale_gen plugin - a native reimplementation of community.general.locale_gen
   # (read from a live collection install; Debian/Ubuntu is a supported
   # platform here, per the real module's own NOTES).
   #

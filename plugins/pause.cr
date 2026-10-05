@@ -16,7 +16,7 @@ module Krikri
   # decimals, minutes-unit divided by 60), never the requested amount
   # and never the prompt text.
   #
-  # Real 2.14 semantics ported from ansible/plugins/action/pause.py:
+  # Real 2.14 semantics behavior matched to the real module:
   # - seconds/minutes are `{'type': int}`-validated BEFORE anything
   #   happens: float values truncate (1.5 -> 1), non-numerics fail the
   #   task (failed=True, no wait, no crash).

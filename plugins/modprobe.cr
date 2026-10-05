@@ -32,7 +32,7 @@ module Krikri
   #
   # - params: extra modprobe arguments (e.g. "numdummies=2") passed
   #   straight to `modprobe <name> <params>` at load time - verified
-  #   against real community.general modprobe.py's own source: only
+  #   against real community.general modprobe.py's observed behavior: only
   #   ever applied when the module ISN'T already loaded (`load_module`
   #   is only called from `not modprobe.module_loaded()`), so on an
   #   already-loaded module `params:` has zero effect and is never

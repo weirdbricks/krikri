@@ -12,7 +12,7 @@ module Krikri
   # a state change to skip).
   #
   # msg carries the task arg's NATIVE type: real's fail ACTION plugin
-  # (ansible/plugins/action/fail.py) assigns `result['msg'] =
+  # assigns `result['msg'] =
   # self._task.args.get('msg')` verbatim - no str() coercion anywhere -
   # so a non-string YAML literal (the parser marks those; see
   # NON_STRING_PARAM_PREFIX) stays an int/float/bool/None/list/dict in

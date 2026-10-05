@@ -2,7 +2,7 @@
 # community.mysql.mysql_variables - queries / sets MySQL or MariaDB
 # global server variables over the MySQL wire protocol (same shared
 # connection path as the other community.mysql plugins - see
-# plugins/mysql_db.cr's module comment). Ported from community.mysql's
+# plugins/mysql_db.cr's module comment). Behavior matched to community.mysql's
 # mysql_variables module (round 310090: Oefenweb.percona_server reads
 # `datadir` and sets `innodb_fast_shutdown` through it; previously
 # unavailable -> rc=4 "unavailable modules").

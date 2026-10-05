@@ -167,7 +167,7 @@ module Krikri
     end
 
     # The real module parses every SAN entry through
-    # cryptography_get_name (module_utils/_crypto/cryptography_support.py)
+    # cryptography_get_name
     # before generating. Two failure classes the openssl CLI does NOT
     # reproduce on its own: an entry with no colon at all is the
     # "forgot DNS: prefix?" case (the CLI silently accepts an empty

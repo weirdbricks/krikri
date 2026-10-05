@@ -13,7 +13,7 @@ require "../src/krikri/plugin_helpers/maven_artifact_command"
 require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
-  # maven_artifact plugin - a native port of
+  # maven_artifact plugin - a native reimplementation of
   # community.general.maven_artifact: downloads a Maven artifact to
   # dest, resolving "latest" versions and SNAPSHOT timestamps through
   # the repository's maven-metadata.xml, with checksum verification.

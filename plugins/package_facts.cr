@@ -18,8 +18,7 @@ module Krikri
   # os_family != Suse/Archlinux, so dpkg is the path the role actually
   # needs. Read-only, so it's safe under --check.
   #
-  # Param coverage matches real Ansible's argument_spec
-  # (ansible/modules/package_facts.py):
+  # Param coverage matches real Ansible's argument_spec:
   #   manager:  type list (default ['auto']), lowercased, with real's
   #             ALIASES (dnf/dnf5/yum/zypper -> rpm; added in ansible-core
   #             2.18). There is deliberately NO "dpkg" manager: real

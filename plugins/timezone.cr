@@ -196,7 +196,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: lines.join("\n"))
     end
 
-    # module_utils/basic.py get_bin_path(required=True) failure: plain
+    # the real module get_bin_path(required=True) failure: plain
     # fail_json, no abort() "Error message:" wrapper (confirmed live
     # against real ansible-playbook 2.19.11 on a host without hwclock).
     private def missing_binary(name : String) : PluginResult

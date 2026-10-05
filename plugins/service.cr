@@ -83,7 +83,7 @@ module Krikri
     TOOL_BINARIES  = %w[service chkconfig update-rc.d rc-service rc-update initctl systemctl insserv]
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
 
-    # Real Ansible's service ACTION plugin (ansible/plugins/action/service.py)
+    # Real Ansible's service ACTION plugin
     # defines UNUSED_PARAMS['systemd'] = ['pattern', 'runlevel', 'sleep',
     # 'arguments', 'args']: documented `service:` options the systemd module
     # has no use for. When the resolved service-manager module is systemd,

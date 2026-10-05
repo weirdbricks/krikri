@@ -327,7 +327,7 @@ module Krikri
     # inventory's directory and the playbook's, with the playbook side
     # winning a same-key conflict between the two file trees - the
     # dirless-infra shape (ansible/inventory/backend_hosts.yml next to
-    # ansible/group_vars/) silently lost every playbook-adjacent
+    # the real module) silently lost every playbook-adjacent
     # group_vars var before this parameter existed.
     def self.parse(path : String, playbook_dir : String? = nil) : Inventory
       # `-i "web1,web2,"` - real Ansible's host_list source. The trailing
@@ -604,7 +604,7 @@ module Krikri
       content = File.read(path)
 
       current_group : String? = nil
-      group_type = :hosts # :hosts or :vars or :children
+      group_type = :hosts # Observed behavior: hosts or :vars or :children
 
       content.lines.each do |line|
         line = line.strip

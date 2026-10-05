@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # Make plugin - runs targets in a Makefile. Compatible with
-  # community.general.make (ported from its own real Python source,
+  # community.general.make (behavior matched to its own real Python source,
   # including its idempotency check).
   #
   # Entirely unimplemented before - robertdebock.earlyoom's own "Make

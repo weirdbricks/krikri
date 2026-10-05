@@ -38,7 +38,7 @@ module Krikri
     # Execute a task on a host - dispatches to the loop, retry, or plain
     # single-execution path depending on what the task declares.
     # Real Ansible templates a task's `name:` leniently through
-    # ReplacingMarkerBehavior (ansible/playbook/task.py
+    # ReplacingMarkerBehavior (the real module
     # _post_validate_name): every undefined span becomes a numbered
     # `<< error N - 'x' is undefined >>` placeholder IN the displayed
     # name, and each name-templating context exits by emitting one
@@ -225,7 +225,7 @@ module Krikri
     # `{{ r.keys() | list | to_json }}` on a registered poll: 5 command
     # job): the async_status ACTION plugin's base dict - started,
     # finished, stdout, stderr, stdout_lines, stderr_lines,
-    # ansible_job_id, results_file (ansible/plugins/action/async_status.py
+    # ansible_job_id, results_file (the real module
     # initializes it, then coerces started/finished to booleans) - merged
     # with the job file's module result the way its merge_hash does:
     # duplicate keys keep their base position with the file's value, the

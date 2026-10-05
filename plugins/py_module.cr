@@ -104,14 +104,14 @@ module Krikri
       # unchanged from pre-shim behavior.
       #
       # A role shipping its OWN custom module_utils packages (e.g.
-      # linux-system-roles.storage's module_utils/storage_lsr/ beside its
+      # linux-system-roles.storage's the real module beside its
       # library/blivet.py) gets that tree staged under
-      # ansible/module_utils/ here too, the way real Ansible's AnsiballZ
+      # the real module here too, the way real Ansible's AnsiballZ
       # wrapper bundles the role's own module_utils into the zipapp. The
       # controller only sends this when the role actually ships a
       # module_utils/ tree (see executor_run_loop's dispatch), so the
       # common no-module_utils role costs nothing. When staging, the
-      # shim bundle skeleton (ansible/, ansible/module_utils/) is written
+      # shim bundle skeleton (ansible/, the real module) is written
       # UNCONDITIONALLY rather than probe-gated: even with real
       # ansible-core installed on the target, its own package tree can
       # never contain the role's custom package, so only a work-dir-local
@@ -135,7 +135,7 @@ module Krikri
           rel_path = rel
           # Path-traversal guard on the controller-supplied relative
           # path: only plain subdirectory components under
-          # ansible/module_utils/ are ever staged.
+          # the real module are ever staged.
           next if rel_path.empty? || rel_path.starts_with?('/')
           next if rel_path.split('/').includes?("..")
           dest = File.join(work_dir, "ansible", "module_utils", rel_path)
@@ -193,7 +193,7 @@ module Krikri
       # args...}}`, or `_load_params` raises "ANSIBLE_MODULE_ARGS not
       # provided." even with real args present at the top level.
       # Confirmed live against ansible-core 2.19.4's own
-      # `module_utils/_internal/_debugging.py` - the previous env-var
+      # `the real module` - the previous env-var
       # approach failed EVERY new-style module invocation with "Failed
       # to decode JSON module parameters." (no valid JSON on stdin at
       # all), silently masking the whole 0.9.819 py_module feature for

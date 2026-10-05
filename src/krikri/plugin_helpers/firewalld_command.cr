@@ -124,7 +124,7 @@ module Krikri
       # real Ansible's own `ForwardPortTransaction` builds from a
       # `port_forward:` entry (a dict with `port`/`proto`/`toport`
       # required, `toaddr` optional and simply omitted from the value
-      # when absent - verified against the real module's own source and
+      # when absent - verified against observed behavior and
       # live against a real `firewall-offline-cmd`, firewalld 1.3.3).
       # Returns {value: nil, error: "..."} with the exact error message
       # real Ansible raises (checked in the same port/proto/toport order

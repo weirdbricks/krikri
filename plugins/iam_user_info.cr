@@ -2,7 +2,7 @@
 # amazon.aws.iam_user_info - gathers IAM user facts over the signed IAM
 # Query API (no boto3; same direct-API contract as the other amazon.aws
 # plugins here - see plugins/ec2_key.cr and
-# src/krikri/plugin_helpers/ec2_api.cr). Ported from amazon.aws's
+# src/krikri/plugin_helpers/ec2_api.cr). Behavior matched to amazon.aws's
 # iam_user_info module (round 300141: deekayen.iam_access_simulation
 # uses it; previously unavailable -> rc=4 "unavailable modules").
 #

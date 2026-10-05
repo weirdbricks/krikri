@@ -2,7 +2,7 @@ module Krikri
   # Real Ansible's controller-side relative-src lookup (`ActionBase
   # ._find_needle` -> `DataLoader.path_dwim_relative_stack`): the ordered
   # candidate list a missing file's "Could not find or access" error
-  # reports, and the same list resolution searches. Ported from
+  # reports, and the same list resolution searches. Behavior matched to
   # ansible-core 2.19.11's dataloader.py, live-verified against real
   # ansible-playbook for template:/copy:/script:/unarchive: with a
   # missing relative src (playbook-dir task and in-role task):
@@ -67,7 +67,7 @@ module Krikri
       end
     end
 
-    # Port of DataLoader._is_role's shape: a directory that looks like a
+    # Matches DataLoader._is_role's shape: a directory that looks like a
     # role because it (or its parent) holds a main.yml/meta/tasks entry.
     def self.role_path?(path : String) : Bool
       untasked = ["main.yml", "main.yaml", "main"].any? { |entry| File.file?(File.join(path, entry)) }

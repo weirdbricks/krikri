@@ -7,7 +7,7 @@ module Krikri
     # urllib ever opens the URL, shared by the uri and get_url plugins.
     #
     # Real Ansible builds a request in three steps that all happen before
-    # a single byte goes out (module_utils/urls.py's Request.open, 2.19.11):
+    # a single byte goes out (the real module's Request.open, 2.19.11):
     #
     #   1. _configure_auth() - with use_gssapi: true the module imports
     #      python-gssapi, and a host without it raises MissingModuleError
@@ -137,7 +137,7 @@ module Krikri
       # The make_context half, in its own order: cafile (its own open),
       # then set_ciphers, then load_cert_chain. The cipher list is
       # applied BEFORE the client certificate chain is loaded
-      # (ansible-core 2.19.11's module_utils/urls.py make_context), so a
+      # (ansible-core 2.19.11's the real module make_context), so a
       # task carrying BOTH a garbage ciphers: list and a
       # client_cert:/client_key: that do not exist reports the cipher
       # failure, not the missing file - live-verified vs 2.19.11 on

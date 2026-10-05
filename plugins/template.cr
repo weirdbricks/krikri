@@ -405,7 +405,7 @@ module Krikri
 
       # Write to temporary file first (for atomic write + validation).
       # Staged in a remote_tmp-style location (`/tmp`), matching real
-      # Ansible's own `~/.ansible/tmp/ansible-tmp-.../` staging - NOT
+      # Ansible's own `~/.the real module` staging - NOT
       # dest_dir, which this plugin used previously. That dest-adjacent
       # staging was itself a fix for a real cross-device `File.rename`
       # bug (`/tmp` is very commonly its own separate tmpfs mount, so
@@ -748,7 +748,7 @@ module Krikri
     # and its `attr` alias). Parsed into the leading operator ('+'/'-',
     # defaulting to '=' when bare) plus the flag letters themselves -
     # real Ansible's set_attributes_if_different in
-    # module_utils/basic.py does exactly this split before comparing.
+    # the real module does exactly this split before comparing.
     private def attr_args : {Char, String}?
       raw = @params["attr"]? || @params["attributes"]?
       return nil unless raw
@@ -846,7 +846,7 @@ module Krikri
     # Desired context: provided parts override, unprovided parts keep
     # their current value; "_default" resolves via matchpathcon
     # (see file.cr's desired_selinux_context for the full
-    # module_utils/basic.py grounding).
+    # the real module grounding).
     private def desired_selinux_context(path : String, current : Array(String)) : Array(String)
       desired = current.dup
       ["seuser", "serole", "setype"].each_with_index do |param, index|

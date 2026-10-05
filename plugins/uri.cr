@@ -325,7 +325,7 @@ module Krikri
 
       result.extra["elapsed"] = JSON::Any.new(elapsed)
       apply_response_extras(result, headers, body, redirected)
-      # Real fetch_url (module_utils/urls.py) parses the cookie jar into
+      # Real fetch_url parses the cookie jar into
       # the result on every response urllib returns normally: cookies
       # (name -> value dict) and cookies_string ("name=value; name2=value2"),
       # both ALWAYS present - empty dict/"" when no Set-Cookie came back.

@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # deploy_helper plugin - manages the release-directory layout used
-  # by the "capistrano-style" deploy pattern, a native port of
+  # by the "capistrano-style" deploy pattern, a native reimplementation of
   # community.general.deploy_helper.
   #
   # Implemented against real deploy_helper.py's control flow:

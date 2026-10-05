@@ -3,7 +3,7 @@ require "../base_action_plugin"
 
 module Krikri
   # pause: (ansible.builtin.pause) as a controller-side action plugin -
-  # ported from plugins/pause.cr. Sleeping here blocks this host's own
+  # behavior matched to plugins/pause.cr. Sleeping here blocks this host's own
   # execution fiber via Crystal's cooperative scheduler, the same
   # wall-clock delay a subprocess sleep produced before, but without the
   # subprocess (or, for a remote host, the SSH round trip) that used to
@@ -20,7 +20,7 @@ module Krikri
   # elapsed wall-clock time (rounded to 2 decimals, minutes-unit divided
   # by 60), never the requested amount and never the prompt text.
   #
-  # Real 2.19 semantics ported from ansible/plugins/action/pause.py:
+  # Real 2.19 semantics behavior matched to the real module:
   # - seconds/minutes are `{'type': int}`-validated BEFORE anything
   #   happens: float values truncate (1.5 -> 1), non-numerics fail the
   #   task (failed=True, no wait, no crash).

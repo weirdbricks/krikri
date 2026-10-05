@@ -6,7 +6,7 @@ module Krikri
     module DockerResources
       # Binary (1024-based) size suffixes, matching real Ansible's own
       # `human_to_bytes` (`SIZE_RANGES` in
-      # `ansible/module_utils/common/text/formatters.py`) - K/M/G/T/P are
+      # `the real module`) - K/M/G/T/P are
       # KiB/MiB/GiB/TiB/PiB despite the non-"i" spelling, not decimal
       # 1000-based units.
       SIZE_RANGES = {

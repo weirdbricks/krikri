@@ -1,8 +1,7 @@
 require "json"
 
 module Krikri
-  # Real's missing_required_lib(<library>) message, verbatim
-  # (module_utils/basic.py), for a target that cannot import <library>.
+  # Real's missing_required_lib(<library>) message, verbatim, for a target that cannot import <library>.
   #
   # The shape of the parity problem this covers: several real modules
   # import a Python library at MODULE level, so a target without it

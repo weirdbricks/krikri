@@ -2,7 +2,7 @@ module Krikri
   module PluginHelpers
     # SelinuxConfig - the pure validation logic of ansible.posix.selinux,
     # split out of the plugin so the arg-spec rules are unit-testable
-    # without a host that has /etc/selinux/config. Ported from the real
+    # without a host that has /etc/selinux/config. Behavior matched to the real
     # module's main() (ansible-collections/ansible.posix):
     #
     # 1. `state` is REQUIRED (choices enforcing/permissive/disabled) -

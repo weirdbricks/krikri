@@ -5,8 +5,8 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # community.general.capabilities - manages Linux file capabilities via
-  # getcap(8)/setcap(8). Ported from the real Python module
-  # (community/general/plugins/modules/capabilities.py) - same getcap
+  # getcap(8)/setcap(8). Behavior matched to the real Python module
+  # - same getcap
   # output parsing (both the older `/path = cap+ep` form and the newer
   # `/path cap+ep` form, including comma-grouped caps sharing one op/
   # flags pair), same "replace the entry for this cap name, keep every
@@ -162,7 +162,7 @@ module Krikri
       Process.quote(s)
     end
 
-    # module_utils/basic.py get_bin_path(): the module process's PATH
+    # the real module get_bin_path(): the module process's PATH
     # first, then the /sbin, /usr/sbin and /usr/local/sbin dirs that
     # exist and are not listed already; first executable match wins.
     private def find_executable(name : String) : String?

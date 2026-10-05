@@ -8,7 +8,7 @@ require "../src/krikri/plugin_helpers/java_cert_command"
 require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
-  # java_cert plugin - a native port of community.general.java_cert
+  # java_cert plugin - a native reimplementation of community.general.java_cert
   # (read from a live collection install), the keytool wrapper that
   # imports/removes certificates from a Java keystore.
   #

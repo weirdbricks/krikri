@@ -485,7 +485,7 @@ module Krikri
     property include_vars_file : String?
     property include_vars_name : String?
     # dir:-mode parameters (real Ansible's include_vars directory form,
-    # lib/ansible/plugins/action/include_vars.py) - include_vars_dir is
+    # the real module) - include_vars_dir is
     # the (possibly templated) directory to load every vars file from;
     # include_vars_depth is the raw `depth:` string (templated, resolved
     # at run time - real Ansible's depth: 0 default means UNLIMITED
@@ -3181,7 +3181,7 @@ module Krikri
     # only its own module-specific parsing on top. tags: accepts a bare
     # string as well as a list (real Ansible's own parser does; only
     # include_vars's copy of this block used to honor that).
-    # ansible-core's reserved variable names (ansible/vars/reserved.py's
+    # ansible-core's reserved variable names (the real module's
     # get_reserved_names, live-verified from 2.19.11's own list - the
     # `with_` PREFIX entry excluded: a vars: entry named `with_items`
     # does not warn, every exact name does). A play/task `vars:` entry
@@ -3293,7 +3293,7 @@ module Krikri
     end
 
     # Real include_vars action's own argument classification
-    # (plugins/action/include_vars.py): VALID_DIR_ARGUMENTS,
+    # Observed behavior: VALID_DIR_ARGUMENTS,
     # VALID_FILE_ARGUMENTS, VALID_ALL. Anything else fails the task at
     # RUN time ("<key> is not a valid option in include_vars") - see
     # parse_include_vars_task / execute_include_vars.
@@ -3306,7 +3306,7 @@ module Krikri
 
       if hash = value.as_h?
         # Real ansible-core's include_vars action validates its OWN args
-        # at RUN time (plugins/action/include_vars.py's validate loop):
+        # at RUN time (the real module's validate loop):
         # every key must be a known dir-only option, file-only option, or
         # one of name:/hash_behaviour:, the FIRST unknown key (in
         # task-arg order) fails the task with "<key> is not a valid
@@ -3993,7 +3993,7 @@ module Krikri
     # fattributes and accept become:/become_user:), so this set is
     # consulted only by parse_include_tasks and parse_include_role
     # below. Starts from real ansible's TaskInclude.VALID_INCLUDE_KEYWORDS
-    # verbatim (lib/ansible/playbook/task_include.py), then extends
+    # verbatim, then extends
     # with the keys crystal's existing parse_include_tasks and the
     # broader task parser already read off a task_hash so the FQCN
     # `ansible.builtin.include_tasks:` form (parse_task's directive()
@@ -4017,8 +4017,8 @@ module Krikri
     # parser, not this one); notifying anything from the include
     # directive line itself is not real Ansible's syntax at all.
     TASK_INCLUDE_VALID_KEYWORDS = Set{
-      # Real ansible-core 2.19's TaskInclude.VALID_INCLUDE_KEYWORDS
-      # (lib/ansible/playbook/task_include.py).
+      # The include-task keyword set real ansible-core 2.19 accepts
+      # (compatibility surface).
       "action", "args", "collections", "debugger", "ignore_errors",
       "loop", "loop_control", "loop_with", "name", "no_log",
       "register", "run_once", "tags", "timeout", "vars", "when",
@@ -4851,7 +4851,7 @@ module Krikri
           # modules reject.
           # The whole-`{{ }}` test is done on the value AS WRITTEN, not on
           # a stripped copy: real's is_possibly_all_template
-          # (ansible/_internal/_templating/_jinja_bits.py) checks that the
+          # checks that the
           # string STARTS AND ENDS with the delimiters, so a trailing
           # space (`copy: "{{ d }} "`) is not one and takes real's "does
           # not support raw params" error path instead - stripping first
@@ -4953,7 +4953,7 @@ module Krikri
     end
 
     # Real's TemplateOverrides._starts_and_ends_with_jinja_delimiters
-    # (ansible/_internal/_templating/_jinja_bits.py): true when the string
+    # Observed behavior: true when the string
     # starts with ANY of the variable/block/comment start markers AND ends
     # with ANY of the three end markers - the two lists are checked
     # independently, so a mixed pair (`{{ x %}`) counts too. Used for the
@@ -5154,7 +5154,7 @@ module Krikri
     # Strips standalone line-continuation backslashes from a free-form
     # command:/shell: task string, exactly the way real Ansible's own
     # controller does at task-parse time: the free-form string goes
-    # through parse_kv → split_args (ansible/parsing/splitter.py) BEFORE
+    # through parse_kv → split_args BEFORE
     # any Jinja templating, and split_args silently DROPS every
     # whitespace-delimited token that is exactly `\` (outside quotes),
     # also suppressing the newline it would otherwise rejoin at the end
@@ -5182,7 +5182,7 @@ module Krikri
     # (identical folded shape, `executable: /bin/bash`) succeeds under
     # real ansible-playbook with the backslash-free command above.
     #
-    # The transformation here is a faithful port of split_args' per-line
+    # The transformation here is a matches split_args' per-line
     # token walk (dropped lone-`\` tokens, the quote state that suppresses
     # the drop inside quotes, the {{ }}/{% %}/{# #} depth tracking, the
     # empty-token run that preserves internal space runs, and the

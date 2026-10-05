@@ -43,7 +43,7 @@ module Krikri
   #   already exists locally - verified against real Ansible's own
   #   `present()` source (`if not image or self.force_source:`). A
   #   forced re-pull that resolves to the exact same image digest it
-  #   already had reports `changed: false` (real Ansible's own source
+  #   already had reports `changed: false` (real Ansible's observed behavior
   #   re-checks the image ID before/after and resets `changed` back to
   #   false on a match - NOT an unconditional `changed: true` the way a
   #   naive reading of the trigger condition alone would suggest) -

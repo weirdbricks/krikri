@@ -70,7 +70,7 @@ module Krikri
   # - privileged / auto_remove: bool
   # - memory / memory_reservation / memory_swap: human-readable byte-size
   #   strings ("512M", "1G", ...) - see PluginHelpers::DockerResources's
-  #   own doc comment, ported from real Ansible's own `human_to_bytes`
+  #   own doc comment, behavior matched to real Ansible's own `human_to_bytes`
   #   (binary/1024-based units despite the non-"i" K/M/G/T/P spelling).
   #   `memory_swap: "unlimited"` (or the literal string `"-1"`) is real
   #   Ansible's own documented unlimited-swap convention.
@@ -123,7 +123,7 @@ module Krikri
   # - healthcheck: a dict ({test:, interval:, timeout:, retries:,
   #   start_period:}) - see PluginHelpers::DockerHealthcheck's own doc
   #   comment for the duration-string-parsing/test-normalization rules,
-  #   ported from real Ansible's own `parse_healthcheck`/
+  #   behavior matched to real Ansible's own `parse_healthcheck`/
   #   `normalize_healthcheck`. `test: ["NONE"]` is the real, documented
   #   way to explicitly disable an inherited healthcheck. `start_interval:`
   #   (real Ansible's own newer addition) is NOT implemented - the

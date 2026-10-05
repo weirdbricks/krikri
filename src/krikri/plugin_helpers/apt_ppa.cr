@@ -60,7 +60,7 @@ module Krikri
       # add_source builds: `os.path.basename(source)` on the expanded
       # `deb https://.../owner/name/ubuntu codename main` line just takes
       # everything after its last "/" - "ubuntu codename main" - with
-      # spaces turned into hyphens, verified by tracing the Python source
+      # spaces turned into hyphens, verified against observed behavior
       # rather than assumed. keydir is the caller's own choice of
       # KEY_DIRS entry (whichever one actually exists).
       def self.keyfile_name(info : Info, codename : String) : String

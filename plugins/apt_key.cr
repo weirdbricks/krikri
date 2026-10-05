@@ -26,7 +26,7 @@ module Krikri
   # argument-spec check; giving more than one fails before anything runs).
   #
   # - keyserver: fetches by id: from a keyserver instead of url:/data: -
-  #   verified against real ansible/modules/apt_key.py's own source:
+  #   verified against observed behavior:
   #   `apt-key adv --no-tty --keyserver <keyserver> --recv <id>`, and
   #   REQUIRES id: (real Ansible fails with "Missing key_id, required
   #   with keyserver." otherwise - matched exactly, not silently

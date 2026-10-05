@@ -92,7 +92,7 @@ module Krikri
     end
 
     # A role (or the playbook tree) shipping its OWN custom module_utils
-    # packages - e.g. linux-system-roles.storage's module_utils/storage_lsr/
+    # packages - e.g. linux-system-roles.storage's the real module
     # beside its library/blivet.py, which does `from
     # ansible.module_utils.storage_lsr.argument_validator import
     # validate_parameters`. Real Ansible's AnsiballZ wrapper bundles the
@@ -529,8 +529,8 @@ module Krikri
       PYTHON
 
     # In modern ansible-core the real text-conversion implementation
-    # moved from `ansible/module_utils/_text.py` to
-    # `ansible/module_utils/common/text/converters.py` - `_text` remains
+    # moved from `the real module` to
+    # `the real module` - `_text` remains
     # only as a deprecated re-export shim - and newer roles import the
     # new path directly. bodsch.users' own library/multi_users.py does
     # exactly that (`from ansible.module_utils.common.text.converters

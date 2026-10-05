@@ -78,7 +78,7 @@ module Krikri
   # `debian.deb822` unconditionally right after its own module-arg
   # validation - a target without python3-debian FAILS the task with
   # missing_required_lib("python3-debian") wording (live-verified
-  # against ansible-core 2.19.11 on trixie and 2.19's own source;
+  # against ansible-core 2.19.11 on trixie and 2.19's observed behavior;
   # neither auto-installs the dependency, unlike devel's
   # install_python_debian/respawn path). This plugin previously
   # skipped that gate entirely and happily wrote the file, reporting

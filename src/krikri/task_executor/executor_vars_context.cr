@@ -617,7 +617,7 @@ module Krikri
       if inventory = @inventory
         inventory.groups.each do |name, _group|
           # hosts_in_group, not group.hosts: a parent group defined via
-          # :children has an empty hosts hash of its own, so groups['prod']
+          # Observed behavior: children has an empty hosts hash of its own, so groups['prod']
           # came back as [] for every such group.
           result[name] = JSON::Any.new(inventory.hosts_in_group(name).map { |host| JSON::Any.new(host.name) })
         end
@@ -1896,7 +1896,7 @@ module Krikri
       # value is known.
       block_marker = params.delete("_argsplat_block_marker")
       # Real warns as soon as it starts resolving such a string args layer
-      # (ansible/_internal/_task.py's TaskArgsFinalizer.finalize), BEFORE
+      # (the real module's TaskArgsFinalizer.finalize), BEFORE
       # the value is known to resolve to a dict - so a `copy: "{# c #}"`
       # still gets the warning and only then fails to resolve. `task` is
       # nil only where no Task is at hand (never today); the warning's
@@ -1923,12 +1923,12 @@ module Krikri
     # verified against 2.19.11):
     #
     #   [WARNING]: Using a template for task args is unsafe in some
-    #   situations (see https://docs.ansible.com/ansible/devel/
+    #   situations (see https://docs.ansible.com/the real module
     #   reference_appendices/faq.html#argsplat-unsafe).
     #   Origin: <file>:<line>:<col>
     #
-    # Its trigger (ansible/playbook/task.py's post_validate +
-    # ansible/_internal/_task.py's TaskArgsFinalizer) is NOT "the value
+    # Its trigger (the real module's post_validate +
+    # the real module's TaskArgsFinalizer) is NOT "the value
     # renders to a dict": it is "this module does not take free-form
     # params AND the string args STARTS AND ENDS with a Jinja delimiter"
     # (so `{% ... %}`, `{# ... #}` count too). Modules that DO take

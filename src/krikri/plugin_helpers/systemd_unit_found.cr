@@ -2,7 +2,7 @@ module Krikri
   # Real Ansible's own systemd module decides ONCE, before it acts on the
   # unit, whether that unit exists at all (`found`), and then refuses to
   # enable/disable or start/stop something it could not find - see
-  # module_utils/service.py's fail_if_missing, called as
+  # the real module's fail_if_missing, called as
   # fail_if_missing(module, found, unit, msg='host') at the top of both the
   # `enabled:` and `state:` blocks of systemd_service.py.
   #
@@ -47,7 +47,7 @@ module Krikri
       nil
     end
 
-    # fail_if_missing's exact wording (module_utils/service.py:117-118) -
+    # fail_if_missing's exact wording (the real module:117-118) -
     # note the trailing ": host" (real passes msg='host' from systemd's
     # enabled:/state: blocks) and no trailing period.
     def self.missing_service_message(unit : String) : String

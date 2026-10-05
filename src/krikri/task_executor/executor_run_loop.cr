@@ -2077,11 +2077,11 @@ module Krikri
       end
 
       # A role shipping its OWN custom module_utils packages (e.g.
-      # linux-system-roles.storage's module_utils/storage_lsr/ beside its
+      # linux-system-roles.storage's the real module beside its
       # library/blivet.py) gets that tree bundled into the plugin config
       # the same way the module source itself travels (base64, relative
       # path -> content) - the plugin stages it under
-      # ansible/module_utils/ on the target so the module's `from
+      # the real module on the target so the module's `from
       # ansible.module_utils.<role_pkg>...` import resolves, mirroring
       # real Ansible's AnsiballZ bundling of the role's own
       # module_utils/. A role with NO module_utils/ directory - the

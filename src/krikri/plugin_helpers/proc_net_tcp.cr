@@ -14,7 +14,7 @@ module Krikri
     module ProcNetTcp
       # Real Ansible's own connection-state name -> the two-hex-digit code
       # /proc/net/tcp itself uses, verified against
-      # ansible/modules/wait_for.py's own `get_connection_state_id`
+      # the real module's own `get_connection_state_id`
       # function source directly, not guessed from /proc/net/tcp's own
       # sparse kernel documentation.
       STATE_CODES = {

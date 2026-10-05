@@ -142,7 +142,7 @@ module Krikri
     FACT_BINARY_EXTRA_DIRS = ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]
 
     # Real Ansible's own SMBIOS chassis-type table
-    # (module_utils/facts/hardware/linux.py) behind ansible_form_factor.
+    # behind ansible_form_factor.
     CHASSIS_TYPES = {
       1 => "Other", 2 => "Unknown", 3 => "Desktop", 4 => "Low Profile Desktop",
       5 => "Pizza Box", 6 => "Mini Tower", 7 => "Tower", 8 => "Portable",
@@ -248,7 +248,7 @@ module Krikri
     DEFAULT_GATHER_TIMEOUT = 10
     DEFAULT_FACT_PATH      = "/etc/ansible/facts.d"
 
-    # Real Ansible's get_collector_names (module_utils/facts/collector.py),
+    # Real Ansible's get_collector_names,
     # narrowed to the families this engine implements: 'min' is prepended
     # unconditionally, "min"/"all" (and their negations) are special, a
     # positive unknown token FAILS (BadSubsetError, mirroring real
@@ -350,7 +350,7 @@ module Krikri
 
       # network is NOT timeout-guarded in real Ansible either - its
       # collector takes no gather_timeout (only hardware/mounts do, via
-      # module_utils/facts/hardware/linux.py's GATHER_TIMEOUT reads and
+      # the real module's GATHER_TIMEOUT reads and
       # timeout decorator), so neither does this.
       gather_network_facts(facts) if families.includes?("network")
       gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
@@ -375,7 +375,7 @@ module Krikri
     # gather_timeout for the families real Ansible guards: the family
     # collects into a scratch hash inside its own fiber, and a result
     # that doesn't land within *gather_timeout* seconds (real default:
-    # 10, module_utils/facts/timeout.py's DEFAULT_GATHER_TIMEOUT) is
+    # 10, the real module's DEFAULT_GATHER_TIMEOUT) is
     # dropped with a warning instead of failing the module - exactly
     # real LinuxHardware's "No mount facts were gathered due to
     # timeout." warning path. An overrun fiber cannot be killed in
@@ -744,7 +744,7 @@ module Krikri
       # apparmor.status - real Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
       # profile is actually enforcing) - "enabled" if present, "disabled"
-      # otherwise, matched exactly (ansible/module_utils/facts/system/
+      # otherwise, matched exactly (the real module
       # apparmor.py). Entirely missing before: found via robertdebock.vault's
       # own `when: ansible_apparmor.status == "enabled"` guard on its
       # `aa-enforce` hardening task, which real Ansible ran (real host has
@@ -775,7 +775,7 @@ module Krikri
       facts["ansible_fips"] = read_file_stripped("/proc/sys/crypto/fips_enabled") == "1"
 
       # ansible_selinux.status - real Ansible's SelinuxFactCollector
-      # (module_utils/facts/system/selinux.py) decides this by loading
+      # decides this by loading
       # libselinux.so.1 via ctypes and calling is_selinux_enabled():
       # library absent -> 'Missing selinux Python library'; library
       # present but not active in the kernel -> 'disabled'; present and
@@ -922,7 +922,7 @@ module Krikri
       end
 
       # PID 1's own `container=` environment variable - real Ansible's
-      # `LinuxVirtual#get_virtual_facts` checks this (module_utils/facts/
+      # `LinuxVirtual#get_virtual_facts` checks this (the real module
       # virtual/linux.py) BEFORE falling back to `systemd-detect-virt`,
       # and it is what actually makes podman detection reliable: podman
       # (and systemd-nspawn, and older LXC) sets this unconditionally,
@@ -974,7 +974,7 @@ module Krikri
     # Parses PID 1's `/proc/1/environ` content (NUL-separated key=value
     # entries) for a `container=` marker, matching real Ansible's own
     # `container=lxc`/`container=podman`/generic-`container=.` priority
-    # order (module_utils/facts/virtual/linux.py). Only `lxc` and
+    # order. Only `lxc` and
     # `podman` get their own specific virtualization_type - EVERY other
     # non-empty value (docker, oci, systemd-nspawn, ...) normalizes to
     # the literal string "container", never the raw env value itself
@@ -1873,7 +1873,7 @@ module Krikri
     end
 
     # /proc/cmdline facts - real Ansible's CmdLineFactCollector
-    # (module_utils/facts/system/cmdline.py), part of real min output
+    # part of real min output
     # (podman-diff setup case, real W2): ansible_cmdline collapses
     # duplicate keys (later token wins), ansible_proc_cmdline turns them
     # into lists, and a flag without "=" is True. Empty/missing
@@ -1909,7 +1909,7 @@ module Krikri
     end
 
     # ansible_dns - real Ansible's DnsFactCollector
-    # (module_utils/facts/system/dns.py) over /etc/resolv.conf: nameserver
+    # over /etc/resolv.conf: nameserver
     # lines append to "nameservers", domain/search/sortlist as
     # scalar/list, options as key:value or bare-True flags. The KEY is
     # always set - an empty/comment-only resolv.conf yields {}, never an
@@ -1955,7 +1955,7 @@ module Krikri
     end
 
     # ansible_system_capabilities / _enforced - real Ansible's
-    # SystemCapabilitiesFactCollector (module_utils/facts/system/caps.py)
+    # SystemCapabilitiesFactCollector
     # via `capsh --print`: its "Current:" line decides both - the bare
     # "=ep" bounding set means unenforced, anything else means enforced
     # with that capability list; no capsh binary (or a failing run)
@@ -2120,7 +2120,7 @@ module Krikri
     end
 
     # fact_path - real Ansible's local facts mechanism
-    # (module_utils/facts/system/local.py): every *.fact file in
+    # Observed behavior: every *.fact file in
     # *fact_path* (real default /etc/ansible/facts.d) becomes a key under
     # ansible_local. Executable files are RUN and their stdout parsed;
     # the rest are read in place. Content must parse as JSON, else as

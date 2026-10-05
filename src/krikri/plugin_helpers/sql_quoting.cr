@@ -19,8 +19,8 @@ module Krikri
     # passes a lone identifier/literal, not arbitrary SQL fragments) -
     # same trust boundary real Ansible's own DB modules work within.
     module SqlQuoting
-      # Faithful port of community.postgresql's pg_quote_identifier
-      # (module_utils/database.py), which itself wraps Ansible's shared
+      # matches community.postgresql's pg_quote_identifier
+      # which itself wraps Ansible's shared
       # _identifier_parse. It takes the *raw* user-supplied identifier text
       # and returns SQL text:
       # - an unquoted identifier (or dotted path) has every fragment wrapped
@@ -67,7 +67,7 @@ module Krikri
 
       private UNCLOSED_QUOTE = "unclosed quote"
 
-      # Direct port of Python's _identifier_parse; see the pg_quote_
+      # Matches Python's _identifier_parse; see the pg_quote_
       # identifier doc comment for the behavior contract.
       private def self.parse_identifier_fragments(identifier : String, quote_char : Char) : Array(String)
         raise SQLParseError.new("Identifier name unspecified or unquoted trailing dot") if identifier.empty?

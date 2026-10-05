@@ -6,7 +6,7 @@ module Krikri
     # seven amazon.aws modules krikri reimplements natively, in real
     # declaration order (base first, then the module's own), plus the
     # module-level mutually_exclusive / required_one_of / required_if
-    # groups. Ported from amazon.aws 11.4.0's module sources; the
+    # groups. Behavior matched to amazon.aws 11.4.0's observed behavior; the
     # unsupported-parameter messages render the sorted key/alias lists,
     # so the order here only drives WHICH error surfaces first.
     module AwsModuleSpecs

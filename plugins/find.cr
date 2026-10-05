@@ -42,7 +42,7 @@ module Krikri
   # - mode / exact_mode: filters matched files by permission bits -
   #   octal ("0644") or the `u=rw,g=r,o=r` symbolic assignment form -
   #   see `PluginHelpers::FindModeFilter`'s own doc comment for exact
-  #   semantics (verified against real ansible/modules/find.py's own
+  #   semantics (verified against the real module's own
   #   `mode_filter` source, including its non-obvious non-exact "ANY
   #   requested bit present" semantics) and its documented scope cut
   #   (only `=` assignment, not the fuller chmod(1) `+`/`-`/`X`/`s`/`t`

@@ -3,7 +3,7 @@ require "json"
 module Krikri
   module PluginHelpers
     # DockerHealthWait - real community.docker's `docker_container
-    # state=healthy` wait loop, ported from module_utils/module_container/
+    # state=healthy` wait loop, behavior matched to the real module
     # module.py's `wait_for_state` (as called for the healthy state with
     # `wait_states=['starting', 'unhealthy']`,
     # `complete_states=['healthy', None]`, `max_wait=healthy_wait_timeout`,

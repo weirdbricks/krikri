@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # community.rabbitmq.rabbitmq_user - manages RabbitMQ users via
-# `rabbitmqctl`. Ported from community.rabbitmq's rabbitmq_user module
+# `rabbitmqctl`. Behavior matched to community.rabbitmq's rabbitmq_user module
 # (round 196: mrlesmithjr.rabbitmq uses it). Supports user add/delete,
 # password changes, tag updates and vhost permission grants - the subset
 # the corpus actually calls.

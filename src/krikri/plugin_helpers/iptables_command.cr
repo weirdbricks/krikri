@@ -14,7 +14,7 @@ module Krikri
     # after the action, `--numeric` only on the `-L` call sites), and its
     # argument-spec validation messages (mutually_exclusive /
     # required_if / required_by wording from
-    # module_utils/common/validation.py).
+    # the real module).
     module IptablesCommand
       # Real-Ansible parameter order, flag-for-flag (construct_rule()).
       # Returns the flag list, or a real-Ansible failure message when
@@ -189,7 +189,7 @@ module Krikri
       end
 
       # Real Ansible's argument-spec validation for this module,
-      # message-for-message (module_utils/common/validation.py wording),
+      # message-for-message (the real module wording),
       # in its own evaluation order: mutually_exclusive (which real
       # Ansible checks BEFORE applying defaults, so only an explicitly
       # passed flush: counts), then the per-parameter choices, then

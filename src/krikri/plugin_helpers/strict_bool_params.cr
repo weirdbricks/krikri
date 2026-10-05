@@ -10,9 +10,9 @@ module Krikri
   class BoolParamError < Exception; end
 
   module PluginHelpers
-    # Strict `type: bool` param validation - a faithful port of real
-    # ansible-core's check_type_bool (module_utils/common/validation.py)
-    # + boolean() (module_utils/parsing/convert_bool.py) + the
+    # Strict `type: bool` param validation - a matches real
+    # ansible-core's check_type_bool
+    # + boolean() + the
     # parameters.py failure wrapper, shared by BasePlugin (module-side
     # argspec validation) and the controller-side action plugins that
     # real validates the same way (assert).

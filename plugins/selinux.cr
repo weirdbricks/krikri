@@ -53,7 +53,7 @@ module Krikri
 
       # Real ansible.posix.selinux ALWAYS fails when the config file is
       # missing - unconditionally, regardless of distro - confirmed
-      # directly against the module's own source
+      # directly against the module's observed behavior
       # (`if not os.path.isfile(configfile): module.fail_json(msg=
       # "Unable to find file {0}".format(configfile), details="Please
       # install SELinux-policy package, if this package is not

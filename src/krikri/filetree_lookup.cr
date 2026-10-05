@@ -3,7 +3,7 @@ require "./plugin_helpers/facts_gatherer"
 
 # Krikri::FiletreeLookup - a native reimplementation of the
 # community.general.filetree lookup plugin (with_community.general.filetree:),
-# translated from `community.general/plugins/lookup/filetree.py` (verified
+# behavior matched to `the real module` (verified
 # against the collection source, not guessed).
 #
 # Real semantics (all load-bearing for the roles that use it):
@@ -151,7 +151,7 @@ module Krikri::FiletreeLookup
     end
   end
 
-  # Translated from filetree.py's own file_props(): lstat the entry, map
+  # behavior matched to filetree.py's own file_props(): lstat the entry, map
   # its type to state (+ src for file/link), and attach the stat
   # properties. A failed stat yields nil (real module warns and skips).
   private def self.file_props(root : String, relpath : String, abspath : String) : Hash(String, JSON::Any)?

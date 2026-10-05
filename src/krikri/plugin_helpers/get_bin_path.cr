@@ -1,6 +1,6 @@
 module Krikri
   module PluginHelpers
-    # Real Ansible's module_utils/basic.py get_bin_path(required=True):
+    # Real Ansible's the real module get_bin_path(required=True):
     # resolves a module's required binary at module start, BEFORE any
     # state check, and fails with exactly this message when nothing
     # executable is found - so even a state-only task

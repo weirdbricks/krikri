@@ -66,7 +66,7 @@ module Krikri
     def execute : PluginResult
       validate_bool_params!
       # Real AnsibleModule argument-spec validation: any key outside real
-      # Ansible's argument_spec (ansible/modules/systemd_service.py: name/
+      # Ansible's argument_spec (the real module: name/
       # service/unit, state, enabled, force, masked, daemon_reload/
       # daemon-reload, daemon_reexec/daemon-reexec, scope, no_block) aborts
       # the task BEFORE the module runs. Round 813233 (role
@@ -123,7 +123,7 @@ module Krikri
       force_flag = SystemdCliFlags.force_flag(@params["force"]?)
       no_block_flag = SystemdCliFlags.no_block_flag(@params["no_block"]?)
 
-      # Real AnsibleModule argument validation (ansible/modules/systemd.py's
+      # Real AnsibleModule argument validation (the real module's
       # own required_one_of/required_by), both presence-based - a given-but-
       # false daemon_reload still satisfies required_one_of, and a given
       # state/enabled/masked requires a name even when falsy:

@@ -239,7 +239,7 @@ module Krikri
       end
 
       # `expires:`'s own Unix-timestamp-to-useradd/usermod-`-e`-value
-      # conversion - verified against real ansible/modules/user.py's own
+      # conversion - verified against the real module's own
       # source: `time.gmtime(timestamp)` then `strftime('%Y-%m-%d', ...)`
       # (UTC, matching `time.gmtime`'s own UTC-not-local semantics) for a
       # non-negative timestamp; a NEGATIVE timestamp (real Ansible's own

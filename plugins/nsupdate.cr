@@ -9,7 +9,7 @@ require "../src/krikri/plugin_helpers/socket_connect"
 require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
-  # nsupdate plugin - a native port of community.general.nsupdate:
+  # nsupdate plugin - a native reimplementation of community.general.nsupdate:
   # create/update/remove DNS records via RFC2136 dynamic update,
   # speaking the DNS wire format directly (the pieces of dnspython the
   # real module drives - see NsupdateMessage; the real module shells

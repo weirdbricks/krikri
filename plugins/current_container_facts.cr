@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # community.docker.current_container_facts - detects whether the module
-# runs inside a Docker/Podman container and sets facts. Ported from
+# runs inside a Docker/Podman container and sets facts. Behavior matched to
 # community.docker's current_container_facts module (round 300010:
 # collivier.xtesting uses it; previously unavailable -> rc=4
 # "unavailable modules").

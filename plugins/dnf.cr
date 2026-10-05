@@ -92,7 +92,7 @@ module Krikri
     end
 
     # Whether the request resolved to the dnf5 backend. Real's `dnf:`
-    # ACTION plugin (ansible/plugins/action/dnf.py) rewrites the module
+    # ACTION plugin rewrites the module
     # name from use_backend (default "auto") - and for auto/yum resolves
     # the host's ansible_pkg_mgr fact, running the dnf5 MODULE on a host
     # whose package manager is dnf5 (Fedora 41+) and the dnf4 module

@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # lvg plugin - creates, extends, shrinks, or removes LVM volume groups
-  # via pvcreate/vgcreate/vgextend/vgreduce/vgremove, a native port of
+  # via pvcreate/vgcreate/vgextend/vgreduce/vgremove, a native reimplementation of
   # community.general.lvg (companion to this repo's existing
   # lvol/filesystem plugins).
   #

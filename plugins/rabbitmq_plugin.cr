@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # community.rabbitmq.rabbitmq_plugin - manages RabbitMQ plugin state via
-# `rabbitmq-plugins`. Ported from community.rabbitmq's rabbitmq_plugin
+# `rabbitmq-plugins`. Behavior matched to community.rabbitmq's rabbitmq_plugin
 # module (round 196: mrlesmithjr.rabbitmq uses it; previously unavailable
 # → rc=4 "unavailable modules" where real ansible rc=0'd).
 #

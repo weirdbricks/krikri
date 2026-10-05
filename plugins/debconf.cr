@@ -17,7 +17,7 @@ module Krikri
   # one of question:/vtype:/value: (aliases selection:/setting: and
   # answer:) without the other two fails with AnsibleModule's own
   # validation message, "parameters are required together: question,
-  # vtype, value" (ansible/module_utils/common/validation.py's exact
+  # vtype, value" (the real module's exact
   # wording).
   #
   # Not implemented: `vtype: password`'s own idempotency read-back

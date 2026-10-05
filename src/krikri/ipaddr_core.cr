@@ -1,6 +1,6 @@
 require "json"
 
-# Crystal port of the `ansible.utils` ipaddr filter family (ipaddr,
+# Crystal reimplementation of the `ansible.utils` ipaddr filter family (ipaddr,
 # ipwrap, ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
 # previous_nth_usable, network_in_network, network_in_usable, ip4_hex),
 # mirrored against real ansible-core 2.19.4 + ansible.utils + netaddr

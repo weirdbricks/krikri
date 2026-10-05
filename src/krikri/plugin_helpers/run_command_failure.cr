@@ -58,7 +58,7 @@ module Krikri
         )
       end
 
-      # Real module_utils/common/process.py get_bin_path's ValueError
+      # Real the real module get_bin_path's ValueError
       # when the binary is nowhere to be found. Real surfaces it as a
       # bare fail_json-style msg (live-verified vs 2.19.11: the fatal
       # msg carries no "Task failed:" chain prefix).

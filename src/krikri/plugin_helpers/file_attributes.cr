@@ -3,7 +3,7 @@ module Krikri
     # FileAttributes - pure parsing for stat's get_mime/get_attributes
     # options. Both shell out in real Ansible too (`file` and `lsattr`
     # have no native Crystal or stdlib equivalent - this mirrors real
-    # Ansible's own module_utils/basic.py exactly, not a missed
+    # Ansible's own the real module exactly, not a missed
     # native-conversion opportunity like stat/find's old shell versions
     # were), so this module only covers parsing their output, not running
     # the commands themselves (that's the plugin's own job, via the
@@ -11,7 +11,7 @@ module Krikri
     module FileAttributes
       # Maps lsattr's single-letter flags to their real Ansible attribute
       # names - verified against a real ansible-core install's own
-      # module_utils/common/file.py FILE_ATTRIBUTES table, not guessed.
+      # the real module FILE_ATTRIBUTES table, not guessed.
       FLAG_NAMES = {
         'A' => "noatime", 'a' => "append", 'c' => "compressed", 'C' => "nocow",
         'd' => "nodump", 'D' => "dirsync", 'e' => "extents", 'E' => "encrypted",

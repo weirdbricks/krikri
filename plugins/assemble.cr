@@ -254,7 +254,7 @@ module Krikri
     # Write the assembled content to dest, backing up the previous file
     # when requested; returns the backup file path ("" when none), or a
     # failed PluginResult when real's atomic_move would crash the module
-    # (module_crash_result). Real's atomic_move (module_utils/basic.py):
+    # (module_crash_result). Real's atomic_move:
     # os.rename(temp, dest) first, then - only when dest did not exist
     # ("creating") - os.stat(os.path.dirname(dest)). A dest whose parent
     # directory is missing fails the rename with ENOENT ("Could not

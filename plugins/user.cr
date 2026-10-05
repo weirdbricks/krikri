@@ -47,7 +47,7 @@ module Krikri
   #     real Ansible's own mutual-exclusion between `-p` and `-L`/`-U`)
   #
   #   expires (optional): account expiration, a Unix TIMESTAMP (seconds,
-  #     NOT days) - verified against real ansible/modules/user.py's own
+  #     NOT days) - verified against the real module's own
   #     source: converted to a `YYYY-MM-DD` UTC date via `-e` on
   #     useradd/usermod; a negative value (real Ansible's own documented
   #     "-1 to remove" convention) clears the expiration (`-e ''`).
@@ -603,7 +603,7 @@ module Krikri
       # Real Ansible's local-path tail (create_user_useradd's post-
       # luseradd block): expiry via a separate lchage (luseradd has no
       # -e), supplementary groups via one lgroupmod -M per group
-      # (luseradd has no -G) - order per its own source: lchage first.
+      # (luseradd has no -G) - order per its observed behavior: lchage first.
       if local
         if expires
           days = PluginHelpers::UserState.local_expiry_days(expires)

@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # community.docker.docker_login - registry authentication, storing
-# credentials in the docker CLI config file. Ported from community
+# credentials in the docker CLI config file. Behavior matched to community
 # .docker's docker_login module (round 300108: oasis_roles
 # .molecule_docker_ci uses it; previously unavailable -> rc=4
 # "unavailable modules").

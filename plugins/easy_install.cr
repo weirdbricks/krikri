@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # community.general.easy_install - installs Python libraries via
-# `easy_install`, optionally into a virtualenv. Ported from
+# `easy_install`, optionally into a virtualenv. Behavior matched to
 # community.general's easy_install module (round 300033:
 # cchurch.virtualenv uses it; previously unavailable -> rc=4
 # "unavailable modules").

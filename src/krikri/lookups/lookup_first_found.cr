@@ -227,7 +227,7 @@ module Krikri
       # i.e. files/, templates/, and vars/ are NOT part of the no-paths:
       # search at all - that per-subdir behavior belongs to the
       # with_first_found: KEYWORD form, which picks its subdir from the
-      # task's own action name (ansible/plugins/lookup/first_found.py's
+      # task's own action name (the real module's
       # `subdir` selection) and searches via the same
       # DataLoader#path_dwim_relative_stack the keyword form's
       # TaskExecutor#resolve_first_found_path already mirrors. The old

@@ -523,7 +523,7 @@ module Krikri
       ))
     end
 
-    # run_command's own OSError branch (module_utils/basic.py): a spawn
+    # run_command's own OSError branch: a spawn
     # that never started fails the module with its fixed message, the
     # errno as rc, empty stdout/stderr and the printable argv as `cmd`
     # (its `_clean_args`, a shlex-quoted JOIN - not the argv list the

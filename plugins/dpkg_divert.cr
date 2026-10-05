@@ -6,7 +6,7 @@ require "../src/krikri/plugin_helpers/dpkg_divert_command"
 
 module Krikri
   # dpkg_divert plugin - manages Debian dpkg file diversions via the
-  # dpkg-divert tool, a native port of community.general.dpkg_divert
+  # dpkg-divert tool, a native reimplementation of community.general.dpkg_divert
   # (read from a live collection install; Debian/Ubuntu is a supported
   # platform here).
   #
@@ -21,7 +21,7 @@ module Krikri
   #     avoid-orphaned-files rename of the diverted file
   #   - rename: true hands --rename to dpkg-divert; the real module's
   #     own "forced renaming" fallback (unlinking the blocker, since
-  #     dpkg-divert refuses to clobber) is ported too
+  #     dpkg-divert refuses to clobber) is matched too
   #   - check mode and the real module's "just try and see" probe run
   #     the same command with --test inserted
   #

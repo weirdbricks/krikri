@@ -1,7 +1,7 @@
 module Krikri
   module PluginHelpers
     # The pure half of real Ansible's ServiceMgrFactCollector
-    # (module_utils/facts/system/service_mgr.py): what PID 1's comm
+    # Observed behavior: what PID 1's comm
     # contributes to the ansible_service_mgr fact.
     #
     # Real Ansible discards "init" (too many systems name it) and
@@ -42,7 +42,7 @@ module Krikri
       end
 
       # The service ACTION plugin's module resolution
-      # (ansible/plugins/action/service.py): an explicit `use:` names
+      # Observed behavior: an explicit `use:` names
       # the manager module directly ("auto"/absent means detect, and a
       # use: value that names no module falls back to the generic
       # service module); with auto, the ansible_service_mgr fact picks

@@ -98,7 +98,7 @@ module Krikri
     #    result - duplicates keep their base position, the module's own
     #    keys follow in file order (command: changed, rc, cmd, start,
     #    end, delta, msg, failed). The base dict is what
-    #    ansible/plugins/action/async_status.py initializes (then
+    #    the real module initializes (then
     #    coerces started/finished to booleans) before merge_hash with
     #    the module result; the key_order below mirrors that merge
     #    DYNAMICALLY from the file's own key order, so any module's

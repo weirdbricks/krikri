@@ -68,8 +68,8 @@ module Krikri
   # matching real Ansible's own PipModule.
   #
   # - editable: adds `-e` to extra_args (deduplicated if extra_args
-  #   already includes it) - verified against real ansible/modules/
-  #   pip.py's own source, `-e` is applied there too rather than as a
+  #   already includes it) - verified against the real module
+  #   the real module's observed behavior, `-e` is applied there too rather than as a
   #   separate standalone flag
   # - umask: an octal string, applied via a `umask <value>;` command
   #   prefix (this codebase shells out per-command rather than forking
@@ -332,7 +332,7 @@ module Krikri
     end
 
     # Real Ansible's mutually_exclusive message format
-    # (module_utils/common/validation.py): each violated pair joined
+    # Observed behavior: each violated pair joined
     # with `|`, pairs joined with `, `.
     private def mutually_exclusive_error : PluginResult?
       violated = [] of String

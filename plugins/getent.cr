@@ -218,7 +218,7 @@ module Krikri
       results
     end
 
-    # Real Ansible's module protocol (module_utils/basic.py's
+    # Real Ansible's module protocol (the real module's
     # _return_formatted, called from both exit_json and fail_json) ALWAYS
     # attaches `invocation: {module_args: <the module's params>}` to a
     # module's raw JSON result - so it is present on a failing lookup

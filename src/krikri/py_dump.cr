@@ -358,7 +358,7 @@ module Krikri
         # The first character of a scalar: the full indicator set, plus
         # the leading '?'/':'/- that only count at the start.
         private def scan_leading_indicators(ch : Char, followed_by_ws : Bool) : Nil
-          if "#,[]{}&*!|>'\"%@`".includes?(ch)
+          if "# []{}&*!|>'\"%@`".includes?(ch)
             @flow_indicators = @block_indicators = true
           end
           if ch == '?' || ch == ':'

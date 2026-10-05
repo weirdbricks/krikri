@@ -1,12 +1,12 @@
 #!/usr/bin/env crystal
 # community.docker.docker_compose_v2 - manages Docker Compose projects via
-# the `docker compose` v2 CLI plugin. Ported from community.docker's
+# the `docker compose` v2 CLI plugin. Behavior matched to community.docker's
 # docker_compose_v2 module (KNOWN_MISSING's "unimplemented collection
 # modules" entry: mrlesmithjr.blocky uses it; previously rc=4 "unavailable
 # modules" where real ansible rc=0'd).
 #
 # Mirrors the real module's structure (community.docker's
-# module_utils/_compose_v2.py BaseComposeManager + the module's own
+# the real module BaseComposeManager + the module's own
 # get_up_cmd/get_down_cmd/get_restart_cmd/cmd_stop):
 #   - state=present   -> `docker compose ... up --detach --no-color
 #     --quiet-pull` (ALWAYS detached - there is no attach mode), flags
@@ -423,7 +423,7 @@ module Krikri
     end
 
     # Runs `<docker> compose <base args> <cmd args>` on the target and
-    # turns the parsed stderr events into changed/failed - the port of
+    # turns the parsed stderr events into changed/failed - the match of
     # the real module's run-and-then-update_result/update_failed flow.
     private def run_command(cmd_args : Array(String), ignore_pulls : Bool, ignore_builds : Bool, check_mode : Bool) : PluginResult
       result = remote_exec(capture_cmd(cmd_args))
@@ -646,7 +646,7 @@ module Krikri
       end
     end
 
-    # Text-mode event parser - the port of the real module's
+    # Text-mode event parser - the match of the real module's
     # parse_events/_extract_event text path (its --progress json branch
     # is deliberately not ported, see the module comment). Events are
     # {resource_type, resource_id, status, msg}; only status matters for

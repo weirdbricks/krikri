@@ -41,7 +41,7 @@ module Krikri
   #   unconditional ALTER + changed: true on every run).
   # - plugin/plugin_hash_string/plugin_auth_string: non-password
   #   authentication, matching real Ansible's own mysql_user module
-  #   (verified against community.mysql's module_utils/user.py). Auth
+  #   (verified against community.mysql's the real module). Auth
   #   clause precedence (highest first): password, then
   #   plugin+plugin_hash_string (`IDENTIFIED WITH <p> AS <hash>`), then
   #   plugin+plugin_auth_string (`IDENTIFIED WITH <p> BY <auth>`, with
@@ -347,7 +347,7 @@ module Krikri
     end
 
     # Builds the CREATE/ALTER USER auth clause, matching real Ansible's
-    # mysql_user module precedence (community.mysql module_utils/user.py):
+    # mysql_user module precedence:
     # password first, then plugin+hash (`IDENTIFIED WITH p AS hash`), then
     # plugin+auth_string (`IDENTIFIED WITH p BY auth`, with MariaDB pam ->
     # USING and ed25519 -> USING PASSWORD() special cases), then bare
@@ -361,7 +361,7 @@ module Krikri
     # NOT let the server pick its default - real hashes the password
     # itself (`SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(...)))))`) and
     # issues `IDENTIFIED WITH mysql_native_password AS '<hash>'`
-    # (module_utils/user.py's user_add/user_mod), so the account lands on
+    # (the real module's user_add/user_mod), so the account lands on
     # mysql_native_password even where the server default is
     # caching_sha2_password, and a server where that plugin is not loaded
     # (MySQL 8.4+ disabled it by default; it is gone from 9.7 on) rejects
@@ -431,7 +431,7 @@ module Krikri
     # What the given plaintext password hashes to under
     # mysql_native_password, computed by the server itself the way real
     # computes it before every password-based CREATE/ALTER USER
-    # (module_utils/user.py: `SELECT CONCAT('*',
+    # (the real module: `SELECT CONCAT('*',
     # UCASE(SHA1(UNHEX(SHA1(...)))))`).
     private def native_password_hash(db : DB::Database, password : String) : String
       db.query_one("SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(?)))))", password, as: String)

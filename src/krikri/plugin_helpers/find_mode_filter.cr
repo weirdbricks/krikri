@@ -1,7 +1,7 @@
 module Krikri
   module PluginHelpers
     # FindModeFilter - pure logic for find:'s mode:/exact_mode: filter.
-    # Verified against real ansible/modules/find.py's own `mode_filter`
+    # Verified against the real module's own `mode_filter`
     # source directly, not assumed from ansible-doc's prose:
     #
     #   try:

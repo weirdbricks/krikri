@@ -7,7 +7,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
-  # xml plugin - manages bits and pieces of XML files via xpath. Port of
+  # xml plugin - manages bits and pieces of XML files via xpath. Matches
   # community.general.xml's core semantics (value/attribute set, node
   # auto-creation, delete, add/set_children, count, print_match, content
   # get, pretty_print, insertbefore/after, backup,

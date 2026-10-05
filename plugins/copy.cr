@@ -293,7 +293,7 @@ module Krikri
 
       # Calculate the checksums the result fields carry. `checksum:` is
       # a SHA1 (real Ansible's own checksum algorithm - module.sha1 <-
-      # module_utils/basic.py's checksum(), verified against
+      # the real module's checksum(), verified against
       # ansible-core 2.19.4's live output: a 40-hex-char SHA1, not the
       # 32-hex-char MD5 this used to emit) of the content, used both for
       # the result field and the idempotency comparison; `md5sum:` is the
@@ -1024,7 +1024,7 @@ module Krikri
       # UTC (live-verified vs 2.19.11: a backup taken at 19:12 EDT is
       # named ...@19:12:40~, not ...@23:12:40~).
       timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")
-      # Real Ansible's backup_local (module_utils/files.py) inserts the
+      # Real Ansible's backup_local inserts the
       # process PID between path and timestamp, not a random number:
       # `<path>.<pid>.<yyyy-mm-dd@hh:mm:ss>~`.
       backup_path = "#{path}.#{Process.pid}.#{timestamp}~"
@@ -1252,7 +1252,7 @@ module Krikri
     # real Ansible's `attributes` param and its `attr` alias. Parsed
     # into the leading operator ('+'/'-', defaulting to '=' when bare)
     # plus the flag letters themselves - real Ansible's
-    # set_attributes_if_different in module_utils/basic.py does exactly
+    # set_attributes_if_different in the real module does exactly
     # this split before comparing. Mirrors file.cr's proven
     # implementation exactly (same helper names, same semantics).
     private def attr_args : {Char, String}?

@@ -426,7 +426,7 @@ module Krikri
       end
 
       # Real's include_vars action validates its own arguments at the
-      # START of its run (plugins/action/include_vars.py's validate
+      # START of its run (the real module's validate
       # loop), before anything is looked up: the first unknown key fails
       # the task ("<key> is not a valid option in include_vars"), then a
       # file:-style key beside a dir:-style key fails ("You are mixing
@@ -824,7 +824,7 @@ module Krikri
     end
 
     # include_vars: with `dir:` - real Ansible's directory form
-    # (lib/ansible/plugins/action/include_vars.py, verified live against
+    # (the real module, verified live against
     # 2.19.4): loads every vars file under the directory, walking
     # subdirectories recursively by default (depth: 0 means UNLIMITED
     # levels - depth: 1 means top-level files only, each further level

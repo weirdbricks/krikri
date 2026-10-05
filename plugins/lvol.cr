@@ -7,7 +7,7 @@ require "../src/krikri/plugin_helpers/lvol_size"
 
 module Krikri
   # lvol plugin - creates, resizes, (de)activates or removes LVM logical
-  # volumes, a native port of community.general.lvol (ansible-core's
+  # volumes, a native reimplementation of community.general.lvol (ansible-core's
   # ansible.builtin.lvol is the same module - it only ever lived in one
   # place, historically under ansible-core then community.general; this
   # repo registers one binary under both FQCNs, same shape as the
@@ -297,7 +297,7 @@ module Krikri
     # named tuple {changed_flag, failed, msg, rc, err, out, early} -
     # rc/err/out carry real's fail_json kwargs on a command failure and
     # early marks real's early exit_json branches (:matches,
-    # :not_larger) that bypass the lvchange tail.
+    # Observed behavior: not_larger) that bypass the lvchange tail.
     private def resize(
       vg_info : NamedTuple(name: String, size: Float64, free: Float64, ext_size: Float64),
       this_lv : NamedTuple(name: String, size: Float64, active: Bool, thinpool: Bool, thinvol: Bool),

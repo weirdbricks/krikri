@@ -212,7 +212,7 @@ module Krikri
       # into exactly that shape.
       result.extra["state"] = JSON::Any.new(state) unless state == "touch" || result.failed? || result.extra.has_key?("state")
 
-      # Real Ansible's AnsibleModule.add_path_info (module_utils/basic.py)
+      # Real Ansible's AnsibleModule.add_path_info
       # merges the file-common stat fields (uid/gid/owner/group/mode/
       # state/size) into EVERY result whose path still exists at module
       # exit time - so a state=absent --check on an existing file reports
@@ -1154,7 +1154,7 @@ module Krikri
     # corner case, but every shape real playbooks (and this project's own
     # fixtures) actually write.
     # Real Ansible (AnsibleModule._symbolic_mode_to_octal in
-    # module_utils/basic.py) validates each comma clause against
+    # the real module) validates each comma clause against
     # USERS_RE ^[ugo]+$ and PERMS_RE ^[rwxXstugo]*$ - note the perms
     # class includes u/g/o (copy syntax like `g+u`) - and fails the
     # task with "mode must be in octal or symbolic form" on any
@@ -1339,7 +1339,7 @@ module Krikri
     # and its `attr` alias). Parsed into the leading operator ('+'/'-',
     # defaulting to '=' when bare) plus the flag letters themselves -
     # real Ansible's set_attributes_if_different in
-    # module_utils/basic.py does exactly this split before comparing.
+    # the real module does exactly this split before comparing.
     private def attr_args : {Char, String}?
       raw = @params["attr"]? || @params["attributes"]?
       return nil unless raw
@@ -1411,7 +1411,7 @@ module Krikri
     # SELinux context params (seuser:/serole:/setype:/selevel:, real
     # Ansible's file-common args). Real Ansible accepts these on every
     # host but only ACTS on them when SELinux is actually enabled - its
-    # set_context_if_different (module_utils/basic.py) opens with
+    # set_context_if_different opens with
     # `if not self.selinux_enabled(): return changed`, a graceful no-op.
     # Live-verified against ansible-core 2.19.4 on this non-SELinux
     # machine: all four params are silently accepted, the result carries

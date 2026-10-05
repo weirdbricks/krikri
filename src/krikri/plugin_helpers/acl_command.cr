@@ -133,7 +133,7 @@ module Krikri
         lines
       end
 
-      # The idempotency check, ported from real acl.py's acl_changed:
+      # The idempotency check, behavior matched to real acl.py's acl_changed:
       # `setfacl --test` prints the would-be result of the operation,
       # ending the line with `*,*` when nothing would change and with a
       # full entry list (ending `,*`) when it would. So for POSIX ACLs

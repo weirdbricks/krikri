@@ -5,7 +5,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # snap plugin - manages snap packages via the `snap` command, a
-  # native port of community.general.snap.
+  # native reimplementation of community.general.snap.
   #
   # Implemented against real snap.py's control flow:
   #   - discovery via `snap list <name>` per name (exit code 0 =

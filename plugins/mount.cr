@@ -73,7 +73,7 @@ module Krikri
   # currently mounted, this creates it (`mkdir -p`) and mounts for real
   # (`mount -t <fstype> -o <opts> <src> <path>`, `opts:` verified to still
   # get `boot: false`'s `noauto` treatment even though there's no fstab
-  # entry to append it to - confirmed against real Ansible's own source,
+  # entry to append it to - confirmed against observed behavior,
   # which computes that unconditionally before the ephemeral-specific
   # fstab skip). If it's *already* mounted, real Ansible compares the
   # mount table's actual current source device against the requested

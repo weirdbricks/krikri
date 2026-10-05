@@ -63,7 +63,7 @@ module Krikri
     # here, a meaningfully bigger change than anything else in this
     # file).
     module DockerClient
-      # Real community.docker's DOCKER_COMMON_ARGS (module_utils/_util.py):
+      # Real community.docker's DOCKER_COMMON_ARGS:
       # the connection parameters every API module's argument_spec merges
       # in (the module spec overrides these on key collision), with their
       # aliases. Keys the plugins' own validation must treat as legal and

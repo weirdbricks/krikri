@@ -115,7 +115,7 @@ module Krikri
     @do_permanent = true
 
     # Real Ansible's result msg is built from a msgs list each
-    # transaction appends to (module_utils/firewalld.py's self.msgs): a
+    # transaction appends to (the real module's self.msgs): a
     # context line first ("Permanent and Non-Permanent(immediate)
     # operation" / "Permanent operation" / "Non-permanent operation"),
     # then per-change detail lines, then - only on hosts where firewalld
@@ -143,7 +143,7 @@ module Krikri
 
       # Real firewalld.py's first module-level act is
       # FirewallTransaction.sanity_check() - the firewall Python
-      # library's import gate (module_utils/firewalld.py: the import
+      # library's import gate (the real module: the import
       # block sets import_failure=True, sanity_check turns that into
       # missing_required_lib('firewall') + the version suffix). It
       # runs BEFORE the offline/permanent validation and the zone
@@ -240,7 +240,7 @@ module Krikri
       PluginResult.new(changed: true, failed: false)
     end
 
-    # Real's action_handler (module_utils/firewalld.py) wraps every
+    # Real's action_handler wraps every
     # firewalld interaction in try/except and fail_json's with
     # "ERROR: Exception caught: <exception>" plus, when any context msgs
     # have accumulated, " <joined msgs>"; a message mentioning
@@ -639,7 +639,7 @@ module Krikri
     end
 
     # Ports real Ansible's own `permanent`/`immediate`/`offline` twisty
-    # validation logic (ansible/posix/plugins/modules/firewalld.py's
+    # validation logic (the real module's
     # `main()`) instead of the previous blanket "offline: true,
     # permanent: true both required" gate - that combination isn't even
     # a real Ansible requirement (permanent defaults false, immediate

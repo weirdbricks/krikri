@@ -7,7 +7,7 @@ module Krikri
   # yum_versionlock plugin - locks/unlocks package versions via the
   # `yum versionlock` plugin (the yum-plugin-versionlock package).
   # Compatible with Ansible's community.general.yum_versionlock module
-  # (community/general/plugins/modules/yum_versionlock.py), which is
+  # which is
   # deliberately simpler than its dnf_versionlock sibling: no NEVRA
   # resolution through repoquery, no raw:/excluded:/clean - just
   # add/delete on the yum locklist.
