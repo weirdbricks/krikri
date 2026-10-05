@@ -60,6 +60,10 @@ defect moves down or gets deleted.
   (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
   build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
+- **krikri-jinja follow-up:** filter results that are generators should be materialized inside the
+  engine's own `eval_filter` instead of by the host-side wrapper in
+  `src/krikri/krikri_jinja_filters.cr` - lives in the sibling `weirdbricks/krikri-jinja` repo
+  (bump/tag there, then the `tag:` in this repo's `shard.yml`).
 
 ## Deliberate limits (decided, not defects)
 
@@ -194,6 +198,14 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   `rejectattr` (deliberately excluded from `KNOWN_FILTER_NAMES`), `groupby`, and the Windows-only
   `win_basename`/`win_dirname`/`win_splitdrive`.
 
+### ansible.netcommon IP filters are implemented even where the Ansible host lacks the collection
+
+- krikri implements the `ansible.netcommon` filter family (`ipaddr`, `network_in_usable`, ...)
+  natively, so a role using one renders fine here while `ansible-playbook` on a host without the
+  `ansible.netcommon` collection installed fatals with `No filter named 'ansible.netcommon.<filter>'`.
+  `jtprogru.hosts` is the precedent: such roles diverge BY DESIGN - the collection gap is on the
+  Ansible side, and krikri having the filter is not a defect.
+
 ### Init systems and package managers
 
 - **`service:` on an upstart host** - detection covers systemd, OpenRC and SysV (Ansible's own branches,
@@ -301,6 +313,10 @@ because anyone intends to fix them.
   `object of type 'HostVarsVars' has no attribute 'x'`; krikri fails the same task (and
   `is defined`/`default()` behave the same) but says `object of type 'dict'`, since each
   host's vars reach the template engine as a plain dict.
+- **`version_compare` was removed in ansible-core 2.19**: a role using that filter fails on
+  both engines (the role is broken against 2.19 either way), only the wording differs -
+  Ansible's `No filter named 'version_compare' found.` vs krikri's
+  `unknown filter "version_compare"`.
 
 ### Everything else
 
@@ -375,6 +391,10 @@ because anyone intends to fix them.
   "skipping" recap line, not a runtime crash.
 - `community.general.zypper_repository` - unimplemented; same cosmetic parse-time-drop class, no
   zypper/openSUSE host ever tested.
+- `community.general.homebrew`/`homebrew_tap` - unimplemented; reachable in practice via the
+  linuxbrew roles (`ctorgalson.linuxbrew`, `markosamuli.linuxbrew`), which then diverge by design:
+  krikri skips those tasks, ansible runs them (and the Linux brew path fails on this hardware
+  anyway - Homebrew's x86_64 build needs an SSSE3 CPU).
 - `ansible.posix.firewalld` - `zone:` defaults to the system default zone (`firewall-offline-cmd
   --get-default-zone`) and Ansible's `permanent`/`immediate`/`offline` validation is matched to Ansible's observed behavior, so
   `offline: true, permanent: true` isn't required explicitly. A running firewalld daemon (auto-detected
