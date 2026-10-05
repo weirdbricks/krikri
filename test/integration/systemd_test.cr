@@ -371,6 +371,13 @@ private def with_fake_systemctl(params : Hash(String, String)) : JSON::Any
   PluginSpecHelper.run("systemd", params, env: {"PATH" => "#{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"})
 end
 
+# `command -v systemctl` resolves the fake binary on the test's PATH (as
+# Ansible's get_bin_path would); pin the prefix so the expectations still read
+# like the live-verified "/usr/bin/systemctl ..." strings.
+def normalize_systemctl(cmd : String) : String
+  cmd.sub(/\A\S*\/systemctl\b/, "/usr/bin/systemctl")
+end
+
 # The no-service-manager failure path (Ansible's bare
 # `module.run_command(systemctl, check_rc=True)` fallback after
 # show/is-enabled/list-unit-files all fail): its echoed cmd carries the
@@ -383,7 +390,7 @@ describe "systemd plugin - no-service-manager failure cmd" do
   it "echoes --force in the failure cmd, with Ansible's run_command result shape" do
     result = with_fake_systemctl({"name" => "ssh.service", "force" => "true"})
     result["failed"].as_bool.must_equal(true)
-    result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
+    normalize_systemctl(result["cmd"].as_s).must_equal("/usr/bin/systemctl --force")
     result["rc"].as_i.must_equal(1)
     result["msg"].as_s.must_equal("System has not been booted with systemd as init system (PID 1). Can't operate." \
                                   "\nFailed to connect to system scope bus via local transport: Host is down")
@@ -396,20 +403,20 @@ describe "systemd plugin - no-service-manager failure cmd" do
 
   it "echoes --no-block before --force" do
     result = with_fake_systemctl({"name" => "ssh.service", "force" => "true", "no_block" => "true"})
-    result["cmd"].as_s.must_equal("/usr/bin/systemctl --no-block --force")
+    normalize_systemctl(result["cmd"].as_s).must_equal("/usr/bin/systemctl --no-block --force")
   end
 
   it "echoes the scope flag first for scope: user (with the user-bus failure msg)" do
     result = with_fake_systemctl({"name" => "ssh.service", "scope" => "user", "force" => "true"})
     result["failed"].as_bool.must_equal(true)
-    result["cmd"].as_s.must_equal("/usr/bin/systemctl --user --force")
+    normalize_systemctl(result["cmd"].as_s).must_equal("/usr/bin/systemctl --user --force")
     result["msg"].as_s.must_equal("Failed to connect to user scope bus via local transport: No such file or directory")
   end
 
   it "fails scope: global with systemctl's own --global rejection and the prefix in cmd" do
     result = with_fake_systemctl({"name" => "ssh.service", "scope" => "global", "no_block" => "true"})
     result["failed"].as_bool.must_equal(true)
-    result["cmd"].as_s.must_equal("/usr/bin/systemctl --global --no-block")
+    normalize_systemctl(result["cmd"].as_s).must_equal("/usr/bin/systemctl --global --no-block")
     result["msg"].as_s.must_equal("--global is not supported for this operation.")
     result["stderr_lines"].as_a.size.must_equal(1)
   end
@@ -417,7 +424,7 @@ describe "systemd plugin - no-service-manager failure cmd" do
   it "keeps the state-management failure on the same failure path (cmd carries --force)" do
     result = with_fake_systemctl({"name" => "ssh.service", "state" => "started", "force" => "true"})
     result["failed"].as_bool.must_equal(true)
-    result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
+    normalize_systemctl(result["cmd"].as_s).must_equal("/usr/bin/systemctl --force")
   end
 end
 

@@ -41,6 +41,14 @@ describe Krikri::LocalExecutor do
     # argv-split it with "DEBIAN_FRONTEND=noninteractive" as argv[0] -
     # ENOENT, since that's shell env-assignment syntax, not a real
     # executable name.
+    it "routes a bare shell builtin like `command -v` through the shell" do
+      result = Krikri::LocalExecutor.exec("command -v sh")
+      result[:exit_code].must_equal 0
+      result[:stdout].strip.wont_be_empty
+      Krikri::LocalExecutor.exec("command -v krikri_no_such_tool_xyz")[:exit_code].must_equal 1
+      Krikri::LocalExecutor.exec("type sh")[:exit_code].must_equal 0
+    end
+
     it "still routes a leading NAME=value env-assignment prefix through the shell" do
       result = Krikri::LocalExecutor.exec("SOME_VAR=hello sh -c 'echo $SOME_VAR'")
       result[:exit_code].must_equal(0)

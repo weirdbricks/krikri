@@ -42,6 +42,15 @@ module Krikri
     # is completely ordinary and not env-assignment syntax.
     LEADING_ENV_ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
 
+    # A command whose first word is a shell BUILTIN with no binary of its
+    # own (`command -v snap`, `type apt-get`, `hash -r`, ...) has no
+    # metacharacter either, so the argv fast path would exec a file named
+    # "command" and fail with ENOENT - plugins probing for a tool with a
+    # bare `command -v X` reported the tool missing on every host. Only the
+    # builtins that exist solely as builtins are listed (`true`, `false`,
+    # `test` and `echo` also ship as binaries).
+    LEADING_SHELL_BUILTIN = /\A\s*(?:command|type|hash|cd|export|unset|set|alias|unalias|ulimit|umask|exec|eval|source|read|wait|exit|return|shift|trap|builtin|local|declare|typeset|let|\.)(?:\s|\z)/
+
     # `needs_shell?` is a pure function of the command string, and the same
     # command is often re-run many times (idempotency reruns, spec suites,
     # loop: bodies) - cache the verdict rather than re-scanning every call.
@@ -54,7 +63,8 @@ module Krikri
         # and crash on argv[0], so route it through the shell path too.
         result = command.blank? ||
                  SHELL_METACHARACTERS.matches?(command) ||
-                 LEADING_ENV_ASSIGNMENT.matches?(command)
+                 LEADING_ENV_ASSIGNMENT.matches?(command) ||
+                 LEADING_SHELL_BUILTIN.matches?(command)
         @@needs_shell_cache[command] = result
         result
       end
