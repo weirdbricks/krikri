@@ -59,6 +59,10 @@ module Krikri
   #   it's built first here too, not just appended anywhere) /
   #   `restrict_config_file:` (bool - `--defaults-file=` instead, meaning
   #   *only* `config_file:` is read, no other implicit option files).
+  #   When `login_password:` is given alongside `config_file:`,
+  #   `config_file:` is not passed as its own defaults flag but pulled
+  #   into the staged temp defaults file via `!include` so the password
+  #   still never lands on argv - see #stages_defaults_file?.
   #   `name: all` (Ansible has no separate `all_databases:` boolean
   #   param at all despite this plugin's own prior doc comment claiming
   #   otherwise - verified against its actual `argument_spec` - it's
@@ -303,6 +307,11 @@ module Krikri
     # very first option - built and prepended separately from
     # login_flags for that reason, not folded into it.
     private def config_file_flag : String
+      # When staging is active the temp defaults file STANDS IN for
+      # config_file (it !include's it - see stages_defaults_file?), so
+      # the single defaults flag on argv is the staged one, emitted by
+      # login_flags; config_file itself is never a flag in that case.
+      return "" if stages_defaults_file?
       config_file = @params["config_file"]?
       return "" unless config_file
 
@@ -310,26 +319,49 @@ module Krikri
       "#{flag}#{quote(config_file)} "
     end
 
-    # When a login_password was given and the user did NOT name their own
-    # config file, stage the credentials into a temporary
-    # --defaults-extra-file instead of `--password=` on the command line:
-    # the cleartext would otherwise sit in the tool's argv, readable from
-    # the target's /proc/<pid>/cmdline by any local user for the
-    # dump/import's duration. Same pattern as postgresql_db.cr's .pgpass
-    # staging - the password is base64-framed in the command string so it
-    # never appears in argv at all, and the file is 0600 and always
-    # removed, preserving the tool's exit code. (With a user-supplied
-    # config_file: the old --password= argv form remains, since only one
-    # defaults file may be given - matching Ansible's own behavior
-    # when config_file is passed.)
+    # When a login_password was given, stage the credentials into a
+    # temporary 0600 defaults file instead of `--password=` on the
+    # command line: the cleartext would otherwise sit in the tool's
+    # argv, readable from the target's /proc/<pid>/cmdline by any local
+    # user for the dump/import's duration. Same pattern as
+    # postgresql_db.cr's .pgpass staging - the password is base64-framed
+    # in the command string so it never appears in argv at all, and the
+    # file is 0600 and always removed, preserving the tool's exit code.
+    #
+    # This now stages even when the user also passed config_file: (it
+    # used to keep the --password= argv form there, putting the password
+    # in the target's `ps`). Both files cannot simply ride on argv - the
+    # client honors only the FIRST --defaults-extra-file (a second one
+    # is rejected outright: `unknown variable 'defaults-extra-file=...'`)
+    # - and MYSQL_PWD=... for the client command is no substitute: a
+    # probed real mariadb 11.8 client (password argument captured at
+    # mysql_real_connect) uses an option-file password INSTEAD of
+    # MYSQL_PWD, so config_file's password would beat login_password,
+    # the opposite of Ansible's precedence, where the argv --password=
+    # always wins over every option file (MySQL also marks MYSQL_PWD
+    # deprecated). So one merged staged file it is: it !include's
+    # config_file FIRST and declares its own [client] password AFTER
+    # the include - option files are processed in order and the LAST
+    # occurrence wins (verified the same way against the real client,
+    # both include orders) - which gives login_password precedence over
+    # config_file's password exactly like Ansible's argv flag, while the
+    # password itself lives only in the 0600 file. `!include` is
+    # documented by both mysql (Oracle) and mariadb. With
+    # restrict_config_file: the staged file is passed as --defaults-file=
+    # (see login_flags) so the usual implicit option files stay excluded,
+    # mirroring what --defaults-file=config_file would have read.
     private def stages_defaults_file? : Bool
       pw = @params["login_password"]?
-      !pw.nil? && !pw.empty? && !@params["config_file"]?
+      !pw.nil? && !pw.empty?
     end
 
     private def defaults_file_prefix : String
       return "" unless stages_defaults_file?
-      content = "[client]\n"
+      content = ""
+      # config_file FIRST, our [client] block after it - the order is
+      # what makes login_password win, see stages_defaults_file?.
+      content += "!include #{@params["config_file"]}\n" if @params["config_file"]?
+      content += "[client]\n"
       content += "user=#{@params["login_user"]}\n" if @params["login_user"]?
       content += "password=#{@params["login_password"]}\n"
       encoded = Base64.strict_encode(content)
@@ -352,17 +384,27 @@ module Krikri
     private def login_flags : String
       String.build do |flags|
         # user/password ride the staged defaults file (see
-        # stages_defaults_file?) whenever it's in play - never argv.
-        # The --defaults-extra-file= pointing at that staged file is
-        # emitted here as the first flag (mysqldump/mysql demand a
-        # defaults flag come before everything else, see
-        # config_file_flag above); when staging is active
-        # config_file_flag is empty by construction, so this really is
-        # the first option on the tool's argv. The path is the
-        # $__krikri_mydefaults shell variable set by
+        # stages_defaults_file?) whenever it's in play - never argv,
+        # even when config_file: was given too (the staged file then
+        # !include's it instead of it getting its own flag). The single
+        # defaults flag is emitted here as the first option
+        # (mysqldump/mysql demand a defaults flag come before
+        # everything else, see config_file_flag above); when staging is
+        # active config_file_flag is empty by construction, so this
+        # really is the first option on the tool's argv. The path is
+        # the $__krikri_mydefaults shell variable set by
         # defaults_file_prefix in the same /bin/bash -c string.
         if stages_defaults_file?
-          flags << "--defaults-extra-file=\"$__krikri_mydefaults\" "
+          # --defaults-file= only when restrict_config_file: pinned a
+          # config_file: too - then the staged file must read JUST
+          # itself plus its !include, with the implicit option files
+          # still excluded (what --defaults-file=config_file would
+          # have read). Otherwise keep --defaults-extra-file= so the
+          # implicit files stay in play, as they are whenever
+          # config_file: is absent.
+          restrict = true?(@params["restrict_config_file"]?) && @params["config_file"]? != nil
+          flag = restrict ? "--defaults-file=" : "--defaults-extra-file="
+          flags << flag << "\"$__krikri_mydefaults\" "
         else
           flags << "--user=" << quote(@params["login_user"]) << " " if @params["login_user"]?
           flags << "--password=" << quote(@params["login_password"]) << " " if @params["login_password"]?

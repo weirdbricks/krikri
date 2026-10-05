@@ -2,13 +2,18 @@ require "../minitest_helper"
 require "file_utils"
 
 # Regression spec for the credential-staging wiring in mysql_db's
-# dump/import path: when login_password is given (and the user did not
-# supply their own config_file), the password must reach mysqldump/mysql
-# via a staged 0600 --defaults-extra-file, NOT via --password= on argv,
-# and the staged file must be gone afterwards. A previous security pass
-# staged the file but never added the --defaults-extra-file= flag to the
-# tool's command line, so dump/import silently ran with no credentials
-# at all.
+# dump/import path: when login_password is given - with OR without the
+# user's own config_file - the password must reach mysqldump/mysql via a
+# staged 0600 defaults file, NOT via --password= on argv, and the staged
+# file must be gone afterwards. A previous security pass staged the file
+# but never added the --defaults-extra-file= flag to the tool's command
+# line, so dump/import silently ran with no credentials at all; the gap
+# fixed alongside this spec kept --password= on argv whenever
+# config_file: was given together with login_password:. The client
+# honors only the FIRST --defaults-extra-file, so both files cannot ride
+# as flags - the staged file instead !include's config_file FIRST and
+# declares [client] password AFTER the include, so login_password still
+# overrides the config file's password (last occurrence wins).
 #
 # No MySQL server is involved: mysqldump/mysql are shimmed on PATH to
 # capture their argv and whatever the staged defaults file contained,
@@ -27,6 +32,7 @@ private def with_shims(&)
     for arg in "$@"; do
       case "$arg" in
         --defaults-extra-file=*) cp "${arg#--defaults-extra-file=}" "$CAPTURE_DIR/defaults_file" 2>/dev/null ;;
+        --defaults-file=*) cp "${arg#--defaults-file=}" "$CAPTURE_DIR/defaults_file" 2>/dev/null ;;
       esac
     done
     echo "SHIM-OK"
@@ -109,7 +115,7 @@ describe "mysql_db dump/import credential staging" do
     end
   end
 
-  it "keeps the documented config_file behavior (user's own defaults file + --password= on argv)" do
+  it "dump with config_file + login_password stages the password, never --password= on argv" do
     with_shims do |capture_dir|
       target = File.tempname(Dir.tempdir, "krikri-dump.sql")
       begin
@@ -124,8 +130,99 @@ describe "mysql_db dump/import credential staging" do
 
         result["changed"].as_bool.must_equal(true)
         argv = File.read(File.join(capture_dir, "argv"))
+        argv.must_include("--defaults-extra-file=")
+        argv.wont_include("--password=")
+        argv.wont_include("s3cret")
+        argv.wont_include("--defaults-extra-file=/etc/my.cnf")
+
+        staged_path = argv.split('\n').find!(&.starts_with?("--defaults-extra-file="))
+        staged_path = staged_path.lchop("--defaults-extra-file=")
+        File.read(File.join(capture_dir, "defaults_file")).must_equal(
+          "!include /etc/my.cnf\n[client]\nuser=dbadmin\npassword=s3cret'pw!\n")
+        File.exists?(staged_path).must_equal(false)
+      ensure
+        File.delete?(target)
+      end
+    end
+  end
+
+  it "import with config_file + login_password stages the password, never --password= on argv" do
+    with_shims do |capture_dir|
+      target = File.tempname(Dir.tempdir, "krikri-import.sql")
+      File.write(target, "CREATE TABLE t (id int);")
+      begin
+        result = PluginSpecHelper.run("mysql_db", {
+          "name"           => "mydb",
+          "state"          => "import",
+          "target"         => target,
+          "config_file"    => "/etc/my.cnf",
+          "login_user"     => "dbadmin",
+          "login_password" => "s3cret'pw!",
+        })
+
+        result["changed"].as_bool.must_equal(true)
+        argv = File.read(File.join(capture_dir, "argv"))
+        argv.must_include("--defaults-extra-file=")
+        argv.wont_include("--password=")
+        argv.wont_include("s3cret")
+        File.read(File.join(capture_dir, "defaults_file")).must_equal(
+          "!include /etc/my.cnf\n[client]\nuser=dbadmin\npassword=s3cret'pw!\n")
+      ensure
+        File.delete?(target)
+      end
+    end
+  end
+
+  it "restrict_config_file with config_file + login_password stages the merged file as --defaults-file=" do
+    with_shims do |capture_dir|
+      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      begin
+        result = PluginSpecHelper.run("mysql_db", {
+          "name"                 => "mydb",
+          "state"                => "dump",
+          "target"               => target,
+          "config_file"          => "/etc/my.cnf",
+          "restrict_config_file" => "true",
+          "login_user"           => "dbadmin",
+          "login_password"       => "s3cret'pw!",
+        })
+
+        result["changed"].as_bool.must_equal(true)
+        argv = File.read(File.join(capture_dir, "argv"))
+        argv.must_include("--defaults-file=")
+        argv.wont_include("--defaults-extra-file=")
+        argv.wont_include("--password=")
+        argv.wont_include("s3cret")
+        argv.wont_include("--defaults-file=/etc/my.cnf")
+
+        staged_path = argv.split('\n').find!(&.starts_with?("--defaults-file="))
+        staged_path = staged_path.lchop("--defaults-file=")
+        File.read(File.join(capture_dir, "defaults_file")).must_equal(
+          "!include /etc/my.cnf\n[client]\nuser=dbadmin\npassword=s3cret'pw!\n")
+        File.exists?(staged_path).must_equal(false)
+      ensure
+        File.delete?(target)
+      end
+    end
+  end
+
+  it "config_file without login_password is still passed straight through as --defaults-extra-file=" do
+    with_shims do |capture_dir|
+      target = File.tempname(Dir.tempdir, "krikri-dump.sql")
+      begin
+        result = PluginSpecHelper.run("mysql_db", {
+          "name"        => "mydb",
+          "state"       => "dump",
+          "target"      => target,
+          "config_file" => "/etc/my.cnf",
+          "login_user"  => "dbadmin",
+        })
+
+        result["changed"].as_bool.must_equal(true)
+        argv = File.read(File.join(capture_dir, "argv"))
         argv.must_include("--defaults-extra-file=/etc/my.cnf")
-        argv.must_include("--password=s3cret'pw!")
+        argv.must_include("--user=dbadmin")
+        argv.wont_include("--password=")
       ensure
         File.delete?(target)
       end
