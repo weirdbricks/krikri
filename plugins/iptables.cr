@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_splitlines"
 require "../src/krikri/plugin_helpers/iptables_command"
 
 module Krikri
@@ -38,13 +39,14 @@ module Krikri
       %w[chain_management flush numeric]
     end
 
-    @failure : String?
+    @failure : PluginResult?
 
     def execute : PluginResult
       validate_bool_params!
       check_mode = true?(@params["_ansible_check_mode"]?)
       ip_version = @params["ip_version"]? || "ipv4"
-      binaries = ip_version == "both" ? ["iptables", "ip6tables"] : [ip_version == "ipv6" ? "ip6tables" : "iptables"]
+      binaries = (ip_version == "both" ? ["iptables", "ip6tables"] : [ip_version == "ipv6" ? "ip6tables" : "iptables"])
+        .map { |bin| resolve_bin(bin) }
 
       flush = true?(@params["flush"]?)
       policy = @params["policy"]?
@@ -90,11 +92,7 @@ module Krikri
       end
 
       if failure = @failure
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: failure
-        )
+        return failure
       end
 
       # ansible-core 2.19.11 iptables exits with a single
@@ -156,7 +154,7 @@ module Krikri
 
     private def apply_flush(bin : String, chain : String?, check_mode : Bool, msgs : Array(String)) : Nil
       unless check_mode
-        fail_on_command_failure(remote_exec(push(bin, "-F", chain)))
+        fail_on_command_failure(remote_exec(push(bin, "-F", chain)), push_display(bin, "-F", chain))
       end
       msgs << "flushed #{chain}"
     end
@@ -164,13 +162,14 @@ module Krikri
     private def apply_policy(bin : String, chain : String?, policy : String, check_mode : Bool, msgs : Array(String)) : Bool
       current = current_policy(bin, chain)
       if current.nil?
-        # Ansible fails here rather than guessing.
-        @failure = "Can't detect current policy"
+        # Ansible fails here rather than guessing (fail_json(msg=...) -
+        # the plain failed/msg/changed/exception shape).
+        @failure = PluginResult.new(changed: false, failed: true, msg: "Can't detect current policy")
         return false
       end
       changed = current != policy
       if changed && !check_mode
-        fail_on_command_failure(remote_exec("#{push(bin, "-P", chain)} #{policy}"))
+        fail_on_command_failure(remote_exec("#{push(bin, "-P", chain)} #{policy}"), "#{push_display(bin, "-P", chain)} #{policy}")
       end
       msgs << "policy #{policy}"
       changed
@@ -181,7 +180,9 @@ module Krikri
       changed = state == "absent" ? present : !present
       if changed
         action = state == "absent" ? "-X" : "-N"
-        fail_on_command_failure(remote_exec(push(bin, action, chain))) if chain_management && !check_mode
+        if chain_management && !check_mode
+          fail_on_command_failure(remote_exec(push(bin, action, chain)), push_display(bin, action, chain))
+        end
       end
       changed
     end
@@ -193,28 +194,46 @@ module Krikri
 
       return true if check_mode
       action = should_be_present ? (@params["action"]? == "insert" ? "-I" : "-A") : "-D"
-      fail_on_command_failure(remote_exec(push(bin, action, chain, rule: rule_flags)))
+      fail_on_command_failure(remote_exec(push(bin, action, chain, rule: rule_flags)), push_display(bin, action, chain, rule: rule_flags))
       true
     end
 
     # Ansible runs every mutating operation (the -F/-P/-N/-X/-A/-I/-D
     # call sites) through module.run_command(check_rc=True) - a non-zero
     # exit from the real iptables/ip6tables binary fails the task with
-    # the binary's stderr as the message. It is never swallowed into a
-    # silent "changed: true" (an -A on a nonexistent chain used to be
-    # reported exactly that way). First failure wins: a later operation
-    # never overwrites an already-recorded failure.
-    private def fail_on_command_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Nil
+    # the full run_command failure shape: the space-joined raw argv
+    # (`_clean_args`) as cmd, rc, raw stdout/stderr, msg=stderr.rstrip,
+    # and the display layer's *_lines splits - the key order Ansible's
+    # fail_json kwargs-first shape produces, probe-verified through a
+    # register + to_json (cmd, rc, stdout, stderr, failed, msg,
+    # stdout_lines, stderr_lines, changed, exception). It is never
+    # swallowed into a silent "changed: true" (an -A on a nonexistent
+    # chain used to be reported exactly that way). First failure wins:
+    # a later operation never overwrites an already-recorded failure.
+    private def fail_on_command_failure(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), cmd : String) : Nil
       return if result[:exit_code] == 0 || @failure
-      @failure = [result[:stderr].strip, result[:stdout].strip]
-        .reject(&.empty?)
-        .first?
-      @failure ||= "Failure executing command, exit code: #{result[:exit_code]}"
+      stdout = result[:stdout]
+      stderr = result[:stderr]
+      @failure = PluginResult.new(
+        changed: false,
+        failed: true,
+        msg: stderr.rstrip,
+        cmd: cmd,
+        rc: result[:exit_code],
+        stdout: stdout,
+        stderr: stderr,
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(stderr),
+        key_order: %w[cmd rc stdout stderr failed msg stdout_lines stderr_lines changed exception]
+      )
     end
 
     # Ansible's push_arguments(): one shared command framing for
     # every operation this plugin runs, including `-w wait` (when set)
-    # and the `-I`-only insert position.
+    # and the `-I`-only insert position. The exec variant shell-quotes
+    # each token (one argument per value, like run_command's argv);
+    # `push_display` returns the raw space-join Ansible's `_clean_args`
+    # reports as a failure's `cmd`.
     private def push(bin : String, action : String, chain : String? = nil,
                      rule : Array(String) = [] of String, numeric : Bool = false) : String
       PluginHelpers::IptablesCommand.push_arguments(
@@ -223,6 +242,18 @@ module Krikri
         rule_num: @params["rule_num"]?,
         wait: @params["wait"]?,
         numeric: numeric
+      )
+    end
+
+    private def push_display(bin : String, action : String, chain : String? = nil,
+                             rule : Array(String) = [] of String, numeric : Bool = false) : String
+      PluginHelpers::IptablesCommand.push_arguments(
+        bin, action, chain, table,
+        rule: rule,
+        rule_num: @params["rule_num"]?,
+        wait: @params["wait"]?,
+        numeric: numeric,
+        for_display: true
       )
     end
 
@@ -247,6 +278,24 @@ module Krikri
     private def rule_present?(bin : String, chain : String, rule_flags : Array(String)) : Bool
       result = remote_exec("#{push(bin, "-C", chain, rule: rule_flags)} > /dev/null 2>&1")
       result[:exit_code] == 0
+    end
+
+    # Ansible's module.get_bin_path('iptables', True): the module
+    # process's PATH first, then the sbin dirs a non-login shell's PATH
+    # routinely lacks; first executable match wins. The resolved path
+    # is what both the executed command string and a failure's `cmd`
+    # carry (the probe evidence's cmd starts with /usr/sbin/iptables,
+    # not a bare name). Falls back to the bare name when nothing
+    # matches, so the pre-existing behavior on a host without the
+    # binary is unchanged.
+    private def resolve_bin(name : String) : String
+      paths = (ENV["PATH"]? || "").split(':') + ["/sbin", "/usr/sbin", "/usr/local/sbin"]
+      paths.each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        return candidate if File.exists?(candidate) && !File.directory?(candidate) && File::Info.executable?(candidate)
+      end
+      name
     end
   end
 end

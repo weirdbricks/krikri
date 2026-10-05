@@ -23,7 +23,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
         "-d", "0.0.0.0/0",
         "-j", "MASQUERADE",
         "-o", "eth0",
-        "-m", "comment", "--comment", "'Ansible NAT Masquerade'",
+        "-m", "comment", "--comment", "Ansible NAT Masquerade",
       ])
     end
 
@@ -47,6 +47,14 @@ describe Krikri::PluginHelpers::IptablesCommand do
         "destination_ports" => "80,443",
       })
       rule.must_equal(["-m", "multiport", "--dports", "80,443"])
+    end
+
+    it "duplicates -m multiport when match already includes it (Ansible has no dedup)" do
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "match"             => "multiport",
+        "destination_ports" => "80,443",
+      })
+      rule.must_equal(["-m", "multiport", "-m", "multiport", "--dports", "80,443"])
     end
 
     it "uses the real -m flag for an explicit match: param (not a typo'd -mat)" do
@@ -316,11 +324,21 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.must_equal(["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED"])
     end
 
-    it "single-quotes the comment value" do
+    it "leaves the comment value raw (Ansible joins its argv with plain spaces)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "comment" => "Ansible NAT Masquerade",
       })
-      rule.must_equal(["-m", "comment", "--comment", "'Ansible NAT Masquerade'"])
+      rule.must_equal(["-m", "comment", "--comment", "Ansible NAT Masquerade"])
+    end
+
+    it "renders the probe round's rule string byte-identically to Ansible's" do
+      rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
+        "protocol"         => "tcp",
+        "jump"             => "ACCEPT",
+        "destination_port" => "8080",
+        "comment"          => "kop keyorder probe",
+      }).as(Array(String))
+      rule.join(" ").must_equal("-p tcp -j ACCEPT --destination-port 8080 -m comment --comment kop keyorder probe")
     end
 
     it "returns an empty rule (chain-only operation) when no rule params are given" do
@@ -362,6 +380,23 @@ describe Krikri::PluginHelpers::IptablesCommand do
     it "omits -w and the chain when unset" do
       cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments("iptables", "-F", nil, "nat")
       cmd.must_equal("iptables -t nat -F")
+    end
+
+    it "keeps a multi-word value ONE argument in the exec string (probe regression)" do
+      cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments(
+        "iptables", "-A", "KOP_TEST", "filter",
+        rule: ["-p", "tcp", "-j", "ACCEPT", "-m", "comment", "--comment", "kop keyorder probe"]
+      )
+      cmd.must_equal("iptables -t filter -A KOP_TEST -p tcp -j ACCEPT -m comment --comment 'kop keyorder probe'")
+    end
+
+    it "renders the raw space-join Ansible's _clean_args reports as cmd (probe regression)" do
+      cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments(
+        "/usr/sbin/iptables", "-A", "KOP_TEST", "filter",
+        rule: ["-p", "tcp", "-j", "KOP_NO_SUCH_TARGET", "--destination-port", "8083"],
+        for_display: true
+      )
+      cmd.must_equal("/usr/sbin/iptables -t filter -A KOP_TEST -p tcp -j KOP_NO_SUCH_TARGET --destination-port 8083")
     end
   end
 
@@ -520,10 +555,21 @@ describe Krikri::PluginHelpers::IptablesCommand do
   # literal argv word, never as shell syntax.
   describe "shell-injection regression" do
     it "escapes a rule value containing an apostrophe-breakout payload" do
+      # construct_rule carries the value RAW (Ansible's display join);
+      # the escaping happens when push_arguments builds the exec string.
+      payload = "10.0.0.1'; touch /tmp/krikri-spec-iptables-pwn; #"
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
-        "source" => "10.0.0.1'; touch /tmp/krikri-spec-iptables-pwn; #",
+        "source" => payload,
       })
-      rule.must_equal(["-s", "'10.0.0.1'\\''; touch /tmp/krikri-spec-iptables-pwn; #'"])
+      rule.must_equal(["-s", payload])
+
+      cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments(
+        "iptables", "-A", "INPUT", "filter", rule: rule.as(Array(String))
+      )
+      stdout = IO::Memory.new
+      Process.new("/bin/bash", ["-c", cmd.sub("iptables ", "printf '[%s]' ")], output: stdout).wait
+      stdout.to_s.must_equal("[-t][filter][-A][INPUT][-s][#{payload}]")
+      File.exists?("/tmp/krikri-spec-iptables-pwn").must_equal(false)
     end
 
     it "escapes a chain name carrying an apostrophe-breakout payload" do

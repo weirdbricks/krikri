@@ -15,6 +15,17 @@ module Krikri
     # argument-spec validation messages (mutually_exclusive /
     # required_if / required_by wording from
     # the Ansible module).
+    #
+    # `construct_rule()` returns RAW tokens, exactly like Ansible's own:
+    # values as given, no quoting - the registered `rule` string is
+    # Ansible's `' '.join(construct_rule(params))` (probe-verified:
+    # a comment value reaches it unquoted, words joined with plain
+    # spaces). Quoting exists only when the exec command string is
+    # built (`push_arguments` shell-quotes each token so the
+    # /bin/bash -c framing keeps every value ONE argument, the way
+    # Ansible's run_command passes its argv list); `push_arguments`
+    # with `for_display: true` returns the raw space-join that
+    # Ansible's `_clean_args` puts in a failure's `cmd`.
     module IptablesCommand
       # Real-Ansible parameter order, flag-for-flag (construct_rule()).
       # Returns the flag list, or a real-Ansible failure message when
@@ -65,8 +76,8 @@ module Krikri
         append_param(rule, params["to_destination"]?, "--to-destination")
         if dports = params["destination_ports"]?
           unless dports.empty?
-            rule.concat(["-m", "multiport"]) unless rule.includes?("multiport")
-            rule.concat(["--dports", quote_if_needed(dports)])
+            rule.concat(["-m", "multiport"])
+            rule.concat(["--dports", dports])
           end
         end
         append_param(rule, params["to_source"]?, "--to-source")
@@ -136,13 +147,13 @@ module Krikri
           # string "--icmp-type --icmpv6-type" followed by the one value -
           # i.e. both flags share the one value, on both binaries'
           # identical rule string.
-          rule.concat(["--icmp-type", "--icmpv6-type", quote_if_needed(icmp)])
+          rule.concat(["--icmp-type", "--icmpv6-type", icmp])
         else
           icmp_flag = (params["ip_version"]? == "ipv6") ? "--icmpv6-type" : "--icmp-type"
           append_param(rule, params["icmp_type"]?, icmp_flag)
         end
         if comment = params["comment"]?
-          rule.concat(["-m", "comment", "--comment", shell_single_quote(comment)])
+          rule.concat(["-m", "comment", "--comment", comment])
         end
 
         # Real quirk 2: `match_set` without `match_set_flags` appends
@@ -176,16 +187,27 @@ module Krikri
       # action, chain, the insert position (only on `-I`), then `-w`
       # wait, then the rule flags. `numeric` is appended only by the
       # `-L` call sites (get_chain_policy/check_chain_present).
+      #
+      # The rule tokens arrive RAW (see construct_rule); the exec
+      # string shell-quotes each one with `Shell.quote_arg` - unlike
+      # `quote_if_needed` it treats whitespace as unsafe, so a
+      # multi-word value (comment, set_counters "10 20") stays ONE
+      # argument, matching Ansible's run_command argv list (which
+      # passes each value as a single element, whatever it contains).
+      # With `for_display` the raw tokens are space-joined instead,
+      # byte-identical to Ansible's `' '.join(...)` rule string and
+      # `_clean_args` failure cmd.
       def self.push_arguments(bin : String, action : String, chain : String?, table : String,
                               rule : Array(String) = [] of String, rule_num : String? = nil,
-                              wait : String? = nil, numeric : Bool = false) : String
-        parts = [bin, "-t", quote_if_needed(table), action]
-        parts << quote_if_needed(chain) if chain
-        parts << quote_if_needed(rule_num) if action == "-I" && rule_num && !rule_num.empty?
-        parts.concat(["-w", quote_if_needed(wait)]) if wait && !wait.empty?
+                              wait : String? = nil, numeric : Bool = false,
+                              for_display : Bool = false) : String
+        parts = [bin, "-t", table, action]
+        parts << chain if chain
+        parts << rule_num if action == "-I" && rule_num && !rule_num.empty?
+        parts.concat(["-w", wait]) if wait && !wait.empty?
         parts.concat(rule)
         parts << "--numeric" if numeric
-        parts.join(" ")
+        parts.map { |part| for_display ? part : Shell.quote_arg(part) }.join(" ")
       end
 
       # Ansible's argument-spec validation for this module,
@@ -262,11 +284,11 @@ module Krikri
 
       private def self.append_ctstate(rule : Array(String), ctstate : String, matches : Array(String)) : Nil
         if matches.includes?("conntrack")
-          rule.concat(["--ctstate", quote_if_needed(ctstate)])
+          rule.concat(["--ctstate", ctstate])
         elsif matches.includes?("state")
-          rule.concat(["--state", quote_if_needed(ctstate)])
+          rule.concat(["--state", ctstate])
         else
-          rule.concat(["-m", "conntrack", "--ctstate", quote_if_needed(ctstate)])
+          rule.concat(["-m", "conntrack", "--ctstate", ctstate])
         end
       end
 
@@ -278,9 +300,9 @@ module Krikri
       private def self.append_param(rule : Array(String), value : String?, flag : String) : Nil
         return unless value
         if value.starts_with?('!')
-          rule.concat(["!", flag, quote_if_needed(value[1..])])
+          rule.concat(["!", flag, value[1..]])
         else
-          rule.concat([flag, quote_if_needed(value)])
+          rule.concat([flag, value])
         end
       end
 
@@ -294,7 +316,7 @@ module Krikri
         flags = parsed["flags"]?
         flags_set = parsed["flags_set"]?
         return unless flags && flags_set
-        rule.concat(["--tcp-flags", quote_if_needed(csv_join(flags)), quote_if_needed(csv_join(flags_set))])
+        rule.concat(["--tcp-flags", csv_join(flags), csv_join(flags_set)])
       end
 
       private def self.csv_join(node : JSON::Any) : String
@@ -317,23 +339,6 @@ module Krikri
       private def self.each_csv(value : String?, &) : Nil
         return unless value
         value.split(',').each { |v| yield v.strip unless v.strip.empty? }
-      end
-
-      # Shared shell-quoting implementation (this used to be its own copy
-      # with a double-backslash escape that produced a literal backslash
-      # - and an unterminated quote - for any comment containing an
-      # apostrophe; the shared one uses the correct `'\''` convention).
-      def self.shell_single_quote(str : String) : String
-        Shell.single_quote(str)
-      end
-
-      # Every rule value here ends up in a /bin/bash -c command string
-      # (the plugin's remote_exec), so a value carrying a shell
-      # metacharacter is quoted - safely, with the shared primitive -
-      # while well-formed values (IPs, ports, "10 20", comma lists)
-      # pass through byte-identical.
-      private def self.quote_if_needed(str : String) : String
-        Shell.quote_if_needed(str)
       end
     end
   end
