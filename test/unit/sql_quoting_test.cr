@@ -46,8 +46,8 @@ describe Krikri::PluginHelpers::SqlQuoting do
   # Every expected string below was produced by the REAL implementation:
   # community.postgresql's pg_quote_identifier (which delegates to
   # Ansible's _identifier_parse), imported directly from
-  # ~/.the real module under python3 -
-  # not hand-derived. This is what pins parity with real Ansible.
+  # ~/.the Ansible module under python3 -
+  # not hand-derived. This is what pins parity with Ansible.
   describe ".pg_quote_identifier" do
     include RaisesAssertion
     it "quotes simple identifiers, preserving case" do
@@ -56,7 +56,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("A_b1", "role").must_equal("\"A_b1\"")
     end
 
-    it "accepts identifiers real Ansible accepts that an allow-list would reject" do
+    it "accepts identifiers Ansible accepts that an allow-list would reject" do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("peering-manager", "role").must_equal("\"peering-manager\"")
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("my schema", "schema").must_equal("\"my schema\"")
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("a b", "table").must_equal("\"a b\"")
@@ -75,7 +75,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier(%q(a\b), "table").must_equal(%q("a\b"))
     end
 
-    it "splits unquoted dotted paths per fragment (real Ansible's own handling)" do
+    it "splits unquoted dotted paths per fragment (Ansible's own handling)" do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("a.b", "table").must_equal(%q("a"."b"))
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("a.b.c", "table").must_equal(%q("a"."b"."c"))
     end
@@ -90,7 +90,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
       Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier(%q("a"."b"), "table").must_equal(%q("a"."b"))
     end
 
-    it "raises real Ansible's own errors on over-deep dotted paths" do
+    it "raises Ansible's own errors on over-deep dotted paths" do
       assert_raises_message(Krikri::PluginHelpers::SqlQuoting::SQLParseError, "PostgreSQL does not support table with more than 3 dots") do
         Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("a.b.c.d", "table")
       end
@@ -99,7 +99,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
       end
     end
 
-    it "raises real Ansible's own error on an empty identifier" do
+    it "raises Ansible's own error on an empty identifier" do
       assert_raises_message(Krikri::PluginHelpers::SqlQuoting::SQLParseError, "Identifier name unspecified or unquoted trailing dot") do
         Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier("", "table")
       end
@@ -140,7 +140,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
       right[1..-2].gsub("\"\"", "\"").must_equal(%q(b --))
     end
 
-    it "rejects malformed pre-quoted input with real Ansible's own message" do
+    it "rejects malformed pre-quoted input with Ansible's own message" do
       assert_raises_message(Krikri::PluginHelpers::SqlQuoting::SQLParseError, "User escaped identifiers must escape extra quotes") do
         Krikri::PluginHelpers::SqlQuoting.pg_quote_identifier(%q("a"b), "table")
       end

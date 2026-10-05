@@ -4,8 +4,8 @@ require "../minitest_helper"
 # argument-validation surfaces against real community.docker's
 # AnsibleModule setup (source-verified against docker_network.py /
 # docker_network_info.py + _util.py DOCKER_COMMON_ARGS; live-diffed vs
-# real ansible-playbook via the podman-diff docker_network_edge_cases +
-# docker_network_info_edge_cases harnesses - real runs all of this
+# ansible-playbook via the podman-diff docker_network_edge_cases +
+# docker_network_info_edge_cases harnesses - Ansible runs all of this
 # BEFORE its eager daemon ping, the only byte-comparable surface
 # without a daemon):
 #

@@ -25,7 +25,7 @@ module Krikri
   # wildcard/flatten/filter produces a projection, and a field access /
   # index / slice applied to a projection maps over its elements, dropping
   # `null` results. Syntactically invalid expressions raise
-  # `JMESPath::Error` (real Ansible's json_query fails the task on an
+  # `JMESPath::Error` (Ansible's json_query fails the task on an
   # unparseable expression too).
   module JMESPath
     class Error < Exception; end

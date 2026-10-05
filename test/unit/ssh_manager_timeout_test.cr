@@ -4,10 +4,10 @@ require "../../src/krikri/ssh_manager"
 # Real bug found benchmarking buluma.netdata (round 163 regression
 # check): Krikri::SSHManager's per-command execution timeout was a
 # hardcoded 300s (5 minutes) default shared by #exec/#exec_script/
-# #daemon_send. Real Ansible has no default command-duration limit at
+# #daemon_send. Ansible has no default command-duration limit at
 # all - a foreground task runs until it completes, however long that
 # takes. netdata's own installer genuinely compiles from source and
-# took a confirmed 1536s (~25.6 minutes) against real ansible-playbook;
+# took a confirmed 1536s (~25.6 minutes) against ansible-playbook;
 # crystal's identical task was killed at exactly 300s despite the
 # remote command still actively running and eventually succeeding.
 # This spec is a deliberately blunt guard against the default silently
@@ -73,9 +73,9 @@ describe "Krikri::SSHManager (ssh_manager_timeout_test.cr: control socket)" do
     # and had to dial a fresh incoming TCP connection - which a
     # host-locking role (`ufw default deny incoming` + `ufw --force
     # enable`, no allow rules) blocks outright, timing the warm run out
-    # where real Ansible's own warm rerun rides its stable ~/.ansible/cp
+    # where Ansible's own warm rerun rides its stable ~/.ansible/cp
     # master and succeeds (verified live on fresh Atlantic.net hosts:
-    # real Ansible is locked out IDENTICALLY once its own master socket
+    # Ansible is locked out IDENTICALLY once its own master socket
     # is moved away - the lockout is the role's real effect, the
     # divergence was purely connection reuse). Pin the directory itself
     # as pid-independent; per-target socket names below it are

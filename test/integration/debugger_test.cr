@@ -35,7 +35,7 @@ private FAILING = <<-YAML
   YAML
 
 describe "debugger:" do
-  # EOF is real Ansible's "user interrupted execution", exit 99 - NOT
+  # EOF is Ansible's "user interrupted execution", exit 99 - NOT
   # the ordinary failed-task 2.
   it "treats a closed stdin as an interrupt, exiting 99" do
     code, output = run_debug(FAILING, nil)
@@ -100,7 +100,7 @@ describe "debugger:" do
     plain_output.wont_include("(debug)>")
   end
 
-  # Assignment from the prompt - real Ansible does this by exec'ing the
+  # Assignment from the prompt - Ansible does this by exec'ing the
   # typed line as Python; this parses the two shapes that make the
   # debugger useful and applies them to the real task/vars. Every
   # expectation below was checked against ansible-core 2.19.4 driving the
@@ -126,7 +126,7 @@ describe "debugger:" do
 
   describe "assignment" do
     it "applies task.args[...] and re-runs it on r" do
-      # `_raw_params` is real Ansible's name for a command:'s free-form
+      # `_raw_params` is Ansible's name for a command:'s free-form
       # argument; this engine stores it as `cmd` and aliases the two.
       code, output = run_debug(FAILING, %(task.args["_raw_params"] = "/bin/true"\nr\n))
       code.must_equal(0)
@@ -135,7 +135,7 @@ describe "debugger:" do
     end
 
     it "does NOT change the task on a task_vars assignment alone - u is required" do
-      # Verified against real Ansible: assign + r re-runs the ORIGINAL
+      # Verified against Ansible: assign + r re-runs the ORIGINAL
       # command, because its task object is already templated by then.
       code, _ = run_debug(templated_playbook, %(task_vars["exit_code"] = "0"\nr\nc\n))
       code.must_equal(2)

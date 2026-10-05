@@ -11,7 +11,7 @@ require "../../src/krikri/conditional_evaluator"
 #     - not "'No package matching' in apt_resolved.msg"
 #
 # The second clause is a DOUBLE-quoted string literal whose content
-# happens to contain single quotes - in real Jinja2 `not "<string>"` is
+# happens to contain single quotes - in Jinja2 `not "<string>"` is
 # `not <truthy>` = False, so this failed_when NEVER fires and the play
 # continues past a genuinely failed apt task. Verified live against
 # ansible-core 2.19.11: BOTH the matching and non-matching msg variants
@@ -23,7 +23,7 @@ require "../../src/krikri/conditional_evaluator"
 # through to expression parsing, where the quote-aware ` in ` splitter
 # correctly refused to split inside the quotes, #evaluate_in returned
 # false, and the enclosing `not` flipped that to True - hard-failing a
-# task real Ansible treats as ok (krikri ok=14 failed=1 vs real
+# task Ansible treats as ok (krikri ok=14 failed=1 vs real
 # ok=283 failed=0 on the same host).
 describe "Krikri::ConditionalEvaluator (conditional_nested_quote_literal_test.cr)" do
   private def vars
@@ -44,7 +44,7 @@ describe "Krikri::ConditionalEvaluator (conditional_nested_quote_literal_test.cr
   end
 
   it "keeps the string-literal reading even when the substring is absent from msg" do
-    # Real ansible-core 2.19.11 marks this ok too - the clause never
+    # ansible-core 2.19.11 marks this ok too - the clause never
     # becomes a containment test, so msg content is irrelevant.
     Krikri::ConditionalEvaluator.evaluate(
       %q(not "'No package matching' in apt_other.msg"), vars

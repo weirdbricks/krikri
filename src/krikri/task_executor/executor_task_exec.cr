@@ -44,7 +44,7 @@ module Krikri
       base = base_context_a_for(host).dup
       base_context_b_for(host).each { |key, value| base[key] = value }
       # vars_files paths are play/task-arg-grade templating, not loop-
-      # source resolution - real Ansible's legacy-alias synthesis applies
+      # source resolution - Ansible's legacy-alias synthesis applies
       # here (see #synthesize_legacy_ssh_aliases).
       synthesize_legacy_ssh_aliases(base)
       substitutor = VarSubstitutor.new(vars: base, host_name: host.name)
@@ -64,7 +64,7 @@ module Krikri
             end
           rescue
             # A vars file that will not parse is skipped rather than
-            # taking the run down - real ansible-playbook likewise does
+            # taking the run down - ansible-playbook likewise does
             # not abort for a vars_files entry it cannot use (verified:
             # a MISSING file is tolerated silently, rc=0).
           end
@@ -113,7 +113,7 @@ module Krikri
       missing_required = [] of String
       type_errors = [] of String
       options.each do |option_name, spec|
-        # Real Ansible templates the ENTIRE argument spec - `default:`
+        # Ansible templates the ENTIRE argument spec - `default:`
         # expressions included - when finalizing the
         # validate_argument_spec call's own args, BEFORE ever looking at
         # whether the option itself was provided (live-verified against
@@ -148,14 +148,14 @@ module Krikri
         value = vars_context[option_name]?
 
         if value.nil?
-          # Real Ansible applies spec defaults with set_default=False
+          # Ansible applies spec defaults with set_default=False
           # before check_required_arguments (ansible-core's
-          # the real module _set_defaults), so only a
+          # the Ansible module _set_defaults), so only a
           # default whose value is not None stands in for a missing
           # option - a spec declaring `default: null` alongside
           # `required: true` does NOT satisfy the requirement
           # (robertdebock.vault_agent's vault_agent_address, round 979000:
-          # real ansible-playbook fails the synthesized validation task
+          # ansible-playbook fails the synthesized validation task
           # with "missing required arguments: vault_agent_address" while
           # this engine treated the null default as a provided value,
           # passed validation, and only failed the role's own
@@ -164,7 +164,7 @@ module Krikri
             value = resolved_default
           else
             # A var provided as an explicit null (`vault_agent_address:`)
-            # counts as provided in real Ansible - the action plugin picks
+            # counts as provided in Ansible - the action plugin picks
             # up any name present in task_vars and check_required_arguments
             # only flags names ABSENT from the parameters dict - so only a
             # var the play never defines can be "missing required" here
@@ -179,7 +179,7 @@ module Krikri
         if declared_type = spec["type"]?.try(&.as_s?)
           # A null value (the role default is the YAML literal `null` -
           # grzegorzfranus.github_runner's `github_runner_user_uid: null`
-          # with `type: int`) is real Ansible's "not provided": the
+          # with `type: int`) is Ansible's "not provided": the
           # validator skips type conversion for None entirely ("if value
           # is None: continue") - it never says "of type str and we were
           # unable to convert to int" against a None.
@@ -187,7 +187,7 @@ module Krikri
             unless argument_type_matches?(value, declared_type)
               # Kept separate from `errors` so the combined missing-
               # required message (emitted after the loop) can precede
-              # every type error the way real Ansible's validator orders
+              # every type error the way Ansible's validator orders
               # them (check_required_arguments before
               # _validate_argument_types).
               type_errors << "argument '#{option_name}' is of type #{json_type_name(value)} and we were unable to convert to #{declared_type}"
@@ -205,7 +205,7 @@ module Krikri
       errors.concat(type_errors)
 
       result = if errors.empty?
-                 # Real's passing action result carries
+                 # Ansible's passing action result carries
                  # {"changed": false, "msg": "The arg spec validation
                  # passed"} but its stdout callback prints a bare
                  # `ok: [host]` - ResultDisplay would surface the msg as
@@ -225,7 +225,7 @@ module Krikri
                end
 
       # Display/stats flow through the same pipeline as every other task
-      # result so a failed validation shows real Ansible's one-line
+      # result so a failed validation shows Ansible's one-line
       # `fatal: [host]: FAILED! => {json}` dump (argument_errors included)
       # instead of the old multi-line `failed:`/`Message:` shape, and
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
@@ -256,13 +256,13 @@ module Krikri
         when Int64, Int32, Float64 then true
         when String                then value.as_s.to_f64? != nil
           # Python's bool is a subclass of int (isinstance(True, int) is
-          # True) - real ansible-core's own argument-spec validator
+          # True) - ansible-core's own argument-spec validator
           # accepts a bool value for a declared int/float param on that
           # basis. dev-sec mysql_hardening's own argument_specs.yml
           # declares mysql_hardening_skip_show_database as `type: int,
           # default: 1` while defaults/main.yml sets it to the literal
           # boolean `true` - a real (if sloppy) mismatch in the role
-          # itself that real ansible-playbook tolerates via this exact
+          # itself that ansible-playbook tolerates via this exact
           # coercion; rejecting it here failed the role's own argument-
           # spec validation task before any hardening logic ever ran.
         when Bool then true
@@ -293,11 +293,11 @@ module Krikri
     end
 
     # Python's own type name for a resolved loop-source value, matching
-    # real Ansible's own error wording exactly ("not 'NoneType'", "not
+    # Ansible's own error wording exactly ("not 'NoneType'", "not
     # 'str'"). Only 'NoneType' and 'str' were live-verified (round174
     # matrix scenarios 11a/11c); 'int'/'float'/'bool'/'dict' are inferred
     # from the same CPython type()/__name__ convention, not independently
-    # verified against a real ansible-playbook run.
+    # verified against a ansible-playbook run.
     private def python_type_name(value : JSON::Any) : String
       case value.raw
       when Nil     then "NoneType"
@@ -333,7 +333,7 @@ module Krikri
       # false_condition: the when: expression that evaluated False (the bare
       # literal `false` stays a bool, like YAML gives real).
       #
-      # Key order is real's own (task_executor.py builds
+      # Key order is Ansible's own (task_executor.py builds
       # `dict(changed=False, skipped=True,
       # skip_reason='Conditional result was False') | result_context`,
       # the conditional's false_condition landing last): a later
@@ -401,7 +401,7 @@ module Krikri
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "group_by: no inventory available in this context"}.to_json)
       end
 
-      # Real's group_by action crashes on non-string YAML literal args
+      # Ansible's group_by action crashes on non-string YAML literal args
       # (the parser marks those; see NON_STRING_PARAM_PREFIX) while
       # building its result dict: key hits `group_name.replace(' ', '-')`
       # - "'<type>' object has no attribute 'replace'" - and parents, a
@@ -436,7 +436,7 @@ module Krikri
       end
 
       # An empty-string key passes the action's checks and aborts the
-      # whole run in the executor's add_group processing - real's
+      # whole run in the executor's add_group processing - Ansible's
       # inventory layer, rc 1, no recap, no further output (same stage
       # and shape as add_host's empty-name abort below).
       if key.empty?
@@ -446,7 +446,7 @@ module Krikri
         Process.exit(1)
       end
 
-      # Real's group_by.py: the key is ONE group name (spaces become `-`,
+      # Ansible's group_by.py: the key is ONE group name (spaces become `-`,
       # never split on commas) and parents defaults to ["all"]; its
       # result is exactly {changed, add_group, parent_groups} (the strategy
       # then flips changed to true when the group or host membership is
@@ -473,13 +473,13 @@ module Krikri
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
                                check_mode : Bool = @check_mode) : JSON::Any
-      # Real Ansible's reboot module always returns an "elapsed" field (integer
+      # Ansible's reboot module always returns an "elapsed" field (integer
       # seconds since the reboot command was issued) in its result, including in
       # check mode where it returns {'changed': True, 'elapsed': 0,
       # 'rebooted': True} - round900541 derjd.reboot: the role's reboot:
       # handler registers its result as rv and a follow-up debug: task reads
       # rv.elapsed, which crashed this engine with "object of type 'dict' has
-      # no attribute 'elapsed'" where real Ansible succeeded.
+      # no attribute 'elapsed'" where Ansible succeeded.
       return JSON.parse({"changed" => true, "elapsed" => 0, "failed" => false, "msg" => "Would have rebooted"}.to_json) if check_mode
 
       if PluginManager.local_connection?(exec_host, vars_context)
@@ -497,7 +497,7 @@ module Krikri
       post_reboot_delay = params["post_reboot_delay"]?.try(&.to_i?) || 0
       # A None test/reboot command (YAML `test_command:` with no value -
       # the parser wires literal nulls as NONE_SENTINEL - or a whole-span
-      # null template) falls back to real's argspec defaults, same as an
+      # null template) falls back to Ansible's argspec defaults, same as an
       # empty string always did.
       test_command = params["test_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "whoami"
       reboot_command = params["reboot_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "systemctl reboot"
@@ -514,7 +514,7 @@ module Krikri
       # remote shell itself (the command was rejected outright, e.g.
       # permission denied) is worth surfacing.
       issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", exec_host.port, timeout: 15, identity_file: identity_file) rescue nil
-      # Real Ansible stamps its elapsed clock the moment the shutdown command
+      # Ansible stamps its elapsed clock the moment the shutdown command
       # returns (result['start'] in the action plugin) and reports elapsed as
       # integer seconds on EVERY path after that point - including when the
       # wait itself times out - so a registered rv.elapsed is always readable.
@@ -555,7 +555,7 @@ module Krikri
 
       sleep post_reboot_delay.seconds if post_reboot_delay > 0
 
-      # post_reboot_delay sits inside real Ansible's elapsed window too (its
+      # post_reboot_delay sits inside Ansible's elapsed window too (its
       # action plugin sleeps before validating the reboot, both after start).
       elapsed_seconds = (Time.instant - reboot_started_at).total_seconds.to_i
 
@@ -579,7 +579,7 @@ module Krikri
 
     # Override a task's own changed/failed verdict with changed_when:/
     # failed_when:, evaluated against vars_context plus the task's own result
-    # (made available under its own register: name, mirroring real Ansible -
+    # (made available under its own register: name, mirroring Ansible -
     # a bare literal like "false" needs no register: at all; referencing a
     # result field like "result.rc" does). Same substitute-then-evaluate
     # pipeline as when_condition/until_condition.
@@ -594,14 +594,14 @@ module Krikri
 
       # An SSH-transport-level failure (the result's own `unreachable`
       # marker, set by PluginManager.interpret_remote_result when the
-      # stderr names ssh itself) is real Ansible's UNREACHABLE, not a
+      # stderr names ssh itself) is Ansible's UNREACHABLE, not a
       # failed task: book it the way the pre-run unreachable pass's
       # results are booked and remove the host from the rest of the run.
       # Without this, a host that dies mid-play (reboot that never came
       # back, network gone) kept running every later task and each one
       # was booked as a generic "Plugin execution failed on remote"
       # failed - found via robertdebock.common's warm rerun against a
-      # host the cold run's reboot had killed: real ansible-playbook
+      # host the cold run's reboot had killed: ansible-playbook
       # recap'd `unreachable=1 failed=0` and halted the host at
       # Gathering Facts, this engine booked `failed=2` and ran on.
       if unreachable_task_result?(result)
@@ -627,7 +627,7 @@ module Krikri
       # and counted as `ok=`, never `skipped=`. Found benchmarking
       # evrardjp.keepalived's own `debug: var: keepalived_scripts
       # verbosity: 2` tasks (a standard verbosity-gated debug idiom) -
-      # real Ansible correctly shows these as `skipping:` and counts
+      # Ansible correctly shows these as `skipping:` and counts
       # them under `skipped=`, not `ok=`.
       if result["skipped"]?.try(&.as_bool) == true
         puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_result_suffix(result)}".colorize(:cyan)
@@ -656,7 +656,7 @@ module Krikri
     # when `failed` and the task didn't opt out via ignore_errors:.
     private def print_skipped_tasks(tasks : Array(Task), host : Host) : Nil
       tasks.each do |nested_task|
-        # A nested block is transparent - like real Ansible, it gets no
+        # A nested block is transparent - like Ansible, it gets no
         # "TASK [...]" banner of its own, only its members do.
         if nested_task.block?
           print_skipped_tasks(nested_task.block_tasks || [] of Task, host)
@@ -680,7 +680,7 @@ module Krikri
         puts "skipping: [#{connection_host}]".colorize(:cyan)
         # A skipped meta: task (e.g. a named meta: flush_handlers inside
         # a when:-false block) prints its "skipping:" line but is NOT
-        # counted in the PLAY RECAP - real ansible-core ignores meta
+        # counted in the PLAY RECAP - ansible-core ignores meta
         # tasks in stats entirely (0x0i.systemd: krikri skipped=9 vs
         # ansible skipped=8, the extra one being exactly this shape).
         unless nested_task.module_name == "_meta"
@@ -701,7 +701,7 @@ module Krikri
     # already rendered data by the time they reach the per-item pass -
     # that pass would be their SECOND render, and rendering data-derived
     # text is exactly the controller code-execution hole the taint closes
-    # (real ansible-core marks such items AnsibleUnsafe and never
+    # (ansible-core marks such items AnsibleUnsafe and never
     # re-templates them). Callers therefore skip the per-item pass for
     # such loops and instead mark the resulting item VALUES in the
     # UnsafeValues exact-text registry, so every later re-render
@@ -794,7 +794,7 @@ module Krikri
 
         # A raw value that's *exactly* one bare `{{ variable }}` span (no
         # surrounding text, no filter chain) resolves to the variable's
-        # own native JSON type - matching real Ansible's own templating,
+        # own native JSON type - matching Ansible's own templating,
         # which preserves the referenced value's type when the whole
         # input is a single expression, only falling back to string
         # concatenation for partial/mixed text. The general `substitute`
@@ -865,7 +865,7 @@ module Krikri
           # actual Array) never fired - `path: "{{ item }}"` on the
           # `file:` module then received something as a whole, so
           # crystal reported `changed` on already-correct directories
-          # where real Ansible's actually-flattened, actually-scalar
+          # where Ansible's actually-flattened, actually-scalar
           # `item` reported `ok`.
           begin
             evaluated = KrikriJinja.evaluate_expression(
@@ -881,7 +881,7 @@ module Krikri
         end
 
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-        # strict: true - real Ansible templates the loop-source list itself
+        # strict: true - Ansible templates the loop-source list itself
         # with module-arg (strict-undefined) semantics BEFORE any iteration
         # runs (igor_nikiforov.etcd: `loop: ["{{ etcd_conf_dir }}/certs",
         # "{{ etcd_config['data-dir'] }}"]` on a dict missing that key
@@ -909,19 +909,19 @@ module Krikri
       # a YAML-bool `remote_src: true` (wired as a marked non-string
       # literal) fell through to the controller lookup and reported
       # "Could not find or access" with the internal non-string marker
-      # leaked into the searched paths, where real fails on the target.
+      # leaked into the searched paths, where Ansible fails on the target.
       return params if remote_src_param?(params)
 
       src = params["src"]?
       # A falsy non-string literal src (false/0/0.0 - the parser marks
-      # those) is ignored by real's copy action plugin (`not source`),
+      # those) is ignored by Ansible's copy action plugin (`not source`),
       # exactly like an absent or empty one - and so is a None one (a
       # YAML `src:` with no value, wired as NONE_SENTINEL, same as a
       # whole-span null template).
       src = "" if src == Krikri::NONE_SENTINEL
       return params unless src && Krikri.python_param_truthy?(src)
 
-      # Real Ansible's copy action plugin resolves a relative src against
+      # Ansible's copy action plugin resolves a relative src against
       # the role's files/ dir, the playbook dir, and the task's dir
       # before anything else. krikri only ever looked at absolute paths
       # here, so a playbook-relative `src: files/m4-tree/` reached the
@@ -932,7 +932,7 @@ module Krikri
       # size, vault decrypt, directory staging) sees the real file.
       #
       # The resolution (and the missing-src failure) applies on a LOCAL
-      # connection too: the target IS the controller there, so real's
+      # connection too: the target IS the controller there, so Ansible's
       # action plugin still fails a src: that exists nowhere with its
       # controller-side wording - previously the local early-return let
       # the plugin binary run and report its own "Source file not found"
@@ -950,7 +950,7 @@ module Krikri
           params = params.dup
           params["src"] = src
         else
-          # real's _find_needle miss on the controller - a relative src,
+          # Ansible's _find_needle miss on the controller - a relative src,
           # so the failure carries the full Searched-in list (both
           # connection flavors live-verified against 2.19.11).
           candidates = NeedleLookup.candidates(
@@ -962,7 +962,7 @@ module Krikri
       elsif local_connection
         # Absolute src on a local connection: the controller-side
         # existence check IS the whole story (same filesystem), so a
-        # miss fails here with real's wording instead of reaching the
+        # miss fails here with Ansible's wording instead of reaching the
         # plugin binary. An absolute src builds no searched-paths list
         # in real (its absolute lookup branch never populates one).
         is_directory = Dir.exists?(src) rescue false
@@ -971,7 +971,7 @@ module Krikri
         return params
       end
 
-      # Real Ansible's copy action plugin fails the task on the
+      # Ansible's copy action plugin fails the task on the
       # CONTROLLER before anything runs when src: names a file that
       # doesn't exist there ("Could not find or access '<src>' on the
       # Ansible Controller.") - including under --check, which reports
@@ -986,7 +986,7 @@ module Krikri
       size = File.size(src) rescue nil
       return controller_missing_copy_result(src, [] of String) unless size
 
-      # Real Ansible's `copy:` auto-decrypts a vault-armored src on the
+      # Ansible's `copy:` auto-decrypts a vault-armored src on the
       # CONTROLLER before transfer (decrypt: true is the default;
       # decrypt: false keeps the ciphertext) - without this the
       # ciphertext was uploaded verbatim, i.e. krikri behaved like
@@ -1067,12 +1067,12 @@ module Krikri
       resolved
     end
 
-    # Real Ansible's own failure text for a controller-side src: miss
+    # Ansible's own failure text for a controller-side src: miss
     # (copy action plugin) - byte-identical to the unarchive variant
     # below so divergence triage compares cleanly against a real
     # ansible-playbook run of the same role. A relative src carries the
-    # full Searched-in list (real's AnsibleFileNotFound paths); an
-    # absolute one carries none (real's absolute lookup branch never
+    # full Searched-in list (Ansible's AnsibleFileNotFound paths); an
+    # absolute one carries none (Ansible's absolute lookup branch never
     # populates one).
     private def controller_missing_copy_result(src : String, candidates : Array(String)) : JSON::Any
       result = JSON.parse({
@@ -1098,7 +1098,7 @@ module Krikri
       result
     end
 
-    # copy:'s decrypt: param (real Ansible default true): only an
+    # copy:'s decrypt: param (Ansible default true): only an
     # explicit falsy ("false"/"no"/"0"/"off") opts OUT of controller-side
     # vault decryption of src - the inverse of remote_src's truthy check
     # above, because the default points the other way.
@@ -1161,7 +1161,7 @@ module Krikri
     end
 
     # Checksum-first skip for a large controller->remote `copy:` upload,
-    # matching real Ansible's own `copy:` behavior (it computes the
+    # matching Ansible's own `copy:` behavior (it computes the
     # source checksum locally and stats the destination remotely before
     # ever transferring content, skipping the transfer entirely on a
     # match). Previously #stage_large_copy_source unconditionally SCP'd
@@ -1179,7 +1179,7 @@ module Krikri
     # exactly or a mismatch would silently skip a needed copy) and
     # sha1sums it in the same script, only if it exists (SHA1, not the
     # MD5 this used to compare - the compared value doubles as the
-    # result's `checksum:` field, which real Ansible reports as SHA1).
+    # result's `checksum:` field, which Ansible reports as SHA1).
     #
     # Returns the resolved params for the caller to use as-is (with
     # `src` left pointing at the untouched local file - the plugin body
@@ -1247,7 +1247,7 @@ module Krikri
     # change is needed there beyond deleting the scratch copy afterward.
     #
     # Note what this deliberately does NOT handle: per-file vault
-    # decryption inside the tree. Real Ansible's directory copy runs each
+    # decryption inside the tree. Ansible's directory copy runs each
     # file through the same decrypt: machinery as a single-file src:, but
     # this path `scp -r`s the directory without ever reading individual
     # files in Crystal, so a vault-encrypted file inside a copied
@@ -1277,14 +1277,14 @@ module Krikri
       # makes remote_tmp itself an exact copy of src's contents - the
       # trailing "/" on the ORIGINAL src: value still has to be
       # preserved here, since copy.cr's own directory-copy dispatch uses
-      # it (real Ansible's own convention) to decide whether src's
+      # it (Ansible's own convention) to decide whether src's
       # contents land directly in dest or as a dest/<basename> subdir.
       resolved["src"] = src.ends_with?('/') ? "#{remote_tmp}/" : remote_tmp
       resolved["__cleanup_after_copy_dir"] = "true"
       resolved
     end
 
-    # unarchive:'s own real Ansible default (remote_src: false, not
+    # unarchive:'s own Ansible default (remote_src: false, not
     # documented as such in this codebase before) means `src:` names a
     # file on the CONTROLLER, not the target - same category of gap
     # inline_copy_source_content/stage_large_copy_source already solve
@@ -1308,7 +1308,7 @@ module Krikri
     # had that file transferred to it at all - "Source ... failed to
     # transfer" regardless of the file genuinely existing, just on the
     # wrong host.
-    # Real Ansible's unarchive action plugin checks `src:` against the
+    # Ansible's unarchive action plugin checks `src:` against the
     # CONTROLLER only, unconditionally, when remote_src is false (the
     # default) - there is no "maybe it's already on the remote" fallback,
     # and a controller-side miss is a hard task failure:
@@ -1332,7 +1332,7 @@ module Krikri
       return params unless task.module_name == "ansible.builtin.unarchive"
       return params if ansible_boolean_param?(params["remote_src"]?)
       # copy: is unarchive's OLDER param spelling, mutually exclusive
-      # with remote_src: per real Ansible's own argument_spec, and
+      # with remote_src: per Ansible's own argument_spec, and
       # INVERTED - copy: false means the same thing as remote_src: true
       # ("the file is already on the target, don't copy it from the
       # controller"). CVi.thanos (round 812047, confirming this staging
@@ -1357,7 +1357,7 @@ module Krikri
       original_src = src
 
       # A bare relative src: names a controller-side file in the role's
-      # own files/ dir (real Ansible's unarchive action plugin searches
+      # own files/ dir (Ansible's unarchive action plugin searches
       # there via _find_needle, same convention copy:/template:/script:
       # use). Previously only an ABSOLUTE controller path was staged, so
       # `unarchive: src: "{{ package_name }}"` with
@@ -1369,7 +1369,7 @@ module Krikri
         resolved_local = resolve_script_path(src, task)
         # resolve_script_path covers both the role's files/ dir and a
         # path relative to the controller's own cwd - if neither has it,
-        # real Ansible's controller-side lookup has run out of places to
+        # Ansible's controller-side lookup has run out of places to
         # look and the task fails here, before the plugin ever runs.
         return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless resolved_local
         src = resolved_local
@@ -1408,9 +1408,9 @@ module Krikri
       resolved
     end
 
-    # Real Ansible's own failure text for a controller-side src: miss
+    # Ansible's own failure text for a controller-side src: miss
     # (unarchive action plugin, remote_src: false) - byte-identical so
-    # divergence triage compares cleanly against a real ansible-playbook
+    # divergence triage compares cleanly against a ansible-playbook
     # run of the same role. A relative src carries the full Searched-in
     # list (live-verified against 2.19.11); an absolute one none.
     private def controller_missing_unarchive_result(src : String, candidates : Array(String)) : JSON::Any
@@ -1435,7 +1435,7 @@ module Krikri
     # [args...]" - the path always names a file on the CONTROLLER, same
     # category of gap as unarchive:'s src: (see
     # #stage_unarchive_remote_src). Resolves the path against the
-    # currently-executing role's own files/ dir first (real Ansible's own
+    # currently-executing role's own files/ dir first (Ansible's own
     # script: action plugin searches there, same convention copy:/
     # template: use), then falls back to whatever's resolvable relative to
     # the controller's own cwd. A local connection needs the path resolved
@@ -1447,7 +1447,7 @@ module Krikri
 
       cmd = params["cmd"]? || params["_raw_params"]?
       return params unless cmd
-      # Real's script action plugin runs the task args through
+      # Ansible's script action plugin runs the task args through
       # validate_argument_spec (type str) before the _find_needle lookup,
       # so a non-string YAML literal (the parser marks those; see
       # NON_STRING_PARAM_PREFIX) renders through Python str() there - bools
@@ -1466,7 +1466,7 @@ module Krikri
 
       resolved_local = resolve_script_path(local_path, task)
       unless resolved_local
-        # real's script action plugin fails the task ON THE CONTROLLER
+        # Ansible's script action plugin fails the task ON THE CONTROLLER
         # when _find_needle can't find the file - an AnsibleActionFail
         # carrying the loader's not-found text verbatim (no
         # "Task failed: " prefix; the Searched-in list for a relative
@@ -1523,7 +1523,7 @@ module Krikri
     # normal "file not found on target" failure surfaces from script.cr
     # itself once uploaded/executed.
     # assemble with a remote_src the action plugin treats as falsy
-    # (boolean(strict=False) - see Krikri.lenient_boolean_true?): real's
+    # (boolean(strict=False) - see Krikri.lenient_boolean_true?): Ansible's
     # action assembles the fragments on the CONTROLLER and delegates the
     # placement to the copy module, so the action's controller-side touch
     # points run before anything else - live-verified vs 2.19.11:
@@ -1601,7 +1601,7 @@ module Krikri
       resolved
     end
 
-    # Real's assemble action resolves src through _find_needle('files',
+    # Ansible's assemble action resolves src through _find_needle('files',
     # src) - the same role files/ search stack copy/script/unarchive use.
     private def assemble_candidates(task : Task, src : String) : Array(String)
       return [] of String if src.starts_with?('/') || src.starts_with?("~")
@@ -1610,7 +1610,7 @@ module Krikri
         File.expand_path(@playbook_dir), "files", src)
     end
 
-    # The delimiter crash real's assemble action hits on a TRUTHY
+    # The delimiter crash Ansible's assemble action hits on a TRUTHY
     # non-string YAML literal delimiter (the parser marks those; see
     # NON_STRING_PARAM_PREFIX): codecs.escape_decode(delimiter) inside
     # _assemble_from_fragments raises TypeError "a bytes-like object is
@@ -1665,7 +1665,7 @@ module Krikri
       # flags (see debug.cr's own comment on `_verbosity`).
       final_params["_verbosity"] = @verbosity.to_s
 
-      # setup:'s discovered_interpreter_python stamp - real Ansible emits
+      # setup:'s discovered_interpreter_python stamp - Ansible emits
       # it on the host's FIRST module invocation that runs interpreter
       # discovery, never after (see first_gather_for_host?); the gate is
       # executor state, so it is threaded to the gatherer here and in the
@@ -1697,7 +1697,7 @@ module Krikri
       # otherwise be base64'd over SSH and immediately discarded by the
       # plugin that receives it. `playbook_dir` is a fourth key, and not
       # a connection detail: it is the module's own working directory
-      # under a local connection (real Ansible's local connection plugin
+      # under a local connection (Ansible's local connection plugin
       # runs every module with cwd = the playbook's directory, so any
       # relative path a module resolves - tempfile's `path:`, for one -
       # is relative to the playbook, not to the shell the playbook was
@@ -1756,7 +1756,7 @@ module Krikri
       end
     end
 
-    # Matches real Ansible's `stdout_lines`/`stderr_lines` (built from
+    # Matches Ansible's `stdout_lines`/`stderr_lines` (built from
     # Python's `str.splitlines()`), not Crystal's plain `String#split("\n")`.
     # The rationale (empty input, trailing-newline cases - and the UFW role
     # that found them) lives with the shared implementation in
@@ -1766,7 +1766,7 @@ module Krikri
       PluginHelpers::AnsibleSplitlines.split(text)
     end
 
-    # Real's copy action plugin rejects src+content together before the
+    # Ansible's copy action plugin rejects src+content together before the
     # src file is even looked at (live-verified: the mutual-exclusion
     # error wins over a MISSING src too, and an EMPTY src is simply
     # ignored - `src: ""` + content runs the content path, no conflict).
@@ -1775,7 +1775,7 @@ module Krikri
     private def copy_src_content_conflict(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.copy"
       src = params["src"]?
-      # Real's check is Python truthiness (`source and content is not
+      # Ansible's check is Python truthiness (`source and content is not
       # None`): a falsy non-string literal src (false/0/0.0 - the parser
       # marks those) is simply ignored and the content path runs, and so
       # is a None one (a YAML `src:` with no value - the parser wires
@@ -1794,7 +1794,7 @@ module Krikri
     # attribute '<attr>'" (live-verified vs 2.19.11: ints report
     # _AnsibleTaggedInt, floats _AnsibleTaggedFloat, bools plain 'bool').
     # Mirrors the three crash points that precede src resolution/content
-    # inlining, in real's order:
+    # inlining, in Ansible's order:
     # - content + truthy non-string dest: `dest.endswith("/")` in the
     #   required/conflict elif chain (copy.py:433);
     # - no content, not remote_src: `source.endswith(os.path.sep)` before
@@ -1804,7 +1804,7 @@ module Krikri
     # The remaining crash point - `_remote_expand_user(dest)`'s
     # `user_path.startswith('~')` (copy.py:511) - fires only after the src
     # lookup succeeded, so it is checked after inline_copy_source_content
-    # (copy_dest_expand_failure below): a missing src fails with real's
+    # (copy_dest_expand_failure below): a missing src fails with Ansible's
     # "Could not find or access" wording first, exactly like real.
     private def copy_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.copy"
@@ -1833,7 +1833,7 @@ module Krikri
     # missing-src failure would have returned. See
     # copy_literal_type_failure for the message shapes.
     #
-    # `remote_src: true` never reaches it: real's copy.py hands the whole
+    # `remote_src: true` never reaches it: Ansible's copy.py hands the whole
     # task to the copy MODULE on the target the moment remote_src is
     # truthy (the `elif remote_src:` branch right after the content
     # tempfile), so the local path is never walked and no dest/src
@@ -1857,7 +1857,7 @@ module Krikri
       literal_crash_result("'#{Krikri.python_scalar_type_name(native)}' object has no attribute '#{attribute}'")
     end
 
-    # Real's assemble action plugin, on the branch that assembles the
+    # Ansible's assemble action plugin, on the branch that assembles the
     # fragments on the controller (remote_src present and falsy, see
     # assemble_action_local_path?), expands the destination's user path
     # itself - `dest = self._remote_expand_user(dest)` - right after the
@@ -1883,7 +1883,7 @@ module Krikri
     end
 
     # os.path.expanduser(os.fspath(x)) on a non-string YAML literal - the
-    # crash real's unarchive action hits on a non-string src
+    # crash Ansible's unarchive action hits on a non-string src
     # (`source = os.path.expanduser(source)`, unarchive.py action, both
     # remote_src flavors, live-verified vs 2.19.11).
     private def literal_expanduser_crash_result(native : JSON::Any) : JSON::Any
@@ -1900,7 +1900,7 @@ module Krikri
       }.to_json)
     end
 
-    # convert_bool()-shaped truthiness for a param real reads through
+    # convert_bool()-shaped truthiness for a param Ansible reads through
     # boolean(..., strict=False): a parser-marked non-string literal
     # contributes its NATIVE truthiness (1/1.0/true truthy, 0/0.0/false
     # falsy), a plain string the boolean-literal spelling check the plain
@@ -1911,7 +1911,7 @@ module Krikri
       ["true", "yes", "1", "on"].includes?(value.downcase)
     end
 
-    # Real's unarchive/assemble action plugins crash on non-string YAML
+    # Ansible's unarchive/assemble action plugins crash on non-string YAML
     # literal args (the parser marks those; see NON_STRING_PARAM_PREFIX)
     # at their own controller-side touch points, before the module or the
     # "dest must be an existing dir"/isdir checks - all live-verified vs
@@ -1931,7 +1931,7 @@ module Krikri
     #   _find_needle(src)'s startswith.
     # Checked before the src staging paths so the marker text can never
     # leak into a Searched-in list or an upload path; the src/dest presence
-    # guards keep real's ordering when either is genuinely absent (real
+    # guards keep Ansible's ordering when either is genuinely absent (real
     # fails "src (or content) and dest are required" / "src and dest are
     # required" before touching any of them), as does skipping the
     # unarchive checks when the copy/remote_src mutual exclusion applies.
@@ -1972,7 +1972,7 @@ module Krikri
     end
 
     private def remote_src_param?(params : Hash(String, String)) : Bool
-      # real's own predicate for the action plugin's remote_src branch
+      # Ansible's own predicate for the action plugin's remote_src branch
       # (copy.py:422): boolean(value, strict=False) - the full
       # BOOLEANS_TRUE spelling list (y/yes/on/1/true/t and the native
       # true/1/1.0), everything else - invalid spellings, explicit None,
@@ -1982,7 +1982,7 @@ module Krikri
       Krikri.lenient_boolean_true?(params["remote_src"]?)
     end
 
-    # Real's add_host: non-string YAML literal args (the parser marks
+    # Ansible's add_host: non-string YAML literal args (the parser marks
     # those; see NON_STRING_PARAM_PREFIX) crash the run at two different
     # stages, both live-verified vs 2.19.11:
     #
@@ -2023,7 +2023,7 @@ module Krikri
     #   first non-string member - see list_member_attribute_crash.
     #   The groups failure precedes the name crash (action stage before
     #   result processing), and the name failure precedes the groups
-    #   failure (real's name check is the first raise in the action).
+    #   failure (Ansible's name check is the first raise in the action).
     private def add_host_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.add_host" || task.module_name == "add_host"
 
@@ -2079,7 +2079,7 @@ module Krikri
         Process.exit(1)
       end
       if effective_name.empty?
-        # Real's message carries the name's Python str() after the colon
+        # Ansible's message carries the name's Python str() after the colon
         # only when there IS one - an empty string renders the bare colon
         # with no trailing space (live-verified byte-for-byte vs 2.19.11).
         STDERR.puts "[ERROR]: Invalid empty host name provided:".colorize(:red)
@@ -2090,7 +2090,7 @@ module Krikri
       nil
     end
 
-    # Real's group_by/add_host action plugins iterate a YAML list arg's
+    # Ansible's group_by/add_host action plugins iterate a YAML list arg's
     # members with plain string ops (group_by's
     # `[name.replace(' ', '-') for name in parent_groups]`, add_host's
     # `group_name.strip()`), so a non-string MEMBER crashes the action -
@@ -2125,7 +2125,7 @@ module Krikri
 
     # Data-driven module argument validation (see ArgspecValidator): the
     # failing result JSON for this task's module args, or nil when
-    # validation passes or does not apply. Real Ansible runs these checks
+    # validation passes or does not apply. Ansible runs these checks
     # inside the module's own AnsibleModule init - i.e. after the action
     # plugin stage, before any module-side file access - which is exactly
     # where the two callers of this hook sit.
@@ -2153,14 +2153,14 @@ module Krikri
       # action-plugin-level failures; the post-action hook takes only
       # the module-level ones.
       return nil if failure.action_level? != action_level_only
-      # Real's copy action - which template: delegates to - short-circuits
+      # Ansible's copy action - which template: delegates to - short-circuits
       # in check mode the moment the checksums differ (copy.py:288-293:
       # "result['changed'] = True; return result"), so the copy module's
       # own spec never rejects the template-only leftovers under --check
       # (live-verified vs 2.19.11). The module-level failures of the
       # template: delegation are therefore skipped in check mode; the
       # action-level ones (src/dest presence) still fire, exactly like
-      # real's action plugin. A truthy remote_src is the one exception:
+      # Ansible's action plugin. A truthy remote_src is the one exception:
       # that branch dispatches the copy module right away (copy.py:466),
       # so its spec - unsupported parameters included - does run under
       # --check too.
@@ -2177,7 +2177,7 @@ module Krikri
       # bytes actually have to move. See copy_module_never_runs?.
       return nil if !action_level_only && copy_module_never_runs?(task, params, check_mode)
 
-      # Real's fail_json shape for an argument-spec rejection, live-verified
+      # Ansible's fail_json shape for an argument-spec rejection, live-verified
       # vs ansible-core 2.19.11: the module's own kwargs lead (a copy
       # module's always-present diff:[], then failed+msg), then the
       # controller backfills changed, then exception
@@ -2185,7 +2185,7 @@ module Krikri
       # failed_default_order emits. Built in that order here rather than
       # insertion-ordered by assignment.
       result = {} of String => JSON::Any
-      # copy's module-level failure keeps real's always-present "diff" key
+      # copy's module-level failure keeps Ansible's always-present "diff" key
       # (an empty LIST): a registered failed copy shows "diff": [] for the
       # argspec case too (live-verified vs 2.19.11) - the plugin's own
       # post-processing adds it to every copy result that reaches the
@@ -2193,10 +2193,10 @@ module Krikri
       result["diff"] = JSON::Any.new([] of JSON::Any) if task.module_name == "ansible.builtin.copy" && !action_level_only
       result["failed"] = JSON::Any.new(true)
       result["msg"] = JSON::Any.new(failure.msg)
-      # copy/template: real's action plugin computes the source SHA1
+      # copy/template: Ansible's action plugin computes the source SHA1
       # before the module runs and merges it into the failed result, so
       # the fatal dump carries "checksum" for these two modules - but
-      # only where real's action plugin actually reaches the
+      # only where Ansible's action plugin actually reaches the
       # checksum-merging tail (live-verified vs 2.19.11): template:'s
       # delegation reaches it unless the delegated copy took ITS
       # remote_src branch, which returns the module result directly
@@ -2222,7 +2222,7 @@ module Krikri
       JSON.parse(result.to_json)
     end
 
-    # Whether real's copy ACTION plugin leaves the copy MODULE unexecuted
+    # Whether Ansible's copy ACTION plugin leaves the copy MODULE unexecuted
     # for this task - in which case the copy module's own argument spec
     # (its `type: bool` conversions, its unsupported-parameter check)
     # never runs and can never fail the task. The two ways that happens
@@ -2257,7 +2257,7 @@ module Krikri
     end
 
     # SHA1 of the source content a copy/template task would deploy - the
-    # value real's copy action plugin puts in its result (live-verified:
+    # value Ansible's copy action plugin puts in its result (live-verified:
     # sha1 of the content string, or of the source FILE's bytes when src
     # is a controller file; nothing when src is remote or missing).
     private def argspec_source_checksum(params : Hash(String, String)) : String?
@@ -2273,7 +2273,7 @@ module Krikri
       Digest::SHA1.hexdigest(File.read(src))
     end
 
-    # Adds stdout_lines/stderr_lines (real Ansible behavior - each module
+    # Adds stdout_lines/stderr_lines (Ansible behavior - each module
     # that has stdout/stderr sets these itself; krikri derives them
     # centrally here instead) to a plugin result. Shared by register_result
     # below (for later tasks referencing the registered var) AND
@@ -2288,7 +2288,7 @@ module Krikri
       result_hash = result.as_h.dup
 
       # A result carrying the _ansible_omit_command_lines marker (pause -
-      # see the pause action plugin's own comment) opts out: real's pause
+      # see the pause action plugin's own comment) opts out: Ansible's pause
       # module has stdout/stderr but never derives *_lines from them
       # (live-verified vs 2.19.11 registered pause shape). register_result
       # strips the marker with every other _ansible_* key BEFORE calling
@@ -2318,7 +2318,7 @@ module Krikri
       # the assert plugins' `_ansible_quiet` display marker is likewise
       # controller-internal, not part of the registered shape.
       #
-      # `invocation` is stripped here too, generically: real ansible-core's
+      # `invocation` is stripped here too, generically: ansible-core's
       # strategy plugin (strategy/__init__.py, "register final results"
       # block) deletes a top-level `invocation` key from the clean copy it
       # registers. Round 813375 (galaxyproject.pulsar) pinned the exact
@@ -2350,7 +2350,7 @@ module Krikri
     # Applies the real key order a controller-side action failure's
     # REGISTERED result carries (see Krikri::FAILED_KEY_ORDER_DEFAULT):
     # the order the action's builder marked the result with, plus the
-    # `exception: "(traceback unavailable)"` key real's fail_json adds on
+    # `exception: "(traceback unavailable)"` key Ansible's fail_json adds on
     # every failure - including these, which krikri's own result builders
     # left out. Applied here, at the single point every registered result
     # passes through, so no individual builder has to know the rule.

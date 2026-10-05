@@ -37,7 +37,7 @@ describe "archive expanded_exclude_paths" do
     result["expanded_exclude_paths"].as_a.size.must_equal(0)
   end
 
-  it "keeps literal nonexistent exclude paths, like real's expand_paths" do
+  it "keeps literal nonexistent exclude paths, like Ansible's expand_paths" do
     work = PluginSpecHelper.tmp_path("archive-xpaths-missing")
     Dir.mkdir_p(File.join(work, "srcdir"))
     File.write(File.join(work, "srcdir", "a.txt"), "one\n")

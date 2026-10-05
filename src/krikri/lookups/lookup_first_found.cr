@@ -89,9 +89,9 @@ module Krikri
         nil
       end
 
-      # Real Ansible's first_found: the first `files:` entry that exists
+      # Ansible's first_found: the first `files:` entry that exists
       # under any `paths:` entry (both lists, in order - outer loop over
-      # files, inner over paths, matching real Ansible's own search
+      # files, inner over paths, matching Ansible's own search
       # order), each entry independently rendered since it commonly still
       # carries its own `{{ }}` markers (linux-system-roles/timesync's
       # `"{{ ansible_facts['distribution'] }}_{{ ansible_facts
@@ -107,18 +107,18 @@ module Krikri
       # {files: [...], paths: [...]}`), fixed together since both are
       # "a relative paths: entry means role-relative, not cwd-relative":
       #   1. `paths:` omitted entirely used to default unconditionally to
-      #      "." (plain cwd) - real Ansible's own default for a role-scoped
+      #      "." (plain cwd) - Ansible's own default for a role-scoped
       #      first_found is the role's files/templates/vars dirs.
       #   2. `paths: ['vars']` (this idiom's actual common spelling - the
       #      docker/mysql/postgresql roles all give an explicit relative
       #      "vars") was joined straight against cwd too - "vars/Ubuntu.yml"
       #      against the *process's* cwd, essentially never the role dir a
-      #      real `ansible-playbook` run resolves it against.
+      #      `ansible-playbook` run resolves it against.
       # Both now go through resolve_first_found_root, which prepends
       # `role_path` (already sitting in @vars as a magic var - see
       # TaskExecutor#build_vars_context) to any relative entry, absolute
       # entries and non-role usage passing through unchanged. Resolves
-      # entirely against the controller's own filesystem - real Ansible's
+      # entirely against the controller's own filesystem - Ansible's
       # first_found always does (it's how role vars files that live on the
       # controller, not the managed host, get found).
       private def evaluate_first_found(params : JSON::Any) : String
@@ -150,7 +150,7 @@ module Krikri
         # Each candidate entry renders STRICTLY (undefined variable in an
         # entry fails the calling task, it does not silently render to the
         # "undefined" sentinel and lose to a later `default.yml` fallback):
-        # real Ansible templates the lookup's args strictly before first_found
+        # Ansible templates the lookup's args strictly before first_found
         # ever sees them (verified live against 2.19.4 - `include_vars: "{{
         # lookup('first_found', params) }}"` with `files: ['{{ ansible_facts
         # .os_family }}.yml', 'default.yml']` and no gathered facts fails the
@@ -197,7 +197,7 @@ module Krikri
       # candidate list - first_found "found nothing" no matter what files
       # actually existed, and the include_vars: path got the "undefined"
       # sentinel as its filename ("include_vars: file not found: undefined")
-      # where real Ansible (verified live against 2.19.4) templates the whole
+      # where Ansible (verified live against 2.19.4) templates the whole
       # lookup term before the plugin sees it and finds the file. Render a
       # string value STRICTLY (an undefined variable inside it fails the
       # calling task, same as any other candidate) and parse the rendered
@@ -227,17 +227,17 @@ module Krikri
       # i.e. files/, templates/, and vars/ are NOT part of the no-paths:
       # search at all - that per-subdir behavior belongs to the
       # with_first_found: KEYWORD form, which picks its subdir from the
-      # task's own action name (the real module's
+      # task's own action name (the Ansible module's
       # `subdir` selection) and searches via the same
       # DataLoader#path_dwim_relative_stack the keyword form's
       # TaskExecutor#resolve_first_found_path already mirrors. The old
       # ["files", "tasks", "templates", "vars", "."] root list made the
-      # lookup form find a same-named vars/ file real Ansible never
+      # lookup form find a same-named vars/ file Ansible never
       # would: Frzk.chrony's own `include_tasks: "{{ lookup('
       # first_found', findme) }}"` (no paths:, files list containing
       # "Debian.yml") picked up the role's vars/Debian.yml - a VARS
       # mapping, not a task list - and died "Included tasks file must be
-      # a YAML list" where real Ansible included tasks/Linux.yml.
+      # a YAML list" where Ansible included tasks/Linux.yml.
       private def default_first_found_roots : Array(String)
         roots = [] of String
         if role_path = @vars["role_path"]?.try(&.as_s?)
@@ -273,7 +273,7 @@ module Krikri
       #     benchmarking buluma.confluence (round 165): `paths: ['../
       #     vars']` against `role_path` alone resolved to role_path's
       #     own PARENT's "vars" dir (one level too far up) - never
-      #     found the real per-OS vars file real ansible-playbook found
+      #     found the real per-OS vars file ansible-playbook found
       #     via base 2, so include_vars: always got "undefined".
       # An absolute entry, or any entry when there's no enclosing role,
       # passes through unchanged (base 1 only, base 2 skipped - normalizing

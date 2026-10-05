@@ -63,7 +63,7 @@ describe "vars_files:" do
     output.must_include("alt=from_second")
   end
 
-  # A missing file is tolerated silently by real Ansible (rc=0), not an
+  # A missing file is tolerated silently by Ansible (rc=0), not an
   # error - verified.
   it "tolerates a missing file" do
     status, output = run_play(<<-YAML, {} of String => String)

@@ -52,7 +52,7 @@ module Krikri
       # gsub(pattern, replacement) backref expansion, which differs in
       # corner cases (missing-group and multi-digit handling); one
       # implementation now, so both evaluators answer identically.
-      # *options* carries the ignorecase/multiline kwargs real Ansible's
+      # *options* carries the ignorecase/multiline kwargs Ansible's
       # regex_replace accepts (flags |= re.I / re.M). Python re.M only
       # moves ^/$ to line boundaries - NOT dot-matches-newline - so
       # callers must map it to Regex::Options::MULTILINE_ONLY, never
@@ -71,15 +71,15 @@ module Krikri
 
       # regex_search(value, pattern, group_ref=nil) - Python re.search
       # semantics: the first match of *pattern* anywhere in *value*, or nil
-      # (Python None / JSON null - real Ansible's own no-match return) when
+      # (Python None / JSON null - Ansible's own no-match return) when
       # nothing matches. With a group_ref the match's captured group text is
-      # returned wrapped in a one-element LIST (real Ansible wraps every
+      # returned wrapped in a one-element LIST (Ansible wraps every
       # group reference; see the nginxinc.nginx `| first` repro in the
       # jinja_filters.cr comment history). The group_ref grammar is real
       # Ansible's own: `\1`-style capture-group INDICES (only the first
       # `\d+` run counts, so `'\1\2'` resolves group 1 - live-verified
       # against ansible-core 2.19.11) and `\g<name>`-style named references;
-      # anything else raises ("Unknown argument", as real Ansible does), and
+      # anything else raises ("Unknown argument", as Ansible does), and
       # a reference to a group the pattern doesn't have raises too ("no such
       # group"). A group that exists but didn't participate yields nil in
       # the returned list (Python's match.group() -> None), NOT an empty
@@ -96,7 +96,7 @@ module Krikri
         elsif index_match = ref.match(/^\\(\d+)/)
           [group_capture(match, index_match[1].to_i, ref)]
         else
-          raise "regex_search: Unknown argument '#{ref}' (only \\1-style group indices and \\g<name> named references are accepted, as in real Ansible)"
+          raise "regex_search: Unknown argument '#{ref}' (only \\1-style group indices and \\g<name> named references are accepted, as in Ansible)"
         end
       end
 
@@ -104,7 +104,7 @@ module Krikri
       # when the group exists but didn't participate (Python's
       # match.group() -> None; Crystal's strict access raises "was not
       # matched" for exactly that case, which is swallowed here), a raised
-      # error when the pattern has no such group at all (real Ansible's
+      # error when the pattern has no such group at all (Ansible's
       # match.group() raising IndexError surfaces as "no such group"). The
       # strict `match[...]` access inside the rescue is what distinguishes
       # the two cases - the `?`-form returns nil for both.
@@ -248,7 +248,7 @@ module Krikri
       end
 
       # hash(algorithm='sha1') - wraps Python's hashlib.new(). Defaults
-      # to sha1; raises on unsupported algorithms (real Ansible does too).
+      # to sha1; raises on unsupported algorithms (Ansible does too).
       def self.hash(s : String, algorithm : String) : String
         openssl_name = case algorithm.downcase
                        when "md5"    then "MD5"
@@ -298,7 +298,7 @@ module Krikri
           raise "password_hash: openssl passwd failed" unless status.success?
           output.to_s.strip
         when "sha256", "sha512"
-          # Real Ansible hashes through passlib, whose own DEFAULT rounds
+          # Ansible hashes through passlib, whose own DEFAULT rounds
           # (535000 for sha256-crypt, 656000 for sha512-crypt) show in the
           # output's rounds= prefix even when only a salt was given -
           # openssl passwd's fixed 5000-round hash diverged byte for byte
@@ -401,7 +401,7 @@ module Krikri
       # to_uuid(namespace=ANSIBLE_NAMESPACE) - deterministic UUID5
       # (SHA1-based) using Ansible's own default namespace. A caller-
       # supplied namespace is parsed like Python's uuid.UUID() (any
-      # case, braces stripped) - invalid text is real Ansible's own
+      # case, braces stripped) - invalid text is Ansible's own
       # "badly formed hexadecimal UUID string" ValueError.
       def self.to_uuid(s : String, namespace : String = "361E6D51-FAEC-444A-9079-341386DA8E2E") : String
         UUID.v5(s, UUID.new(namespace)).to_s
@@ -410,7 +410,7 @@ module Krikri
       end
 
       # b64encode/b64decode - standard base64 (not urlsafe). b64decode
-      # raises on invalid input (real Ansible does too).
+      # raises on invalid input (Ansible does too).
       def self.b64encode(s : String) : String
         Base64.strict_encode(s)
       end
@@ -422,14 +422,14 @@ module Krikri
       end
 
       # from_json() - parses a JSON string into a real structure;
-      # raises on invalid input (real Ansible does too).
+      # raises on invalid input (Ansible does too).
       def self.from_json(s : String) : JSON::Any
         JSON.parse(s)
       rescue
         raise "from_json: invalid JSON input"
       end
 
-      # from_yaml() - real Ansible only calls yaml.safe_load when the
+      # from_yaml() - Ansible only calls yaml.safe_load when the
       # input IS a string; any other type returns as-is unchanged (the
       # non-string passthrough here is REAL behavior, verified live -
       # the stringify-then-parse shape used to fail whole templates on
@@ -483,7 +483,7 @@ module Krikri
       # to_nice_json(indent=4, sort_keys=True) - a pretty-printed JSON
       # dump. Crystal's own JSON::Any#to_pretty_json (2-space indent) is
       # used rather than hand-rolling a 4-space emitter - narrower than
-      # real Ansible's exact byte output but structurally correct.
+      # Ansible's exact byte output but structurally correct.
       def self.to_nice_json(value : JSON::Any, sort_keys : Bool = true) : String
         sorted = sort_keys ? sort_json_keys(value) : value
         sorted.to_pretty_json
@@ -499,7 +499,7 @@ module Krikri
       end
 
       # Recursively sorts dict keys - used by to_nice_json/to_yaml
-      # (real Ansible's sort_keys=True defaults).
+      # (Ansible's sort_keys=True defaults).
       def self.sort_json_keys(value : JSON::Any) : JSON::Any
         case raw = value.raw
         when Hash
@@ -512,7 +512,7 @@ module Krikri
         end
       end
 
-      # Set operations over JSON arrays - real Ansible's own filters
+      # Set operations over JSON arrays - Ansible's own filters
       # (`list(set(a) OP set(b))`). For plain integer lists CPython's set
       # order is deterministic, so it is reproduced exactly (see PySet);
       # any other element type falls back to set semantics preserving
@@ -573,7 +573,7 @@ module Krikri
       HUMAN_READABLE_BIT_SUFFIXES = {"bits", "Kb", "Mb", "Gb", "Tb", "Pb", "Eb", "Zb", "Yb"}
 
       # human_readable(isbits=False) - formats a byte count as e.g.
-      # "1.00 KB" (1024-based). Mirrors real Ansible's own
+      # "1.00 KB" (1024-based). Mirrors Ansible's own
       # bytes_to_human: `isbits:` selects the bit-count suffix table
       # (and multiplies by 8 first) rather than a base-1000 divisor
       # (a common misconception is that "bits" implies SI units - it
@@ -630,7 +630,7 @@ module Krikri
 
       # community.general's netmask_to_cidr filter: a dotted-decimal
       # subnet mask ("255.255.255.0") to its CIDR prefix length (24).
-      # Real Ansible's own implementation builds
+      # Ansible's own implementation builds
       # `ipaddress.IPv4Network(f"0.0.0.0/{value}")` and reads its
       # `.prefixlen` - equivalent to counting the netmask's leading set
       # bits, which is what this does directly rather than pulling in a
@@ -746,14 +746,14 @@ module Krikri
         end
       end
 
-      # extract(container, morekeys=None) - real Ansible's own filter,
+      # extract(container, morekeys=None) - Ansible's own filter,
       # arbitrated against ansible-core 2.19.11 (Phase-3 slice 4): the
       # piped value plus the morekeys sequence is a path of getitem
       # accesses into *container* - EVERY level uses the same step
       # semantics (verified live: morekeys can keep indexing into
       # lists and even strings, `0 | extract(clist, [0])` -> "z"), so
       # one step function serves the first access and the walk alike.
-      # A miss at any level raises real Ansible's uniform wording,
+      # A miss at any level raises Ansible's uniform wording,
       # "object of type '<type>' has no attribute <key>", where <type>
       # is the Python type name of the node missed on ('dict', 'list',
       # 'str', 'int', 'float', 'bool', 'NoneType') and <key> is quoted
@@ -763,7 +763,7 @@ module Krikri
       # also serves map()'s per-item path) directly, and the Crinja
       # registration (jinja_filters.cr) after converting its container
       # to JSON::Any. *hostvars_label*, hoisted to the caller per the
-      # Phase-3 survey, is the wrapper type name real Ansible reports
+      # Phase-3 survey, is the wrapper type name Ansible reports
       # for nodes under a hostvars container ("HostVarsVars" - verified
       # via `map('extract', hostvars, 'ansible_host')` over a host
       # lacking the attribute); when nil, labels come from the node's
@@ -786,7 +786,7 @@ module Krikri
 
       # One getitem access. Dicts look up by the key's string form (the
       # JSON engine's keys are always strings; an int key coerces -
-      # real Ansible would miss, since Python dicts don't stringify
+      # Ansible would miss, since Python dicts don't stringify
       # keys, but krikri cannot represent int YAML keys at all, so the
       # coercion is what keeps `range(n) | map('extract', mapping, ...)`
       # idioms working - kept deviation). Lists and strings index by
@@ -816,7 +816,7 @@ module Krikri
         idx >= 0 ? idx < size : idx >= -size
       end
 
-      # Real Ansible's uniform miss wording (verified live against
+      # Ansible's uniform miss wording (verified live against
       # ansible-core 2.19.11 for dict/list/str/int/NoneType/bool nodes,
       # string and int keys, first level and walk alike). The key is
       # quoted iff it was a string - Python's own AttributeError message

@@ -7,7 +7,7 @@ module Krikri
   # Rpm_key plugin - imports/removes a GPG key into the target's RPM
   # database via `rpm --import`/`rpm --erase`. Compatible with Ansible's
   # ansible.builtin.rpm_key module (RHEL-family only - `dnf`/`yum` hosts,
-  # verified against real ansible-playbook on a Rocky Linux target).
+  # verified against ansible-playbook on a Rocky Linux target).
   #
   # Real rpm_key.py parses PGP packets itself via ctypes bindings into
   # librpm to derive a key's ID/fingerprint from raw key material. This
@@ -19,7 +19,7 @@ module Krikri
   #
   # Supported parameters:
   # - key: required. A URL, a path to a key file already on the TARGET
-  #   (never fetched from the controller - matches real Ansible, which
+  #   (never fetched from the controller - matches Ansible, which
   #   only treats `key:` as a controller-relative path when it isn't a
   #   URL and isn't a bare key ID either, and even then still needs the
   #   file to exist on the target since fetch_url/open() both run
@@ -139,7 +139,7 @@ module Krikri
 
         primary_short_id = pairs.first[0][-8..]? || pairs.first[0]
         if installed_short_keyids.includes?(primary_short_id)
-          # Real 2.19.11's four success exits are all bare
+          # Ansible 2.19.11's four success exits are all bare
           # exit_json(changed=...) - no msg key at all (the
           # "Key already present" text was this plugin's own borrow;
           # dropped, npm-style). Live-verified changed AND unchanged
@@ -172,7 +172,7 @@ module Krikri
       result[:exit_code] == 0 ? nil : "failed to fetch key at #{key} , error was: #{result[:stderr]}"
     end
 
-    # fingerprint: is a documented LIST param (real ansible's own
+    # fingerprint: is a documented LIST param (Ansible's own
     # argument_spec types it as list) - a real YAML list arrives here as
     # a JSON-array-shaped string after task-param substitution, so parse
     # it with the same convention as unarchive.cr's parse_list_param:
@@ -180,7 +180,7 @@ module Krikri
     # Ansible's check_type_list also accepts a comma-separated string
     # for backward compat). ONLY valid JSON - never a Python-repr repair
     # pass: a value that merely LOOKS like a container is a plain STRING
-    # in real ansible-core (live-verified vs ansible-playbook 2.19.11,
+    # in ansible-core (live-verified vs ansible-playbook 2.19.11,
     # see apt.cr's parse_package_names); a whole-value `{{ list_var }}`
     # container arg arrives as the double-quoted JSON the wire
     # serialized it to (see substitute_task_params's whole-single-span

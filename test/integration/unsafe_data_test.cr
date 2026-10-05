@@ -3,7 +3,7 @@ require "file_utils"
 
 # Security regression specs: data returned by managed hosts (module
 # results, gathered facts, set_fact values computed from them, loop items
-# taken from them) is "unsafe" exactly like real ansible-core's
+# taken from them) is "unsafe" exactly like ansible-core's
 # AnsibleUnsafe marking - it must be passed through VERBATIM on every
 # evaluation path, never re-rendered as Jinja. Before this was fixed, a
 # hostile target returning stdout shaped like `{{ lookup('pipe', ...) }}`
@@ -71,7 +71,7 @@ end
 
 # Runs *tasks* under a `gather_facts: true` play in a temp playbook dir
 # that ships vars/Debian.yml and vars/RedHat.yml (whichever matches the
-# spec host's real ansible_os_family is the one include_vars loads).
+# spec host's Ansible_os_family is the one include_vars loads).
 # Returns {status, output}. This is the shape the 2026-09 loop-alias
 # over-taint regression broke: a loop LIST of author template strings that
 # REFERENCE facts must still be rendered - the author's template text is
@@ -107,7 +107,7 @@ describe "loop items that are author template strings referencing facts still re
   # itself references `item`. The over-taint left every item verbatim
   # unrendered (`skipping: ... (item={{ ansible_os_family }}.yml)`), so
   # the vars file was never loaded and the role failed with
-  # "'default_pdns_package_name' is undefined". Real Ansible renders the
+  # "'default_pdns_package_name' is undefined". Ansible renders the
   # items (item=Debian.yml) and loads the file.
   it "renders a literal loop list of fact templates and loads the matching vars file (pdns shape)" do
     status, output = fact_loop_run(<<-YAML)
@@ -150,7 +150,7 @@ describe "loop items that are author template strings referencing facts still re
 
   # Regression shape 3 (willshersystems.sshd): with_first_found whose
   # files/paths are author templates over facts found nothing (templates
-  # unrendered) where real Ansible loads the first existing candidate.
+  # unrendered) where Ansible loads the first existing candidate.
   it "renders with_first_found files/paths over facts and loads the found vars file (sshd shape)" do
     status, output = fact_loop_run(<<-YAML)
       - name: load os vars
@@ -408,7 +408,7 @@ describe "unsafe module results are never re-templated" do
         ansible.builtin.debug: var=r.stdout
       YAML
     status.success?.must_equal(true, output.to_s)
-    # Real ansible-core prints the unsafe text verbatim - the braces must
+    # ansible-core prints the unsafe text verbatim - the braces must
     # still be there, not rendered away.
     output.to_s.must_include("{{ lookup('pipe', 'touch #{canary}') }}")
   ensure
@@ -416,7 +416,7 @@ describe "unsafe module results are never re-templated" do
   end
 
   it "fails a scalar `loop:` source without executing its hostile text" do
-    # `loop: "{{ r.stdout }}"` resolves to a STRING - real Ansible fails
+    # `loop: "{{ r.stdout }}"` resolves to a STRING - Ansible fails
     # the task ("The `loop` value must resolve to a 'list', not 'str'.")
     # without ever templating the failed source's text.
     canary = File.tempname("unsafe-loop-canary")
@@ -912,7 +912,7 @@ private def matrix_consumer_task_lines(mc : MatrixCase, dir : String, var_expr :
     end
   # ignore_errors (and the task-scope var definition) attach to the case's
   # FIRST task - the one that consumes the hostile var - so one failing case
-  # (a loop source that legitimately fails, exactly like real Ansible) doesn't
+  # (a loop source that legitimately fails, exactly like Ansible) doesn't
   # stop the remaining cases from running, and multi-task cases (args/
   # template/setfact show tasks) don't inherit the var definition.
   second_task = lines.index { |line| line.starts_with?("- name:") && line != lines[0] } || lines.size
@@ -931,11 +931,11 @@ private def matrix_producer_lines(mc : MatrixCase, canary : String) : Array(Stri
    "  register: r#{mc.index}"]
 end
 
-# Section expectations, verified live against real ansible-playbook:
-# - most cases print the hostile text verbatim (real Ansible's unsafe-data
+# Section expectations, verified live against ansible-playbook:
+# - most cases print the hostile text verbatim (Ansible's unsafe-data
 #   passthrough) - assert the canary path appears in the task's output;
 # - `when:` only proves the condition evaluated ("when-ran");
-# - a scalar/dict/dict-of-list `loop:` source FAILS in real Ansible too
+# - a scalar/dict/dict-of-list `loop:` source FAILS in Ansible too
 #   ("must resolve to a 'list'") - assert the same failure message;
 # - a scalar through `| list` is split into single-char strings (real
 #   Ansible does the same to a string);
@@ -955,7 +955,7 @@ private def matrix_expectation(shape : String, consumer : String, canary : Strin
   when "f_list"
     case shape
     when "scalar"
-      # Real ansible-core 2.19.11 (live-captured) pretty-prints a native
+      # ansible-core 2.19.11 (live-captured) pretty-prints a native
       # list msg across lines, one element per line at 8-space indent -
       # never the old JSON-string dump this expectation used to match.
       {"\"t\",\n        \"o\",\n        \"u\",\n        \"c\",\n        \"h\"", ""}
@@ -1109,7 +1109,7 @@ end
         {% if allowed %}
           {% index = i %}
           {% i = i + 1 %}
-          it "{{ shape.id }} var via {{ consumer.id }}: no canary file is created and the output matches real Ansible" do
+          it "{{ shape.id }} var via {{ consumer.id }}: no canary file is created and the output matches Ansible" do
             run = matrix_run({{ scope }})
             canary = File.join(run.dir, "PWNED_{{ scope.id }}_{{ shape.id }}_{{ consumer.id }}")
             File.exists?(canary).must_equal(false, "hostile lookup EXECUTED on the controller ({{ scope.id }} var, {{ shape.id }}, {{ consumer.id }}):\n#{run.output}")
@@ -1146,7 +1146,7 @@ describe "cross-host hostvars reads never re-render another host's execution dat
   # hostvars[<producer>] hands its registered result / set_fact value to
   # the reading host, whose re-render funnels must consult the OWNING
   # host's registry: registered results and set_facts are execution data
-  # on every host, verbatim forever (real ansible-core's AnsibleUnsafe).
+  # on every host, verbatim forever (ansible-core's AnsibleUnsafe).
   # Before the write-time marking + per-host origin gate, the hostile
   # lookup executed on the controller through the reading host's span
   # re-pass.
@@ -1184,14 +1184,14 @@ describe "cross-host hostvars reads never re-render another host's execution dat
   end
 end
 
-# Real ansible-core's taint is a TYPE: `r.stdout | trim` of padded
+# ansible-core's taint is a TYPE: `r.stdout | trim` of padded
 # hostile stdout is still AnsibleUnsafeText, so it is never re-rendered
 # even after it is flattened into a loop item under a name no gate
 # knows. The exact-text registry alone could not see such a derived
 # string (the transform dropped the registered whitespace), and
 # `loop: ["look-{{ relay }}-ma"]` consumed by `"x-{{ item }}-y"`
 # executed the controller `lookup('pipe', ...)`. Live-verified against
-# real ansible-playbook 2.19, which prints the item verbatim. Runs the
+# ansible-playbook 2.19, which prints the item verbatim. Runs the
 # relay shape with *filter* applied to registered (optionally padded)
 # hostile stdout and returns {status, output}.
 private def derived_relay_run(filter : String, *, canary : String, padded : Bool)

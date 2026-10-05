@@ -18,10 +18,10 @@ module Krikri
   #   (community.postgresql 4.x dropped required=True; with neither
   #   login_db given, psycopg2 connects to the default database). The
   #   deprecated `db:` spelling IS still accepted as an alias of
-  #   login_db (it is in the real 4.2.0 argument_spec, with a
-  #   deprecation warning - live-verified by running real 2.19.11).
+  #   login_db (it is in the Ansible 4.2.0 argument_spec, with a
+  #   deprecation warning - live-verified by running Ansible 2.19.11).
   # - query: SQL string, or a JSON-encoded list of statements run in
-  #   order (the real module's list form). Also not required: real's
+  #   order (the Ansible module's list form). Also not required: Ansible's
   #   argument_spec has no required=True on query, and a nil query
   #   crashes the module body's statement loop after connecting (an
   #   uncaught TypeError) - emulated here as a failed result, which
@@ -31,16 +31,16 @@ module Krikri
   #   $N positions - crystal-pg has no named binding). Mutually
   # - login_host/login_port/login_user/login_password/login_unix_socket
   #   plus the deprecated host/port/login/unix_socket aliases (all in
-  #   the real module's argument_spec - the same shared spec the other
+  #   the Ansible module's argument_spec - the same shared spec the other
   #   plugins use, so they resolve to identical values).
   # - autocommit: for statements that can't run in a transaction block
   #   (VACUUM). Mutually exclusive with check_mode.
   # - search_path: SET search_path before the query.
   # - check_mode: the query runs, but inside a transaction that is
-  #   rolled back at the end (matching the real module's
+  #   rolled back at the end (matching the Ansible module's
   #   execute-then-rollback).
   #
-  # Argument-validation surface matches the real module's AnsibleModule
+  # Argument-validation surface matches the Ansible module's AnsibleModule
   # setup (verified against the live collection via the podman-diff
   # postgresql_query case file): mutually-exclusive positional|named,
   # login_port int conversion, autocommit/trust_input bool conversion,
@@ -48,22 +48,22 @@ module Krikri
   # all-aliases parenthetical. The deprecated host/port/login/
   # unix_socket/db names are real aliases of the login_* params, so
   # they're accepted and resolve to the same values (live-verified by
-  # running real 2.19.11 + community.postgresql 4.2.0).
+  # running Ansible 2.19.11 + community.postgresql 4.2.0).
   #
-  # Returns, in real Ansible's own key order: changed, query (the LAST
+  # Returns, in Ansible's own key order: changed, query (the LAST
   # statement, mogrify'd), query_list, statusmessage, query_result (the
   # LAST statement's full result set as an array of column->value dicts,
-  # matching real Ansible - one entry per row, {} for a statement that
+  # matching Ansible - one entry per row, {} for a statement that
   # produces no rows), query_all_results (one row-list per statement),
   # rowcount (total produced/affected rows), execution_time_ms (per
   # statement), and the controller-backfilled failed: false. No msg on
-  # success. Live-verified against real ansible-core 2.19.11 +
+  # success. Live-verified against ansible-core 2.19.11 +
   # community.postgresql 4.2.0.
   #
   # Divergence, deliberate: statusmessage is synthesized from the
   # statement's leading keyword + affected-row count ("INSERT 0 1" /
   # "SELECT 3" style) - crystal-pg does not surface the server's raw
-  # command tag. The real module's own changed: determination only ever
+  # command tag. The Ansible module's own changed: determination only ever
   # reads that tag's keyword and trailing count, and that rule is ported
   # exactly (see PostgresqlQueryHeuristics), so changed: itself matches.
   class PostgresqlQueryPlugin < BasePlugin
@@ -78,7 +78,7 @@ module Krikri
       changed : Bool,
       execution_times_ms : Array(Float64)
 
-    # The real module's merged argument_spec (postgres_common_
+    # The Ansible module's merged argument_spec (postgres_common_
     # argument_spec + postgresql_query's own update) in declaration
     # order - values are the spec's aliases.
     SPEC = {
@@ -107,12 +107,12 @@ module Krikri
     BOOL_PARAMS = {"autocommit", "trust_input"}
     SSL_MODES   = %w[allow disable prefer require verify-ca verify-full]
 
-    # Real Ansible's kw dict in its own insertion order
+    # Ansible's kw dict in its own insertion order
     # (exit_json(changed, query, query_list, statusmessage, query_result,
     # query_all_results, rowcount, execution_time_ms)), with `failed: false`
     # backfilled by the controller after the module's kwargs - hence its
-    # position. No msg: real exits with none on success.
-    # Live-verified against real ansible-core 2.19.11 + community.postgresql
+    # position. No msg: Ansible exits with none on success.
+    # Live-verified against ansible-core 2.19.11 + community.postgresql
     # 4.2.0.
     SUCCESS_KEY_ORDER = %w[
       changed query query_list statusmessage query_result query_all_results
@@ -120,7 +120,7 @@ module Krikri
     ]
 
     # community.postgresql's shared connection spec still ACCEPTS its
-    # deprecated aliases, and real warns about each one the task uses
+    # deprecated aliases, and Ansible warns about each one the task uses
     # (both on stderr and in the registered result's trailing
     # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
     def finalize_result(result : PluginResult) : PluginResult
@@ -196,7 +196,7 @@ module Krikri
       res
     end
 
-    # Real AnsibleModule setup order (ArgumentSpecValidator.validate,
+    # AnsibleModule setup order (ArgumentSpecValidator.validate,
     # errors[0] priority): mutually_exclusive -> required (none - query
     # and login_db are both optional in the live spec) -> types in spec
     # declaration order -> choices -> unsupported params LAST.
@@ -257,14 +257,14 @@ module Krikri
         execution_times_ms << (Time.monotonic - started).total_milliseconds
         rowcount += affected
         statusmessage = tag
-        # Real Ansible renders a statement that produced no rows as an
+        # Ansible renders a statement that produced no rows as an
         # EMPTY DICT, not an empty list (its own fetch loop leaves
         # query_result == [] and it then replaces that with {}), so both
         # the per-statement entry in query_all_results and the final
         # query_result are {} for DDL - not [].
         rendered = rows.empty? ? JSON::Any.new({} of String => JSON::Any) : JSON::Any.new(rows.map { |row| JSON::Any.new(row) })
         all_results << rendered
-        # Real Ansible's query_result is the LAST statement's whole
+        # Ansible's query_result is the LAST statement's whole
         # result set (one dict per row) - not just its first row, which
         # silently dropped every row after the first on a multi-row
         # SELECT.
@@ -382,7 +382,7 @@ module Krikri
     # Slice(UInt8), PG::Numeric, UUID, JSON::PullParser for json/jsonb,
     # PG::Interval...). JSON only carries null/bool/number/string, so
     # the numeric PG types are kept as native JSON numbers (psycopg2
-    # hands real Ansible native Python ints/floats too - stringifying
+    # hands Ansible native Python ints/floats too - stringifying
     # them was a visible type divergence), and everything else that has
     # no JSON representation is rendered as text - matching how the real
     # module's non-convertible types end up stringified in the returned

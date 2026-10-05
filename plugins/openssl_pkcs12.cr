@@ -35,7 +35,7 @@ module Krikri
   # key followed by the certificates as PEM to `path:` - the real
   # module's parse is a converter, not an info-only read.
   #
-  # Differentialed against the real module (community.crypto 3.1.1):
+  # Differentialed against the Ansible module (community.crypto 3.1.1):
   #
   #   * the archive is written 0400 unless `mode:` says otherwise - the
   #     tightest default of any module in this family
@@ -51,18 +51,18 @@ module Krikri
   class OpensslPkcs12Plugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps and the module source (dump()
     # builds filename/privatekey_path/backup_file/pkcs12, then the shared
     # exit adds changed, then mode only on the regenerated path when the
-    # file exists - real's converged/check-mode/absent results carry no
+    # file exists - Ansible's converged/check-mode/absent results carry no
     # mode). ansible_facts is controller-added; warnings trails last.
     SUCCESS_KEY_ORDER = %w[
       filename privatekey_path backup_file pkcs12 changed mode ansible_facts
       failed warnings
     ]
 
-    # The real module's argument_spec (declaration order) plus the
+    # The Ansible module's argument_spec (declaration order) plus the
     # file-common args its add_file_common_args=True injects (the only
     # alias is attributes->attr; friendly_name's alias is on the module
     # key below).
@@ -101,7 +101,7 @@ module Krikri
 
     def execute : PluginResult
       result = run_execute
-      # Real's argument spec marks maciter_size removed in
+      # Ansible's argument spec marks maciter_size removed in
       # community.crypto 4.0.0 - passing it emits a controller-side
       # deprecation warning alongside ANY result (including failures),
       # live-verified vs 2.19.11.
@@ -121,7 +121,7 @@ module Krikri
         return err
       end
 
-      # Real's backend constructor (select_backend runs BEFORE the
+      # Ansible's backend constructor (select_backend runs BEFORE the
       # base_dir check and the state dispatch) eagerly reads every
       # provided file input - certificate, then private key, then the
       # other certificates - and a missing file surfaces as the
@@ -157,7 +157,7 @@ module Krikri
       end
     end
 
-    # The "unhandled module exception" result shape real 2.19 produces:
+    # The "unhandled module exception" result shape Ansible 2.19 produces:
     # the fatal msg carries the full "Task failed: Module failed: <exc>"
     # chain while the error block shows the bare exception text.
     private def unhandled_error(detail : String) : PluginResult
@@ -180,7 +180,7 @@ module Krikri
         return error
       end
 
-      # The real module serializes the archive through the
+      # The Ansible module serializes the archive through the
       # cryptography library: in check mode via the unconditional
       # dump() (a key/cert mismatch fails there before anything
       # else), on a write via generate_bytes() after its
@@ -296,17 +296,17 @@ module Krikri
     end
 
     # action: parse - read the archive from `src`, write its private key
-    # followed by its certificates as PEM to `path` (the real module's
+    # followed by its certificates as PEM to `path` (the Ansible module's
     # parse is a converter, not an info-only read: it produces a file).
     # Idempotency compares the desired bundle against the file's current
-    # content PEM-normalized (the real module compares its own
+    # content PEM-normalized (the Ansible module compares its own
     # re-serialized PEM dump against the file's bytes, so both engines
     # settle on the same second-run "ok" and the same src-change rewrite).
-    # Native PKCS#12 parse through libcrypto (real's own primitive, the
+    # Native PKCS#12 parse through libcrypto (Ansible's own primitive, the
     # cryptography library's load_key_and_certificates): the private key
     # PEM (PKCS#8) followed by the certificate and every additional
     # certificate. Returns nil when the data cannot be deserialized -
-    # real's exact fail_json text for that is "Could not deserialize
+    # Ansible's exact fail_json text for that is "Could not deserialize
     # PKCS12 data".
     private def native_pkcs12_dump(path : String) : String?
       bio = LibCryptoPkcs12.bio_new_file(path, "rb")
@@ -432,7 +432,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices -> required_if
     # -> mutually_exclusive -> unsupported (deferred last).
     private def validate_arguments : PluginResult?
@@ -643,7 +643,7 @@ module Krikri
       res = PluginResult.new(changed: changed, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
       res.extra["filename"] = JSON::Any.new(path)
       res.extra["privatekey_path"] = JSON::Any.new(privatekey_path)
-      # Real only carries `mode` on the paths that fall through to its
+      # Ansible only carries `mode` on the paths that fall through to its
       # shared final block - i.e. when changed (a fresh/forced export, or
       # an attribute-only change). Its converged exit and check-mode exit
       # happen BEFORE that block, so unchanged results carry no mode.

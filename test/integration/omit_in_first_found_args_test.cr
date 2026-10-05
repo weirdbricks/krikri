@@ -17,7 +17,7 @@ describe "the `omit` magic bareword inside a first_found lookup's args" do
     #   vars: params: { files: ["{{ ansible_distribution }}.{{
     #     ansible_lsb.codename | default(omit) }}.yml", ...],
     #     paths: ['vars/os'] }
-    # On hosts without ansible_lsb, real ansible-playbook (core 2.19.4,
+    # On hosts without ansible_lsb, ansible-playbook (core 2.19.4,
     # verified live) renders `default(omit)` to the omit marker - which
     # stringifies to empty text mid-string ("Debian..yml", verified) -
     # the candidate misses, and the run falls through to the next entry

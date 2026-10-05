@@ -3,7 +3,7 @@ require "../minitest_helper"
 # pluggero.openssh (round 981024) divergence: a previously-clean role's
 # apt-version scraping regressed once the role piped `apt list --upgradable`
 # style output through `regex_search('Version:\ .*:([\d\.]{2,})', '\1',
-# multiline=True)`. Real Ansible's multiline kwarg builds Python re.M,
+# multiline=True)`. Ansible's multiline kwarg builds Python re.M,
 # which only moves ^/$ to line boundaries - `.` must NOT cross newlines
 # (that would be re.DOTALL, which these filters never request). krikri
 # mapped it to Crystal's Regex::Options::MULTILINE, which implies PCRE

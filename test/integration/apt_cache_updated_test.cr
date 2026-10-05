@@ -3,7 +3,7 @@ require "../../src/krikri/conditional_evaluator"
 require "file_utils"
 
 # Regression spec for the `apt` module's `cache_updated` result key
-# (0.9.862). Real Ansible's apt module ALWAYS includes `cache_updated` in
+# (0.9.862). Ansible's apt module ALWAYS includes `cache_updated` in
 # exit_json - true only when its get_updated_cache_time() before/after
 # mtime diff shows the cache was genuinely refreshed - and the very
 # common `changed_when: apt_cache.cache_updated` idiom (hifis.gitlab's
@@ -97,11 +97,11 @@ describe "apt plugin cache_updated result key" do
   # php_packages_extra }}'` with the var defaulting to `[]` templates to
   # the literal string "[]" - a `name:` KEY that IS present (so the "no
   # name: at all" branch never fired) but parses down to an empty package
-  # list. Real Ansible's apt module folds a genuine cache refresh's own
+  # list. Ansible's apt module folds a genuine cache refresh's own
   # changed: into this case exactly the same as no name: given at all;
   # this engine fell through into the packages-present install path with
   # an empty list and lost the cache-update changed: entirely, reporting
-  # ok when real Ansible reported changed.
+  # ok when Ansible reported changed.
   it "folds a genuine cache refresh's changed: into an empty (not absent) name: list" do
     with_stub_path(move: true) do |path, stamp|
       result = PluginSpecHelper.run("apt", {

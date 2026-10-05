@@ -28,27 +28,27 @@ module Krikri
   #
   # Supported parameters (the core shape both geerlingguy.docker and
   # geerlingguy.nodejs actually write, plus every other real DEB822 key
-  # real Ansible's own module supports: architectures, trusted, enabled,
+  # Ansible's own module supports: architectures, trusted, enabled,
   # allow_insecure, allow_downgrade_to_insecure, allow_weak, pdiffs,
   # by_hash, languages, targets, check_date, check_valid_until,
   # date_max_future, exclude/include (ansible-core 2.21+), and
   # inrelease_path - closed across a proactive scope-cut audit pass and
-  # a later param-coverage pass, verified against the real module's own
+  # a later param-coverage pass, verified against the Ansible module's own
   # source for exact field-name/value-format conversion. Note
-  # inrelease_path IS written to the file by real Ansible (as
+  # inrelease_path IS written to the file by Ansible (as
   # "Inrelease-Path:" - the module never pops it from params, unlike
   # mode/state), so this plugin writes it too rather than consuming it.
   # List-typed params (uris/suites/components/types/architectures/
   # languages/targets/exclude/include) accept both a real YAML list
   # (arriving as a JSON-array-shaped string after task-param
-  # substitution) and a comma-separated scalar, matching real Ansible's
+  # substitution) and a comma-separated scalar, matching Ansible's
   # own check_type_list backward compat):
   # - name (required): base filename under /etc/apt/sources.list.d/,
   #   written as <name>.sources
   # - types: deb (default) | deb-src | "deb deb-src" - elements validated
-  #   against [deb, deb-src] like real Ansible's own choices check
+  #   against [deb, deb-src] like Ansible's own choices check
   # - uris: the repo URL(s), space-separated if more than one (optional
-  #   - real Ansible accepts a name-only task and writes just the
+  #   - Ansible accepts a name-only task and writes just the
   #   X-Repolib-Name header + the Types default)
   # - suites: distro suite/codename(s) (optional)
   # - components: repo component(s), e.g. "main"
@@ -56,7 +56,7 @@ module Krikri
   #   OR a URL - fetched (binary-safe, redirect-aware, matching
   #   get_url.cr's own response.body_io streaming rather than a UTF-8-
   #   decoding String read), stored as `.asc` (ASCII-armored) or `.gpg`
-  #   (binary) under `/etc/apt/keyrings/<name>{.asc,.gpg}` (real Ansible's
+  #   (binary) under `/etc/apt/keyrings/<name>{.asc,.gpg}` (Ansible's
   #   own naming convention - no `gpg --dearmor` involved, the fork stores
   #   armored keys verbatim) - the *local* path is what actually lands in
   #   the rendered Signed-By: field after the key has been fetched and
@@ -67,14 +67,14 @@ module Krikri
   #   space-normalized and emitted literally on one line.
   # - state: present (default) | absent
   # - mode: applied to the resulting file (default "0644", matching
-  #   real Ansible's own module default)
+  #   Ansible's own module default)
   #
   # Idempotency: compares the fully-rendered file content against
   # whatever's already on disk at the target path - matching real
   # Ansible's own module, which rewrites (not merges) the whole file
   # and reports changed based on a content diff.
   #
-  # Dependency gate: the real module is Python and imports
+  # Dependency gate: the Ansible module is Python and imports
   # `debian.deb822` unconditionally right after its own module-arg
   # validation - a target without python3-debian FAILS the task with
   # missing_required_lib("python3-debian") wording (live-verified
@@ -82,7 +82,7 @@ module Krikri
   # neither auto-installs the dependency, unlike devel's
   # install_python_debian/respawn path). This plugin previously
   # skipped that gate entirely and happily wrote the file, reporting
-  # changed=1 where real reports a failed (often ignore_errors'd)
+  # changed=1 where Ansible reports a failed (often ignore_errors'd)
   # task - found via krikri-playbook-generator's fixed generic
   # dependency set, which does NOT preinstall python3-debian in its
   # real-ansible container.
@@ -96,7 +96,7 @@ module Krikri
         check_valid_until enabled pdiffs trusted]
     end
 
-    # Every bool option here defaults to None in real's argspec, so an
+    # Every bool option here defaults to None in Ansible's argspec, so an
     # explicit null skips type validation there (see
     # BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
@@ -114,7 +114,7 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real Ansible rejects ANY parameter outside its own argument_spec
+      # Ansible rejects ANY parameter outside its own argument_spec
       # at module-arg validation, before any action runs (ansible-core
       # 2.15 has no body_string/body - a body-only task fails with
       # "Unsupported parameters", it does not write the file). Found via
@@ -137,10 +137,10 @@ module Krikri
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: name") unless name
 
-      # Real Ansible's own argument_spec validates `types` elements
+      # Ansible's own argument_spec validates `types` elements
       # against choices=[deb, deb-src] and FAILS the task (changed=False)
       # on anything else - it does not silently write the invalid value.
-      # uris/suites are NOT required by real Ansible: a name-only task
+      # uris/suites are NOT required by Ansible: a name-only task
       # succeeds and writes just X-Repolib-Name + the Types: deb default.
       # This is argspec-level validation (fires for state=absent too,
       # like every choices check inside AnsibleModule's init).
@@ -149,7 +149,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of types must be one or more of: deb, deb-src. Got no match for: #{bad.join(", ")}") unless bad.empty?
       end
 
-      # The real module's `from debian.deb822 import Deb822` runs right
+      # The Ansible module's `from debian.deb822 import Deb822` runs right
       # after its own argspec validation and before ANY state handling,
       # so a python3-debian-less target fails identically for
       # state=present and state=absent (and in check mode).
@@ -169,7 +169,7 @@ module Krikri
       add(target, check_mode)
     end
 
-    # The real module's unconditional `from debian.deb822 import Deb822`
+    # The Ansible module's unconditional `from debian.deb822 import Deb822`
     # (ansible-core 2.15+ through 2.19.x; devel's install_python_debian
     # auto-install path does not exist in any released core): a target
     # without python3-debian fails with missing_required_lib wording
@@ -201,10 +201,10 @@ module Krikri
       nil
     end
 
-    # Real Ansible's own filename slug: reuses a legacy-normalized
+    # Ansible's own filename slug: reuses a legacy-normalized
     # <name>.sources (lowercased, [_\s]+ → '-', non-[a-z0-9-] stripped)
     # when one already exists on disk, else name with spaces → '-'.
-    # Real Ansible never writes a filename containing a space.
+    # Ansible never writes a filename containing a space.
     private def slug_for(name : String) : String
       legacy = name.downcase.gsub(/[_\s]+/, "-").gsub(/[^a-z0-9-]/, "")
       return legacy if File.exists?(File.join(SOURCES_LIST_D, "#{legacy}.sources"))
@@ -223,12 +223,12 @@ module Krikri
       "exclude" => "Exclude", "include" => "Include",
     }
 
-    # Real ansible.builtin.deb822_repository writes fields in ALPHABETICAL
+    # Ansible.builtin.deb822_repository writes fields in ALPHABETICAL
     # ORDER BY THE UNDERLYING PARAM NAME, not by field name and not in
     # any fixed/declared order (`for key, value in sorted(params.items())`)
-    # - verified directly against a real ansible-playbook -vvv run's own
+    # - verified directly against a ansible-playbook -vvv run's own
     # `repo:` return value, not assumed from source alone. This matters
-    # for idempotency: a file real Ansible itself wrote and a file this
+    # for idempotency: a file Ansible itself wrote and a file this
     # plugin writes must line up byte-for-byte, or a warm rerun against
     # an already-real-Ansible-managed file would spuriously report
     # changed every time on line-order alone even though nothing
@@ -250,7 +250,7 @@ module Krikri
       PluginHelpers::Deb822RepositoryContent.render(fields)
     end
 
-    # Bool fields (all `type: bool` in the real module's own
+    # Bool fields (all `type: bool` in the Ansible module's own
     # argument_spec) are written as literal "yes"/"no" - real APT's own
     # deb822 sources parser (and this codebase's own `true?`) both
     # already understand "yes"/"no"/"true"/"false" interchangeably, so
@@ -271,12 +271,12 @@ module Krikri
       end
     end
 
-    # List-typed params are documented LIST types in the real module's
+    # List-typed params are documented LIST types in the Ansible module's
     # own argument_spec, so a real YAML list arrives here as a
     # JSON-array-shaped string after task-param substitution - parse it
     # with the same convention as unarchive.cr/rpm_key.cr's
     # parse_list_param (JSON array first, then comma-split for a plain
-    # scalar, matching real Ansible's own check_type_list backward-compat
+    # scalar, matching Ansible's own check_type_list backward-compat
     # behavior). ONLY valid JSON - never a Python-repr repair pass: a
     # value that merely LOOKS like a container is a plain STRING in real
     # ansible-core (live-verified vs ansible-playbook 2.19.11, see
@@ -313,7 +313,7 @@ module Krikri
       raw = @params["signed_by"]?
       return nil unless raw
 
-      # 1. Local path — return unchanged (matches real Ansible's own
+      # 1. Local path — return unchanged (matches Ansible's own
       #    os.path.isfile(v) branch).
       return raw if File.exists?(raw)
 
@@ -326,7 +326,7 @@ module Krikri
 
       # 3. Inline ASCII-armored GPG key text — render as Deb822 folded
       #    multi-line value (indented with 4 spaces on each continuation
-      #    line, matching real Ansible's own format_multiline output).
+      #    line, matching Ansible's own format_multiline output).
       if raw.lstrip.starts_with?("-----BEGIN PGP")
         return format_inline_key(raw)
       end
@@ -378,7 +378,7 @@ module Krikri
     end
 
     private def format_inline_key(raw : String) : String
-      # Real Ansible's own format_multiline: strips whitespace, replaces
+      # Ansible's own format_multiline: strips whitespace, replaces
       # empty lines with '.', indents each line with 4 spaces, then
       # prepends a leading newline so the whole block becomes a Deb822
       # folded continuation value after "Signed-By:".
@@ -404,7 +404,7 @@ module Krikri
       existing = File.exists?(target) ? File.read(target) : nil
       changed = existing != new_content
 
-      # Real ansible-core 2.19.11 deb822_repository exits (both success
+      # ansible-core 2.19.11 deb822_repository exits (both success
       # exits, present AND absent, live-verified in check mode via
       # register + to_json) with exactly:
       #   exit_json(repo=repo, changed=changed, dest=sources_filename,
@@ -463,7 +463,7 @@ module Krikri
         changed = true
       end
 
-      # Real Ansible's state=absent ALSO removes the downloaded
+      # Ansible's state=absent ALSO removes the downloaded
       # signed_by keyrings (<slug>.asc / <slug>.gpg under
       # /etc/apt/keyrings/) - independently of whether the .sources file
       # itself exists - and reports changed if either side was removed.

@@ -102,10 +102,10 @@ describe "template engine canary" do
     # template source (`'\\1'`, i.e. two literal backslash characters
     # here in Crystal source) since crinja (crystal-play-0.9.52+) now
     # fully decodes Python-style string-literal escapes in `{{ }}`,
-    # matching real Ansible's own verified template-FILE behavior: a
+    # matching Ansible's own verified template-FILE behavior: a
     # bare `\1` decodes to a single control character (octal escape)
     # before the filter ever sees it, breaking the backreference -
-    # live-verified against real ansible-playbook 2.19 rendering a
+    # live-verified against ansible-playbook 2.19 rendering a
     # real `.j2` file (`'\1'` renders `length=1`, i.e. it really is
     # decoded; `'\\1'` is required for a working backreference). This
     # is a genuine, if surprising, real-Ansible limitation of `.j2`
@@ -120,7 +120,7 @@ describe "template engine canary" do
     # Phase-3 slice 3: the Crinja registration now delegates to the SAME
     # FilterCore.regex_search core as the hand-rolled FilterEngine case
     # branch, so both sides answer identically on the group-ref grammar
-    # arbitrated against real ansible-core 2.19.11 (see
+    # arbitrated against ansible-core 2.19.11 (see
     # filter_engine_spec.cr for the full battery and the pre-change
     # divergence inventory).
     crinja_render("{{ 'a' | regex_search('(?<foo>a)', '\\\\g<foo>') }}").must_equal("['a']")
@@ -138,7 +138,7 @@ describe "template engine canary" do
   end
 
   it "multiline=True maps to Python re.M only: ^/$ move, `.` does NOT cross newlines" do
-    # Real Ansible's regex filters build flags = re.I | re.M; Python's
+    # Ansible's regex filters build flags = re.I | re.M; Python's
     # re.M only moves ^/$ to line boundaries, it is NOT re.DOTALL.
     # Crystal's Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL
     # (Ruby semantics), so `Version:\ .*:` swallowed across the newline
@@ -154,7 +154,7 @@ describe "template engine canary" do
     crinja_render("{{ {'a': 1, 'b': 2} | combine({'b': 3, 'c': 4}) }}").must_equal("{'a': 1, 'b': 3, 'c': 4}")
   end
 
-  # dict2items / items2dict - real Ansible's own filters (NOT standard
+  # dict2items / items2dict - Ansible's own filters (NOT standard
   # Jinja2; Python/Jinja2 reject them as "No filter named ..."), mirrored
   # here in jinja_filters.cr so a `.j2` template's `{% for %}` block-tag
   # chain can use them. The hand-rolled FilterEngine has the same pair
@@ -239,7 +239,7 @@ describe "template engine canary" do
   # `raw.responds_to?(:to_f?)` - Crystal's own Float64/Int64 have no
   # `to_f?` (only String does) - so `{{ x | float }}` on a variable
   # holding a native number answered the DEFAULT (0.0), and the role's
-  # `when: java_subversion | float == 0.1` skipped a task real Ansible
+  # `when: java_subversion | float == 0.1` skipped a task Ansible
   # runs. krikri's override lives in jinja_filters.cr; this canary pins
   # the registration (and flags it as redundant if the fork ever fixes
   # the guard itself).
@@ -253,7 +253,7 @@ describe "template engine canary" do
 
   # Real bug found via linux-system-roles.ssh (round 700466): the
   # vendored trim filter casts its target to String and raises "Cast from
-  # Bool to (SafeString | String) failed" on a non-string. Real Jinja2's
+  # Bool to (SafeString | String) failed" on a non-string. Jinja2's
   # trim applies soft_str (Python str()) to its target first, so
   # `true | trim` renders "True" (capitalized) and strips fine -
   # ssh_config.j2 guards default options with

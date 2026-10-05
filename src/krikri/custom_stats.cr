@@ -4,7 +4,7 @@ module Krikri
   # Backing store for ansible.builtin.set_stats: - a single process-wide
   # accumulator (class-level, not per-TaskExecutor-instance) since
   # krikri-playbook.cr constructs a fresh TaskExecutor per play but the
-  # custom-stats block real Ansible prints is for the WHOLE run, after
+  # custom-stats block Ansible prints is for the WHOLE run, after
   # every play's PLAY RECAP.
   module CustomStats
     @@global = Hash(String, JSON::Any).new
@@ -35,11 +35,11 @@ module Krikri
       @@per_host
     end
 
-    # Real Ansible's own aggregate: true (the default) sums a numeric
+    # Ansible's own aggregate: true (the default) sums a numeric
     # value into whatever's already stored under that key across
     # multiple set_stats: calls (e.g. a loop incrementing a counter);
     # any non-numeric value (or aggregate: false) just overwrites, same
-    # as real Ansible.
+    # as Ansible.
     private def self.merge_into(bucket : Hash(String, JSON::Any), key : String, value : JSON::Any, aggregate : Bool) : Nil
       existing = bucket[key]?
       if aggregate && existing && numeric?(existing) && numeric?(value)

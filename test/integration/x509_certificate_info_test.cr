@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.crypto.x509_certificate_info - read-only certificate facts.
-# Field shapes verified against the real module (community.crypto 3.1.1,
+# Field shapes verified against the Ansible module (community.crypto 3.1.1,
 # ansible-core 2.19.4) rather than the docs: same vocabulary (OpenSSL LN
 # names through cryptography's OID table), same sorted list extensions,
 # same ASN.1 TIME validity spelling, same colon-hex fingerprints.
@@ -48,12 +48,12 @@ describe "x509_certificate_info plugin" do
 
     result["basic_constraints"].as_a.must_equal(["CA:TRUE"])
     result["basic_constraints_critical"].as_bool.must_equal(true)
-    # The real module sorts the key usage entries and joins them into one
+    # The Ansible module sorts the key usage entries and joins them into one
     # string; "Key Encipherment" sorts before "Digital Signature".
     result["key_usage"].as_s.must_equal("Digital Signature, Key Encipherment")
     result["key_usage_critical"].as_bool.must_equal(false)
     result["extended_key_usage"].as_a.must_equal(["TLS Web Server Authentication"])
-    # The real module renders SAN IP entries as "IP:...", not openssl's
+    # The Ansible module renders SAN IP entries as "IP:...", not openssl's
     # "IP Address:..." spelling.
     result["subject_alt_name"].as_a.map(&.as_s).must_equal(["DNS:www.example.com", "IP:1.2.3.4"])
   end

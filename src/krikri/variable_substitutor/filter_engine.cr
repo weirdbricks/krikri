@@ -40,7 +40,7 @@ module Krikri
     class FilterEngine
       # Raised when a filter name is not implemented here (and, since
       # this engine is only ever the fallback path, not implemented by
-      # Crinja either) - real Ansible's own "Syntax error in template:
+      # Crinja either) - Ansible's own "Syntax error in template:
       # No filter named 'x'." (verified against ansible-core 2.19),
       # which fails the task.
       class UnknownFilterError < Exception
@@ -128,7 +128,7 @@ module Krikri
       # renders below (strict_render_deferred_leaves, map/selectattr
       # attribute extraction) - a value resolved through an
       # execution-resolved root (registered result / set_fact / fact /
-      # loop item) is never re-rendered, exactly like real ansible-core's
+      # loop item) is never re-rendered, exactly like ansible-core's
       # AnsibleUnsafe marking. Chain argument sub-resolutions overwrite it
       # for their own (self-contained) scope; the next chain entry always
       # overwrites it before any leaf render can observe a stale value.
@@ -142,7 +142,7 @@ module Krikri
       # Audit pass (2026-08-11, following the ansible-vault/prometheus/
       # grafana rounds finding 5 independent copies of this exact bug):
       # re-renders *value* if its raw form is still a String containing
-      # `{{` - real Ansible's recursive re-templating applied to
+      # `{{` - Ansible's recursive re-templating applied to
       # whatever a plain-lookup fallback already resolved. Now a thin
       # delegate to the ONE shared implementation
       # (VariableSubstitutor::Rerender) - the multi-span and block-tag
@@ -156,10 +156,10 @@ module Krikri
       # head value. The chain head (ExpressionEvaluator's
       # retemplated_nested_templates with defer_unresolved) leaves a leaf
       # whose template bottoms out at an undefined name in its raw,
-      # unrendered form - real Jinja2/Ansible's laziness, so a chain that
+      # unrendered form - Jinja2/Ansible's laziness, so a chain that
       # never reads that leaf (selectattr on a sibling field,
       # stackhpc.libvirt-vm round 952484) succeeds. A serializer like
-      # to_json reads EVERY leaf by definition, though, and real Ansible
+      # to_json reads EVERY leaf by definition, though, and Ansible
       # fails the task there ("'x' is undefined") - which is exactly what
       # this engine did before laziness landed, spec'd in
       # test/unit/nested_container_undefined_filter_test.cr. Re-running the

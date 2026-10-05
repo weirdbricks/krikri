@@ -10,7 +10,7 @@ require "../../src/krikri/task_executor"
 # `remote_src: true` (wired as a marked non-string literal) fell through
 # to the controller lookup and failed with "Could not find or access"
 # (leaking the internal non-string marker into the searched paths), where
-# real fails on the target with "Module failed: Source <src> not found"
+# Ansible fails on the target with "Module failed: Source <src> not found"
 # or, with unsupported parameters present, the module's
 # Unsupported-parameters error first.
 #

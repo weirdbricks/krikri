@@ -12,7 +12,7 @@ require "file_utils"
 # method; the -v dump sorts alphabetically, so the order is only
 # observable programmatically).
 #
-# The pins cover the keys krikri emits, in real's relative order: real's
+# The pins cover the keys krikri emits, in Ansible's relative order: Ansible's
 # registered result additionally carries controller-appended
 # ansible_facts (interpreter discovery) and backfilled failed: false /
 # warnings after the module dict, which krikri's module wire omits.
@@ -60,9 +60,9 @@ describe "mount plugin result key order" do
   # state=absent against a throwaway fstab needs no real mount (the
   # present/remounted variants need a working mount(2), which the
   # unprivileged test host and rootless container both deny - those
-  # were pinned from the live-verified absent shape, real's single
+  # were pinned from the live-verified absent shape, Ansible's single
   # exit_json(changed=changed, **args)).
-  it "serializes an absent fstab-entry removal as real's args order (verified live for state=absent)" do
+  it "serializes an absent fstab-entry removal as Ansible's args order (verified live for state=absent)" do
     fstab = unique_tmp("mount-order-fstab")
     path = unique_tmp("mount-order-path")
     File.write(fstab, "tmpfs #{path} tmpfs defaults 0 0\n")
@@ -101,10 +101,10 @@ end
 describe "apt plugin result key order" do
   # Unprivileged-testable apt paths only: the bare no-op ok (nothing to
   # remove) and the check-mode cache-update claim (needs python3-apt on
-  # the host to pass real's check-mode refusal). The install/remove/
+  # the host to pass Ansible's check-mode refusal). The install/remove/
   # upgrade/deb orders were live-verified identical in the podman
   # container.
-  it "serializes the nothing-to-remove absent ok in real's bare-changed-relative order" do
+  it "serializes the nothing-to-remove absent ok in Ansible's bare-changed-relative order" do
     result = PluginSpecHelper.run("apt", {"name" => "krikri-not-a-package-xyz", "state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)
@@ -117,7 +117,7 @@ describe "apt plugin result key order" do
     result.as_h.keys.must_equal(["changed"])
   end
 
-  it "serializes a check-mode cache-update claim in real's cache-keys order" do
+  it "serializes a check-mode cache-update claim in Ansible's cache-keys order" do
     result = PluginSpecHelper.run("apt", {
       "update_cache"        => "yes",
       "_ansible_check_mode" => "true",
@@ -277,7 +277,7 @@ end
 describe "acl plugin result key order" do
   it "serializes a present-ACL success as changed-msg-acl (real: changed, msg, acl)" do
     # A filesystem that refuses setfacl (tmpfs/fuse mounts without acl
-    # support, e.g. inside a job container) makes real's acl task fail
+    # support, e.g. inside a job container) makes Ansible's acl task fail
     # identically, so this success-order pin needs a host that can
     # actually record an ACL.
     skip "no ACL support on this filesystem (setfacl is rejected)" unless PluginSpecHelper.setfacl_supported?

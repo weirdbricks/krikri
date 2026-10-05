@@ -3,8 +3,8 @@ require "../minitest_helper"
 # Pins plugins/docker_login.cr's argument-validation surface against real
 # community.docker.docker_login's AnsibleModule setup (source-verified
 # against the collection's docker_login.py + _util.py DOCKER_COMMON_ARGS;
-# live-diffed vs real ansible-playbook via the podman-diff
-# docker_login_edge_cases harness - real runs all of this BEFORE its
+# live-diffed vs ansible-playbook via the podman-diff
+# docker_login_edge_cases harness - Ansible runs all of this BEFORE its
 # eager daemon ping, the only byte-comparable surface without a daemon):
 #
 # - required_if (state, present, [username, password]) is key PRESENCE

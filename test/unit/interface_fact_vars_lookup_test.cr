@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
-# Pull in the real Ansible-specific Crinja filter registrations, as
+# Pull in the Ansible-specific Crinja filter registrations, as
 # expression_evaluator_spec.cr does - without this the ExpressionEvaluator's
 # Crinja env has none of them.
 require "../../src/krikri/krikri_jinja_filters"
@@ -97,7 +97,7 @@ describe "Krikri::FactsGatherer (interface_fact_vars_lookup_test.cr)" do
     vars_context["dnsmasq_interface"] = JSON::Any.new("eth0")
     vars_context["ansible_eth0"] = iface_fact
     # build_vars_context also exposes the same facts as the ansible_facts
-    # dict (real Ansible's own collected-facts shape, keyed ansible_eth0).
+    # dict (Ansible's own collected-facts shape, keyed ansible_eth0).
     vars_context["ansible_facts"] = JSON::Any.new({"ansible_eth0" => iface_fact} of String => JSON::Any)
     self_view = Hash(String, JSON::Any).new
     vars_context.each { |key, value| self_view[key] = value }

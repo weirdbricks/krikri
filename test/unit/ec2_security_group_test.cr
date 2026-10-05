@@ -348,7 +348,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
   end
 
   describe ".run" do
-    it "returns the real module's full field coverage on the create path" do
+    it "returns the Ansible module's full field coverage on the create path" do
       describes = 0
       handler = ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
@@ -490,7 +490,7 @@ describe Krikri::PluginHelpers::Ec2SecurityGroup do
       bodies.map { |b| URI::Params.parse(b)["Action"] }.uniq.must_equal(["DescribeSecurityGroups"])
     end
 
-    it "describes the existing group in check mode like real ansible" do
+    it "describes the existing group in check mode like Ansible" do
       bodies = [] of String
       handler = ->(_region : String, body : String) do
         bodies << body

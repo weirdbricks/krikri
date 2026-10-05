@@ -17,7 +17,7 @@ module Krikri
   #
   # See plugins/postgresql_db.cr's module comment for the shared
   # architecture note (talks to the server directly over PostgreSQL's own
-  # wire protocol via will/crystal-pg). Real Ansible splits this from role
+  # wire protocol via will/crystal-pg). Ansible splits this from role
   # management (postgresql_user, implemented separately in this codebase)
   # - this plugin follows the same split.
   #
@@ -27,7 +27,7 @@ module Krikri
   #   `foreign_server` / `parameter` (PostgreSQL 15+ only - `pg_parameter_acl`
   #   doesn't exist before that; privs: `SET`/`ALTER_SYSTEM`, the latter
   #   mapped to the real two-word SQL privilege `ALTER SYSTEM` when
-  #   building the GRANT/REVOKE statement, matching real Ansible's own
+  #   building the GRANT/REVOKE statement, matching Ansible's own
   #   privilege-name spelling and its own `'_'` -> `' '` substitution) /
   #   `group` (role membership - `GRANT role TO role`, not an ACL grant
   #   at all, so `privs:` isn't accepted for it at all, matching real
@@ -44,32 +44,32 @@ module Krikri
   # - objs: comma-separated list of object names `type` applies to
   #   (required for `table`/`sequence`/`schema`/`language`/`tablespace`/
   #   `type`; for `database`, defaults to the connected database itself
-  #   when omitted, matching real Ansible's own behavior - GRANT ON
+  #   when omitted, matching Ansible's own behavior - GRANT ON
   #   DATABASE almost always targets "whichever database this connection
   #   is for"). The literal value `ALL_IN_SCHEMA` is supported for
   #   `table`/`sequence`/`function`/`procedure` - expands to every such
   #   object currently in `schema:`, queried fresh each run (verified
-  #   against real Ansible's own `relkind in ('r', 'v', 'm', 'p', 'f')`
+  #   against Ansible's own `relkind in ('r', 'v', 'm', 'p', 'f')`
   #   filter for tables, and its own `prokind` filter for routines).
   #
   #   For `function`/`procedure`, each obj must be a *signature*, not a
   #   bare name - `f(int)`, not `f` - because PostgreSQL allows
   #   overloading and a bare name cannot identify one. Anything without
-  #   parentheses is rejected with real Ansible's own message
+  #   parentheses is rejected with Ansible's own message
   #   ("Illegal function / procedure signature"). Since `objs:` is
   #   itself comma-separated, argument types are separated with **colons**
   #   rather than commas: `objs: "f(int:text)"` means `f(int, text)`.
-  #   That is real Ansible's own encoding, applied the same way (after
+  #   That is Ansible's own encoding, applied the same way (after
   #   the comma split, not before). Type names are resolved by
   #   PostgreSQL, so aliases work exactly as they do in psql - `int` and
   #   `integer` name the same function.
   #   For `default_privs`, `objs:` means something different again: an
   #   object *class*, not an object name - `TABLES`, `SEQUENCES`,
   #   `FUNCTIONS`, `TYPES` or `SCHEMAS`. `ALL_DEFAULT` expands to the
-  #   first four (deliberately not `SCHEMAS`, matching real Ansible,
+  #   first four (deliberately not `SCHEMAS`, matching Ansible,
   #   which pops it from that set). `state: absent` revokes across
   #   TABLES/FUNCTIONS/SEQUENCES/TYPES regardless of what `objs:` said,
-  #   again matching real Ansible's own build_absent, which ignores objs
+  #   again matching Ansible's own build_absent, which ignores objs
   #   entirely for this type.
   #
   #   Note `objs: SCHEMAS` cannot be combined with `schema:`: PostgreSQL
@@ -88,34 +88,34 @@ module Krikri
   #   `ALL PRIVILEGES` (expands per `type` - see
   #   `PluginHelpers::PostgresqlAcl.all_privs`). For `default_privs` the
   #   list is passed to PostgreSQL verbatim (so `ALL` stays `ALL` in the
-  #   emitted SQL, as real Ansible does); it is expanded to letters only
+  #   emitted SQL, as Ansible does); it is expanded to letters only
   #   for the idempotency check, per object class, since `ALL` means
   #   different privileges for TABLES than for SEQUENCES.
   # - roles: comma-separated list of role names to grant/revoke for, or
   #   `PUBLIC`
   # - state: `present` (default, GRANT) / `absent` (REVOKE)
   # - grant_option: when given, also grants/revokes `WITH GRANT OPTION`
-  #   for exactly the privileges in `privs:` (real Ansible's own
+  #   for exactly the privileges in `privs:` (Ansible's own
   #   documented way to revoke just the grant option while keeping the
   #   privilege itself: `state: present` + `grant_option: false`) - when
   #   omitted, grant option is left untouched either way.
   # - schema: schema containing `objs` for `table:`/`sequence:`/`type:`
-  #   (default `"public"`, matching real Ansible's own default) -
+  #   (default `"public"`, matching Ansible's own default) -
   #   `language:`/`tablespace:` aren't schema-qualified at all in real
-  #   PostgreSQL (cluster-wide objects), matching real Ansible's own
+  #   PostgreSQL (cluster-wide objects), matching Ansible's own
   #   `obj_ids` construction.
   # - session_role: `SET ROLE "role"` immediately after connecting,
   #   before anything else - the specified role must already be one
   #   `login_user:` is a member of (a plain PostgreSQL server-side error
   #   otherwise, surfaced via this plugin's existing `PQError` rescue,
-  #   not a custom message the way real Ansible's own
+  #   not a custom message the way Ansible's own
   #   `"Could not switch to role %s"` is - a minor scope cut, not a
   #   behavior difference in what actually happens).
   # - fail_on_role: bool, default `true` - when a role in `roles:`
   #   doesn't exist (checked via `pg_roles`, `PUBLIC` always considered
   #   to exist), `true` fails the whole task immediately (matching real
   #   Ansible's own default); `false` skips just that role and continues
-  #   with whichever others do exist, same as real Ansible's own
+  #   with whichever others do exist, same as Ansible's own
   #   `module.warn(...)` + continue behavior. If none of the requested
   #   roles exist, `changed: false` with no error, matching real
   #   Ansible's own "nothing to do" exit.
@@ -140,14 +140,14 @@ module Krikri
   # membership either).
   #
   # `default_privs` idempotency deliberately differs in *mechanism* from
-  # real Ansible while matching it in result: real Ansible executes its
+  # Ansible while matching it in result: Ansible executes its
   # statements unconditionally and reports `changed` by diffing
   # `pg_default_acl` before and after, which cannot support check_mode
   # (it would have to make the change to find out). Here the current
   # `defaclacl` is read and compared against the desired state first, so
   # `--check` works and no statement runs when nothing needs changing.
   # `state: present` remains declarative either way - it emits the same
-  # REVOKE ALL + GRANT pair real Ansible does, so afterwards the grantee
+  # REVOKE ALL + GRANT pair Ansible does, so afterwards the grantee
   # holds exactly `privs:`, not the union with whatever was there before.
   #
   # Not implemented: `trust_input:` (this plugin always
@@ -156,8 +156,8 @@ module Krikri
   # granular `ssl_*` params (not supported by any plugin in this
   # codebase - `login_*` only).
   #
-  # One deliberate difference from real Ansible: `login_db:` is optional
-  # here (defaults to "postgres"), where real Ansible's module lists it
+  # One deliberate difference from Ansible: `login_db:` is optional
+  # here (defaults to "postgres"), where Ansible's module lists it
   # as required and fails with "missing required arguments: login_db".
   # Longstanding behavior of this plugin, not introduced with routines.
   class PostgresqlPrivsPlugin < BasePlugin
@@ -181,11 +181,11 @@ module Krikri
     }
 
     # objs: ALL_DEFAULT expands to these four - deliberately *not*
-    # SCHEMAS, matching real Ansible, which pops it from the set.
+    # SCHEMAS, matching Ansible, which pops it from the set.
     ALL_DEFAULT_CLASSES = ["TABLES", "SEQUENCES", "FUNCTIONS", "TYPES"]
 
     # state: absent for default_privs revokes on this fixed list
-    # regardless of what objs: said - real Ansible's own build_absent
+    # regardless of what objs: said - Ansible's own build_absent
     # ignores objs entirely for this type. SCHEMAS is absent here too.
     ABSENT_DEFAULT_CLASSES = ["TABLES", "FUNCTIONS", "SEQUENCES", "TYPES"]
 
@@ -204,7 +204,7 @@ module Krikri
       check_mode : Bool, grant_option : Bool?, session_role : String?, fail_on_role : Bool,
       target_roles : Array(String)
 
-    # Real Ansible's exit_json(changed=..., queries=executed_queries):
+    # Ansible's exit_json(changed=..., queries=executed_queries):
     # `failed: false` is backfilled by the controller after the module's
     # own kwargs, and there is no msg. Live-verified against real
     # ansible-core 2.19.11 + community.postgresql 4.2.0.
@@ -216,7 +216,7 @@ module Krikri
     end
 
     # community.postgresql's shared connection spec still ACCEPTS its
-    # deprecated aliases, and real warns about each one the task uses
+    # deprecated aliases, and Ansible warns about each one the task uses
     # (both on stderr and in the registered result's trailing
     # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
     def finalize_result(result : PluginResult) : PluginResult
@@ -286,7 +286,7 @@ module Krikri
       privs_result(changed, queries)
     end
 
-    # Real Ansible's own QueryBuilder, reproduced verbatim: the single
+    # Ansible's own QueryBuilder, reproduced verbatim: the single
     # GRANT/REVOKE statement (or ALTER DEFAULT PRIVILEGES pair) it builds
     # from the module params and appends to executed_queries, joined by
     # newlines into ONE list entry. Live-verified against real
@@ -295,11 +295,11 @@ module Krikri
     # and ALL_IN_SCHEMA, grant/revoke, with and without objs.
     #
     # Note it reports the statement it BUILDS, not the statement it ends
-    # up needing: real always issues the full requested GRANT (its
+    # up needing: Ansible always issues the full requested GRANT (its
     # `changed` comes from diffing the ACL before/after), so `queries` is
     # non-empty even when nothing changed. The SQL actually executed here
     # is the computed delta (#apply_grants), but both converge to the same
-    # database state, and `queries` reports real's shape.
+    # database state, and `queries` reports Ansible's shape.
     #
     # privs order: real builds a Python frozenset, so its own privilege
     # order is arbitrary (it differs between two runs of the same task);
@@ -317,14 +317,14 @@ module Krikri
       [lines.join("\n")]
     end
 
-    # Real Ansible quotes implicit roles (PUBLIC, CURRENT_USER,
+    # Ansible quotes implicit roles (PUBLIC, CURRENT_USER,
     # SESSION_USER, CURRENT_ROLE) as bare uppercase keywords - lowercase
-    # quoted forms resolve to the same role but are not what real emits.
+    # quoted forms resolve to the same role but are not what Ansible emits.
     private def query_grantee(role : String) : String
       IMPLICIT_ROLES.includes?(role.upcase) ? role.upcase : quote_ident(role)
     end
 
-    # The `<privs> ON <objtype> <objs>` fragment - real's own wording,
+    # The `<privs> ON <objtype> <objs>` fragment - Ansible's own wording,
     # including its `privs: ALL` pass-through (ALL stays ALL rather than
     # being expanded to the individual privilege letters).
     private def set_what(p : ResolvedParams, objs : Array(String)) : String
@@ -349,7 +349,7 @@ module Krikri
     # obj_ids: real quotes each object itself and then prefixes the schema
     # qualifier where the object type lives in one - applied to raw user
     # input (not the canonicalized signature #canonical_routines produces),
-    # exactly as real does, since real never canonicalizes either.
+    # exactly as Ansible does, since Ansible never canonicalizes either.
     private def obj_ids(p : ResolvedParams, objs : Array(String)) : Array(String)
       if ROUTINE_TYPES.includes?(p.type)
         objs.map do |obj|
@@ -363,7 +363,7 @@ module Krikri
       end
     end
 
-    # state: present, non-default_privs - real's GRANT, followed by the
+    # state: present, non-default_privs - Ansible's GRANT, followed by the
     # grant/admin option handling: grant_option true appends WITH GRANT
     # OPTION (WITH ADMIN OPTION for group), false appends a plain ';' plus
     # a REVOKE ... OPTION FOR line, and an unset option just ';'.
@@ -424,7 +424,7 @@ module Krikri
     # on the first problem found (caught by #execute).
     # privs: for default_privs is deliberately NOT expanded the way every
     # other type's is: ALTER DEFAULT PRIVILEGES takes the privilege list
-    # verbatim, so `ALL` stays `ALL` in the emitted SQL (real Ansible
+    # verbatim, so `ALL` stays `ALL` in the emitted SQL (Ansible
     # does the same - "we don't want privs to be quoted here").
     # Expansion to letters happens per object class at apply time, since
     # ALL means different privileges for TABLES than for SEQUENCES.
@@ -481,7 +481,7 @@ module Krikri
       state = @params["state"]? || "present"
       validate_type_and_state!(type, state)
 
-      # Real Ansible aliases: privs: -> priv:, roles: -> role:,
+      # Ansible aliases: privs: -> priv:, roles: -> role:,
       # login_db: -> db:/database:, objs: -> obj: (below). Same bug
       # class fixed for postgresql_db/postgresql_user/mysql_db/
       # mysql_user in round 43 (robertdebock.postgres) - a real
@@ -515,7 +515,7 @@ module Krikri
     # default_privs, foreign_data_wrapper, foreign_server, type,
     # parameter, got: X"; state's choices are ["present", "absent"]).
     # Raised messages surface verbatim as the result's bare msg through
-    # execute's rescue, which the [ERROR] block wraps with real's
+    # execute's rescue, which the [ERROR] block wraps with Ansible's
     # "Task failed: Module failed:" chain like every argspec failure.
     private VALID_TYPES = %w[table sequence function procedure database schema language tablespace group default_privs foreign_data_wrapper foreign_server type parameter]
 
@@ -564,7 +564,7 @@ module Krikri
                # Routine signatures are encoded with ':' between argument
                # types, because objs: itself is comma-separated - without
                # this convention `f(int, text)` would split into the two
-               # nonsense objects `f(int` and `text)`. Real Ansible uses
+               # nonsense objects `f(int` and `text)`. Ansible uses
                # exactly the same encoding, and applies it after the
                # comma split, not before: `obj.replace(':', ',')`.
                parsed = parsed.map(&.gsub(':', ',')) if ROUTINE_TYPES.includes?(type)
@@ -575,7 +575,7 @@ module Krikri
 
       raise "objs is required for type '#{type}'" if objs.nil? || objs.empty?
 
-      # Real Ansible requires the `name(args)` form for routines and
+      # Ansible requires the `name(args)` form for routines and
       # raises on anything else, rather than trying to resolve a bare
       # name - PostgreSQL's own regprocedure input requires the argument
       # list too ("expected a left parenthesis"), so a bare name could
@@ -593,7 +593,7 @@ module Krikri
     # #qualified_object/#quote_ident, which quote it injection-safely -
     # see those two methods.)
     # Queries every table/sequence currently in schema, fresh each run -
-    # real Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
+    # Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
     # a fixed list captured once). relkind filter for tables matches real
     # Ansible's own query exactly (r/v/m/p/f - ordinary/view/merialized
     # view/partitioned/foreign tables), not just 'r'.
@@ -623,11 +623,11 @@ module Krikri
     end
 
     # Checks each requested role against pg_roles (PUBLIC always exists,
-    # matching real Ansible's own is_implicit_role short-circuit).
+    # matching Ansible's own is_implicit_role short-circuit).
     # fail_on_role: true raises immediately on the first missing role
     # (caught by #execute's own rescue right at the call site);
     # fail_on_role: false skips just that role and continues - #execute
-    # treats an empty result as "nothing to do", matching real Ansible's
+    # treats an empty result as "nothing to do", matching Ansible's
     # own behavior exactly.
     private def resolve_roles!(db : DB::Database, roles_raw : Array(String), fail_on_role : Bool) : Array(String)
       roles_raw.select do |role|
@@ -733,11 +733,11 @@ module Krikri
       end
     end
 
-    # Real Ansible's own VALID_PRIVS spells the parameter: type's second
+    # Ansible's own VALID_PRIVS spells the parameter: type's second
     # privilege `ALTER_SYSTEM` (an underscore, since a bare privilege
     # name can't contain a space) but the actual SQL keyword is the
     # two-word `ALTER SYSTEM` - swapped back here, the same
-    # underscore-to-space substitution real Ansible's own query building
+    # underscore-to-space substitution Ansible's own query building
     # does (`','.join(privs).replace('_', ' ')`). A no-op for every
     # other privilege name in this codebase, none of which contain an
     # underscore.
@@ -752,7 +752,7 @@ module Krikri
     # fetch_acl/qualified_object machinery above applies; this is a
     # parallel path, not another object type.
     #
-    # Real Ansible executes its statements unconditionally and reports
+    # Ansible executes its statements unconditionally and reports
     # `changed` by diffing `pg_default_acl` before and after. That cannot
     # support check_mode (it would have to actually make the change to
     # find out), so idempotency here is computed *predictively* from the
@@ -760,7 +760,7 @@ module Krikri
     # plugin already takes for ordinary ACLs, and it produces the same
     # changed/unchanged answer.
     #
-    # `state: present` is declarative, matching real Ansible's own
+    # `state: present` is declarative, matching Ansible's own
     # REVOKE-ALL-then-GRANT pair: afterwards the grantee holds exactly
     # `privs` for that class, no more. So "already correct" means the
     # current letter set equals the desired one, not merely contains it.
@@ -772,7 +772,7 @@ module Krikri
       owners = p.target_roles.empty? ? [current_role(db)] : p.target_roles
 
       # state: absent revokes across a fixed class list regardless of
-      # objs:, exactly as real Ansible's own build_absent does.
+      # objs:, exactly as Ansible's own build_absent does.
       classes = p.state == "absent" ? ABSENT_DEFAULT_CLASSES : p.objs
 
       changed = false
@@ -859,7 +859,7 @@ module Krikri
     # PostgresqlAcl/apply_all_grants entirely rather than being shoehorned
     # into the privilege-letter machinery above. objs: here are the
     # group/role names being granted; roles: are the members receiving
-    # membership in them (real Ansible's own naming, kept as-is even
+    # membership in them (Ansible's own naming, kept as-is even
     # though "objs"/"roles" read oddly for this one type).
     private def apply_all_group_grants(
       db : DB::Database, groups : Array(String), members : Array(String),
@@ -942,7 +942,7 @@ module Krikri
 
     # pg_proc.prokind for each routine type: 'f' ordinary function,
     # 'p' procedure. Aggregates ('a') and window functions ('w') are
-    # deliberately not addressable - real Ansible's module doesn't expose
+    # deliberately not addressable - Ansible's module doesn't expose
     # them either.
     PROKINDS = {"function" => 'f', "procedure" => 'p'}
 
@@ -1079,7 +1079,7 @@ module Krikri
     end
 
     # Which pg_quote_identifier dot-level the object type's objs: may
-    # carry; types the real map has no entry for keep real's own fallback
+    # carry; types the real map has no entry for keep Ansible's own fallback
     # id_type, 'table' (see quote_identifier's doc comment).
     OBJ_ID_TYPES = {
       "table"      => "table",
@@ -1093,19 +1093,19 @@ module Krikri
       OBJ_ID_TYPES[type]? || "table"
     end
 
-    # Quotes a raw user-supplied identifier the way real Ansible's
+    # Quotes a raw user-supplied identifier the way Ansible's
     # community.postgresql pg_quote_identifier does (see
     # PluginHelpers::SqlQuoting.pg_quote_identifier): unquoted dotted paths
     # split per fragment, embedded quotes doubled, over-deep dotted paths
-    # and malformed quoting rejected with real Ansible's own error
+    # and malformed quoting rejected with Ansible's own error
     # messages. The allow-list this replaces rejected entirely legitimate
     # identifiers (e.g. role: peering-manager - the hyphen), while the
     # quoting alone is what actually makes arbitrary text injection-safe.
     # id_type follows the object type: table/sequence/type objs may carry
     # up to three dot levels (db.schema.object), schema two, database one,
-    # tablespace one; the types real Ansible has no level of its own for
+    # tablespace one; the types Ansible has no level of its own for
     # (language, foreign_data_wrapper, foreign_server, parameter) use
-    # real's own fallback id_type, 'table'.
+    # Ansible's own fallback id_type, 'table'.
     private def quote_identifier(s : String, id_type : String) : String
       PluginHelpers::SqlQuoting.pg_quote_identifier(s, id_type)
     end

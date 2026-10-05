@@ -3,7 +3,7 @@ require "../minitest_helper"
 
 # A looped include_tasks: whose `when:` raises (ansible-core 2.19's
 # broken-conditional error) must recap ONE failure for the whole task, not
-# one per raising item. Real Ansible evaluates the include's condition
+# one per raising item. Ansible evaluates the include's condition
 # per item and prints a `failed: ... (item=...)` line for each, but the
 # executor aggregates the loop into a single failed task result - three
 # item-failure lines on screen, failed=1 in the PLAY RECAP (verified live
@@ -73,7 +73,7 @@ describe "looped include_tasks with a raising when: recaps one failure" do
 
     status.exit_code.must_equal(2)
     output.must_include("Conditionals must have a boolean result")
-    # Real ansible-core 2.19.11's loop-item failure line shape (live-
+    # ansible-core 2.19.11's loop-item failure line shape (live-
     # verified for this exact playbook): `failed: [host] (item=...) =>
     # {...}` - "failed:", item before the =>, never "fatal:".
     output.must_include("failed: [localhost] (item=")

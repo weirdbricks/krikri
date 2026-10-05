@@ -14,7 +14,7 @@ require "../../src/krikri/variable_substitutor/jinja_renderer"
 #
 # New in this batch: strftime (documented directive subset in
 # jinja_filters.cr), subelements, and the trivial aliases count/d/e/
-# items/root (d aliases `default`, per real Jinja2 semantics - see the
+# items/root (d aliases `default`, per Jinja2 semantics - see the
 # comment at the registration site for the checklist's "dict" wording).
 #
 # Parity contract: every filter is exercised through BOTH a pure-Crinja
@@ -150,9 +150,9 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       filter_batch2_crinja_render("{{ [1, 2, 3, 4] | count }}").must_equal("4")
     end
 
-    it "d behaves as default (real Jinja2 semantics, not dict)" do
+    it "d behaves as default (Jinja2 semantics, not dict)" do
       filter_batch2_crinja_render("{{ missing | d(5) }}").must_equal("5")
-      # A defined None is not undefined: real ansible-core keeps it (and a
+      # A defined None is not undefined: ansible-core keeps it (and a
       # None renders as empty text), live-verified `a{{ x | d(5) }}b` -> "ab".
       filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => nil}).must_equal("")
       filter_batch2_crinja_render("{{ x | d(5) }}", {"x" => 7}).must_equal("7")

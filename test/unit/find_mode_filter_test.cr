@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/find_mode_filter"
 
 # Real bug found via a proactive scope-cut audit: find:'s mode:/
 # exact_mode: were entirely unimplemented. Verified against real
-# the real module's own mode_filter source directly.
+# the Ansible module's own mode_filter source directly.
 describe Krikri::PluginHelpers::FindModeFilter do
   describe ".parse_mode" do
     it "parses an octal string" do
@@ -38,7 +38,7 @@ describe Krikri::PluginHelpers::FindModeFilter do
       Krikri::PluginHelpers::FindModeFilter.matches?(0o755, "0644", true).must_equal(false)
     end
 
-    it "exact_mode: false matches if ANY requested bit is present (real Ansible's own bitwise-AND semantics, not a full-superset check)" do
+    it "exact_mode: false matches if ANY requested bit is present (Ansible's own bitwise-AND semantics, not a full-superset check)" do
       # 0o600 (rw-------) & 0o644 (rw-r--r--) = 0o600, nonzero -> true,
       # even though 0o600 doesn't have every bit 0o644 asks for.
       Krikri::PluginHelpers::FindModeFilter.matches?(0o600, "0644", false).must_equal(true)

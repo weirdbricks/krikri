@@ -11,7 +11,7 @@ require "file_utils"
 #   new + real     : changed/dest + the stat set, no msg
 #   new + check    : changed/dest ONLY - no stat fields (nothing exists
 #                     to stat), no msg, and never a "state": "touch" echo
-#                     (real Ansible's file module never emits the literal
+#                     (Ansible's file module never emits the literal
 #                     resolved state for touch)
 describe "file state=touch result shape (live-verified vs ansible-core 2.19.4)" do
   it "existing file, real run: dest + full stat fields, no msg" do

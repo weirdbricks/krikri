@@ -6,7 +6,7 @@ require "file_utils"
 # treated as LITERAL TEXT when referenced from a consumer task's
 # task-level `vars:` entry - `{{ __pk | list }}` produced the template
 # source's own characters (`["{", "{", " ", "[", ...]`) instead of
-# rendering the template first (real ansible-playbook: `["pg-server"]`).
+# rendering the template first (ansible-playbook: `["pg-server"]`).
 #
 # Root cause: the task-level `vars:` bare-mustache render
 # (evaluate_bare_mustache_preserving_type) evaluated the expression
@@ -44,7 +44,7 @@ private def run_repro(tasks : String)
 
   output = IO::Memory.new
   status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
-  # The debug msg now displays as real Ansible 2.19.11 does (live-captured):
+  # The debug msg now displays as Ansible 2.19.11 does (live-captured):
   # a whole-span list value is a NATIVE container, pretty-printed as
   # `    "msg": [` + the elements - never the old JSON-string dump
   # `    "msg": "[\"pg-server\"]"`.
@@ -109,7 +109,7 @@ private PLAIN_TASKS = <<-YAML
 
 describe "include_vars-loaded template values consumed from task-level vars:" do
   it "renders the template, not its literal text (looped include_vars, round 981063 repro)" do
-    # Real ansible-playbook renders the loaded author template lazily:
+    # ansible-playbook renders the loaded author template lazily:
     # a native one-element list, pretty-printed. The regression rendered
     # the template SOURCE text and split it into single characters with
     # `| list`.

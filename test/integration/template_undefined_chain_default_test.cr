@@ -8,7 +8,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-describe "a real Jinja2 default() fallback that chains through an undefined value" do
+describe "a Jinja2 default() fallback that chains through an undefined value" do
   it "doesn't crash the whole template render when the fallback branch is never actually needed" do
     # Real bug found benchmarking robertdebock.haproxy (round 41,
     # krikri-playbook 0.9.386 / crinja crystal-play-0.9.8). Its own
@@ -21,10 +21,10 @@ describe "a real Jinja2 default() fallback that chains through an undefined valu
     # IndexExpression chain hit an undefined base - even inside a
     # default() fallback that never got used - crashing the entire
     # template render instead of just quietly discarding the unused
-    # fallback value, unlike real ansible-playbook. See crinja's
+    # fallback value, unlike ansible-playbook. See crinja's
     # PATCHES.md 0.9.8 entry for the fix (chained access on an
     # undefined base now self-propagates as Undefined instead of
-    # raising, matching real Ansible's own Marker class).
+    # raising, matching Ansible's own Marker class).
     src = File.tempname("undefined-chain-default-src", ".j2")
     dest = File.tempname("undefined-chain-default-dest")
     playbook = File.tempname("undefined-chain-default", ".yml")

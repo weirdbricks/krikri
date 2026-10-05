@@ -26,7 +26,7 @@ end
 describe "module_defaults:" do
   # A task's own argument always beats a default. And the key matches on
   # the BARE module name, so an FQCN key supplies defaults to a
-  # short-name task (verified both directions against real Ansible).
+  # short-name task (verified both directions against Ansible).
   it "applies play defaults, lets the task override, and matches short vs FQCN names" do
     markers(<<-YAML).must_equal(["FROM_DEFAULTS", "FROM_TASK", "FROM_DEFAULTS"])
       - hosts: all
@@ -74,7 +74,7 @@ describe "module_defaults:" do
   # An action-group key expands to its member modules. `group/aws` is
   # defined by ansible.builtin itself (as an extend_group pointer into
   # amazon.aws), so it RESOLVES even with that collection absent and the
-  # rest of the mapping applies - verified against real Ansible, which
+  # rest of the mapping applies - verified against Ansible, which
   # exits 0 here.
   it "accepts a builtin action-group key that resolves to no installed modules" do
     markers(<<-YAML).must_equal(["STILL_APPLIED"])
@@ -110,7 +110,7 @@ describe "module_defaults:" do
 end
 
 # Action groups proper: membership comes from the installed collections'
-# own meta/runtime.yml, the same source real Ansible reads.
+# own meta/runtime.yml, the same source Ansible reads.
 private ACTION_GROUP_RUNTIME = <<-YAML
   action_groups:
     demo:
@@ -172,10 +172,10 @@ describe "module_defaults: action groups" do
     output.must_include("FROM_EXTENDED")
   end
 
-  # A group nothing defines is an ERROR, with real Ansible's own message
+  # A group nothing defines is an ERROR, with Ansible's own message
   # and exit code 4 - a bare name resolves in ansible.builtin, so
   # `group/demo` does NOT match a collection's `demo` group.
-  it "refuses an unresolvable group the way real Ansible does" do
+  it "refuses an unresolvable group the way Ansible does" do
     code, output = run_with_collections(<<-YAML, ACTION_GROUP_RUNTIME)
       - hosts: all
         gather_facts: false

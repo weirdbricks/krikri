@@ -109,7 +109,7 @@ describe Krikri::AsyncJobs do
 
   # Regression: the async dir used to be fixed at require time, so a spec
   # sweeping it hit the developer's real ~/.ansible_async. It must now be
-  # resolved at call time from ANSIBLE_ASYNC_DIR (real Ansible's own shell
+  # resolved at call time from ANSIBLE_ASYNC_DIR (Ansible's own shell
   # plugin env name, confirmed via `ansible-doc -t shell sh`).
   it "resolves status/config paths under ANSIBLE_ASYNC_DIR when set" do
     in_temp_async_dir do |dir|

@@ -18,7 +18,7 @@ module Krikri
   #   - gather_subset: comma-separated families (all/min/hardware/network/
   #     mounts/aliases, !-negations, unknown positives fail like real)
   #   - gather_timeout: per-family timeout in seconds (hardware/mounts,
-  #     the collectors real Ansible guards; default 10)
+  #     the collectors Ansible guards; default 10)
   #   - filter: fnmatch glob(s) over top-level fact keys, post-gather
   #   - fact_path: *.fact scripts/ini/json files gathered into ansible_local
   #

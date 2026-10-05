@@ -2,7 +2,7 @@
 # community.rabbitmq.rabbitmq_plugin - manages RabbitMQ plugin state via
 # `rabbitmq-plugins`. Behavior matched to community.rabbitmq's rabbitmq_plugin
 # module (round 196: mrlesmithjr.rabbitmq uses it; previously unavailable
-# → rc=4 "unavailable modules" where real ansible rc=0'd).
+# → rc=4 "unavailable modules" where Ansible rc=0'd).
 #
 # The module's argument is `names` (list or comma-separated string) -
 # the `name` spelling is kept as a fallback for the historical param.
@@ -57,7 +57,7 @@ module Krikri
         # real module (state=enabled, new_only=false) disables every
         # enabled plugin not in the requested names. Header lines
         # ("Listing plugins with pattern ...") contain spaces and are
-        # skipped the same way the real module skips them.
+        # skipped the same way the Ansible module skips them.
         enabled_lines.each do |line|
           next if line.includes?(" ")
           next if plugins.includes?(line)

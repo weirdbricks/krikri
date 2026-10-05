@@ -11,7 +11,7 @@ require "../minitest_helper"
 # (changed: true), a rerun correctly reported "Package already
 # installed" (changed: false), and state: absent removed it (changed:
 # true) then correctly no-op'd on a second removal (changed: false) -
-# all matching real Ansible's own community.general.npm algorithm
+# all matching Ansible's own community.general.npm algorithm
 # (npm list --json --long, checking the "dependencies" hash for a
 # missing/invalid entry).
 describe "npm plugin" do
@@ -35,8 +35,8 @@ describe "npm plugin" do
     result["msg"].as_s.must_equal("state is absent but all of the following are missing: name")
   end
 
-  it "fails with the real Ansible executable-not-found message instead of silently reporting already installed" do
-    # Real Ansible's own npm module resolves the executable via
+  it "fails with the Ansible executable-not-found message instead of silently reporting already installed" do
+    # Ansible's own npm module resolves the executable via
     # `module.get_bin_path(npm_path, True)`, which fails the task
     # outright when it's missing - real bug found via a 400-role
     # regression sweep: krikri's own `npm list` shell command just

@@ -7,7 +7,7 @@ module Krikri
       VALID_SOURCE_TYPES = {"deb", "deb-src"}
 
       # Strips and collapses whitespace, validates the line starts with
-      # deb/deb-src - matches real Ansible's own SourcesList#_parse
+      # deb/deb-src - matches Ansible's own SourcesList#_parse
       # validation before a source line is compared or stored.
       def self.normalize(repo : String) : String?
         chunks = repo.strip.split
@@ -17,7 +17,7 @@ module Krikri
         chunks.join(" ")
       end
 
-      # Replicates real Ansible's own `_suggest_filename` exactly
+      # Replicates Ansible's own `_suggest_filename` exactly
       # (verified by reading apt_repository.py's actual source and
       # cross-checking output against a real Python re-implementation of
       # it, not assumed from docs): strip `[options]` and the
@@ -41,7 +41,7 @@ module Krikri
       end
 
       # Resolves the actual sources.list.d file path an added repo line
-      # lands in, replicating real Ansible's own flow exactly
+      # lands in, replicating Ansible's own flow exactly
       # (apt_repository.py: an explicit `filename:` param goes through
       # `_suggest_filename` - which returns it VERBATIM and then
       # unconditionally appends `.list` - followed by `_expand_path`,
@@ -52,7 +52,7 @@ module Krikri
       # keydb_active_replication) intentionally lands at
       # /etc/apt/sources.list.d/keydb.list.LIST.LIST - i.e.
       # /etc/apt/sources.list.d/keydb.list.list: quirky, but exactly
-      # what real Ansible writes, and apt reads any *.list under
+      # what Ansible writes, and apt reads any *.list under
       # sources.list.d, so the repo IS live for apt. Found via
       # v0112358.keydb_active_replication, where joining the full-path
       # param under sources_list_d instead produced a nested
@@ -60,7 +60,7 @@ module Krikri
       # warning (the repo file is simply invisible to apt), the task
       # still reported changed/success, and the later
       # `apt: name=keydb` failed with "Unable to locate package keydb"
-      # where real Ansible's identical sequence installed it.
+      # where Ansible's identical sequence installed it.
       def self.target_sources_path(filename_param : String?, filename_source : String, sources_list_d : String) : String
         if filename_param
           candidate = "#{filename_param}.list"

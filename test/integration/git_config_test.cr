@@ -92,13 +92,13 @@ describe "git_config plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "reports real's missing-required-arguments wording for a missing name" do
+  it "reports Ansible's missing-required-arguments wording for a missing name" do
     result = PluginSpecHelper.run("git_config", {} of String => String)
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: name")
   end
 
-  it "reports real's choices wordings in the spec's declaration order" do
+  it "reports Ansible's choices wordings in the spec's declaration order" do
     result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "add_mode" => "bogus"})
     result["msg"].as_s.must_equal("value of add_mode must be one of: add, replace-all, got: bogus")
 
@@ -109,7 +109,7 @@ describe "git_config plugin" do
     result["msg"].as_s.must_equal("value of state must be one of: present, absent, got: bogus")
   end
 
-  it "reports real's required_if wordings in declaration order" do
+  it "reports Ansible's required_if wordings in declaration order" do
     result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "local"})
     result["msg"].as_s.must_equal("scope is local but all of the following are missing: repo")
 
@@ -120,14 +120,14 @@ describe "git_config plugin" do
     result["msg"].as_s.must_equal("state is present but all of the following are missing: value")
   end
 
-  it "reports real's unsupported-parameters wording" do
+  it "reports Ansible's unsupported-parameters wording" do
     result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "v", "scope" => "global", "krikri_param" => "yes"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Unsupported parameters for (community.general.git_config) module: krikri_param. " \
                                   "Supported parameters include: add_mode, file, name, repo, scope, state, value.")
   end
 
-  it "reports real's post-setup guard for an empty-string value (required_if only fires on a missing key)" do
+  it "reports Ansible's post-setup guard for an empty-string value (required_if only fires on a missing key)" do
     result = PluginSpecHelper.run("git_config", {"name" => "k", "value" => "", "scope" => "global"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("If state=present, a value must be specified. " \

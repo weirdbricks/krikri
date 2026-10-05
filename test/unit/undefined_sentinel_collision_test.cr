@@ -8,7 +8,7 @@ require "../../src/krikri/variable_substitutor"
 # against that same literal text. When the real value at that index genuinely
 # IS the text "undefined" (verified live: `command: printf 'undefined'` +
 # `register: s2`), the check can't tell a real value from an actual miss.
-# Real ansible-core 2.19 renders `{{ s2.stdout_lines.0 }}` fine in that case;
+# ansible-core 2.19 renders `{{ s2.stdout_lines.0 }}` fine in that case;
 # this engine raised "'s2' is undefined" on the dotted form
 # while the bracket form `s2.stdout_lines[0]` (resolved structurally, no
 # string re-check) was already correct.

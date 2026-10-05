@@ -10,7 +10,7 @@ require "../../src/krikri/python_lookup_runner"
 # plugin's own error as a real LookupError).
 #
 # The dispatch specs here require the controller python3 to import the
-# real `ansible` package (the plugin file itself imports LookupBase at
+# `Ansible` package (the plugin file itself imports LookupBase at
 # its top level). On a controller without it, every dispatch degrades
 # to kind "unavailable" - those cases assert exactly that degradation
 # rather than skipping, so the suite is green either way.
@@ -167,7 +167,7 @@ describe Krikri::PythonLookupRunner do
       raise "expected LookupError"
     rescue ex : Krikri::PythonLookupRunner::LookupUnavailableError
       # A file that cannot even be imported is the plugin's own
-      # breakage - real Ansible fails the task; this runner reports it
+      # breakage - Ansible fails the task; this runner reports it
       # as kind "error" (only the mechanism being absent degrades).
       ex.kind.must_equal("error")
       ex.unavailable?.must_equal(false)

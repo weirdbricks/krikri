@@ -25,7 +25,7 @@ describe "with_first_found: a custom paths: entry containing {{ role_path }}" do
     # silent skip instead of a visible failure - the role's own
     # kubic_pkg_mgr var (set inside the file that was never loaded)
     # stayed undefined, silently skipping the rest of the role's tasks
-    # too, while real ansible-playbook actually loads the file and
+    # too, while ansible-playbook actually loads the file and
     # proceeds.
     src_dir = File.tempname("first-found-custom-paths-role")
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "vars"))

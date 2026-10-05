@@ -4,7 +4,7 @@ require "../minitest_helper"
 # Regression spec for round 84001 (abaez.user): the user plugin never read
 # generate_ssh_key: (or any of its ssh_key_* friends) at all, so a
 # `generate_ssh_key: yes` task never generated a keypair and always
-# reported ok where real Ansible generates via ssh-keygen and reports
+# reported ok where Ansible generates via ssh-keygen and reports
 # changed. These specs exercise the real plugin binary against a temp
 # directory via an ABSOLUTE ssh_key_file (relative paths resolve against
 # the account's real home, which would mutate a developer's own ~/.ssh) -

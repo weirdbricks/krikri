@@ -26,7 +26,7 @@ require "../../src/krikri/action_plugin_manager"
 #   the shim PATH (per-child Process.run env, parallel-safe).
 #
 # The synchronize action plugin's controller-side final results register
-# real's module shapes: success [changed, msg, rc, cmd, stdout_lines,
+# Ansible's module shapes: success [changed, msg, rc, cmd, stdout_lines,
 # failed] (empty msg kept, cmd carrying the resolved rsync path), failure
 # [rc, cmd, failed, msg, changed, exception] - the probes below pin
 # those captured orders.
@@ -36,7 +36,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # The 27-key openssl_csr_info info shape, captured identically for the
-# openssl_csr_info_query, _exists and _check probes: the real module's
+# openssl_csr_info_query, _exists and _check probes: the Ansible module's
 # get_info keys in real order (subject first, no leading changed), then
 # the controller backfill failed, changed LAST.
 private CSR_INFO_KEYS = [
@@ -128,7 +128,7 @@ describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
 
   it "registers openssl_csr_info's query as the 27-key subject-first info shape with failed/changed last" do
     # Real probe openssl_csr_info_query (27 keys, starts with subject,
-    # no leading changed, ends failed, changed - the real module's
+    # no leading changed, ends failed, changed - the Ansible module's
     # get_info keys in real order, then the controller backfill).
     skip("no openssl binary") unless tool_available?("openssl")
 
@@ -211,7 +211,7 @@ describe "kop_pkg_misc round 993004 keyorder: openssl_csr/openssl_csr_info" do
     dumps["exists"]["signature_valid"].as_bool.must_equal(true)
   end
 
-  it "registers openssl_csr_info's missing-file failure as [failed, msg, changed, exception] with real's wording" do
+  it "registers openssl_csr_info's missing-file failure as [failed, msg, changed, exception] with Ansible's wording" do
     # Real probe openssl_csr_info_fail (path /var/tmp/kop_nosuch.csr):
     # [failed, msg, changed, exception], msg "Error while reading CSR
     # file from disk: [Errno 2] No such file or directory: '<path>'".
@@ -249,7 +249,7 @@ end
 describe "kop_pkg_misc round 993004 keyorder: apache2_module failure" do
   it "registers the a2enmod failure as [rc, stdout, stderr, failed, msg, stdout_lines, stderr_lines, changed, exception]" do
     # Real probe apache2_module_fail (enable a nonexistent module):
-    # real's a2enmod exits 1 with "ERROR: Module <name> does not exist!"
+    # Ansible's a2enmod exits 1 with "ERROR: Module <name> does not exist!"
     # on stderr; the registered result carries the command-tool kwargs
     # lead, failed/msg mid-order, the controller's *_lines splits, then
     # changed and exception LAST. The exact captured msg names the
@@ -296,7 +296,7 @@ describe "kop_pkg_misc round 993004 keyorder: apache2_module failure" do
 
   before_each do
     # The shims the test's PATH points at: apache2ctl -M reports an
-    # empty loaded-modules set, a2enmod rejects everything with real's
+    # empty loaded-modules set, a2enmod rejects everything with Ansible's
     # stderr bytes (captured verbatim in the round's cold_py.out).
     FileUtils.mkdir_p(PluginSpecHelper.tmp_path("apache2-fail/shim"))
     apache2ctl = File.join(PluginSpecHelper.tmp_path("apache2-fail/shim"), "apache2ctl")
@@ -468,7 +468,7 @@ describe "kop_pkg_misc round 993004 keyorder: java_cert (keytool shim)" do
   # Replays the probe role's java_cert sequence (import -> exists ->
   # check -> remove, plus the missing-cert failure) in ONE engine run so
   # the shim keystore state evolves exactly like the capture's. The
-  # engine child gets the shim PATH: real's test_keytool probes keytool
+  # engine child gets the shim PATH: Ansible's test_keytool probes keytool
   # with a bare execvpe-style lookup inside the plugin process before any
   # shell command runs, so the task `environment:` exports never reach
   # it. The shim is a text-file "keystore" whose -list output is a real
@@ -619,7 +619,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
 
     dump.as_h.keys.must_equal(["changed", "msg", "rc", "cmd", "stdout_lines", "failed"])
     dump["changed"].as_bool.must_equal(true)
-    # Real's msg is `out.replace(changed_marker, '')`: the raw rsync
+    # Ansible's msg is `out.replace(changed_marker, '')`: the raw rsync
     # stdout INCLUDING its trailing newline (round 995004: real msg ends
     # 'a\n', a join of itemize lines loses that). The itemize lines are
     # asserted, not the whole string - rsync's optional "created
@@ -651,7 +651,7 @@ describe "kop_pkg_misc round 993004 keyorder: synchronize (delegate_to same host
     dump["failed"].as_bool.must_equal(false)
   end
 
-  it "registers the idempotent rerun with real's empty msg key kept" do
+  it "registers the idempotent rerun with Ansible's empty msg key kept" do
     skip("no rsync binary") unless tool_available?("rsync")
 
     dump = run_synchronize_probes["exists"]
@@ -760,7 +760,7 @@ describe "SynchronizeActionPlugin delegate_to same-host rsync locality (round 99
   # `ssh -S none`, no private-key -i, no user@host: qualification on
   # either end, whichever way the module actually gets there.
   it "hands the params back unchanged for on-host module dispatch when the same-host delegate is non-local" do
-    # Real's dest_is_local case: delegate_to naming the task's own host
+    # Ansible's dest_is_local case: delegate_to naming the task's own host
     # returns use_delegate=true and the action plugin munges NOTHING -
     # the module runs on that host and rsync syncs the two plain paths
     # there (verified live vs ansible-core 2.19 + ansible.posix).

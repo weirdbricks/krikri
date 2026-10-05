@@ -20,16 +20,16 @@ module Krikri
   #
   # `quiet:` (bool, default false) is display-only: a passing assert
   # with `quiet: true` still carries `msg` in its result/registered var
-  # (live-verified against real ansible-core 2.19.4), but the success
-  # message is not printed. Real Ansible implements the same thing by
+  # (live-verified against ansible-core 2.19.4), but the success
+  # message is not printed. Ansible implements the same thing by
   # adding `_ansible_verbose_always` when NOT quiet; here a quiet
   # success instead tags the result with `_ansible_quiet: true` (private
   # `_ansible_*` keys are stripped before register, so the registered
-  # var shape matches real Ansible's exactly either way) and
+  # var shape matches Ansible's exactly either way) and
   # ResultDisplay suppresses the msg for it. Failures report
   # msg/assertion/evaluated_to identically with or without `quiet:`.
   class AssertActionPlugin < ActionPlugin
-    # Real AnsibleModule argspec-validates assert's `quiet:` (type: bool)
+    # AnsibleModule argspec-validates assert's `quiet:` (type: bool)
     # at module setup - the same StrictBoolValidation the module plugins
     # use, since this action plugin computes the whole result without
     # ever running plugins/assert.cr. Live-verified against ansible-core
@@ -58,7 +58,7 @@ module Krikri
       conditions = Array(String).from_json(that_json)
       substitutor = VarSubstitutor.new(vars: @vars, host_name: @host.name)
 
-      # raise_undefined: true - real Ansible is strict for assert:'s own
+      # raise_undefined: true - Ansible is strict for assert:'s own
       # that: exactly as it is for when:, and reports it with the SAME
       # message ("Error while evaluating conditional: 'x' is undefined"),
       # not as an ordinary "Assertion failed". Live-verified against
@@ -67,7 +67,7 @@ module Krikri
       # A filter/default()/is-defined chain stays lenient, same
       # REGEX_BARE_VAR_REF-shaped boundary as every other strict site.
       #
-      # strict: true - real ansible-core 2.19 also rejects a non-bool
+      # strict: true - ansible-core 2.19 also rejects a non-bool
       # `that:` RESULT outright ("Conditional result (True) was derived
       # from value of type 'int'. Conditionals must have a boolean
       # result."), not just a genuinely undefined reference. This was
@@ -75,7 +75,7 @@ module Krikri
       # `when:`) already passes it - found via mrlesmithjr.postgresql's
       # own preflight.yml: `that: postgresql_version | default(false)`
       # where `postgresql_version` defaults to a real int (14, not a
-      # bool) - real Ansible fails the whole play at this first task;
+      # bool) - Ansible fails the whole play at this first task;
       # this plugin silently treated the nonzero int as truthy and let
       # the play continue for 5 more tasks before diverging elsewhere.
       # Both conditional-error rescues carry changed=false (real
@@ -93,7 +93,7 @@ module Krikri
           break
         end
       rescue ex : ConditionalEvaluator::UndefinedVariableError
-        # Real ansible-core 2.19.11 prefixes assert:'s undefined-
+        # ansible-core 2.19.11 prefixes assert:'s undefined-
         # conditional failure with "Task failed: " exactly like its
         # non-bool one (live-verified: `assert: that: x` on an undefined
         # var → fatal msg "Task failed: Error while evaluating
@@ -104,7 +104,7 @@ module Krikri
         result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
         return ActionResult.final(result)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
-        # Real Ansible's assert: prefixes this specific failure
+        # Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while
         # evaluating conditional: " - verified against the exact
         # message ansible-core 2.19.4 raises for a non-bool `that:`
@@ -148,7 +148,7 @@ module Krikri
               else
                 {"_ansible_verbose_always" => JSON::Any.new(true)}
               end
-      # Real's registered assert success runs changed, msg, failed
+      # Ansible's registered assert success runs changed, msg, failed
       # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       ActionResult.final(ActionResult.plugin_result_json(false, false, success_msg, extra,
         key_order: ["changed", "msg", "failed"]))

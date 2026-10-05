@@ -1,9 +1,9 @@
 require "../minitest_helper"
 require "file_utils"
 
-# plugin_helpers/python_lib_gate.cr picks the interpreter real's
-# missing_required_lib() names, and it has to match real's interpreter
-# DISCOVERY: real runs `command -v` over INTERPRETER_PYTHON_FALLBACK
+# plugin_helpers/python_lib_gate.cr picks the interpreter Ansible's
+# missing_required_lib() names, and it has to match Ansible's interpreter
+# DISCOVERY: Ansible runs `command -v` over INTERPRETER_PYTHON_FALLBACK
 # (python3.13 ... python3.8, /usr/bin/python3, python3) and hands the
 # module the first hit, so the sys.executable basic.py prints is that
 # interpreter's. This gate probed a bare `python3` instead, which on a
@@ -19,7 +19,7 @@ require "file_utils"
 
 require "../../src/krikri/plugin_helpers/python_lib_gate"
 
-# The interpreter real's discovery would land on for this host: the first
+# The interpreter Ansible's discovery would land on for this host: the first
 # INTERPRETER_PYTHON_FALLBACK entry `command -v` resolves.
 private def real_discovered_interpreter : String?
   Krikri::INTERPRETER_FALLBACK.each do |name|
@@ -40,19 +40,19 @@ end
 describe "python library gate interpreter discovery" do
   serial!
 
-  it "falls back to the interpreters real's INTERPRETER_PYTHON_FALLBACK would try" do
+  it "falls back to the interpreters Ansible's INTERPRETER_PYTHON_FALLBACK would try" do
     Krikri::INTERPRETER_FALLBACK.must_equal([
       "python3.13", "python3.12", "python3.11", "python3.10",
       "python3.9", "python3.8", "/usr/bin/python3", "python3",
     ])
   end
 
-  it "names the interpreter real's discovery picks, not a bare python3" do
+  it "names the interpreter Ansible's discovery picks, not a bare python3" do
     interpreter = real_discovered_interpreter
-    skip "host has no python in real's fallback list" unless interpreter
+    skip "host has no python in Ansible's fallback list" unless interpreter
 
     # The interpreter reports its own sys.executable, exactly like the
-    # module process real runs under the discovered interpreter does.
+    # module process Ansible runs under the discovered interpreter does.
     reported = IO::Memory.new
     Process.run(interpreter, {"-c", "import sys; print(sys.executable)"},
       output: reported, error: Process::Redirect::Close)
@@ -61,7 +61,7 @@ describe "python library gate interpreter discovery" do
   end
 
   it "reports the missing-library message against that interpreter" do
-    skip "host has no python in real's fallback list" unless real_discovered_interpreter
+    skip "host has no python in Ansible's fallback list" unless real_discovered_interpreter
 
     # A library that exists nowhere always fails to import, so the gate
     # fires and the message names the discovered interpreter.

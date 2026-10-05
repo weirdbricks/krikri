@@ -12,7 +12,7 @@ module Krikri
     # flag and message. Keeping the wire calls out is what lets specs
     # exercise every decision branch against canned XML with no network.
     #
-    # Behavior mirrors the real module's key_pair module_utils:
+    # Behavior mirrors the Ansible module's key_pair module_utils:
     # - state=present, no key_material: create a new key pair unless one
     #   with the same name exists (or force=true, which deletes and
     #   recreates). The CreateKeyPair response's private key is the only

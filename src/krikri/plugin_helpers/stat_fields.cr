@@ -18,12 +18,12 @@ module Krikri
       #
       # atime/mtime/ctime are float seconds (tv_sec + tv_nsec / 1e9),
       # matching Python's own os.stat_result st_atime/st_mtime/st_ctime
-      # float attributes that real Ansible's stat/find results carry
+      # float attributes that Ansible's stat/find results carry
       # through verbatim.
       #
       # block_size/blocks/device_type are the raw st_blksize/st_blocks/
       # st_rdev passthroughs from the same stat() struct. All three are
-      # emitted unconditionally (real Ansible only gates them on the
+      # emitted unconditionally (Ansible only gates them on the
       # platform exposing st_blksize/st_blocks/st_rdev, which Linux
       # always does). real stat.py has NO disk_usage_bytes field in
       # 2.19.11 (its platform-dependent list passes st_blocks through

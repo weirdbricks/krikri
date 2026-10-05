@@ -19,7 +19,7 @@ describe "locale_gen plugin" do
     result["msg"].as_s.must_include("state")
   end
 
-  # The mechanism probe is the real module's first host-dependent step;
+  # The mechanism probe is the Ansible module's first host-dependent step;
   # when neither /etc/locale.gen nor /var/lib/locales/supported.d
   # exists, that failure must surface before any availability check.
   it "fails cleanly when the locales package is not installed" do

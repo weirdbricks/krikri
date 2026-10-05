@@ -12,7 +12,7 @@ require "../../src/krikri/host"
 # delegated localhost task as remote - the engine then died with an
 # unhandled exception ("ssh: connect to host localhost port 22:
 # Connection refused") trying to upload the get_url plugin binary to the
-# controller over SSH. Real ansible runs delegated localhost tasks
+# controller over SSH. Ansible runs delegated localhost tasks
 # locally and rc=0s the play.
 describe "Krikri::PluginManager (plugin_manager_delegate_local_test.cr)" do
   it "delegated localhost is local even when the origin host's vars say ssh" do

@@ -20,7 +20,7 @@ module Krikri
     # which for krikri is the native EC2/IAM Query-API helpers (no
     # boto3 anywhere).
     #
-    # The gate probes the host's python3 the same way the real module's
+    # The gate probes the host's python3 the same way the Ansible module's
     # import check would: if boto3+botocore import cleanly the module
     # (and krikri) proceed to the API work; if not, both fail with the
     # same missing-library message shape (hostname and interpreter path
@@ -48,7 +48,7 @@ module Krikri
     #   9. the boto3 gate
     module AwsModuleArgs
       # A single argument in the merged argument spec. type is the real
-      # spec's type= value ("str" for untyped entries - real Ansible
+      # spec's type= value ("str" for untyped entries - Ansible
       # defaults untyped params to str).
       record Arg,
         type : String = "str",
@@ -76,7 +76,7 @@ module Krikri
         required_if : Array(Tuple(String, String, Array(String))) = [] of Tuple(String, String, Array(String)),
         sub : Hash(String, SubSpec) = {} of String => SubSpec
 
-      # the real module _aws_common_argument_spec() + region, in
+      # the Ansible module _aws_common_argument_spec() + region, in
       # declaration order; every module's merged spec is this plus its
       # own params.
       BASE_ARGS = {
@@ -99,7 +99,7 @@ module Krikri
       # -- entry points -------------------------------------------------
 
       # Returns the failed PluginResult for the FIRST argument-spec
-      # violation (real fails on errors[0]), or nil when validation
+      # violation (Ansible fails on errors[0]), or nil when validation
       # passes and the module would move on to the boto3 check.
       def self.validate(spec : Spec, params : Hash(String, String)) : Krikri::PluginResult?
         given = resolve_given(spec.args, params)
@@ -145,7 +145,7 @@ module Krikri
 
       # -- spec-level checks ------------------------------------------------
 
-      # Resolves aliases to canonical names: real AnsibleModule replaces
+      # Resolves aliases to canonical names: AnsibleModule replaces
       # an alias's value with the canonical key before validation.
       private def self.resolve_given(args : Hash(String, Arg), params : Hash(String, String)) : Hash(String, String)
         given = Hash(String, String).new
@@ -241,13 +241,13 @@ module Krikri
 
       # -- _list_no_log_values step ------------------------------------------
 
-      # Real runs _list_no_log_values before every other fatal check,
+      # Ansible runs _list_no_log_values before every other fatal check,
       # and for a dict / elements-dict param that HAS an options=
       # sub-spec it runs the value's string elements through
       # check_type_dict directly: a string that fails both JSON and k=v
       # parsing surfaces check_type_dict's bare TypeError as errors[0],
       # and a non-string non-dict element surfaces the Mapping-check
-      # wording (with real's "must by a" typo preserved). Params without
+      # wording (with Ansible's "must by a" typo preserved). Params without
       # options are untouched here - they keep the prefixed wording
       # check_types builds later.
       private def self.check_no_log_values(spec : Spec, given : Hash(String, String)) : Krikri::PluginResult?
@@ -313,7 +313,7 @@ module Krikri
       end
 
       # A dict-typed value: an object passes through; a string only if
-      # real's k=v fallback parses it; anything else (list, bool, int)
+      # Ansible's k=v fallback parses it; anything else (list, bool, int)
       # fails dict conversion. Returns the ELEMENT list (for elements=
       # dict parents, one entry per element; for dict parents, the one
       # dict).
@@ -344,7 +344,7 @@ module Krikri
       # elements=dict entries WITH an options= spec (network_interfaces)
       # surface the bare dict-parse failure via the _list_no_log_values
       # step above; the ones without (volumes:) only fail in
-      # _validate_elements and get real's "Elements value for option"
+      # _validate_elements and get Ansible's "Elements value for option"
       # wording.
       private def self.dict_parse_error(param : String, has_options : Bool) : Krikri::PluginResult
         if has_options
@@ -462,7 +462,7 @@ module Krikri
         JSON::Any.new(raw)
       end
 
-      # The Python type name real's conversion errors quote: what the
+      # The Python type name Ansible's conversion errors quote: what the
       # YAML value arrived as.
       private def self.python_class(value : JSON::Any) : String
         case value.raw

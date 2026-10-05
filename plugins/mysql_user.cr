@@ -23,25 +23,25 @@ module Krikri
   #   existing user's password is updated (update_password: always,
   #   the default - see below)
   # - host: the 'host' part of user@host (default "localhost", matching
-  #   real Ansible's own default - not "%")
+  #   Ansible's own default - not "%")
   # - state: present (default) / absent
   # - priv: "db.table:PRIV1,PRIV2" (multiple grants separated by "/"),
-  #   same format real Ansible's mysql_user uses - see
+  #   same format Ansible's mysql_user uses - see
   #   src/krikri/plugin_helpers/mysql_privileges.cr. Diffed against
   #   the account's actual SHOW GRANTS output; a mismatch REVOKEs
   #   everything and re-GRANTs the desired set from scratch rather than
   #   computing a minimal add/remove delta - simpler, and idempotent
   #   either way, just not the smallest possible set of statements.
-  # - update_password: "always" (default, matching real Ansible) or
+  # - update_password: "always" (default, matching Ansible) or
   #   "on_create". "always" compares the account's current password hash
   #   (mysql.user.authentication_string) against the mysql_native_password
   #   hash of the given password (computed by the server, the way real
   #   does) before deciding whether an ALTER is even needed - matching
-  #   real Ansible's own idempotent behavior (round 18; was previously an
+  #   Ansible's own idempotent behavior (round 18; was previously an
   #   unconditional ALTER + changed: true on every run).
   # - plugin/plugin_hash_string/plugin_auth_string: non-password
-  #   authentication, matching real Ansible's own mysql_user module
-  #   (verified against community.mysql's the real module). Auth
+  #   authentication, matching Ansible's own mysql_user module
+  #   (verified against community.mysql's the Ansible module). Auth
   #   clause precedence (highest first): password, then
   #   plugin+plugin_hash_string (`IDENTIFIED WITH <p> AS <hash>`), then
   #   plugin+plugin_auth_string (`IDENTIFIED WITH <p> BY <auth>`, with
@@ -63,12 +63,12 @@ module Krikri
   # subtract_privs: (this always does a full revoke-then-regrant instead),
   # resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
-    # Carries the fail_json msg real's module would produce for a server
+    # Carries the fail_json msg Ansible's module would produce for a server
     # rejection of a password/plugin auth statement, out of the deep
     # statement helpers to #execute's rescue.
     private class AuthStatementError < Exception; end
 
-    # Real 2.19.11 + community.mysql 5.0.2 (live-verified, `{{ r |
+    # Ansible 2.19.11 + community.mysql 5.0.2 (live-verified, `{{ r |
     # to_json }}`, MySQL 8.4): the module's own exit_json kwargs, in its
     # own order - changed, user, msg, password_changed, attributes,
     # failed. `user` is the `name:` param echoed verbatim (a bare name
@@ -77,21 +77,21 @@ module Krikri
     # `attributes` is null unless `attributes:` was given.
     private SUCCESS_KEY_ORDER = %w[changed user msg password_changed attributes failed]
 
-    # What real reports for whether the account's password was (re)set -
+    # What Ansible reports for whether the account's password was (re)set -
     # tracked through the run and attached to the result in #with_shape.
     @password_changed : JSON::Any? = JSON::Any.new(false)
 
     def execute : PluginResult
-      # Real's `name:` param has NO `user:` alias (verified against the
+      # Ansible's `name:` param has NO `user:` alias (verified against the
       # installed ansible.mysql 5.2.0 module source, which
-      # community.mysql's plugin_routing redirects to: real rejects
+      # community.mysql's plugin_routing redirects to: Ansible rejects
       # `user:` with "Unsupported parameters for (mysql_user) module:
-      # user"). That rejection happens in real's argument-spec check,
+      # user"). That rejection happens in Ansible's argument-spec check,
       # which krikri runs controller-side before this plugin is ever
       # reached; keep the plugin itself reading the canonical name only.
       name = @params["name"]?
       unless name
-        # Real AnsibleModule's own required-arguments failure is plural
+        # AnsibleModule's own required-arguments failure is plural
         # "arguments" even for a single missing param (same wording the
         # dpkg_selections fix aligned to) - live-verified against
         # community.mysql.mysql_user via the podman-diff
@@ -105,7 +105,7 @@ module Krikri
       # task BEFORE any connection attempt; this engine accepted any
       # unknown state as if it were present and CREATED the account
       # (W7: state: present-nowhere reported changed=true "User added")
-      # where real Ansible fails with the standard choices message
+      # where Ansible fails with the standard choices message
       # (live-verified, same harness case).
       unless ["present", "absent"].includes?(state)
         return PluginResult.new(changed: false, failed: true,
@@ -156,9 +156,9 @@ module Krikri
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
-    # Re-emits a result with real's registered keys attached. Only the
+    # Re-emits a result with Ansible's registered keys attached. Only the
     # SUCCESS paths carry them; a fail_json keeps the plain failure shape
-    # real's own fail_json produces.
+    # Ansible's own fail_json produces.
     private def with_shape(result : PluginResult, name : String) : PluginResult
       return result if result.failed?
 
@@ -174,7 +174,7 @@ module Krikri
       )
     end
 
-    # Real reports the attributes the SERVER ended up storing, which is
+    # Ansible reports the attributes the SERVER ended up storing, which is
     # only ever something when `attributes:` was given; null otherwise.
     private def desired_attributes : JSON::Any
       attributes = @params["attributes"]?
@@ -257,7 +257,7 @@ module Krikri
       early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, check_mode)
       return early if early
 
-      # Real Ansible branches the success msg on create-vs-modify (its own
+      # Ansible branches the success msg on create-vs-modify (its own
       # user_add sets msg to "User added" when the account genuinely didn't
       # exist), not on `changed` - a brand-new create is not an "update".
       msg = if created
@@ -322,15 +322,15 @@ module Krikri
     ) : {PluginResult?, Bool, Bool}
       # Real bug found benchmarking robertdebock.mysql's own "Create
       # users" task (round 18): update_password: always (the default,
-      # matching real Ansible - the role leaves it unset) previously
+      # matching Ansible - the role leaves it unset) previously
       # reissued ALTER USER ... IDENTIFIED BY unconditionally on every
       # run, reporting changed: true even when the password was already
       # exactly what was requested - a genuine idempotency divergence
-      # from real ansible-playbook, which compares the account's current
+      # from ansible-playbook, which compares the account's current
       # password hash (mysql.user.authentication_string, the
       # mysql_native_password/MariaDB format) against what the given
       # password WOULD hash to (`SELECT CONCAT('*', UCASE(SHA1(UNHEX(
-      # SHA1(...)))))) - the same hash real then hands to
+      # SHA1(...)))))) - the same hash Ansible then hands to
       # `ALTER USER ... IDENTIFIED WITH mysql_native_password AS ...`
       # on the update path - before deciding whether an ALTER is even
       # needed.
@@ -346,22 +346,22 @@ module Krikri
       {nil, true, false}
     end
 
-    # Builds the CREATE/ALTER USER auth clause, matching real Ansible's
+    # Builds the CREATE/ALTER USER auth clause, matching Ansible's
     # mysql_user module precedence:
     # password first, then plugin+hash (`IDENTIFIED WITH p AS hash`), then
     # plugin+auth_string (`IDENTIFIED WITH p BY auth`, with MariaDB pam ->
     # USING and ed25519 -> USING PASSWORD() special cases), then bare
     # plugin (`IDENTIFIED WITH p`). The plugin name is interpolated as a
-    # single-quoted string literal (quote_str), matching how real Ansible
+    # single-quoted string literal (quote_str), matching how Ansible
     # reaches the server with it (a bound query parameter) - MySQL accepts
     # a quoted string where the auth plugin name goes, and a raw
     # interpolation would let `plugin:` carry arbitrary SQL.
     #
-    # A password with no `plugin:` is real's DEFAULT-PLUGIN path: it does
+    # A password with no `plugin:` is Ansible's DEFAULT-PLUGIN path: it does
     # NOT let the server pick its default - real hashes the password
     # itself (`SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(...)))))`) and
     # issues `IDENTIFIED WITH mysql_native_password AS '<hash>'`
-    # (the real module's user_add/user_mod), so the account lands on
+    # (the Ansible module's user_add/user_mod), so the account lands on
     # mysql_native_password even where the server default is
     # caching_sha2_password, and a server where that plugin is not loaded
     # (MySQL 8.4+ disabled it by default; it is gone from 9.7 on) rejects
@@ -431,7 +431,7 @@ module Krikri
     # What the given plaintext password hashes to under
     # mysql_native_password, computed by the server itself the way real
     # computes it before every password-based CREATE/ALTER USER
-    # (the real module: `SELECT CONCAT('*',
+    # (the Ansible module: `SELECT CONCAT('*',
     # UCASE(SHA1(UNHEX(SHA1(...)))))`).
     private def native_password_hash(db : DB::Database, password : String) : String
       db.query_one("SELECT CONCAT('*', UCASE(SHA1(UNHEX(SHA1(?)))))", password, as: String)
@@ -440,7 +440,7 @@ module Krikri
     end
 
     # Runs a CREATE/ALTER USER auth statement, surfacing a server
-    # rejection in the shape real's module fails with: its
+    # rejection in the shape Ansible's module fails with: its
     # `except mysql_driver.Error as e: module.fail_json(msg=to_native(e))`
     # passes pymysql's own str(Exception) through, which is the
     # `(errno, "message")` tuple form.
@@ -454,7 +454,7 @@ module Krikri
     # this errno, on every MySQL/MariaDB server.
     private ER_PLUGIN_IS_NOT_LOADED = 1524
 
-    # Wraps a driver PacketError in real's failure shape when the errno
+    # Wraps a driver PacketError in Ansible's failure shape when the errno
     # is recoverable, re-raises it unchanged otherwise (the generic
     # DbErrors shape stays for everything the harness has not pinned).
     #
@@ -485,7 +485,7 @@ module Krikri
       # for at all (`MySql::Type::LongBlob` has no override, only the
       # base `raise "not supported read"`). An integer result is a type
       # every driver here already reads fine. A NULL authentication
-      # string compares as NULL (never equal), matching real's
+      # string compares as NULL (never equal), matching Ansible's
       # current_pass_hash != encrypted_password on an unset password.
       matches = db.query_all(
         "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
@@ -534,7 +534,7 @@ module Krikri
     # `host_all: true` (dev-sec mysql_hardening's own "Ensure that the
     # root password is present" / "Ensure that anonymous users are
     # absent" tasks) operates on every existing host row for *name*
-    # instead of a single `host:`. Real Ansible's own module: for
+    # instead of a single `host:`. Ansible's own module: for
     # `present`, updates every existing account's password if any exist;
     # if none exist yet, falls back to creating exactly one account at
     # `host:` (default "localhost") - `host_all` alone never invents

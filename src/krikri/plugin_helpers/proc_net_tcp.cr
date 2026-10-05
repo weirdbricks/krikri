@@ -5,16 +5,16 @@ module Krikri
     # connections the way wait_for's `state: drained` needs to. No I/O -
     # plugins/wait_for.cr reads the actual file and does the polling.
     #
-    # IPv4 (`/proc/net/tcp`) only - real Ansible's own wait_for also reads
+    # IPv4 (`/proc/net/tcp`) only - Ansible's own wait_for also reads
     # `/proc/net/tcp6`, but IPv6 `host:`/`exclude_hosts:` values are rare
     # in real `drained:` usage (almost always gating on a local service's
     # plain IPv4 default), and the byte-swapped-per-4-byte-word hex
     # encoding IPv6 addresses use there is meaningfully more involved than
     # IPv4's - a documented scope cut, not an oversight.
     module ProcNetTcp
-      # Real Ansible's own connection-state name -> the two-hex-digit code
+      # Ansible's own connection-state name -> the two-hex-digit code
       # /proc/net/tcp itself uses, verified against
-      # the real module's own `get_connection_state_id`
+      # the Ansible module's own `get_connection_state_id`
       # function source directly, not guessed from /proc/net/tcp's own
       # sparse kernel documentation.
       STATE_CODES = {
@@ -82,7 +82,7 @@ module Krikri
       # either exactly `host_hex` or the "any address" wildcard (a
       # service listening on 0.0.0.0 shows every connection's local
       # address as 0.0.0.0 too, not the specific interface IP - matching
-      # real Ansible's own `match_all_ips` handling), and a remote
+      # Ansible's own `match_all_ips` handling), and a remote
       # address not in `exclude_hexes`.
       def self.count_active(
         connections : Array(Connection), host_hex : String, port_hex : String,

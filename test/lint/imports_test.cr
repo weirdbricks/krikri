@@ -3,7 +3,7 @@ require "file_utils"
 require "../../src/krikri_lint/lint"
 
 module Krikri::Lint
-  # The file set krikri-lint reports must match the one real ansible-lint
+  # The file set krikri-lint reports must match the one ansible-lint
   # walks: a playbook pulls in its imported task files, imported playbooks
   # and role content, transitively.
   describe Imports do

@@ -1,8 +1,8 @@
 require "../minitest_helper"
 
 # Pins plugins/gem.cr's pre-flight probe and argument checks against real
-# community.general.gem (live-diffed vs real ansible-playbook 2.19.11 in
-# the no-ruby container: real's first command is always `<gem> --version`,
+# community.general.gem (live-diffed vs ansible-playbook 2.19.11 in
+# the no-ruby container: Ansible's first command is always `<gem> --version`,
 # so a missing/unexecutable binary fails before any state dispatch):
 #
 # - without `executable:`, get_bin_path('gem', True) fails with its own

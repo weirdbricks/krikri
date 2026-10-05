@@ -8,7 +8,7 @@ require "../src/krikri/plugin_helpers/run_command_failure"
 
 module Krikri
   # Gem plugin - manages Ruby gems via the `gem` CLI. Compatible with (a
-  # subset of) Ansible's community.general.gem module - real Ansible's
+  # subset of) Ansible's community.general.gem module - Ansible's
   # own module also just shells out to the `gem` command line tool
   # internally, not a Ruby API, so this mirrors that approach rather
   # than being a compromise.
@@ -30,19 +30,19 @@ module Krikri
   #   fluentd's own td-agent-bundled fluent-gem is a real example of
   #   overriding this)
   # - user_install: install to the user's local gem dir via
-  #   `--user-install` (default true, matching real Ansible's own
+  #   `--user-install` (default true, matching Ansible's own
   #   default) rather than system-wide
   # - bindir: custom `--bindir` for installed executables
   #
   # Idempotency: `present` (no version:) checks parsed `gem list` output
   # for existence at ANY version - already installed is a no-op,
-  # matching real Ansible's own default behavior. `present` with a
-  # version: does real Ansible's exact-string membership test against
+  # matching Ansible's own default behavior. `present` with a
+  # version: does Ansible's exact-string membership test against
   # the parsed version list (NOT `gem list -i -v`) - so a version
   # SPECIFIER (">= 1.0") is deliberately non-idempotent here exactly as
-  # it is in real Ansible, where the specifier never matches a parsed
+  # it is in Ansible, where the specifier never matches a parsed
   # version string. `latest` resolves the latest remote version first
-  # (real Ansible's own remote listing) and then runs the same
+  # (Ansible's own remote listing) and then runs the same
   # exact-version check - so an already-latest gem is a no-op with
   # changed=false, and `version` together with `latest` fails with real
   # Ansible's own validation message. `gem install` on an already-latest
@@ -52,12 +52,12 @@ module Krikri
   # revisit if a real playbook needs it).
   #
   # - repository: `--source <repository>`
-  # - include_dependencies: default true (matching real Ansible's own
+  # - include_dependencies: default true (matching Ansible's own
   #   default exactly - NOT false) - only ever adds a flag
   #   (`--ignore-dependencies`) when explicitly set false; true adds
   #   nothing (modern rubygems installs dependencies by default with no
   #   flag needed)
-  # - norc: `--norc` - real Ansible gates this on the installed rubygems
+  # - norc: `--norc` - Ansible gates this on the installed rubygems
   #   version being >= 2.5.2; not replicated here (a rubygems that old
   #   predates any real playbook this project has benchmarked against by
   #   a decade-plus) - always added when requested
@@ -79,7 +79,7 @@ module Krikri
       gem_source = @params["gem_source"]?
       repository = @params["repository"]?
 
-      # Real AnsibleModule argument_spec: mutually_exclusive=[("gem_source",
+      # AnsibleModule argument_spec: mutually_exclusive=[("gem_source",
       # "repository"), ("gem_source", "version")] - validated at module
       # setup, before main()'s own checks.
       if gem_source && repository
@@ -118,7 +118,7 @@ module Krikri
       when "absent"
         remove(executable, name, version)
       when "latest"
-        # Real Ansible resolves the latest REMOTE version first and then
+        # Ansible resolves the latest REMOTE version first and then
         # runs the same exact-version installed check as state=present,
         # so state=latest is idempotent for an already-latest gem (the
         # remote listing costs a network round-trip, and an unreachable
@@ -127,7 +127,7 @@ module Krikri
         # the version param is an exact-string membership test against
         # parsed `gem list` output - NOT `gem list -i -v` - which is why
         # version specifiers (">= 1.0") are deliberately non-idempotent
-        # in real Ansible: the specifier never matches a parsed version
+        # in Ansible: the specifier never matches a parsed version
         # string, so the module reinstalls on every run. Matching that
         # exactly, including the non-idempotence.
         resolved = list_versions(executable, name, remote: true)[0]?
@@ -140,7 +140,7 @@ module Krikri
     # Real gem.py's first command is always `<gem> --version`
     # (get_rubygems_version via common_opts, run with check_rc=True) - so
     # a missing/unexecutable binary fails before anything else:
-    #  - an `executable:` override is used VERBATIM (real's
+    #  - an `executable:` override is used VERBATIM (Ansible's
     #    executable.split(" "), no PATH search): a path that cannot be
     #    exec'd surfaces run_command's OSError shape
     #  - without one, get_bin_path('gem', True) fails with its own
@@ -198,7 +198,7 @@ module Krikri
       found.empty? ? nil : found
     end
 
-    # Real Ansible's get_installed_versions: `gem list --norc "^name$"`
+    # Ansible's get_installed_versions: `gem list --norc "^name$"`
     # (optionally --remote), each line parsed with
     # /\S+\s+\((?:default: )?(.+)\)/, versions split on ", ", platform
     # suffixes (everything after the first token) stripped - and then an
@@ -270,7 +270,7 @@ module Krikri
     end
 
     # The binary name for command building: a resolved absolute path when
-    # no executable: override was given (real's get_bin_path result).
+    # no executable: override was given (Ansible's get_bin_path result).
     private def gem_binary(executable : String?) : String
       executable || @gem_path
     end

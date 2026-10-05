@@ -64,7 +64,7 @@ describe "lvg plugin" do
     result["msg"].as_s.must_equal("value of state must be one of: absent, present, active, inactive, got: bogus")
   end
 
-  it "rejects unsupported parameters like real AnsibleModule" do
+  it "rejects unsupported parameters like AnsibleModule" do
     result = PluginSpecHelper.run("lvg", {"vg" => "vg0", "pvs" => "/dev/sdz99", "bogus_param" => "1"})
 
     result["failed"].as_bool.must_equal(true)
@@ -111,7 +111,7 @@ describe "deploy_helper plugin" do
     result["msg"].as_s.must_equal("value of state must be one of: present, absent, clean, finalize, query, got: bogus")
   end
 
-  it "rejects the unfinished state real's choices check rejects" do
+  it "rejects the unfinished state Ansible's choices check rejects" do
     result = PluginSpecHelper.run("deploy_helper", {"path" => "/tmp/krikri-deploy-test", "state" => "unfinished"})
 
     result["failed"].as_bool.must_equal(true)

@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # A set_fact: value whose expression ACCESSES a genuinely undefined
 # variable - `undefined_var.split(':') | map(...) | list` - must fail the
-# task at arg-finalization time, like real Ansible does for every module's
+# task at arg-finalization time, like Ansible does for every module's
 # args ("Finalization of task args for 'ansible.builtin.set_fact' failed:
 # Error while resolving value for '_host_pattern_variants':
 # 'conga_host_facts_pattern' is undefined", captured live in the round
@@ -52,7 +52,7 @@ describe "set_fact: strict-undefined arg finalization" do
   end
 
   # Same strictness for bracket access and a direct call on an undefined
-  # root - real Ansible's StrictUndefined raises on all three access
+  # root - Ansible's StrictUndefined raises on all three access
   # shapes identically.
   it "fails bracket access on an undefined root" do
     status, output = run_playbook(<<-YAML)

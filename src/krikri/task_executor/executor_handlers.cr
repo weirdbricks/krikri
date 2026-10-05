@@ -21,7 +21,7 @@ module Krikri
       notify_list.each do |handler_name|
         # A `notify: "{{ some_list_var }}"` whose ENTIRE value is one
         # pure `{{ }}` span can itself resolve to a real LIST of
-        # handler names, not just a single name - real Ansible notifies
+        # handler names, not just a single name - Ansible notifies
         # every element (and, for an EMPTY list, notifies nothing at
         # all - no error). Verified live against ansible-core 2.19.12.
         # #substitute always flattens to one STRING (Crinja's own
@@ -90,11 +90,11 @@ module Krikri
       end
     end
 
-    # Real Ansible aborts the run the moment a task notifies a name no
+    # Ansible aborts the run the moment a task notifies a name no
     # handler answers to - see `HandlerNotFoundError`'s own comment for
     # why this lives here (run time, only for a notification actually
     # fired) rather than in a parse-time sweep, and for exactly what
-    # real ansible-core 2.19.4 does in each case.
+    # ansible-core 2.19.4 does in each case.
     #
     # The "does anything answer to this name" test deliberately mirrors
     # `HandlerRunner#should_run_handler?` rather than re-deriving its
@@ -190,7 +190,7 @@ module Krikri
       # Passing nil instead of @halted_hosts is what --force-handlers
       # means: HandlerRunner skips a notified handler for any host in
       # that set, so withholding it lets a failed host still flush its
-      # handlers. Real Ansible keeps failed=1 and rc=2 either way - the
+      # handlers. Ansible keeps failed=1 and rc=2 either way - the
       # flag only decides whether the handler runs.
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
         @force_handlers ? nil : @halted_hosts)
@@ -315,18 +315,18 @@ module Krikri
       end
 
       # A failed handler halts the rest of the play for this host, same
-      # as a failed regular task (real Ansible: an unrescued handler
+      # as a failed regular task (Ansible: an unrescued handler
       # failure aborts the host's play run) - every other execution path
       # in this file (execute_looped_task, execute_include_tasks, the
       # plain-task path, etc.) calls halt_if_failed, but this one never
       # did. robertdebock.unbound's own `./configure --enable-systemd`
       # handler genuinely fails on stock Ubuntu 22.04 (libsystemd-dev
       # not installed - a real external role/environment gap, reproduces
-      # on real ansible-playbook too, which correctly stops right there)
+      # on ansible-playbook too, which correctly stops right there)
       # - krikri-playbook instead kept running every task after the
       # `meta: flush_handlers` that triggered it, diverging from real
       # Ansible's own recap (extra ok:/changed:/failed: entries for
-      # tasks real Ansible never even attempted).
+      # tasks Ansible never even attempted).
       halt_if_failed(handler, host, Krikri.result_failed_flag(result)) unless resolve_task_ignore_errors(handler)
 
       result
@@ -367,14 +367,14 @@ module Krikri
       # An empty loop: source (e.g. cloudalchemy.cortex's "reload cortex
       # services" handler looping over `cortex_services | dict2items`
       # when cortex_all_in_one: leaves that dict empty) skips the whole
-      # handler in real Ansible ("All items skipped") rather than running
+      # handler in Ansible ("All items skipped") rather than running
       # zero times silently - found via a real ok/skipped-count off-by-
-      # one against real ansible-playbook. Without this, the handler fell
+      # one against ansible-playbook. Without this, the handler fell
       # through to the empty loop below, never printed a "skipping:"
       # line, and #record_handler_result's already_displayed branch
       # counted the no-op result as "ok" instead of "skipped".
       if loop_items.empty?
-        # Same lazy module resolution real Ansible does (see
+        # Same lazy module resolution Ansible does (see
         # execute_looped_task's own comment): with zero items the
         # handler's module is never resolved, so an unimplemented module
         # behind an empty loop is a plain skip, not an
@@ -413,7 +413,7 @@ module Krikri
       # and books skipped=1 - found via robertdebock.dovecot
       # round970454 ("Copy sample configuration", when:-gated on
       # Archlinux, so all 27 items skip on Ubuntu): krikri finished
-      # ok=9/skipped=1 where real Ansible finished ok=8/skipped=2. Same
+      # ok=9/skipped=1 where Ansible finished ok=8/skipped=2. Same
       # rule as the regular-task loop path in execute_looped_task's own
       # executed_count == 0 branch.
       if executed_count == 0
@@ -467,7 +467,7 @@ module Krikri
       # module still fails the run's exit code the way every other
       # unavailable module does.
       #
-      # Real Ansible also evaluates a non-looped task's `when:` BEFORE it
+      # Ansible also evaluates a non-looped task's `when:` BEFORE it
       # ever attempts module resolution - so a `when:` that itself raises
       # (an undefined variable, a bad attribute access) is a fatal
       # conditional error even when that same handler's module is ALSO
@@ -480,7 +480,7 @@ module Krikri
       # exactly like the available-module path below: a raise flows
       # through WhenEvaluationError to when_error_result as a real
       # failed handler; a clean false takes the skip WITHOUT registering
-      # the module (real Ansible never reaches module resolution for a
+      # the module (Ansible never reaches module resolution for a
       # when:-false handler); only a truthy condition - or no when: at
       # all - counts as genuinely reached for the end-of-run exit-4
       # accounting.
@@ -505,7 +505,7 @@ module Krikri
       end
 
       # Evaluate the handler's own when: here (not in #execute_handler_
-      # internal, before loop resolution) - real Ansible skips a
+      # internal, before loop resolution) - Ansible skips a
       # notified handler whose condition is false (e.g. os_hardening's
       # "Restart auditd via service" handler is gated on os_family ==
       # 'RedHat'), and for a LOOPED handler, evaluates that condition
@@ -520,7 +520,7 @@ module Krikri
       # l2chroot" ran l2chroot against /usr/bin/which despite its own
       # `l2chroot: false` flag, which failed since `which` isn't a
       # dynamic executable). A skipped handler is not shown as changed/
-      # failed and isn't counted in the recap, matching real Ansible.
+      # failed and isn't counted in the recap, matching Ansible.
       if handler.when_condition
         begin
           when_result = evaluate_when_items(handler, vars_context, host)
@@ -615,7 +615,7 @@ module Krikri
       # it: a handler's args are finalized exactly like a task's, so real
       # emits its "unsafe template for task args" warning here too - it did
       # not, so a notified handler with `copy: "{{ d }}"` silently diverged
-      # from real's stderr.
+      # from Ansible's stderr.
       begin
         substituted_params = expand_templated_args(substitute_task_params(handler.params, substitutor, native_containers: handler.module_name.ends_with?("set_fact"), module_name: handler.module_name), handler)
         substituted_env = substitute_task_environment(handler, substitutor)
@@ -624,7 +624,7 @@ module Krikri
         # Not routed through apply_changed_failed_when - failed_when:/
         # changed_when: only reinterpret a MODULE result, and arg
         # finalization failed before any module ran (same reasoning as
-        # execute_task_once's identical rescue). Real Ansible reports
+        # execute_task_once's identical rescue). Ansible reports
         # `fatal:` here even with `failed_when: false` set.
         if register_name = handler.register
           register_result(host, register_name, result) unless register_name.empty?
@@ -659,7 +659,7 @@ module Krikri
         return result
       end
       substituted_params = copied
-      # Real's unarchive/assemble action plugins crash on non-string
+      # Ansible's unarchive/assemble action plugins crash on non-string
       # literal args at their own controller-side touch points, before
       # the src staging paths could leak the marker into a message or
       # upload path - see unarchive_assemble_literal_type_failure.
@@ -802,7 +802,7 @@ module Krikri
       # krikri-playbook bug - confirmed identically failing when run
       # directly on both hosts) always propagated as a genuine task
       # failure, since failed_when could never suppress it here, while
-      # real ansible-playbook's own run of the identical role reports
+      # ansible-playbook's own run of the identical role reports
       # this handler as "changed", not failed.
       result = apply_changed_failed_when(handler, result, vars_context, host)
 

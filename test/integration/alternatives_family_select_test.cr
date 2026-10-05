@@ -5,7 +5,7 @@ require "../minitest_helper"
 # ansible-playbook 2.19.11 on this host, 2026-10-01 - krikri-playbook
 # generator round 33 re-sweep, cases #180/#187):
 #
-#   - with only `family:` given, real's self.path is None, so the
+#   - with only `family:` given, Ansible's self.path is None, so the
 #     install() branch is skipped entirely and the gate is
 #     `not (is_same_path or is_same_family)` with is_same_path always
 #     false - real therefore DOES run `update-alternatives --set <name>

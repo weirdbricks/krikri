@@ -21,7 +21,7 @@ end
 
 describe "loop sources holding a list-producing template" do
   it "runs loop:/with_list: array-wrapped sources as one iteration but still flattens with_items:" do
-    # Real Ansible's three shapes, side by side, all live-verified against
+    # Ansible's three shapes, side by side, all live-verified against
     # ansible-core 2.19.11 on this machine:
     #   loop: ["{{ bl }}"]          -> ONE item, the whole list
     #   with_items: ["{{ bl }}"]    -> THREE items (with_items splices a
@@ -143,7 +143,7 @@ describe "loop sources holding a list-producing template" do
   it "resolves with_nested:/with_together: array-wrapped sources to real factors and columns" do
     # with_nested:/with_together: take a list of independent factors/
     # columns, so their one-element ARRAY form is a single `{{ var }}`
-    # SOURCE, not an item list - real Ansible zips/iterates the resolved
+    # SOURCE, not an item list - Ansible zips/iterates the resolved
     # list's own elements into one row per element (live-verified against
     # ansible-core 2.19.11: three one-element rows here). Reading that
     # array as "the whole source is secretly a list-producing template"

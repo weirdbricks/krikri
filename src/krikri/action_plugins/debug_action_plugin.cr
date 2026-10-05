@@ -13,7 +13,7 @@ module Krikri
   # ansible-core's own debug module has always been action-plugin-only
   # (action/debug.py) - it never had a target-side module at all, so
   # running it as a real remote plugin binary here was itself a
-  # divergence from real Ansible's own architecture, not just a missed
+  # divergence from Ansible's own architecture, not just a missed
   # optimization. plugins/debug.cr is kept as a real, working binary for
   # `--async`/manual invocation, but the normal task-execution path never
   # reaches it anymore.
@@ -24,11 +24,11 @@ module Krikri
 
       # A natively typed msg (literal YAML number/bool, or a whole-span
       # `{{ expr }}` evaluated structurally) arrives JSON-encoded behind the
-      # NATIVE_TYPED_PREFIX - real keeps that exact type in the result.
+      # NATIVE_TYPED_PREFIX - Ansible keeps that exact type in the result.
       native_msg = native_typed_msg(msg)
       msg = native_msg.as_s? || native_msg.to_json if native_msg
 
-      # msg and var are mutually exclusive in real ansible.builtin.debug -
+      # msg and var are mutually exclusive in Ansible.builtin.debug -
       # but that check (like every other option check) belongs to the
       # action plugin's own argument-spec validation, which runs on the
       # controller BEFORE this plugin is reached: ArgspecValidator's debug
@@ -41,7 +41,7 @@ module Krikri
       current_verbosity = @params["_verbosity"]?.try(&.to_i?) || 0
 
       if current_verbosity < required_verbosity
-        # Real Ansible's registered result for a verbosity-skipped debug
+        # Ansible's registered result for a verbosity-skipped debug
         # carries skipped (and skip_reason) but NO msg key at all (live:
         # podman-diff debug_edge_cases D3 - a follow-up
         # `d3.msg | default('none')` prints 'none' on real). The old
@@ -49,7 +49,7 @@ module Krikri
         return ActionResult.final(result_json(changed: false, failed: false, msg: "", extra: {"skipped" => JSON::Any.new(true)}))
       end
 
-      # Real ansible.builtin.debug documents msg as defaulting to
+      # Ansible.builtin.debug documents msg as defaulting to
       # "Hello world!" and prints it for a bare `debug:` task (verified
       # against ansible-core 2.19.4). This is the copy that actually runs
       # for a normal debug task - plugins/debug.cr carries the same
@@ -69,7 +69,7 @@ module Krikri
       # unconditional (see ResultDisplay's empty-msg branch).
       return debug_var(var_name) if var_name
 
-      # Real's registered debug msg result runs msg, failed, changed
+      # Ansible's registered debug msg result runs msg, failed, changed
       # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       final = result_json(false, false, msg.to_s, {"_ansible_verbose_always" => JSON::Any.new(true)},
         key_order: ["msg", "failed", "changed"])
@@ -85,14 +85,14 @@ module Krikri
     end
 
     # The decoded value behind a NATIVE_TYPED_PREFIX `msg`, or nil for an
-    # ordinary string one (or an unparsable payload, which real would
+    # ordinary string one (or an unparsable payload, which Ansible would
     # never produce - the prefix is only ever written by this engine).
     private def native_typed_msg(msg : String?) : JSON::Any?
       return nil unless msg && msg.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
       JSON.parse(msg[Krikri::NATIVE_TYPED_PREFIX.size..]) rescue nil
     end
 
-    # The task's own `verbosity:` threshold. Real's spec types it 'int' and
+    # The task's own `verbosity:` threshold. Ansible's spec types it 'int' and
     # a bool IS an int in Python, so a natively-typed `verbosity: true` is 1
     # (the task then skips unless -v) and `false` is 0. The demoted wire
     # text is the only signal left by the time the plugin runs - a QUOTED
@@ -123,12 +123,12 @@ module Krikri
       # shape) - is rendered at debug time, and a templating error
       # inside it (extract on a missing hostvars attribute, a
       # strict-mode undefined reference, ...) fails the task exactly
-      # like real Ansible aborting the play. This path used to stop at
+      # like Ansible aborting the play. This path used to stop at
       # the raw lookup and print the unrendered template string as the
       # "value", letting bad-inventory playbooks run on with an ok:.
       # Unsafe gate (VarSubstitutor.unsafe_root?): a var resolved through an
       # execution-resolved root (registered result / set_fact / fact) is
-      # AnsibleUnsafe in real ansible-core - printed verbatim, never
+      # AnsibleUnsafe in ansible-core - printed verbatim, never
       # re-templated. Without this, `debug: var=r.stdout` on a hostile
       # module result whose text looks like a template executed the
       # template on the controller.
@@ -144,7 +144,7 @@ module Krikri
       # stays `true`, an int `0`, an object nested) - live-verified
       # 2026-09-24: `debug: var=r.changed` prints `"r.changed": true`,
       # not a quoted string. Only the unresolvable case is a string.
-      # Real's registered debug var: result runs the VARIABLE-NAME key,
+      # Ansible's registered debug var: result runs the VARIABLE-NAME key,
       # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       ActionResult.final(result_json(false, false, "", {
         "_ansible_verbose_always" => JSON::Any.new(true),

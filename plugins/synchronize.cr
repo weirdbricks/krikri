@@ -8,12 +8,12 @@ module Krikri
   # synchronize plugin (ansible.posix.synchronize) - the standalone binary
   # half of the port. The normal task-execution path dispatches this
   # binary when the action plugin's delegate host IS the task's own host
-  # (real Ansible's dest_is_local case): the module runs ON that host and
+  # (Ansible's dest_is_local case): the module runs ON that host and
   # rsync works on two plain local paths with no remote shell at all.
   # It also serves `--async`/manual invocation on whatever host the
   # "local" rsync end is: it takes FINAL src/dest (already munged - plain
   # local paths, or user@host:path specs for rsync's own remote-shell
-  # transport) and shells out to the `rsync` CLI with the real module's
+  # transport) and shells out to the `rsync` CLI with the Ansible module's
   # argument construction, via the shared SynchronizeRsync helper.
   # Idempotency (changed: false on a no-op rsync run) comes from rsync's
   # own itemized output - see SynchronizeRsync's changed-detection comment.

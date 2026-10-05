@@ -1,8 +1,8 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_resources"
 
-# Byte-size parsing verified against real Ansible's own `human_to_bytes`
-# (`the real module`'s `SIZE_RANGES`) -
+# Byte-size parsing verified against Ansible's own `human_to_bytes`
+# (`the Ansible module`'s `SIZE_RANGES`) -
 # binary (1024-based) units despite the non-"i" K/M/G/T/P spelling.
 describe Krikri::PluginHelpers::DockerResources do
   include RaisesAssertion
@@ -41,7 +41,7 @@ describe Krikri::PluginHelpers::DockerResources do
 
   describe ".memory_swap_to_bytes" do
     include RaisesAssertion
-    it "converts 'unlimited' and '-1' to the literal -1 (real Ansible's own unlimited-swap convention)" do
+    it "converts 'unlimited' and '-1' to the literal -1 (Ansible's own unlimited-swap convention)" do
       Krikri::PluginHelpers::DockerResources.memory_swap_to_bytes("unlimited").must_equal(-1_i64)
       Krikri::PluginHelpers::DockerResources.memory_swap_to_bytes("-1").must_equal(-1_i64)
     end

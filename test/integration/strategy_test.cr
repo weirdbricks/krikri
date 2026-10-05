@@ -32,7 +32,7 @@ private def run_strategy(strategy : String?) : {Int32, Array(String)}
   # The banner/result sequence IS the observable difference.
   lines = stdout_io.to_s.lines.compact_map do |lv2|
     if lv2.starts_with?("TASK [")
-      # Real's banner pads the line with "*" to the display width;
+      # Ansible's banner pads the line with "*" to the display width;
       # strip the padding so the sequence assertions stay name-only.
       lv2.sub(/ \*+$/, "")
     elsif lv2 =~ /^(changed|ok): \[(h\d)\]/
@@ -81,7 +81,7 @@ describe "strategy:" do
     lines.count(&.starts_with?("TASK [slow")).must_equal(2)
   end
 
-  # Real Ansible REFUSES an unknown strategy - it does not fall back to
+  # Ansible REFUSES an unknown strategy - it does not fall back to
   # linear - and exits 1, not the parser-error 4.
   it "refuses an unknown strategy" do
     code, _ = run_strategy("nonsense")

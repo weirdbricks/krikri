@@ -4,15 +4,15 @@ require "file_utils"
 
 # Registered-result key orders for the ping/getent/debug/set_fact/assert/
 # find/fetch/wait_for/unarchive/archive/uri plugins, pinned to the orders
-# live-verified against real ansible-core 2.19.11 by registering each
+# live-verified against ansible-core 2.19.11 by registering each
 # module's result and dumping `{{ r | to_json }}` (the -v dump sorts
 # alphabetically, so the order is only observable programmatically).
 #
 # Module-plugin specs assert the plugin's own wire shape via
 # PluginSpecHelper.run - krikri's successful module wire omits failed:
-# false (real's registered result carries it, appended after the module
+# false (Ansible's registered result carries it, appended after the module
 # dict), and for the modules whose real wire also carries no changed
-# (ping/getent/wait_for: exit_json passes none, so real's task executor
+# (ping/getent/wait_for: exit_json passes none, so Ansible's task executor
 # backfills the failed, changed TAIL on register) krikri's wire omits
 # changed too (omit_changed), giving the registered shape ping/...,
 # failed, changed. Action-plugin specs (debug/set_fact/assert) run the
@@ -54,7 +54,7 @@ private def unique_tmp(*parts : String) : String
 end
 
 describe "ping plugin result key order" do
-  it "serializes a wire of just ping (real's module wire carries no changed)" do
+  it "serializes a wire of just ping (Ansible's module wire carries no changed)" do
     result = PluginSpecHelper.run("ping", {} of String => String)
     result["ping"].as_s.must_equal("pong")
     result.as_h.keys.must_equal(["ping"])

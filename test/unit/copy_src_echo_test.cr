@@ -1,16 +1,16 @@
 require "../minitest_helper"
 require "system/user"
 
-# The registered `src` echo for content copies, pinned to real's shape:
+# The registered `src` echo for content copies, pinned to Ansible's shape:
 # the copy action plugin stages the content on the target as
 # <remote_tmp>/ansible-tmp-<epoch.micro>-<pid>-<random>/.source and the
 # module echoes that path back (round 995005 deploy_helper_helper_block:
 # real /root/.ansible/tmp/ansible-tmp-.../.source, krikri its own
 # .krikri-playbook-copy-<hex>.tmp next to the dest). Krikri's write flow
-# keeps its own staging locations; only the ECHO is shaped like real's.
+# keeps its own staging locations; only the ECHO is shaped like Ansible's.
 #
 # remote_tmp is `~/.ansible/tmp` of the user the plugin runs as, so the
-# tilde has to be EXPANDED for real: round996005 registered real's
+# tilde has to be EXPANDED for real: round996005 registered Ansible's
 # /root/.ansible/tmp/... against krikri's /root/~/.ansible/tmp/... -
 # Crystal's File.expand_path does not expand a leading "~" (it just
 # joins it onto the working directory), so the pin below must never be
@@ -27,7 +27,7 @@ private def with_temp_dir(&)
   end
 end
 
-describe "copy content src echo in real's staged shape" do
+describe "copy content src echo in Ansible's staged shape" do
   it "echoes ~/.ansible/tmp/ansible-tmp-.../.source for a plain content copy" do
     with_temp_dir do |dir|
       dest = File.join(dir, "current")

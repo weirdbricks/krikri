@@ -1,11 +1,11 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Live-compared byte for byte with real ansible-playbook 2.19.11 (via
+# Live-compared byte for byte with ansible-playbook 2.19.11 (via
 # scripts/output_parity.sh on the same playbooks): debug: msg keeps native
 # YAML/Jinja types, an undefined `var:` prints the inline error marker plus a
 # stderr template-error warning, and a failing include_vars uses the standard
-# failure display (action-level block, real's result keys).
+# failure display (action-level block, Ansible's result keys).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -53,7 +53,7 @@ describe "debug native typing and include_vars failures" do
     stderr_text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nope_zzz' is undefined\nOrigin: PB:5:14")
   end
 
-  it "fails include_vars with real's result keys and action-level block" do
+  it "fails include_vars with Ansible's result keys and action-level block" do
     stdout_text, _ = run_krikri(<<-YAML)
       - hosts: localhost
         gather_facts: false

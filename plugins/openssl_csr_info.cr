@@ -12,7 +12,7 @@ module Krikri
   #
   # Backed by the `openssl` CLI through the shared X509CertInfo.parse_csr
   # helper (see its comment for the field-by-field provenance against
-  # the real module's own get_info). Params: path (a PEM or DER request
+  # the Ansible module's own get_info). Params: path (a PEM or DER request
   # file) or content (PEM text), exactly one of the two, matching the
   # real module's required_one_of plus mutually_exclusive pair.
   #
@@ -20,11 +20,11 @@ module Krikri
   # beyond Int64 go out as their decimal strings (this engine's result
   # world is JSON::Any, Int64 at widest - see X509CertInfo#json_int).
   # Everything else - including extensions_by_oid (see
-  # X509CertInfo.parse_extensions_by_oid) - follows the real module.
+  # X509CertInfo.parse_extensions_by_oid) - follows the Ansible module.
   class OpensslCsrInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec - no file-common args (no
+    # The Ansible module's argument_spec - no file-common args (no
     # add_file_common_args), no aliases.
     SPEC = {
       "path"                  => [] of String,
@@ -93,7 +93,7 @@ module Krikri
       failure("Error while reading CSR file from disk: #{detail}")
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). Types are all str/path here, nothing
     # to convert.
@@ -136,7 +136,7 @@ module Krikri
       raw[start..stop + "-----END CERTIFICATE REQUEST-----".size - 1] + "\n"
     end
 
-    # A DER request (the real module auto-detects the encoding); openssl
+    # A DER request (the Ansible module auto-detects the encoding); openssl
     # converts it to PEM for the text parser.
     private def convert_der(raw : Bytes, path : String?) : String?
       der_file = File.tempname("csrinfo-der")

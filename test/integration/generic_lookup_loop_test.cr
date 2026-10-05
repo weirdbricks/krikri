@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # Generic legacy `with_<lookup>:` loop sources (with_url:, with_lines:, ...).
-# Real Ansible treats ANY with_-prefixed task key as a loop keyword
+# Ansible treats ANY with_-prefixed task key as a loop keyword
 # equivalent to `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"`
 # with the terms templated first; the parser previously recognized only a
 # fixed set of with_* keywords, so with_url:/with_lines: fell through as
@@ -11,7 +11,7 @@ require "../minitest_helper"
 # lean_delivery.solr_standalone's sha512-checksum fetch).
 #
 # with_url is exercised through file:// URLs (controller-local reads,
-# the same scheme real Ansible's url lookup accepts) so the spec needs no
+# the same scheme Ansible's url lookup accepts) so the spec needs no
 # network. Every expected value matches an ansible-core 2.19 run of the
 # same playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -100,7 +100,7 @@ describe "generic with_<lookup> loop sources" do
   end
 
   it "splices a list-valued with_lines term into one command per element" do
-    # Real Ansible's listify_lookup_plugin_terms templates the term first
+    # Ansible's listify_lookup_plugin_terms templates the term first
     # and splices the resolved LIST one level into the lookup's terms, so
     # each element runs as its own command (ansible-core 2.19: two items,
     # alpha and beta).
@@ -143,7 +143,7 @@ describe "generic with_<lookup> loop sources" do
     output.must_include("included with second line")
   end
 
-  it "fails the task like real Ansible when the with_url file:// target is missing" do
+  it "fails the task like Ansible when the with_url file:// target is missing" do
     code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
@@ -159,7 +159,7 @@ describe "generic with_<lookup> loop sources" do
 
   # Security: terms and results of a generic lookup loop are DATA. Each
   # case below used to run the hostile `lookup('pipe', ...)` on the
-  # controller (live canary); real ansible-playbook 2.19.11 prints the
+  # controller (live canary); ansible-playbook 2.19.11 prints the
   # text verbatim and never executes it.
   it "never executes Jinja carried by host-derived text in a lookup term" do
     canary = File.tempname("krikri-lookup-term-canary")

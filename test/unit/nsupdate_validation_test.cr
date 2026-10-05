@@ -6,7 +6,7 @@ require "../minitest_helper"
 #
 # - port/ttl/timeout are AnsibleModule type-converted (int/int/float)
 #   BEFORE the choices checks, failing with parameters.py's wording
-# - key_algorithm=gss-tsig + key_name fails with the real module's
+# - key_algorithm=gss-tsig + key_name fails with the Ansible module's
 #   incompatibility check, which runs before any gssapi import
 # - the record type is parsed only at record_exists time (dnspython's
 #   UnknownRdatatype wording, after TSIG/zone setup, pre-network)

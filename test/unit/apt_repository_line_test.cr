@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/apt_repository_line"
 
 # suggested_filename outputs below are cross-checked against a direct
 # Python re-implementation of apt_repository.py's own `_suggest_filename`
-# (read from the real ansible-core source, not assumed from docs) for the
+# (read from the ansible-core source, not assumed from docs) for the
 # same inputs - see plugins/apt_repository.cr's module comment.
 describe Krikri::PluginHelpers::AptRepositoryLine do
   describe ".normalize" do
@@ -59,7 +59,7 @@ describe Krikri::PluginHelpers::AptRepositoryLine do
 
     # Regression: v0112358.keydb_active_replication passes
     # `filename: /etc/apt/sources.list.d/keydb.list` - a FULL path.
-    # Real Ansible's `_suggest_filename` returns the param verbatim,
+    # Ansible's `_suggest_filename` returns the param verbatim,
     # unconditionally appends `.list` (so `.list.list` - a genuine,
     # verified quirk of its own source), and `_expand_path` passes any
     # candidate containing '/' through as-is instead of joining
@@ -71,9 +71,9 @@ describe Krikri::PluginHelpers::AptRepositoryLine do
     # apt never reads: `apt-get update` exited 0 with no GPG warning
     # (the repo was simply invisible), the task still reported
     # changed/success, and the later `apt: name=keydb` failed with
-    # "Unable to locate package keydb" where real Ansible's identical
+    # "Unable to locate package keydb" where Ansible's identical
     # sequence installed it.
-    it "honors a full-path filename: param verbatim (plus real Ansible's own .list suffix quirk)" do
+    it "honors a full-path filename: param verbatim (plus Ansible's own .list suffix quirk)" do
       Krikri::PluginHelpers::AptRepositoryLine.target_sources_path(
         "/etc/apt/sources.list.d/keydb.list", repo_line, sources_list_d
       ).must_equal("/etc/apt/sources.list.d/keydb.list.list")

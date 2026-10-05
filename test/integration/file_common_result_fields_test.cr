@@ -5,15 +5,15 @@ require "openssl/digest"
 require "digest/sha1"
 require "digest/md5"
 
-# The file-common result fields real Ansible's AnsibleModule.add_path_info
+# The file-common result fields Ansible's AnsibleModule.add_path_info
 # merges into EVERY file-touching module's result -
 # uid/gid/owner/group/mode/state/size for any result path that still exists
 # at module exit time (so a state=absent --check reports the file's
-# PRE-removal stats with state "file", while the same task for real reports
+# PRE-removal stats with state "file", while the same task for Ansible reports
 # only state "absent"), plus copy's own SHA1 `checksum:` (verified live
 # against ansible-core 2.19.4's ad-hoc output: a 40-hex-char SHA1, not the
 # 32-hex-char MD5 this engine used to emit) - all live-verified shapes.
-describe "file-common result fields (real Ansible's add_path_info)" do
+describe "file-common result fields (Ansible's add_path_info)" do
   describe "copy" do
     it "reports a SHA1 (40-hex) checksum plus the stat fields on the identical-content no-op" do
       dest = File.tempname("copy-fields-noop")
@@ -93,7 +93,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
       File.delete(path) if path && File.exists?(path)
     end
 
-    it "state=absent for real reports only path + state 'absent'" do
+    it "state=absent for Ansible reports only path + state 'absent'" do
       path = File.tempname("file-absent-real")
       File.write(path, "bye\n")
 
@@ -109,7 +109,7 @@ describe "file-common result fields (real Ansible's add_path_info)" do
       File.delete(path) if path && File.exists?(path)
     end
 
-    it "state=touch reports the stat fields under the 'dest' key (real Ansible's key for touch)" do
+    it "state=touch reports the stat fields under the 'dest' key (Ansible's key for touch)" do
       path = File.tempname("file-touch")
       File.write(path, "x")
 

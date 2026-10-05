@@ -44,7 +44,7 @@ private DESCRIBE_NONE = <<-XML
 XML
 
 # A VPC the wire response carries no tagSet for at all (the real API
-# omits it for untagged VPCs) - the real module still returns tags: {}.
+# omits it for untagged VPCs) - the Ansible module still returns tags: {}.
 private DESCRIBE_NO_TAGS = <<-XML
 <?xml version="1.0" encoding="UTF-8"?>
   <DescribeVpcsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
@@ -107,7 +107,7 @@ describe "Krikri::PluginHelpers::Ec2Info (ec2_vpc_net_info_test.cr)" do
   end
 
   describe ".run_vpcs" do
-    it "shapes a VPC with the real module's field names, DNS attributes included" do
+    it "shapes a VPC with the Ansible module's field names, DNS attributes included" do
       result = run_module({"region" => "us-east-1"}, ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         case action

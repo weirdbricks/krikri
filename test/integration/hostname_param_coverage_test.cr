@@ -2,12 +2,12 @@ require "../minitest_helper"
 require "file_utils"
 
 # Proactive parameter-coverage pass for the hostname module's `use:`
-# parameter (real Ansible's STRATS dict: alpine/debian/freebsd/generic/
+# parameter (Ansible's STRATS dict: alpine/debian/freebsd/generic/
 # macos/macosx/darwin/openbsd/openrc/redhat/sles/solaris/systemd).
 #
 # Every asserted failure text was live-verified against real
 # ansible-core 2.19.4's own
-# the real module, run
+# the Ansible module, run
 # directly inside a rockylinux:9 container via
 #   printf '{"ANSIBLE_MODULE_ARGS": {...}}' | python3 hostname.py
 #   ("value of use must be one of: alpine, debian, freebsd, generic,
@@ -31,7 +31,7 @@ require "file_utils"
 #    BEFORE the file write (AlpineStrategy extends FileStrategy, so
 #    set_current_hostname's super() no-ops - no plain `hostname N` call)
 #   use=openrc: /etc/conf.d/hostname's hostname="..." line replaced in
-#    place; a file without a hostname= line crashes real Ansible with a
+#    place; a file without a hostname= line crashes Ansible with a
 #    TypeError (its reader returns None); a MISSING file reads as "" and
 #    the write produces a lone "\n" (both live-verified)
 #
@@ -42,7 +42,7 @@ require "file_utils"
 # The redhat/openrc/alpine strategies do real Crystal File I/O on
 # hardcoded system paths (/etc/sysconfig/network, /etc/conf.d/hostname,
 # /etc/hostname), which non-root specs must not touch: the file-mutation
-# paths were live-verified in the container against BOTH real Ansible
+# paths were live-verified in the container against BOTH Ansible
 # and the rebuilt krikri plugin binary (see the specs below that only
 # assert the readable paths), and the examples here guard on machine
 # state like the service param-coverage spec does.
@@ -114,7 +114,7 @@ end
 
 describe "hostname plugin - use: parameter coverage" do
   describe "argument validation" do
-    it "fails with real Ansible's exact choice-validation message (live-verified text)" do
+    it "fails with Ansible's exact choice-validation message (live-verified text)" do
       with_hostname_shims("x", "x") do |env, log|
         result = PluginSpecHelper.run("hostname", {
           "name" => "web01", "use" => "bogus", "_environment" => env,
@@ -131,7 +131,7 @@ describe "hostname plugin - use: parameter coverage" do
       result["msg"].as_s.must_equal("missing required arguments: name")
     end
 
-    it "fails on use: generic - real Ansible's Base strategy is a NotImplementedError crash (live-verified)" do
+    it "fails on use: generic - Ansible's Base strategy is a NotImplementedError crash (live-verified)" do
       with_hostname_shims("x", "x") do |env, log|
         result = PluginSpecHelper.run("hostname", {
           "name" => "web01", "use" => "generic", "_environment" => env,
@@ -191,7 +191,7 @@ describe "hostname plugin - use: parameter coverage" do
       end
     end
 
-    it "fails with real Ansible's >64-char message on the actual set only (live-verified text and check-mode behavior)" do
+    it "fails with Ansible's >64-char message on the actual set only (live-verified text and check-mode behavior)" do
       long_name = "a" * 65
       with_hostname_shims("oldstatic", "oldtrans") do |env, log|
         result = PluginSpecHelper.run("hostname", {
@@ -211,7 +211,7 @@ describe "hostname plugin - use: parameter coverage" do
       end
     end
 
-    it "fails with real Ansible's get_bin_path message when hostnamectl is absent (live-verified text)" do
+    it "fails with Ansible's get_bin_path message when hostnamectl is absent (live-verified text)" do
       with_no_binaries do |env, _log|
         result = PluginSpecHelper.run("hostname", {
           "name" => "newhost", "use" => "systemd", "_environment" => env,
@@ -221,7 +221,7 @@ describe "hostname plugin - use: parameter coverage" do
       end
     end
 
-    it "surfaces a failing hostnamectl as real Ansible's Command failed message (live-verified text)" do
+    it "surfaces a failing hostnamectl as Ansible's Command failed message (live-verified text)" do
       dir = File.join(Dir.tempdir, "krikri-hostname-fail-#{Random.rand(1_000_000)}")
       log = File.join(dir, "calls.log")
       FileUtils.mkdir_p(dir)
@@ -259,10 +259,10 @@ describe "hostname plugin - use: parameter coverage" do
 
     it "runs `hostname -F /etc/hostname` BEFORE the file write, and never a plain `hostname <name>` (live-verified order)" do
       # The file write targets the real /etc/hostname, which this spec
-      # must not touch: when the write fails (non-root), real Ansible
+      # must not touch: when the write fails (non-root), Ansible
       # fails the same way with the same message, so we assert the
       # command order plus that failure; skipped when running as root
-      # (where the plugin - and real Ansible - would legitimately
+      # (where the plugin - and Ansible - would legitimately
       # rewrite the file).
       skip("would touch the real /etc/hostname") if File::Info.writable?("/etc/hostname")
       with_hostname_cmd_shim do |env, log|
@@ -279,7 +279,7 @@ describe "hostname plugin - use: parameter coverage" do
   end
 
   describe "use: redhat" do
-    it "fails with real Ansible's exact message when /etc/sysconfig/network has no HOSTNAME entry (live-verified text, check mode included)" do
+    it "fails with Ansible's exact message when /etc/sysconfig/network has no HOSTNAME entry (live-verified text, check mode included)" do
       skip("/etc/sysconfig/network exists on this machine; the no-entry failure needs to control the file") if File.exists?("/etc/sysconfig/network")
       result = PluginSpecHelper.run("hostname", {
         "name" => "web01", "use" => "redhat", "_ansible_check_mode" => "true",
@@ -299,7 +299,7 @@ describe "hostname plugin - use: parameter coverage" do
       result["changed"].as_bool.must_equal(true)
     end
 
-    it "fails with real Ansible's 'failed to update hostname: [Errno ...]' text when /etc/conf.d is missing (live-verified in a container)" do
+    it "fails with Ansible's 'failed to update hostname: [Errno ...]' text when /etc/conf.d is missing (live-verified in a container)" do
       skip("/etc/conf.d exists on this machine; the write failure needs to control the file") if File.exists?("/etc/conf.d")
       result = PluginSpecHelper.run("hostname", {"name" => "newhost", "use" => "openrc"})
       result["failed"].as_bool.must_equal(true)
@@ -308,11 +308,11 @@ describe "hostname plugin - use: parameter coverage" do
   end
 
   describe "use: alpine write failure" do
-    it "fails with real Ansible's 'failed to update hostname: [Errno ...]' text when the file write fails (live-verified in a container)" do
+    it "fails with Ansible's 'failed to update hostname: [Errno ...]' text when the file write fails (live-verified in a container)" do
       # Same guard as the command-order example: only run when the real
       # /etc/hostname write would fail at the OS level (non-root), so
       # nothing is ever written. As non-root the write fails with EACCES,
-      # rendered here as Python's str(OSError), matching real Ansible's
+      # rendered here as Python's str(OSError), matching Ansible's
       # "failed to update hostname: %s" % to_native(e) shape (Errno 2
       # variant container-verified side by side).
       skip("would touch the real /etc/hostname") if File::Info.writable?("/etc/hostname")

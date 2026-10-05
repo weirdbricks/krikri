@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
-# Real Ansible's --tags/--skip-tags selection. Every expectation here was
-# captured from a real ansible-core 2.19.4 run of the same playbook.
+# Ansible's --tags/--skip-tags selection. Every expectation here was
+# captured from a ansible-core 2.19.4 run of the same playbook.
 #
 # The previous implementation was a single intersection test applied only
 # when --tags was passed, and only to top-level tasks. Five things were
@@ -99,7 +99,7 @@ describe "tag selection" do
     ran_markers(FLAT_PLAYBOOK, ["--skip-tags", "alpha"]).must_equal(["B", "U", "ALW"])
   end
 
-  # --skip-tags wins over always, matching real Ansible.
+  # --skip-tags wins over always, matching Ansible.
   it "lets --skip-tags always drop an always-tagged task" do
     ran_markers(FLAT_PLAYBOOK, ["--skip-tags", "always"]).must_equal(["A", "B", "U"])
   end

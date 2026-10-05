@@ -26,17 +26,17 @@ module Krikri
   # list of `that:` conditions, for role pre-flight validation.
   #
   # Implemented as a plain module rather than the control-node-only action
-  # plugin real Ansible uses (and this entry originally scoped): `that:`
+  # plugin Ansible uses (and this entry originally scoped): `that:`
   # conditions only ever reference variables already resolved into @vars
   # (the same full vars_context every other plugin's `params` were already
   # substituted against before this process was even started) - there's no
   # filesystem/network access or controller-vs-target distinction to make,
   # so there's nothing an action plugin buys here that a plain module
   # doesn't already have. Runs and evaluates identically under check mode
-  # (real Ansible does the same - the verdict doesn't depend on any state
+  # (Ansible does the same - the verdict doesn't depend on any state
   # change), never reports changed.
   #
-  # Verified against real `ansible-playbook` (not assumed from
+  # Verified against `ansible-playbook` (not assumed from
   # `ansible-doc`): evaluation stops at the *first* failing condition
   # (conditions are not aggregated), the failed result includes the raw
   # (unsubstituted) `assertion` text and `evaluated_to: false`, the default
@@ -54,7 +54,7 @@ module Krikri
   # private `_ansible_quiet: true` key (the same convention real
   # Ansible's own `_ansible_verbose_always` inverse uses; private
   # `_ansible_*` keys are stripped before register, so the registered
-  # var shape stays identical to real Ansible's).
+  # var shape stays identical to Ansible's).
   class AssertPlugin < BasePlugin
     # ansible.builtin.assert's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.assert). Validated at
@@ -95,7 +95,7 @@ module Krikri
         PluginResult.new(changed: false, failed: true, msg: fail_msg, assertion: failing, evaluated_to: false)
       else
         success_msg = @params["success_msg"]? || "All assertions passed"
-        # Real's registered assert success runs changed, msg, failed
+        # Ansible's registered assert success runs changed, msg, failed
         # (live-verified vs 2.19.11 via `{{ r | to_json }}`) - mirrors
         # AssertActionPlugin's key_order.
         if true?(@params["quiet"]?)

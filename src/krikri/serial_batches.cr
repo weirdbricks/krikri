@@ -1,7 +1,7 @@
 require "./playbook_parser"
 
 module Krikri
-  # `serial:` - real Ansible runs the WHOLE play against one batch of
+  # `serial:` - Ansible runs the WHOLE play against one batch of
   # hosts at a time instead of every host at once, which is what makes a
   # rolling restart rolling. This engine previously ignored the keyword
   # entirely, so `serial: 1` still hit every host simultaneously.
@@ -55,7 +55,7 @@ module Krikri
           token.to_i? || total
         end
 
-      # A zero or negative batch would loop forever; real Ansible treats
+      # A zero or negative batch would loop forever; Ansible treats
       # anything under one host per batch as one.
       size < 1 ? 1 : size
     end

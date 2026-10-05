@@ -1,14 +1,14 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Task-level `ansible.builtin.gather_facts` - real Ansible lets
+# Task-level `ansible.builtin.gather_facts` - Ansible lets
 # gather_facts be invoked as an ordinary task (an action plugin that
 # delegates to setup, accepting the same gather_subset/gather_timeout/
 # fact_path/filter params), not just as the play-level `gather_facts:`
 # keyword. krikri only implemented the play-level setting, so a direct
 # task was skipped and the run exited rc=4 with "Playbook execution
 # completed with unavailable modules: ansible.builtin.gather_facts"
-# while real ansible-playbook ran ok=1.
+# while ansible-playbook ran ok=1.
 #
 # Found by krikri-playbook-generator (random 2-module smoke test,
 # gather_facts + debconf, seed 42, --run-on-podman).

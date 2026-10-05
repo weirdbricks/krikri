@@ -10,7 +10,7 @@ module Krikri
   # openssl_publickey plugin (community.crypto.openssl_publickey) -
   # derives a public key from a private key and writes it to `path:`.
   #
-  # Behavior matched against the real module (community.crypto 3.1.1):
+  # Behavior matched against the Ansible module (community.crypto 3.1.1):
   #
   #   * formats: PEM (default, SubjectPublicKeyInfo) and OpenSSH (the
   #     `ssh-keygen -y` single line, comment stripped)
@@ -31,7 +31,7 @@ module Krikri
 
     Pkey = PluginHelpers::Pkey
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
     # unchanged, check-mode and state=absent runs. Variant positions
     # confirmed live: backup_file after fingerprint, publickey (with
@@ -42,7 +42,7 @@ module Krikri
       diff ansible_facts failed warnings
     ]
 
-    # The real module's argument_spec plus the file-common args its
+    # The Ansible module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (the only alias is
     # attributes->attr).
     SPEC = {
@@ -109,7 +109,7 @@ module Krikri
       if changed
         backup_file = backup(path)
         File.write(path, desired)
-        # Public key material - 0644-by-umask like the real module's
+        # Public key material - 0644-by-umask like the Ansible module's
         # write_file default, not the 0600 a private key gets.
         File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?
         apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
@@ -124,7 +124,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices -> required_if
     # -> mutually_exclusive -> unsupported (deferred last).
     private def validate_arguments : PluginResult?
@@ -175,10 +175,10 @@ module Krikri
       res
     end
 
-    # Loads the private key through libcrypto (what the real module's
+    # Loads the private key through libcrypto (what the Ansible module's
     # `cryptography` backend does - same library, same failure text) and
     # derives the public key from it. Returns {desired, failure_message}:
-    # the failure message is byte-for-byte the real module's
+    # the failure message is byte-for-byte the Ansible module's
     # OpenSSLBadPassphraseError text when the key cannot be parsed.
     #
     # For `format: OpenSSH` the ssh-keygen CLI is still the serializer
@@ -286,7 +286,7 @@ module Krikri
     end
 
     # The SubjectPublicKeyInfo DER of the loaded private key's public
-    # half - the input the real module hashes for its `fingerprint`
+    # half - the input the Ansible module hashes for its `fingerprint`
     # result (set by #derive, real computes it from the PRIVATE key
     # regardless of the output format).
     @fingerprint_der : Bytes?

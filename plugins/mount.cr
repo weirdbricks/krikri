@@ -11,12 +11,12 @@ module Krikri
   # Supported parameters:
   # - path: mount point (required)
   # - src / fstype: device and filesystem type (required when
-  #   state: present or mounted, matching real Ansible's own
+  #   state: present or mounted, matching Ansible's own
   #   required_if - confirmed via its actual argument_spec, not assumed)
   # - opts: mount options (default "defaults")
   # - dump / passno: fstab fields (default "0")
   # - boot: whether the filesystem mounts on boot (default true) - false
-  #   appends "noauto" to opts, matching real Ansible's behavior exactly
+  #   appends "noauto" to opts, matching Ansible's behavior exactly
   # - fstab: path to the fstab file (default /etc/fstab)
   # - backup: copy the fstab file to a timestamped backup before writing
   #   (default false)
@@ -43,51 +43,51 @@ module Krikri
   # calls are genuine system operations and stay shelled-out either way.
   #
   # state: remounted (Linux `mount -o remount[,opts] [-T fstab] path`,
-  # verified against real ansible.posix mount.py's own `remount()`
+  # verified against Ansible.posix mount.py's own `remount()`
   # function source, not assumed - the BSD `-u` variant isn't
   # implemented, Linux-only like the rest of this plugin) always reports
-  # `changed: true` on success, matching real Ansible's own documented
+  # `changed: true` on success, matching Ansible's own documented
   # behavior (a remount is inherently "did something," not a state
   # comparison). If `opts:` is given (and isn't the literal string
   # `"defaults"`) and the remount command itself fails, this fails with
-  # real Ansible's own exact message rather than silently doing nothing -
+  # Ansible's own exact message rather than silently doing nothing -
   # verified against the source, not paraphrased. When `opts:` is
   # absent/`"defaults"` and the remount command fails instead (e.g. the
   # mount point isn't actually in `fstab` yet, which `remounted` expects
   # is exactly the common case where a fstab entry was just added in the
-  # same task/play), real Ansible falls back to a full `umount` + `mount`
+  # same task/play), Ansible falls back to a full `umount` + `mount`
   # cycle using the fstab entry (a bare `mount <path>` with no `-t`/`-o`
   # consults fstab for the matching line) - implemented here too now, and
   # only fails for real if BOTH the remount attempt AND that fallback
   # cycle fail. No path in this plugin is exit-code-blind anymore -
   # every `mount`/`umount` invocation propagates a real command failure
   # as a task failure with the command's own stdout/stderr, matching
-  # real ansible.posix.mount's verified `fail_json` behavior.
+  # Ansible.posix.mount's verified `fail_json` behavior.
   #
   # state: ephemeral (`path`/`src`/`fstype` required, same as
-  # `present`/`mounted` - verified against real Ansible's own
+  # `present`/`mounted` - verified against Ansible's own
   # `required_if`) mounts without ever touching `fstab` at all, matching
-  # real Ansible's own "The fstab is completely ignored" behavior -
+  # Ansible's own "The fstab is completely ignored" behavior -
   # `fstab:`/`backup:`/`dump:`/`passno:` are all accepted but silently
-  # have no effect here, same as real Ansible. If the mount point isn't
+  # have no effect here, same as Ansible. If the mount point isn't
   # currently mounted, this creates it (`mkdir -p`) and mounts for real
   # (`mount -t <fstype> -o <opts> <src> <path>`, `opts:` verified to still
   # get `boot: false`'s `noauto` treatment even though there's no fstab
   # entry to append it to - confirmed against observed behavior,
   # which computes that unconditionally before the ephemeral-specific
-  # fstab skip). If it's *already* mounted, real Ansible compares the
+  # fstab skip). If it's *already* mounted, Ansible compares the
   # mount table's actual current source device against the requested
   # `src:` (a new `current_mount_source`, reading `/proc/mounts` - no
   # `findmnt` dependency, matching the same "no new binary requirement"
   # preference the rest of this codebase already has) - a match triggers
   # a remount (reusing the exact same `mount -o remount[,opts]` shape
   # `state: remounted` already implements above); a mismatch fails
-  # clearly with real Ansible's own exact message rather than risking an
+  # clearly with Ansible's own exact message rather than risking an
   # unwanted unmount/override, matching its own documented behavior:
   # "the module will fail to avoid unexpected unmount or mount point
   # override." Always `changed: true` on success either way (both the
   # fresh-mount and the source-matches-so-remount paths set it), matching
-  # real Ansible's own documented behavior exactly - verified against its
+  # Ansible's own documented behavior exactly - verified against its
   # source, not just the one-line doc summary.
   #
   # Not implemented: Solaris/BSD-specific vfstab handling (Linux fstab
@@ -105,16 +105,16 @@ module Krikri
     DEFAULT_FSTAB = "/etc/fstab"
 
     def execute : PluginResult
-      # Real ansible.posix.mount rejects ANY parameter outside its own
+      # Ansible.posix.mount rejects ANY parameter outside its own
       # argument_spec at module-arg validation, before any action runs -
       # this engine silently ignored the unknown key and wrote the fstab
-      # entry anyway (changed=true on a task real Ansible fails). Found
+      # entry anyway (changed=true on a task Ansible fails). Found
       # via the podman-diff mount_edge_cases M3 harness case; message
-      # live-verified against the real module's own output for this exact
+      # live-verified against the Ansible module's own output for this exact
       # task. check_mode/diff_mode/_module_name/_verbosity/_environment
       # are engine-internal keys injected by the executor (see
       # build_plugin_config), not part of the real argument_spec, so none
-      # are rejected. The parenthesized alias list mirrors real Ansible's msg (name).
+      # are rejected. The parenthesized alias list mirrors Ansible's msg (name).
       mount_supported = {"backup", "boot", "dump", "fstab", "fstype", "opts", "opts_no_log", "passno", "path", "src", "state", "name"}
       mount_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| mount_supported.includes?(k) || mount_internal.includes?(k) }
@@ -128,7 +128,7 @@ module Krikri
         )
       end
 
-      # `name:` is real Ansible's own documented alias for `path:` (the
+      # `name:` is Ansible's own documented alias for `path:` (the
       # module's original param name, predating `path:` - still commonly
       # used in real-world roles, e.g. geerlingguy.swap's own "Manage
       # swap file entry in fstab." task: `mount: {name: none, src: ...}`).
@@ -160,7 +160,7 @@ module Krikri
       # the parent when missing, then `open(args['fstab'], 'a')`. A bare
       # relative filename has os.path.dirname() == '' and
       # os.makedirs('') raises FileNotFoundError - an UNCAUGHT module
-      # exception real 2.19.11 surfaces as "Task failed: Module failed:
+      # exception Ansible 2.19.11 surfaces as "Task failed: Module failed:
       # [Errno 2] No such file or directory: ''" (live-verified) -
       # emulated here the same way apt's python-apt SystemError is.
       unless state == "ephemeral"
@@ -180,7 +180,7 @@ module Krikri
 
     # Real mount.py's own pre-state fstab creation (runs even in check
     # mode - it is outside any check_mode guard). Returns a failure
-    # PluginResult when real Ansible would have failed here, nil when
+    # PluginResult when Ansible would have failed here, nil when
     # execution continues.
     private def ensure_fstab_file(fstab : String) : PluginResult?
       return nil if remote_file_exists?(fstab)
@@ -224,7 +224,7 @@ module Krikri
       nil
     end
 
-    # Real's two open-failure fail_json texts.
+    # Ansible's two open-failure fail_json texts.
     private def fstab_open_failure(fstab : String, permission : Bool, detail : String) : PluginResult
       if permission
         PluginResult.new(changed: false, failed: true,
@@ -262,9 +262,9 @@ module Krikri
           # break the system at the reboot, so undo all the changes if
           # possible" (ansible/ansible#59183). Without the restore the
           # entry lingers and a later state=absent cleanup task reports
-          # changed where real reports ok (round 993003 kop_storage cold
+          # changed where Ansible reports ok (round 993003 kop_storage cold
           # recap: the /var/tmp/kop_mntfail cleanup loop item). Both
-          # undo steps swallow failures, as real's try/except does.
+          # undo steps swallow failures, as Ansible's try/except does.
           if fstab_changed && !check_mode
             begin
               write_fstab(fstab, pre_lines)
@@ -306,8 +306,8 @@ module Krikri
       success_result(fstab_changed || unmount_changed, path, fstab, backup_file)
     end
 
-    # Real ansible.posix.mount echoes the effective fstab fields back in
-    # every successful result. Verified live against real ansible
+    # Ansible.posix.mount echoes the effective fstab fields back in
+    # every successful result. Verified live against Ansible
     # (ansible.posix 2.2.2 ad-hoc CLI comparison, privileged podman
     # container, 2026-09-13): every success carries name (the mount
     # point), fstab, backup_file ("" when none was created), boot
@@ -345,7 +345,7 @@ module Krikri
       # `module.exit_json(changed=changed, **args)` with args ordered
       # name, opts, dump, passno, fstab, boot, backup_file, then the
       # user-specified src/fstype overrides appended (live-verified
-      # against real 2.19.11 via a registered {{ r | to_json }} dump in
+      # against Ansible 2.19.11 via a registered {{ r | to_json }} dump in
       # the podman container: state=absent, changed and unchanged runs
       # and check mode all identical).
       result.key_order = ["changed", "name", "opts", "dump", "passno", "fstab", "boot", "backup_file", "src", "fstype"]
@@ -363,7 +363,7 @@ module Krikri
     # (see ResultDisplay's `_ansible_core_deprecations` handling), while
     # the result's own `deprecations` list still carries the structured
     # entry into registered vars (both live-verified against 2.19.11).
-    # Real's fail_json paths don't pass args, so failed results carry no
+    # Ansible's fail_json paths don't pass args, so failed results carry no
     # deprecation.
     private def add_exit_json_warnings_deprecation(result : PluginResult) : Nil
       result.extra["deprecations"] = JSON.parse([{
@@ -478,9 +478,9 @@ module Krikri
       end
     end
 
-    # Naming matches real ansible's backup_local() helper (used by
+    # Naming matches Ansible's backup_local() helper (used by
     # mount.py's backup): <fstab>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~
-    # - live-verified against real ansible 2026-09-13.
+    # - live-verified against Ansible 2026-09-13.
     private def backup_fstab(fstab : String) : String
       uid = remote_exec("stat -c %u #{shell_single_quote(fstab)}")[:stdout].strip
       backup_path = "#{fstab}.#{uid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
@@ -553,7 +553,7 @@ module Krikri
     # `mount -o remount[,opts] [-T fstab] path` - always changed: true on
     # success (a remount is inherently "did something," matching real
     # Ansible's own documented RV(ignore:changed=true) here), verified
-    # command shape and failure message against real ansible.posix
+    # command shape and failure message against Ansible.posix
     # mount.py's own remount() source - see the class doc above for what
     # isn't replicated (the opts-absent-and-failed umount+mount fallback).
     private def ensure_remounted(path : String, check_mode : Bool) : PluginResult
@@ -583,7 +583,7 @@ module Krikri
           )
         end
 
-        # `opts:` absent/`"defaults"`: real ansible.posix mount.py's own
+        # `opts:` absent/`"defaults"`: Ansible.posix mount.py's own
         # `remount()` falls back to a full `umount` + `mount` cycle
         # (both driven by the existing fstab entry - a bare `mount
         # <path>` with no `-t`/`-o` consults fstab for the matching
@@ -594,7 +594,7 @@ module Krikri
         # same task/play). Previously this whole fallback wasn't
         # implemented at all - a failed opts-less remount always
         # reported `changed: true, failed: false` regardless, matching
-        # neither real Ansible's fallback NOR a real failure.
+        # neither Ansible's fallback NOR a real failure.
         return remount_via_umount_mount(path, fstab)
       end
 
@@ -659,7 +659,7 @@ module Krikri
       success_result(true, path, @params["fstab"]? || DEFAULT_FSTAB, "")
     end
 
-    # Real Ansible compares the mount table's actual current source
+    # Ansible compares the mount table's actual current source
     # device against the requested src: before touching an already-
     # mounted ephemeral mount point - a match triggers a remount, a
     # mismatch fails clearly rather than risking an unwanted unmount or
@@ -687,13 +687,13 @@ module Krikri
 
     # `mount -o remount -t <fstype> [-o <opts>] <src> <path>` - a
     # distinctly different shape from state: remounted's own `mount -o
-    # remount[,opts] [-T fstab] path`, verified against real Ansible's
+    # remount[,opts] [-T fstab] path`, verified against Ansible's
     # own `remount()` source: for `state: ephemeral` specifically, the
     # `-o remount` from the opts-aware branch (only taken for
     # `state: remounted`) is skipped in favor of a second, separate
     # `-o <opts>` coming from the same `_set_ephemeral_args` helper the
     # fresh-mount path above also uses, and `fstype`/`src` are appended
-    # too (real Ansible's own `remount()` needs both regardless of
+    # too (Ansible's own `remount()` needs both regardless of
     # `state:`, since `mount -o remount` alone can't re-derive them the
     # way an fstab-backed remount can).
     private def ephemeral_remount_command(path : String, src : String, fstype : String) : String

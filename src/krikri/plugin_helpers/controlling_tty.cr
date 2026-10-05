@@ -2,7 +2,7 @@ module Krikri
   # Gives the CURRENT (plugin) process a controlling terminal, so that
   # anything it spawns afterwards can `open("/dev/tty")`.
   #
-  # Why this exists: real ansible-core's ssh connection plugin asks for a
+  # Why this exists: ansible-core's ssh connection plugin asks for a
   # remote pty on essentially every module invocation - see
   # `plugins/connection/ssh.py`:
   #
@@ -13,7 +13,7 @@ module Krikri
   #
   # and `sudoable` is True for ordinary module dispatch (it is only
   # forced False for the internal `dd`-based put_file/fetch_file
-  # helpers). So under real Ansible the whole remote process tree - the
+  # helpers). So under Ansible the whole remote process tree - the
   # module, and whatever subprocess a `command:`/`shell:` task spawns -
   # inherits a controlling terminal, and `/dev/tty` is openable there.
   #
@@ -37,7 +37,7 @@ module Krikri
   # Found via the Galaxy role `imntreal.smallstep_ca`, whose
   # `command: step ca init ...` task fails under this engine with
   # "error allocating terminal: open /dev/tty: no such device or
-  # address" while real ansible-playbook succeeds - the `step` CLI
+  # address" while ansible-playbook succeeds - the `step` CLI
   # opens /dev/tty unconditionally to render a banner, even when (as
   # there) every credential comes from `--password-file` and it never
   # actually reads from it.
@@ -150,7 +150,7 @@ module Krikri
       @@slave_fd = slave_fd
 
       # A pty's line discipline holds only a few KB. Nothing on the
-      # controller ever reads this side (real Ansible's equivalent
+      # controller ever reads this side (Ansible's equivalent
       # bytes end up mixed into ssh's stdout and are discarded when the
       # module's JSON is parsed out of it), so without a reader a
       # program that writes more than that to /dev/tty would block
@@ -171,7 +171,7 @@ module Krikri
 
     # Canonical-mode ICANON with the default VMIN=1 would make a read of
     # /dev/tty block forever waiting for a line nobody will ever type.
-    # Real Ansible's remote pty is fed by ssh from a controller stdin
+    # Ansible's remote pty is fed by ssh from a controller stdin
     # that is closed, so a read there sees EOF rather than hanging;
     # VMIN=0/VTIME=0 is the closest local equivalent - a read returns 0
     # immediately instead of blocking. ECHO off for the same reason

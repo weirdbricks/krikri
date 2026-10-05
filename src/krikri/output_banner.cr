@@ -18,10 +18,10 @@
 {% end %}
 
 module Krikri
-  # Real ansible-playbook's `Display.banner` shape: a blank line, then
+  # ansible-playbook's `Display.banner` shape: a blank line, then
   # `<msg> ` followed by `*` padding out to the display width (79 when
   # stdout is not a tty, `tty_width - 1` when it is, minimum 3 stars).
-  # Banners are never colorized, even on a tty (real's default callback
+  # Banners are never colorized, even on a tty (Ansible's default callback
   # passes no color to banner).
   module OutputBanner
     {% if flag?(:linux) %}
@@ -42,7 +42,7 @@ module Krikri
       "*" * star_len
     end
 
-    # Real's `max(79, tty_size - 1)`: a tty reports its ioctl width; any
+    # Ansible's `max(79, tty_size - 1)`: a tty reports its ioctl width; any
     # non-tty stdout (pipe, file) reports 0 and lands on the 79 floor.
     def self.columns : Int32
       return 79 unless STDOUT.tty?

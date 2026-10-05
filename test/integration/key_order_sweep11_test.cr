@@ -10,7 +10,7 @@ require "json"
 # (the -v dump sorts alphabetically, so the order is only observable
 # programmatically - see key_order_sweep_test.cr for the general method).
 #
-# `ansible_facts` and `warnings` appear in real's registered result too
+# `ansible_facts` and `warnings` appear in Ansible's registered result too
 # (the interpreter-discovery warning and the fact the controller merges
 # in) but have no krikri equivalent, so every expectation below starts at
 # the first module-owned key.
@@ -80,7 +80,7 @@ end
 describe "dnf-family plugin result key order (sweep11)" do
   serial!
 
-  it "registers real's dnf install/no-op/list/cache result shapes" do
+  it "registers Ansible's dnf install/no-op/list/cache result shapes" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "dnf")
     ---
@@ -124,7 +124,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     #{dump_task("absent")}
     YAML
 
-    # real 2.19.11, fedora:41, `dnf: {name: bash, state: present}` on an
+    # Ansible 2.19.11, fedora:41, `dnf: {name: bash, state: present}` on an
     # already-installed package: results, changed, msg "Nothing to do",
     # rc 0, failed.
     noop = dumps["noop"]
@@ -134,19 +134,19 @@ describe "dnf-family plugin result key order (sweep11)" do
     noop["msg"].as_s.must_equal("Nothing to do")
     noop["rc"].as_i.must_equal(0)
 
-    # `list:` is real's exit_json(msg="", results=...) - no `changed` of
+    # `list:` is Ansible's exit_json(msg="", results=...) - no `changed` of
     # its own, so the CONTROLLER backfills it after `failed` (real:
     # msg, results, rc, failed, changed). krikri registers the same five
     # keys with the same values; only the position of the
     # controller-injected `failed` differs (this engine's executor
     # appends it last, after the module's own keys, so `changed` lands
-    # one position earlier than real's).
+    # one position earlier than Ansible's).
     list = dumps["list"]
     list.keys.must_equal(%w[msg results rc changed failed])
     list["msg"].as_s.must_equal("")
     list["changed"].as_bool.must_equal(false)
     list["rc"].as_i.must_equal(0)
-    # the per-package dict is real's _package_dict spelling/order.
+    # the per-package dict is Ansible's _package_dict spelling/order.
     pkg = list["results"].as_a.first.as_h
     pkg.keys.must_equal(%w[name arch epoch release version repo nevra envra yumstate])
     pkg["name"].as_s.must_equal("bash")
@@ -154,7 +154,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     pkg["yumstate"].as_s.must_equal("installed")
     pkg["nevra"].as_s.starts_with?("bash-").must_equal(true)
 
-    # `update_cache:` with no name is real's literal
+    # `update_cache:` with no name is Ansible's literal
     # exit_json(msg=, changed=, results=, rc=) call - a DIFFERENT key
     # order from the transaction path above.
     cache = dumps["cache"]
@@ -163,7 +163,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     cache["changed"].as_bool.must_equal(false)
 
     # A real transaction: results carries the installed RPM's NEVRA and
-    # msg is EMPTY (real only says "Nothing to do" when it changed
+    # msg is EMPTY (Ansible only says "Nothing to do" when it changed
     # nothing).
     install = dumps["install"]
     install.keys.must_equal(%w[results changed msg rc failed])
@@ -184,7 +184,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     absent["msg"].as_s.must_equal("Nothing to do")
   end
 
-  it "registers real's dnf removal result shape" do
+  it "registers Ansible's dnf removal result shape" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "dnfrm")
     ---
@@ -216,7 +216,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     remove["msg"].as_s.must_equal("")
     remove["results"].as_a.first.as_s.must_match(/^Removed: sl-\d/)
   end
-  it "registers real's dnf5 install/no-op/list result shapes" do
+  it "registers Ansible's dnf5 install/no-op/list result shapes" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "dnf5")
     ---
@@ -275,7 +275,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     remove["changed"].as_bool.must_equal(true)
     remove["results"].as_a.first.as_s.must_match(/^Removed: sl-\d/)
   end
-  it "registers real's dnf_versionlock result shape" do
+  it "registers Ansible's dnf_versionlock result shape" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "dvl")
     ---
@@ -302,7 +302,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     lock["locklist_post"].as_a.must_equal(lock["specs_toadd"].as_a)
   end
 
-  it "registers real's yum_versionlock result shape" do
+  it "registers Ansible's yum_versionlock result shape" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "yvl")
     ---
@@ -316,7 +316,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     #{dump_task("lock")}
     YAML
 
-    # real exits exit_json(changed=changed, meta={"packages": ..., "state":
+    # Ansible exits exit_json(changed=changed, meta={"packages": ..., "state":
     # ...}) - the requested specs and the resolved state come back under
     # a single top-level "meta" key, whatever the module's docs say.
     lock = dumps["lock"]
@@ -328,7 +328,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     meta["state"].as_s.must_equal("present")
   end
 
-  it "registers real's rpm_key success shape (changed + the controller's failed)" do
+  it "registers Ansible's rpm_key success shape (changed + the controller's failed)" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "rk")
     ---
@@ -343,7 +343,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     #{dump_task("key")}
     YAML
 
-    # real's rpm_key exit_json(changed=...) carries nothing else, so the
+    # Ansible's rpm_key exit_json(changed=...) carries nothing else, so the
     # registered result is exactly the module's `changed` plus the
     # controller's `failed` (no msg, no stdout).
     key = dumps["key"]
@@ -351,7 +351,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     key["changed"].as_bool.must_equal(false)
   end
 
-  it "registers real's gem success shape" do
+  it "registers Ansible's gem success shape" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "gem")
     ---
@@ -371,7 +371,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     # real community.general gem's success result carries no msg and no
     # captured output - just what was asked for, plus changed, in the
     # module's own dict order name/state/changed (live-verified in a
-    # fresh container with real ansible-core 2.19.11: both an install and
+    # fresh container with ansible-core 2.19.11: both an install and
     # an absent no-op register name, state, changed); the controller's
     # failed lands last, where krikri's executor appends it too.
     gem = dumps["gem"]
@@ -380,7 +380,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     gem["name"].as_s.must_equal("rake")
     gem["state"].as_s.must_equal("present")
   end
-  it "registers real's dnf check-mode shape without touching the host" do
+  it "registers Ansible's dnf check-mode shape without touching the host" do
     skip("podman image #{FEDORA_IMAGE} unavailable") unless fedora_image?
     dumps = fedora_play(<<-YAML, "dnfck")
     ---
@@ -403,7 +403,7 @@ describe "dnf-family plugin result key order (sweep11)" do
     #{dump_var_task("query", "q")}
     YAML
 
-    # real's check-mode exit carries the same keys as a real transaction,
+    # Ansible's check-mode exit carries the same keys as a real transaction,
     # with the "would have" msg and the RPMs it would have installed.
     check = dumps["check"]
     check.keys.must_equal(%w[results changed msg rc failed])

@@ -2,8 +2,8 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.general.alternatives argument-validation and install-guard
-# regressions (found against real ansible-playbook via the podman-diff
-# harness): real AnsibleModule validates name/state/required_one_of
+# regressions (found against ansible-playbook via the podman-diff
+# harness): AnsibleModule validates name/state/required_one_of
 # BEFORE the module resolves update-alternatives, and install() fails a
 # nonexistent --path with "Specified path ... does not exist" instead of
 # registering an alternative that points at a missing binary. Check mode

@@ -30,7 +30,7 @@ describe "getent plugin argument validation" do
                                   "Supported parameters include: database, fail_key, key, service, split.")
   end
 
-  it "maps an unknown database to real's rc-1 wording" do
+  it "maps an unknown database to Ansible's rc-1 wording" do
     result = PluginSpecHelper.run("getent", {"database" => "krikri_db"})
 
     result["failed"].as_bool.must_equal(true)

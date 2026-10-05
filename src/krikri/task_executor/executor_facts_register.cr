@@ -17,7 +17,7 @@ module Krikri
       # RUN hasn't already gathered, populating @facts from a still-warm
       # earlier PROCESS's cache the same way an earlier play in this
       # same run would - see FactCache's own comment for why this is
-      # gated on smart_gathering specifically (real Ansible's own
+      # gated on smart_gathering specifically (Ansible's own
       # `implicit` gathering ignores the cache entirely). This is what
       # makes a warm rerun show `ok=0`/no banner for a fully-cached host
       # instead of always re-gathering - see KNOWN_MISSING.md.
@@ -50,16 +50,16 @@ module Krikri
       end
 
       # A host the pre-upload pass already found unreachable must NOT get
-      # a second live SSH attempt here - real ansible-playbook only ever
+      # a second live SSH attempt here - ansible-playbook only ever
       # tries the connection once (inside this very task, since Gathering
       # Facts *is* its first task) and reports that single failure as
       # unreachable=1/failed=0. Retrying produces a second, redundant
       # connection failure that used to get booked as "failed" here AND
       # THEN as "unreachable" again when run_task_batch's own
       # @unreachable_hosts check hit the play's first real task -
-      # doubling the recap for what real Ansible counts once. Found via
+      # doubling the recap for what Ansible counts once. Found via
       # GROG.reboot going DIVERGENT on a dead kata VM: crystal's warm
-      # recap showed `unreachable=1 failed=1` against real Ansible's
+      # recap showed `unreachable=1 failed=1` against Ansible's
       # `unreachable=1 failed=0`.
       live_targets = targets.reject { |host| @unreachable_hosts.includes?(host.name) }
 
@@ -102,7 +102,7 @@ module Krikri
         # touching the network, so nothing else ever notices) kept
         # running the whole play as generic task failures - found via
         # robertdebock.common's warm rerun against a host the cold run
-        # had killed: real ansible-playbook recap'd `unreachable=1
+        # had killed: ansible-playbook recap'd `unreachable=1
         # failed=0` and halted the host at Gathering Facts, this engine
         # booked `failed=2` and ran on.
         if outcomes[host.name]?.try(&.[2])
@@ -125,10 +125,10 @@ module Krikri
         if success
           puts "ok: [#{host.name}]".colorize(:green)
           # A successful implicit Gathering Facts task DOES count as ok=1 in
-          # the recap - real ansible-core 2.19.11 recaps ok=2 for facts + one
+          # the recap - ansible-core 2.19.11 recaps ok=2 for facts + one
           # command task, ok=1 for a task-less play, and ok=4 for 2 gathers +
           # 2 debug tasks (all verified live, cache-free: with this box's
-          # ambient ANSIBLE_GATHERING=smart + a warm fact cache real Ansible
+          # ambient ANSIBLE_GATHERING=smart + a warm fact cache Ansible
           # silently SKIPS Gathering Facts on a rerun - no banner, no recap
           # contribution - which is how the "facts never count" model was
           # once wrongly inferred from a masked rerun). A FAILED implicit
@@ -186,11 +186,11 @@ module Krikri
       vars_context = Hash(String, JSON::Any).new
       host.vars.each { |key, value| vars_context[key] = value }
 
-      # Real Ansible resolves the connection plugin for the implicit setup
+      # Ansible resolves the connection plugin for the implicit setup
       # task too - an unresolvable ansible_connection fails Gathering
       # Facts with "the connection plugin 'X' was not found" instead of
       # attempting SSH (the silent fallback below reported a bogus
-      # UNREACHABLE for what real Ansible reports as a plain failure).
+      # UNREACHABLE for what Ansible reports as a plain failure).
       if (conn_msg = unresolvable_connection_message(host))
         return {false, conn_msg, false}
       end
@@ -206,7 +206,7 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
-      # ansible_python_interpreter: real Ansible only exposes this flat
+      # ansible_python_interpreter: Ansible only exposes this flat
       # magic var when the module actually runs on the CONTROLLER itself
       # (a genuine ansible_connection=local target, where it's just
       # sys.executable) - live-verified against ansible-core 2.19.4 that
@@ -267,7 +267,7 @@ module Krikri
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         # Merge, not replace: with the run-scoped fact store this host may
         # already carry facts/set_facts from earlier plays of this run, and
-        # real Ansible's own re-gather merges the fresh discovery OVER the
+        # Ansible's own re-gather merges the fresh discovery OVER the
         # existing fact cache (set_facts and earlier gathered facts
         # survive; verified against ansible-core 2.19.11). Under the old
         # per-play store the incoming hash started empty, so replace and
@@ -289,7 +289,7 @@ module Krikri
     # used to be the same question because the pre-gather check ran on a
     # per-play store that was always empty of set_facts at gather time;
     # with the run-scoped store a play-1 set_fact alone must NOT count as
-    # "already gathered" for --gathering smart (real Ansible's smart
+    # "already gathered" for --gathering smart (Ansible's smart
     # gathering consults the fact cache, which set_facts don't enter
     # unless cacheable: yes). merge_ansible_facts writes every
     # high-precedence key into BOTH stores, so "every @facts key is also
@@ -301,11 +301,11 @@ module Krikri
       facts.keys.any? { |key| set_names.nil? || !set_names.has_key?(key) }
     end
 
-    # Real Ansible's setup result carries `discovered_interpreter_python`
+    # Ansible's setup result carries `discovered_interpreter_python`
     # (the interpreter its own discovery resolved) exactly ONCE per host
     # per run - the first module invocation where discovery runs, and it
     # is exempt from the module's own filter (podman-diff setup case W1:
-    # real returns ansible_facts = {discovered_interpreter_python} for a
+    # Ansible returns ansible_facts = {discovered_interpreter_python} for a
     # filter matching nothing); later invocations find the discovery
     # already cached and never re-emit it (real W2+). This engine's
     # gatherer has no per-host state, so the executor computes the

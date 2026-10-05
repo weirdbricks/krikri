@@ -4,7 +4,7 @@ require "../minitest_helper"
 # delegate_to: + delegate_facts: task must (a) censor the loop item on
 # no_log tasks - `(item=(censored due to no_log))`, never the raw item
 # value - and (b) show the delegation target on the host line,
-# `ok: [localhost -> node1]`, matching real ansible-playbook's own
+# `ok: [localhost -> node1]`, matching ansible-playbook's own
 # display. Previously the item printed verbatim and the line stayed
 # `ok: [localhost]`, hiding both the security control and which host
 # the action actually ran against.

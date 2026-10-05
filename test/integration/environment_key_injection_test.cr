@@ -7,7 +7,7 @@ require "../minitest_helper"
 # SSH side runs `ssh host <string>`), so a task-controlled key like
 # `X; touch /tmp/pwned; #` was arbitrary command execution on the managed
 # host. The VALUE side was always Shell.single_quote'd - only the key was
-# raw. Real Ansible hands the environment dict to subprocess's `env:` and can
+# raw. Ansible hands the environment dict to subprocess's `env:` and can
 # never execute through a key, so keys that are valid POSIX identifiers
 # behave identically and anything else is now rejected with a clear plugin
 # error instead of reaching the shell.

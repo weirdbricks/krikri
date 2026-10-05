@@ -153,7 +153,7 @@ module Krikri
       # `JinjaRenderer#evaluate_value!`'s nil convention) - not the empty
       # string the krikri-jinja render Finalizer produces for a top-level
       # Undefined, which made the two entry points disagree with each
-      # other (found by bin/differential_fuzz; real Ansible fails the task
+      # other (found by bin/differential_fuzz; Ansible fails the task
       # in either shape under StrictUndefined). The else-less ternary
       # (`TRUTHY if COND` with a FALSE cond) passes false and keeps the
       # Finalizer's "": there the empty render is load-bearing for real
@@ -168,7 +168,7 @@ module Krikri
         render_via_jinja(expr)
       end
 
-      # #evaluate, but formatting a CONTAINER result the way real Ansible
+      # #evaluate, but formatting a CONTAINER result the way Ansible
       # renders one into final text - Python's `repr` (`['a', 'b']`),
       # not this codebase's internal JSON-compact form (`["a","b"]`).
       #
@@ -199,7 +199,7 @@ module Krikri
         # too), but structured_container deliberately skips lookup calls so a
         # side-effecting lookup never runs twice. The already-rendered result
         # string is the JSON-compact form, so parse THAT and print it as
-        # Python repr like real Ansible's `[1, 2]` in mixed text. A plain
+        # Python repr like Ansible's `[1, 2]` in mixed text. A plain
         # lookup('file', ...) whose content merely looks like JSON is NOT
         # converted: only the list-forcing forms are.
         if list_forcing_lookup?(expr) && (value = (JSON.parse(rendered) rescue nil)) && value.as_a?
@@ -225,7 +225,7 @@ module Krikri
       # from a real value that happens to BE the text "undefined", so any
       # caller that re-checks its own output (`rendered == "undefined"`)
       # misreads the collision as a miss and, under strict-undefined,
-      # fails a task real Ansible runs. The disambiguation here never
+      # fails a task Ansible runs. The disambiguation here never
       # compares strings: a rendered "undefined" is demoted to Undefined
       # only when the undefined-typed structural resolver
       # (VariableLookup#resolve - nil on a miss, JSON::Any otherwise)
@@ -286,7 +286,7 @@ module Krikri
 
       # Evaluate any expression and return string result. A thin guard in
       # front of #evaluate_expr for the inline ternary `TRUTHY if COND else
-      # FALSY` (real Jinja2/Ansible syntax, used directly in default vars
+      # FALSY` (Jinja2/Ansible syntax, used directly in default vars
       # like konstruktoid-hardening's `sysctl_conf_dir: "{{
       # '/usr/lib/sysctl.d' if usr_lib_sysctl_d_dir else '/etc/sysctl.d'
       # }}"`) - split out from the main body (rather than added as another
@@ -303,7 +303,7 @@ module Krikri
       # fallback, whose stringification loses the container's native
       # shape (`structured_container` saw a JSON TEXT string, not a
       # dict, so a mixed-text `parent={{ l.0.0 }}` rendered
-      # `{"name":"s1"}` where real Ansible renders Python repr
+      # `{"name":"s1"}` where Ansible renders Python repr
       # `{'name': 's1'}` - live-verified vs 2.19.11). VariableLookup's
       # apply_dotted_parts owns the Array-vs-Hash-key decision.
       REGEX_PLAIN_REFERENCE = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\.[0-9]+|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
@@ -311,7 +311,7 @@ module Krikri
       def evaluate(expr : String) : String
         if ternary = split_ternary(expr)
           # Crinja-first delegation, ternary construct (after boolean_logic?
-          # below): real Jinja2's inline ternary is right-associative
+          # below): Jinja2's inline ternary is right-associative
           # (`a if b else c if d else e` chains) and its condition can
           # itself be any expression, including one this hand-rolled
           # evaluator's OWN #split_ternary/#evaluate_ternary don't fully
@@ -340,7 +340,7 @@ module Krikri
         elsif boolean_logic?(expr)
           # A full boolean expression (`X is failed or Y != Z`, `A and
           # B`) as a `{{ }}` span's entire content, most commonly a
-          # set_fact: value - real Ansible/Jinja2 evaluates `or`/`and`/
+          # set_fact: value - Ansible/Jinja2 evaluates `or`/`and`/
           # `is` tests identically whether they sit inside a bare when:
           # or a `{{ }}` substitution, but this evaluator (the "plain"
           # one used for {{ }} spans) had no concept of any of the
@@ -357,7 +357,7 @@ module Krikri
           # real installed version, forcing every run to redundantly
           # reinstall the package.
           #
-          # BUT: real Jinja2's `or`/`and` are value-selectors, not pure
+          # BUT: Jinja2's `or`/`and` are value-selectors, not pure
           # boolean operators - `X or Y` evaluates to X itself (not
           # "True") when X is truthy, only falling through to Y when X
           # isn't. `ConditionalEvaluator.evaluate(...) ? "True" :
@@ -535,7 +535,7 @@ module Krikri
       end
 
       # `omit` isn't a real variable - it's a magic bareword sentinel
-      # (real Ansible's own way to conditionally drop a module param
+      # (Ansible's own way to conditionally drop a module param
       # entirely), only ever meaningful as an operand here, never
       # resolvable via a normal variable lookup.
       private def evaluate_operand(expr : String) : String
@@ -558,7 +558,7 @@ module Krikri
 
       private def evaluate_expr_bare_literal(expr : String) : String?
         # A bare boolean literal (`true`/`false`/`True`/`False`), as
-        # opposed to a quoted string one - real Ansible/Jinja2 accepts
+        # opposed to a quoted string one - Ansible/Jinja2 accepts
         # both spellings as literals. Checked before anything else falls
         # through to a plain variable lookup on the literal identifier
         # text itself (always undefined). Real bug found benchmarking
@@ -581,7 +581,7 @@ module Krikri
         # "True"/"False" (real Python/Jinja2 `str(bool)` convention) -
         # this branch was simply never reached with Crinja unavailable
         # for a bare literal, since Crinja renders `{{ true }}`/
-        # `{{ false }}` as "True"/"False" like real Ansible does, so the
+        # `{{ false }}` as "True"/"False" like Ansible does, so the
         # divergence never showed up in practice. Kept as the fallback
         # (unchanged) for the case Crinja itself is ever unavailable.
         if expr == "true" || expr == "false" || expr == "True" || expr == "False"
@@ -674,7 +674,7 @@ module Krikri
           evaluate_bare_dict_call(expr)
       end
 
-      # `lookup('first_found', ffparams)` - real Ansible's lookup()
+      # `lookup('first_found', ffparams)` - Ansible's lookup()
       # function call syntax (distinct from a `|` filter chain), used
       # pervasively across linux-system-roles to pick an OS-version-
       # specific vars file: `include_vars: "{{ lookup('first_found',
@@ -719,10 +719,10 @@ module Krikri
         result.raw.is_a?(String) ? result.as_s : result.to_json
       end
 
-      # `query('first_found', params)` - real Ansible's OTHER lookup-
+      # `query('first_found', params)` - Ansible's OTHER lookup-
       # invocation syntax; unlike `lookup(...)` (which comma-joins a
       # multi-result lookup into a scalar string unless `wantlist=True`
-      # is passed explicitly), `query(...)` is real Ansible's own
+      # is passed explicitly), `query(...)` is Ansible's own
       # `lookup(..., wantlist=True)` shorthand and ALWAYS returns a
       # real list - the standard modern idiom for `loop: "{{
       # query('first_found', params) }}"` (picking an OS-specific vars
@@ -734,12 +734,12 @@ module Krikri
       # once with a bogus `_loop_var`, so `include_vars: "{{ _loop_var
       # }}"` failed with "file not found: undefined" instead of the
       # real per-OS vars file. Found live benchmarking buluma.confluence
-      # (round 165): real ansible-playbook resolved the loop to the
+      # (round 165): ansible-playbook resolved the loop to the
       # real candidate (`ubuntu-22.04.yml`) and continued; crystal
       # failed at the very first real task.
       private def evaluate_bare_query_call(expr : String) : String?
         return evaluate_query(expr[6..-2]) if bare_call?(expr, "query(")
-        # `q(...)` - real Ansible's documented short alias for `query(...)`
+        # `q(...)` - Ansible's documented short alias for `query(...)`
         # (same lookup-plugin dispatch, always the list form). Previously
         # unrecognized - this fell through to a plain variable-name lookup
         # on the literal text `q('first_found', include_files, ...)`,
@@ -751,7 +751,7 @@ module Krikri
         nil
       end
 
-      # `range(...)` - real Jinja2/Python's function-call range syntax,
+      # `range(...)` - Jinja2/Python's function-call range syntax,
       # commonly used as a `loop:` source (`loop: "{{ range(1, 11) |
       # list }}"`) rather than the engine's own `with_sequence:`
       # keyword. Checked here (bare, no filter chain) for the no-filter
@@ -778,7 +778,7 @@ module Krikri
         end
       end
 
-      # `dict(iterable)` - real Ansible's Templar exposes actual
+      # `dict(iterable)` - Ansible's Templar exposes actual
       # Python's `dict` builtin (not Jinja2's own `**kwargs`-only
       # `dict` global), which also accepts a single positional
       # argument: an iterable of [key, value] pairs. Real bug found
@@ -825,7 +825,7 @@ module Krikri
       # rendered text (see jinja_renderer.cr's own `rerender_string_
       # value` comment on why - protecting `buluma.bind`'s `(
       # bind_python_version == '3')` idiom, which needs the opposite
-      # behavior) - correct for real Ansible's OWN pre-2.19 templating
+      # behavior) - correct for Ansible's OWN pre-2.19 templating
       # model, but ansible-core 2.19 made native types the default, so
       # a same-run `X == <int>` against exactly this indirected shape
       # can take the wrong branch silently. Not chased as a general
@@ -965,7 +965,7 @@ module Krikri
           # the vendored Crinja is lenient on every strict class (probe:
           # undefined operand stringifies "", null renders its "None"
           # repr, an omit operand its sentinel text, list + int APPENDS)
-          # and succeeds where real Ansible hard-fails the task - so a
+          # and succeeds where Ansible hard-fails the task - so a
           # raise from the fallback below would never even be reached.
           # Runs the hand-rolled operand resolution + combination once
           # for validation only; only its OWN strict verdict propagates,
@@ -984,7 +984,7 @@ module Krikri
           # operands, recursive re-templating of operand values, and
           # every non-numeric operand class - all matched except the
           # divergences documented in CRINJA_PHASE2_REPORT.md (notably
-          # int + float, which real Jinja adds numerically and the
+          # int + float, which Jinja adds numerically and the
           # hand-rolled path below string-concatenates). Uses the
           # raw-value path (like the filter-chain construct, NOT the
           # scalar-only #render_via_jinja): a `+` chain can produce a
@@ -1011,7 +1011,7 @@ module Krikri
         # single run instead of converging. Checked after both `-` and
         # `+` (so `2 + 3 * 4` still splits on `+` first, each side
         # separately reaching this check via #resolve_plus_operand,
-        # matching real Jinja2's normal precedence - `*`/`/` bind
+        # matching Jinja2's normal precedence - `*`/`/` bind
         # tighter than `+`/`-`) but before the filter/literal/variable
         # checks further down.
         if mult_div = split_top_level_mult_div(expr)
@@ -1156,7 +1156,7 @@ module Krikri
         rescue
           # A leading unary minus whose Crinja evaluation failed: negate a
           # numeric operand, raise on a missing bare reference or a
-          # non-numeric one - real Jinja2/Ansible fails the task on both
+          # non-numeric one - Jinja2/Ansible fails the task on both
           # (`- missing_var`, `- 'abc'`), while the plain-lookup fallback
           # below silently rendered the "undefined" sentinel (found by
           # bin/differential_fuzz: "cannot negate" divergences). Same
@@ -1186,7 +1186,7 @@ module Krikri
       # Negate *operand* for a leading unary minus, or nil when the shape
       # can't be resolved conservatively (the caller keeps the lenient
       # plain-lookup fallback). A genuinely-missing bare reference raises
-      # real Ansible's strict-undefined message (via resolve_plus_operand's
+      # Ansible's strict-undefined message (via resolve_plus_operand's
       # own strict gate); a resolvable non-numeric operand raises real
       # Python's unary-minus TypeError.
       private def evaluate_unary_minus(operand : String) : String?
@@ -1235,7 +1235,7 @@ module Krikri
         # re-resolving it - `@lookup.nested` already has the
         # `rerender_if_templated` handling for exactly this, but
         # previously only ran on an actual Crinja *exception*, never
-        # on a quiet `nil`. Real Ansible resolves the var fully (via
+        # on a quiet `nil`. Ansible resolves the var fully (via
         # its own vars_context) before evaluating `.name`.
         value ? @lookup.format_value(value) : @lookup.nested(expr)
       rescue
@@ -1312,7 +1312,7 @@ module Krikri
         # pattern as the dotted-access/simple-lookup cases above.
         #
         # The engine (krikri-jinja v0.4.20) now hard-fails an out-of-range
-        # list/tuple subscript with real Jinja2's "list object has no
+        # list/tuple subscript with Jinja2's "list object has no
         # element N" strict undefined - that raise must propagate (real
         # Ansible fails the task), not fall into the lenient plain-lookup
         # fallback below, which would render the "undefined" sentinel.
@@ -1331,7 +1331,7 @@ module Krikri
         # Round 812045 (pluggero.bibata_cursor): same strict bracket-index
         # check as the leading-paren path above - a plain `none_var[0]`
         # (JSON-null base) or `short_list[5]` (past the end) must fail the
-        # task the way real Ansible does, not render "undefined". A
+        # task the way Ansible does, not render "undefined". A
         # `| default(...)` guard after the index never reaches this (the
         # whole chain goes through the top-level-pipe path instead, and
         # the trailing-index walk in bracket_index_failure_message stops
@@ -1423,7 +1423,7 @@ module Krikri
       end
 
       # Splits *expr* on a top-level ` if ` with NO ` else ` clause at all
-      # - real Jinja2's else-less inline-if (`TRUTHY if COND`), which
+      # - Jinja2's else-less inline-if (`TRUTHY if COND`), which
       # renders as an empty string when COND is false (Jinja evaluates the
       # missing else branch to Undefined, whose default __str__ is "").
       # Real bug found benchmarking ansible-community.ansible-vault's own
@@ -1713,9 +1713,9 @@ module Krikri
           # list*int, int*list (bool counts as its int-subclass value).
           # Previously any non-numeric pair silently produced JSON null
           # (rendered as ""), so even the VALID repeat shapes
-          # (`'-' * 40`, a real Ansible idiom) rendered empty while real
+          # (`'-' * 40`, a Ansible idiom) rendered empty while real
           # Ansible repeated the operand, and the invalid ones
-          # (`str * list`) were silently answered where real Jinja2
+          # (`str * list`) were silently answered where Jinja2
           # raises TypeError (found by bin/differential_fuzz).
           if (repeat = python_repeat(a, b)) || (repeat = python_repeat(b, a))
             return repeat
@@ -1792,7 +1792,7 @@ module Krikri
           raw
         when Bool
           # Python's bool is an int subclass (True == 1, False == 0), so
-          # `true * 2` is 2 in real Jinja2, not a type error.
+          # `true * 2` is 2 in Jinja2, not a type error.
           raw ? 1.0 : 0.0
         end
       end
@@ -1805,7 +1805,7 @@ module Krikri
       # galaxy_manage_existing) <= 1` with three boolean defaults -
       # Python sums those to 1 and the assert passes; here the Bools
       # fell through to the string-concat fallback ("TrueFalseFalse")
-      # and the assert failed where real Ansible's succeeds.
+      # and the assert failed where Ansible's succeeds.
       private def python_number(value : JSON::Any) : Int64 | Float64 | Nil
         case raw = value.raw
         when Bool    then raw ? 1_i64 : 0_i64
@@ -1836,7 +1836,7 @@ module Krikri
       # Resolves and concatenates/adds every operand of a top-level `+`
       # expression, left to right - array+array concatenates, string+string
       # concatenates, number+number adds; anything else is a strict
-      # operand-class failure (real Ansible fails the task, see
+      # operand-class failure (Ansible fails the task, see
       # #python_type_name / CRINJA_PHASE2_REPORT.md's strictness section).
       private def evaluate_plus(segments : Array(String)) : String
         values = segments.map { |seg| resolve_plus_operand(seg, strict: true) }
@@ -1865,7 +1865,7 @@ module Krikri
 
       private def resolve_plus_operand(expr : String, strict : Bool = false) : JSON::Any
         expr = expr.strip
-        # Strict +/- mode, undefined filter-chain operand: real Ansible
+        # Strict +/- mode, undefined filter-chain operand: Ansible
         # hard-fails `'a' + undef_var|string` ("'undef_var' is undefined")
         # - the lenient render path below collapses the chain to "" and
         # silently concatenates. Same conservative probe the bare-reference
@@ -1888,7 +1888,7 @@ module Krikri
         # `~` and mult/div's operand fallback keep the lenient default):
         # the `omit` keyword and a `none` literal resolve to their real
         # values here so the combine-time strict check can see them as the
-        # operand classes real Ansible fails on (an omit operand reaches
+        # operand classes Ansible fails on (an omit operand reaches
         # the combine as OMIT_SENTINEL; NoneType as JSON null), instead of
         # a plain-name lookup that can't see either and would report them
         # as undefined.
@@ -1899,7 +1899,7 @@ module Krikri
 
         resolved = @lookup.resolve(expr)
 
-        # Real Ansible's recursive re-templating - the fifth (and, so
+        # Ansible's recursive re-templating - the fifth (and, so
         # far, last) independent plain-lookup fallback in this engine
         # found needing this exact fix, alongside ConditionalEvaluator's
         # bare when:, ExpressionEvaluator's filter-chain head,
@@ -1917,7 +1917,7 @@ module Krikri
           return value
         end
 
-        # Strict +/- mode, genuinely-missing operand: real Ansible hard-
+        # Strict +/- mode, genuinely-missing operand: Ansible hard-
         # fails the task on `missing_var + 'x'` ("'missing_var' is
         # undefined", live-verified against 2.19.11) - the old lenient
         # null-collapse here made krikri silently produce the right-hand
@@ -1928,7 +1928,7 @@ module Krikri
         # call, a crinja-only filter chain) - failing THOSE would turn an
         # evaluator gap into a spurious task failure.
         # An out-of-range (or None-base) integer bracket index is a real
-        # task failure in real Ansible for EVERY construct, lenient or
+        # task failure in Ansible for EVERY construct, lenient or
         # strict - the engine (krikri-jinja v0.4.20) raises the same way,
         # and bracket_index_failure_message diagnoses the shape with real
         # Ansible's own message. nil for every shape it can't pin down
@@ -1976,7 +1976,7 @@ module Krikri
         # A `*`/`/`/`//` sub-expression nested inside a `+`/`-` operand
         # (`2 + 3 * 4`'s own right-hand `+`-segment) - checked here so
         # `*`/`/` bind tighter than the `+`/`-` that already split this
-        # segment out, matching real Jinja2 precedence.
+        # segment out, matching Jinja2 precedence.
         if mult_div = split_top_level_mult_div(expr)
           parts, ops = mult_div
           rendered = evaluate_mult_div(expr, parts, ops)
@@ -1998,7 +1998,7 @@ module Krikri
           # stringify-then-`JSON.parse` round trip below turned it into
           # (mrlesmithjr.mongodb round 981080: `'https://x/server-' +
           # v|string + '.asc'` hard-failed "can only concatenate str
-          # (not "float") to str" where real Ansible concatenated). A
+          # (not "float") to str" where Ansible concatenated). A
           # stringly-typed re-parse cannot distinguish a str that merely
           # LOOKS numeric from a real number; only the structured engine
           # result can. nil (Crinja-undefined) deliberately falls through
@@ -2055,7 +2055,7 @@ module Krikri
       # the expression the value was resolved FROM: a root published as
       # execution-resolved (registered result / set_fact / fact / loop
       # item) makes the value unsafe - returned verbatim, never
-      # re-rendered (real ansible-core's AnsibleUnsafe semantics).
+      # re-rendered (ansible-core's AnsibleUnsafe semantics).
       private def retemplated_lookup_value(resolved : JSON::Any?, source_expr : String? = nil) : JSON::Any?
         return nil unless resolved
         return nil if VarSubstitutor.unsafe_root?(@vars, source_expr)
@@ -2067,7 +2067,7 @@ module Krikri
         return nil if hostvars_origin_unsafe?(source_expr)
 
         # A hostvars-rooted expression re-renders with the OTHER host's
-        # scope (real Ansible's HostVarsVars templar) - see
+        # scope (Ansible's HostVarsVars templar) - see
         # HostvarsContext. The unsafe gates above/below still apply: the
         # other host's own execution-resolved values are gated by its
         # registry (the merged scope carries its inventory_hostname), and
@@ -2097,7 +2097,7 @@ module Krikri
         # maintained copy.
         raw = resolved.raw
         if raw.is_a?(Array) || raw.is_a?(Hash)
-          # defer_unresolved: real Jinja2/Ansible templates a container's
+          # defer_unresolved: Jinja2/Ansible templates a container's
           # values lazily, on access - a filter chain over a list of dicts
           # (`mylist | selectattr('state', ...)`) that only ever reads ONE
           # field must not fail on a SIBLING field whose own template
@@ -2107,7 +2107,7 @@ module Krikri
           # filters on `state`). The eager whole-structure render below is
           # kept (it feeds every full-structure consumer: sort/join/combine/
           # to_json...), but a leaf that bottoms out at an undefined name is
-          # left raw so the chain behaves like real Jinja's lazy containers;
+          # left raw so the chain behaves like Jinja's lazy containers;
           # access points that DO read the leaf render it strictly
           # (FilterEngine's map/selectattr attribute extraction and the
           # to_json-family serializers), so nothing that today hard-fails
@@ -2415,7 +2415,7 @@ module Krikri
       end
 
       # Whether *value* is the omit sentinel (see Krikri::
-      # OMIT_SENTINEL) - the marker real Ansible's `omit` leaves behind
+      # OMIT_SENTINEL) - the marker Ansible's `omit` leaves behind
       # for a container/parameter to drop rather than render.
       private def omit?(value : JSON::Any) : Bool
         value.as_s? == OMIT_SENTINEL
@@ -2445,10 +2445,10 @@ module Krikri
         end
       end
 
-      # Real Ansible's Python type name for a +/- operand value, for the
+      # Ansible's Python type name for a +/- operand value, for the
       # strict failure messages (`unsupported operand type(s) for +:
       # 'NoneType' and 'str'`). The OMIT_SENTINEL string is this
-      # codebase's own encoding of real Ansible's omit - live-verified
+      # codebase's own encoding of Ansible's omit - live-verified
       # against local ansible-core: real Python reports an omit operand
       # by its class name `_OmitType` (`can only concatenate str (not
       # "_OmitType") to str`, `unsupported operand type(s) for +:
@@ -2471,7 +2471,7 @@ module Krikri
       private def combine_plus(a : JSON::Any, b : JSON::Any) : JSON::Any
         # The omit sentinel is itself a String, so it would otherwise hit
         # the {String, String} branch below and silently concatenate -
-        # real Ansible fails the task on an omit operand (`_OmitType`).
+        # Ansible fails the task on an omit operand (`_OmitType`).
         # Omit on the LEFT: every real Python class pair fails the same
         # way (`unsupported operand type(s) for +: '_OmitType' and 'str'`).
         # Omit on the RIGHT is side-dependent - str/list left operands
@@ -2520,7 +2520,7 @@ module Krikri
           # another str (`can only concatenate str (not "NoneType") to
           # str`) - previously this branch string-concatenated the
           # rendered forms, silently absorbing null/omit/number/list
-          # operands real Ansible hard-fails on.
+          # operands Ansible hard-fails on.
           raise PlusMinusOperandError.new(
             "can only concatenate str (not \"#{python_type_name(b)}\") to str")
         when {Array, _}
@@ -2958,7 +2958,7 @@ module Krikri
       private def filter_chain_var_head(var_expr : String) : JSON::Any
         resolved = @lookup.resolve(var_expr)
 
-        # Real Ansible's recursive re-templating: a variable
+        # Ansible's recursive re-templating: a variable
         # whose own raw value is itself unrendered Jinja (a
         # role default defined in terms of another default,
         # e.g. ansible-community.ansible-vault's own

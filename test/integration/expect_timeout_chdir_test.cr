@@ -17,7 +17,7 @@ require "json"
 #     creates/removes guards are looked at.
 
 describe "expect timeout conversion" do
-  it "fails a non-numeric timeout with real's check_type_int wording" do
+  it "fails a non-numeric timeout with Ansible's check_type_int wording" do
     result = PluginSpecHelper.run("expect", {
       "command"   => "echo hi",
       "responses" => {"x" => "y"}.to_json,
@@ -30,7 +30,7 @@ describe "expect timeout conversion" do
       "\"'krikri_not_a_number'\" cannot be converted to an int")
   end
 
-  it "beats the empty-command check, like real's ordering" do
+  it "beats the empty-command check, like Ansible's ordering" do
     result = PluginSpecHelper.run("expect", {
       "command"   => "   ",
       "responses" => {"x" => "y"}.to_json,
@@ -89,7 +89,7 @@ describe "expect chdir" do
     result["msg"].as_s.must_equal("Task failed: Module failed: [Errno 2] No such file or directory: '#{missing}'")
   end
 
-  it "beats the creates/removes skip, like real's ordering" do
+  it "beats the creates/removes skip, like Ansible's ordering" do
     missing = File.join(PluginSpecHelper.tmp_path("expect-chdir-skip"), "no-such-dir")
     exists = PluginSpecHelper.tmp_path("expect-chdir-skip-guard")
     File.write(exists, "")

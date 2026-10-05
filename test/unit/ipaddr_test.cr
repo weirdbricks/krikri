@@ -4,7 +4,7 @@ require "../../src/krikri/variable_substitutor/filter_engine"
 
 # ansible.utils ipaddr filter family (IpAddrCore) - every expectation
 # below is mirrored from a live ansible-core 2.19.4 + ansible.utils +
-# netaddr 1.3.0 probe (real ansible-playbook run on this host), not
+# netaddr 1.3.0 probe (ansible-playbook run on this host), not
 # from the collection's docs: several documented aliases ('addr',
 # 'netprefix', 'host-prefixed', 'bin', 'hex', 'reserved',
 # 'unspecified') are NOT in the installed plugin's own query map and

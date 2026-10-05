@@ -53,7 +53,7 @@ private TMP_DIR = begin
 end
 
 # A tiny local HTTP server serving the tar.gz built above, plus a
-# redirect - real Ansible's own unarchive module fetches src: first
+# redirect - Ansible's own unarchive module fetches src: first
 # when remote_src: true and src: contains "://" (GitHub's own release-
 # asset URLs are themselves a redirect to a signed storage URL, so
 # redirect-following isn't optional here).
@@ -97,7 +97,7 @@ describe "unarchive plugin" do
     # Real bug found benchmarking robertdebock.nextcloud: `owner:`/
     # `group:` used to only ever be applied to the DESTINATION
     # DIRECTORY itself (a `chown #{owner} #{dest}`, no `-R`), while
-    # real ansible-playbook's own unarchive module does a final pass
+    # ansible-playbook's own unarchive module does a final pass
     # applying owner:/group:/mode: to every extracted path. Left
     # everything but dest itself at its archive-native ownership -
     # broke a role's downstream `occ` commands relying on the extracted
@@ -109,7 +109,7 @@ describe "unarchive plugin" do
     # This fixture's own archive.tar.gz was built via `tar czf ... .`
     # (archiving the CURRENT directory), so it carries a self-
     # referential "./" member for its own top-level directory - live-
-    # verified against ansible-core 2.19.11: real Ansible applies a
+    # verified against ansible-core 2.19.11: Ansible applies a
     # requested mode:/owner: to dest ITSELF in exactly this shape (dest
     # preset to one mode, the archive's own embedded "./" entry
     # recording a different one, and the task's own explicit mode:
@@ -149,7 +149,7 @@ describe "unarchive plugin" do
   it "never touches an unrelated sibling file, or dest itself, when the archive names its members explicitly (no './' entry)" do
     # The mongodb_exporter fix above (dest itself untouched) still left
     # a blanket `find dest -mindepth 1 -exec ... +` reaching every OTHER
-    # pre-existing file under dest too - real Ansible's own unarchive
+    # pre-existing file under dest too - Ansible's own unarchive
     # module only ever applies owner:/group:/mode: to the archive's own
     # extracted members (dest/<member>, ansible#35426), never to
     # anything else that happens to already live there. Found live via
@@ -166,7 +166,7 @@ describe "unarchive plugin" do
     # myproject-1.0`, naming the directory explicitly rather than
     # archiving "."), so dest itself is genuinely never one of the
     # archive's own members here - unlike the "./"-entry fixture above,
-    # where live verification against real Ansible showed dest DOES
+    # where live verification against Ansible showed dest DOES
     # get the requested mode (a different, equally real shape).
     dest = fresh_dest("tar-unrelated-sibling")
     dest_mode_before = File.info(dest).permissions.value & 0o777
@@ -193,7 +193,7 @@ describe "unarchive plugin" do
     # apply_dest_attributes used to discard chown/chgrp/chmod's exit
     # code entirely - a bogus owner: name (a real, common typo/stale-
     # variable mistake) silently "succeeded" instead of failing the
-    # task, matching real Ansible's own AnsibleModule.set_owner_if_
+    # task, matching Ansible's own AnsibleModule.set_owner_if_
     # different behavior of failing on a real chown error.
     dest = fresh_dest("tar-bad-owner")
     result = PluginSpecHelper.run("unarchive", {
@@ -234,7 +234,7 @@ describe "unarchive plugin" do
     # Real bug found benchmarking darkwizard242.hugo and .awsnuke (round
     # 811222/811266): extra_opts: [hugo] is a plain MEMBER NAME (not a
     # tar flag), extracting only "hugo" out of a release tarball that
-    # also ships README.md/LICENSE at the top level - real Ansible (and
+    # also ships README.md/LICENSE at the top level - Ansible (and
     # this plugin's own extraction step) never touches those other
     # members. apply_dest_attributes' own member list didn't know about
     # this extra_opts shape (only --strip-components: from the 0.9.1049
@@ -294,7 +294,7 @@ describe "unarchive plugin" do
     # directory" warning (exit code 1) for the stripped-away top-level
     # path whenever --strip-components is used, even when nothing
     # actually differs - a raw exit-code check treats that as "changed"
-    # forever. Real ansible-playbook stays changed: false on an
+    # forever. ansible-playbook stays changed: false on an
     # identical rerun (confirmed live) because its own is_unarchived()
     # parses tar's output and explicitly ignores this exact warning
     # pattern.
@@ -328,7 +328,7 @@ describe "unarchive plugin" do
     # `template:` tasks (a 0750 tmp dir, a 0640 config.inc.php) saw
     # their own carefully-applied modes stomped back to the unarchive
     # task's 0755 on every run and re-fixed them right back, reporting
-    # changed: true forever where real ansible-playbook's warm rerun
+    # changed: true forever where ansible-playbook's warm rerun
     # (which never touches non-members) stays ok. 0.9.1044 scoped the
     # application to the archive's own member list - but
     # Act 2 (what this spec pins): the member paths were still raw
@@ -386,7 +386,7 @@ describe "unarchive plugin" do
   it "is idempotent on a mode: override rerun despite tar --compare's own Mode differs line" do
     # Real bug found benchmarking prometheus.prometheus.alertmanager round
     # 134: its own unarchive task sets `mode: 0755` (applied recursively
-    # to every extracted file, matching real ansible-playbook's actual
+    # to every extracted file, matching ansible-playbook's actual
     # behavior - see this file's header comment) - since the archive's
     # OWN embedded member mode is 0644, `tar --compare` legitimately
     # reports "Mode differs" for those files on every single rerun. Real
@@ -412,7 +412,7 @@ describe "unarchive plugin" do
     # ownership anyway (everything ends up owned by the extracting user
     # regardless of what the archive records), so a Uid/Gid mismatch
     # against the archive's own embedded (unreachable-as-non-root) owner
-    # is neither a real change nor fixable. Real Ansible's own
+    # is neither a real change nor fixable. Ansible's own
     # TgzArchive#is_unarchived (unarchive.py) only treats a Uid/Gid-
     # differs line as meaningful when running AS ROOT (`if run_uid == 0
     # and not self.file_args['owner'] and OWNER_DIFF_RE...`) - previously
@@ -490,7 +490,7 @@ describe "unarchive plugin" do
   end
 
   it "keeps a Python-repr exclude: string a plain string (never re-parsed into a list)" do
-    # Real ansible-core's native typing requires a template's whole
+    # ansible-core's native typing requires a template's whole
     # parsed AST to be exactly one output node wrapping one expression,
     # so a value that merely LOOKS like a container - a literal
     # `exclude: "['sub/b.txt']"` string, or a `{% if %}...{% else %}
@@ -500,12 +500,12 @@ describe "unarchive plugin" do
     # container arg arrives as double-quoted JSON (see
     # substitute_task_params's whole-single-span comment), so the
     # single-quote "repair" this spec used to assert was only ever
-    # reachable for values that are strings in real Ansible. The raw
+    # reachable for values that are strings in Ansible. The raw
     # garbage text now reaches tar's --exclude verbatim (exactly what
-    # real Ansible's comma-split would pass), where its own bracket-
+    # Ansible's comma-split would pass), where its own bracket-
     # pattern wildcard semantics swallow every member - nothing is
     # compared as differing and nothing is extracted, vs the repaired
-    # parse that excluded a REAL member real Ansible never excluded.
+    # parse that excluded a REAL member Ansible never excluded.
     dest = fresh_dest("exclude-pyrepr")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "exclude" => "['sub/b.txt']"})
 
@@ -532,12 +532,12 @@ describe "unarchive plugin" do
     result["files"].as_a.map(&.as_s).sort!.must_equal(["./", "./a.txt", "./sub/", "./sub/b.txt"])
   end
 
-  it "fetches src: from a URL first when it contains :// (remote_src: true + a URL), real Ansible's own documented behavior" do
+  it "fetches src: from a URL first when it contains :// (remote_src: true + a URL), Ansible's own documented behavior" do
     # Real bug found benchmarking geerlingguy.node_exporter's own
     # "Download and unarchive node_exporter into temporary location."
     # task (`src: "{{ a_url }}"`, `remote_src: true`). This class's own
     # doc comment previously (wrongly) claimed remote_src: "has no
-    # effect" - real Ansible's unarchive module explicitly documents
+    # effect" - Ansible's unarchive module explicitly documents
     # fetching src: first when it contains "://". Previously src: went
     # straight to a local-file-path existence check, always false for
     # a URL, failing outright with "Source ... failed to transfer" even
@@ -565,15 +565,15 @@ describe "unarchive plugin" do
     result["msg"].as_s.must_include("src")
   end
 
-  it "fails when include: and exclude: are both given (real Ansible's mutually_exclusive)" do
+  it "fails when include: and exclude: are both given (Ansible's mutually_exclusive)" do
     result = PluginSpecHelper.run("unarchive", {"src" => "irrelevant.tar.gz", "dest" => TMP_DIR, "include" => "a", "exclude" => "b"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("parameters are mutually exclusive: include|exclude")
   end
 
-  it "fails on a non-archive src with real Ansible's no-handler-found message head" do
-    # podman-diff unarchive_edge_cases E6: real 2.14's pick_handler
+  it "fails on a non-archive src with Ansible's no-handler-found message head" do
+    # podman-diff unarchive_edge_cases E6: Ansible 2.14's pick_handler
     # composes 'Failed to find handler for "<src>". Make sure the
     # required command to extract the file is installed.\n<reasons>' -
     # the reasons tail is nondeterministic (collected into a Python

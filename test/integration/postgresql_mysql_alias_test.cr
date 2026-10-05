@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Real bug found benchmarking robertdebock.postgres (round 43, 0.9.387):
 # postgresql_db/postgresql_user/mysql_db/mysql_user all only ever read
-# their own canonical `name:` param, never real Ansible's deprecated
+# their own canonical `name:` param, never Ansible's deprecated
 # aliases (`db:` for postgresql_db/mysql_db, `user:` for postgresql_user/
 # mysql_user) - a real playbook using either alias (the role's own
 # "Create postgres database"/"Create postgres users" tasks do exactly

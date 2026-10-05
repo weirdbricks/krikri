@@ -3,11 +3,11 @@ require "../../src/krikri/task_executor"
 require "../../src/krikri/vault"
 
 # Regression spec for the KNOWN_MISSING.md open gap "copy: never
-# auto-decrypts a vault-encrypted src:": real Ansible's copy: decrypt:
+# auto-decrypts a vault-encrypted src:": Ansible's copy: decrypt:
 # param (default true) transparently decodes a vault-armored src file on
 # the CONTROLLER before transfer, but krikri's controller-side read
 # (TaskExecutor#inline_copy_source_content) uploaded the ciphertext
-# verbatim - krikri's effective behavior equaled real Ansible's
+# verbatim - krikri's effective behavior equaled Ansible's
 # decrypt: false for every run.
 #
 # The private method is exercised through a subclass (Crystal private

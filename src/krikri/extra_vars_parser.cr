@@ -3,7 +3,7 @@ require "./unsafe_values"
 require "yaml"
 
 module Krikri
-  # `-e` / `--extra-vars`, real Ansible's highest-precedence variable
+  # `-e` / `--extra-vars`, Ansible's highest-precedence variable
   # scope. Every accepted form below was checked against a real
   # ansible-core 2.19.4 before being implemented here:
   #
@@ -48,7 +48,7 @@ module Krikri
       from_structured(File.read(path), source: path)
     end
 
-    # JSON and YAML both, because real Ansible accepts either for an
+    # JSON and YAML both, because Ansible accepts either for an
     # inline value and for an @file - and JSON is a subset of YAML, so
     # one parser covers both. Parsed via YAML::Any then re-encoded to
     # JSON::Any, the representation the rest of the engine uses.
@@ -79,7 +79,7 @@ module Krikri
       result = {} of String => JSON::Any
       text.split(/\s+/).reject(&.empty?).each do |pair|
         separator = pair.index('=')
-        # parse_kv drops a token without '=' (real ansible ignores it)
+        # parse_kv drops a token without '=' (Ansible ignores it)
         next unless separator && separator > 0
 
         result[pair[0...separator]] = JSON::Any.new(pair[(separator + 1)..])

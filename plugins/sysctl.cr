@@ -19,7 +19,7 @@ module Krikri
   #   Ansible's does)
   # - reload: run `sysctl -p <sysctl_file>` to apply the file's contents
   #   to the running kernel when the file changed (default true, matching
-  #   real Ansible's default - also needs root/capabilities for real)
+  #   Ansible's default - also needs root/capabilities for real)
   # - ignoreerrors: pass -e to the underlying sysctl command
   # - check_mode: report what would change without writing anything or
   #   touching the running kernel
@@ -226,17 +226,17 @@ module Krikri
 
     # Real set_token_value: `sysctl [-e] -w token="value"` under LANG=C;
     # fails the task (changed stays false) when the rc is nonzero OR the
-    # stderr matches real Ansible's _stderr_failed regex - sysctl can exit
+    # stderr matches Ansible's _stderr_failed regex - sysctl can exit
     # 0 yet still fail to set a value
     # (https://bugzilla.redhat.com/show_bug.cgi?id=1264080).
-    # Both this and reload_sysctl's failure are real Ansible's plain
+    # Both this and reload_sysctl's failure are Ansible's plain
     # `fail_json(msg=...)` - msg only, no name/sysctl_file echo.
     private def set_token_value(token : String, value : String, sysctl_file : String) : PluginResult?
       ignore_flag = true?(@params["ignoreerrors"]?) ? "-e " : ""
       # Unquoted, a space-separated value (net.ipv4.ip_local_port_range:
       # "32768 65535") splits into two shell words - sysctl sets only the
       # first and then chokes on the second as a bogus bare key, failing
-      # the whole command where real ansible.posix.sysctl's own quoted
+      # the whole command where Ansible.posix.sysctl's own quoted
       # write succeeds. Found via juju4.harden_sysctl, round 60128.
       result = remote_exec("LANG=C LC_ALL=C LC_MESSAGES=C sysctl #{ignore_flag}-w #{Process.quote(token)}=#{Process.quote(value)}")
       if result[:exit_code] != 0 || stderr_failed?(result[:stderr])

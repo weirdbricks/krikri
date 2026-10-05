@@ -1,14 +1,14 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19's native typing extends beyond the set_fact
+# ansible-core 2.19's native typing extends beyond the set_fact
 # whole-span fix (0.9.1325): it applies to (a) literal YAML scalars in
 # set_fact - a quoted `a: "5"` stays the str "5" while `a: 5` is the int 5,
 # `a: 0644` is the YAML-1.1 octal int 420, `a: yes` the YAML-1.1 bool true,
 # `a: ~` None, and a quoted `"[1, 2]"` stays a string - and (b) whole-span
 # template values in `vars:` (play/task vars and include_vars files), where
 # `b: "{{ 42 }}"` is a real int and `b: "{{ '42' }}"` a real str.
-# Live-verified against real ansible-playbook 2.19.11 with the identical
+# Live-verified against ansible-playbook 2.19.11 with the identical
 # playbooks.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

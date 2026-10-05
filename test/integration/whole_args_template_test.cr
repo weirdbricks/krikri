@@ -12,7 +12,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 describe "whole-args template (`module: \"{{ item }}\"`)" do
   # Real bug found in round 827232 (calvinbui.ansible_apt): its only
   # task is `apt: "{{ item }}"` with `loop: "{{ apt_install_packages }}"`,
-  # each item a dict like {"name": "git"}. Real Ansible templates the
+  # each item a dict like {"name": "git"}. Ansible templates the
   # args string first and, because the rendered value is a dict, uses it
   # AS the module params; krikri kv-parsed the raw template text, found
   # no "=", and dumped it into _raw_params, which apt's strict argument

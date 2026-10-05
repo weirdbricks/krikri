@@ -7,7 +7,7 @@ require "../../src/krikri/filetree_lookup"
 # lookup plugin had no native implementation at all, so the task key fell
 # through unrecognized and `item` was never bound. These specs pin the
 # real plugin's semantics (behavior matched to
-# the real module, not guessed) on a real
+# the Ansible module, not guessed) on a real
 # temp tree.
 private def ft_s(props : Hash(String, JSON::Any), key : String) : String
   props[key]?.try(&.as_s) || ""

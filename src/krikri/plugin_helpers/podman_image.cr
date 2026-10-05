@@ -3,12 +3,12 @@ require "json"
 module Krikri
   module PluginHelpers
     # PodmanImage - pure logic for the podman_image plugin: image
-    # reference construction (the real module's name/tag combination)
+    # reference construction (the Ansible module's name/tag combination)
     # and creds argument building. Split out so this logic is
     # unit-spec-able (execution needs a real podman host).
     module PodmanImage
       # name may carry its own tag/digest; the separate tag param only
-      # applies when the name has none of its own (the real module's
+      # applies when the name has none of its own (the Ansible module's
       # image-name split).
       def self.build_reference(name : String, tag : String?) : String
         return name if tag.nil? || tag.empty?

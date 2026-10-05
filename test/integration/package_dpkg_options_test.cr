@@ -2,19 +2,19 @@ require "../minitest_helper"
 require "file_utils"
 
 # Regression spec for `package:`'s apt install/remove commands missing
-# real Ansible's default dpkg options (`-o Dpkg::Options::=--force-confdef
+# Ansible's default dpkg options (`-o Dpkg::Options::=--force-confdef
 # -o Dpkg::Options::=--force-confold`, apt.py's DPKG_OPTIONS). Real
 # Ansible's apt module threads those options into every apt-get call it
 # builds; package.cr's own separate apt dispatch didn't, so an install
 # whose package ships a conffile that already exists on disk unowned made
 # dpkg stop and prompt for the conflict on stdin - and with this engine's
 # /dev/null stdin the prompt died with "end of file on stdin at conffile
-# prompt", failing the whole install where real ansible-playbook resolved
+# prompt", failing the whole install where ansible-playbook resolved
 # the same conflict silently to "keep current". Found via
 # weareinteractive.docker (round 979177): the role templates
 # /etc/default/docker BEFORE `package: docker-ce` runs, so the fresh-host
 # install hit the prompt on both cold and warm and the "Installing
-# packages" task failed while real Ansible reported changed.
+# packages" task failed while Ansible reported changed.
 # apt.cr's own apt-get call sites already carried the options; this pins
 # the OS-agnostic package plugin's separate ones.
 
@@ -40,7 +40,7 @@ private def env_param(path : String, marker : String, dpkg_query_output : String
 end
 
 describe "package plugin apt dpkg options" do
-  it "installs with real Ansible's default force-confdef/force-confold dpkg options" do
+  it "installs with Ansible's default force-confdef/force-confold dpkg options" do
     with_stub_path(dpkg_query_output: "") do |path, marker|
       result = PluginSpecHelper.run("package", {
         "use"          => "apt",
@@ -57,7 +57,7 @@ describe "package plugin apt dpkg options" do
     end
   end
 
-  it "honors an explicit dpkg_options param the way real Ansible's package action plugin forwards it" do
+  it "honors an explicit dpkg_options param the way Ansible's package action plugin forwards it" do
     with_stub_path(dpkg_query_output: "") do |path, marker|
       result = PluginSpecHelper.run("package", {
         "use"          => "apt",

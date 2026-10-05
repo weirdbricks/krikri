@@ -3,7 +3,7 @@ require "file_utils"
 
 # YAML parse-failure Origin blocks pad the line-number gutter to the
 # offending line's width (" 9" before "10") and show up to TWO leading
-# context lines - byte-compared vs real ansible-playbook 2.19.11.
+# context lines - byte-compared vs ansible-playbook 2.19.11.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")

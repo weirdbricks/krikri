@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# include_vars: with dir: - real Ansible's directory form. Verified live against
+# include_vars: with dir: - Ansible's directory form. Verified live against
 # ansible-core 2.19.4 with a minimal role: every vars file under the
 # directory loads recursively (sorted, later files overriding earlier),
 # depth: 0 means unlimited / depth: 1 means top-level files only,
@@ -65,7 +65,7 @@ describe "include_vars: with dir:" do
   end
 
   it "resolves a relative dir: against the role's vars/ directory" do
-    # Real Ansible's _set_root_dir: inside a role, `dir: vars` resolves
+    # Ansible's _set_root_dir: inside a role, `dir: vars` resolves
     # to the role's own vars/ directory (and a plain subdir name lands
     # under role_path/vars/<name>).
     status, output = run_playbook(<<-YAML)
@@ -117,7 +117,7 @@ describe "include_vars: with dir:" do
     output.to_s.must_include("absent")
   end
 
-  it "fails the task on an unknown extension without ignore_unknown_extensions: (real Ansible's default)" do
+  it "fails the task on an unknown extension without ignore_unknown_extensions: (Ansible's default)" do
     status, output = run_playbook(<<-YAML)
       - name: load vars
         include_vars:
@@ -189,7 +189,7 @@ end
 
 describe "include_vars: with malformed parameters" do
   it "fails the task when neither file:/dir: is given" do
-    # Real ansible-core 2.19.11 (live-verified): a file/dir-less
+    # ansible-core 2.19.11 (live-verified): a file/dir-less
     # include_vars: is NOT a playbook-load abort - the action runs, its
     # null source_file reaches _find_needle, the dataloader warns on
     # stderr, and the task fails with the action's own result shape
@@ -209,7 +209,7 @@ describe "include_vars: with malformed parameters" do
   end
 
   it "fails the task on an unknown argument like free-form" do
-    # Real ansible-core 2.19.11 (live-verified): the include_vars action's
+    # ansible-core 2.19.11 (live-verified): the include_vars action's
     # own argument loop rejects the FIRST unknown key at RUN time -
     # "free-form is not a valid option in include_vars" - an ordinary
     # failed task (fatal dump carries only changed + the wrapped msg),
@@ -229,7 +229,7 @@ describe "include_vars: with malformed parameters" do
   end
 
   it "reports an unknown argument before the missing-file error" do
-    # Real's validate loop runs BEFORE the file lookup, so an unknown key
+    # Ansible's validate loop runs BEFORE the file lookup, so an unknown key
     # wins even when no file/dir was given either.
     status, output = run_playbook(<<-YAML)
       - name: unknown arg wins
@@ -243,7 +243,7 @@ describe "include_vars: with malformed parameters" do
   end
 
   it "reports the alphabetically-first unknown argument, not the YAML-first one" do
-    # Real 2.19's chain templar rebuilds the task args mapping with a
+    # Ansible 2.19's chain templar rebuilds the task args mapping with a
     # SORTED keys() iteration, so the include_vars action's
     # first-invalid-key report comes out in alphabetical key order, not
     # YAML order: `files_macthing:` written AFTER `free-form:` is still
@@ -263,7 +263,7 @@ describe "include_vars: with malformed parameters" do
   end
 
   it "fails the task when file:-style and dir:-style arguments are mixed" do
-    # Real ansible-core 2.19.11 (live-verified): the mixing rejection is
+    # ansible-core 2.19.11 (live-verified): the mixing rejection is
     # the include_vars ACTION's own runtime check - an ordinary failed
     # task ("You are mixing file only and dir only arguments, these are
     # incompatible"), not a parse-time hard stop.

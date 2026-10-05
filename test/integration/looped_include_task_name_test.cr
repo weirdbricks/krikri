@@ -14,7 +14,7 @@ require "../minitest_helper"
 # task's name ONCE at include-entry time - before any of those set_fact: tasks
 # had run - so every iteration's banner showed a permanent "... for undefined"
 # even though the same task's module params (rendered lazily at execution)
-# resolved correctly. Real ansible-core 2.19.4 templates each task's name at
+# resolved correctly. ansible-core 2.19.4 templates each task's name at
 # ITS OWN task-start with current task_vars, so the banner shows the real
 # per-iteration value.
 describe "TASK banner names of tasks inside a looped include_tasks:" do

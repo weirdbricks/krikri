@@ -6,7 +6,7 @@ require "../minitest_helper"
 # VCS requirement (`git+https://github.com/grycap/clues.git@master`)
 # reached `pip show` verbatim - which always fails - so every rerun of a
 # `pip: {name: git+...}` task re-installed and reported `changed: true`
-# where real Ansible's own pip module pre-checks by the DERIVED package
+# where Ansible's own pip module pre-checks by the DERIVED package
 # name and reports ok. Real pip.py derives the name from the `#egg=`
 # fragment or the URL basename (.git stripped); `.../clues.git@master`
 # -> "clues".

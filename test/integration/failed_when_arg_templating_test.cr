@@ -8,10 +8,10 @@ require "file_utils"
 # apply_changed_failed_when pipeline as a genuine module result - so
 # `failed_when: false` swallowed it, the task reported `ok:` (with the
 # fatal error text nested under it), and the play continued to the next
-# task. Real Ansible (verified live against ansible-core 2.19.11) treats
+# task. Ansible (verified live against ansible-core 2.19.11) treats
 # arg finalization as unconditionally fatal: `failed_when: false` has no
 # effect, the host reports `fatal:` and stops. ignore_errors: DOES still
-# apply (real Ansible: ignored=1, play continues).
+# apply (Ansible: ignored=1, play continues).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -46,7 +46,7 @@ describe "an arg-templating failure is unignorable by failed_when:" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "still honors ignore_errors: true (real Ansible: ignored=1, play continues)" do
+  it "still honors ignore_errors: true (Ansible: ignored=1, play continues)" do
     playbook = File.tempname("failed-when-arg-templating-ignore", ".yml")
     File.write(playbook, <<-YAML)
       - hosts: localhost

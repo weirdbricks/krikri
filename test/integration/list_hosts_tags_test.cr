@@ -1,10 +1,10 @@
 require "file_utils"
 require "../minitest_helper"
 
-# --list-hosts and --list-tags, matching real ansible-playbook's layout
+# --list-hosts and --list-tags, matching ansible-playbook's layout
 # (captured from ansible-core 2.19.4).
 #
-# One DELIBERATE divergence, in --list-hosts: real Ansible emits the
+# One DELIBERATE divergence, in --list-hosts: Ansible emits the
 # hosts of a multi-group pattern like `all` in a different order on every
 # run (Python hash iteration - observed as web2,db1,web1 / web1,web2,db1
 # / web2,web1,db1 across five consecutive runs of the same playbook), so

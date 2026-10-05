@@ -3,7 +3,7 @@ require "../../src/krikri/playbook_parser"
 
 # current_container_facts detection runs against /proc on whatever host
 # the plugin process lands on, so the spec covers the module resolution
-# plus the mountinfo parsing rules on fixture files (the real module's
+# plus the mountinfo parsing rules on fixture files (the Ansible module's
 # 64-hex-id regex chain). The cpuset/mountinfo probes themselves are
 # environment-dependent - verified live against real container runs.
 describe "community.docker.current_container_facts" do

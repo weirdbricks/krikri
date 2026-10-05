@@ -31,7 +31,7 @@ describe GroupState do
       group.as(GroupState::Group).gid.must_equal("4")
     end
 
-    it "prefers the LAST matching line (real Ansible scans reversed lines)" do
+    it "prefers the LAST matching line (Ansible scans reversed lines)" do
       group = GroupState.local_parse(<<-FILE, "dup")
         dup:x:1000:
         other:x:1001:
@@ -95,7 +95,7 @@ describe GroupState do
         .must_equal(["'g1'"])
     end
 
-    it "keeps -r on the local path (real Ansible passes it to lgroupadd too, live-verified)" do
+    it "keeps -r on the local path (Ansible passes it to lgroupadd too, live-verified)" do
       GroupState.groupadd_args("g1", nil, true, local: true).must_equal(["-r", "'g1'"])
     end
 

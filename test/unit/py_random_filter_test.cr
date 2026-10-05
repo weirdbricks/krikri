@@ -23,7 +23,7 @@ describe Krikri::PyRandom do
   # Pinned against real CPython 3.13.5's random.Random (randrange goes
   # through _randbelow_with_getrandbits, identical across Python versions;
   # choice is the 3.11+ seq[_randbelow(len)] form) - these pin BIT-EXACT
-  # parity with real ansible-playbook, not merely internal determinism.
+  # parity with ansible-playbook, not merely internal determinism.
   it "reproduces CPython's randrange for string seeds" do
     Krikri::PyRandom.new("host1").randrange(65534).must_equal(31863)
     Krikri::PyRandom.new("host2").randrange(65534).must_equal(58734)
@@ -55,13 +55,13 @@ describe "Krikri::VariableSubstitutor::FilterEngine (py_random_filter_test.cr)" 
       Krikri::VariableSubstitutor::FilterEngine.known_filter_name?("random").must_equal(true)
     end
 
-    it "matches real Ansible for 65534 | random(seed=inventory_hostname)" do
+    it "matches Ansible for 65534 | random(seed=inventory_hostname)" do
       # lean_delivery.jenkins_slave's own password-generation idiom - the
       # seed is a VARIABLE reference (unquoted kwarg), not a literal.
       scoped.apply(JSON::Any.new(65534_i64), "random(seed=inventory_hostname)").as_i.must_equal(31863)
     end
 
-    it "matches real Ansible for a quoted string seed" do
+    it "matches Ansible for a quoted string seed" do
       engine.apply(JSON::Any.new(65534_i64), "random(seed='host1')").as_i.must_equal(31863)
     end
 
@@ -151,7 +151,7 @@ describe "Krikri::VariableSubstitutor::FilterEngine (py_random_filter_test.cr)" 
   end
 
   describe "Crinja side (.j2 templates / {% %} blocks)" do
-    it "random with a seed matches real Ansible through a pure Crinja render" do
+    it "random with a seed matches Ansible through a pure Crinja render" do
       crinja_render("{{ 65534 | random(seed='host1') }}").must_equal("31863")
       crinja_render("{{ n | random(seed=host) }}", {"n" => 65534, "host" => "host1"}).must_equal("31863")
     end

@@ -24,7 +24,7 @@ private def run_adhoc(args : Array(String), env : Hash(String, String)? = nil) :
 end
 
 describe "krikri ad-hoc CLI" do
-  it "--help lists the real ansible ad-hoc option surface" do
+  it "--help lists the Ansible ad-hoc option surface" do
     _, output = run_adhoc(["--help"])
 
     ["--become-password-file", "--become-pass-file",
@@ -102,7 +102,7 @@ describe "krikri ad-hoc CLI" do
     end
   end
 
-  # Ad-hoc result shape for command/shell, matched against real ansible's
+  # Ad-hoc result shape for command/shell, matched against Ansible's
   # own ad-hoc output (re-verified 2026-09-16, ansible-core 2.19.11,
   # matching command.py's r['msg'] = '' initialization + exit_json):
   # `ansible localhost -c local -m command -a "echo hi" -t <dir>` writes
@@ -183,7 +183,7 @@ describe "krikri ad-hoc CLI" do
     status.exit_code.must_equal(0)
   end
 
-  it "stacks -v/-vv/-vvv like real ansible and krikri-playbook" do
+  it "stacks -v/-vv/-vvv like Ansible and krikri-playbook" do
     status, _ = run_adhoc(["localhost", "-i", INVENTORY, "-vv", "-m", "ping"])
 
     status.success?.must_equal(true)
@@ -196,7 +196,7 @@ describe "krikri ad-hoc CLI" do
     output.must_include("Error")
   end
 
-  # Real ansible passes the ENTIRE ad-hoc result buffer to one
+  # Ansible passes the ENTIRE ad-hoc result buffer to one
   # Display.display(msg, color=...) call whose stringc() wraps each line
   # with the same SGR code - so the whole block gets colored, not just
   # the status word. Codes verified byte-for-byte against ansible-core
@@ -234,14 +234,14 @@ describe "krikri ad-hoc CLI" do
     end
   end
 
-  # JSON-object `-a` args: real Ansible's ad-hoc arg parsing accepts a
+  # JSON-object `-a` args: Ansible's ad-hoc arg parsing accepts a
   # single JSON object string as the module params (verified live
   # against ansible-core 2.19.11, same sweep date) - before the
   # JSON-object path in PlaybookParser.parse_adhoc_params existed, the
   # whole string was silently ignored and the module ran on its own
   # defaults (e.g. debug printed "Hello world!" instead of the given
   # msg). Malformed JSON-looking strings fall through to the ordinary
-  # k=v split, exactly as real Ansible does (live-checked: `{bad json`
+  # k=v split, exactly as Ansible does (live-checked: `{bad json`
   # became `_raw_params`, which command then tried to execute and
   # failed with rc=2).
   describe "JSON-object -a args" do
@@ -268,7 +268,7 @@ describe "krikri ad-hoc CLI" do
       output.must_include("kv marker")
     end
 
-    it "falls back to k=v parsing for malformed JSON-looking args, like real Ansible" do
+    it "falls back to k=v parsing for malformed JSON-looking args, like Ansible" do
       status, output = run_adhoc(["localhost", "-i", INVENTORY, "-c", "local", "-m", "command", "-a", "{bad json"])
 
       status.success?.must_equal(false)

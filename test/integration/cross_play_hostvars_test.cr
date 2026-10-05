@@ -2,14 +2,14 @@ require "../minitest_helper"
 
 # Facts produced in an earlier play of the same run must be visible in
 # later plays BOTH directly and through hostvars - with no fact cache
-# configured. Real ansible-core keeps set_fact/registered/gathered facts
+# configured. ansible-core keeps set_fact/registered/gathered facts
 # in the in-memory host state for the whole run (ansible-core 2.19.11,
 # verified live), while this engine used to scope them to the producing
 # play's own TaskExecutor: cross-play reads only survived via a fact
 # cache plugin (ANSIBLE_CACHE_PLUGIN), so a CI/dev run without one got
-# `hostvars[...] = undefined` for exactly the data real Ansible still
+# `hostvars[...] = undefined` for exactly the data Ansible still
 # had. Every example here clears the ANSIBLE_* fact-cache/gathering env
-# explicitly and was live-verified against real ansible-playbook 2.19.11
+# explicitly and was live-verified against ansible-playbook 2.19.11
 # before being pinned.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

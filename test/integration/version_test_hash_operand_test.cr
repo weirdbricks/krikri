@@ -1,14 +1,14 @@
 require "../minitest_helper"
 
 # `x is version('2.7', '<')` with the bare `ansible_version` magic-var
-# DICT as the left operand - a role-side bug, but one real Ansible turns
+# DICT as the left operand - a role-side bug, but one Ansible turns
 # into a hard task failure, found via timorunge.pmm_client's own
 # `tasks/preinst.yml`:
 #
 #   update_cache: "{{ omit if ((ansible_pkg_mgr == 'dnf') and
 #     (ansible_version is version('2.7', '<'))) else 'yes' }}"
 #
-# Real ansible-core 2.19 (verified live, `ansible_connection=local`) tries
+# ansible-core 2.19 (verified live, `ansible_connection=local`) tries
 # to version-compare the stringified dict and fails the task with
 # "Version comparison failed: '<' not supported between instances of
 # 'str' and 'int'" - "Finalization of task args for
@@ -16,7 +16,7 @@ require "../minitest_helper"
 # ok=3 failed=1 skipped=0). This engine's evaluate_value happily
 # stringified the whole compact-JSON dump, compare_versions' digit scan
 # compared *something*, the ternary picked a branch, and the play
-# continued into tasks real Ansible never reached (ok=5 failed=1
+# continued into tasks Ansible never reached (ok=5 failed=1
 # skipped=1) - genuinely different tasks ran.
 #
 # The second example guards the correct, dotted-field usage

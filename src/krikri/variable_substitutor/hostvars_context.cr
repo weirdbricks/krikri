@@ -4,7 +4,7 @@ module Krikri
   module VariableSubstitutor
     # Per-host variable context for `hostvars[<other host>]` values.
     #
-    # Real Ansible renders a value read through `hostvars['other']` with
+    # Ansible renders a value read through `hostvars['other']` with
     # THAT host's own templar (HostVarsVars): the value's `{{ myname }}`
     # resolves against the other host's inventory vars/facts/registered
     # vars/inventory_hostname, never the reading host's. This engine's
@@ -20,7 +20,7 @@ module Krikri
     # host's scope: entry keys win, everything the entry does not carry
     # (play/role vars, shared magic vars like groups/playbook_dir,
     # hostvars itself) falls back to the reading host's scope - for two
-    # hosts in the same play those are identical in real Ansible, and the
+    # hosts in the same play those are identical in Ansible, and the
     # entry carries every per-host difference. Lookups are unaffected:
     # `hostvars['h2'].missing_key` still resolves against the raw entry
     # alone (undefined), exactly as before - only the re-render of a

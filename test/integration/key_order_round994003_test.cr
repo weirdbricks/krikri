@@ -3,18 +3,18 @@ require "file_utils"
 require "json"
 
 # round994002 (kop_misc2, Ubuntu 22.04) / round994003 (kop_rocky, Rocky
-# Linux 9) registered-result shapes, captured from real ansible-core
+# Linux 9) registered-result shapes, captured from ansible-core
 # 2.19.11 via the probe roles' `KEYORDER|<probe>|{{ r | to_json }}`
 # debug lines and pinned here against krikri:
 #
-# - ansible.posix.firewalld (round994003): success results carry real's
+# - ansible.posix.firewalld (round994003): success results carry Ansible's
 #   msg composition ("Permanent and Non-Permanent(immediate) operation[,
 #   Changed <thing> <value> to <state>]") and register as
 #   [changed, msg, failed]; a check-mode would-change registers as bare
 #   [changed, failed]; a failure registers as
-#   [failed, msg, changed, exception] with real's
+#   [failed, msg, changed, exception] with Ansible's
 #   "ERROR: Exception caught: <dbus exception> <joined msgs>" text. The
-#   plugin used to emit a `zone` key real never has, msg-less failures
+#   plugin used to emit a `zone` key Ansible never has, msg-less failures
 #   (it echoed the CLI's empty stdout while the error went to stderr),
 #   and - the actual bug that failed a task real succeeds at - drove
 #   firewall-cmd's nonexistent --remove-service-from-zone flag.
@@ -26,7 +26,7 @@ require "json"
 #   latter satisfies the plugin's firewall-library import gate). The
 #   permanent+immediate combination is what the real capture used.
 #
-# - ansible.builtin.service (both rounds): on a systemd host real's
+# - ansible.builtin.service (both rounds): on a systemd host Ansible's
 #   service ACTION plugin dispatches to the systemd module, whose
 #   registered result is [name, changed, status, (enabled,) state,
 #   failed] - status being the full `systemctl show` property dict, and
@@ -103,7 +103,7 @@ FW_FIREWALLD_STATEFUL_SHIM = <<-SHIM
   done
   case "$action" in
     list)
-      # real's ServiceTransaction reads the zone's whole service list
+      # Ansible's ServiceTransaction reads the zone's whole service list
       # (`service in self.fw.getServices(zone)`) - space-separated on one line (like firewall-cmd) -
       # never --query-service, which rejects an undefined service name.
       if [ -f "$KRIKRI_FW_STATE" ]; then
@@ -159,7 +159,7 @@ FW_FIREWALLD_STATEFUL_SHIM = <<-SHIM
 describe "firewalld registered shapes (round994003, podman container)" do
   serial!
 
-  it "registers real's permanent+immediate success/check/failure shapes" do
+  it "registers Ansible's permanent+immediate success/check/failure shapes" do
     unless PluginSpecHelper.container_cli_available?
       skip("podman unavailable")
     end
@@ -174,7 +174,7 @@ describe "firewalld registered shapes (round994003, podman container)" do
     # firewall-offline-cmd) hits the same fake.
     File.write(File.join(shims, "firewall-offline-cmd"), FW_FIREWALLD_STATEFUL_SHIM)
     # The firewall-library import gate probes the plugin process's own
-    # PATH with real's interpreter-discovery order.
+    # PATH with Ansible's interpreter-discovery order.
     %w[python3.13 python3.12 python3.11 python3.10 python3].each do |py_shim|
       File.write(File.join(shims, py_shim), "#!/bin/sh\nexit 0\n")
     end
@@ -354,7 +354,7 @@ describe "firewalld registered shapes (round994003, podman container)" do
     svc_again["msg"].as_s.must_equal(context)
 
     svc_check = dumps["fw-svc-check"].as_h
-    # real's exit_json(changed=True) inside the transaction: no msg key.
+    # Ansible's exit_json(changed=True) inside the transaction: no msg key.
     svc_check.keys.must_equal(["changed", "failed"])
     svc_check["changed"].as_bool.must_equal(true)
 
@@ -394,8 +394,8 @@ describe "firewalld registered shapes (round994003, podman container)" do
     fw_fail["changed"].as_bool.must_equal(false)
     fw_fail["exception"].as_s.must_equal("(traceback unavailable)")
 
-    # The zone file must still hold only the services real would have
-    # written: real's own permanent addService/update() rejects a name
+    # The zone file must still hold only the services Ansible would have
+    # written: Ansible's own permanent addService/update() rejects a name
     # no service XML defines (firewalld's check_config), so krikri
     # writing a <service name="kop_nosuch_svc"/> entry here is its own
     # bug, not a difference from real.
@@ -458,7 +458,7 @@ FW_SYSTEMCTL_SHIM = <<-SHIM
   exit 0
   SHIM
 
-# A representative slice of real's `systemctl show firewalld` output,
+# A representative slice of Ansible's `systemctl show firewalld` output,
 # in its own property order (round994003 firewalld_helper_service
 # captured 240 keys; the order is what this pin is about).
 FW_SHOW_INACTIVE = <<-SHOW
@@ -523,7 +523,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
       YAML
 
       cold = dumps["svc-cold"].as_h
-      # real's systemd-module registered shape: [name, changed, status,
+      # Ansible's systemd-module registered shape: [name, changed, status,
       # enabled, state, failed] - no msg key (the round994003
       # firewalld_helper_service capture).
       cold.keys.must_equal(["name", "changed", "status", "enabled", "state", "failed"])
@@ -539,7 +539,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
         "ActiveState", "FragmentPath", "CollectMode",
       ])
       # The status dict is the PRE-action `systemctl show` snapshot, same
-      # as real's (it never re-reads after the mutations).
+      # as Ansible's (it never re-reads after the mutations).
       status["ActiveState"].as_s.must_equal("inactive")
       status["LoadState"].as_s.must_equal("loaded")
     end

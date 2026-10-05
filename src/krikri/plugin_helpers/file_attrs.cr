@@ -1,6 +1,6 @@
 module Krikri
   module PluginHelpers
-    # Real AnsibleModule.set_fs_attributes_if_different (basic.py) and
+    # AnsibleModule.set_fs_attributes_if_different (basic.py) and
     # the add_path_info its result passes through - the shared protocol
     # layer behind `add_file_common_args`, for the plugins that hand-roll
     # their owner:/group:/mode: application instead of going through the
@@ -18,7 +18,7 @@ module Krikri
     #   raises exactly those, and its run_and_capture rescue surfaces
     #   them verbatim). A rejected chown syscall fails with the bare
     #   "chown failed" in the fatal msg and the OSError's own text
-    #   appended in the [ERROR] block - real's
+    #   appended in the [ERROR] block - Ansible's
     #   `fail_json(path=..., msg='chown failed', exception=ex)` pair.
     #   chgrp carries no detail at all (`fail_json(msg='chgrp failed')`).
     #   A rejected chmod is only a warning: set_mode_if_different logs it
@@ -72,7 +72,7 @@ module Krikri
         {changed, nil}
       end
 
-      # Real parses ANY all-digit mode string as octal, leading zero or
+      # Ansible parses ANY all-digit mode string as octal, leading zero or
       # not ("640" and "0640" are identical); a symbolic mode ("u+x") has
       # no libc equivalent and goes to the real chmod binary, exactly
       # like copy.cr's own apply_file_attributes.
@@ -100,9 +100,9 @@ module Krikri
         nil
       end
 
-      # Each returns nil on success and the failure real Ansible reports
+      # Each returns nil on success and the failure Ansible reports
       # otherwise, with the fatal msg and the [ERROR] block text split
-      # the way real's own fail_json(msg=..., exception=...) pair
+      # the way Ansible's own fail_json(msg=..., exception=...) pair
       # renders them.
       def chown(path : String, uid : Int32) : PluginResult?
         File.chown(path, uid: uid, gid: -1)
@@ -127,7 +127,7 @@ module Krikri
       rescue
       end
 
-      # Real's fail_json(path=..., msg=..., exception=...) routes through
+      # Ansible's fail_json(path=..., msg=..., exception=...) routes through
       # add_path_info, so the file's stat fields ride along on the
       # failure too - exactly as on a successful result.
       def attrs_failure(path : String, msg : String, detail : String) : PluginResult
@@ -138,7 +138,7 @@ module Krikri
 
       # Formats the Errno the way Python's str(OSError) does over a
       # BYTES path - the b'...' repr included, since that is literally
-      # what real's os.lchown(b_path, ...) raises with.
+      # what Ansible's os.lchown(b_path, ...) raises with.
       def os_error_text(ex : File::Error, path : String) : String
         errno = ex.os_error.try(&.value)
         strerror = ex.os_error.try(&.message) || "Unknown error"

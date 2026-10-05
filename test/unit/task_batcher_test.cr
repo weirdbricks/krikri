@@ -30,10 +30,10 @@ describe Krikri::TaskBatcher do
   end
 
   it "ends the batch after a task whose notify: is certain to abort the run" do
-    # Real Ansible aborts at the notifying task, having run nothing
+    # Ansible aborts at the notifying task, having run nothing
     # after it; a batch group would already have executed every
     # remaining step in the same SSH round trip, applying side effects
-    # real Ansible never applies (verified live over SSH - round 181).
+    # Ansible never applies (verified live over SSH - round 181).
     a = task("a")
     b = task("b")
     b.notify = ["no_such_handler"]
@@ -116,7 +116,7 @@ describe Krikri::TaskBatcher do
     # itself was missing from that list. Batched together, the later
     # task's `when:` got rendered against pre-batch (still-undefined)
     # `services`, always silently skipping - a real behavioral
-    # divergence from real Ansible, not just wasted batching.
+    # divergence from Ansible, not just wasted batching.
     a = task("a")
     b = Krikri::Task.new("b", "ansible.builtin.service_facts")
     c = task("c")
@@ -337,7 +337,7 @@ describe Krikri::TaskBatcher do
     # failed_when: is the hazard, not changed_when: - it can flip a raw
     # `failed: true` to a pass (or the reverse) before the batch
     # script's own fail-fast would have halted the group, letting later
-    # members execute real side effects real Ansible never applies.
+    # members execute real side effects Ansible never applies.
     # changed_when: riding along on the same task doesn't soften that.
     a = task("a")
     b = task("b")
@@ -436,7 +436,7 @@ describe Krikri::TaskBatcher do
   # step with `item` unbound, its strict `{{ item[1] }}` param
   # substitution raised, and the group's fail-fast halted the batch
   # before the next member was ever prepared - which then got no
-  # batch-cache entry and printed "skipping:" (real Ansible: "ok:"),
+  # batch-cache entry and printed "skipping:" (Ansible: "ok:"),
   # silently dropping a real task's execution whenever an empty-list
   # templated loop task sat directly before a non-looped one.
   describe "runtime-resolved loop sources are never batched with their neighbors" do

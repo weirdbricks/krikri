@@ -9,7 +9,7 @@ require "../minitest_helper"
 # invocation entirely when a local `pip show` said the package was
 # absent, which made a PEP 668 externally-managed environment (bookworm
 # system python, where pip refuses to run at all) report state=absent
-# as ok where real ansible-playbook fails the task.
+# as ok where ansible-playbook fails the task.
 #
 # Driven through the real plugin binary via PluginSpecHelper with a
 # fake pip executable so the spec is hermetic: no real pip, no network,

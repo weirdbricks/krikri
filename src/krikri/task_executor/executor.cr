@@ -27,7 +27,7 @@ require "../cli_options"
 require "../task_debugger"
 
 module Krikri
-  # `ansible_version` - a real Ansible magic var (`{full, major, minor,
+  # `ansible_version` - a Ansible magic var (`{full, major, minor,
   # revision, string}`) giving the CONTROLLER's ansible-core version, used
   # by real roles for feature-detection (`ansible_version.string is
   # version_compare(min_version, '>=')`). Entirely unimplemented before -
@@ -38,9 +38,9 @@ module Krikri
   # failed the task outright. Found live re-benchmarking xanmanning.k3s
   # (round 163 regression check) - its own `pre_checks.yml` gates on
   # exactly this pattern before doing anything else, so the WHOLE role
-  # failed at task 1 on every rerun. Reports a real ansible-core version
+  # failed at task 1 on every rerun. Reports a ansible-core version
   # (not this project's own "0.9.x" version number) deliberately: this
-  # engine's whole design goal is behavioral parity with real Ansible, and
+  # engine's whole design goal is behavioral parity with Ansible, and
   # every version-gated role feature in the wild was written expecting a
   # 2.x-shaped comparison target, not a sub-1.0 one - reporting crystal's
   # own version here would make EVERY such min-version check fail
@@ -59,7 +59,7 @@ module Krikri
     property handlers : Array(Task)
     property? check_mode : Bool
     property? diff_mode : Bool
-    # Real ansible-playbook's -v/-vv/-vvv/... count, exposed to task
+    # ansible-playbook's -v/-vv/-vvv/... count, exposed to task
     # templating as the ansible_verbosity magic var. See
     # #build_vars_context's own assignment for the full rationale.
     property verbosity : Int32
@@ -79,7 +79,7 @@ module Krikri
     # whole-playbook static scan (PlaybookParser.unavailable_modules)
     # flagged ANY unresolvable module name found anywhere in the file
     # regardless of reachability, producing a false-positive exit 4
-    # divergence from real Ansible's own (often 0 or 2) exit code on
+    # divergence from Ansible's own (often 0 or 2) exit code on
     # every such role. Found via buluma.jenkins's own zypper_repository
     # task (round 180), gated behind an OS-family branch that's false on
     # every host this project benchmarks against (Ubuntu/RHEL-family).
@@ -95,7 +95,7 @@ module Krikri
     # The subset of @facts[host.name] that came from `set_fact`/
     # `register`-style high-precedence writes rather than an ordinary
     # fact-gathering module (setup/package_facts/service_facts/etc).
-    # Real Ansible ranks these very differently - "host facts" (#11 in
+    # Ansible ranks these very differently - "host facts" (#11 in
     # the documented precedence order) sit BELOW play vars (#12), while
     # "set_facts / registered vars" (#19) sit near the very top, above
     # task vars. merge_ansible_facts writes every key into @facts
@@ -107,7 +107,7 @@ module Krikri
     # in at the low tier. Found live testing itigoag.packages: a plain
     # `package_facts:` task's `ansible_facts.packages` was clobbering a
     # play-level `vars: packages: {...}` of the same bare name, which
-    # real ansible-playbook never does (a play var always wins over
+    # ansible-playbook never does (a play var always wins over
     # ordinary gathered facts).
     @set_facts : Hash(String, Hash(String, JSON::Any))
     # The "ansible_facts.*" dict form of @facts[host.name] (unprefixed
@@ -140,7 +140,7 @@ module Krikri
     # from the three ActionPluginManager.execute_action dispatch sites
     # after a successful action: without this the hostvars/groups caches
     # stay stale for the REST of the play and `hostvars['<new host>']`
-    # reads "undefined" where real Ansible exposes the host immediately
+    # reads "undefined" where Ansible exposes the host immediately
     # (verified live vs 2.19.11: a same-play `hostvars['dyn1']` read
     # after add_host resolves with the full magic-var entry).
     def bump_hv_generation_for_add_host(module_name : String) : Nil
@@ -182,24 +182,24 @@ module Krikri
     # the rest of the play for that host" behavior). Public - crystal-
     # play.cr reads this after #run to carry a failed host forward and
     # exclude it from every *remaining* play in the whole run too, not
-    # just the rest of this one (real Ansible's actual behavior; see
+    # just the rest of this one (Ansible's actual behavior; see
     # git log's `0.9.61`-found, `0.9.64`-fixed cross-cutting engine
     # gap commit).
     getter halted_hosts : Set(String)
     # Subset of halted_hosts that got there via a CLEAN meta: end_host/
-    # end_play, not a real task failure. Real Ansible's own semantics:
+    # end_play, not a real task failure. Ansible's own semantics:
     # "causes the play to end WITHOUT FAILING the host(s)" - such a host
     # must still be excluded from the REST OF THIS PLAY (the existing
     # halted_hosts mechanism already does that for free, including
     # correctly propagating out of block:/rescue:/always: nesting and
     # suppressing its own pending notified handlers - both verified
-    # against real ansible-playbook to behave identically to a real
+    # against ansible-playbook to behave identically to a real
     # failure for THIS play), but must NOT be treated as a failure by
     # krikri-playbook.cr's cross-play carry-forward (permanently_failed_
     # hosts) or count toward the run's overall failed/exit-code status.
     getter ended_hosts : Set(String)
     # Hosts a real failure halted in this play whose error state was
-    # since cleared via meta: clear_host_errors. Real Ansible's own
+    # since cleared via meta: clear_host_errors. Ansible's own
     # documented semantics: "makes them available for targeting in
     # subsequent plays, but not continue execution in the current
     # play" - so, unlike ended_hosts, these stay in halted_hosts (the
@@ -209,7 +209,7 @@ module Krikri
     # Hosts a `meta: end_role` ended the calling role for, keyed by the
     # role's own filesystem root (task.role_path - the identity two tasks
     # of the same role invocation share). Every remaining task of that
-    # role is silently skipped for such a host - real Ansible consumes
+    # role is silently skipped for such a host - Ansible consumes
     # them in the iterator without banners or recap counters, and does
     # NOT touch the parent role, depended-on roles or later
     # include_role: calls of the same role.
@@ -274,7 +274,7 @@ module Krikri
     # otherwise every batched task pays for that construction twice.
     @batch_cache : Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)}))
     # Max hosts run concurrently per task via the --forks flag; defaults
-    # to 5, matching real ansible-playbook's own default (--forks 1
+    # to 5, matching ansible-playbook's own default (--forks 1
     # restores the original one-host-at-a-time behavior). Only tasks
     # `task_forkable?` allows actually fan out - run_once:/block:/
     # include_role: (and a non-looped include_tasks:, batched by its own
@@ -286,7 +286,7 @@ module Krikri
     # running a playbook): suppresses the playbook-style "TASK [...]"
     # banner (ad-hoc has no task name to show - it's always exactly one
     # synthetic task) and switches finish_single_task's result display
-    # to ResultDisplay.display_adhoc_result, matching real ansible's own
+    # to ResultDisplay.display_adhoc_result, matching Ansible's own
     # `host | SUCCESS => {...}` minimal-callback output instead of
     # ansible-playbook's `ok: [host]`.
     @adhoc : Bool
@@ -328,7 +328,7 @@ module Krikri
       getter results : Hash(String, IO::Memory)
       # Carries the FINISHED host's name, not just a tick: the caller
       # prints each host's buffer as its name arrives, which is what
-      # gives real Ansible's completion-order output.
+      # gives Ansible's completion-order output.
       getter done_signal : Channel(String)
       getter gate : Channel(Nil)
 
@@ -346,7 +346,7 @@ module Krikri
       @play_vars = {} of String => JSON::Any,
       # Play#all_role_defaults / #all_role_vars - every static role's own
       # defaults/vars, visible to EVERY role in the play including ones
-      # that ran earlier (real Ansible loads them all at play setup).
+      # that ran earlier (Ansible loads them all at play setup).
       # See #build_vars_context for exactly where they rank.
       @all_role_defaults = {} of String => JSON::Any,
       @all_role_vars = {} of String => JSON::Any,
@@ -360,7 +360,7 @@ module Krikri
       # Run-scoped store for `set_fact:`-produced high-tier vars. Real
       # Ansible ranks set_facts near the very top of the precedence ladder
       # and keeps them for the WHOLE RUN - a play-2 play var must not
-      # shadow a play-1 set_fact (verified against real ansible-core
+      # shadow a play-1 set_fact (verified against ansible-core
       # 2.19: a two-play repro prints play 1's set_fact value in play 2
       # even though play 2 declares a same-named vars: entry). This used
       # to be per-play unconditionally, so exactly that shadowing
@@ -368,7 +368,7 @@ module Krikri
       # the same store to every play's executor; per-play isolation
       # remains the default when nil (specs, ad-hoc use).
       set_fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
-      # Run-scoped store for `register:` results. Real Ansible keeps a
+      # Run-scoped store for `register:` results. Ansible keeps a
       # registered result on the host for the WHOLE RUN - play 2 can read
       # play 1's registered var directly and through hostvars[<host>]
       # (verified against ansible-core 2.19.11). The caller passes the
@@ -376,7 +376,7 @@ module Krikri
       # the default when nil (specs, ad-hoc use).
       registered_store : Hash(String, Hash(String, JSON::Any))? = nil,
       @adhoc = false,
-      # -e/--extra-vars. Real Ansible's HIGHEST-precedence scope: they
+      # -e/--extra-vars. Ansible's HIGHEST-precedence scope: they
       # beat play vars, role vars, task vars, inventory and facts, and
       # (verified against ansible-core 2.19.4) a later `set_fact` cannot
       # override one either - which is why these are applied at the very
@@ -389,9 +389,9 @@ module Krikri
       # path may be templated against that host's own facts.
       @vars_files = [] of Array(String),
       @vars_files_dir = ".",
-      # The playbook's own directory, absolute - real Ansible's
+      # The playbook's own directory, absolute - Ansible's
       # `playbook_dir` magic var (see #apply_path_magic_vars). Defaults
-      # to the working directory, which is also what real Ansible
+      # to the working directory, which is also what Ansible
       # reports for an ad-hoc run with no playbook at all.
       @playbook_dir = ".",
       # See Play#any_errors_fatal / Play#max_fail_percentage.
@@ -411,20 +411,20 @@ module Krikri
       # does the actual family filtering.
       @gather_subset = [] of String,
       # See Play#gather_timeout / Play#fact_path - the other two play
-      # keywords real Ansible feeds its implicit setup call.
+      # keywords Ansible feeds its implicit setup call.
       @gather_timeout : Int64? = nil,
       @fact_path : String? = nil,
       # See Play#remote_user.
       @remote_user : String? = nil,
       # See Play#debugger.
       @debugger : String? = nil,
-      # The playbook FILE path (not just #playbook_dir) - real Ansible's
+      # The playbook FILE path (not just #playbook_dir) - Ansible's
       # task-arg templating failures embed the offending task's source
       # location from the playbook YAML (see
       # #finalize_args_failure_message). nil (specs, ad-hoc) omits that
       # context block.
       @playbook_file : String? = nil,
-      # The play's own source position - real Ansible labels the implicit
+      # The play's own source position - Ansible labels the implicit
       # Gathering Facts task's `task path:` line with the play's location
       # (see Play#source_file/#source_line).
       @play_source_file : String? = nil,
@@ -433,12 +433,12 @@ module Krikri
       @results = Hash(String, Hash(String, Int32)).new
       # The caller owns run-scoped stores and hands the same ones to every
       # play's executor, so facts (and set_facts/registered vars) from
-      # play 1 are still there in play 4 - real Ansible keeps them in
+      # play 1 are still there in play 4 - Ansible keeps them in
       # memory for the whole run, cache or not. With no store passed (the
       # default), this is per-play exactly as before (specs, ad-hoc use).
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
       @set_facts = set_fact_store || Hash(String, Hash(String, JSON::Any)).new
-      # Registered vars share the run the same way (real Ansible keeps a
+      # Registered vars share the run the same way (Ansible keeps a
       # register: result visible to every later play, directly and via
       # hostvars).
       @registered_vars = registered_store || Hash(String, Hash(String, JSON::Any)).new
@@ -508,7 +508,7 @@ module Krikri
     end
 
     # One host's whole task list, flushing output after EACH task rather
-    # than at the end. Real Ansible emits a host's banner and its result
+    # than at the end. Ansible emits a host's banner and its result
     # together - under `free` you see "TASK [x] / changed: [h2]" as a
     # pair, then h2's next pair, while h1 is still working - so buffering
     # per host (rather than per task) would group all of a host's output

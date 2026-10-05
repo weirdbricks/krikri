@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real Ansible's own strategy/__init__.py counts a failed task caught by
+# Ansible's own strategy/__init__.py counts a failed task caught by
 # ignore_errors: true as `ok` AND `ignored` in the recap - never
 # `failed`, and never halts the host. TaskExecutor's shared
 # ResultDisplay.update_stats already did this correctly for the common
@@ -12,7 +12,7 @@ require "../minitest_helper"
 # their own stats (only for whether to halt the host). Found via
 # CyVerse-Ansible.ez's own "include variables ..., if error, just
 # ignore" task (`ignore_errors: yes` on a missing-file include_vars:):
-# real Ansible's recap showed `ok=10 failed=0 ignored=1`, this engine's
+# Ansible's recap showed `ok=10 failed=0 ignored=1`, this engine's
 # showed `ok=9 failed=1 ignored=0`.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -50,8 +50,8 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
     output.must_match(/ignored=1\b/)
   end
 
-  it "include_tasks: on a missing file fails fatally even under ignore_errors: (real 2.19.11)" do
-    # Live-verified against real ansible-core 2.19.11 (this expectation
+  it "include_tasks: on a missing file fails fatally even under ignore_errors: (Ansible 2.19.11)" do
+    # Live-verified against ansible-core 2.19.11 (this expectation
     # used to claim ok+ignored and "still going" - wrong): an
     # include_tasks: whose file resolves nowhere is a fatal include
     # failure that ignore_errors: does NOT apply to - the play halts for
@@ -99,9 +99,9 @@ describe "ignore_errors: on a controller-side failure counts as ok+ignored, not 
 end
 
 # Recap tallying for the implicit Gathering Facts task + ignore_errors:
-# interactions, verified live against real ansible-core 2.19.11 (run
+# interactions, verified live against ansible-core 2.19.11 (run
 # cache-free: this box's ambient ANSIBLE_GATHERING=smart + a warm
-# /tmp/ansible_facts_cache makes real Ansible silently SKIP Gathering
+# /tmp/ansible_facts_cache makes Ansible silently SKIP Gathering
 # Facts on a rerun - no banner, no recap contribution - which once got
 # misread as "facts never count in the recap"). A successful implicit
 # facts task counts ok=1 like any task; an ignore_errors:-swallowed
@@ -135,7 +135,7 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
       YAML
 
     status.success?.must_equal(true)
-    # Real 2.19.11 recaps exactly ok=2 changed=1 ignored=1 here
+    # Ansible 2.19.11 recaps exactly ok=2 changed=1 ignored=1 here
     # (verified live, cache-free): the ignored failure counts as one ok
     # + one ignored, the command module reports changed=true on a
     # non-zero rc, and the implicit facts task adds its own ok=1.
@@ -158,7 +158,7 @@ describe "PLAY RECAP tallying for implicit facts and ignored failures" do
       YAML
 
     status.success?.must_equal(true)
-    # Real 2.19.11 recaps ok=1 changed=1 ignored=1 for exactly this
+    # Ansible 2.19.11 recaps ok=1 changed=1 ignored=1 for exactly this
     # shape (verified live, cache-free): the task DID change, so
     # `changed=` counts even though the task failed, and the ignored
     # failure counts as ok + ignored, never failed - update_stats'

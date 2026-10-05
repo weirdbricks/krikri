@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Task-level `check_mode:`. Real Ansible honours it in both directions
+# Task-level `check_mode:`. Ansible honours it in both directions
 # (verified against ansible-core 2.19.4): `check_mode: true` simulates a
 # task during an ordinary run, and `check_mode: false` lets a task
 # really run during a `--check` run. Both were ignored here - only the
@@ -107,7 +107,7 @@ describe "task-level check_mode:" do
     File.exists?(real).must_equal(true)
   end
 
-  # Live-verified against real Ansible: the magic var tracks the RUN's
+  # Live-verified against Ansible: the magic var tracks the RUN's
   # mode, not the task's - a check_mode: true task inside an ordinary
   # run still sees ansible_check_mode == false.
   it "does not let a task's check_mode leak into the ansible_check_mode magic var" do
@@ -123,7 +123,7 @@ describe "task-level check_mode:" do
       YAML
 
     status.exit_code.must_equal(0)
-    # Rendered as Python's "False", matching real Ansible's own output.
+    # Rendered as Python's "False", matching Ansible's own output.
     output.must_include("MAGIC=[False]")
   end
 end

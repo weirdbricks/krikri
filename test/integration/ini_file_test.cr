@@ -8,7 +8,7 @@ describe "ini_file plugin" do
     result = PluginSpecHelper.run("ini_file", {"path" => path, "section" => "mysqld", "option" => "port", "value" => "3306"})
 
     result["changed"].as_bool.must_equal(true)
-    # Real Ansible's own ini_file module force-seeds a single leading
+    # Ansible's own ini_file module force-seeds a single leading
     # blank line whenever the starting file is empty/nonexistent (`if not
     # ini_lines: ini_lines.append("\n")`) before any section/option
     # insertion - a brand-new config always gets exactly one blank line
@@ -32,7 +32,7 @@ describe "ini_file plugin" do
     File.read(path).must_equal("[alpha]\nkey1 = one\n[beta]\nopt = x\n")
   end
 
-  it "uncomments and replaces an existing commented-out option line in place, matching real Ansible's modify_inactive_option default" do
+  it "uncomments and replaces an existing commented-out option line in place, matching Ansible's modify_inactive_option default" do
     path = PluginSpecHelper.tmp_path("ini_file-uncomment-option")
     File.write(path, "[Journal]\n#Storage=auto\n#LineMax=48K\n#ReadKMsg=yes\n")
 
@@ -85,7 +85,7 @@ describe "ini_file plugin" do
     content.must_include("[mysqld]")
   end
 
-  it "does not remove a commented-out option line with state=absent, matching real Ansible's match_active_opt" do
+  it "does not remove a commented-out option line with state=absent, matching Ansible's match_active_opt" do
     path = PluginSpecHelper.tmp_path("ini_file-absent-commented")
     File.write(path, "[Journal]\n#Storage=auto\n#Compress=yes\n")
 
@@ -176,7 +176,7 @@ describe "ini_file plugin" do
     File.read(path).must_equal("[Service]\nExecStart = \nType=oneshot\nExecStart = -/usr/lib/systemd/systemd-sulogin-shell rescue\n\n[Other]\nx=1\n")
   end
 
-  it "fails with real Ansible's mutual-exclusion error when value and values are both given" do
+  it "fails with Ansible's mutual-exclusion error when value and values are both given" do
     path = PluginSpecHelper.tmp_path("ini_file-values-exclusive-params")
     File.write(path, "[Service]\n")
 
@@ -221,7 +221,7 @@ describe "ini_file plugin" do
   # real. The replacement spec for the still-real failure (a missing
   # FILE) lives in the "create:false against a missing section" block
   # at the end of this file.
-  it "appends a missing section under create: false, as real's do_ini does" do
+  it "appends a missing section under create: false, as Ansible's do_ini does" do
     path = PluginSpecHelper.tmp_path("ini_file-no-create")
     File.write(path, "[client]\nport = 3306\n")
 
@@ -238,7 +238,7 @@ describe "ini_file plugin" do
   # changed" / "section removed" / "OK", and a diff dict keyed with
   # "<path> (content)" headers whose before/after content is only
   # filled in --diff mode).
-  describe "msg and diff shape (real ansible's field set)" do
+  describe "msg and diff shape (Ansible's field set)" do
     it "says 'section and option added' when both are newly created" do
       path = PluginSpecHelper.tmp_path("ini_file-msg-new")
       File.delete(path) if File.exists?(path)
@@ -324,7 +324,7 @@ describe "ini_file plugin" do
   # the old "Value must be set when state=present and option is defined"
   # wording is gone.
   describe "value-required guard (real wording)" do
-    it "fails with real's exact message when no value/values is given" do
+    it "fails with Ansible's exact message when no value/values is given" do
       path = PluginSpecHelper.tmp_path("ini_file-value-required")
       File.delete(path) if File.exists?(path)
 
@@ -378,7 +378,7 @@ describe "ini_file plugin" do
 
       result["changed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("option added")
-      # Byte-identical to real 2.19.11 (xxd-verified): the option line,
+      # Byte-identical to Ansible 2.19.11 (xxd-verified): the option line,
       # then the seed blank line's own newline as trailing content.
       File.read(path).must_equal("opt1\n\n")
     end
@@ -427,7 +427,7 @@ describe "ini_file plugin" do
       File.read(path).must_equal("key = value\nkpg setting = on\n[main]\nkpg setting = one\n")
     end
 
-    it "still fails with real's message when the FILE itself is missing" do
+    it "still fails with Ansible's message when the FILE itself is missing" do
       path = PluginSpecHelper.tmp_path("ini_file-create-false-missing-file")
       File.delete(path) if File.exists?(path)
 

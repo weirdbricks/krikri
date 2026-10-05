@@ -7,7 +7,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real ansible-core 2.19's _return_formatted deprecates any `warnings`
+# ansible-core 2.19's _return_formatted deprecates any `warnings`
 # key passed to exit_json - ansible.posix.mount does exactly that on
 # every successful run. Captured live against 2.19.11 (non-tty,
 # ANSIBLE_NOCOLOR=1): the "Deprecation warnings can be disabled" hint

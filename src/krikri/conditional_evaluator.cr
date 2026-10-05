@@ -29,7 +29,7 @@ module Krikri
     end
   end
 
-  # A TEST PLUGIN's runtime failure - real ansible-core 2.19 wraps it as
+  # A TEST PLUGIN's runtime failure - ansible-core 2.19 wraps it as
   # "The test plugin '<fqcn>' failed: <cause>" and the [ERROR] chain block
   # shows the cause as its own innermost stanza. test_name carries the
   # real FQCN spelling for the wrapper.
@@ -44,7 +44,7 @@ module Krikri
   module ConditionalEvaluator
     # Precompiled regular expressions for condition parsing.
     # Eliminates runtime regex compilation in hot `when:` and test paths.
-    # `version_compare` is real Ansible's older alias for the `version`
+    # `version_compare` is Ansible's older alias for the `version`
     # test and is still accepted by ansible-core 2.19 (verified live,
     # round173). Missing it here was benign while conditionals were
     # lenient - the expression fell through to the generic comparison
@@ -76,7 +76,7 @@ module Krikri
     # the condition's own value - not one produced by a real boolean
     # operator (==, in, is defined, and/or/not, ...) - resolves to a
     # genuine None/null (e.g. a filter like `regex_search()` finding no
-    # match). Real Ansible's changed_when/failed_when (unlike when:, which
+    # match). Ansible's changed_when/failed_when (unlike when:, which
     # freely truthy-converts) requires the templated result to already be
     # a literal boolean; a None specifically raises "Conditional result
     # (...) was derived from value of type 'NoneType'. Conditionals must
@@ -104,7 +104,7 @@ module Krikri
     #
     # Found live via round172's buluma.git_tag (Rocky 9.6): `when:
     # git_remote != '' and git_remote != None` with `git_remote` genuinely
-    # undefined (no default, never set). Real Ansible raises ("'git_remote'
+    # undefined (no default, never set). Ansible raises ("'git_remote'
     # is undefined") and fails the task (failed=1); this evaluator's
     # lenient `nil != ''`/`nil != None` comparisons both resolved truthy
     # instead, evaluating the whole `when:` as satisfied - the exact
@@ -138,13 +138,13 @@ module Krikri
       # failed_when:/until: strings whenever a continuation line is more
       # indented than the block's own base indentation (equal-indent lines
       # fold to single spaces, more-indented ones keep their line breaks).
-      # Real Ansible evaluates conditions through a real Python/Jinja
+      # Ansible evaluates conditions through a real Python/Jinja
       # parser where inter-token whitespace is irrelevant; this
       # hand-rolled evaluator splits on literal " and "/" or "/etc. and
       # so a newline INSIDE an operand silently mis-splits the condition
       # - `mrlesmithjr.network-tweaks`' own `(x is defined and\n  x) and
       # (item.set is defined and\n    item.set)` evaluated FALSE for every
-      # loop item while real Ansible ran them (round 189). Collapse every
+      # loop item while Ansible ran them (round 189). Collapse every
       # whitespace run OUTSIDE string literals to a single space, before
       # any operator splitting happens.
       condition = normalize_condition_whitespace(condition)
@@ -172,7 +172,7 @@ module Krikri
       # would otherwise slice on operators INSIDE the quotes and produce
       # unbalanced-quote operands ("'mariadb_version_check.rc" from
       # splitting `'mariadb_version_check.rc == 0'` on "==") that then fail
-      # variable resolution under raise_undefined. Real Ansible reads
+      # variable resolution under raise_undefined. Ansible reads
       # mrlesmithjr.mariadb_galera_cluster's own `changed_when: not
       # 'mariadb_version_check.rc == 0'` as exactly this constant
       # (non-empty string -> truthy -> `not` -> False -> changed=false,
@@ -197,7 +197,7 @@ module Krikri
       # was instead fed to the quote-aware ` in ` splitter, which
       # (correctly) refuses to split inside quotes, found no top-level
       # " in ", and made #evaluate_in return false; the enclosing `not`
-      # then flipped that to True and hard-failed a task real Ansible
+      # then flipped that to True and hard-failed a task Ansible
       # treats as ok (round 902000: krikri ok=14 failed=1 vs real
       # ok=283 failed=0).
       # The first-close-is-last-char rule still rejects genuine compound
@@ -214,7 +214,7 @@ module Krikri
         end
       end
 
-      # Compile-time filter-name validation - real Jinja resolves every
+      # Compile-time filter-name validation - Jinja resolves every
       # filter name referenced ANYWHERE in the expression when it
       # COMPILES the template, before any and/or short-circuiting
       # happens (`jinja2`'s compiler raises "no filter named 'x'" as a
@@ -237,20 +237,20 @@ module Krikri
       # clause already raises - so the only behavior change is for
       # names that would fail the task anyway the moment they were
       # evaluated. Deliberately does NOT validate `map('name')` /
-      # select('name') inner arguments: real Jinja resolves those at
+      # select('name') inner arguments: Jinja resolves those at
       # RUNTIME, not compile time, so an unreachable one is genuinely
       # never an error there.
       validate_filter_names(condition, vars)
 
       # Compile-time TEST-name validation - the `is <test>`-side twin of
       # validate_filter_names just above, with the same justification:
-      # real Jinja resolves every test name in the whole expression when
+      # Jinja resolves every test name in the whole expression when
       # it COMPILES the template, before any and/or short-circuiting.
       # Found via sunfoxcz.dkim (round 74502): its very first `fail:`
       # task's `when:` list is [dkim_domains is not defined,
-      # dkim_domains is not list] - and real Jinja2/ansible-core has NO
+      # dkim_domains is not list] - and Jinja2/ansible-core has NO
       # `is list` TEST (there is a `list` FILTER and an `is iterable`
-      # test), so real Ansible fails the task immediately with "Syntax
+      # test), so Ansible fails the task immediately with "Syntax
       # error in expression: No test named 'list'.". Here the first
       # clause was already False, short-circuit evaluation never reached
       # the invalid clause, and the role ran 6 tasks deep before failing
@@ -285,7 +285,7 @@ module Krikri
       # admin_space_left | int < auditd_space_left | int) if (auditd_
       # space_left | string is not match(".*%")) else true` failed
       # outright (misread as a bare truthiness check on the whole
-      # unparsed string) while real Ansible passed - even the trivial
+      # unparsed string) while Ansible passed - even the trivial
       # `true if true else false` was broken, this had no working case.
       if condition.includes?(" if ") && condition.includes?(" else ")
         if_parts = split_by_operator(condition, " if ")
@@ -320,7 +320,7 @@ module Krikri
       # "Download helm." gates on `when: not helm_check.stat.exists or
       # "{{ helm_version }}" not in helm_existing_version.stdout` - with
       # the binary not yet installed, `not helm_check.stat.exists` alone
-      # is already true and real Ansible's `or` short-circuits there
+      # is already true and Ansible's `or` short-circuits there
       # without ever evaluating the second (undefined-stdout) clause;
       # here the whole `X or Y` got negated as one blob first, discarding
       # short-circuiting entirely and evaluating false, so Download/Copy
@@ -342,7 +342,7 @@ module Krikri
       # ANXS.postgresql's own `when: postgresql_apt_key_url and
       # postgresql_apt_key_id and postgresql_install_repository` - the
       # first two operands are plain non-boolean strings (a URL and a
-      # key ID), perfectly valid `and` operands in real Ansible since
+      # key ID), perfectly valid `and` operands in Ansible since
       # `and` never even looks at them once it reaches the FINAL truthy
       # bool (postgresql_install_repository) - passing strict: true to
       # every operand independently (the older, incorrect approach)
@@ -351,7 +351,7 @@ module Krikri
       # naive "always false" approach had - stackhpc.systemd_networkd's
       # own `when: systemd_networkd_network or systemd_networkd_link or
       # systemd_networkd_netdev` (three EMPTY DICT defaults, all falsy)
-      # - is exactly the case real Ansible DOES reject: Python's `or`
+      # - is exactly the case Ansible DOES reject: Python's `or`
       # falls through every falsy operand and returns the LAST one
       # unchanged (a dict, not a bool), which ansible-core correctly
       # fails on ("Conditionals must have a boolean result") while this
@@ -389,11 +389,11 @@ module Krikri
       # a chance to peel off any top-level `and`/`or` first.
       # Deliberately NOT strict here: Python/Jinja's `not x` always
       # produces a real bool regardless of x's own type, so a None-typed
-      # operand under `not` is exactly as safe in real Ansible as under
+      # operand under `not` is exactly as safe in Ansible as under
       # crystal's existing truthy conversion - no divergence to guard.
       # The same leading-`not` check must also match the zero-space
       # spelling `not(...)` - Python/Jinja's `not` is a keyword, not a
-      # callable, so `not(X)` is exactly `not (X)` and real Ansible
+      # callable, so `not(X)` is exactly `not (X)` and Ansible
       # evaluates it identically. Leaving it unmatched here is far worse
       # than merely mis-grouping: the `(...)` wrapper then survives
       # uneaten into every later handler, each of which slices the
@@ -401,7 +401,7 @@ module Krikri
       # redhat_sap.sap_hana_deployment's own
       # `when: >- not(( sap_hana_deployment_zip_file_name is none ) or
       # (sap_hana_deployment_zip_file_name | trim == ''))` (vars: null):
-      # real Ansible skips the task (`is none` is True, `or` short-
+      # Ansible skips the task (`is none` is True, `or` short-
       # circuits, `not True` is False), here the ` or ` inside the
       # wrapper sits at paren depth 1 so the or-split found nothing, the
       # `not ` match failed for lack of a space, and the `==` comparison
@@ -455,11 +455,11 @@ module Krikri
         # round 812053) - the non-greedy capture cut at the FIRST comma
         # anywhere, handing the evaluator a truncated
         # compare-to (`... | selectattr("name"`) that hard-failed as "No
-        # filter named 'selectattr("name"'." (real Ansible evaluates the
+        # filter named 'selectattr("name"'." (Ansible evaluates the
         # same condition fine). Re-split the full argument text quote- and
-        # paren-aware instead, mirroring how real Jinja2 parses the test's
+        # paren-aware instead, mirroring how Jinja2 parses the test's
         # call arguments. A non-two-argument shape (single-arg, or 3+ args
-        # real Jinja accepts via operator defaults/kwargs) falls through to
+        # Jinja accepts via operator defaults/kwargs) falls through to
         # the generic is-test delegation below, exactly as the old regex's
         # non-match did.
         rest = condition[version_test[0].size..].strip
@@ -503,7 +503,7 @@ module Krikri
       # undefined", failing the task outright). Found live benchmarking
       # devsec.hardening.os_hardening, whose user_accounts.yml gates
       # every interactive-user task on `item is not in
-      # os_always_ignore_users`; verified against real ansible-core
+      # os_always_ignore_users`; verified against ansible-core
       # 2.19.4, which skips/runs exactly as the operator form does.
       condition = condition.gsub(" is not in ", " not in ").gsub(" is in ", " in ")
 
@@ -531,7 +531,7 @@ module Krikri
       end
 
       # Handle 'is defined' / 'is not defined' / 'is undefined' / 'is not
-      # undefined' - real Jinja2 provides both spellings (`undefined` is
+      # undefined' - Jinja2 provides both spellings (`undefined` is
       # simply `defined`'s own negation, not a distinct concept), and
       # real playbooks use both (ssh_hardening's own crypto_ciphers.yml/
       # crypto_macs.yml/crypto_kex.yml default-setting tasks are all
@@ -559,7 +559,7 @@ module Krikri
       end
 
       # Handle 'is mapping' / 'is sequence' (plus each "is not ..."
-      # negation) - real Jinja2's own type tests (a dict/Hash vs. a
+      # negation) - Jinja2's own type tests (a dict/Hash vs. a
       # list/Array), used e.g. as a defaults-sanity assert:
       # `grafana_security is mapping`. Entirely unimplemented before -
       # fell through to #evaluate_truthiness, which has no notion of
@@ -595,7 +595,7 @@ module Krikri
       end
 
       # Handle 'is failed' / 'is succeeded' / 'is success' / 'is changed'
-      # / 'is skipped' (plus each "is not ..." negation) - real Ansible's
+      # / 'is skipped' (plus each "is not ..." negation) - Ansible's
       # own tests on a registered task result, reading the corresponding
       # boolean field out of its result dict. Entirely unimplemented
       # before (fell through to #evaluate_truthiness, which has no
@@ -644,7 +644,7 @@ module Krikri
       # 'is link_exists' (plus each "is not ..." negation) - real
       # Ansible's own path-check tests. Like lookup('file', ...), these
       # always check the CONTROLLER's filesystem, never the target's -
-      # matches real Ansible's own behavior (these are plain os.path.*
+      # matches Ansible's own behavior (these are plain os.path.*
       # wrappers running in the controller's own Python process).
       # "link_exists" MUST be checked before "link" - " is link_exists"
       # contains " is link" as a substring, so testing "link" first
@@ -675,7 +675,7 @@ module Krikri
         return negate ? !result : result
       end
 
-      # Handle 'is mount' (plus "is not ..." negation) - real Ansible's
+      # Handle 'is mount' (plus "is not ..." negation) - Ansible's
       # own test, real os.path.ismount(). Shells to the real
       # `mountpoint(8)` utility (util-linux, near-universal on Linux)
       # rather than hand-rolling a device/inode stat comparison, same
@@ -691,7 +691,7 @@ module Krikri
       end
 
       # Handle 'is is_abs' (plus "is not ...") - the `is*` spelling
-      # (P2.3) of real Ansible's absolute-path test, os.path.isabs.
+      # (P2.3) of Ansible's absolute-path test, os.path.isabs.
       if condition.includes?(" is not is_abs")
         var_name = condition.gsub(" is not is_abs", "").strip
         return !(resolve_test_operand(var_name, vars).try(&.as_s?) || "").starts_with?("/")
@@ -709,7 +709,7 @@ module Krikri
       end
 
       # Handle 'is vault_encrypted' / 'is vaulted_file' (plus each "is
-      # not ..." negation) - real Ansible's own tests: vault_encrypted
+      # not ..." negation) - Ansible's own tests: vault_encrypted
       # checks a STRING value's own content; vaulted_file reads a path
       # (on the CONTROLLER) and checks its content.
       {"vault_encrypted", "vaulted_file"}.each do |test_name|
@@ -722,7 +722,7 @@ module Krikri
         end
       end
 
-      # Handle 'is urn' (plus "is not ..." negation) - real Ansible's
+      # Handle 'is urn' (plus "is not ..." negation) - Ansible's
       # own test: validates the value is a syntactically well-formed
       # URN (RFC 8141: "urn:<nid>:<nss>").
       if condition.includes?(" is not urn")
@@ -735,15 +735,15 @@ module Krikri
 
       # Handle 'is started' / 'is finished' / 'is timedout' / 'is
       # reachable' / 'is unreachable' (plus each "is not ..." negation)
-      # - real Ansible's own tests on a registered result dict (the
+      # - Ansible's own tests on a registered result dict (the
       # `async_status:`/`wait_for_connection:` shape). Deliberately NOT
-      # #result_field below - real Ansible's own async_status result
+      # #result_field below - Ansible's own async_status result
       # (and this codebase's own plugins/async_status.cr) represents
       # `started:`/`finished:` as an INTEGER 0/1, not a JSON bool, and
       # #result_field's `.as_bool?` check silently returns false for
       # any non-bool field - always wrong for the actual real-world
       # shape these two tests exist to check. "reachable" inverts the
-      # SAME `unreachable` field real Ansible's own implementation
+      # SAME `unreachable` field Ansible's own implementation
       # checks, not a separately-tracked "reachable" field.
       {"started", "finished", "timedout", "unreachable"}.each do |test_name|
         if condition.includes?(" is not #{test_name}")
@@ -763,7 +763,7 @@ module Krikri
       end
 
       # Handle 'is match(...)' / 'is search(...)' (plus each "is not ..."
-      # negation) - real Jinja2's own regex tests: match() anchors at
+      # negation) - Jinja2's own regex tests: match() anchors at
       # the START of the string only (Python's re.match, NOT a full-
       # string anchor - "latestXYZ" is match("latest") is still true),
       # search() matches anywhere in the string (re.search). Entirely
@@ -813,7 +813,7 @@ module Krikri
       end
 
       # Handle 'is subset(...)' / 'is superset(...)' / 'is contains(...)'
-      # (plus each "is not ..." negation) - real Ansible's own tests
+      # (plus each "is not ..." negation) - Ansible's own tests
       # (ansible.builtin, not standard Jinja2), common in `assert:`-heavy
       # hardening roles checking one list/dict against another. Entirely
       # unimplemented before - fell through to the generic fallback
@@ -869,7 +869,7 @@ module Krikri
         return negate ? !result : result
       end
 
-      # Generic fallback for any other real Jinja2 `is [not] <test>`
+      # Generic fallback for any other Jinja2 `is [not] <test>`
       # built-in this module hasn't special-cased above (`divisibleby`,
       # `even`, `odd`, `equalto`, `sameas`, `escaped`, `callable`, etc) -
       # every specific `is` pattern already handled above (version,
@@ -985,7 +985,7 @@ module Krikri
     # never raising on an operand the real expression wouldn't even
     # look at), then re-evaluates ONLY that one operand under the
     # caller's real `strict` - so a non-bool deciding operand still
-    # raises ConditionalBooleanError exactly where real Ansible would,
+    # raises ConditionalBooleanError exactly where Ansible would,
     # while an operand the short-circuit never reaches is left alone
     # regardless of its own type. See the 'or' branch's own comment in
     # #evaluate_measured for the two real-host cases (ANXS.postgresql,
@@ -1006,7 +1006,7 @@ module Krikri
         # code, so with 'rsyslog_elks' absent from group_names the
         # literal read as falsy and the short-circuit fell through to
         # `rsyslog_use_remote` instead - a different, silently-wrong
-        # answer than real Ansible, where Python's `or` short-circuits to
+        # answer than Ansible, where Python's `or` short-circuits to
         # the non-empty string itself and never evaluates the second
         # operand at all.
         part_truthy = if content = quoted_string_literal(part)
@@ -1143,7 +1143,7 @@ module Krikri
       parts
     end
 
-    # Real Ansible's single-argument `default()` filter substitutes ONLY
+    # Ansible's single-argument `default()` filter substitutes ONLY
     # for a genuinely UNDEFINED variable - never for a defined-but-null
     # one (Jinja2's `Undefined` type, not Python `None`) - so `x |
     # default(None) != None`, the standard "is this optional param
@@ -1156,9 +1156,9 @@ module Krikri
     # the comparison answered exactly backwards. Found via ontic.git
     # (round 601424): its defaults/main.yml defines git_config/git_users
     # as bare nulls and every task in tasks/configure.yml is gated on
-    # `... | default(None) != None`, which real Ansible skips wholesale
+    # `... | default(None) != None`, which Ansible skips wholesale
     # but krikri ran (and then failed inside the git_users loop on
-    # `'item.username' is undefined` for a None loop item real Ansible
+    # `'item.username' is undefined` for a None loop item Ansible
     # never reaches).
     #
     # Deliberately narrow: only fires for `==`/`!=` against the bare
@@ -1169,7 +1169,7 @@ module Krikri
     # never round-trips through text, so null-ness survives intact, and
     # the single-arg default semantics are applied faithfully (substitute
     # only when the base name is genuinely absent from vars - verified
-    # against real ansible-playbook that a genuinely-undefined base
+    # against ansible-playbook that a genuinely-undefined base
     # answers the same `None != None` false as a defined-null one).
     # Anything else - other operators, other filters, the 2-arg boolean
     # default form, exotic default arguments, a base whose own raw value
@@ -1270,7 +1270,7 @@ module Krikri
     end
 
     # Dict-literal comparisons in `when:`/`assert:`/`failed_when:` clauses.
-    # Real Jinja treats `{'a': 1} == {'a': 1}` as a full dict-literal
+    # Jinja treats `{'a': 1} == {'a': 1}` as a full dict-literal
     # expression on each side; this evaluator's value model has no dict
     # type, so a bare dict literal fell through evaluate_value's quoted/
     # number/bool cases into the variable lookup, which tried to find a
@@ -1312,7 +1312,7 @@ module Krikri
     # side can't be re-parsed here and the caller would otherwise fall
     # through to the generic path, whose bare `{"a": 1, "b": 2}` literal
     # lookup then wrongly raises "'{...}' is undefined" (real bug found
-    # live via modules_data.yml's shapers assert). Real Jinja evaluates
+    # live via modules_data.yml's shapers assert). Jinja evaluates
     # `X == Y` in a single pass with full dict/filter semantics. Use
     # krikri-jinja directly for expressions it supports, while retaining
     # Crinja for Ansible-specific features.
@@ -1371,7 +1371,7 @@ module Krikri
     # into canonical JSON text. Handles single- or double-quoted keys and
     # string values (with Jinja escape decoding), bare identifiers as
     # keys (real Python/Jinja allows `{a: 1}` when `a` is... actually
-    # real Jinja requires the key to be a valid NAME - handled as a bare
+    # Jinja requires the key to be a valid NAME - handled as a bare
     # string), numbers, true/false/none/null, and nested dicts/lists.
     # Returns nil for anything unparseable (the caller then falls back to
     # the generic comparison path rather than inventing a result).
@@ -1491,7 +1491,7 @@ module Krikri
     # "it worked" flag, only "failed" - so both spellings are the
     # inverse of "failed" instead. A field genuinely absent (a var that
     # isn't a registered result at all, or a task type whose result
-    # never sets "skipped") defaults to false, matching real Ansible's
+    # never sets "skipped") defaults to false, matching Ansible's
     # own tests never raising for a missing field.
     private def self.result_field(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
       result = vars[var_name]?
@@ -1553,7 +1553,7 @@ module Krikri
     # Audit pass (2026-08-11, following the ansible-vault/prometheus/
     # grafana rounds finding 5 independent copies of this exact bug):
     # re-renders *value* if its raw form is still a String containing
-    # `{{` - real Ansible's recursive re-templating applied to whatever
+    # `{{` - Ansible's recursive re-templating applied to whatever
     # a caller already resolved. Now a thin delegate to the ONE shared
     # implementation (VariableSubstitutor::Rerender) - the multi-span
     # and block-tag fixes this copy used to re-discover independently
@@ -1568,7 +1568,7 @@ module Krikri
 
     # When this evaluation traces back to a task-level `when:`/`assert:`
     # (raise_undefined), a resolved value whose own raw form is still
-    # unrendered Jinja must render STRICTLY - real Ansible's recursive
+    # unrendered Jinja must render STRICTLY - Ansible's recursive
     # re-templating raises the moment the value bottoms out at a name set
     # nowhere, with the innermost missing name in the message. Every other
     # caller keeps the long-standing lenient render (see Rerender.if_
@@ -1670,7 +1670,7 @@ module Krikri
     end
 
     # `started`/`finished`/`timedout`/`unreachable` fields are a plain
-    # INTEGER 0/1 in real Ansible's own async_status/wait_for_connection
+    # INTEGER 0/1 in Ansible's own async_status/wait_for_connection
     # result shape (and this codebase's own plugins/async_status.cr) -
     # not a JSON bool like #result_field's own `.as_bool?` check
     # assumes. Truthy for either a real bool `true` or a non-zero
@@ -1746,7 +1746,7 @@ module Krikri
     # `community.general.lists_mergeby` in a `when:` hard-failed as the
     # nonexistent filter "community" even though the same chain inside a
     # task param ran fine. A genuinely-unknown dotted name is returned
-    # whole, so the error names it as real Ansible does
+    # whole, so the error names it as Ansible does
     # ("No filter named 'nephelaiio.plugins.sorted_get'.").
     private def self.filter_name_at(bytes : Bytes, start : Int32) : {String, Int32}?
       i = start
@@ -1786,7 +1786,7 @@ module Krikri
     # Mirrors FilterEngine#apply's own FQCN-prefix strip rules for the
     # pre-pass: returns the bare name when the dotted spelling is one the
     # dispatch accepts, the full dotted name otherwise (so an unknown
-    # collection filter errors under its complete FQCN, as real Ansible
+    # collection filter errors under its complete FQCN, as Ansible
     # names it). *after* is the index just past the name, unchanged for a
     # bare name.
     private def self.normalize_filter_fqcn(name : String, after : Int32) : {String, Int32}?
@@ -1813,7 +1813,7 @@ module Krikri
     # VariableSubstitutor::UnknownTestError ("No test named 'x'.") for
     # one nothing can resolve - exactly the names the generic
     # REGEX_GENERIC_IS_TEST Crinja delegation would fail on at runtime,
-    # just at COMPILE time like real Jinja, before short-circuiting can
+    # just at COMPILE time like Jinja, before short-circuiting can
     # hide them. An `is` with no identifier after it (`is (`, end of
     # string) is left alone for the runtime paths to interpret.
     private def self.validate_test_names(condition : String) : Nil
@@ -1964,7 +1964,7 @@ module Krikri
       # circuits to the truthy string literal itself, and `is string`
       # must see that STRING - the bare lookup below found no variable
       # named "(\"...\" or false)" and answered false, skipping a task
-      # real ansible-core 2.19.11 runs (live-verified).
+      # ansible-core 2.19.11 runs (live-verified).
       if var_name.includes?("|") || var_name.match(REGEX_BARE_CALL) ||
          (var_name.starts_with?('(') && var_name.ends_with?(')'))
         # var_name may also be a bare function-CALL expression, not a
@@ -2092,7 +2092,7 @@ module Krikri
       # ok=3 failed=1). Here json_any_to_value's else branch returned the
       # whole compact-JSON dump as a string, compare_versions' digit
       # extraction then compared *something*, the ternary picked a
-      # branch, and the play continued into tasks real Ansible never
+      # branch, and the play continued into tasks Ansible never
       # reached (ok=5 failed=1 skipped=1). Only Hash is guarded - that is
       # the confirmed real-world shape (a magic-var dict used bare);
       # Arrays are deliberately left to the legacy stringification until
@@ -2153,7 +2153,7 @@ module Krikri
     end
 
     # Decodes Jinja2/Python string-literal escape sequences inside a
-    # quoted literal's interior - real Jinja's lexer decodes \n, \t,
+    # quoted literal's interior - Jinja's lexer decodes \n, \t,
     # \\, \', \", \x##, \u#### (and friends) when it tokenizes a string
     # literal in an EXPRESSION context, so a when:/assert:/failed_when:
     # clause like
@@ -2162,7 +2162,7 @@ module Krikri
     # keeps backslash-n verbatim) compares against a real newline and
     # passes. Previously the interior was returned verbatim, so the
     # right-hand side held literal backslash-n and every such
-    # comparison evaluated false while real ansible-core 2.19 passed
+    # comparison evaluated false while ansible-core 2.19 passed
     # (found live via the modules_systems.yml benchmark's payload
     # byte-diff assert). Only escape sequences Jinja's own STRING
     # lexer honors are decoded; unknown backslash sequences are kept
@@ -2233,7 +2233,7 @@ module Krikri
       # engine dependency): digit runs are ints, [a-z]+ runs are strings,
       # literal dots are components, everything else is dropped; a
       # prefix-exhausted list is less, and the first int-vs-str mismatch
-      # raises real's TypeError text (always '<' - Python list ordering
+      # raises Ansible's TypeError text (always '<' - Python list ordering
       # bottoms out in __lt__ regardless of the operator).
       a_parts = loose_version_components(a)
       b_parts = loose_version_components(b)
@@ -2309,14 +2309,14 @@ module Krikri
         return resolved.raw.as(Hash).has_key?(item.to_s)
       end
 
-      # Real Jinja2 evaluates `x in y` as `y.__contains__(x)` with the
+      # Jinja2 evaluates `x in y` as `y.__contains__(x)` with the
       # LEFT operand evaluated first - the ordering below keeps that,
       # and the rescue only reshapes the failure message for one
       # specific case: a plain-STRING container. A Python
       # str.__contains__ requires its argument to itself be a `str` -
       # an Undefined marker isn't one (Jinja2 defers the undefined
       # raise to force time, so the marker object reaches __contains__
-      # intact) - so real Ansible hard-fails the task with Python's own
+      # intact) - so Ansible hard-fails the task with Python's own
       # TypeError text ("'in <string>' requires string as left operand,
       # not UndefinedMarker") rather than the generic "'node_1' is
       # undefined" the strict raise below used to surface first
@@ -2325,7 +2325,7 @@ module Krikri
       # never defined). Deliberately NOT widened to the
       # undefined-in-*list* path (list.__contains__ compares by
       # equality and returns False for an Undefined without raising -
-      # real Ansible skips such a task) or to any raise_undefined=false
+      # Ansible skips such a task) or to any raise_undefined=false
       # (lenient) caller: both keep their existing behavior untouched.
       begin
         item = evaluate_value(item_expr, vars, raise_undefined)
@@ -2366,7 +2366,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's own escape hatch for the strict-boolean-conditional
+    # Ansible's own escape hatch for the strict-boolean-conditional
     # rule it introduced in 2.19; this project's benchmark harness has
     # set it on the real-Ansible side since round 20, so honouring it
     # here keeps both engines comparable under the same environment.
@@ -2385,7 +2385,7 @@ module Krikri
 
     # Evaluate truthiness of a value
     private def self.evaluate_truthiness(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
-      # Real Ansible/Python `bool([])` and `bool({})` are both False -
+      # Ansible/Python `bool([])` and `bool({})` are both False -
       # but #evaluate_value's own return union (String | Int64 | Bool |
       # Nil | Array(String)) has no Hash case at all (an empty Hash's
       # own #to_s, "{}", is a non-empty STRING - always truthy under the
@@ -2436,7 +2436,7 @@ module Krikri
       if strict && !allow_broken_conditionals?
         case raw_value = value
         when Bool
-          # The only shape real Ansible accepts.
+          # The only shape Ansible accepts.
         when String
           # "undefined" is this codebase's own unresolved-lookup
           # sentinel, reported below as the NoneType it stands for.
@@ -2446,7 +2446,7 @@ module Krikri
           # boolean-expression }}` (e.g. jdauphant.dns's own
           # `dns_forced_in_dhclientconf: "{{ansible_os_family == 'Debian'
           # or ansible_os_family == 'Redhat'}}"`, used bare or combined
-          # via `and` in a when:). Real Ansible's Jinja2-native templating
+          # via `and` in a when:). Ansible's Jinja2-native templating
           # preserves the boolean TYPE all the way through variable
           # storage for a whole-value template like this, so `when:
           # dns_forced_in_dhclientconf` never sees anything but a real
@@ -2454,7 +2454,7 @@ module Krikri
           # that typing, rendering the SAME semantic value as the text
           # "True" instead - previously indistinguishable from a
           # genuinely non-boolean string (`when: some_string_var`, which
-          # real Ansible DOES correctly reject under ansible-core 2.19's
+          # Ansible DOES correctly reject under ansible-core 2.19's
           # strict conditional-boolean requirement) and always raised,
           # even for the common bare-variable idiom, not just the `and`
           # case found benchmarking jdauphant.dns.
@@ -2481,7 +2481,7 @@ module Krikri
         # "undefined" - this codebase's own sentinel for an unresolved
         # lookup/filter result (e.g. `regex_search()`'s own "no match"
         # return, per its own doc comment) - must be FALSY here, matching
-        # real Jinja2's `Undefined`/Python's `None` (`bool(None)` is
+        # Jinja2's `Undefined`/Python's `None` (`bool(None)` is
         # False). Found via robertdebock.mount's own handler condition
         # `when: mount_requests | regex_search("swap")`: no "swap"
         # anywhere in `mount_requests` correctly produced the "undefined"
@@ -2507,7 +2507,7 @@ module Krikri
       end
     end
 
-    # Real ansible-core distinguishes two undefined-reference shapes, and
+    # ansible-core distinguishes two undefined-reference shapes, and
     # the distinction is the whole point of the message: a reference whose
     # ROOT variable doesn't exist is "'x' is undefined", while a dotted
     # attribute miss on a variable that DOES exist and IS a dict is
@@ -2527,7 +2527,7 @@ module Krikri
       # The shared walker extends the same real-Ansible wording to the
       # bracket forms this dot-only check never covered (`d['missing']`,
       # and a dynamic key like rke2's `groups[rke2_servers_group_name]`
-      # → "... no attribute 'masters'") - same message real Ansible
+      # → "... no attribute 'masters'") - same message Ansible
       # raises there (live-verified against 2.19.4).
       Krikri.strict_undefined_message(expr, vars)
     end
@@ -2563,7 +2563,7 @@ module Krikri
       # exist yet to tell the two apart.
       return nil if expr == "None" || expr == "none"
 
-      # `omit` - real Ansible's magic bareword (a unique per-run sentinel
+      # `omit` - Ansible's magic bareword (a unique per-run sentinel
       # object), same special-case VariableSubstitutor already carries for
       # `{{ omit }}` template interpolation (see its own OMIT_SENTINEL) -
       # but that carve-out never reached a bare `when:`/`assert:`
@@ -2572,7 +2572,7 @@ module Krikri
       # "'omit' is undefined" under raise_undefined - found via oasis_
       # roles.rhsm's own `when: rhsm_username != omit or rhsm_
       # activationkey != omit` (the standard "was this optional param
-      # actually given" idiom), which real Ansible evaluates fine since
+      # actually given" idiom), which Ansible evaluates fine since
       # `omit` is always a defined global there. Reusing the same
       # sentinel string as VariableSubstitutor's keeps `x != omit`
       # correct regardless of which evaluator resolved `x`'s own
@@ -2597,7 +2597,7 @@ module Krikri
       # to the plain "vars.has_key?" lookup, found no variable literally
       # named "5.1", and raised "'5.1' is undefined" under raise_undefined
       # - a real bug, not a hypothetical one: found live via
-      # buluma.p10k's own ZSH-version check, which real Ansible evaluates
+      # buluma.p10k's own ZSH-version check, which Ansible evaluates
       # fine (integer literals already worked; only non-integer numeric
       # literals were missing this case).
       return expr if expr.to_f64?
@@ -2629,7 +2629,7 @@ module Krikri
       # tried (and failed) to find a variable literally named
       # "'v' + consul_template_version" and hard-failed the task
       # ("Error while evaluating conditional: ''v' +
-      # consul_template_version' is undefined") where real Ansible
+      # consul_template_version' is undefined") where Ansible
       # concatenates and evaluates the membership test cleanly.
       # A bare `(` anywhere (not
       # just a leading one) also needs routing here - real bug found
@@ -2646,7 +2646,7 @@ module Krikri
       if expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
          expr.includes?("*") || expr.includes?("/") || expr.includes?("+")
         # A filter chain fed by a genuinely undefined variable is fatal
-        # for a `when:`/`assert:` in real Ansible exactly as a bare
+        # for a `when:`/`assert:` in Ansible exactly as a bare
         # undefined reference is ("Error while evaluating conditional:
         # 'nope' is undefined" for `when: nope | length > 0`, verified
         # against ansible-core 2.19.4) - the strict path below only ever
@@ -2674,7 +2674,7 @@ module Krikri
         # has no filter-chain probe above that can catch an undefined
         # bare operand: ExpressionEvaluator's render is lenient, baking
         # the undefined in as "", so `when: "'v' + no_such_var in ..."`
-        # would silently skip where real Ansible fatally fails
+        # would silently skip where Ansible fatally fails
         # ("'no_such_var' is undefined" - live-verified against
         # ansible-playbook). Probe the top-level `+` operands - only for
         # this narrow newly-routed shape, leaving every
@@ -2692,7 +2692,7 @@ module Krikri
         # through a filter chain. The second is dev-sec.os-hardening's
         # own `when: sysctl_overwrite | default()` (tasks/sysctl.yml)
         # with the role's bare-key `sysctl_overwrite:` null default:
-        # real Jinja2's `default()` only substitutes on an UNDEFINED
+        # Jinja2's `default()` only substitutes on an UNDEFINED
         # value, so the defined None passes through and ansible-core
         # 2.19's strict type check fails with NoneType - live-verified.
         # This codebase's Crinja delegation also passes the None through
@@ -2815,7 +2815,7 @@ module Krikri
       if vars.has_key?(expr)
         value = vars[expr]
 
-        # Real Ansible's recursive re-templating: a variable whose own
+        # Ansible's recursive re-templating: a variable whose own
         # raw value is itself unrendered Jinja (a role default defined in
         # terms of another default, e.g. ansible-community.ansible-vault's
         # `vault_enterprise: "{{ lookup('env', 'VAULT_ENTERPRISE') |
@@ -2840,7 +2840,7 @@ module Krikri
           json_any_to_value(value)
         end
       else
-        # Undefined variable - real Ansible raises here (see
+        # Undefined variable - Ansible raises here (see
         # UndefinedVariableError above) when this evaluate_value call
         # ultimately traces back to a task-level `when:` (raise_undefined
         # true); every other caller keeps the long-standing lenient nil.
@@ -2851,7 +2851,7 @@ module Krikri
 
     # Strict-undefined probe for a bare `+` expression routed to the
     # lenient ExpressionEvaluator by #evaluate_value's operator guard
-    # (round 811188, wunzeco.consul-template). Real Ansible fails the
+    # (round 811188, wunzeco.consul-template). Ansible fails the
     # task when any bare operand of such an expression is genuinely
     # undefined - `when: "'v' + no_such_var in list"` dies with
     # "'no_such_var' is undefined" - so the top-level (outside

@@ -31,7 +31,7 @@ module Krikri
       end
 
       # A /usr/share/i18n/SUPPORTED entry line, e.g. "en_US.UTF-8 UTF-8"
-      # or a commented "# de_LI.UTF-8 UTF-8". Mirrors the real module's
+      # or a commented "# de_LI.UTF-8 UTF-8". Mirrors the Ansible module's
       # re_locale_entry, including that the locale group is
       # `\S+[._\S]+` - the trailing charset is whatever follows the
       # LAST space the backtracking engine can still hand to it.
@@ -52,7 +52,7 @@ module Krikri
         supported_lines.any? { |line| supported_entry_locale(line) == locale }
       end
 
-      # changed determination: the real module tracks state_tracking -
+      # changed determination: the Ansible module tracks state_tracking -
       # whether ALL requested locales are present - against the
       # requested state, so `present` changes when any locale is
       # missing, but `absent` only changes (and only applies) when

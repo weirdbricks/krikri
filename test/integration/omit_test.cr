@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# `omit` - real Ansible's magic value for "drop this entirely rather
+# `omit` - Ansible's magic value for "drop this entirely rather
 # than giving it any real value". This engine represents it internally
 # as the OMIT_SENTINEL string, which used to LEAK as literal text
 # (`__crystal_ansible_omit__`) everywhere except the one case that
@@ -36,7 +36,7 @@ end
 
 describe "omit" do
   it "renders as nothing when it is only PART of a larger value" do
-    # Real Ansible prints "[]" here; this engine printed
+    # Ansible prints "[]" here; this engine printed
     # "[__crystal_ansible_omit__]", so its own sentinel reached logs,
     # config files and command lines as if it were real content.
     code, output = run_omit(<<-YAML)
@@ -52,7 +52,7 @@ describe "omit" do
   it "accepts a BARE {{ omit }}, which used to fail the task as undefined" do
     # `omit` is a magic bareword, not a variable anyone sets, so the
     # strict module-arg check reported "'omit' is undefined" and failed
-    # the task. Real Ansible prints "[]".
+    # the task. Ansible prints "[]".
     code, output = run_omit(<<-YAML)
         - name: t
           ansible.builtin.debug:
@@ -111,7 +111,7 @@ describe "omit" do
   end
 
   it "does not swallow genuinely falsy values alongside it" do
-    # "", 0 and false are real values real Ansible keeps - only omit
+    # "", 0 and false are real values Ansible keeps - only omit
     # goes. A reject that tested truthiness instead of identity would
     # eat all four.
     _, output = run_omit(<<-YAML)
@@ -132,7 +132,7 @@ describe "omit" do
   it "treats a block-tag template rendering to nothing as omitted, not empty" do
     # hbjydev.restic's own content: "{% for f in restic_files %}{{ f
     # }}\n{% endfor %}" with restic_files: [] - live-verified vs
-    # ansible-core 2.19.11: real Ansible fails copy's own "src (or
+    # ansible-core 2.19.11: Ansible fails copy's own "src (or
     # content) is required" check here, unlike a bare `{{ empty_var
     # }}"`/literal `""` content (both succeed and write a real empty
     # file - see copy_empty_content_spec.cr). The block tag's own empty

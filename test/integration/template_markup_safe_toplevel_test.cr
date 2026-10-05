@@ -48,7 +48,7 @@ describe "a template whose whole rendered value is Markup-wrapped (xanmanning.k3
     # xanmanning.k3s's k3s.service.j2 (rounds 979194/986000), where real
     # ansible-playbook 2.19.11 renders the file fine. Fixed in
     # krikri-jinja v0.4.19 by unwrapping Markup to its underlying string
-    # in to_json_any, matching real Jinja2 (Markup is-a str).
+    # in to_json_any, matching Jinja2 (Markup is-a str).
     status, output, dest = run_template_task(
       "{{ 'ExecStart=/usr/local/bin/k3s server' | safe }}\n",
     )

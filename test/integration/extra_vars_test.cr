@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
-# -e / --extra-vars, real Ansible's highest-precedence variable scope.
-# Every expectation here was captured from a real ansible-core 2.19.4 run
+# -e / --extra-vars, Ansible's highest-precedence variable scope.
+# Every expectation here was captured from a ansible-core 2.19.4 run
 # of the same playbook, not derived.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

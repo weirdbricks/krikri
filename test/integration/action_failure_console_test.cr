@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Console output and registered results of FAILING controller-side actions,
-# live-verified against ansible-core 2.19.11 (every expectation below is real's
+# live-verified against ansible-core 2.19.11 (every expectation below is Ansible's
 # own output, with tmp paths/timestamps masked).
 #
 # include_vars with a missing file (register: + ignore_errors:) - real registers
@@ -14,8 +14,8 @@ require "../minitest_helper"
 #
 # set_fact with an invalid variable name - the registered key order already
 # matched real; what was missing is the two-segment [ERROR] block whose cause
-# segment points at the invalid key's own Origin, plus real's help text.
-# debug with an undefined variable in msg: already printed real's block
+# segment points at the invalid key's own Origin, plus Ansible's help text.
+# debug with an undefined variable in msg: already printed Ansible's block
 # byte-for-byte; pinned here so it cannot regress.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -197,7 +197,7 @@ describe "action failure console blocks" do
     output.must_include("Task failed.\nOrigin: ")
     output.must_include("\n<<< caused by >>>\n\nInvalid variable name 'bad-name'.\nOrigin: ")
     # the caret lands on the opening quote of the quoted key, the same column
-    # the bare form gets (real 2.19.11, 10-space indent -> column 11)
+    # the bare form gets (Ansible 2.19.11, 10-space indent -> column 11)
     output.must_include("          ^ column 11")
     output.must_include("Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.")
     output.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Invalid variable name 'bad-name'."}))

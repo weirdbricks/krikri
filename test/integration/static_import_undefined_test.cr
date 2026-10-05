@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # A static import whose target can only be known from a FACT is refused
-# before anything runs - real Ansible resolves import_tasks:/import_role:
+# before anything runs - Ansible resolves import_tasks:/import_role:
 # up front, against vars/extra-vars only. Verified against ansible-core
 # 2.19.4, including the two different exit codes it uses.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -31,7 +31,7 @@ ensure
 end
 
 describe "static import referencing a fact" do
-  # import_tasks: PATH -> real Ansible's parser error, exit 4. This used
+  # import_tasks: PATH -> Ansible's parser error, exit 4. This used
   # to be SILENT: the templated path missed the file and the task was
   # dropped with no banner, no failure and exit 0.
   it "refuses an import_tasks: path built from a fact, running nothing" do
@@ -52,7 +52,7 @@ describe "static import referencing a fact" do
     end
   end
 
-  # import_role: NAME -> real Ansible reports a plain undefined-variable
+  # import_role: NAME -> Ansible reports a plain undefined-variable
   # error with exit code 1, NOT the parser error 4 above.
   it "refuses an import_role: name built from a fact, with exit code 1" do
     run_in_dir(<<-YAML) do |status, output|
@@ -96,7 +96,7 @@ describe "static import referencing a fact" do
   end
 
   # Guard against over-reach: a name from a PLAY VAR is resolvable before
-  # the run, which real Ansible allows and must keep working.
+  # the run, which Ansible allows and must keep working.
   it "still allows an import_role: name from a play var" do
     run_in_dir(<<-YAML) do |status, output|
       - name: P

@@ -133,14 +133,14 @@ module Krikri
       # Real module includes backup_file only when a backup was actually
       # made (its None default is dropped by exit_json).
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
-      # Real's exit_json runs add_path_info over every result whose
+      # Ansible's exit_json runs add_path_info over every result whose
       # `path` still exists, so the file's stat fields are part of the
       # success result too, not just a failure's.
       add_path_info(result, path)
       result
     end
 
-    # Real ansible.builtin.ini_file's registered-result key order
+    # Ansible.builtin.ini_file's registered-result key order
     # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
     # ini_file: tasks): changed, diff, msg, path, then backup_file only
     # when a backup was taken, then the add_path_info stat block and
@@ -151,7 +151,7 @@ module Krikri
     private SUCCESS_KEY_ORDER = %w[changed diff msg path backup_file uid gid owner group mode state size failed]
 
     private def initial_lines(original : String) : Array(String)
-      # Real Ansible's own ini_file module force-seeds a single blank line
+      # Ansible's own ini_file module force-seeds a single blank line
       # (`if not ini_lines: ini_lines.append("\n")`) whenever the starting
       # line list is empty - a brand-new file, or an existing-but-0-byte
       # one - before any section/option insertion logic runs, so a freshly
@@ -175,7 +175,7 @@ module Krikri
 
     # `values` arrives as the JSON-stringified list form (params are
     # flattened to strings by BasePlugin); same parse convention as
-    # the other list-valued params. Real's type=list conversion also
+    # the other list-valued params. Ansible's type=list conversion also
     # accepts a plain string (comma-split, check_type_list) and a bare
     # number (single-element list), so those wire shapes map to lists
     # too; a genuinely malformed container value stays nil (the argspec
@@ -268,7 +268,7 @@ module Krikri
       lines.size
     end
 
-    # Matches option lines the same way real Ansible's own `match_opt`
+    # Matches option lines the same way Ansible's own `match_opt`
     # does: an OPTIONAL leading `#`/`;` comment marker is allowed before
     # the option name, since `modify_inactive_option` (default `true`)
     # means a commented-out `#option=value` line counts as a match and
@@ -280,17 +280,17 @@ module Krikri
     # common, e.g. journald.conf/logind.conf's own upstream defaults) -
     # krikri-playbook always appended a brand-new active line at the
     # end of the section instead of uncommenting the existing one in
-    # place, unlike real Ansible. Found benchmarking robertdebock.
+    # place, unlike Ansible. Found benchmarking robertdebock.
     # systemd's own journald.conf `LineMax` setting.
     #
     # With `active_only` set, the comment marker is disallowed entirely,
-    # matching real Ansible's own `match_active_opt`: real Ansible's
+    # matching Ansible's own `match_active_opt`: Ansible's
     # state=absent branch hard-codes `match_active_opt` and ignores
     # `modify_inactive_option` completely, so a commented-out line is
     # never a match for removal (adfinis-sygroup.systemd_journald's
     # `Storage: absent` task on a fresh journald.conf whose `#Storage=auto`
     # is still commented out - krikri-playbook used to delete the comment
-    # and report changed where real Ansible reports ok).
+    # and report changed where Ansible reports ok).
     private def option_line_index?(line : String, option : String, active_only : Bool = false, bare_ok : Bool = false) : Bool
       # bare_ok mirrors real match_opt's `(=|$)` terminator: a bare
       # `option` line with no `=` at all counts as a match (reachable
@@ -395,7 +395,7 @@ module Krikri
                              state : String, block_start : Int32, block_end : Int32,
                              exclusive : Bool, no_extra_spaces : Bool, allow_no_value : Bool = false) : {Bool, String?}
       # state=absent only ever matches ACTIVE (uncommented) option lines,
-      # per real Ansible's hard-coded match_active_opt in its absent branch.
+      # per Ansible's hard-coded match_active_opt in its absent branch.
       active_only = state == "absent"
       matches = (block_start...block_end).select { |i| option_line_index?(new_lines[i], option, active_only) }
 

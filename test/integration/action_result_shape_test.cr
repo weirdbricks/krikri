@@ -10,7 +10,7 @@ require "../minitest_helper"
 #              defaults to ["all"]; changed is true only the first time.
 #   raw      - {rc, stdout, stdout_lines, stderr, stderr_lines, changed,
 #              failed} (no cmd/start/end/delta/msg - raw is aliased to the
-#              shell plugin binary, whose command-style extras real's raw
+#              shell plugin binary, whose command-style extras Ansible's raw
 #              never returns); a non-zero rc adds msg + exception; check
 #              mode is the bare {skipped, failed, changed} executor skip.
 

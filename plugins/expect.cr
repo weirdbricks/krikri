@@ -2,7 +2,7 @@
 
 # expect module (ansible.builtin.expect) - runs an interactive command
 # attached to a real pty and answers prompts matching `responses:`
-# patterns as they appear, same category of problem real Ansible's own
+# patterns as they appear, same category of problem Ansible's own
 # module solves via pexpect. No pexpect equivalent exists for Crystal, so
 # this talks to the kernel pty layer directly via `openpty(3)` (glibc,
 # -lutil) rather than shelling out to a separate `expect(1)` binary -
@@ -34,7 +34,7 @@
 #   responses for '<key>', output was '<text since last match>'"
 #   (changed=false, unlike a timeout)
 # - non-zero child exit gives "non-zero return code" with changed=true
-# - chdir is pexpect's cwd for the spawned command (and, like real's
+# - chdir is pexpect's cwd for the spawned command (and, like Ansible's
 #   os.chdir, also resolves relative creates/removes)
 
 require "json"
@@ -75,7 +75,7 @@ module Krikri
       %w[echo]
     end
 
-    # (pattern key for real's "No remaining responses for '<key>'" msg,
+    # (pattern key for Ansible's "No remaining responses for '<key>'" msg,
     # compiled regex, answers, whether the task gave a LIST response)
     alias Response = {String, Regex, Array(String), Bool}
 
@@ -152,7 +152,7 @@ module Krikri
     end
 
     # Everything real expect.py's main() does before its first line of
-    # module logic, in real's order: the AnsibleModule argument
+    # module logic, in Ansible's order: the AnsibleModule argument
     # validation (responses required, coerced to a dict) and then,
     # immediately after it, the pexpect import gate.
     # The gate is `if not HAS_PEXPECT: module.fail_json(msg=
@@ -162,8 +162,8 @@ module Krikri
     # creates/removes skip, or the spawn. krikri drives the pty layer
     # directly and needs no pexpect, which used to leave it reporting
     # its own downstream outcome ("The command was not found or was
-    # not executable: <cmd>." for a command real never tried, or plain
-    # success on a creates:/removes: skip) where real reports the
+    # not executable: <cmd>." for a command Ansible never tried, or plain
+    # success on a creates:/removes: skip) where Ansible reports the
     # missing library. Reproduced as-is, at the same point in the
     # flow. Verified against ansible-playbook 2.19.11 on a target
     # without pexpect, for the skip, non-skip and nonexistent-command
@@ -186,9 +186,9 @@ module Krikri
     end
 
     # expect.py's check_type_int(timeout): the int itself, or the failure
-    # result real's `module.fail_json(msg=f"argument 'timeout' is of type
+    # result Ansible's `module.fail_json(msg=f"argument 'timeout' is of type
     # {type(timeout)} and we were unable to convert to int: {te}")`
-    # produces. `timeout` is `type: raw`, so real's argspec never looks
+    # produces. `timeout` is `type: raw`, so Ansible's argspec never looks
     # at it - the module body is the only thing that rejects one.
     private def convert_timeout : {Int32, PluginResult?}
       raw_timeout = @params["timeout"]?
@@ -241,7 +241,7 @@ module Krikri
 
     # Real expect.py's skip exits with cmd/stdout/changed/rc only - NO
     # msg (that wording belongs to the command module, not expect.py).
-    # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+    # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
     # cmd, stdout, changed, rc - exit_json's own kwargs order.
     private def skip_result(stdout : String) : PluginResult
       PluginResult.new(changed: false, failed: false, stdout: stdout, rc: 0,
@@ -338,7 +338,7 @@ module Krikri
       "#{hours}:#{sprintf("%02d", minutes)}:#{sprintf("%02d", secs.to_i)}.#{sprintf("%06d", ((secs - secs.to_i) * 1_000_000).round.to_i)}"
     end
 
-    # Real Ansible's own default (echo: no) means a sent response's text
+    # Ansible's own default (echo: no) means a sent response's text
     # is NOT echoed back into the captured output - turn off the pty's
     # canonical-mode local echo unless the task explicitly asked for it
     # (echo: true), matching pexpect's own `setecho()` behavior.
@@ -479,7 +479,7 @@ module Krikri
 
     # Returns (timed_out, exhausted-pattern-or-nil, output). An exhausted
     # LIST response (the same prompt matching again with no answers left)
-    # aborts the loop immediately - real's response_closure fail_json's
+    # aborts the loop immediately - Ansible's response_closure fail_json's
     # mid-session the same way.
     private def read_until_deadline(amaster : LibC::Int, responses : Array(Response), deadline : Time::Instant) : {Bool, {String, String}?, String}
       buffer = IO::Memory.new
@@ -533,7 +533,7 @@ module Krikri
 
     # Per-pattern matching in declaration order; a string response is
     # static (resent on every match), a list response is consumed in
-    # order and then EXHAUSTS with real's fail_json wording. Returns the
+    # order and then EXHAUSTS with Ansible's fail_json wording. Returns the
     # exhausted pattern's (key, text-since-last-match) or nil.
     private def answer_prompts(
       amaster : LibC::Int, text : String,

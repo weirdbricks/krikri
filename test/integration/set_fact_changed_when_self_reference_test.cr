@@ -1,14 +1,14 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real Ansible evaluates a set_fact: task's own changed_when:/failed_when:
+# Ansible evaluates a set_fact: task's own changed_when:/failed_when:
 # against a context that already has the facts THAT SAME TASK just set
 # merged in (the module result for set_fact carries them under
 # ansible_facts, and that gets folded in before changed_when/failed_when
 # templating). Found via smlloyd.authselect (RHEL-family round 60487):
 # `set_fact: {authselect_current_profile: "{{ ... }}"}` with a
 # `changed_when:` that references `authselect_current_profile` right back
-# - real ansible-playbook resolves it fine; this engine raised
+# - ansible-playbook resolves it fine; this engine raised
 # "'authselect_current_profile' is undefined" because the caller only
 # merges a set_fact's ansible_facts into vars_context AFTER
 # apply_changed_failed_when returns.

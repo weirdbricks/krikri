@@ -15,7 +15,7 @@ describe "block: name keyword strict-undefined" do
   # the role's tasks wrap everything in a block named
   # `do tasks when "{{ service_name }}" state is "running"`, whose
   # service_name default references `container_name` - defined only by
-  # the grafana_podman wrapper role. Run standalone, real ansible-core
+  # the grafana_podman wrapper role. Run standalone, ansible-core
   # 2.19 fails the first block child with "Task failed: Error processing
   # keyword 'name': 'container_name' is undefined"; this engine rendered
   # the block name leniently for display and kept executing deep into
@@ -84,7 +84,7 @@ describe "block: name keyword strict-undefined" do
     output.to_s.must_include("failed=1")
   end
 
-  # A task's OWN name is lenient in real Ansible (banners as
+  # A task's OWN name is lenient in Ansible (banners as
   # "<< error 1 - 'nope' is undefined >>" and still runs/skips normally)
   # - only block names are strict.
   it "keeps a task's own undefined name lenient" do
@@ -112,7 +112,7 @@ describe "block: name keyword strict-undefined" do
 
   # The strict substitute must report the INNERMOST missing name through
   # the recursive re-templating chain (block name -> service_name ->
-  # container_name), exactly like real Ansible's one strict pass.
+  # container_name), exactly like Ansible's one strict pass.
   it "reports the innermost undefined name through the re-templating chain" do
     playbook = File.tempname("block-name-innermost", ".yml")
     File.write(playbook, <<-YAML)

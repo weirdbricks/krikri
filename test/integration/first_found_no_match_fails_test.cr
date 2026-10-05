@@ -16,13 +16,13 @@ describe "with_first_found: with no candidate matching (no skip:)" do
     #   with_first_found: ["{{ ansible_distribution }}-{{ ansible_
     #     distribution_major_version }}.yml", ...]
     # On a host whose distribution/family matches none of the role's
-    # own tasks/<OS>.yml files, real ansible-playbook (core 2.19.4,
+    # own tasks/<OS>.yml files, ansible-playbook (core 2.19.4,
     # verified live with a minimal repro) FAILS the task with
     # "The lookup plugin 'first_found' failed: No file was found when
     # using first_found." - the keyword form's lookup raises for a
     # miss regardless of which module it is attached to. krikri
     # previously returned an empty loop list here, which surfaced as a
-    # silent skip (failed=0 skipped=1) where real Ansible recaps
+    # silent skip (failed=0 skipped=1) where Ansible recaps
     # failed=1 - hiding a role that did nothing at all on that OS.
     src_dir = File.tempname("first-found-no-match-include-tasks")
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))

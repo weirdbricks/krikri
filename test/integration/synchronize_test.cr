@@ -65,7 +65,7 @@ describe "synchronize plugin" do
 
       PluginSpecHelper.run("synchronize", {"src" => "#{src}/", "dest" => "#{dest}/"})
       # rsync's quick check is size + 1-second-granularity mtime - a
-      # same-second, same-size rewrite is invisible to it (real Ansible
+      # same-second, same-size rewrite is invisible to it (Ansible
       # included), so pin the mtime apart before the content update.
       sleep 1.seconds
       File.write(File.join(src, "b.txt"), "v2\n")

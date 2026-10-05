@@ -4,15 +4,15 @@ require "../../src/krikri/conditional_evaluator"
 require "../../src/krikri/krikri_jinja_filters"
 
 # String-literal escapes inside a `when:`/`assert:` expression must decode
-# (vanilla Jinja / real ansible-core condition-compiler semantics), whereas
-# inline task-param `{{ }}` templating keeps them literal (real's
+# (vanilla Jinja / ansible-core condition-compiler semantics), whereas
+# inline task-param `{{ }}` templating keeps them literal (Ansible's
 # AnsibleLexer doubles backslashes inline). The regression this locks: a
 # method-call argument (`.split('\n')`) or a `~` concat operand resolved
 # through the conditional evaluator's Crinja delegation rendered against the
 # inline verbatim environment, so `'\n'` stayed a literal backslash-n and
 # `.split('\n')` matched nothing / `~ '\n'` appended two characters. Found
 # live via the modules_data.yml benchmark's lineinfile-staged / slurped-bytes
-# asserts, both real ansible-core 2.19.11 passes. NOTE: the condition strings
+# asserts, both ansible-core 2.19.11 passes. NOTE: the condition strings
 # use `%q` so their `'\n'` stays a literal backslash-n (exactly what must get
 # decoded at eval time); the surrounding vars are built with real newlines.
 describe "Krikri::ConditionalEvaluator (conditional_method_arg_escapes_test.cr)" do

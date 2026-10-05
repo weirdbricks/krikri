@@ -45,7 +45,7 @@ describe "nsupdate plugin" do
   end
 
   it "fails on an unknown record type (pre-network, dnspython wording)" do
-    # DHCID is a valid dnspython type (real Ansible accepts it and proceeds
+    # DHCID is a valid dnspython type (Ansible accepts it and proceeds
     # to the network); the unknown-type wording is confirmed for truly
     # unknown types via podman-diff case N14 - and it fires before any
     # traffic, so the unreachable server never matters here.

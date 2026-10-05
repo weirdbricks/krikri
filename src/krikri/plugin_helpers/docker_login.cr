@@ -5,7 +5,7 @@ require "../shell"
 module Krikri
   module PluginHelpers
     # DockerLogin - pure logic for the docker_login plugin: docker
-    # config.json auth-entry handling (the real module's
+    # config.json auth-entry handling (the Ansible module's
     # DockerFileStore.get/store/erase semantics: base64 "user:pass"
     # entries under auths[<registry>], config rewritten 0600) and login
     # command construction. Split out so this logic is unit-spec-able
@@ -100,7 +100,7 @@ module Krikri
         cmd
       end
 
-      # The real module's required_if failure message for state=present.
+      # The Ansible module's required_if failure message for state=present.
       def self.missing_credentials_msg(username : String?, password : String?) : String?
         missing = [] of String
         missing << "username" if username.nil? || username.empty?

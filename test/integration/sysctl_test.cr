@@ -82,7 +82,7 @@ describe "sysctl plugin" do
     # apply_kernel_value's `sysctl -w` result used to be discarded
     # entirely - execute() unconditionally returned failed: false
     # regardless of whether the live kernel-parameter set actually
-    # succeeded. Real ansible.posix.sysctl fails the task when this
+    # succeeded. Ansible.posix.sysctl fails the task when this
     # fails, unless ignoreerrors: is set. Using a bogus dotted name
     # here (real `sysctl -w` genuinely fails on any Linux host for a
     # name with no matching /proc/sys/ path - verified directly against

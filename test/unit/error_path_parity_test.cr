@@ -14,9 +14,9 @@ end
 alias Failure = Krikri::ArgspecValidator::Failure
 
 # Error-path shapes found by the differential fuzzer (krikri-playbook-generator)
-# vs real ansible-core 2.19.11: every expectation below was checked against
-# real ansible's own module source / a live run, not guessed.
-describe "error-path parity with real ansible (fuzzer findings)" do
+# vs ansible-core 2.19.11: every expectation below was checked against
+# Ansible's own module source / a live run, not guessed.
+describe "error-path parity with Ansible (fuzzer findings)" do
   it "replace/blockinfile/lineinfile report a missing file with ' !' and rc 257" do
     missing = File.join(scratch_dir, "no-such-file-zzz")
 
@@ -44,7 +44,7 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     size["size"].as_s.must_equal("banana")
   end
 
-  it "find turns a non-directory search path into real's module warning" do
+  it "find turns a non-directory search path into Ansible's module warning" do
     file = File.join(scratch_dir, "a-file")
     File.write(file, "x")
     result = PluginSpecHelper.run("find", {"paths" => file})
@@ -88,14 +88,14 @@ describe "error-path parity with real ansible (fuzzer findings)" do
       "File not found: #{missing}: [Errno 2] No such file or directory: '#{missing}'")
   end
 
-  it "lineinfile: state=present without line uses real's wording" do
+  it "lineinfile: state=present without line uses Ansible's wording" do
     file = File.join(scratch_dir, "li-file")
     File.write(file, "x\n")
     result = PluginSpecHelper.run("lineinfile", {"path" => file, "state" => "present"})
     result["msg"].as_s.must_equal("line is required with state=present")
   end
 
-  it "file: recurse on a non-directory carries add_path_info like real's fail_json(path=...)" do
+  it "file: recurse on a non-directory carries add_path_info like Ansible's fail_json(path=...)" do
     file = File.join(scratch_dir, "recurse-file")
     File.write(file, "x\n")
     result = PluginSpecHelper.run("file", {"path" => file, "recurse" => "true"})
@@ -134,7 +134,7 @@ describe "error-path parity with real ansible (fuzzer findings)" do
       [%(Filename portion of cron_file ("bad.name") should consist solely of upper- and lower-case letters, digits, underscores, and hyphens)])
   end
 
-  it "wait_for: runtime checks fail with real's wording and elapsed=0" do
+  it "wait_for: runtime checks fail with Ansible's wording and elapsed=0" do
     both = PluginSpecHelper.run("wait_for", {"port" => "80", "path" => "/tmp"})
     both["msg"].as_s.must_equal("port and path parameter can not both be passed to wait_for")
     both["elapsed"].as_i.must_equal(0)
@@ -219,7 +219,7 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     end
   end
 
-  it "get_url/uri: checksum format, scheme-less URLs and real's failure keys" do
+  it "get_url/uri: checksum format, scheme-less URLs and Ansible's failure keys" do
     dest = File.join(scratch_dir, "gu-dest")
     checksum = PluginSpecHelper.run("get_url", {"url" => "http://example.invalid/x", "dest" => dest, "checksum" => "nocolon"})
     checksum["msg"].as_s.must_equal("The checksum parameter has to be in format <algorithm>:<checksum>")
@@ -237,7 +237,7 @@ describe "error-path parity with real ansible (fuzzer findings)" do
     uri["content"]?.must_be_nil
   end
 
-  it "rpm_key/subversion/git: real's missing-executable and details keys" do
+  it "rpm_key/subversion/git: Ansible's missing-executable and details keys" do
     if Process.find_executable("rpm").nil?
       PluginSpecHelper.run("rpm_key", {"key" => "x"})["msg"].as_s.must_match(/\AFailed to find required executable "rpm" in paths: /)
     end

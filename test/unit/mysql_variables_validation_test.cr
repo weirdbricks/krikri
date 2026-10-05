@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/mysql_variables.cr's argument-validation and check-mode
 # surface against real community.mysql.mysql_variables (live-diffed vs
-# real ansible-playbook via the podman-diff mysql_variables_edge_cases
+# ansible-playbook via the podman-diff mysql_variables_edge_cases
 # harness): variable is required=True in the argument_spec (so a
 # missing variable fails at setup, not with the module body's
 # unreachable "Cannot run without variable" check), mode is a choices
@@ -83,7 +83,7 @@ describe "mysql_variables plugin argument validation" do
       "_ansible_check_mode" => "true",
     })
 
-    # Real's controller-side check-mode skip result carries an explicit
+    # Ansible's controller-side check-mode skip result carries an explicit
     # `failed: false` (skipped, msg, failed, changed - pinned in
     # key_order_sweep9_test.cr), so krikri emits one too rather than
     # leaving the key for the executor to backfill after `changed`.

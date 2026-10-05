@@ -43,7 +43,7 @@ module Krikri
 
     # A relative first_found `paths:` entry can resolve against either
     # the role's own ROOT directory OR (buluma.confluence's own `paths:
-    # ['../vars']` idiom, real Ansible resolves this relative to tasks/,
+    # ['../vars']` idiom, Ansible resolves this relative to tasks/,
     # not role_path itself) its tasks/ subdirectory - same two-root
     # search ExpressionEvaluator's own #resolve_first_found_roots
     # applies (see that method's comment for the full story and the
@@ -63,7 +63,7 @@ module Krikri
     def self.fetch_url_lines(url : String, redirects_left : Int32 = 5) : Array(String)?
       return nil if redirects_left < 0
 
-      # file:// reads a controller-local file, like real Ansible's url
+      # file:// reads a controller-local file, like Ansible's url
       # lookup (open_url handles the scheme) - same line handling as the
       # HTTP body below, and the offline-testable form of the
       # with_url:/lookup('url', ...) checksum idiom.
@@ -186,7 +186,7 @@ module Krikri
     end
 
     # lookup('password', 'path [length=N]') - generates a random
-    # password ONCE and persists it to *path* (real Ansible's own
+    # password ONCE and persists it to *path* (Ansible's own
     # behavior: a later run/lookup reads the same file back rather than
     # generating a new value every time). Same logic as
     # ExpressionEvaluator's own #evaluate_password_lookup.
@@ -202,7 +202,7 @@ module Krikri
       end
 
       # `/dev/null` means "fresh random password, don't persist it" -
-      # real Ansible's own password lookup special-cases that exact path
+      # Ansible's own password lookup special-cases that exact path
       # for both the read-back and the write. See
       # ExpressionEvaluator#evaluate_password_lookup's own comment for
       # how the missing case was found (imntreal.smallstep_ca wrote

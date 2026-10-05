@@ -9,7 +9,7 @@ require "../../src/krikri/shell"
 # concern).
 
 describe "command plugin" do
-  it "rstrips a trailing newline from stdout, matching real Ansible's own AnsibleModule.run_command()" do
+  it "rstrips a trailing newline from stdout, matching Ansible's own AnsibleModule.run_command()" do
     result = PluginSpecHelper.run("command", {"cmd" => "echo hello"})
 
     result["stdout"].as_s.must_equal("hello")
@@ -18,13 +18,13 @@ describe "command plugin" do
   # Real bug found benchmarking konstruktoid.docker_rootless (0.9.618):
   # a nonexistent executable raised a Crystal exception, caught by this
   # plugin's own rescue - but that early return had no rc/stdout at
-  # all (only stderr), where real Ansible's run_command() catches
+  # all (only stderr), where Ansible's run_command() catches
   # ENOENT itself and returns a normal (rc=2, stdout='', stderr=...)
   # result. A `failed_when: false`-guarded probe of an optional binary
   # correctly avoided failing the TASK, but a later `.stdout`/`.rc`
   # reference on the same registered result was genuinely undefined
-  # instead of real Ansible's empty string/2.
-  it "populates rc/stdout even when the executable itself doesn't exist (ENOENT), matching real Ansible's run_command()" do
+  # instead of Ansible's empty string/2.
+  it "populates rc/stdout even when the executable itself doesn't exist (ENOENT), matching Ansible's run_command()" do
     result = PluginSpecHelper.run("command", {"cmd" => "/does/not/exist/anywhere --version"})
 
     result["rc"].as_i64.must_equal(2)
@@ -69,7 +69,7 @@ describe "command plugin" do
     # Regression guard for the fix above: a backslash immediately
     # followed by a non-whitespace character (e.g. find's own `\;`
     # exec terminator) must still be decoded to that literal character,
-    # matching real Ansible's shlex.split() - only a backslash that is
+    # matching Ansible's shlex.split() - only a backslash that is
     # its OWN whitespace-delimited token is a line-continuation marker.
     result = PluginSpecHelper.run("command", {
       "cmd" => %q(find /tmp -maxdepth 0 -exec /usr/bin/printf '[%s]' {} \;),
@@ -133,7 +133,7 @@ describe "command plugin" do
     # directory, a still-later plain command/shell with no chdir: of its
     # own inherited the now-deleted stale cwd and failed at shell/process
     # startup ("getcwd: cannot access parent directories") - a class of
-    # bug real ansible-playbook can't hit since it execs fresh per task.
+    # bug ansible-playbook can't hit since it execs fresh per task.
     # This spec doesn't need a real daemon to catch a regression: it just
     # asserts the plugin's own process cwd is bit-for-bit unchanged
     # before/after running a chdir:'d command, proving the daemon-shared
@@ -154,7 +154,7 @@ describe "command plugin" do
   it "fails the task with a clear message when chdir: doesn't exist, without ever calling Dir.cd" do
     # Companion to the no-leak spec above: the chdir-validation path
     # (File.directory? check, added when Dir.cd(chdir) was removed) must
-    # still fail the task the same way real Ansible does for a bad
+    # still fail the task the same way Ansible does for a bad
     # chdir:, just without mutating this process's own cwd to get there.
     missing = File.join(Dir.tempdir, "krikri-playbook-spec-chdir-missing-#{Random.rand(1_000_000)}")
     FileUtils.rm_rf(missing)
@@ -166,7 +166,7 @@ describe "command plugin" do
     result["_ansible_error_detail"].as_s.must_include(missing)
   end
 
-  it "expands a leading ~ in creates: before checking existence, matching real Ansible's expanduser" do
+  it "expands a leading ~ in creates: before checking existence, matching Ansible's expanduser" do
     # Real bug found benchmarking geerlingguy.composer: its own
     # composer_home_path default is the literal string '~/.composer',
     # fed straight into `creates={{ composer_home_path }}/vendor/...`.
@@ -188,11 +188,11 @@ describe "command plugin" do
     end
   end
 
-  it "resolves a relative creates: against chdir: when both are given, matching real Ansible" do
+  it "resolves a relative creates: against chdir: when both are given, matching Ansible" do
     # Real divergence found benchmarking kyl191.openvpn's warm run: its
     # "server_keys | Generate CA key" task is
     # `argv: [openssl, req, ...]`, `chdir: "{{ openvpn_key_dir }}"`,
-    # `creates: ca-key.pem` - real ansible-playbook resolves the
+    # `creates: ca-key.pem` - ansible-playbook resolves the
     # RELATIVE creates: path against chdir: (chdir changes what
     # "relative" means for the whole task, not just the command's own
     # execution), finds ca-key.pem already there, and reports the task
@@ -234,7 +234,7 @@ describe "command plugin" do
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "creates: accepts a GLOB pattern, matching real Ansible's glob.glob() check" do
+  it "creates: accepts a GLOB pattern, matching Ansible's glob.glob() check" do
     # Real bug found via appsilon.mount_efs's own "install | build
     # amazon-efs-utils" (`creates: ".../build/amazon-efs-utils*deb"`,
     # the built package's filename varies by version): `File.exists?`
@@ -295,14 +295,14 @@ describe "command plugin" do
     result["msg"].as_s.must_equal("Missing required parameter: cmd")
   end
 
-  # Proactive param-coverage pass: real Ansible's `command` still ACCEPTS
+  # Proactive param-coverage pass: Ansible's `command` still ACCEPTS
   # `executable:` but ignores it entirely, emitting module.warn(...) - the
   # task succeeds normally (via execvp, no shell) and the result carries a
   # top-level "warnings" list with exactly this message. Live-verified
   # against ansible-core 2.19.4. Not previously implemented (the param was
   # silently tolerated with no warning at all). The warning convention
   # matches apache2_module.cr's extra["warnings"] usage.
-  it "accepts executable:, ignores it, and emits real Ansible's exact warning" do
+  it "accepts executable:, ignores it, and emits Ansible's exact warning" do
     result = PluginSpecHelper.run("command", {"cmd" => "echo hi", "executable" => "/bin/bash"})
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -327,7 +327,7 @@ describe "command plugin" do
     File.delete(marker) if marker && File.exists?(marker)
   end
 
-  # Proactive param-coverage pass: real Ansible's `command` documents
+  # Proactive param-coverage pass: Ansible's `command` documents
   # `stdin_add_newline` as "Whether to append a newline to stdin data"
   # (bool, default yes) - run_command appends '\n' unless it is false.
   # Live-verified against ansible-core 2.19.4: `wc -l` fed "line1\nline2"
@@ -345,7 +345,7 @@ describe "command plugin" do
     result["stdout"].as_s.must_equal("1")
   end
 
-  # Proactive param-coverage pass: real Ansible's `command` documents
+  # Proactive param-coverage pass: Ansible's `command` documents
   # `strip_empty_ends` as "Strip empty lines from the end of stdout/stderr
   # in result" (bool, default yes) - its command.py only rstrips
   # "\r\n" when strip is true, so false returns the raw bytes untouched.
@@ -373,7 +373,7 @@ describe "command plugin" do
     result["stderr"].as_s.must_equal("1\n2\n")
   end
 
-  # Real Ansible's command module declares no check-mode support, so a
+  # Ansible's command module declares no check-mode support, so a
   # --check run reports `skipping:` and the command never executes. The
   # marker-file probe is the whole point: the old regression was the
   # command running FOR REAL under --check.
@@ -390,7 +390,7 @@ describe "command plugin" do
   end
 end
 
-# Real ansible-core 2.19.11's registered command result runs changed,
+# ansible-core 2.19.11's registered command result runs changed,
 # stdout, stderr, rc, cmd, start, end, delta, msg, stdout_lines,
 # stderr_lines, (ansible_facts,) failed - live-verified via
 # `{{ r | to_json }}` on a registered command: task (the -v dump sorts
@@ -399,7 +399,7 @@ end
 # stdout_lines, and the creates:/removes: skip path keeps the same
 # order with null start/end/delta (all live-verified). krikri emits
 # failed: false on the executed-success path only (failed_flag), so the
-# skip/check pins below stop at stderr_lines - real also appends
+# skip/check pins below stop at stderr_lines - Ansible also appends
 # failed: false there.
 describe "command plugin result key order" do
   it "serializes the executed-success result in real command's key order" do

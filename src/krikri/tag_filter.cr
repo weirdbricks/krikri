@@ -1,7 +1,7 @@
 require "./playbook_parser"
 
 module Krikri
-  # Real Ansible's `--tags`/`--skip-tags` selection, including the four
+  # Ansible's `--tags`/`--skip-tags` selection, including the four
   # special tag names and the two magic task tags. Previously this was a
   # single line in krikri-playbook.cr - `task.tags.any? { |t| tags.includes?(t) }`,
   # applied only when --tags was passed and only to TOP-LEVEL tasks -
@@ -22,7 +22,7 @@ module Krikri
   #     carry `alpha`.
   #   * `--skip-tags` did not exist.
   module TagFilter
-    # Selection rules, from real Ansible's own semantics:
+    # Selection rules, from Ansible's own semantics:
     #
     #   no --tags            -> everything EXCEPT `never`
     #   --tags all           -> everything EXCEPT `never`
@@ -34,7 +34,7 @@ module Krikri
     #                           named explicitly (`never` itself counts)
     #
     # --skip-tags is applied AFTER the above and wins, including over
-    # `always` (real Ansible lets `--skip-tags always` drop those too).
+    # `always` (Ansible lets `--skip-tags always` drop those too).
     def self.apply(tasks : Array(Task), only : Array(String), skip : Array(String), play_tags : Array(String) = [] of String) : Array(Task)
       kept = Array(Task).new
       tasks.each do |task|
@@ -48,7 +48,7 @@ module Krikri
     # Returns the task (with its nested lists filtered in place) if it
     # survives selection, or nil if it is filtered out. *inherited* is the
     # union of the play's own tags and every enclosing block's tags -
-    # real Ansible pushes a play's tags and a block's tags down onto
+    # Ansible pushes a play's tags and a block's tags down onto
     # their children rather than treating the block as an atomic unit.
     private def self.filter(task : Task, only : Array(String), skip : Array(String), inherited : Array(String)) : Task?
       effective = (task.tags + inherited).uniq

@@ -5,7 +5,7 @@ require "../../src/krikri/param_sentinels"
 # Regression spec (sweep29 000020-authorized_key-chaos): an explicit
 # `path: 9` (a non-string YAML int literal, whose type: path spec
 # coerces it to the string "9") has Python os.path.dirname("9") == "" -
-# NOT Crystal's "." - so real 2.19.11 fails the task:
+# NOT Crystal's "." - so Ansible 2.19.11 fails the task:
 # - manage_dir false: the keysfile branch's uncaught os.makedirs("")
 #   crash, "Task failed: Module failed: [Errno 2] No such file or
 #   directory: ''";

@@ -3,14 +3,14 @@ require "../minitest_helper"
 # Real bug found benchmarking bertvv.mariadb's own "Add official
 # MariaDB repository (yum)" task (template: dest: /etc/yum.repos.d/
 # MariaDB.repo, on an Ubuntu host where /etc/yum.repos.d never
-# exists). Real ansible-playbook fails with "Destination directory
+# exists). ansible-playbook fails with "Destination directory
 # /etc/yum.repos.d does not exist" - template/copy do NOT create a
 # missing single-file destination's parent directory. Both plugins
 # used to silently `Dir.mkdir_p` it instead, which only diverged from
-# real Ansible once the parent genuinely didn't exist yet (the common
+# Ansible once the parent genuinely didn't exist yet (the common
 # case - dest already inside an existing dir - never hit this path).
 describe "template/copy plugins - missing destination directory" do
-  it "template fails like real Ansible instead of creating the missing parent dir" do
+  it "template fails like Ansible instead of creating the missing parent dir" do
     missing_parent = File.join(Dir.tempdir, "krikri-missing-dest-#{Random.new.hex(8)}")
     dest = File.join(missing_parent, "file.conf")
 
@@ -21,7 +21,7 @@ describe "template/copy plugins - missing destination directory" do
     Dir.exists?(missing_parent).must_equal(false)
   end
 
-  it "copy (content:) fails like real Ansible instead of creating the missing parent dir" do
+  it "copy (content:) fails like Ansible instead of creating the missing parent dir" do
     missing_parent = File.join(Dir.tempdir, "krikri-missing-dest-#{Random.new.hex(8)}")
     dest = File.join(missing_parent, "file.txt")
 
@@ -32,7 +32,7 @@ describe "template/copy plugins - missing destination directory" do
     Dir.exists?(missing_parent).must_equal(false)
   end
 
-  it "copy (src:) fails like real Ansible instead of creating the missing parent dir" do
+  it "copy (src:) fails like Ansible instead of creating the missing parent dir" do
     src = File.tempname("krikri-copy-src")
     File.write(src, "hello\n")
     missing_parent = File.join(Dir.tempdir, "krikri-missing-dest-#{Random.new.hex(8)}")

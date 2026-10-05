@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real Ansible's with_items: (unlike loop:) implicitly applies
+# Ansible's with_items: (unlike loop:) implicitly applies
 # flatten(levels=1) across its rendered elements - found via
 # nicolai86.prepare-release's own `with_items: ["{{ default_directories
 # }}", "{{ directories }}"]` (two nested-list sources in one with_items:),
@@ -74,7 +74,7 @@ describe "with_items: flattens nested list sources one level, unlike loop:" do
   # permissions with RPM" task loops
   # `with_items: "{{ list_of_packages.results | map(attribute='stdout_
   # lines') | list | unique }}"` - the map produces [[pkg], [pkg], ...]
-  # and real ansible-playbook 2.19.11 flattens that one level before
+  # and ansible-playbook 2.19.11 flattens that one level before
   # iterating, so `item` reaches `rpm --restore '{{ item }}'` as a bare
   # scalar package name. krikri used to keep each item a one-element
   # nested list here (the whole-source filter-chain path in
@@ -104,7 +104,7 @@ describe "with_items: flattens nested list sources one level, unlike loop:" do
   end
 
   # Same flatten for the direct whole-variable template form
-  # (`with_items: "{{ nested }}"`, not a filter chain) - real Ansible
+  # (`with_items: "{{ nested }}"`, not a filter chain) - Ansible
   # applies its one-level flatten regardless of how the source
   # resolved to a list of lists.
   it "with_items: over a direct template resolving to nested lists flattens one level" do

@@ -3,9 +3,9 @@ require "../param_sentinels"
 
 module Krikri
   # Raised by StrictBoolValidation#validate_bool_params! when a documented
-  # `type: bool` param carries a value real Ansible's check_type_bool
+  # `type: bool` param carries a value Ansible's check_type_bool
   # would reject. BasePlugin#run_and_capture surfaces the message verbatim
-  # as the module failure, exactly like real AnsibleModule's argspec
+  # as the module failure, exactly like AnsibleModule's argspec
   # validation failing before any module logic runs.
   class BoolParamError < Exception; end
 
@@ -17,7 +17,7 @@ module Krikri
     # argspec validation) and the controller-side action plugins that
     # real validates the same way (assert).
     #
-    # Real AnsibleModule validates every PROVIDED param's type at module
+    # AnsibleModule validates every PROVIDED param's type at module
     # setup, before any module logic: a `type: bool` option whose value
     # is not a bool, one of the boolean literals (case-insensitive,
     # whitespace-stripped), or the numbers 0/1 fails the module before
@@ -26,13 +26,13 @@ module Krikri
     # valid boolean. Valid booleans include: ...". Previously the lenient
     # BasePlugin#true? treated any non-empty string as truthy, so a
     # typo'd or mis-templated bool param silently flipped behavior
-    # (force:/remove:/backup: class flags) where real Ansible never gets
+    # (force:/remove:/backup: class flags) where Ansible never gets
     # past argument validation.
     #
     # A plugin opts in by overriding #bool_params with its module's
     # documented `type: bool` options (ansible-doc -j <module>, in real
     # argument-spec declaration order) and calling #validate_bool_params!
-    # where real's module-setup validation would sit in its own arg-check
+    # where Ansible's module-setup validation would sit in its own arg-check
     # ordering (top of #execute for plain modules; after the
     # unsupported-params/mutually-exclusive gates for the plugins that
     # hand-roll those first, matching arg_spec.py's check order).
@@ -43,7 +43,7 @@ module Krikri
         [] of String
       end
 
-      # alias -> canonical for bool options real's argspec declares aliases
+      # alias -> canonical for bool options Ansible's argspec declares aliases
       # for. A playbook using the alias spelling still fails with the
       # CANONICAL name in the message, because real resolves aliases to the
       # canonical key before argspec validation runs (so the alias key no
@@ -71,7 +71,7 @@ module Krikri
 
       # The "Valid booleans include:" tail. Real serializes a Python SET
       # here, so the order differs between module processes
-      # (PYTHONHASHSEED) - real ansible does not reproduce its own order
+      # (PYTHONHASHSEED) - Ansible does not reproduce its own order
       # between two runs. This fixed order is the check_type_bool
       # docstring's own listing; only the wording shape is deterministic.
       private BOOLEANS_PARAM_REPR = %w['1' 'on'] + ["1"] + %w['0'] + ["0"] +
@@ -156,13 +156,13 @@ module Krikri
       end
 
       # Validates every PROVIDED bool param (omitted params are never
-      # validated - real only sees provided keys plus defaults) in real
+      # validated - Ansible only sees provided keys plus defaults) in real
       # argument-spec declaration order, raising BoolParamError on the
-      # FIRST violation - real only surfaces errors[0] from the
+      # FIRST violation - Ansible only surfaces errors[0] from the
       # AnsibleValidationErrorMultiple. Reads the RAW param wire
       # (@config["params"]) so native JSON types survive: a YAML `force:
       # 2` that arrives as a real JSON number reports "of type int" the
-      # way real's native_type_name does, not the stringified @params
+      # way Ansible's native_type_name does, not the stringified @params
       # view.
       protected def validate_bool_params_in!(raw_params : Hash(String, JSON::Any)) : Nil
         aliases = bool_param_aliases
@@ -173,7 +173,7 @@ module Krikri
           next unless key
           # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
           # rides the raw wire as a prefixed STRING - decode it back to its
-          # native value so the bool check sees the bool/int/float real's
+          # native value so the bool check sees the bool/int/float Ansible's
           # check_type_bool would have seen (a literal `flat: false` is a
           # real bool, not the string "nonstring:false").
           raw = raw_params[key]

@@ -1,5 +1,5 @@
 module Krikri
-  # Real Ansible's controller-side relative-src lookup (`ActionBase
+  # Ansible's controller-side relative-src lookup (`ActionBase
   # ._find_needle` -> `DataLoader.path_dwim_relative_stack`): the ordered
   # candidate list a missing file's "Could not find or access" error
   # reports, and the same list resolution searches. Behavior matched to
@@ -21,7 +21,7 @@ module Krikri
   # after the LAST searched path (no list at all for an absolute src,
   # whose lookup never populates one).
   module NeedleLookup
-    # The task's search stack: real's `Task.get_search_path()` - the
+    # The task's search stack: Ansible's `Task.get_search_path()` - the
     # role dependency chain, current role first, then the directory of
     # the file the task lives in (deduplicated against the role paths).
     # The basedir is NOT part of this - path_dwim_relative_stack appends
@@ -29,7 +29,7 @@ module Krikri
     def self.search_stack(role_path : String?, role_parent_paths : Array(String)?, task_file_dir : String?) : Array(String)
       stack = [] of String
       stack << File.expand_path(role_path) if role_path
-      # role_parent_paths is root-first (outermost .. parent); real's
+      # role_parent_paths is root-first (outermost .. parent); Ansible's
       # reversed dep chain runs current-role first.
       role_parent_paths.try(&.reverse.each { |path| stack << File.expand_path(path) })
       if task_file_dir
@@ -44,7 +44,7 @@ module Krikri
       stack.each do |path|
         upath = File.expand_path(path)
         role_base = File.dirname(upath)
-        # real's in-role branch: the search path points at a role's
+        # Ansible's in-role branch: the search path points at a role's
         # tasks/ directory - look in the role root's dirname/ dir and
         # the tasks dir itself before the generic candidates
         if role_base.ends_with?("/tasks") && role_path?(upath)

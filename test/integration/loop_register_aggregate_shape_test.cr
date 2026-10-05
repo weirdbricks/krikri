@@ -1,12 +1,12 @@
 require "file_utils"
 require "../minitest_helper"
 
-# Real Ansible's loop-aggregate register shape (ansible-core's itemized
+# Ansible's loop-aggregate register shape (ansible-core's itemized
 # task handler): `failed` is only present when an item actually failed,
 # and `msg` is "All items completed" / "One or more items failed". The
 # aggregate previously always carried failed: false and no msg, so
-# `r.failed | default('none')` printed False where real prints None
-# (live-verified against real ansible-playbook 2.14 in the podman-diff
+# `r.failed | default('none')` printed False where Ansible prints None
+# (live-verified against ansible-playbook 2.14 in the podman-diff
 # harness, git_config GC14).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

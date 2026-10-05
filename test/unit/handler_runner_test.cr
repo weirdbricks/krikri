@@ -101,7 +101,7 @@ describe Krikri::HandlerRunner do
   end
 
   it "runs a multi-topic listen: handler only ONCE when notified via two of its topics in one flush" do
-    # Real Ansible's own dedup rule: a handler notified through more
+    # Ansible's own dedup rule: a handler notified through more
     # than one of its listen topics (or the same topic twice) in a
     # single flush still runs exactly once.
     host = make_host

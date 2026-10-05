@@ -15,19 +15,19 @@ module Krikri
     # mutating calls to make; the full #run wires it together and specs
     # drive it through the Ec2Api transport seam.
     #
-    # Behavior mirrors the real module:
+    # Behavior mirrors the Ansible module:
     # - rules/rules_egress are lists of {proto, from_port, to_port,
     #   cidr_ip, cidr_ipv6, group_id, group_name, prefix_list_id} dicts;
     #   a rule with no source at all defaults to 0.0.0.0/0.
     # - a rule may instead carry `ports`, a list of single ports and/or
     #   "N-M" range strings (real module docs, amazon.aws >= 2.4); each
     #   element becomes its own rule (from=to=port, or from=N to=M),
-    #   expanded against the rule's source list like the real module's
+    #   expanded against the rule's source list like the Ansible module's
     #   expand_rule.
     # - rules present on the group but not in the desired list are
     #   revoked when purge_rules (resp. purge_rules_egress) is true
     #   (the default) - including the default allow-all egress rule AWS
-    #   creates with every new group, which real Ansible also revokes
+    #   creates with every new group, which Ansible also revokes
     #   the first time rules_egress is managed.
     # - proto "all" normalizes to "-1" with no port range.
     module Ec2SecurityGroup
@@ -108,7 +108,7 @@ module Krikri
       end
 
       # "22" -> (22, 22); "443-8443" -> (443, 8443), bounds sorted like
-      # the real module's expand_ports_list (so "8443-443" still yields
+      # the Ansible module's expand_ports_list (so "8443-443" still yields
       # 443 first).
       private def self.parse_ports_entry(spec : String) : Tuple(String?, String?)
         return {spec.strip, spec.strip} unless dash = spec.index('-')
@@ -285,7 +285,7 @@ module Krikri
           if egress
             # A freshly created VPC group already carries AWS's default
             # allow-all egress rule; with purge_rules_egress (the default)
-            # real Ansible revokes it whenever the desired list is
+            # Ansible revokes it whenever the desired list is
             # supplied without it - including an explicitly empty one.
             default_egress = Rule.new("-1", nil, nil, ["0.0.0.0/0"], [] of String, [] of String, [] of String, [] of String)
             unless egress.any?(&.canonical.==(default_egress.canonical))
@@ -294,7 +294,7 @@ module Krikri
           end
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupIngress", permission_params(ingress)) if ingress && !ingress.empty?
           steps << Ec2Api::Step.new("AuthorizeSecurityGroupEgress", permission_params(egress)) if egress && !egress.empty?
-          # Tags are applied on the create path too (real Ansible does not
+          # Tags are applied on the create path too (Ansible does not
           # drop them); ResourceId is injected by #run - the group id only
           # exists after CreateSecurityGroup returns.
           steps << Ec2Api::Step.new("CreateTags", Ec2Api.tag_params(tags)) unless tags.empty?
@@ -305,7 +305,7 @@ module Krikri
         changed = false
 
         # nil rules/rules_egress means the param was not supplied - those
-        # directions are left untouched, matching real Ansible (purge only
+        # directions are left untouched, matching Ansible (purge only
         # applies where a desired list was actually given).
         if ingress
           ingress_diff = diff_rules(ingress, current.ingress, purge_rules)
@@ -354,7 +354,7 @@ module Krikri
       end
 
       # -- result shaping ----------------------------------------------------
-      # Real Ansible's ec2_security_group success result (verified live,
+      # Ansible's ec2_security_group success result (verified live,
       # 2026-09-13) is the described group's boto3-shaped output:
       # description, group_id, group_name, ip_permissions,
       # ip_permissions_egress, owner_id, security_group_arn, tags,
@@ -482,7 +482,7 @@ module Krikri
         check_mode = bool_param(params["_ansible_check_mode"]?)
 
         # state: absent never carries group fields - the group is gone (or
-        # was never there), so there's nothing to describe; real Ansible
+        # was never there), so there's nothing to describe; Ansible
         # returns exactly {changed, group_id: null}. The delete step itself
         # still runs (unless check mode).
         if state == "absent"
@@ -497,7 +497,7 @@ module Krikri
         end
 
         # Check mode against a group that doesn't exist yet: nothing to
-        # describe either - real Ansible returns {changed: true, group_id:
+        # describe either - Ansible returns {changed: true, group_id:
         # null} there.
         if check_mode && plan.group_id.empty?
           result = Krikri::PluginResult.new(changed: plan.changed, failed: false)
@@ -526,7 +526,7 @@ module Krikri
           end
         end
 
-        # Real Ansible ends every present-path result with the group's
+        # Ansible ends every present-path result with the group's
         # current describe output - including in check mode against an
         # existing group (describe is read-only, so it runs there too).
         result = Krikri::PluginResult.new(changed: plan.changed, failed: false)

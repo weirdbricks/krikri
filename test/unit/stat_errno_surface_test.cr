@@ -7,7 +7,7 @@ require "file_utils"
 # every stat failure came back as exists: false - a stat whose parent
 # is a FILE (ENOTDIR, e.g. probing dest/hostname after a flat: true
 # fetch wrote dest as a plain file) silently reported exists: false
-# where real ansible-playbook hard-fails with "Not a directory".
+# where ansible-playbook hard-fails with "Not a directory".
 private def with_temp_dir(&)
   dir = File.tempname("stat-errno-spec")
   Dir.mkdir_p(dir)

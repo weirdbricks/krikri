@@ -5,7 +5,7 @@ module Krikri
   module PluginHelpers
     # MysqlConnection - building a mysql:// connection URI from
     # Ansible-style login_* params, with the same implicit `~/.my.cnf`
-    # option-file fallback real Ansible's own mysql_* modules rely on.
+    # option-file fallback Ansible's own mysql_* modules rely on.
     # mysql_db/mysql_user/mysql_info/mysql_query do the actual DB.open.
     module MysqlConnection
       # The default option file every one of community.mysql's mysql_*
@@ -58,7 +58,7 @@ module Krikri
         socket = resolve_socket(unix_socket, host, defs)
         uri = build_base_uri(socket, host, port)
 
-        # Real MySQL client libraries (what real Ansible's own mysql_*
+        # Real MySQL client libraries (what Ansible's own mysql_*
         # modules run on, via PyMySQL/mysqlclient), when no login_user:
         # is given at all, default the connection username to the
         # current OS user rather than leaving it empty - relevant here
@@ -89,7 +89,7 @@ module Krikri
         # plugins, so there's no way for a caller to opt out short of this -
         # explicitly disable it here instead.
         # SECURITY NOTE (deliberate, compatibility-preserving divergence):
-        # real Ansible's PyMySQL connection defaults to ssl-mode=preferred,
+        # Ansible's PyMySQL connection defaults to ssl-mode=preferred,
         # so mysql_* traffic is TLS when the server supports it. Here it is
         # always plaintext for TCP until the vendored shard grows working
         # TLS - known, documented, NOT fixed so behavior stays shippable.
@@ -98,7 +98,7 @@ module Krikri
         # shard reads the socket path FROM uri.path, so a `/dbname` path
         # component is only usable for TCP. The shard itself accepts a
         # `database` query param for both transports (Options.from_uri).
-        # Found via an ad-hoc CLI comparison sweep against real ansible
+        # Found via an ad-hoc CLI comparison sweep against Ansible
         # (2026-09-13): mysql_query silently dropped login_db, so every
         # unqualified query failed with "No database selected".
         query_params = URI::Params.new
@@ -162,7 +162,7 @@ module Krikri
       end
 
       # Resolves a config_file path to an absolute path, expanding a leading
-      # `~` the same way Python's os.path.expanduser does (real Ansible's
+      # `~` the same way Python's os.path.expanduser does (Ansible's
       # path-type params pass through that before any existence check).
       # Crystal's own File.expand_path does NOT expand `~` (it treats it as a
       # literal relative component), which is why this hand-rolls the tilde

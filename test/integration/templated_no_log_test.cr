@@ -10,7 +10,7 @@ require "file_utils"
 # which is the SAFE direction for this security control (never
 # under-hides a real secret) but means the task's own failure message
 # was suppressed on every run regardless of the actual value, hiding
-# real errors from anyone debugging a failure.
+# Ansible errors from anyone debugging a failure.
 #
 # TaskExecutor#resolve_task_no_log re-renders the raw expression
 # against the live vars context at every actual no_log decision point.
@@ -61,10 +61,10 @@ describe "templated no_log: re-resolved at runtime, not parse time" do
 
   it "hides the failure message when the role-default no_log: resolves to true" do
     # no_log: true suppresses everything that could carry the secret -
-    # the msg, the error block real 2.19 itself leaks on failed no_log
+    # the msg, the error block Ansible 2.19 itself leaks on failed no_log
     # tasks, per-item detail - while the censored fatal dump (which
     # carries no secret) and any "...ignoring" note still print,
-    # matching real 2.19.11's shape minus its own leak.
+    # matching Ansible 2.19.11's shape minus its own leak.
     status, output = run_role_playbook("true")
 
     status.success?.must_equal(true, output)

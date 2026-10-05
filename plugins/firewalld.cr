@@ -12,7 +12,7 @@ module Krikri
   # Supported parameters:
   # - zone: firewalld zone - defaults to the configured default zone
   #   (firewalld.conf's DefaultZone, resolved over D-Bus when a daemon
-  #   is running) when omitted, matching real Ansible's own documented
+  #   is running) when omitted, matching Ansible's own documented
   #   behavior ("the default zone can be configured per system but
   #   public is default from upstream") rather than requiring it.
   # - state: enabled | disabled for every "thing" below. present/absent
@@ -22,16 +22,16 @@ module Krikri
   #   Ansible accepts `zone: myzone state: present permanent: true`
   #   with nothing else as a zone create/delete; round900593
   #   Thulium-Drake.firewalld), or target: (ZoneTargetTransaction).
-  #   Using them with any other thing fails with real Ansible's own
+  #   Using them with any other thing fails with Ansible's own
   #   "absent and present state can only be used in zone level
-  #   operations" message (verified live against a real ansible-playbook
+  #   operations" message (verified live against a ansible-playbook
   #   run - this plugin previously accepted present/absent everywhere as
-  #   silent synonyms, more lenient than real Ansible rather than
+  #   silent synonyms, more lenient than Ansible rather than
   #   matching it). Those four are also the ONLY valid values - real
   #   Ansible's argument spec rejects anything else up front (found by
   #   the podman-diff firewalld round: this plugin previously accepted
   #   any unrecognized state as a silent "disabled").
-  # - permanent/immediate/offline: ported real Ansible's own validation
+  # - permanent/immediate/offline: ported Ansible's own validation
   #   logic exactly (see #validate_permanent_immediate) rather than
   #   requiring `offline: true, permanent: true` explicitly - real
   #   Ansible defaults all three false, silently forces `immediate` true
@@ -42,7 +42,7 @@ module Krikri
   #   Ansible's own D-Bus-connection-attempt probe).
   # - one of: service, port, rich_rule, source, masquerade, interface,
   #   icmp_block, protocol, icmp_block_inversion, forward, target -
-  #   matching real Ansible's own mutually_exclusive constraint (exactly
+  #   matching Ansible's own mutually_exclusive constraint (exactly
   #   one "thing" per task). Every flag shape below was verified live
   #   against a real `firewall-offline-cmd` (firewalld 2.3.1, installed
   #   fresh in a throwaway Debian container specifically to check these -
@@ -50,12 +50,12 @@ module Krikri
   #   running daemon/kernel netfilter access needed, so a plain
   #   unprivileged container is enough).
   # - target: NOT an add/remove/query "thing" the way the others are -
-  #   verified against real ansible.posix.firewalld's own
+  #   verified against Ansible.posix.firewalld's own
   #   `ZoneTargetTransaction` source and live-verified against
   #   `firewall-offline-cmd`: uses `--set-target=<value>`/`--get-target`
   #   instead. `state: enabled`/`present` sets the zone's target to the
   #   given value; `state: disabled`/`absent` resets it to the literal
-  #   string `"default"` (real Ansible's own documented behavior:
+  #   string `"default"` (Ansible's own documented behavior:
   #   "Reset zone %s target to default" - NOT simply "remove", since a
   #   zone's target isn't optional the way a service/port/etc entry is).
   #
@@ -67,8 +67,8 @@ module Krikri
   # entirely in environments where its protocol validation can't resolve
   # entries like 'esp' (getprotobyname('esp') fails in a slim container
   # - this plugin previously failed every permanent operation there
-  # while real Ansible succeeded), so the offline backend here is the
-  # same direct XML manipulation the real module's Python does (see
+  # while Ansible succeeded), so the offline backend here is the
+  # same direct XML manipulation the Ansible module's Python does (see
   # FirewalldCommand's ZoneXml helpers). The one exception is
   # rich_rule, whose string form needs firewalld's own Rich_Rule
   # parser for XML serialization AND query canonicalization - it stays
@@ -89,7 +89,7 @@ module Krikri
   #
   # - port_forward: a list of at most one dict
   #   ({port, proto, toport, toaddr?}), structurally different from
-  #   every other "thing" above's simple scalar value - real Ansible's
+  #   every other "thing" above's simple scalar value - Ansible's
   #   own module (`ForwardPortTransaction`) fails with "Only one port
   #   forward supported at a time" for more than one entry, and builds
   #   a compound `port=X:proto=Y:toport=Z[:toaddr=W]` value (`toaddr`
@@ -114,8 +114,8 @@ module Krikri
     @do_runtime = false
     @do_permanent = true
 
-    # Real Ansible's result msg is built from a msgs list each
-    # transaction appends to (the real module's self.msgs): a
+    # Ansible's result msg is built from a msgs list each
+    # transaction appends to (the Ansible module's self.msgs): a
     # context line first ("Permanent and Non-Permanent(immediate)
     # operation" / "Permanent operation" / "Non-permanent operation"),
     # then per-change detail lines, then - only on hosts where firewalld
@@ -131,7 +131,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "missing required argument: state")
       end
 
-      # Real Ansible's argument spec: state choices are enabled,
+      # Ansible's argument spec: state choices are enabled,
       # disabled, present, absent - anything else fails at argument
       # validation time, before any firewalld interaction (verified
       # live: "value of state must be one of: absent, disabled, enabled,
@@ -143,7 +143,7 @@ module Krikri
 
       # Real firewalld.py's first module-level act is
       # FirewallTransaction.sanity_check() - the firewall Python
-      # library's import gate (the real module: the import
+      # library's import gate (the Ansible module: the import
       # block sets import_failure=True, sanity_check turns that into
       # missing_required_lib('firewall') + the version suffix). It
       # runs BEFORE the offline/permanent validation and the zone
@@ -163,7 +163,7 @@ module Krikri
         return validation_error
       end
 
-      # Real Ansible's own mutually_exclusive constraint spans target
+      # Ansible's own mutually_exclusive constraint spans target
       # and port_forward too - target+port together is a validation
       # failure there, not a silently-honored target. (Live-verified
       # error message shape: "parameters are mutually exclusive:
@@ -177,19 +177,19 @@ module Krikri
         return run_target(zone, state, target)
       end
 
-      # Real Ansible's own validation ("absent and present state can
+      # Ansible's own validation ("absent and present state can
       # only be used in zone level operations" - verified live against
-      # a real `ansible-playbook`/`ansible.posix.firewalld` run):
+      # a `ansible-playbook`/`ansible.posix.firewalld` run):
       # `present`/`absent` are only valid for zone-level operations -
-      # in the real module's main() that means a bare zone: with NO
+      # in the Ansible module's main() that means a bare zone: with NO
       # "thing" param at all (ZoneTransaction: creates/deletes the zone
       # itself - round900593 Thulium-Drake.firewalld found this engine
       # rejecting exactly that) or `target:` (handled above). Any other
       # "thing" - service/port/rich_rule/port_forward/etc - requires
       # `enabled`/`disabled` instead. Found live testing `port_forward:`
-      # against real Ansible in a round-34 host round: this plugin
+      # against Ansible in a round-34 host round: this plugin
       # previously accepted `present`/`absent` as silent synonyms for
-      # every thing, more lenient than real Ansible rather than matching
+      # every thing, more lenient than Ansible rather than matching
       # it.
       if state == "present" || state == "absent"
         thing_present = (PluginHelpers::FirewalldCommand::SUPPORTED_THINGS + ["port_forward"]).any? { |key| @params[key]? }
@@ -206,7 +206,7 @@ module Krikri
         return run(zone, state, key, value)
       end
 
-      # Zero "things" is NOT an error: verified live, real Ansible with
+      # Zero "things" is NOT an error: verified live, Ansible with
       # only zone+state (enabled, permanent) succeeds as a no-op
       # (changed=false) - its transaction list is simply empty, so the
       # msgs list stays empty too and exit_json(msg='') keeps the EMPTY
@@ -215,11 +215,11 @@ module Krikri
       firewalld_success(false)
     end
 
-    # Real Ansible never includes a `zone` key in any firewalld result
+    # Ansible never includes a `zone` key in any firewalld result
     # (its exit_json/fail_json calls pass changed/msg only), so none of
     # the result builders below emit one.
 
-    # The success shape: changed, msg, failed - real's
+    # The success shape: changed, msg, failed - Ansible's
     # exit_json(changed=changed, msg=', '.join(msgs)) with the empty-msg
     # key kept only when msgs is empty (an explicit msg='' kwarg).
     private def firewalld_success(changed : Bool) : PluginResult
@@ -233,14 +233,14 @@ module Krikri
       end
     end
 
-    # Check-mode change: real's transaction run() calls
+    # Check-mode change: Ansible's transaction run() calls
     # exit_json(changed=True) outright - NO msg key at all (registered
     # shape: changed, failed only, round994003 firewalld_service_check).
     private def check_mode_changed_result : PluginResult
       PluginResult.new(changed: true, failed: false)
     end
 
-    # Real's action_handler wraps every
+    # Ansible's action_handler wraps every
     # firewalld interaction in try/except and fail_json's with
     # "ERROR: Exception caught: <exception>" plus, when any context msgs
     # have accumulated, " <joined msgs>"; a message mentioning
@@ -264,7 +264,7 @@ module Krikri
     # service paths) - feeding the empty stdout into the result msg is
     # what made every krikri firewalld failure on the round994003 real
     # host msg-less. Strip the optional prefix and wrap the core the way
-    # real's action_handler does.
+    # Ansible's action_handler does.
     private def command_failure_result(result) : PluginResult
       core = result[:stderr].to_s.strip
       core = result[:stdout].to_s.strip if core.empty?
@@ -283,7 +283,7 @@ module Krikri
       end
     end
 
-    # The per-change detail line, in real's composition order: the
+    # The per-change detail line, in Ansible's composition order: the
     # service/port/rich_rule/protocol/icmp-block(-inversion)/port_forward
     # messages come from main() after the transaction returns, while
     # source/interface/masquerade/forward carry their own
@@ -312,15 +312,15 @@ module Krikri
     end
 
     private def run_target(zone : String, state : String, target : String) : PluginResult
-      # Real Ansible's own ZoneTargetTransaction FAILS any target change
+      # Ansible's own ZoneTargetTransaction FAILS any target change
       # in the immediate (runtime) context - a zone's target is only
       # settable permanently ("Zone operations must be permanent. Make
       # sure you didn't set the 'permanent' flag to 'false' or the
-      # 'immediate' flag to 'true.'" - the real module's own
+      # 'immediate' flag to 'true.'" - the Ansible module's own
       # tx_not_permanent_error_msg, raised by BOTH
       # set_enabled_immediate and set_disabled_immediate). So even a
       # bare `target:` task (immediate silently forced true) fails under
-      # real Ansible, and one with permanent+immediate fails too - the
+      # Ansible, and one with permanent+immediate fails too - the
       # immediate transaction runs first. Only permanent-only requests
       # proceed.
       if @do_runtime
@@ -339,7 +339,7 @@ module Krikri
       return check_mode_changed_result if true?(@params["_ansible_check_mode"]?)
 
       write_zone_xml(zone, PluginHelpers::FirewalldCommand.zone_set_target(content, desired))
-      # Real's own ZoneTargetTransaction enabled/disabled msgs.
+      # Ansible's own ZoneTargetTransaction enabled/disabled msgs.
       @msgs << (want_present ? "Set zone #{zone} target to #{target}" : "Reset zone #{zone} target to default")
       firewalld_success(true)
     end
@@ -380,7 +380,7 @@ module Krikri
 
       if want_present
         write_zone_xml(zone, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<zone>\n</zone>\n")
-        # Real's own ZoneTransaction enabled msg, then main()'s detail line.
+        # Ansible's own ZoneTransaction enabled msg, then main()'s detail line.
         @msgs << "Added zone #{zone}"
       else
         etc_path = File.join(ETC_ZONE_DIR, "#{zone}.xml")
@@ -395,9 +395,9 @@ module Krikri
       firewalld_success(true)
     end
 
-    # Matches real Ansible's own `ForwardPortTransaction` construction
+    # Matches Ansible's own `ForwardPortTransaction` construction
     # exactly: fails on >1 entries, requires port/proto/toport (checked
-    # in that order, matching the real module's own error-message
+    # in that order, matching the Ansible module's own error-message
     # order), `toaddr` optional and simply omitted from the compound
     # value when absent.
     private def run_port_forward(zone : String, state : String, raw : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
@@ -450,7 +450,7 @@ module Krikri
         end
       end
 
-      # Real's ForwardPortTransaction sets no enabled/disabled msg; the
+      # Ansible's ForwardPortTransaction sets no enabled/disabled msg; the
       # detail line comes from main(), keyed on the ORIGINAL dict values
       # with toaddr always spelled out (empty when absent).
       if changed
@@ -471,7 +471,7 @@ module Krikri
 
       if @do_runtime
         if key == "service"
-          # Real's ServiceTransaction.get_enabled_immediate reads the
+          # Ansible's ServiceTransaction.get_enabled_immediate reads the
           # zone's whole service LIST and tests membership, so a name
           # that is not a defined service simply reads as "not
           # enabled" here - the failure comes from the later add, with
@@ -483,7 +483,7 @@ module Krikri
         else
           query = remote_exec(PluginHelpers::FirewalldCommand.query_command(zone, key, value, "firewall-cmd"))
           # firewall-cmd's query flags exit 0 ("yes")/1 ("no"); anything
-          # else is a real error and is what real Ansible's
+          # else is a real error and is what Ansible's
           # action_handler would have caught.
           return command_failure_result(query) unless {0, 1}.includes?(query[:exit_code])
           runtime_present = query[:exit_code] == 0
@@ -507,7 +507,7 @@ module Krikri
       append_operation_context_msg
       changed = false
 
-      # Real's transaction adds PERMANENTLY before immediately, and the
+      # Ansible's transaction adds PERMANENTLY before immediately, and the
       # permanent add is what validates the service name: real firewalld's
       # own config-zone addService -> update() runs check_config, which
       # raises INVALID_SERVICE "Zone '<zone>': '<service>' not among
@@ -563,7 +563,7 @@ module Krikri
       firewalld_success(changed)
     end
 
-    # Writes back to /etc/firewalld/zones/<zone>.xml - real Ansible's
+    # Writes back to /etc/firewalld/zones/<zone>.xml - Ansible's
     # offline mode persists every change there (firewalld's own
     # set_zone_config), including changes to a stock /usr/lib zone,
     # which effectively copies it into user config.
@@ -581,7 +581,7 @@ module Krikri
     end
 
     # Does firewalld define this service at all (a service XML in
-    # either catalogue dir)? The check real's own permanent
+    # either catalogue dir)? The check Ansible's own permanent
     # config-zone update() performs before it accepts a zone that
     # references the name - see the INVALID_SERVICE comment in #run.
     private def service_defined?(name : String) : Bool
@@ -590,7 +590,7 @@ module Krikri
       SERVICE_DIRS.any? { |dir| File.exists?(File.join(dir, "#{name}.xml")) }
     end
 
-    # `zone:` (real Ansible's own doc: "the default zone can be
+    # `zone:` (Ansible's own doc: "the default zone can be
     # configured per system but public is default from upstream") -
     # resolves the LIVE daemon's default zone when one is running (real
     # Ansible resolves the default over its D-Bus connection), the
@@ -638,14 +638,14 @@ module Krikri
       false
     end
 
-    # Ports real Ansible's own `permanent`/`immediate`/`offline` twisty
-    # validation logic (the real module's
+    # Ports Ansible's own `permanent`/`immediate`/`offline` twisty
+    # validation logic (the Ansible module's
     # `main()`) instead of the previous blanket "offline: true,
     # permanent: true both required" gate - that combination isn't even
-    # a real Ansible requirement (permanent defaults false, immediate
+    # a Ansible requirement (permanent defaults false, immediate
     # defaults false, offline defaults false; when neither permanent nor
     # immediate is given, immediate is silently forced true). Returns a
-    # failed PluginResult exactly matching real Ansible's own error
+    # failed PluginResult exactly matching Ansible's own error
     # messages for the two validation failures it can raise, nil if the
     # request is valid and this plugin can service it (permanent-only,
     # offline-style - covers every case this plugin's own
@@ -671,7 +671,7 @@ module Krikri
 
       # Which contexts this request touches: an immediate action against
       # a live daemon goes through `firewall-cmd` (the D-Bus client CLI,
-      # the same channel real Ansible's own firewall module drives), a
+      # the same channel Ansible's own firewall module drives), a
       # permanent one through `firewall-offline-cmd` (on-disk zone XML).
       # The daemon-running + immediate combination used to be a hard
       # "not implemented" failure - it is the backend now.

@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # A block:'s body failures move into the recap's "rescued" counter as
 # soon as rescue: is ENTERED - not only when the rescue itself then
-# succeeds. Live-verified against real ansible-core 2.19.12 on Rocky 9.6
+# succeeds. Live-verified against ansible-core 2.19.12 on Rocky 9.6
 # (round173): a failing block task plus a rescue: that ALSO fails recaps
 # as `failed=1 rescued=1`, not `failed=2 rescued=0`. Only the rescue's
 # own failure counts as a play failure.

@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# `role_name` (unprefixed) - real Ansible's own magic var for the name
+# `role_name` (unprefixed) - Ansible's own magic var for the name
 # of the currently executing role. Only its `ansible_role_name` alias
 # was ever set (executor_vars_context.cr), so a role referencing the
 # unprefixed form directly (akkerman.docker's own "pin docker version"

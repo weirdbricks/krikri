@@ -7,7 +7,7 @@ require "../minitest_helper"
 # never evaluated, and a strict-undefined reference to a missing
 # registered var does NOT raise. Pre-fix this raised
 # "'item_stat.stat.exists' is undefined" at the child's when-eval,
-# aborting the play even though real Ansible would have skipped the
+# aborting the play even though Ansible would have skipped the
 # whole file at the parent `when: false` decision.
 #
 # Reproducer: weareinteractive.openssl/tasks/create_dir.yml, used by

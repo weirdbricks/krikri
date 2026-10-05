@@ -9,10 +9,10 @@ module Krikri
   # text in a file. Compatible with Ansible's ansible.builtin.blockinfile.
   #
   # Parameters:
-  #   path (required, aliases: dest, destfile, name - matches real Ansible's
+  #   path (required, aliases: dest, destfile, name - matches Ansible's
   #     own argument_spec): File to edit
   #   block (alias content): Text to insert between the markers - a missing
-  #     or empty block removes the block instead (real Ansible's own
+  #     or empty block removes the block instead (Ansible's own
   #     "if present and block:" gate), which is not the same as state:
   #     absent for the prepend_newline/append_newline padding
   #   state: present (default) or absent
@@ -20,10 +20,10 @@ module Krikri
   #   marker_begin / marker_end: default "BEGIN" / "END"
   #   insertafter / insertbefore: EOF/BOF or a regexp (same LAST-match
   #     anchoring as lineinfile - via the shared LineEditor.insertion_index;
-  #     real Ansible has no firstmatch here) - mutually exclusive
+  #     Ansible has no firstmatch here) - mutually exclusive
   #   create: create the file if it doesn't exist (default: no)
   #   backup: write a timestamped backup before changing the file
-  #   mode / owner / group: applied (unconditionally, like real Ansible's
+  #   mode / owner / group: applied (unconditionally, like Ansible's
   #     check_file_attrs) via the same attr suite lineinfile uses
   #   attributes (alias: attr): chattr-style flags (e.g. "+i")
   #   seuser / serole / setype / selevel: SELinux context parts - graceful
@@ -54,25 +54,25 @@ module Krikri
 
       check_mode = true?(@params["_ansible_check_mode"]?)
       block = @params["block"]? || @params["content"]?
-      # Real Ansible keeps `present` (state: present) and the block
+      # Ansible keeps `present` (state: present) and the block
       # separate: an empty/missing block makes it REMOVE the block, but a
       # state: present task is still "present" for the prepend_newline /
       # append_newline padding, which is why folding the two together here
       # silently dropped the blank line those flags add and reported ok
-      # where real reports changed (verified against 2.19.11).
+      # where Ansible reports changed (verified against 2.19.11).
       state = @params["state"]? || "present"
 
       if error = validate_params
         return error
       end
 
-      # Real Ansible fails on a directory path before anything else
+      # Ansible fails on a directory path before anything else
       # (fail_json rc=256, msg='Path %s is a directory !').
       if File.directory?(path)
         return PluginResult.new(changed: false, failed: true, msg: "Path #{path} is a directory !", rc: 256)
       end
 
-      # Real Ansible: a missing file with state=absent and create=true
+      # Ansible: a missing file with state=absent and create=true
       # exits "File %s not present" WITHOUT creating anything - only
       # state=present (or an explicit need for the file) goes through the
       # create/fail logic below.
@@ -86,7 +86,7 @@ module Krikri
       apply(path, state, block, being_created, check_mode)
     end
 
-    # Real Ansible's argument_spec marks insertbefore/insertafter
+    # Ansible's argument_spec marks insertbefore/insertafter
     # mutually exclusive (live-verified against ansible-core 2.19.4:
     # giving both fails with "parameters are mutually exclusive:
     # insertbefore|insertafter").
@@ -107,7 +107,7 @@ module Krikri
 
       unless create
         return {false, PluginResult.new(changed: false, failed: true, msg: "Path #{path} does not exist !", rc: 257,
-          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
+          # Ansible's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
           # msg, changed, exception (live-verified against 2.19.11, same
           # module_utils pattern as lineinfile's missing-dest failure)
           key_order: %w[rc failed msg changed exception])}
@@ -125,13 +125,13 @@ module Krikri
     private def apply(path : String, state : String, block : String?, being_created : Bool, check_mode : Bool) : PluginResult
       original_content = File.exists?(path) ? File.read(path) : ""
       marker_begin_line, marker_end_line = marker_lines
-      # Real Ansible builds its marker-delimited block lines only from a
+      # Ansible builds its marker-delimited block lines only from a
       # NON-EMPTY block (`if present and block:`), so the default empty
       # block: is a removal - Crystal's split would otherwise hand back
       # one empty line and re-create the markers around it.
       trimmed_block = block.try(&.rstrip("\n")) || ""
       block_lines = trimmed_block.empty? ? [] of String : trimmed_block.split("\n")
-      # Real Ansible clears blocklines entirely for state=absent
+      # Ansible clears blocklines entirely for state=absent
       # (`if present and block: ... else: blocklines = []`), so the
       # block is never "present" on an absent run - the removal msg is
       # 'Block removed' even when block: was passed, and the render's
@@ -147,7 +147,7 @@ module Krikri
       )
       new_content = render_content(new_lines, original_content, being_created, marker_end_line, block_present)
 
-      # Real Ansible compares the whole file byte for byte (`original ==
+      # Ansible compares the whole file byte for byte (`original ==
       # result`), and a file it had to CREATE always counts as changed -
       # its `original` is None there, which can never equal the computed
       # content even when both are empty.
@@ -165,7 +165,7 @@ module Krikri
       diff ||= blockinfile_diff(path)
 
       # owner:/group:/mode:/attributes:/SELinux apply even when the block
-      # content itself was already correct - real Ansible's blockinfile
+      # content itself was already correct - Ansible's blockinfile
       # runs check_file_attrs unconditionally after the write.
       attrs_changed = false
       if File.exists?(path)
@@ -218,8 +218,8 @@ module Krikri
     end
 
     # A file that had to be created reports "File created" even when the
-    # block write happens in the same call - matches real Ansible, verified
-    # against a real `ansible-playbook` run rather than assumed. Real picks
+    # block write happens in the same call - matches Ansible, verified
+    # against a `ansible-playbook` run rather than assumed. Real picks
     # between the other two messages on whether it had any block lines to
     # insert (`elif not blocklines: 'Block removed'`), not on the state
     # value: a state: present task whose block is empty removes too.
@@ -242,7 +242,7 @@ module Krikri
       lines
     end
 
-    # Real Ansible's blocklines all carry their own trailing newline
+    # Ansible's blocklines all carry their own trailing newline
     # (marker1 = marker.sub("{mark}", marker_end) + os.linesep), so when a
     # block ends the file the result ALWAYS ends with a newline - even
     # when the original file's last line didn't have one.
@@ -252,7 +252,7 @@ module Krikri
       content
     end
 
-    # Backup first (real Ansible's backup_local also runs before its own
+    # Backup first (Ansible's backup_local also runs before its own
     # write_changes), then the actual write. Returns {backup_file,
     # failure}: failure a failed PluginResult when the write/validate
     # path itself failed.
@@ -267,7 +267,7 @@ module Krikri
       {backup_file, nil}
     end
 
-    # Real Ansible writes blockinfile's result through
+    # Ansible writes blockinfile's result through
     # AnsibleModule.atomic_move: a temp file whose content is validated
     # (validate:) and then RENAMED into place - same shape lineinfile.cr's
     # merged implementation already uses here. unsafe_writes: swaps the
@@ -320,7 +320,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's atomic_move resolves a symlink dest to its TARGET
+      # Ansible's atomic_move resolves a symlink dest to its TARGET
       # (os.path.realpath) before renaming, so a blockinfile task pointing
       # at a symlink edits the file it points at rather than replacing
       # the symlink - and the previous in-place File.write here followed
@@ -423,7 +423,7 @@ module Krikri
       end
     end
 
-    # The file's current chattr flags as real Ansible reads them:
+    # The file's current chattr flags as Ansible reads them:
     # `lsattr -d <path>` output's first whitespace field with the
     # dash-padding stripped. An lsattr failure (missing binary,
     # unsupported filesystem like tmpfs) is empty flags, not an error -
@@ -445,7 +445,7 @@ module Krikri
     end
 
     # Applies the attributes: param via the real chattr binary and fails
-    # the task (like real Ansible's fail_json(msg='chattr failed')) when
+    # the task (like Ansible's fail_json(msg='chattr failed')) when
     # chattr exits nonzero or writes to stderr.
     private def apply_attr(path : String, check_mode : Bool) : {Bool, PluginResult?}
       return {false, nil} unless attr_changed?(path)
@@ -466,7 +466,7 @@ module Krikri
 
     # seuser:/serole:/setype:/selevel: - SELinux context parts, applied
     # to the file via `chcon`. Mirrors copy.cr's/lineinfile.cr's proven
-    # implementation exactly: real Ansible skips this ENTIRELY (a
+    # implementation exactly: Ansible skips this ENTIRELY (a
     # graceful no-op, its set_context_if_different opens with `if not
     # self.selinux_enabled(): return changed`) when SELinux isn't enabled
     # on the target at all, the overwhelming majority of real-world

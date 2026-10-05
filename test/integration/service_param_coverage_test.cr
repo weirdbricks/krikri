@@ -6,8 +6,8 @@ require "file_utils"
 # under-systemd ignore, which the action plugin lumps in with them).
 #
 # All three are documented `service:` options, but on a systemd-managed
-# host real Ansible's service ACTION plugin
-# (the real module, UNUSED_PARAMS['systemd']) strips
+# host Ansible's service ACTION plugin
+# (the Ansible module, UNUSED_PARAMS['systemd']) strips
 # each one that was given and warns `Ignoring "<param>" as it is not
 # used in "systemd"` before the systemd module ever sees it.
 # Live-verified against ansible-core 2.19.4 on this systemd machine:
@@ -56,7 +56,7 @@ private def with_service_shims(load_state : String, active_state : String, &)
     exit 0
   SHIM
 
-  # The engine implements real Ansible's in-process restart sleep as a
+  # The engine implements Ansible's in-process restart sleep as a
   # `sleep N` shellout, so a shim makes it observable in the same log
   # (and keeps the spec fast - no real sleeping).
   File.write(File.join(dir, "sleep"), <<-'SHIM')
@@ -97,8 +97,8 @@ SYSTEMD_SLEEP_WARNING     = "Ignoring \"sleep\" as it is not used in \"systemd\"
 SYSTEMD_ARGUMENTS_WARNING = "Ignoring \"arguments\" as it is not used in \"systemd\""
 
 describe "service plugin - parameter coverage" do
-  describe "systemd-managed host (real Ansible's UNUSED_PARAMS behavior)" do
-    it "accepts arguments:/pattern:/sleep:, changes nothing, and emits real Ansible's exact warnings" do
+  describe "systemd-managed host (Ansible's UNUSED_PARAMS behavior)" do
+    it "accepts arguments:/pattern:/sleep:, changes nothing, and emits Ansible's exact warnings" do
       with_service_shims("loaded", "active") do |env, log|
         result = PluginSpecHelper.run("service", {
           "name"         => "krikri-fake-svc",
@@ -128,7 +128,7 @@ describe "service plugin - parameter coverage" do
       end
     end
 
-    it "carries the warnings on a failure result too, like real Ansible's action plugin ordering" do
+    it "carries the warnings on a failure result too, like Ansible's action plugin ordering" do
       with_service_shims("not-found", "inactive") do |env, _log|
         result = PluginSpecHelper.run("service", {
           "name"         => "krikri-nope-svc",
@@ -159,7 +159,7 @@ describe "service plugin - parameter coverage" do
     end
   end
 
-  describe "non-systemd managers (real Ansible gives the params real effect there)" do
+  describe "non-systemd managers (Ansible gives the params real effect there)" do
     it "does not emit the systemd warnings when use: sysvinit is pinned" do
       skip "no /etc/init.d/cron on this host" unless File.exists?("/etc/init.d/cron")
       with_service_shims("loaded", "active") do |env, _log|
@@ -213,7 +213,7 @@ describe "service plugin - parameter coverage" do
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         calls = read_calls(log)
         calls.must_include("krikri-fake-svc restart --my-flag")
-        # No sleep call: real Ansible's OpenRC restart is native, no
+        # No sleep call: Ansible's OpenRC restart is native, no
         # stop-then-start split to sleep between.
         calls.join("\n").wont_include("sleep ")
       end

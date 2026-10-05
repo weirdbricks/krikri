@@ -1,11 +1,11 @@
 require "../minitest_helper"
 
-# Real ansible-core 2.19.11's controller-side relative-src lookups
+# ansible-core 2.19.11's controller-side relative-src lookups
 # (live-verified in the krikri repo's output-parity sweep sweep10/000044 +
 # 000047 and dedicated probe playbooks):
 #
 # - template's newline_sequence validation message carries REAL control
-#   characters (the Python source literal "\n, \r or \r\n") and real's
+#   characters (the Python source literal "\n, \r or \r\n") and Ansible's
 #   error pipeline strips the trailing " \r\n" - the displayed and fatal
 #   text both end at "or". The failure is a bare AnsibleActionFail (no
 #   exception context), so the [ERROR] block is the single COLLAPSED
@@ -36,7 +36,7 @@ ensure
 end
 
 describe "template controller-side src/newline_sequence parity" do
-  it "fails a wrong newline_sequence with real's control-character message" do
+  it "fails a wrong newline_sequence with Ansible's control-character message" do
     status, output, _ = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -51,7 +51,7 @@ describe "template controller-side src/newline_sequence parity" do
       YAML
 
     status.success?.must_equal(true)
-    # real's bytes: literal LF after "one of: ", literal CR after ", "
+    # Ansible's bytes: literal LF after "one of: ", literal CR after ", "
     output.must_include("Task failed: newline_sequence needs to be one of: \n, \r or\nOrigin: ")
     output.must_include("{\"changed\": false, \"msg\": \"newline_sequence needs to be one of: \\n, \\r or\"}")
     # collapsed block: no caused-by chain for this failure class
@@ -59,7 +59,7 @@ describe "template controller-side src/newline_sequence parity" do
     output.wont_include("Task failed.")
   end
 
-  it "reports real's searched-paths list for a missing relative src" do
+  it "reports Ansible's searched-paths list for a missing relative src" do
     status, output, dir = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -118,7 +118,7 @@ describe "copy/script/unarchive controller-side src miss parity" do
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Unexpected AnsibleActionFail error: Could not find or access 'missing_file.txt'\\nSearched in:")
   end
 
-  it "fails a missing relative script src on the controller with real's wording" do
+  it "fails a missing relative script src on the controller with Ansible's wording" do
     status, output, dir = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

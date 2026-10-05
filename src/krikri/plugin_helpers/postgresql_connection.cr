@@ -49,7 +49,7 @@ module Krikri
         # real pg_hba.conf gates behind `ident` (needs a running ident
         # daemon, absent here) rather than the `peer` auth a socket
         # connection gets, so it failed outright ("Could not connect to
-        # the PostgreSQL server") while real Ansible connected fine.
+        # the PostgreSQL server") while Ansible connected fine.
         unix_socket ||= DEFAULT_UNIX_SOCKET_DIR unless host
 
         uri = new_uri(unix_socket, host, port, path)
@@ -91,7 +91,7 @@ module Krikri
       # libpq's own connection-error wording, which is what real
       # (psycopg2 -> libpq) embeds in community.postgresql's
       # "unable to connect to database: %s" fail_json. Live-verified
-      # against real ansible-core 2.19.11 + community.postgresql 4.2.0
+      # against ansible-core 2.19.11 + community.postgresql 4.2.0
       # for every case reproduced below:
       #
       # - TCP, nothing listening (ECONNREFUSED):

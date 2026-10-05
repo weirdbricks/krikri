@@ -70,7 +70,7 @@ describe "assert plugin" do
   end
 
   describe "quiet:" do
-    # Real ansible-core 2.19.4, live-verified: quiet: is display-only. A
+    # ansible-core 2.19.4, live-verified: quiet: is display-only. A
     # passing assert with quiet: true still carries msg in its
     # result/registered var (exactly {changed, failed, msg}); only the
     # success message's *display* is suppressed. A failing assert reports

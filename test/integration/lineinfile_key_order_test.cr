@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered lineinfile result key orders -
+# ansible-core 2.19.11's registered lineinfile result key orders -
 # live-verified via `{{ r | to_json }}` on registered lineinfile: tasks.
 # state=present runs changed, msg, backup, diff, failed - backup: ""
 # even when no backup was taken and msg: "" on an already-correct
@@ -11,7 +11,7 @@ require "file_utils"
 # backfilled by the executor after the plugin JSON, so the plugin-level
 # pins below omit it.
 describe "lineinfile plugin result key order" do
-  it "serializes a create success in real's changed-msg-backup-diff order" do
+  it "serializes a create success in Ansible's changed-msg-backup-diff order" do
     path = PluginSpecHelper.tmp_path("lineinfile-order-create.txt")
 
     result = PluginSpecHelper.run("lineinfile", {"path" => path, "line" => "hello", "create" => "true"})

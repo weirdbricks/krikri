@@ -74,7 +74,7 @@ describe "--start-at-task" do
     markers(output).must_equal(["T4"])
   end
 
-  # Real Ansible flattens the play, so starting inside a block runs the
+  # Ansible flattens the play, so starting inside a block runs the
   # remainder of that block and everything after it.
   it "can start at a task nested inside a block" do
     yaml = <<-YAML

@@ -52,7 +52,7 @@ describe "lookup('url', ...)" do
     JSON.parse(result).as_a.map(&.as_s).must_equal(["line one", "line two", "line three"])
   end
 
-  it "supports a `+`-concatenated URL expression, real Ansible's own idiom for versioned release URLs" do
+  it "supports a `+`-concatenated URL expression, Ansible's own idiom for versioned release URLs" do
     v = Hash(String, JSON::Any).new
     v["path"] = JSON::Any.new("lines.txt")
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
@@ -64,7 +64,7 @@ describe "lookup('url', ...)" do
     # Real bug found benchmarking robertdebock.kubectl (round 109):
     # `kubectl_url: ".../release/{{ lookup('url', kubectl_version_url)
     # }}/bin/linux/amd64/kubectl"` (the role's own vars/main.yml) calls
-    # lookup('url', ...) with no wantlist=True at all - real Ansible's
+    # lookup('url', ...) with no wantlist=True at all - Ansible's
     # own lookup() Jinja function only returns a real LIST when the
     # call site explicitly passes wantlist=True, otherwise it
     # comma-joins the plugin's own (always-list) result into a plain
@@ -77,15 +77,15 @@ describe "lookup('url', ...)" do
     result.must_equal("line one,line two,line three")
   end
 
-  it "raises on a 404, matching real Ansible's own url lookup plugin" do
+  it "raises on a 404, matching Ansible's own url lookup plugin" do
     # Real bug found benchmarking buluma.victoriametrics (round 157): a
     # stale `victoriametrics_version` default whose GitHub release
-    # checksums file has since been removed (404). Real ansible-playbook
+    # checksums file has since been removed (404). ansible-playbook
     # fails the whole enclosing set_fact: task right at the lookup
     # ("The lookup plugin 'url' failed: Received HTTP error for <url> :
     # HTTP Error 404: Not Found") - this previously degraded silently
     # to "undefined" instead (this spec's own prior assertion, written
-    # without live verification against real Ansible), letting
+    # without live verification against Ansible), letting
     # execution continue into a `with_items:` loop over a single bogus
     # "undefined" item and only fail several tasks later for an
     # unrelated reason - a real ok=/skipped= recap divergence from real

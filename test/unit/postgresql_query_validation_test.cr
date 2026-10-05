@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/postgresql_query.cr's argument-validation surface
 # against real community.postgresql.postgresql_query 4.2.0
-# (live-verified by running real ansible-playbook 2.19.11 on this host,
+# (live-verified by running ansible-playbook 2.19.11 on this host,
 # 2026-10-03): in the live collection's argument_spec neither query nor
 # login_db is required, positional_args|named_args are mutually
 # exclusive, login_port is an int, autocommit/trust_input are bools,
@@ -14,7 +14,7 @@ require "../minitest_helper"
 # Validation failures happen before any connection, so these run
 # without a PostgreSQL server.
 describe "postgresql_query plugin argument validation" do
-  it "fails on no parameters at all (nil query crashes the real module)" do
+  it "fails on no parameters at all (nil query crashes the Ansible module)" do
     result = PluginSpecHelper.run("postgresql_query", {} of String => String)
 
     result["failed"].as_bool.must_equal(true)

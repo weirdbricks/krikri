@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Connection-plugin resolution parity, end to end. Real Ansible resolves
+# Connection-plugin resolution parity, end to end. Ansible resolves
 # a task's effective connection type (ansible_connection variable or a
 # task's own `connection:` keyword) through its plugin loader right
 # after the when: evaluates and before the module runs, failing the task
@@ -15,7 +15,7 @@ require "file_utils"
 # This engine previously treated ANY non-"local" value as "ssh": an
 # unresolvable connection turned into a bogus UNREACHABLE (pre-run
 # "Failed to upload ... ssh: connect refused", or "Failed to connect to
-# the host via ssh") instead of real Ansible's one clean failed task.
+# the host via ssh") instead of Ansible's one clean failed task.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -30,7 +30,7 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
-describe "unresolvable connection type fails the task like real Ansible" do
+describe "unresolvable connection type fails the task like Ansible" do
   # minitest's describe/it macros cannot expand inside a runtime block,
   # and `it` names cannot interpolate, so the classic suite's conn_type
   # loop is unrolled into one static it per connection type.
@@ -149,7 +149,7 @@ describe "unresolvable connection type fails the task like real Ansible" do
 
   it "keeps the SSH fallback for a collection connection plugin that IS installed on the controller" do
     # containers.podman.podman is a real connection plugin the controller's
-    # collection path resolves - real Ansible would exec the module
+    # collection path resolves - Ansible would exec the module
     # inside the container; this engine keeps its long-standing SSH
     # transport approximation for that case (a resolution failure would
     # be a REGRESSION for roles relying on the fallback), so this only

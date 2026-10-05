@@ -12,7 +12,7 @@ module Krikri
     #
     # Field-path note: the IAM Query API's XML uses the request-style
     # PascalCase names (UserName, Arn, CreateDate, UserId, Path,
-    # PasswordLastUsed) - NOT the snake_case keys the real module's
+    # PasswordLastUsed) - NOT the snake_case keys the Ansible module's
     # result carries. boto3 parses GetUser/ListUsers into those
     # snake_case dicts (its model maps UserName -> user_name etc. for
     # the IAM namespace), so normalization reads the PascalCase wire
@@ -47,7 +47,7 @@ module Krikri
       end
 
       private def self.raw_users(name : String?, group : String?, path : String) : Array(KXML::Element)
-        # name but not path/group: the real module goes straight to GetUser.
+        # name but not path/group: the Ansible module goes straight to GetUser.
         return get_user(name) if name && path == "/" && group.nil?
         return group_members(group) if group
         list_users_by_path(path)
@@ -129,12 +129,12 @@ module Krikri
         end
         result
       rescue
-        # NoSuchEntity - no console access, the real module's {} shape
+        # NoSuchEntity - no console access, the Ansible module's {} shape
         {} of String => JSON::Any
       end
 
       # boto3 parses IAM's CreateDate/PasswordLastUsed into datetime
-      # objects and the real module's JSON encoding renders those with
+      # objects and the Ansible module's JSON encoding renders those with
       # isoformat() (+00:00), not the wire's trailing Z.
       private def self.iso_datetime(text : String) : String
         text.matches?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/) ? text.sub(/Z\z/, "+00:00") : text

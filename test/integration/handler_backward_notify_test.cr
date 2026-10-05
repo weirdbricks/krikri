@@ -7,7 +7,7 @@ require "../minitest_helper"
 # to be dropped entirely, silently skipping a handler the playbook asked
 # for.
 #
-# Real Ansible makes exactly ONE further pass for these. All three
+# Ansible makes exactly ONE further pass for these. All three
 # behaviors below were measured against ansible-core 2.19.4.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

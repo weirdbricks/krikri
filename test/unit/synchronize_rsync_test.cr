@@ -2,14 +2,14 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/synchronize_rsync"
 
 # Unit specs for the synchronize (ansible.posix) rsync-invocation core:
-# argv construction behavior matched to real ansible.posix's
-# the real module, and the itemize-changes protocol its
+# argv construction behavior matched to Ansible.posix's
+# the Ansible module, and the itemize-changes protocol its
 # changed detection rides on. The integration specs
 # (test/integration/synchronize_test.cr) exercise the same code against a
 # real rsync; these pin the flag algebra without needing the binary.
 describe Krikri::SynchronizeRsync do
   describe "build_argv" do
-    it "matches the real module's default flag set (delay-updates -F, compress, archive)" do
+    it "matches the Ansible module's default flag set (delay-updates -F, compress, archive)" do
       argv = Krikri::SynchronizeRsync.build_argv("/a", "/b", Hash(String, String).new)
       argv.must_equal([
         "rsync", "--delay-updates", "-F", "--compress", "--archive",
@@ -105,7 +105,7 @@ describe Krikri::SynchronizeRsync do
       argv.must_include("--link-dest=/snap/shot")
     end
 
-    it "builds --rsh with the real module's ssh options for remote paths" do
+    it "builds --rsh with the Ansible module's ssh options for remote paths" do
       argv = Krikri::SynchronizeRsync.build_argv("/local", "root@web:/remote", {
         "dest_port" => "2222",
       }, private_key: "/id_ed25519", dest_port: 2222)
@@ -192,8 +192,8 @@ describe Krikri::SynchronizeRsync do
         .must_equal(">f.st...... a\ncd+++++++++ b\n")
     end
 
-    it "keeps real's trailing newline on the msg but not on an empty capture" do
-      # Real's msg is out.replace(changed_marker, '') - rsync's raw
+    it "keeps Ansible's trailing newline on the msg but not on an empty capture" do
+      # Ansible's msg is out.replace(changed_marker, '') - rsync's raw
       # stdout, trailing newline included (round 995004
       # synchronize_push). An empty stdout stays empty (the idempotent
       # rerun's msg key must keep its "" value).
@@ -210,7 +210,7 @@ describe Krikri::SynchronizeRsync do
       # whole-single-span comment). A value that merely LOOKS like a
       # container (single-quoted repr text - a literal string, or a
       # `{% if %}...{% else %}['a']{% endif %}` block's rendered output)
-      # is a plain STRING in real ansible-core (live-verified vs
+      # is a plain STRING in ansible-core (live-verified vs
       # ansible-playbook 2.19.11, see apt.cr's parse_package_names) -
       # the old single-quote "repair" turned it into a list real
       # Ansible never had.

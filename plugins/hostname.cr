@@ -3,7 +3,7 @@
 # hostname module (ansible.builtin.hostname) - manages the system hostname.
 #
 # Sets the hostname persistently. Without `use:`, auto-detects exactly
-# like real Ansible's Hostname dispatch: on Linux, a systemd-managed host
+# like Ansible's Hostname dispatch: on Linux, a systemd-managed host
 # (systemctl installed AND one of systemd's sd_booted canary directories
 # present) uses SystemdStrategy (hostnamectl); otherwise the distribution
 # picks the strategy. Debian-family distros use FileStrategy, which reads
@@ -12,15 +12,15 @@
 # entirely on the file's stripped content, with a missing file reading as
 # "").
 #
-# `use:` overrides auto-detection (real Ansible's STRATS dict), mapping to
-# the same strategy classes real Ansible uses:
+# `use:` overrides auto-detection (Ansible's STRATS dict), mapping to
+# the same strategy classes Ansible uses:
 # - systemd/debian -> SystemdStrategy: hostnamectl. Permanent first
 #   (`--pretty --static set-hostname`), then transient (`--transient
 #   set-hostname`); both reads (`--transient status`/`--static status`)
 #   happen even in check mode; a >64-char name fails at the actual set
 #   only (check mode reports would-change regardless, live-verified).
 #   Unlike the auto-detect path, an explicitly requested systemd strategy
-#   FAILS when hostnamectl is absent (real Ansible's get_bin_path,
+#   FAILS when hostnamectl is absent (Ansible's get_bin_path,
 #   live-verified "Failed to find required executable ..." text) rather
 #   than falling back.
 # - redhat -> RedHatStrategy: edits only /etc/sysconfig/network's
@@ -33,19 +33,19 @@
 #   the file's OLD content - live-verified command order) and only then
 #   writes /etc/hostname. Idempotency comes from the file alone.
 # - openrc -> OpenRCStrategy: edits /etc/conf.d/hostname's hostname="..."
-#   line. A file without a hostname= line crashes real Ansible (its
+#   line. A file without a hostname= line crashes Ansible (its
 #   get_permanent_hostname returns None and the diff build raises
 #   TypeError, live-verified) - replicated as a failure here. A missing
 #   file reads as "" and the write path produces a lone "\n" exactly like
-#   real Ansible (live-verified).
-# - generic -> fails: real Ansible's Base strategy raises
+#   Ansible (live-verified).
+# - generic -> fails: Ansible's Base strategy raises
 #   NotImplementedError on every operation (live-verified raw traceback),
 #   so there is no working behavior to replicate.
 #
 # Out of scope (deliberately, this is a Linux-only engine): use: values
 # freebsd/macos/macosx/darwin/openbsd/solaris select non-Linux platform
 # strategies (genuinely non-Linux). They are rejected with an
-# explicit error rather than silently mis-executed. Note real Ansible
+# explicit error rather than silently mis-executed. Note Ansible
 # would actually run them on Linux; that divergence is krikri's
 # Linux-only stance, not an oversight.
 #
@@ -53,9 +53,9 @@
 # (auto path on Debian-family: /etc/hostname's content, not the live
 # kernel hostname). Returns ansible_facts
 # (ansible_hostname, ansible_nodename, ansible_fqdn, ansible_domain)
-# matching real Ansible's convention.
+# matching Ansible's convention.
 #
-# Verified against real ansible-playbook behavior (not ansible-doc alone):
+# Verified against ansible-playbook behavior (not ansible-doc alone):
 # - Returns ansible_facts at the result top level, not nested under a
 #   separate key.
 # - ansible_hostname is the short name (first component before '.').
@@ -76,14 +76,14 @@ module Krikri
       @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
-    # Real Ansible's STRATS dict, in its own
+    # Ansible's STRATS dict, in its own
     # insertion order - used both for choice validation (exact error text)
     # and strategy dispatch.
     private USE_CHOICES = %w[alpine debian freebsd generic macos macosx darwin
       openbsd openrc redhat sles solaris systemd]
 
     def execute : PluginResult
-      # Required param: name (the desired hostname). Real Ansible checks
+      # Required param: name (the desired hostname). Ansible checks
       # required arguments before choice validation (live-verified:
       # name-less + invalid-use fails with the missing-name message).
       desired = @params["name"]?
@@ -107,11 +107,11 @@ module Krikri
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: "use: generic is broken in real Ansible's hostname module (its Base strategy raises NotImplementedError on every operation); failing for parity",
+          msg: "use: generic is broken in Ansible's hostname module (its Base strategy raises NotImplementedError on every operation); failing for parity",
         )
       when "macos", "macosx", "darwin"
         # DarwinStrategy.__init__ does get_bin_path('scutil', True) - never
-        # present on a Linux host, so real fails with get_bin_path's message
+        # present on a Linux host, so Ansible fails with get_bin_path's message
         PluginResult.new(changed: false, failed: true, msg: missing_executable_message("scutil"))
       when "freebsd", "openbsd", "solaris"
         PluginResult.new(
@@ -138,11 +138,11 @@ module Krikri
     #   configured return exit 1 + stderr "Name or service not known",
     #   matching the facts module's own behavior).
     # - ansible_domain:    the suffix after the first '.' of the FQDN, or "".
-    # Real 2.19.11's registered hostname result key order (live-verified
+    # Ansible 2.19.11's registered hostname result key order (live-verified
     # via `{{ r.keys() | list | to_json }}` - an unchanged real-mode run
     # against the box's own hostname and a would-change check-mode run,
     # no mutation): changed, name, ansible_facts, [diff], failed - and NO
-    # msg key on any success path (real's module never carries one;
+    # msg key on any success path (Ansible's module never carries one;
     # krikri previously reported "hostname is already X" / "hostname
     # changed ..." msg strings no real success result has). `name` is the
     # module param echo; diff appears only when the hostname would change
@@ -188,10 +188,10 @@ module Krikri
       }
     end
 
-    # Auto-detect path (no use: given) - real Ansible's Hostname.__init__
+    # Auto-detect path (no use: given) - Ansible's Hostname.__init__
     # dispatch: on Linux, a systemd-managed host uses SystemdStrategy;
     # otherwise the distribution subclass decides. Distributions without
-    # a dedicated class fail exactly like real Ansible's
+    # a dedicated class fail exactly like Ansible's
     # UnimplementedStrategy. Debian-family distros map to FileStrategy,
     # whose reads and writes are /etc/hostname only - so in a container
     # (no systemd, /etc/hostname the only state) the module is idempotent
@@ -224,7 +224,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's ServiceMgrFactCollector.is_systemd_managed: systemctl
+    # Ansible's ServiceMgrFactCollector.is_systemd_managed: systemctl
     # must be installed AND one of systemd's own boot-canary directories
     # (sd_booted) must exist.
     private def systemd_managed? : Bool
@@ -236,7 +236,7 @@ module Krikri
       false
     end
 
-    # The lowercased os-release ID (real Ansible's get_distribution
+    # The lowercased os-release ID (Ansible's get_distribution
     # substrate), or nil when the file is absent or has no ID - which real
     # Ansible treats as an unknown distribution.
     private def detect_distribution : String?
@@ -261,7 +261,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's UnimplementedStrategy fail_json text; the distro is
+    # Ansible's UnimplementedStrategy fail_json text; the distro is
     # rendered capitalized the way get_distribution presents it.
     private def unimplemented_failure(distro : String?) : PluginResult
       msg_platform = distro ? "Linux (#{distro[0].upcase}#{distro[1..]})" : "Linux"
@@ -272,7 +272,7 @@ module Krikri
       )
     end
 
-    # Real Ansible's FileStrategy (the Debian-family auto-detect target,
+    # Ansible's FileStrategy (the Debian-family auto-detect target,
     # also SLES with /etc/HOSTNAME): current == permanent == the file's
     # stripped content ("" when missing), set_current_hostname is a no-op,
     # so changed rests entirely on the file and the live kernel hostname
@@ -301,13 +301,13 @@ module Krikri
       hostname_success(true, hostname_facts, old_facts)
     end
 
-    # SystemdStrategy (use: systemd / use: debian - real Ansible's STRATS
+    # SystemdStrategy (use: systemd / use: debian - Ansible's STRATS
     # maps both to Systemd). Reads even happen in check mode; the permanent
-    # hostname is set before the transient one (real Ansible's own ordering
+    # hostname is set before the transient one (Ansible's own ordering
     # to avoid NetworkManager complaints), each preceded by its >64-char
     # guard so the guard only fires when that half actually needs setting.
     private def systemd_strategy(name : String) : PluginResult
-      # Real Ansible resolves hostnamectl via get_bin_path at strategy
+      # Ansible resolves hostnamectl via get_bin_path at strategy
       # construction - an explicitly requested systemd strategy fails
       # outright when the binary is missing (live-verified message),
       # unlike the auto-detect path's fallback.
@@ -370,7 +370,7 @@ module Krikri
     # RedHatStrategy (use: redhat) - edits ONLY /etc/sysconfig/network's
     # HOSTNAME= line. No transient change, no /etc/hostname, no commands.
     # A file without a HOSTNAME entry (or missing entirely) fails even in
-    # check mode and even when the name already matches - real Ansible
+    # check mode and even when the name already matches - Ansible
     # reads the permanent hostname unconditionally first (live-verified).
     private def redhat_strategy(name : String) : PluginResult
       network_file = "/etc/sysconfig/network"
@@ -408,7 +408,7 @@ module Krikri
         return hostname_success(true, hostname_facts, old_facts)
       end
 
-      # Real Ansible's set_permanent_hostname: rewrite the file line by
+      # Ansible's set_permanent_hostname: rewrite the file line by
       # line, replacing the HOSTNAME= line (appending one if somehow
       # absent - unreachable past the read guard above, kept for shape
       # fidelity), preserving everything else including line endings.
@@ -437,7 +437,7 @@ module Krikri
     end
 
     # AlpineStrategy (use: alpine) - runs `hostname -F /etc/hostname` FIRST
-    # (with the file's OLD content, live-verified: real Ansible's
+    # (with the file's OLD content, live-verified: Ansible's
     # AlpineStrategy extends FileStrategy, so its set_current_hostname
     # no-ops and only the -F call runs), then writes the file.
     # Idempotency comes from the file content alone.
@@ -481,13 +481,13 @@ module Krikri
     end
 
     # OpenRCStrategy (use: openrc) - edits /etc/conf.d/hostname's
-    # hostname="..." line. Real Ansible's reader slices line[10:] (one
+    # hostname="..." line. Ansible's reader slices line[10:] (one
     # character PAST the opening quote, so an unquoted `hostname=x` loses
     # its first character) and returns nil when no hostname= line exists,
-    # which crashes real Ansible's diff build with a TypeError
+    # which crashes Ansible's diff build with a TypeError
     # (live-verified) - replicated as a failure here. A missing file reads
     # as "" and the write path produces a lone "\n" (live-verified); a
-    # missing /etc/conf.d directory fails the write with real Ansible's
+    # missing /etc/conf.d directory fails the write with Ansible's
     # "failed to update hostname: [Errno 2] ..." text (live-verified).
     private def openrc_strategy(name : String) : PluginResult
       conf_file = "/etc/conf.d/hostname"
@@ -509,7 +509,7 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Unable to read hostname from /etc/conf.d/hostname: no hostname= line (real Ansible crashes here with a TypeError)",
+          msg: "Unable to read hostname from /etc/conf.d/hostname: no hostname= line (Ansible crashes here with a TypeError)",
         )
       end
 
@@ -546,7 +546,7 @@ module Krikri
     end
 
     # Run one of the strategy's hostnamectl reads; returns the stripped
-    # output or a PluginResult failure shaped like real Ansible's
+    # output or a PluginResult failure shaped like Ansible's
     # "Command failed rc=%d, out=%s, err=%s" (live-verified).
     private def read_hostnamectl(args : String) : String | PluginResult
       result = remote_exec("hostnamectl #{args}")

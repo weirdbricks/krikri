@@ -3,7 +3,7 @@ require "file_utils"
 
 # Strict-undefined message naming, mandatory's filter-plugin failure
 # wrapper, and the nameless-task when: error chain - byte-compared with
-# real ansible-playbook 2.19.11 via scripts/output_parity.sh.
+# ansible-playbook 2.19.11 via scripts/output_parity.sh.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")

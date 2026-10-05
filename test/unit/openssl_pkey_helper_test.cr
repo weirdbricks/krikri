@@ -129,15 +129,15 @@ describe "Krikri::PluginHelpers::Pkey" do
   end
 
   # load_checked reproduces `cryptography`'s load_pem_private_key failure
-  # semantics - the exact messages the real module's load_privatekey maps
-  # onto its fail_json msg (live-diffed vs real ansible-playbook 2.19.11,
+  # semantics - the exact messages the Ansible module's load_privatekey maps
+  # onto its fail_json msg (live-diffed vs ansible-playbook 2.19.11,
   # kpg35 sweep #247/#249/#251). The OpenSSLError tuple entries come from
   # libcrypto's own error queue, so they match real byte-for-byte on the
   # same libcrypto the target ships.
   describe "load_checked" do
     GARBAGE = "hpzbar"
 
-    it "fails garbage content with real's unparsable-key message" do
+    it "fails garbage content with Ansible's unparsable-key message" do
       pkey, failure = Krikri::PluginHelpers::Pkey.load_checked(GARBAGE, "vizpow")
       pkey.must_be_nil
       failure.wont_be_nil

@@ -19,7 +19,7 @@ module Krikri
   #   passed straight through to pip, which already understands this
   #   syntax natively
   # - version: install exactly this version (equivalent to appending
-  #   `==version` to name: - real Ansible's own module does the same)
+  #   `==version` to name: - Ansible's own module does the same)
   # - state: present (default) | absent | latest
   # - virtualenv: path to a venv - created via `python3 -m venv` if it
   #   doesn't already exist, and used instead of the system pip
@@ -32,54 +32,54 @@ module Krikri
   # - requirements: install from a requirements.txt file instead of a
   #   single name: - mutually exclusive with name:
   # - virtualenv_command: command used to create a new virtualenv
-  #   (default: "virtualenv", matching real Ansible's argument_spec
+  #   (default: "virtualenv", matching Ansible's argument_spec
   #   default - NOT hardcoded python3 -m venv). A bare name is resolved
-  #   on PATH like real Ansible's get_bin_path; a space-separated
+  #   on PATH like Ansible's get_bin_path; a space-separated
   #   command (e.g. `python3 -m venv`, `python -m virtualenv`) is used
-  #   as-is like real Ansible's shlex.split of the same value
+  #   as-is like Ansible's shlex.split of the same value
   # - virtualenv_site_packages: when CREATING a new virtualenv, pass
   #   --system-site-packages (true) or --no-site-packages when the
   #   chosen venv command supports it (false, the default) - mirroring
-  #   real Ansible's setup_virtualenv, which probes `<command> --help`
+  #   Ansible's setup_virtualenv, which probes `<command> --help`
   #   for the latter. No effect on an already-existing virtualenv
   # - break_system_packages: true sets PIP_BREAK_SYSTEM_PACKAGES=1 on
   #   the pip install/uninstall invocation (needed on PEP 668
-  #   externally-managed systems). Real Ansible sets the env var rather
+  #   externally-managed systems). Ansible sets the env var rather
   #   than the --break-system-packages CLI flag so pip < 23.0 (which
   #   lacks the flag) still works - the env var is honored by the same
   #   pip versions that grew the flag
   #
-  # Validation (mirroring real Ansible's own module-level argument
+  # Validation (mirroring Ansible's own module-level argument
   # checks, which run before anything else - before pip discovery or
   # any venv creation):
   # - required_one_of name/requirements: neither given fails with real
   #   Ansible's "one of the following is required: name, requirements"
   # - mutually_exclusive name/requirements and executable/virtualenv:
-  #   both of a pair given fails with real Ansible's "parameters are
+  #   both of a pair given fails with Ansible's "parameters are
   #   mutually exclusive: <pair>"
   #
   # Idempotency: `present` (no version:) checks `pip show <pkg>` for
   # existence only - already installed at ANY version is a no-op,
-  # matching real Ansible's own default behavior (pip: doesn't silently
+  # matching Ansible's own default behavior (pip: doesn't silently
   # upgrade unless state: latest is explicit). `present` with a
   # version: compares the exact installed version. `latest` always
   # invokes `pip install --upgrade` and inspects its own output for
   # "Requirement already up-to-date" vs. an actual install/upgrade,
-  # matching real Ansible's own PipModule.
+  # matching Ansible's own PipModule.
   #
   # - editable: adds `-e` to extra_args (deduplicated if extra_args
-  #   already includes it) - verified against the real module
-  #   the real module's observed behavior, `-e` is applied there too rather than as a
+  #   already includes it) - verified against the Ansible module
+  #   the Ansible module's observed behavior, `-e` is applied there too rather than as a
   #   separate standalone flag
   # - umask: an octal string, applied via a `umask <value>;` command
   #   prefix (this codebase shells out per-command rather than forking
-  #   like real Ansible's own `os.umask()` around the whole run, so a
+  #   like Ansible's own `os.umask()` around the whole run, so a
   #   shell-level `umask` prefix is the equivalent for the single `pip`
   #   invocation either wraps) - fails clearly on an invalid (non-octal)
-  #   value, matching real Ansible's own validation message
+  #   value, matching Ansible's own validation message
   #
   # Not implemented: `extra_args:`/`requirements:`'s own check_mode-
-  # specific idempotency short-circuit (real Ansible's check_mode always
+  # specific idempotency short-circuit (Ansible's check_mode always
   # reports changed: true when either is given, rather than attempting
   # an idempotency check it can't reliably make) - moot here, this
   # plugin doesn't implement check_mode at all yet, a separate and much
@@ -101,12 +101,12 @@ module Krikri
     # needed installing - found benchmarking claranet.postgresql, whose
     # `pip: {name: ..., virtualenv: ...}` cold run reported ok/"Package
     # already installed" in krikri (the fresh venv's own bootstrapped
-    # pip satisfied `pip show pip`) where real Ansible reported changed.
+    # pip satisfied `pip show pip`) where Ansible reported changed.
     @created_virtualenv = false
 
     def execute : PluginResult
       validate_bool_params!
-      # Real Ansible's required_one_of / mutually_exclusive checks run
+      # Ansible's required_one_of / mutually_exclusive checks run
       # inside AnsibleModule.__init__, before main() ever touches pip
       # discovery or venv creation - so a pip-less host with bad
       # arguments fails with the validation message, not the pip
@@ -130,7 +130,7 @@ module Krikri
       return pip_bin if pip_bin.is_a?(PluginResult)
 
       # pip.py: version= with more than one package - after the virtualenv/pip
-      # resolution above, before any install (that order is real's)
+      # resolution above, before any install (that order is Ansible's)
       if @params["version"]? && name && name.split(",").count { |spec| !spec.strip.empty? } > 1
         return PluginResult.new(changed: false, failed: true,
           msg: "'version' argument is ambiguous when installing multiple package distributions. " \
@@ -152,7 +152,7 @@ module Krikri
     # The three checks pip.py makes before it installs anything, in its
     # own order, returning the first failure any of them produces.
     #
-    # Real Ansible's pip.py converts the umask before any
+    # Ansible's pip.py converts the umask before any
     # virtualenv/pip resolution, then resolves (and validates the
     # EXISTENCE of) the pip executable via `get_bin_path` before it ever
     # looks at name:/requirements: at all - a target with no pip/pip3
@@ -165,7 +165,7 @@ module Krikri
     # be empty ON THIS OS (buluma.vagrant's own
     # `vagrant_pip_packages: []` on Debian-family, round 180) never even
     # tried to invoke pip at all, silently reporting `ok:` instead of
-    # real Ansible's hard failure for a genuinely pip-less host. Skipped
+    # Ansible's hard failure for a genuinely pip-less host. Skipped
     # for a virtualenv: target - #resolve_pip_binary already creates the
     # venv (and fails there if that itself doesn't work), so its own pip
     # is guaranteed to exist by the time this runs.
@@ -214,7 +214,7 @@ module Krikri
 
     # Verify pip is usable on the target (skipped for a virtualenv:
     # target - see the caller's comment). Returns the failure result,
-    # or nil when a usable pip was found. Mirrors real Ansible's
+    # or nil when a usable pip was found. Mirrors Ansible's
     # pip.py `_get_pip` discovery order - see #discover_system_pip.
     private def ensure_pip_binary : PluginResult?
       return nil if @params["virtualenv"]?
@@ -223,7 +223,7 @@ module Krikri
       result.is_a?(PluginResult) ? result : nil
     end
 
-    # Real Ansible's pip.py `_get_pip` discovery order, mirrored here:
+    # Ansible's pip.py `_get_pip` discovery order, mirrored here:
     #
     # 1. `executable:` given - an absolute path is trusted as-is; a
     #    bare name must exist on PATH (get_bin_path) or the module
@@ -236,7 +236,7 @@ module Krikri
     #    image that ships no unversioned `python3` command at all
     #    (found via aloysius-lim.elasticsearch_api, round 91020, where
     #    BOTH the old literal-`python3` probe and the `pip3` PATH check
-    #    failed while real Ansible, running its module under the
+    #    failed while Ansible, running its module under the
     #    discovered /usr/bin/python3.9, installed cleanly). Krikri's
     #    plugin is a compiled binary with no module interpreter of its
     #    own, so it probes the same candidates a `-m pip` invocation
@@ -287,7 +287,7 @@ module Krikri
 
     # One shell loop over the `-m pip` candidate interpreters (a single
     # SSH round trip, not one per candidate): the host's
-    # ansible_python_interpreter when set (real Ansible runs its pip
+    # ansible_python_interpreter when set (Ansible runs its pip
     # module under that interpreter, so sys.executable is exactly it),
     # then python3, then the versioned python3.N names interpreter
     # discovery iterates, then a bare python. Returns the winning
@@ -312,7 +312,7 @@ module Krikri
       interpreter =~ /\A[A-Za-z0-9_\/.\-]+\z/ ? interpreter : nil
     end
 
-    # required_one_of + mutually_exclusive in real Ansible's own check
+    # required_one_of + mutually_exclusive in Ansible's own check
     # order (mutually_exclusive first). Returns the failure result, or
     # nil when the arguments are acceptable.
     private def argument_validation_error : PluginResult?
@@ -322,7 +322,7 @@ module Krikri
       required_one_of_error
     end
 
-    # Real Ansible's required_one_of counts a parameter as given when
+    # Ansible's required_one_of counts a parameter as given when
     # its KEY is present (even with an empty value) - the empty-value
     # no-op is a separate, later truthiness check (#missing_name_result).
     private def required_one_of_error : PluginResult?
@@ -331,7 +331,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "one of the following is required: name, requirements")
     end
 
-    # Real Ansible's mutually_exclusive message format
+    # Ansible's mutually_exclusive message format
     # Observed behavior: each violated pair joined
     # with `|`, pairs joined with `, `.
     private def mutually_exclusive_error : PluginResult?
@@ -369,7 +369,7 @@ module Krikri
     # `name:` that resolves to a real list renders to its own bracketed
     # text form (e.g. `[]`, `['pkg']`) since this codebase's plugin
     # params are always plain strings. An empty list becomes `nil`
-    # (matching real Ansible's `if name:` falsy-empty-list no-op); a
+    # (matching Ansible's `if name:` falsy-empty-list no-op); a
     # single-element list unwraps to that one package name (the common
     # real-world shape). A genuine multi-package list (`['a', 'b']`)
     # is a pre-existing, separately-scoped gap - this plugin has never
@@ -402,7 +402,7 @@ module Krikri
       # with more than one entry - #install then comma-split it
       # naively, truncating everything after the first item's own
       # internal comma into garbage ("['psycopg2'" as one bogus
-      # "package", pip erroring "Invalid requirement"). Real Ansible's
+      # "package", pip erroring "Invalid requirement"). Ansible's
       # pip.py takes the parsed list directly, regardless of whether it
       # arrived as a literal YAML list or a templated variable - so
       # every item here gets joined the same comma-separated way
@@ -419,7 +419,7 @@ module Krikri
       "umask #{umask}; #{command}"
     end
 
-    # `version:` uses real Ansible's own Python truthiness (`if
+    # `version:` uses Ansible's own Python truthiness (`if
     # version_string:` in pip.py) - an empty string counts as "no
     # version pin", same as nil/omitted, not literally "pin to the
     # empty version". Found via geerlingguy.elasticsearch-curator's own
@@ -430,7 +430,7 @@ module Krikri
     # module as a real (falsy) value either way. Without this check,
     # `target_spec` built the literal spec `elasticsearch-curator==`
     # (trailing `==` with no version), which pip correctly rejects as
-    # unsatisfiable - real Ansible's pip install succeeds (unpinned).
+    # unsatisfiable - Ansible's pip install succeeds (unpinned).
     private def target_spec(name : String?, version : String?) : String?
       return nil unless name
       return name if version.nil? || version.empty?
@@ -456,7 +456,7 @@ module Krikri
     end
 
     # Creates the virtualenv at `venv` using virtualenv_command:, or
-    # nil on success. Mirrors real Ansible's setup_virtualenv:
+    # nil on success. Mirrors Ansible's setup_virtualenv:
     # - the command is shlex-split; a bare first token is resolved on
     #   PATH (get_bin_path), an absolute/relative path is trusted
     # - --system-site-packages when virtualenv_site_packages:, else
@@ -508,7 +508,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's _is_venv_command: pyvenv (any argv[0] equal to it)
+    # Ansible's _is_venv_command: pyvenv (any argv[0] equal to it)
     # or a `-m venv` module invocation counts as a venv-style command;
     # the classic virtualenv tool does not (it takes -p).
     private def venv_command?(command : String) : Bool
@@ -520,7 +520,7 @@ module Krikri
 
     private def with_chdir(command : String) : String
       if chdir = @params["chdir"]?
-        # real's run_command only honors cwd when it is an existing directory
+        # Ansible's run_command only honors cwd when it is an existing directory
         quoted = shell_single_quote(expand_tilde(chdir))
         "{ [ ! -d #{quoted} ] || cd #{quoted}; } && #{command}"
       else
@@ -551,11 +551,11 @@ module Krikri
     # never matches a bare distribution name - the whole URL+ref string
     # reached `pip show` verbatim, which always fails ("Package(s) not
     # found"), so `already_installed?` always returned false and every
-    # rerun re-installed, reporting `changed: true` where real Ansible's
+    # rerun re-installed, reporting `changed: true` where Ansible's
     # own pip module pre-checks installed packages by their DERIVED name
     # and reports ok. Found live via grycap.clues (rounds 700036/820004):
     # its second `pip: {name: git+...clues.git@master}` "Install CLUES2"
-    # task reported changed where real ansible-playbook reported ok.
+    # task reported changed where ansible-playbook reported ok.
     # Name derivation mirrors real pip's own VCS handling: an `#egg=`
     # fragment wins (PEP 508 direct-reference convention), otherwise the
     # URL's basename with the `.git` suffix stripped (`.../clues.git@master`
@@ -599,7 +599,7 @@ module Krikri
       # since the idempotency check itself could never succeed. Checked
       # per-package here (each already-installed, or - for a `==` pin -
       # already at the requested version) so a warm rerun genuinely
-      # short-circuits, matching real Ansible's own per-package pip
+      # short-circuits, matching Ansible's own per-package pip
       # idempotency.
       unless upgrade || requirements
         return PluginResult.new(changed: false, failed: false, msg: "Package already installed") if all_packages_satisfied?(pip_bin, spec)
@@ -608,7 +608,7 @@ module Krikri
       extra = editable_extra(@params["extra_args"]? || "")
 
       # `target` reaches here already comma-joined by the parser for a
-      # literal YAML `name:` list (real Ansible's pip module takes a
+      # literal YAML `name:` list (Ansible's pip module takes a
       # LIST and installs every element in one invocation, unlike this
       # plugin's own pre-existing single-package-name assumption
       # elsewhere - see #normalize_name's comment). Left as one
@@ -616,7 +616,7 @@ module Krikri
       # metacharacter (`urllib3<2`, `foo>1.0`) gets misparsed by the
       # `bash -c` this plugin shells out through - `<2` becomes a
       # stdin REDIRECT from a file literally named "2" instead of part
-      # of the pip argument, and pip never runs at all. Real Ansible
+      # of the pip argument, and pip never runs at all. Ansible
       # never has this problem because it execs pip with a real argv
       # list, no shell in between. Splitting on the comma the parser
       # joined with and re-quoting each element via `Process.quote`
@@ -634,7 +634,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to install: #{result[:stderr]}", stdout: result[:stdout], stderr: result[:stderr])
       end
 
-      # Real Ansible's own changed-detection for BOTH present and
+      # Ansible's own changed-detection for BOTH present and
       # latest (pip.py: `changed = 'Successfully installed' in
       # out_pip`, the only path when there's no requirements file or
       # VCS name - out_freeze_before stays None): pip prints
@@ -643,12 +643,12 @@ module Krikri
       # invocation genuinely changed nothing.
       changed = result[:stdout].includes?("Successfully installed")
 
-      # Real 2.19.11 registered pip orders (live-verified against a venv
+      # Ansible 2.19.11 registered pip orders (live-verified against a venv
       # pip): changed, cmd, name, version, state, requirements,
       # virtualenv, stdout, stderr, stdout_lines, stderr_lines, failed
       # (a fresh venv's create adds ansible_facts + warnings between
       # stderr_lines and failed). krikri emits only changed/stdout of
-      # that set today - the pin keeps the shared keys in real's
+      # that set today - the pin keeps the shared keys in Ansible's
       # relative order; the missing echo keys are a known set gap.
       PluginResult.new(changed: changed, failed: false, msg: "Package installed", stdout: result[:stdout],
         key_order: ["changed", "stdout"])
@@ -666,7 +666,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's pip.py list-type `name:` param auto-splits a raw
+    # Ansible's pip.py list-type `name:` param auto-splits a raw
     # string on commas (AnsibleModule list-param coercion), then
     # RE-MERGES any resulting piece that starts with a version
     # comparison operator (<, >, =, !, ~) back onto the preceding
@@ -680,20 +680,20 @@ module Krikri
     # as "Invalid requirement: '<3.5': Expected package name at the
     # start of dependency specifier", which flipped that round's PLAY
     # RECAP counts (a downstream `when: ...failed` task then ran
-    # differently than in real Ansible).
+    # differently than in Ansible).
     #
     # Commas INSIDE a PEP 508 extras bracket are not separators at all:
     # real pip's own requirement grammar treats `pkg[extra1,extra2]` as
     # one atomic token (pip's parser - not Ansible's module - is what
     # makes bracket-interior commas non-separating; a truncated
     # `horovod[keras` is rejected outright with "Expected matching
-    # RIGHT_BRACKET"). Real Ansible reassembles bracket-interior
+    # RIGHT_BRACKET"). Ansible reassembles bracket-interior
     # pieces the same way (pip.py's `_recover_package_name` tracks an
     # in-brackets state across its comma-split pieces and joins them
     # back verbatim). Confirmed live in round900263 (grycap.horovod):
     # `name: "horovod[keras,pytorch,tensorflow]"` must reach pip as
     # ONE argv word, and `name: "pkgA[e1,e2],pkgB==1.0"` as two -
-    # real ansible-playbook -vvv was checked against both before this
+    # ansible-playbook -vvv was checked against both before this
     # fix. So a comma only separates requirements when no `[` is
     # currently open; everything inside stays part of the piece,
     # brackets included.
@@ -741,13 +741,13 @@ module Krikri
     # throwaway venv: two consecutive `pip install argparse` both end
     # "Successfully installed argparse-1.4.0", while `pip show
     # argparse` - which does NOT go through the skip list - finds it
-    # fine). Real Ansible's pip.py has no pre-check at all for
+    # fine). Ansible's pip.py has no pre-check at all for
     # state=present: it runs the install and decides
-    # `changed = 'Successfully installed' in out_pip` - so real reports
+    # `changed = 'Successfully installed' in out_pip` - so Ansible reports
     # changed on EVERY repeat install of these names (found via
     # geerlingguy.elasticsearch-curator's `pip: name: argparse`, round
     # 975000-975099). Counting them as satisfied via `pip show`
-    # short-circuited with changed: false where real runs a real
+    # short-circuited with changed: false where Ansible runs a real
     # reinstall - so these names are never "already installed" here and
     # the actual pip install runs, its own output deciding changed.
     PIP_STDLIB_SKIPPED_DISTRIBUTIONS = %w[argparse python wsgiref]
@@ -793,7 +793,7 @@ module Krikri
     end
 
     # PEP 668 externally-managed environments (newer Debian/Ubuntu)
-    # reject pip mutations outright unless overridden - real Ansible's
+    # reject pip mutations outright unless overridden - Ansible's
     # pip.py sets PIP_BREAK_SYSTEM_PACKAGES=1 in the module's own
     # environment when break_system_packages: is true (an env var, not
     # the CLI flag, so pip < 23.0 - which lacks the flag - still
@@ -814,11 +814,11 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Failed to uninstall: #{result[:stderr]}")
       end
 
-      # Real Ansible runs `pip uninstall` unconditionally and lets pip's
+      # Ansible runs `pip uninstall` unconditionally and lets pip's
       # own "not installed" line decide changed=false - it does NOT
       # pre-check installed-ness locally. Skipping that invocation made
       # a PEP 668 externally-managed environment report state=absent as
-      # ok where real Ansible fails (pip refuses to even run), so the
+      # ok where Ansible fails (pip refuses to even run), so the
       # command must actually be issued and its output parsed.
       if (result[:stdout] + result[:stderr]).downcase.includes?("not installed")
         return PluginResult.new(changed: false, failed: false, msg: "Package already absent",

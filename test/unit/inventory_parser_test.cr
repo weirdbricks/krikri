@@ -60,7 +60,7 @@ describe Krikri::InventoryParser do
 
     # These four used to assert that `true`/`yes`/`false`/`no` become
     # booleans, on the stated (but never checked) assumption that this
-    # matches real Ansible's INI parser. It does not: real Ansible runs
+    # matches Ansible's INI parser. It does not: Ansible runs
     # the value through Python's `ast.literal_eval`, which knows `True`
     # and `False` and nothing else - a live differential against
     # ansible-core 2.19.4 over 27 values (0.9.611) has `true`, `false`,
@@ -179,7 +179,7 @@ describe Krikri::InventoryParser do
     # A list-valued inventory var was previously left as text, so a
     # `loop:` over it iterated nothing useful.
     # In a [group:vars] block, where the whole line is one value - a
-    # host LINE is split on whitespace first (real Ansible shlex-splits
+    # host LINE is split on whitespace first (Ansible shlex-splits
     # it), so a literal with a space in it never survives there on
     # either engine.
     it "parses Python list and dict literals into real containers" do
@@ -204,7 +204,7 @@ describe Krikri::InventoryParser do
       vars["mixed"].as_a[2].as_s.must_equal("x")
     end
 
-    # literal_eval raises for anything it cannot parse, and real Ansible
+    # literal_eval raises for anything it cannot parse, and Ansible
     # keeps the raw string when it does.
     it "keeps a malformed container literal as a string" do
       write(File.join(root, "inventory.ini"), <<-INI)
@@ -354,7 +354,7 @@ describe Krikri::InventoryParser do
 
     # Real infra repro (2026-09-20): a two-play playbook targeting a
     # parent group failed with "'ops_probe_pubkey' is undefined" in krikri
-    # while real ansible-playbook resolved it - the inventory declared the
+    # while ansible-playbook resolved it - the inventory declared the
     # target group purely as a [group:children] parent, so the parent's
     # own group_vars file applied to nobody here. The delegate_to: +
     # delegate_facts: loop in the earlier play was coincidence, not cause.
@@ -580,9 +580,9 @@ describe Krikri::InventoryParser do
 
   describe ".validate" do
     include RaisesAssertion
-    it "does not warn about a host with no explicit user - real ansible-playbook never emits this warning" do
+    it "does not warn about a host with no explicit user - ansible-playbook never emits this warning" do
       # Found round 300-303: this engine printed a spurious "Host 'x' has
-      # no user specified" inventory warning that real ansible-playbook
+      # no user specified" inventory warning that ansible-playbook
       # never shows for the identical inventory (SSH falls back to the
       # local OS user, or the host is localhost/local-connection and
       # needs no user at all).

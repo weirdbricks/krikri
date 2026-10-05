@@ -8,7 +8,7 @@ require "../minitest_helper"
 # unhashable one (list/dict) crashes the action at the dict-key assignment
 # ("unhashable type: '_AnsibleTaggedList'/'_AnsibleTaggedDict'"),
 # superseding every file error. Every expectation below was probed against
-# real ansible-playbook 2.19.11 (see the include_vars_name_shape comment in
+# ansible-playbook 2.19.11 (see the include_vars_name_shape comment in
 # executor_blocks_includes.cr). The non-string name value rides the
 # parser's NON_STRING_PARAM_PREFIX marker (see parse_include_vars_task).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -29,7 +29,7 @@ ensure
 end
 
 describe "include_vars with a non-string name: literal" do
-  it "wraps the failure facts under the stringified int name, like real's scope assignment" do
+  it "wraps the failure facts under the stringified int name, like Ansible's scope assignment" do
     _, output, _scratch = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -48,7 +48,7 @@ describe "include_vars with a non-string name: literal" do
     output.must_match(/ignored=1/)
   end
 
-  it "keeps a truthy non-string name out of the string-keyed variable store, like real's native key" do
+  it "keeps a truthy non-string name out of the string-keyed variable store, like Ansible's native key" do
     _, output, _scratch = run_playbook(
       <<-YAML,
       - hosts: localhost
@@ -71,7 +71,7 @@ describe "include_vars with a non-string name: literal" do
     output.must_match(/ok=4\b/)
   end
 
-  it "skips the wrap for falsy name literals, like real's truthiness check" do
+  it "skips the wrap for falsy name literals, like Ansible's truthiness check" do
     _, output, _scratch = run_playbook(
       <<-YAML,
       - hosts: localhost
@@ -96,7 +96,7 @@ describe "include_vars with a non-string name: literal" do
     output.must_match(/ignored=1/)
   end
 
-  it "crashes on a truthy unhashable name like real's dict-key assignment" do
+  it "crashes on a truthy unhashable name like Ansible's dict-key assignment" do
     _, output, _scratch = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

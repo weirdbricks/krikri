@@ -43,7 +43,7 @@ module Krikri
     # declaration order (ansible-doc -j ansible.builtin.template).
     # trim_blocks/lstrip_blocks are deliberately absent: the template
     # ACTION plugin consumes them before the module sees any args, so
-    # real Ansible never argspec-validates them (live-verified against
+    # Ansible never argspec-validates them (live-verified against
     # ansible-core 2.19.11: `trim_blocks: blah` renders fine).
     # `follow` is absent for the same reason: the action plugin reads it
     # through boolean(value, strict=False) and passes the COERCED boolean
@@ -56,7 +56,7 @@ module Krikri
       %w[backup force unsafe_writes]
     end
 
-    # Real ansible.builtin.template's registered-result key orders (the
+    # Ansible.builtin.template's registered-result key orders (the
     # template ACTION plugin delegates to the copy module, so the module
     # result is copy-shaped; live-verified vs 2.19.11 via `{{ r | to_json }}`
     # on registered template: tasks - the -v dump sorts alphabetically):
@@ -64,7 +64,7 @@ module Krikri
     # - changed path (fresh and backup: alike): diff, dest, src, md5sum,
     #   checksum, changed (, backup_file), then the add_path_info stat
     #   block and failed: false - identical to copy's changed order.
-    #   `src` is real's staged .source.txt tempfile path; krikri echoes
+    #   `src` is Ansible's staged .source.txt tempfile path; krikri echoes
     #   the rendered-source path the action plugin sent along
     #   (_rendered_from_template).
     # - equal-content rerun: diff, path, changed, the stat block, then
@@ -110,17 +110,17 @@ module Krikri
         )
       end
       # A non-string YAML literal dest (`dest: true`) is coerced through
-      # Python str() by real's action plugin - bools render as
-      # "True"/"False" (live-verified: real writes a file literally named
+      # Python str() by Ansible's action plugin - bools render as
+      # "True"/"False" (live-verified: Ansible writes a file literally named
       # "True"; int/float spellings already match the demoted text). See
       # NON_STRING_PARAM_PREFIX.
       if native = non_string_param("dest")
         dest = Krikri.python_str_scalar(native)
       end
 
-      # Real AnsibleModule validates bool-typed params at module setup,
+      # AnsibleModule validates bool-typed params at module setup,
       # after the required-args gate (see BasePlugin#validate_bool_params!).
-      # Under --check real's copy action plugin returns as soon as it sees
+      # Under --check Ansible's copy action plugin returns as soon as it sees
       # the checksums differ (copy.py:288-293) and otherwise dispatches the
       # file module with copy's copy-only options stripped, so the copy
       # spec never runs and cannot reject anything (live-verified vs
@@ -130,7 +130,7 @@ module Krikri
       validate_bool_params! unless @check_mode
       dest = expand_tilde(dest)
 
-      # Real ansible.builtin.template, like copy: a dest that signals a
+      # Ansible.builtin.template, like copy: a dest that signals a
       # directory (an existing directory, or an explicit trailing "/")
       # gets the template's own basename appended - the rendered file
       # lands at <dest>/<basename of src>, not on the directory path
@@ -140,13 +140,13 @@ module Krikri
       # benchmarking l3d.unbound, whose config-fragment tasks pass
       # `dest: /etc/unbound/unbound.conf.d/` - previously the raw
       # slash-terminated dest reached the final move and failed with
-      # "Not a directory" where real Ansible succeeded.
+      # "Not a directory" where Ansible succeeded.
       dest_signaled_dir = dest.ends_with?('/')
       if (template_src = @params["_rendered_from_template"]?.presence) && (Dir.exists?(dest) || dest_signaled_dir)
         dest = File.join(dest, File.basename(template_src))
       end
 
-      # follow: (real Ansible's copy-writer semantics, default False):
+      # follow: (Ansible's copy-writer semantics, default False):
       # when True, a symlink at dest: is written THROUGH - the symlink's
       # target gets the rendered content and the symlink itself stays -
       # while the default replaces the symlink with a regular file.
@@ -156,7 +156,7 @@ module Krikri
       # idempotency compares against the target's content, matching real
       # Ansible's own comparison of the followed path's checksum. A
       # dangling symlink is deliberately NOT resolved (File.exists?
-      # returns false for one) - real Ansible's default path unlinks and
+      # returns false for one) - Ansible's default path unlinks and
       # replaces it, which the move below does anyway.
       if true?(@params["follow"]?) && File.symlink?(dest) && File.exists?(dest)
         dest = File.realpath(dest)
@@ -172,7 +172,7 @@ module Krikri
         )
       end
 
-      # output_encoding: real Ansible's template module writes the
+      # output_encoding: Ansible's template module writes the
       # rendered content to dest in this encoding (default utf-8; the
       # source template is always READ as utf-8, so this only shapes the
       # write). Verified byte-level against ansible-core 2.19.4:
@@ -190,7 +190,7 @@ module Krikri
       end
 
       # Calculate MD5 of the encoded content (see output_encoding above);
-      # the RESULT's checksum is real Ansible's SHA1 of the dest content.
+      # the RESULT's checksum is Ansible's SHA1 of the dest content.
       content_md5 = Digest::MD5.hexdigest(content_bytes)
       content_sha1 = Digest::SHA1.hexdigest(content_bytes)
 
@@ -221,7 +221,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's copy module (template: shares it) unconditionally
+      # Ansible's copy module (template: shares it) unconditionally
       # replaces a SYMLINK at dest with a regular file when follow: is
       # not set - even when the link's target already has identical
       # content (copy.py's `checksum_src != checksum_dest or
@@ -233,13 +233,13 @@ module Krikri
         changed = true
       end
 
-      # force: (real Ansible's copy-writer default True): when dest
+      # force: (Ansible's copy-writer default True): when dest
       # already exists with DIFFERENT content and force: is explicitly
-      # false, real Ansible leaves the file untouched and reports plain
+      # false, Ansible leaves the file untouched and reports plain
       # ok/changed: false - NOT a failure (live-verified against
       # ansible-core 2.19.4). force: false only guards an OVERWRITE of an
       # EXISTING file - it never blocks the initial CREATE of a dest that
-      # doesn't exist yet (real Ansible's copy.py only takes this branch
+      # doesn't exist yet (Ansible's copy.py only takes this branch
       # inside its own `if os.path.exists(dest)` check). Missing the
       # `File.exists?(dest)` guard here (copy.cr's own #handle_file_copy
       # already has it, at the `unless force` check nested inside `if
@@ -247,13 +247,13 @@ module Krikri
       # skipped creating a BRAND NEW dest on its very first cold run,
       # reporting "File already exists" for a file that never existed
       # (round 811059/812xxx, cchurch.uwsgi's own `uwsgi_conf_force:
-      # false` default) - real Ansible creates it fine.
+      # false` default) - Ansible creates it fine.
       if changed && File.exists?(dest) && !true?(@params["force"]?, default: true)
-        # Real's result here is ONLY {dest, src, changed} - no msg key at
+        # Ansible's result here is ONLY {dest, src, changed} - no msg key at
         # all (live-verified vs 2.19.11 via a registered result: src is
         # the rendered-source path, here the action plugin's
         # _rendered_from_template). The old "File already exists" msg was
-        # an extra success key real does not emit.
+        # an extra success key Ansible does not emit.
         return PluginResult.new(
           changed: false,
           failed: false,
@@ -290,7 +290,7 @@ module Krikri
             key_order: CHECK_KEY_ORDER
           )
         else
-          # Real's equal-content check run still executes the module
+          # Ansible's equal-content check run still executes the module
           # (the early check-mode return in copy's action plugin only
           # fires on a checksum MISMATCH), so its result carries the
           # module's dest/checksum echo like the real run does
@@ -317,7 +317,7 @@ module Krikri
       # just fixed a stale mode/owner/group - the same identical-content
       # bug as copy.cr's (found on bitintheskud.ansible-role-ecs-agent:
       # anything re-breaking the mode between runs made the task silently
-      # report ok forever while fixing it on disk; real Ansible reports
+      # report ok forever while fixing it on disk; Ansible reports
       # `changed` once, then ok - live-verified against ansible-core 2.19).
       unless changed
         begin
@@ -347,17 +347,17 @@ module Krikri
         backup_file = create_backup(dest)
       end
 
-      # Real Ansible's template/copy modules do NOT create a missing
+      # Ansible's template/copy modules do NOT create a missing
       # destination directory - they fail with this exact message
       # ("Destination directory X does not exist"). This plugin used to
-      # silently `Dir.mkdir_p` it instead, diverging from real Ansible
+      # silently `Dir.mkdir_p` it instead, diverging from Ansible
       # only when the parent genuinely didn't exist yet (the common case
       # - dest already inside an existing dir like /etc/nginx - never hit
       # this path). Found benchmarking bertvv.mariadb's own "Add official
       # MariaDB repository (yum)" task templating into /etc/yum.repos.d
-      # on Ubuntu, where that directory never exists: real Ansible
+      # on Ubuntu, where that directory never exists: Ansible
       # refused the task; krikri quietly created the directory and wrote
-      # the file, reporting `changed` where real Ansible reported
+      # the file, reporting `changed` where Ansible reported
       # `failed`.
       # dest is already resolved past the directory-signal step above, so
       # a trailing-"/" dest has its basename appended before this check.
@@ -382,7 +382,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's copy module (template: shares it) pre-checks the
+      # Ansible's copy module (template: shares it) pre-checks the
       # destination directory's writability and fails with exactly
       # "Destination <dir> not writable" when it isn't - live-verified
       # against ansible-core 2.19.4, including the observable effect:
@@ -390,7 +390,7 @@ module Krikri
       # by default (the atomic temp-file+rename cannot work without
       # directory write permission), and unsafe_writes: true bypasses
       # the check, falling back to a direct, non-atomic in-place write
-      # (real Ansible's _unsafe_writes). Note the check is on the
+      # (Ansible's _unsafe_writes). Note the check is on the
       # DIRECTORY, not the file: a writable dir with an
       # existing-file-dest proceeds normally.
       unless true?(@params["unsafe_writes"]?)
@@ -405,7 +405,7 @@ module Krikri
 
       # Write to temporary file first (for atomic write + validation).
       # Staged in a remote_tmp-style location (`/tmp`), matching real
-      # Ansible's own `~/.the real module` staging - NOT
+      # Ansible's own `~/.the Ansible module` staging - NOT
       # dest_dir, which this plugin used previously. That dest-adjacent
       # staging was itself a fix for a real cross-device `File.rename`
       # bug (`/tmp` is very commonly its own separate tmpfs mount, so
@@ -413,13 +413,13 @@ module Krikri
       # disk hit "Invalid cross-device link" - found via
       # konstruktoid-hardening's "Configure sshd using sshd_config.d"
       # task writing to /usr/lib/tmpfiles.d/ssh.conf) but it diverges
-      # from real Ansible in a way that's independently observable: a
+      # from Ansible in a way that's independently observable: a
       # `validate:` command confined by AppArmor/SELinux to only the
       # target program's OWN real config paths (e.g. dhcpd's profile
       # permits /etc/dhcp/ but not a temp file dropped next to it) can
-      # see a different validation outcome than real Ansible's own
+      # see a different validation outcome than Ansible's own
       # /root/.ansible/tmp-confined run (found via bertvv.dhcp round
-      # 312). Moving back to /tmp restores real Ansible's location
+      # 312). Moving back to /tmp restores Ansible's location
       # without reintroducing the cross-device bug: `FileUtils.mv`
       # (stdlib) already falls back to copy-then-delete on
       # `Errno::EXDEV`/`EPERM`, exactly the fallback needed - see its
@@ -480,10 +480,10 @@ module Krikri
         end
       end
 
-      # Move temp file to destination, mirroring real Ansible's
+      # Move temp file to destination, mirroring Ansible's
       # atomic_move fallback ladder. The optimistic step is a rename of
       # the /tmp-staged file onto dest (atomic, replaces dest INODE -
-      # including replacing a symlink at dest, real Ansible's default
+      # including replacing a symlink at dest, Ansible's default
       # follow=false semantics). When rename can't work - /tmp being a
       # separate tmpfs mount is very common, and the whole reason
       # staging moved back to /tmp was a cross-device "Invalid
@@ -508,7 +508,7 @@ module Krikri
           File.delete(dest_dir_stage) if dest_dir_stage && File.exists?(dest_dir_stage)
           File.delete(temp_file) if File.exists?(temp_file)
           if true?(@params["unsafe_writes"]?)
-            # Real Ansible's _unsafe_writes: a direct, non-atomic
+            # Ansible's _unsafe_writes: a direct, non-atomic
             # in-place write of dest - the only path that works when
             # the DEST DIRECTORY isn't writable (the writability
             # pre-check above normally fails this first without
@@ -557,7 +557,7 @@ module Krikri
         failed: false,
         diff: diff_data,
         dest: dest,
-        # Real's src is the staged rendered-source tempfile (.source.txt,
+        # Ansible's src is the staged rendered-source tempfile (.source.txt,
         # live-verified); krikri echoes the rendered-source path the
         # action plugin passed along for exactly this purpose.
         src: @params["_rendered_from_template"]?.presence || "template",
@@ -572,7 +572,7 @@ module Krikri
 
     # Create backup of existing file
     private def create_backup(path : String) : String
-      # Real Ansible's backup_local (used by the template action's copy
+      # Ansible's backup_local (used by the template action's copy
       # module too) inserts the process PID between path and timestamp
       # and stamps LOCAL time - not a random number, not UTC
       # (live-verified vs 2.19.11).
@@ -615,7 +615,7 @@ module Krikri
     end
 
     # Validate file with command. Captures stdout+stderr (not discarded,
-    # as this used to) so a validation failure - real Ansible's own
+    # as this used to) so a validation failure - Ansible's own
     # `validate:` commands are typically `sshd -T -f %s`/`nginx -t -c
     # %s`-style syntax checkers whose whole purpose is to explain exactly
     # what's wrong - reports *what* failed, not just that it did.
@@ -635,12 +635,12 @@ module Krikri
 
     # Apply file attributes (owner, group, mode). Returns true if anything
     # actually changed on disk (so the identical-content caller can report
-    # `changed` like real Ansible when it reconciles an attribute), false
+    # `changed` like Ansible when it reconciles an attribute), false
     # otherwise - including when nothing was stale or an apply failed.
     private def apply_file_attributes(path : String) : Bool
       before = File.info?(path, follow_symlinks: false)
 
-      # SELinux context runs FIRST, matching the order of real Ansible's
+      # SELinux context runs FIRST, matching the order of Ansible's
       # set_fs_attributes_if_different (set_context_if_different ->
       # owner -> group -> mode -> attributes) and file.cr's own
       # apply_single_file_attributes, which this mirrors.
@@ -650,7 +650,7 @@ module Krikri
       # Set mode (permissions) using native Crystal
       if mode = @params["mode"]?
         begin
-          # Real Ansible parses ANY all-digit mode string as octal,
+          # Ansible parses ANY all-digit mode string as octal,
           # leading zero or not (`mode: "640"` and `mode: "0640"` are
           # identical - only a *symbolic* mode like `u+x` isn't valid
           # octal digits). Real bug found benchmarking robertdebock.redis
@@ -709,12 +709,12 @@ module Krikri
 
     # output_encoding: encodes the rendered content into the requested
     # target encoding, returning the bytes plus an error message (nil on
-    # success). Real Ansible writes with Python's codec stack
+    # success). Ansible writes with Python's codec stack
     # (errors='surrogate_or_strict' - an unencodable character or an
     # unknown codec name fails the task); Crystal strings are UTF-8
     # internally, so this goes through String#encode. The name search
     # tries a few normalizations because codec-naming conventions differ
-    # (real Ansible's documented example "latin-1" is
+    # (Ansible's documented example "latin-1" is
     # "latin1"/"ISO-8859-1" to iconv).
     private def encode_output(content : String, output_encoding : String) : {Slice(UInt8), String?}
       return {content.to_slice, nil} if output_encoding.downcase == "utf-8" || output_encoding.downcase == "utf8"
@@ -737,18 +737,18 @@ module Krikri
     end
 
     # The methods below mirror plugins/file.cr's already-verified
-    # implementations of real Ansible's file-common args (attr:/
+    # implementations of Ansible's file-common args (attr:/
     # attributes: chattr flags, seuser:/serole:/setype:/selevel: SELinux
     # context parts) for a plugin that writes new file content rather
     # than only mutating metadata - deliberately duplicated rather than
     # abstracted, so the proven-correct file.cr behavior can't drift
     # under a shared abstraction.
 
-    # attr:/attributes: (chattr flags, real Ansible's `attributes` param
+    # attr:/attributes: (chattr flags, Ansible's `attributes` param
     # and its `attr` alias). Parsed into the leading operator ('+'/'-',
     # defaulting to '=' when bare) plus the flag letters themselves -
-    # real Ansible's set_attributes_if_different in
-    # the real module does exactly this split before comparing.
+    # Ansible's set_attributes_if_different in
+    # the Ansible module does exactly this split before comparing.
     private def attr_args : {Char, String}?
       raw = @params["attr"]? || @params["attributes"]?
       return nil unless raw
@@ -761,11 +761,11 @@ module Krikri
       end
     end
 
-    # The file's current chattr flags as real Ansible reads them:
+    # The file's current chattr flags as Ansible reads them:
     # `lsattr -d <path>` output's first whitespace field with the
     # dash-padding stripped. An lsattr failure (missing binary,
     # unsupported filesystem) is empty flags, not an error - matching
-    # file.cr's reading of real Ansible's get_file_attributes.
+    # file.cr's reading of Ansible's get_file_attributes.
     private def current_attr_flags(path : String) : String
       result = remote_exec("lsattr -d #{shell_single_quote(path)}")
       return "" unless result[:exit_code] == 0
@@ -774,7 +774,7 @@ module Krikri
       fields[0].delete('-').strip
     end
 
-    # Changed-check mirroring real Ansible's set_attributes_if_different
+    # Changed-check mirroring Ansible's set_attributes_if_different
     # (including its non-converging '-i' quirk, ansible/ansible#33745 -
     # see file.cr's attr_changed? for the full rationale).
     private def attr_changed?(path : String) : Bool
@@ -786,7 +786,7 @@ module Krikri
     end
 
     # Applies the attr:/attributes: param via the real chattr binary,
-    # failing the task (like real Ansible's fail_json) when chattr exits
+    # failing the task (like Ansible's fail_json) when chattr exits
     # nonzero or writes to stderr.
     private def apply_attr(path : String) : Nil
       parsed = attr_args
@@ -801,7 +801,7 @@ module Krikri
       end
     end
 
-    # SELinux context params: real Ansible accepts these on every host
+    # SELinux context params: Ansible accepts these on every host
     # but only ACTS on them when SELinux is actually enabled - its
     # set_context_if_different opens with `if not self.selinux_enabled():
     # return changed`, a graceful no-op (live-verified against
@@ -831,7 +831,7 @@ module Krikri
     end
 
     # The file's current context via `ls -Zd` (split limited to 4 parts
-    # exactly like real Ansible's own `context.split(':', 3)` - the MLS
+    # exactly like Ansible's own `context.split(':', 3)` - the MLS
     # level may itself contain ':').
     private def current_selinux_context(path : String) : Array(String)?
       return nil unless selinux_enabled?
@@ -846,7 +846,7 @@ module Krikri
     # Desired context: provided parts override, unprovided parts keep
     # their current value; "_default" resolves via matchpathcon
     # (see file.cr's desired_selinux_context for the full
-    # the real module grounding).
+    # the Ansible module grounding).
     private def desired_selinux_context(path : String, current : Array(String)) : Array(String)
       desired = current.dup
       ["seuser", "serole", "setype"].each_with_index do |param, index|
@@ -877,9 +877,9 @@ module Krikri
       desired_selinux_context(path, current) != current
     end
 
-    # Applies the full context with `chcon -h` (real Ansible's
+    # Applies the full context with `chcon -h` (Ansible's
     # lsetfilecon equivalent, symlink-aware), failing the task on a
-    # nonzero exit like the real module's fail_json(msg='set selinux
+    # nonzero exit like the Ansible module's fail_json(msg='set selinux
     # context failed').
     private def apply_secontext(path : String) : Nil
       return unless secontext_requested?

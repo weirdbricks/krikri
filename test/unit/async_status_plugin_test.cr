@@ -35,7 +35,7 @@ describe "async_status plugin result shapes" do
     result["msg"].as_s.must_equal("missing required arguments: jid")
   end
 
-  it "matches real Ansible's exact not-found result shape" do
+  it "matches Ansible's exact not-found result shape" do
     jid = "#{Time.utc.to_unix}.#{Random::Secure.hex(6)}"
     begin
       result = PluginSpecHelper.run("async_status", {"jid" => jid})
@@ -117,7 +117,7 @@ describe "async_status plugin result shapes" do
 
         result["failed"]?.must_be_nil
         result["changed"].as_bool.must_equal(true)
-        # Real ansible-core 2.19.11 normalizes started/finished to JSON
+        # ansible-core 2.19.11 normalizes started/finished to JSON
         # booleans (live-verified: a finished poll's registered var reads
         # finished=True), even when the underlying status file carried an
         # int 1.

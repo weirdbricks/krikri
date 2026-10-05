@@ -26,7 +26,7 @@ describe "cron plugin" do
     content.must_include("0 2 * * * root /usr/local/bin/backup.sh")
   end
 
-  it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
+  it "resolves a relative cron_file: against /etc/cron.d, matching Ansible" do
     # Path-resolution proof (cron.py's CronTab#__init__: a relative
     # cron_file: joins onto /etc/cron.d, only an absolute path is used
     # as-is). The observable evidence depends on privilege:
@@ -200,7 +200,7 @@ describe "cron plugin" do
 
     # Real bug, round 811204 (infOpen.lynis): the role manages crontab
     # vars with `value:` - cron.py's documented alias of `job` - and
-    # real ansible-playbook accepts it, but an unresolved alias left
+    # ansible-playbook accepts it, but an unresolved alias left
     # `job` nil and the task failed with "job parameter required when
     # state=present". These mirror the role's exact task shape.
     describe "`value:` alias (cron.py's aliases: ['value'])" do
@@ -318,7 +318,7 @@ describe "cron plugin" do
   end
 
   describe "insertafter/insertbefore without env" do
-    it "fails with real Ansible's env-only validation message" do
+    it "fails with Ansible's env-only validation message" do
       path = tmp_path("cron-insert-without-env.txt")
 
       result = PluginSpecHelper.run("cron", {
@@ -332,7 +332,7 @@ describe "cron plugin" do
       result["msg"].as_s.must_include("valid only with env=yes")
     end
 
-    it "fails with real Ansible's mutual-exclusion message when both are given" do
+    it "fails with Ansible's mutual-exclusion message when both are given" do
       result = PluginSpecHelper.run("cron", {
         "name" => "PATH",
         "env" => "true",
@@ -451,7 +451,7 @@ describe "cron plugin" do
   # of every marked job / env assignment in the crontab after the
   # operation, not just the one entry the task touched (live-verified
   # against ansible-core 2.19.11).
-  describe "jobs/envs result fields (real ansible's full post-op lists)" do
+  describe "jobs/envs result fields (Ansible's full post-op lists)" do
     it "reports all current job names and env names after an add" do
       path = tmp_path("cron-fields.txt")
       File.delete(path) if File.exists?(path)
@@ -484,7 +484,7 @@ describe "cron plugin" do
       result["jobs"].as_a.map(&.as_s).must_equal(["stays"])
     end
 
-    it "carries the full lists on a no-op second run too (real ansible exits with them every time)" do
+    it "carries the full lists on a no-op second run too (Ansible exits with them every time)" do
       path = tmp_path("cron-fields-noop.txt")
       params = {"name" => "a job", "job" => "/bin/true", "cron_file" => path, "user" => "root"}
       PluginSpecHelper.run("cron", params)

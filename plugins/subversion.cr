@@ -8,7 +8,7 @@
 # Parameters:
 #   repo (required): repository URL
 #   dest: local working copy path (required unless checkout=no, update=no,
-#     and export=no, mirroring real Ansible)
+#     and export=no, mirroring Ansible)
 #   revision (optional, default "HEAD"): revision to check out/update to
 #   force (optional, default no): discard local modifications
 #   username/password (optional): passed via --username/--password
@@ -23,7 +23,7 @@
 #   in_place (optional, default no): re-check out over an existing
 #     non-svn directory instead of failing
 #   validate_certs (optional, default no): when no (the default), passes
-#     --trust-server-cert to svn, like real Ansible
+#     --trust-server-cert to svn, like Ansible
 
 require "json"
 require "../src/krikri/base_plugin"
@@ -47,17 +47,17 @@ module Krikri
     # check of its own when `executable:` is given, and the dest-required
     # check that follows it runs BEFORE any svn command is ever spawned.
     # Set once in #execute so the per-operation spawn check can name the
-    # binary the way real's failure does.
+    # binary the way Ansible's failure does.
     @svn_path : String? = nil
     @validate_certs : Bool = false
-    # The password, when real passes it on svn's STDIN rather than on the
+    # The password, when Ansible passes it on svn's STDIN rather than on the
     # command line (svn >= 1.10, see #ensure_version_probe).
     @svn_stdin_password : String? = nil
     # Cached answer to "can this svn_path be spawned at all?", probed
     # once, on the first operation that would actually run.
     @svn_exec_errno : Int32? = nil
     @svn_exec_errno_probed : Bool = false
-    # Cached answer to real's has_option_password_from_stdin() - the
+    # Cached answer to Ansible's has_option_password_from_stdin() - the
     # `<svn> --version --quiet` probe _exec runs before every operation
     # when a password was given.
     @svn_version_probed : Bool = false
@@ -79,7 +79,7 @@ module Krikri
       force = true?(@params["force"]?)
       check_mode = true?(@params["_ansible_check_mode"]?)
       # module.params['executable'] or module.get_bin_path('svn', True).
-      # Real does NOT stat or probe an `executable:` it was handed - the
+      # Ansible does NOT stat or probe an `executable:` it was handed - the
       # only lookup here that can fail is get_bin_path for the default,
       # and the dest-required check below runs before any svn command is
       # spawned, so a bad `executable:` loses to it.
@@ -94,7 +94,7 @@ module Krikri
         end
         svn = probe[:stdout].strip.split("\n").first
         # The default lookup already proved this binary is on PATH and
-        # executable - real's Popen can spawn it, so no per-operation
+        # executable - Ansible's Popen can spawn it, so no per-operation
         # probe is needed for it.
         @svn_exec_errno_probed = true
       end
@@ -106,7 +106,7 @@ module Krikri
         if checkout || do_update || export
           return PluginResult.new(changed: false, failed: true, msg: "the destination directory must be specified unless checkout=no, update=no, and export=no")
         end
-        # Real's get_remote_revision() is the only svn call this branch
+        # Ansible's get_remote_revision() is the only svn call this branch
         # makes, so its `info` is the command a bad binary is named under.
         if failure = spawn_failure(["info", repo])
           return failure
@@ -114,7 +114,7 @@ module Krikri
         after = remote_revision(svn, repo, auth_args)
         return PluginResult.new(changed: false, failed: false, after: after)
       end
-      # Past real's dest gate, so a password's `--version` probe may run
+      # Past Ansible's dest gate, so a password's `--version` probe may run
       # (see #ensure_version_probe) - and it decides how the password
       # itself is passed to every svn call below.
       if @params["password"]?
@@ -160,14 +160,14 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "missing required argument: #{name}")
     end
 
-    # Real's Subversion._exec argv prefix, in real's own order: the
+    # Ansible's Subversion._exec argv prefix, in Ansible's own order: the
     # global options come BEFORE the operation args, which is the order
     # basic.py's `_clean_args` space-joins into the `cmd` it reports when
     # the spawn fails. (The command krikri actually RUNS keeps
     # #auth_args's own spelling, which puts them after the subcommand just
     # as svn itself accepts them either way - only the reported `cmd` has
     # to match real byte for byte.) With a password and an svn that
-    # supports it, real passes `--password-from-stdin` and feeds the
+    # supports it, Ansible passes `--password-from-stdin` and feeds the
     # password on the command's stdin instead of naming it in argv.
     private def auth_display_args : Array(String)
       args = ["--non-interactive", "--no-auth-cache"]
@@ -206,7 +206,7 @@ module Krikri
       args.join(" ")
     end
 
-    # real's Subversion.has_option_password_from_stdin(): `<svn> --version
+    # Ansible's Subversion.has_option_password_from_stdin(): `<svn> --version
     # --quiet` with check_rc=True, called from _exec BEFORE it finishes
     # assembling the operation argv and only when a password was given -
     # so it is the FIRST svn command of the run in that case, and its
@@ -235,7 +235,7 @@ module Krikri
     end
 
     # LooseVersion(svn --version --quiet's stdout) >= LooseVersion('1.10.0')
-    # - real's has_option_password_from_stdin return value, which picks
+    # - Ansible's has_option_password_from_stdin return value, which picks
     # --password-from-stdin over the insecure command-line --password.
     private def at_least_1_10?(reported : String) : Bool
       version = reported.strip.lines.first?.try(&.strip) || ""
@@ -245,12 +245,12 @@ module Krikri
       false
     end
 
-    # Real's Subversion._exec hands its argv to module.run_command, and
+    # Ansible's Subversion._exec hands its argv to module.run_command, and
     # basic.py's handler for the OSError a non-spawnable svn_path raises
     # fail_jsons with rc = the errno (2 ENOENT, 13 EACCES), msg "Error
     # executing command.", the FULL argv as `cmd`, and empty
     # stdout/stderr (the errno text rides in the [ERROR] block only).
-    # Real never runs a `--version` probe up front - EXCEPT through
+    # Ansible never runs a `--version` probe up front - EXCEPT through
     # has_option_password_from_stdin(), which _exec calls BEFORE it
     # assembles any operation argv, and only when a password was given
     # (that probe's own argv is just `<svn> --version --quiet`, no auth
@@ -267,13 +267,13 @@ module Krikri
         return spawn_error(path, errno, argv)
       end
 
-      # The binary spawns: with a password, real's first svn command is
+      # The binary spawns: with a password, Ansible's first svn command is
       # still the --version probe, so its rc decides the outcome.
       @params["password"]? ? ensure_version_probe : nil
     end
 
     # The errno of the first svn command basic.py's Popen raises on
-    # (cached: real only ever tries to spawn once per module run).
+    # (cached: Ansible only ever tries to spawn once per module run).
     private def spawn_errno(path : String) : Int32?
       unless @svn_exec_errno_probed
         @svn_exec_errno_probed = true
@@ -313,10 +313,10 @@ module Krikri
                     "stdout_lines", "stderr_lines", "changed", "exception"])
     end
 
-    # The `cmd` string real reports for an argv: basic.py's _clean_args
+    # The `cmd` string Ansible reports for an argv: basic.py's _clean_args
     # - every token through shlex.quote (Shell.quote_arg leaves a safe
     # token bare, exactly like shlex.quote), space-joined, with the
-    # token AFTER a PASSWD_ARG_RE match replaced by ******** (real's
+    # token AFTER a PASSWD_ARG_RE match replaced by ******** (Ansible's
     # redaction of the value it passed on the command line).
     private def reported_cmd(argv : Array(String)) : String
       rendered = [] of String
@@ -354,7 +354,7 @@ module Krikri
       13
     end
 
-    # Every svn invocation, with real's `data=password` stdin feed
+    # Every svn invocation, with Ansible's `data=password` stdin feed
     # reproduced as a printf pipe when the password is not on the command
     # line (run_command(bits, check_rc, data=stdin_data) hands svn the
     # password bytes with no trailing newline).
@@ -484,7 +484,7 @@ module Krikri
       result[:stdout].strip
     end
 
-    # Mirrors real Ansible's get_revision(): one `svn info` run, parsed
+    # Mirrors Ansible's get_revision(): one `svn info` run, parsed
     # into the bare revision number plus the full matched "Revision: N"
     # and "URL: ..." lines (the before/after result pair), with the real
     # module's "Unable to get ..." fallbacks.

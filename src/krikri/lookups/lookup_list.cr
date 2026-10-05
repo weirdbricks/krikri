@@ -8,22 +8,22 @@ module Krikri
       private def evaluate_lookup_list(lookup_type : String?, parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String?
         case lookup_type
         when "list"
-          # lookup('list', a, b, c) - real Ansible's own list lookup:
+          # lookup('list', a, b, c) - Ansible's own list lookup:
           # returns every term given, as a real list (mainly exists so
           # a caller can always treat the result as a list regardless
           # of how many terms were given).
           parts[1..].map { |part| evaluate_lookup_term(part.strip) }.to_json
         when "items"
-          # lookup('items', list1, list2, ...) - real Ansible's own
+          # lookup('items', list1, list2, ...) - Ansible's own
           # items lookup: flattens the given list terms one level
           # (itertools.chain, not a deep flatten).
           parts[1..].flat_map { |part| lookup_array(evaluate_lookup_term(part.strip)) }.to_json
         when "flattened"
-          # lookup('flattened', t1, t2, ...) - real Ansible's own flattened
+          # lookup('flattened', t1, t2, ...) - Ansible's own flattened
           # lookup: deep-flattens every term (nested lists flattened
           # recursively, non-list scalars kept as whole items - a string is
           # never split) and returns the flat list; via the scalar
-          # `lookup()` spelling real Ansible comma-joins the results. Was
+          # `lookup()` spelling Ansible comma-joins the results. Was
           # entirely unimplemented here - fell through every case to the
           # "undefined" fallback, feeding the literal string "undefined" to
           # the consumer: HanXHX.debian_bootstrap's
@@ -36,7 +36,7 @@ module Krikri
         when "together"
           evaluate_lookup_together(parts)
         when "nested"
-          # lookup('nested', list1, list2, ...) - real Ansible's own
+          # lookup('nested', list1, list2, ...) - Ansible's own
           # nested lookup: a nested-loop Cartesian product of the given
           # lists (same shape as the `product` filter, but as lookup
           # terms rather than a piped value) - the classic with_nested:
@@ -53,7 +53,7 @@ module Krikri
         end
       end
 
-      # lookup('together', list1, list2, ...) - real Ansible's own
+      # lookup('together', list1, list2, ...) - Ansible's own
       # together lookup: zips the given lists together (itertools.
       # izip_longest, padding shorter lists with null), returning a list
       # of lists - the classic with_together: parallel-iteration source.
@@ -66,7 +66,7 @@ module Krikri
         (0...size).map { |i| lists.map { |list| list[i]? || JSON::Any.new(nil) } }.to_json
       end
 
-      # Real Ansible's own flattened lookup runs every term through
+      # Ansible's own flattened lookup runs every term through
       # module_utils' deep `flatten` - nested lists flattened recursively,
       # non-list scalars kept as whole items (a string is never split).
       private def lookup_flatten(values : Array(JSON::Any)) : Array(JSON::Any)
@@ -79,7 +79,7 @@ module Krikri
         end
       end
 
-      # lookup('varnames', 'regex1', 'regex2', ...) - real Ansible's own
+      # lookup('varnames', 'regex1', 'regex2', ...) - Ansible's own
       # varnames lookup: returns every variable NAME (not value) whose
       # name matches ANY of the given regex patterns. Pulled out of
       # #evaluate_lookup_list's own case dispatch to keep that method's

@@ -51,12 +51,12 @@ describe "looped+registered getent invocation" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "does not expose invocation on a NON-looped register (real Ansible's strategy strip)" do
-    # Real ansible-core's strategy plugin deletes a top-level `invocation`
+  it "does not expose invocation on a NON-looped register (Ansible's strategy strip)" do
+    # ansible-core's strategy plugin deletes a top-level `invocation`
     # from the registered dict for a plain (non-looped) register, while a
     # looped register's per-item results[] entries keep theirs - pinned
     # above. Without this strip here, a registered getent result would
-    # show an `invocation` key real Ansible never exposes.
+    # show an `invocation` key Ansible never exposes.
     playbook = File.tempname("getent-noloop-invocation", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro

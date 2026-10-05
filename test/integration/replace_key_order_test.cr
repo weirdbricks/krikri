@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered replace result key order -
+# ansible-core 2.19.11's registered replace result key order -
 # live-verified via `{{ r | to_json }}` on registered replace: tasks:
 # rc leads, then backup_file only when a backup was taken, then msg
 # (empty string included on a no-matches run), then changed, failed -

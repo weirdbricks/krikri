@@ -24,8 +24,8 @@ module Krikri
   # - connected: comma-separated list of container names/IDs that should
   #   be connected to the network. By default this list is canonical -
   #   containers currently connected but not listed get disconnected too
-  #   (matches real Ansible's own default). Pass appends: true to only add
-  #   missing connections and never disconnect anything (real Ansible's
+  #   (matches Ansible's own default). Pass appends: true to only add
+  #   missing connections and never disconnect anything (Ansible's
   #   own appends:/incremental alias). Uses the same raw
   #   `Docr::Client#call` escape hatch as docker_container.cr's networks:
   #   for `POST /networks/{id}/connect`/`disconnect` - docr's own
@@ -44,7 +44,7 @@ module Krikri
   # recreated (Docker has no "change a network's driver in place" API) -
   # everything else about an existing network (IPAM, labels, etc.) is left
   # untouched even if it differs from what was requested, a documented
-  # simplification versus real Ansible's much more thorough comparison.
+  # simplification versus Ansible's much more thorough comparison.
   # connected: is checked/applied on every run regardless, including when
   # the network itself needed no change - silently ignoring it after the
   # network already exists would make it useless on every run after the
@@ -53,7 +53,7 @@ module Krikri
   # - force: unconditionally deletes and recreates the network even when
   #   its config already matches (distinct from the driver-mismatch
   #   auto-recreate above, which only fires on an actual difference) -
-  #   verified against real Ansible's own `present()`/`remove_network()`
+  #   verified against Ansible's own `present()`/`remove_network()`
   #   source: disconnects every currently-connected container first
   #   (Docker's own network-remove API refuses to delete a network with
   #   any container still attached), matching the driver-mismatch path's
@@ -101,7 +101,7 @@ module Krikri
       "scope" => %w[local global swarm],
     }
 
-    # Key order of real's registered result, live-verified against real
+    # Key order of Ansible's registered result, live-verified against real
     # ansible-core 2.19.11 + community.docker 5.2.1 over a Docker-API
     # socket: the module seeds its result dict with `{"changed": ...,
     # "actions": [...]}` (docker_network.py's __init__), then adds
@@ -112,7 +112,7 @@ module Krikri
     # why a normal create/rerun registers only changed/network/failed.
     KEY_ORDER = %w[changed actions network diff failed]
 
-    # Real's own wrapper for a DockerException escaping the module body.
+    # Ansible's own wrapper for a DockerException escaping the module body.
     # Only the prefix is reproduced verbatim; the wrapped message after it
     # is the python SDK's own formatting, which docr words differently.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
@@ -167,7 +167,7 @@ module Krikri
       actions = [] of String
       changed = false
 
-      # Real's remove-then-create recreate path (`force:` or a driver
+      # Ansible's remove-then-create recreate path (`force:` or a driver
       # mismatch) records the removal in `actions` exactly like a plain
       # absent run does.
       if existing && (force || existing.driver != driver)
@@ -203,7 +203,7 @@ module Krikri
       present_result(api, name, actions, changed, check_mode || debug_mode, check_mode)
     end
 
-    # Real's `remove_network()`: disconnect everything first (Docker
+    # Ansible's `remove_network()`: disconnect everything first (Docker
     # refuses to remove an in-use network), then delete, then record the
     # action. Real addresses the network by NAME here, not by id.
     private def remove_network!(
@@ -215,7 +215,7 @@ module Krikri
       actions << "Removed network #{name}"
     end
 
-    # The present-state result dict, in real's own key order: `actions`
+    # The present-state result dict, in Ansible's own key order: `actions`
     # only survives into the wire in check_mode/debug (real pops it
     # otherwise), `network` is the raw inspect payload (`null` when a
     # check_mode create did not actually create anything), and `diff` is
@@ -233,7 +233,7 @@ module Krikri
     end
 
     # `force:` (and the driver-mismatch auto-recreate above) both delete
-    # the existing network before recreating it - real Ansible's own
+    # the existing network before recreating it - Ansible's own
     # `remove_network()` disconnects every currently-connected container
     # FIRST (`disconnect_all_containers()`, verified against its actual
     # source), since Docker's own network-remove API itself refuses to
@@ -254,7 +254,7 @@ module Krikri
       raw || JSON::Any.new(nil)
     end
 
-    # A 404 (no such network) is real's `None`, not a failure - get_network
+    # A 404 (no such network) is Ansible's `None`, not a failure - get_network
     # swallows it into a null `network`.
     private def json_string_array(values : Array(String)) : JSON::Any
       JSON::Any.new(values.map { |value| JSON::Any.new(value) })
@@ -270,7 +270,7 @@ module Krikri
     end
 
     # Connects any requested containers not yet connected; when appends:
-    # is false (the default, matching real Ansible), also disconnects any
+    # is false (the default, matching Ansible), also disconnects any
     # currently-connected container not in the requested list. Appends a
     # real-worded entry to `actions` per change and reports whether
     # anything changed (real records connect/disconnect there too, and
@@ -304,7 +304,7 @@ module Krikri
       changed
     end
 
-    # Real AnsibleModule validation over the merged spec, in
+    # AnsibleModule validation over the merged spec, in
     # arg_spec.ArgumentSpecValidator.validate order: required -> types
     # (merged-spec order) -> choices -> required_together -> sub-spec
     # string-element conversion -> unsupported (deferred to last). The
@@ -422,7 +422,7 @@ module Krikri
       nil
     end
 
-    # ipam_config elements must be dicts (real's _list_no_log_values
+    # ipam_config elements must be dicts (Ansible's _list_no_log_values
     # string-to-dict pass fails a non-dict element before anything else
     # looks at the param, with the bare check_type_dict wording).
     private def validate_ipam_config_elements : PluginResult?
@@ -458,7 +458,7 @@ module Krikri
       actions = [] of String
       remove_network!(api, name, existing, check_mode, actions) if existing
 
-      # Real's absent path never records a `network` key; its diff
+      # Ansible's absent path never records a `network` key; its diff
       # tracker is emitted (as an empty dict - the removal never reaches
       # it) only in check_mode.
       result = PluginResult.new(changed: !existing.nil?, failed: false, failed_flag: false)

@@ -10,7 +10,7 @@ require "file_utils"
 # ops_probe_pubkey read as undefined in play 2 (`hosts: backend_nodes`)
 # and failed the play - only when the inventory was not adjacent to the
 # playbooks, which is why every `connection: local` minimal repro with
-# the files beside each other passed. Real Ansible loads BOTH trees
+# the files beside each other passed. Ansible loads BOTH trees
 # (live-verified against ansible-core 2.19.11): a same-key conflict
 # resolves to the PLAYBOOK side, and inline inventory host vars still
 # outrank every vars file.

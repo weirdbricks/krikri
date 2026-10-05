@@ -1,10 +1,10 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_healthcheck"
 
-# Duration parsing and test normalization verified against real Ansible's
+# Duration parsing and test normalization verified against Ansible's
 # own community.docker module_utils source (`convert_duration_to_nanosecond`,
 # `normalize_healthcheck_test`, `parse_healthcheck` in
-# plugins/the real module) - see plugins/docker_container.cr's own
+# plugins/the Ansible module) - see plugins/docker_container.cr's own
 # doc comment.
 describe Krikri::PluginHelpers::DockerHealthcheck do
   include RaisesAssertion
@@ -41,7 +41,7 @@ describe Krikri::PluginHelpers::DockerHealthcheck do
       Krikri::PluginHelpers::DockerHealthcheck.normalize_test(test).must_equal(["CMD", "curl", "--fail", "http://localhost"])
     end
 
-    it "wraps a plain string test as CMD-SHELL (matches real Ansible's normalize_healthcheck_test)" do
+    it "wraps a plain string test as CMD-SHELL (matches Ansible's normalize_healthcheck_test)" do
       test = JSON.parse(%("curl --fail http://localhost"))
       Krikri::PluginHelpers::DockerHealthcheck.normalize_test(test).must_equal(["CMD-SHELL", "curl --fail http://localhost"])
     end
@@ -64,7 +64,7 @@ describe Krikri::PluginHelpers::DockerHealthcheck do
       parsed.test.must_equal(["NONE"])
     end
 
-    it "returns nil when test: is missing entirely (matches real Ansible's parse_healthcheck - no override at all)" do
+    it "returns nil when test: is missing entirely (matches Ansible's parse_healthcheck - no override at all)" do
       Krikri::PluginHelpers::DockerHealthcheck.parse(%({"interval": "30s"})).must_be_nil
     end
   end

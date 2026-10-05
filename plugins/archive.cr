@@ -28,7 +28,7 @@ module Krikri
   #   with format gz/bz2/xz (default: false - a single file with a
   #   compression-only format is gzip/bzip2/xz-compressed directly, not
   #   wrapped in a tar; format tar/zip always produce a real archive
-  #   regardless of this flag, matching real Ansible's own behavior)
+  #   regardless of this flag, matching Ansible's own behavior)
   # - remove: delete the source path(s) after a successful archive
   #   (default: false)
   # - exclusion_patterns: comma-separated shell-glob patterns matched
@@ -42,16 +42,16 @@ module Krikri
   #   list items, not a file living inside a directory being archived (use
   #   exclusion_patterns: for that - it reaches into a directory's own
   #   contents, exclude_path: never does). The `expanded_paths:` result
-  #   field stays unfiltered by this either way, matching real Ansible's
+  #   field stays unfiltered by this either way, matching Ansible's
   #   own observed output.
   # - mode / owner / group: applied to the resulting dest file
   #
   # - attributes: a chattr(1) flag string (e.g. "+i") applied to dest -
-  #   verified against real AnsibleModule's own
+  #   verified against AnsibleModule's own
   #   `set_attributes_if_different` source, unconditional (no filesystem-
   #   support gate), fails the task on a real chattr error.
   # - seuser / serole / setype / selevel: SELinux file context, applied
-  #   via chcon - matches real Ansible's own confirmed no-op-when-
+  #   via chcon - matches Ansible's own confirmed no-op-when-
   #   SELinux-isn't-enabled behavior (`AnsibleModule.selinux_enabled()`,
   #   checked here via `/sys/fs/selinux/enforce`'s own existence, the
   #   same file `selinuxenabled(8)` tests) - see `#apply_selinux_context`
@@ -66,11 +66,11 @@ module Krikri
   # (a real libbz2 C binding, written for this project after a shard
   # search turned up nothing usable - the only prior bz2 shard,
   # jhbadger/Bzip, is itself a shell wrapper around `bzcat` with no writer,
-  # not a real implementation) for bz2. This matches real Ansible's own
+  # not a real implementation) for bz2. This matches Ansible's own
   # archive module, which uses Python's tarfile/zipfile stdlib rather than
   # shelling out too - no format shells out anymore.
   #
-  # Idempotency is checksum-based like real Ansible, but computed by
+  # Idempotency is checksum-based like Ansible, but computed by
   # reading krikri-playbook's own previously-built archive back natively
   # rather than replicating Python's tarfile per-member header checksum
   # exactly - this compares krikri-playbook's own archives against
@@ -109,7 +109,7 @@ module Krikri
       expanded_excludes, _ = expand_paths(requested_excludes)
 
       # exclude_path only removes entries that exactly match one of the
-      # top-level expanded path: entries themselves - real Ansible's own
+      # top-level expanded path: entries themselves - Ansible's own
       # `self.paths = set(self.expanded_paths) - set(self.expanded_exclude_paths)`,
       # verified against a real community.general 11.2.1 install's actual
       # archived-members output, not assumed from the docs (which read as
@@ -119,12 +119,12 @@ module Krikri
       # never itself a top-level path: entry - only exclusion_patterns:
       # (already supported) reaches into a directory's own contents. The
       # returned `expanded_paths:` result field stays unfiltered either
-      # way, matching real Ansible's own observed output.
+      # way, matching Ansible's own observed output.
       candidate_paths = expanded_paths.reject { |path| expanded_excludes.includes?(path) }
       found_paths = candidate_paths.reject { |path| missing.includes?(path) }
 
-      # Real fails when NOTHING survives the exclude_path subtraction -
-      # `if not self.paths: module.fail_json(...)` - and note real's
+      # Ansible fails when NOTHING survives the exclude_path subtraction -
+      # `if not self.paths: module.fail_json(...)` - and note Ansible's
       # self.paths still CONTAINS missing (nonexistent) literal paths at
       # this point: expand_paths keeps those, so "no source paths were
       # found" fires only when the whole set was excluded (or was empty
@@ -152,7 +152,7 @@ module Krikri
       # (self.paths[0], self.format)`). krikri previously demanded dest
       # unconditionally ("missing required argument: path and dest are
       # both required") - found live via modules_data.yml's gz
-      # single-file probe, which real runs fine with no dest.
+      # single-file probe, which Ansible runs fine with no dest.
       unless dest
         if must_archive?(force_archive, requested_paths, candidate_paths)
           return PluginResult.new(changed: false, failed: true,
@@ -176,7 +176,7 @@ module Krikri
     end
 
     private def absent_result(dest : String?, missing : Array(String), expanded_paths : Array(String), expanded_exclude_paths : Array(String)) : PluginResult
-      # Real's single result property dict, exit_json(**archive.result):
+      # Ansible's single result property dict, exit_json(**archive.result):
       # archived, dest, dest_state, changed, arcroot, missing,
       # expanded_paths, expanded_exclude_paths (absent keys skip).
       PluginResult.new(
@@ -208,7 +208,7 @@ module Krikri
     # Expands each requested path: a shell-glob (contains * or ?) that
     # matches nothing silently contributes nothing (not "missing"); a
     # literal path that doesn't exist is kept in the expanded list but
-    # also recorded as missing - matching real Ansible's expand_paths.
+    # also recorded as missing - matching Ansible's expand_paths.
     private def expand_paths(requested : Array(String)) : {Array(String), Array(String)}
       expanded = [] of String
       missing = [] of String
@@ -327,7 +327,7 @@ module Krikri
       archived = single_compress ? found_paths : members
       stat_fields = dest_stat_fields(dest)
 
-      # Real's registered archive result runs archived, dest, dest_state,
+      # Ansible's registered archive result runs archived, dest, dest_state,
       # changed, arcroot, missing, expanded_paths, expanded_exclude_paths,
       # then add_path_info's uid/gid/owner/group/mode/state/size -
       # live-verified vs 2.19.11 via `{{ r | to_json }}` for both the
@@ -449,7 +449,7 @@ module Krikri
 
     # A symlink member (e.g. robertdebock.backup's own default /var/spool
     # target - Debian's /var/spool/mail -> ../mail) previously hit
-    # `File.open(member)` (which, like real Ansible's own os.stat-based
+    # `File.open(member)` (which, like Ansible's own os.stat-based
     # walk, follows symlinks) trying to read it as a plain file - for a
     # symlink pointing at a DIRECTORY, that raises, and the single
     # top-level `rescue => false` around the whole archive build turned
@@ -496,14 +496,14 @@ module Krikri
           elsif info.symlink?
             # Crystal's stdlib Compress::Zip::Writer has no notion of a
             # Unix symlink entry (no external file attributes API) -
-            # unlike real Ansible's own Python zipfile, which stores a
+            # unlike Ansible's own Python zipfile, which stores a
             # proper symlink entry. Reading the symlink as a plain file
             # (the previous behavior) crashes outright for one pointing
             # at a directory (e.g. Debian's default /var/spool/mail ->
             # ../mail, hit benchmarking robertdebock.backup's own
             # default `/var/spool` archive target), taking down the
             # whole archive build via the one top-level `rescue` below
-            # instead of real Ansible's own per-member error tolerance.
+            # instead of Ansible's own per-member error tolerance.
             # Skip the member (documented format-capability gap) rather
             # than crash or silently embed a wrong regular-file entry.
           else
@@ -599,7 +599,7 @@ module Krikri
     end
 
     private def valid_tar?(path : String) : Bool
-      # Python's tarfile (what the real module reads the existing dest
+      # Python's tarfile (what the Ansible module reads the existing dest
       # with) requires the ustar magic at offset 257 and rejects
       # anything else as ReadError - which for format=tar becomes the
       # module-failing fallback. Crystal's Crystar instead treats a
@@ -653,7 +653,7 @@ module Krikri
     private def apply_dest_attributes(dest : String) : Nil
       # A present owner:/group: value (explicit empty string included)
       # is always resolved - and an unresolvable name fails the task
-      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # like Ansible's basic.py (round900811 kilip.chezmoi) -
       # instead of silently skipping the chown whenever the lookup came
       # back empty.
       if owner = @params["owner"]?
@@ -674,13 +674,13 @@ module Krikri
     end
 
     # `attributes:` - a chattr(1) flag string (e.g. "+i" for immutable),
-    # applied to *dest* - verified against real AnsibleModule's own
+    # applied to *dest* - verified against AnsibleModule's own
     # `set_attributes_if_different` source: unconditional (no filesystem-
     # support gate the way SELinux context has), fails the task with
     # "chattr failed" if the chattr command itself errors, matched
     # exactly rather than silently swallowed the way chmod/chown above
     # are (that swallowing is this module's OWN documented convention,
-    # not something real Ansible does for chattr).
+    # not something Ansible does for chattr).
     private def apply_attributes(dest : String) : PluginResult?
       attributes = @params["attributes"]?
       return nil if attributes.nil? || attributes.empty?
@@ -697,7 +697,7 @@ module Krikri
     end
 
     # `seuser:`/`serole:`/`setype:`/`selevel:` - SELinux file context,
-    # applied to *dest* via `chcon`. Verified against real AnsibleModule's
+    # applied to *dest* via `chcon`. Verified against AnsibleModule's
     # own `set_context_if_different`/`selinux_enabled` source: real
     # Ansible skips this ENTIRELY (not even attempting it) when SELinux
     # isn't enabled on the target at all (`if not self.selinux_enabled():
@@ -705,7 +705,7 @@ module Krikri
     # enforce` selinuxfs check, the same file `selinuxenabled(8)` itself
     # tests. On any non-SELinux host (the overwhelming majority of real-
     # world targets this project has ever benchmarked against) this is a
-    # verified, confirmed no-op, identical to real Ansible's own behavior
+    # verified, confirmed no-op, identical to Ansible's own behavior
     # - the chcon-invocation shape itself for an actually-SELinux-enabled
     # host is implemented per `chcon(1)`'s documented flags but NOT
     # live-verified against a real SELinux-enabled target (none available

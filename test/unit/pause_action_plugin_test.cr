@@ -4,7 +4,7 @@ require "../../src/krikri/action_plugin_manager"
 
 # pause runs as a controller-side action plugin (no target module, same
 # as debug/assert/fail/set_fact) - see PauseActionPlugin. These specs
-# pin the param surface against real ansible.builtin.pause's
+# pin the param surface against Ansible.builtin.pause's
 # argument_spec: echo (bool, default true), minutes (int, mutually
 # exclusive with seconds), seconds (int), prompt (str). Real semantics
 # behavior matched to ansible-core 2.14's action/pause.py: type-int validation
@@ -23,7 +23,7 @@ private def final_json(result : Krikri::ActionResult) : JSON::Any
 end
 
 describe "PauseActionPlugin" do
-  it "fails minutes and seconds together with real Ansible's exact error text" do
+  it "fails minutes and seconds together with Ansible's exact error text" do
     result = run_pause({"seconds" => "1", "minutes" => "1"})
 
     result.success?.must_equal(true)
@@ -32,7 +32,7 @@ describe "PauseActionPlugin" do
     final.as_h["msg"].as_s.must_equal("parameters are mutually exclusive: minutes|seconds")
   end
 
-  it "fails minutes and seconds together even when one is zero (verified against real ansible-playbook)" do
+  it "fails minutes and seconds together even when one is zero (verified against ansible-playbook)" do
     result = run_pause({"seconds" => "0", "minutes" => "0"})
 
     final_json(result).as_h["failed"].as_bool.must_equal(true)
@@ -55,7 +55,7 @@ describe "PauseActionPlugin" do
     final.as_h["changed"].as_bool.must_equal(false)
   end
 
-  it "truncates fractional seconds like real's int type validation" do
+  it "truncates fractional seconds like Ansible's int type validation" do
     result = run_pause({"seconds" => "1.5"})
 
     final = final_json(result)
@@ -115,12 +115,12 @@ describe "PauseActionPlugin" do
     final.as_h["user_input"].as_s.must_equal("")
   end
 
-  # The console lines below are real's OWN Display.display() writes from
+  # The console lines below are Ansible's OWN Display.display() writes from
   # action/pause.py's duration branch, captured byte for byte against
   # ansible-playbook 2.19.11 with stdin from /dev/null. They are carried
   # on the result under an engine-internal key (never registered, never
   # dumped) so ResultDisplay can put them immediately before the item's
-  # status line - the place real's own write lands, once per loop item.
+  # status line - the place Ansible's own write lands, once per loop item.
   it "announces the wait on the console when seconds are given" do
     result = run_pause({"seconds" => "1"})
 
@@ -149,7 +149,7 @@ describe "PauseActionPlugin" do
     console_lines(run_pause({"seconds" => "1", "echo" => "false"})).must_equal(["Pausing for 1 seconds (output is hidden)"])
   end
 
-  it "treats a natively-typed bool duration as an int like real's int callable" do
+  it "treats a natively-typed bool duration as an int like Ansible's int callable" do
     # int(True) == 1 and int(False) == 0, and 0 clamps up to the same
     # 1-second minimum - neither is a validation failure.
     truthy = run_pause({"seconds" => marked("true")})
@@ -170,7 +170,7 @@ describe "PauseActionPlugin" do
 
     final = final_json(result)
     expect(final.as_h.has_key?("_ansible_pause_console")).must_equal(true)
-    # Everything real's own pause result carries is still there.
+    # Everything Ansible's own pause result carries is still there.
     %w(start stop delta stdout stderr rc echo user_input).each do |key|
       final.as_h.has_key?(key).must_equal(true)
     end

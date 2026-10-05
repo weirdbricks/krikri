@@ -21,7 +21,7 @@ module Krikri
   #     parsed anyway (parted still prints the BYT;/disk line with
   #     table "unknown") - the missing label then drives mklabel in the
   #     script. Only a non-label failure (e.g. a nonexistent device)
-  #     fails with real's rc/out/err-carrying shape
+  #     fails with Ansible's rc/out/err-carrying shape
   #   - the script is built exactly like real: mklabel when the current
   #     table differs, mkpart (with the part_type, and fs_type ONLY when
   #     the user passed one - there is no ext2 default) when the label
@@ -36,7 +36,7 @@ module Krikri
     # Real argument_spec's deterministic orders (live-verified wording
     # against 2.19.11: "value of state must be one of: absent, info,
     # present, got: X"; "value of unit must be one of: B, KB, MB, GB, TB,
-    # KiB, MiB, GiB, TiB, s, %, cyl, chs, compact, got: X" - real's
+    # KiB, MiB, GiB, TiB, s, %, cyl, chs, compact, got: X" - Ansible's
     # units_si + units_iec + ["s", "%", "cyl", "chs", "compact"]; it
     # accepts neither the bare "b" nor "kB"/"kKiB").
     private PARTED_STATES = %w[absent info present]
@@ -53,7 +53,7 @@ module Krikri
 
     private UNITS_IEC = %w[KiB MiB GiB TiB]
 
-    # real's fail_json kwargs (rc, out, err) lead the registered result,
+    # Ansible's fail_json kwargs (rc, out, err) lead the registered result,
     # then failed/msg/changed/exception (round 992003 parted_fail:
     # [rc, out, err, failed, msg, changed, exception]).
     private PARTED_FAIL_KEY_ORDER = %w[rc out err failed msg changed exception]
@@ -85,7 +85,7 @@ module Krikri
       check_mode = true?(@params["_ansible_check_mode"]?)
       number, part_start, part_end, label, fs_type, flags, part_type, name, align = resolve_partition_params
 
-      # Real's required_if: state=absent needs number (AnsibleModule
+      # Ansible's required_if: state=absent needs number (AnsibleModule
       # init-time, before the binary lookup).
       if state == "absent" && number.nil?
         return PluginResult.new(changed: false, failed: true,
@@ -103,7 +103,7 @@ module Krikri
           msg: missing_executable_message("parted"))
       end
 
-      # Real's conditioning block: a number below 1 fails before any
+      # Ansible's conditioning block: a number below 1 fails before any
       # device access.
       if n = number
         if n < 1
@@ -112,7 +112,7 @@ module Krikri
         end
       end
 
-      # Read the current disk information (this is where real runs
+      # Read the current disk information (this is where Ansible runs
       # `parted --version` for the first time, via check_parted_label).
       current = read_device_info(device, unit, parted_path)
       return current if current.is_a?(PluginResult)
@@ -189,7 +189,7 @@ module Krikri
             # Assign name to the partition
             if (nm = name) && partition && partition["name"]?.try(&.as_s?) != nm
               # The double quotes need to be included in the arg passed
-              # to parted (real passes the quoted name verbatim).
+              # to parted (Ansible passes the quoted name verbatim).
               script << "name" << n.to_s << "\"#{nm}\""
             end
 
@@ -202,7 +202,7 @@ module Krikri
               end
 
               current_flags = partition ? partition["flags"].as_a.map(&.as_s) : [] of String
-              # Compute only the changes in flags status (real's
+              # Compute only the changes in flags status (Ansible's
               # set-difference loops, in deterministic order here).
               (requested - current_flags).each do |flag|
                 script << "set" << n.to_s << flag << "on"
@@ -239,7 +239,7 @@ module Krikri
         output_script = ["unit", unit, "print"]
       end
 
-      # Final status of the device (real runs this unconditionally, check
+      # Final status of the device (Ansible runs this unconditionally, check
       # mode included)
       final = read_device_info(device, unit, parted_path)
       return final if final.is_a?(PluginResult)
@@ -265,7 +265,7 @@ module Krikri
       {number, part_start, part_end, label, fs_type, flags, part_type, name, align}
     end
 
-    # Real AnsibleModule's init-time choices validation, in its own
+    # AnsibleModule's init-time choices validation, in its own
     # declaration order (device required, then state/unit/label/
     # part_type/align choices).
     private def validate_module_choices(unit : String) : PluginResult?
@@ -316,8 +316,8 @@ module Krikri
     # NOT fatal - parted still printed the BYT;/disk header with table
     # "unknown", which is parsed (this is the loop-device state the
     # kop_storage parted_create probe starts from; the previous port
-    # turned it into a task failure real never produces). Any other
-    # failure fails with real's exact wrapper message plus rc/out/err.
+    # turned it into a task failure Ansible never produces). Any other
+    # failure fails with Ansible's exact wrapper message plus rc/out/err.
     private def read_device_info(device : String, unit : String, parted_path : String) : {generic: Hash(String, JSON::Any), partitions: Array(Hash(String, JSON::Any))} | PluginResult
       argv = [parted_path, "-s", "-m", device, "--", "unit", unit, "print"]
       result = remote_exec(argv.map { |arg| Shell.single_quote(arg) }.join(' '))
@@ -337,7 +337,7 @@ module Krikri
     private def parse_partition_info(parted_output : String, unit : String) : {generic: Hash(String, JSON::Any), partitions: Array(Hash(String, JSON::Any))} | PluginResult # ameba:disable Metrics/CyclomaticComplexity
       lines = parted_output.split('\n').reject { |line| line.strip.empty? }
       if lines.size < 2
-        # parted produced nothing parseable; real would crash here -
+        # parted produced nothing parseable; Ansible would crash here -
         # degrade to the get_device_info failure shape instead.
         return PluginResult.new(changed: false, failed: true,
           msg: "Error while getting device information with parted script: (unparseable parted output)",
@@ -382,7 +382,7 @@ module Krikri
           flags = part_params[6]? || ""
           size_json = JSON::Any.new(part_size)
         else
-          # real emits the empty string (not a number) for the size of a
+          # Ansible emits the empty string (not a number) for the size of a
           # CHS-parsed partition row
           fstype = part_params[3]? || ""
           name = part_params[4]? || ""
@@ -442,7 +442,7 @@ module Krikri
     end
 
     # Real parted_version(): `parted --version`, parsed once per run.
-    # Fails with real's exact message shapes when the binary cannot be
+    # Fails with Ansible's exact message shapes when the binary cannot be
     # run or the version cannot be parsed.
     private def parted_version(parted_path : String) : Tuple(Int32, Int32, Int32) | PluginResult
       if cached = @parted_version

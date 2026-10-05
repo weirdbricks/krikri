@@ -3,7 +3,7 @@ require "../minitest_helper"
 
 # A looped include_tasks: whose FIRST iteration's included tasks fail the
 # host must not let a LATER iteration's include file surface a second
-# failure. Real Ansible registers every loop iteration's include before any
+# failure. Ansible registers every loop iteration's include before any
 # included task executes (all the "included:" lines print first, then the
 # included tasks run in order), so by the time a task failure halts the
 # host, every include file has already been registered - a later file's
@@ -12,13 +12,13 @@ require "../minitest_helper"
 # iteration's file anyway meant a load-time failure in it (e.g.
 # pluggero.upgrade's 03_reboot.yml referencing the unimplemented
 # ansible.windows.win_reboot, round 601548) added a spurious second
-# failed= entry: recap failed=2 where real ansible-core 2.19.4 recaps
+# failed= entry: recap failed=2 where ansible-core 2.19.4 recaps
 # failed=1 with only the original task's error.
 #
 # Not covered live: this spec uses krikri's own unimplemented-module
-# hard-stop as the load-time failure, which real Ansible has no equivalent
+# hard-stop as the load-time failure, which Ansible has no equivalent
 # for (it resolves win_reboot fine) - the recap numbers above were verified
-# against real ansible-playbook with a fail:/command failure instead.
+# against ansible-playbook with a fail:/command failure instead.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -72,7 +72,7 @@ describe "looped include_tasks stops loading later iterations after the host fai
     output.must_include("failed=1")
     output.wont_include("failed=2")
     # Both loop iterations' include registrations still count ok, matching
-    # real Ansible's upfront registration of every iteration.
+    # Ansible's upfront registration of every iteration.
     output.must_include("ok=2")
   end
 end

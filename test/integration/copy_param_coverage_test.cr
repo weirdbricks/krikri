@@ -3,7 +3,7 @@ require "file_utils"
 require "digest/sha1"
 
 # Proactive parameter-coverage pass for `copy:` - every behavior below
-# was live-verified against the locally-installed real ansible-core
+# was live-verified against the locally-installed ansible-core
 # 2.19.4 (`ansible-playbook`/`ansible-doc` on PATH) before being pinned
 # here, mirroring the conventions file.cr's attr:/attributes: specs and
 # archive_spec.cr's own SELinux specs established.
@@ -15,7 +15,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
   describe "checksum:" do
     # Live-verified against ansible-core 2.19.11: `checksum:` states
     # the checksum the WRITTEN file must have, not a claim about the
-    # destination's current content. Real's copy ACTION plugin only
+    # destination's current content. Ansible's copy ACTION plugin only
     # short-circuits when the SOURCE's own checksum equals the dest's -
     # with content: and differing content that comparison never
     # matches, so the copy runs and the MODULE's checksum validation
@@ -67,7 +67,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     # failed." (plus checksum/expected_checksum in the result), and an
     # absent dest stays absent - the verification happens on the staged
     # file BEFORE it is moved into place.
-    it "fails with real Ansible's exact message and leaves an absent dest absent when the written content doesn't match" do
+    it "fails with Ansible's exact message and leaves an absent dest absent when the written content doesn't match" do
       dest = File.tempname("copy-checksum-bad-dest")
       File.delete(dest) if File.exists?(dest)
 
@@ -92,10 +92,10 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     # Mirrors file_spec.cr's own attr: specs - same set_attributes_if_
     # different semantics: '-'-prefixed requests report changed
     # unconditionally (ansible/ansible#33745).
-    it "reports changed on every run for '-'-prefixed attributes, flag set or not (real Ansible's quirk)" do
+    it "reports changed on every run for '-'-prefixed attributes, flag set or not (Ansible's quirk)" do
       # File.tempname lands on the default tempdir, which rootless
       # fuse-overlayfs containers back with a filesystem that rejects
-      # every chattr flag op (real Ansible fails the task there
+      # every chattr flag op (Ansible fails the task there
       # identically) - skip the success-path pin on such a filesystem.
       skip "filesystem rejects chattr flag operations" unless PluginSpecHelper.chattr_clear_supported?
       dest = File.tempname("copy-attr-clear-dest")
@@ -111,7 +111,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "fails the task when chattr itself errors (real Ansible's chattr-failed shape)" do
+    it "fails the task when chattr itself errors (Ansible's chattr-failed shape)" do
       # tmpfs doesn't support chattr - /dev/shm is reliably tmpfs in
       # every environment this suite runs in (containers included).
       dest = File.join("/dev/shm", "krikri-copy-attr-fail-#{Random.new.hex(8)}")
@@ -140,7 +140,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     # Ansible skips the whole chcon step when SELinux isn't enabled on
     # the target - this confirms copy: still succeeds cleanly (a true
     # no-op) rather than attempting (and failing) a chcon call.
-    it "does not fail the copy when SELinux isn't enabled on the target (a true no-op, matching real Ansible)" do
+    it "does not fail the copy when SELinux isn't enabled on the target (a true no-op, matching Ansible)" do
       dest = File.tempname("copy-selinux-noop-dest")
 
       result = PluginSpecHelper.run("copy", {
@@ -267,7 +267,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
     # Live-verified against ansible-core 2.19.4: a missing remote_src
     # source fails with exactly "Source <src> not found" (module-side,
     # since nothing controller-side runs for remote_src).
-    it "fails with real Ansible's exact message when the remote-side source is missing" do
+    it "fails with Ansible's exact message when the remote-side source is missing" do
       src = File.join(Dir.tempdir, "krikri-remote-missing-#{Random.new.hex(8)}")
       dest = File.tempname("copy-remote-missing-dest")
 
@@ -325,7 +325,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
 
   describe "unsafe_writes: (non-atomic write fallback)" do
     # On a normal filesystem the rename-based atomic write simply
-    # succeeds (live-verified: real Ansible behaves identically with
+    # succeeds (live-verified: Ansible behaves identically with
     # unsafe_writes: true there) - this pins that the happy path is
     # unchanged when the param is given.
     it "writes normally when the atomic path succeeds (param has no effect on a normal filesystem)" do
@@ -340,11 +340,11 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "preserves an existing dest's mode across an overwrite when no mode: is given (real Ansible's atomic-move behavior)" do
+    it "preserves an existing dest's mode across an overwrite when no mode: is given (Ansible's atomic-move behavior)" do
       # Live-verified against ansible-core 2.19.4: an overwrite with no
       # explicit mode: preserves the existing dest's permissions - the
       # rename-based write copies them onto the temp file before the
-      # move, exactly like real Ansible's atomic_move does.
+      # move, exactly like Ansible's atomic_move does.
       dest = File.tempname("copy-uw-mode-dest")
       File.write(dest, "old\n")
       File.chmod(dest, 0o660)

@@ -50,7 +50,7 @@ private FILE_PROTOCOL_ENV = %({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "pro
 # Builds the fixture repo plus a separate sub repo added to it as a
 # submodule (pinned at sub's current tip). The sub repo uses branch
 # `master` so track_submodules:'s hardcoded <remote>/master comparison
-# (mirroring real Ansible) resolves.
+# (mirroring Ansible) resolves.
 private def build_submodule_fixture(main_path : String, sub_path : String) : Nil
   build_fixture_repo(main_path)
   `rm -rf #{sub_path}`

@@ -6,14 +6,14 @@ require "../src/krikri/base_plugin"
 module Krikri
   # Apt_key plugin - imports/removes a GPG key into apt's legacy trusted
   # keyring. Compatible with Ansible's ansible.builtin.apt_key module
-  # (deprecated in real ansible-core in favor of signed-by:/deb822_
+  # (deprecated in ansible-core in favor of signed-by:/deb822_
   # repository, but still shipped and still what plenty of real roles
-  # use - verified against real ansible-playbook, which still runs it
+  # use - verified against ansible-playbook, which still runs it
   # successfully on ansible-core 2.19.4).
   #
   # Supported parameters:
   # - url: fetch the key from this URL (fetched on the TARGET, matching
-  #   real Ansible - apt_key: is never delegated to the controller the
+  #   Ansible - apt_key: is never delegated to the controller the
   #   way copy:'s src: implicitly is)
   # - data: the key's own ASCII-armored text, given directly
   # - state: present (default) | absent
@@ -28,11 +28,11 @@ module Krikri
   # - keyserver: fetches by id: from a keyserver instead of url:/data: -
   #   verified against observed behavior:
   #   `apt-key adv --no-tty --keyserver <keyserver> --recv <id>`, and
-  #   REQUIRES id: (real Ansible fails with "Missing key_id, required
+  #   REQUIRES id: (Ansible fails with "Missing key_id, required
   #   with keyserver." otherwise - matched exactly, not silently
   #   defaulted).
   #
-  # - keyring: the full path to a specific keyring file (real Ansible
+  # - keyring: the full path to a specific keyring file (Ansible
   #   passes this straight through as `apt-key --keyring <path> ...`,
   #   applying to every apt-key subcommand - add/del/list). Previously
   #   entirely unimplemented (every key always went into the legacy
@@ -53,18 +53,18 @@ module Krikri
   #   pkg.jenkins.io/debian/jenkins.io.key expired 2023-03-30); the add
   #   prints "OK" and exits 0, the key genuinely is in
   #   /etc/apt/trusted.gpg, but `apt-key adv --list-public-keys` output
-  #   marks it expired and real ansible.builtin.apt_key's own key
+  #   marks it expired and Ansible.builtin.apt_key's own key
   #   parser (`parse_output_for_keys`) deliberately SKIPS pub/sub lines
   #   containing "expired" - so its post-add re-list doesn't see the
   #   key and it fails the task with "apt-key did not return an error,
   #   but failed to add the key (check that the id is correct and *not*
-  #   a subkey)" (verified live against real ansible-playbook on the
+  #   a subkey)" (verified live against ansible-playbook on the
   #   round-83166 host: before == after, task failed). Previously the
   #   add path trusted apt-key's exit code alone and reported success -
   #   diverging both in the task result and in what ran next (real
   #   Ansible stops at the failed apt_key: task; krikri continued into
   #   apt_repository: and failed later with a NO_PUBKEY apt-get update
-  #   error instead). Fixed by mirroring real Ansible's whole add flow:
+  #   error instead). Fixed by mirroring Ansible's whole add flow:
   #   derive the key id from the staged material via `gpg --with-colons`
   #   when id: isn't given (same as its get_key_id_from_file, first
   #   parsed key wins), normalize it the way its parse_key_id does
@@ -84,7 +84,7 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real Ansible's argument-spec validation (mutually_exclusive=
+      # Ansible's argument-spec validation (mutually_exclusive=
       # (('data', 'file', 'keyserver', 'url'),)) runs before main() and
       # before any param resolution, so this is deliberately the first
       # thing here. Live-verified against ansible-core 2.19.4: the
@@ -100,7 +100,7 @@ module Krikri
           msg: "parameters are mutually exclusive: #{mutex_params.join('|')}")
       end
 
-      # Real's find_needed_binaries(module) runs next - before any
+      # Ansible's find_needed_binaries(module) runs next - before any
       # keyring work, key_id parsing or url/data handling - resolving
       # `apt-key` and then `gpg` through module.get_bin_path(...,
       # required=True). Note that in ansible-core 2.19 that helper does
@@ -111,7 +111,7 @@ module Krikri
       # module simply FAILS with the bare get_bin_path text.
       # apt-key was dropped from Debian 12 / Ubuntu 22.04+, so on any
       # current host EVERY apt_key: task ends right here - which is what
-      # real does. Verified against ansible-playbook 2.19.11 for the
+      # Ansible does. Verified against ansible-playbook 2.19.11 for the
       # url: shape and for state: absent with file:/id:.
       %w[apt-key gpg].each do |binary|
         next if remote_exec("command -v #{binary} >/dev/null 2>&1")[:exit_code] == 0
@@ -140,7 +140,7 @@ module Krikri
       key_id = @params["id"]?
       key_id = nil if key_id.try(&.empty?)
 
-      # Real Ansible's exact check order: `if not key_id: if keyserver:
+      # Ansible's exact check order: `if not key_id: if keyserver:
       # fail "Missing key_id, required with keyserver."` happens before
       # any url:/data:/file: handling.
       keyserver = @params["keyserver"]?
@@ -148,7 +148,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.")
       end
 
-      # keyserver: needs no key material at all (real Ansible's add path
+      # keyserver: needs no key material at all (Ansible's add path
       # is `apt-key adv --keyserver ... --recv <id>`), so the url/data/
       # file requirement below only applies to the material-based paths.
       unless url || data || file_path || keyserver
@@ -167,7 +167,7 @@ module Krikri
       result_after : Array(String)? = nil
       begin
         if key_id.nil?
-          # No id: given - real Ansible derives it from the key material
+          # No id: given - Ansible derives it from the key material
           # itself (get_key_id_from_file, first parsed key wins), which
           # is also what makes its idempotency + post-add verification
           # work for the common url:-only shape.
@@ -283,7 +283,7 @@ module Krikri
       elsif d = data
         File.write(tmp_path, d)
       else
-        # file: is a path on the TARGET (real Ansible's own apt_key:file:
+        # file: is a path on the TARGET (Ansible's own apt_key:file:
         # semantics - mrlesmithjr.ansible_es_apm_server copies the key to
         # /tmp first, then points file: at that path). Stage it into the
         # same tmp the data:/url: branches use so the rest of the import
@@ -300,7 +300,7 @@ module Krikri
 
     # Extracts the first key id from the ASCII-armored/binary key
     # material at *path* WITHOUT importing it into any keyring, the way
-    # real ansible.builtin.apt_key's get_key_id_from_file does:
+    # Ansible.builtin.apt_key's get_key_id_from_file does:
     # `gpg --with-colons <file>`, then parse_output_for_keys on the
     # output (its "assume we only want first key?" comment). The
     # throwaway --homedir isolation matters as much as the parse - see
@@ -332,7 +332,7 @@ module Krikri
       {exit_code: result[:exit_code], key_id: keys.first?}
     end
 
-    # Real ansible.builtin.apt_key's parse_output_for_keys, mirrored:
+    # Ansible.builtin.apt_key's parse_output_for_keys, mirrored:
     # collects key ids out of both `apt-key adv --list-public-keys`
     # output (apt's own `pub   rsa4096/<ID> ...` format, code after the
     # slash) and plain `gpg --with-colons` output (field 4), skipping
@@ -357,12 +357,12 @@ module Krikri
       found
     end
 
-    # Real ansible.builtin.apt_key's parse_key_id, mirrored: uppercase,
+    # Ansible.builtin.apt_key's parse_key_id, mirrored: uppercase,
     # optional 0x prefix, must be 8, 16, or 16+ hex chars; the id apt-key
     # subcommands take is the whole thing, the id its keyring listings
     # can be compared against is the LAST 16 chars (fingerprint), and an
     # 8-char id switches the whole module to short-format matching.
-    # Returns nil when real Ansible would raise ValueError (its caller
+    # Returns nil when Ansible would raise ValueError (its caller
     # fails with "Invalid key_id").
     private def parse_key_id(raw : String) : NamedTuple(key_id: String, fingerprint: String, short_key_id: String, short_format: Bool)?
       key_id = raw.upcase
@@ -378,10 +378,10 @@ module Krikri
       }
     end
 
-    # Real ansible.builtin.apt_key's all_keys, mirrored: every key id in
+    # Ansible.builtin.apt_key's all_keys, mirrored: every key id in
     # the effective keyring, via `apt-key adv --list-public-keys
     # --keyid-format=long` + parse_output_for_keys. Returns nil when the
-    # listing itself fails (real Ansible fails the task with "Unable to
+    # listing itself fails (Ansible fails the task with "Unable to
     # list public keys"). Returns an empty list without touching apt-key
     # at all when a keyring: file doesn't exist yet - see the comment in
     # #key_present? for the empty-keybox side effect being avoided.
@@ -397,7 +397,7 @@ module Krikri
       parse_output_for_keys(result[:stdout])
     end
 
-    # Real ansible.builtin.apt_key never compares an 8-char short id
+    # Ansible.builtin.apt_key never compares an 8-char short id
     # against the raw listing: its all_keys passes short_format into
     # parse_output_for_keys, whose shorten_key_ids reduces EVERY listed
     # key to its last 8 hex chars before the membership check - the
@@ -429,7 +429,7 @@ module Krikri
 
       # Real apt_key.py's state=absent path: before = all_keys (NOT the
       # `apt-key list` fingerprint text #key_present? used to scan - that
-      # helper is only called on real's add path... which never calls it
+      # helper is only called on Ansible's add path... which never calls it
       # either), membership check via key_id_in_keys?, del by SHORT id,
       # then an after re-list only when a key was actually removed.
       before_keys = all_keys

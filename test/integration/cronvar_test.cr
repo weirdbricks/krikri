@@ -22,7 +22,7 @@ describe "cronvar plugin" do
     content.must_include("MAILTO=admin@example.com")
   end
 
-  it "resolves a relative cron_file: against /etc/cron.d, matching real Ansible" do
+  it "resolves a relative cron_file: against /etc/cron.d, matching Ansible" do
     # Same proof shape as cron_spec's relative-path example. The
     # observable evidence of correct resolution depends on privilege:
     # unprivileged, a permission error at exactly the resolved path;
@@ -177,7 +177,7 @@ describe "cronvar plugin" do
     File.read(backup_file).must_equal("MAILTO=root\n")
   end
 
-  it "fails with the real module's message when value is missing for state=present" do
+  it "fails with the Ansible module's message when value is missing for state=present" do
     result = PluginSpecHelper.run("cronvar", {
       "name"      => "MAILTO",
       "cron_file" => tmp_path("cronvar-missing-value.txt"),
@@ -200,7 +200,7 @@ describe "cronvar plugin" do
     result["msg"].as_s.must_include("mutually exclusive")
   end
 
-  # kpg32 seed 32: real ansible-core 2.19.11 emits the arg_spec.py
+  # kpg32 seed 32: ansible-core 2.19.11 emits the arg_spec.py
   # wording verbatim, without the parentheses this plugin wrapped the
   # pair in.
   it "words the insertbefore/insertafter clash exactly like real arg_spec.py" do
@@ -230,7 +230,7 @@ describe "cronvar plugin" do
   # mutually_exclusive check runs before the per-parameter choices
   # check, which in turn runs before the module body's own
   # "You must specify 'value'" check.
-  it "checks mutual exclusion before the state choices, like real Ansible" do
+  it "checks mutual exclusion before the state choices, like Ansible" do
     result = PluginSpecHelper.run("cronvar", {
       "name"         => "MAILTO",
       "state"        => "bogus",
@@ -245,7 +245,7 @@ describe "cronvar plugin" do
   # ansible-core 2.19.11): changed + vars (the full current var-name
   # list), plus cron_file/backup_file only when they apply - a backup
   # key is present ONLY when a backup was actually retained.
-  describe "result shape (real ansible's field set)" do
+  describe "result shape (Ansible's field set)" do
     it "carries vars as the full current var-name list after the change" do
       path = tmp_path("cronvar-shape.txt")
       File.delete(path) if File.exists?(path)

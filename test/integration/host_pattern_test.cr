@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# Real Ansible's host-pattern language, in both `hosts:` and `--limit`.
+# Ansible's host-pattern language, in both `hosts:` and `--limit`.
 # Every expectation was taken from an ansible-core 2.19.4 run of the same
 # inventory. Before this, only a bare group/host/glob was understood:
 # `prod` (a :children group), `web:db`, `!web`, `prod:!db` and `web:&prod`

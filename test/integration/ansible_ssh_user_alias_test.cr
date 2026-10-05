@@ -9,7 +9,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
   it "resolves the deprecated ansible_ssh_* spelling to whatever the canonical ansible_* var holds" do
     # Real bug found benchmarking round168's geerlingguy.phergie on
     # Ubuntu 22.04: `defaults/main.yml` sets `phergie_user: "{{
-    # ansible_ssh_user }}"` (real Ansible's variable manager treats
+    # ansible_ssh_user }}"` (Ansible's variable manager treats
     # ansible_ssh_user as a deprecated-but-still-honored alias of
     # ansible_user) - this engine only ever populated the canonical
     # ansible_user spelling (naturally, since that's the literal
@@ -47,7 +47,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
     # snapshot applies to loop-SOURCE resolution only - a task ARG that
     # references ansible_ssh_user (even on a looped task, where args are
     # templated per item against the full context) must keep resolving,
-    # exactly as real ansible-playbook does (live-verified).
+    # exactly as ansible-playbook does (live-verified).
     inventory = File.tempname("ansible-ssh-user-inv", ".ini")
     File.write(inventory, "node ansible_connection=local ansible_user=root\n")
 
@@ -73,15 +73,15 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "fails a loop: source list referencing the alias (real Ansible's scoping)" do
-    # round900321 f500.bashrc, live-verified against real ansible-playbook:
+  it "fails a loop: source list referencing the alias (Ansible's scoping)" do
+    # round900321 f500.bashrc, live-verified against ansible-playbook:
     # `loop: ["{{ ansible_ssh_user }}"]` with only ansible_user set is a
     # HARD task failure ("'ansible_ssh_user' is undefined") - real
     # Ansible's loop-source resolution renders against a vars snapshot
     # that never saw the legacy-alias synthesis (which only applies to
     # final task-arg templating). This engine used to synthesize the
     # aliases into every context, so this resolved and the loop ran where
-    # real ansible-playbook failed.
+    # ansible-playbook failed.
     inventory = File.tempname("ansible-ssh-user-inv", ".ini")
     File.write(inventory, "node ansible_connection=local ansible_user=root\n")
 
@@ -159,9 +159,9 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
     #   phergie_install_path: "/home/{{ ansible_ssh_user }}/phergie"
     # referenced by a task's own args (`file: {owner: "{{ phergie_user }}"}`).
     # Structurally near-identical to f500.bashrc's default above, but the
-    # downstream usage is task-arg templating, where real Ansible's
+    # downstream usage is task-arg templating, where Ansible's
     # legacy-alias synthesis IS in scope - both defaults resolve
-    # (live-verified against real ansible-playbook; the phergie-shape
+    # (live-verified against ansible-playbook; the phergie-shape
     # role's tasks complete ok=2 while the f500-shape role's loop fails).
     src_dir = File.tempname("ansible-ssh-user-phergie")
     Dir.mkdir_p(File.join(src_dir, "roles", "rgtest", "defaults"))

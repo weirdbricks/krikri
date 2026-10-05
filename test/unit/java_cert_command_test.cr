@@ -14,7 +14,7 @@ describe Krikri::PluginHelpers::JavaCertCommand do
   end
 
   describe ".check_cmd" do
-    it "dumps the alias as RFC PEM, in the real module's flag order" do
+    it "dumps the alias as RFC PEM, in the Ansible module's flag order" do
       Krikri::PluginHelpers::JavaCertCommand.check_cmd("keytool", "/etc/ssl/cacerts", "example.com", nil)
         .must_equal(%w[keytool -list -keystore /etc/ssl/cacerts -alias example.com -rfc])
       Krikri::PluginHelpers::JavaCertCommand.check_cmd("keytool", "/etc/ssl/cacerts", "example.com", "JCEKS")

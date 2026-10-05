@@ -22,7 +22,7 @@ require "socket"
 #    "Supported parameters include:" listing.
 #
 # Validation-only cases need no database: they only need the module to be
-# REACHED (a connection failure afterwards is fine - real fails the same
+# REACHED (a connection failure afterwards is fine - Ansible fails the same
 # way). The one functional case runs against a real PostgreSQL server
 # when one is listening on 127.0.0.1:35432 and skips otherwise.
 
@@ -113,7 +113,7 @@ describe "db module argument-spec parity" do
 
   # --- rejected-by-real cases (krikri must reject identically) ---
 
-  it "rejects mysql_user's user: param, which real has no alias for" do
+  it "rejects mysql_user's user: param, which Ansible has no alias for" do
     msg = task_msg("mysql_user", <<-PARAMS)
       name: krikri_parity
       user: krikri_parity

@@ -5,7 +5,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # The `version`/`version_compare` test walks distutils LooseVersion's
 # component list: digit runs are ints, [a-z]+ runs are strings, dots are
 # components, prefix-exhaustion is less, and the first int-vs-str
-# mismatch is a task-failing TypeError. Real ansible-core 2.19.11 wraps a
+# mismatch is a task-failing TypeError. ansible-core 2.19.11 wraps a
 # test plugin failure in the finalization chain as "The test plugin
 # 'ansible.builtin.<name>' failed: <cause>", with the cause as its own
 # innermost "<<< caused by >>>" stanza (no Origin). Byte-compared via

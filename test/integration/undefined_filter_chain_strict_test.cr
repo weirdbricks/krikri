@@ -2,12 +2,12 @@ require "file_utils"
 require "../minitest_helper"
 
 # An undefined variable that flows through a FILTER is just as fatal in
-# real Ansible as a bare undefined reference - `{{ nope | dict2items }}`
+# Ansible as a bare undefined reference - `{{ nope | dict2items }}`
 # fails with "dict2items requires a dictionary, got ...AnsibleUndefined",
 # it does not quietly produce an empty dict. Round185, found live via
 # buluma.environment's `loop: "{{ environment_list | dict2items }}"`
 # (the role never defines environment_list anywhere): the task silently
-# produced zero loop items and the play went green where real Ansible
+# produced zero loop items and the play went green where Ansible
 # reports failed=1.
 #
 # All expectations below were differentialed against the local real
@@ -51,7 +51,7 @@ describe "undefined value reaching a filter is strict" do
 
   # The legitimate, extremely common idiom - default() consumes the
   # undefined before dict2items ever sees it, so this is zero loop items
-  # and a plain skip, exactly as real Ansible reports it.
+  # and a plain skip, exactly as Ansible reports it.
   it "still allows an explicitly defaulted source through the same chain" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

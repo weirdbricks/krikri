@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract real Ansible argument specs for every module krikri ships a plugin for.
+"""Extract Ansible argument specs for every module krikri ships a plugin for.
 
 Ground truth = the installed ansible-core (+ installed collections): each
 module's own ``AnsibleModule(argument_spec=...)`` call is captured by
@@ -8,7 +8,7 @@ its kwargs and aborts. The captured spec drives krikri's data-driven module
 argument validation (see src/krikri/argspec_validator.cr).
 
 Output: data/argspecs.json, keyed by the krikri plugin FQCN, plus
-data/argspec_print_names.json (the module name real Ansible prints in
+data/argspec_print_names.json (the module name Ansible prints in
 "Unsupported parameters for (...) module" - probed empirically with a real
 ansible-playbook run per name spelling, since action plugins may delegate
 under a different name, e.g. template -> ansible.legacy.copy).
@@ -168,7 +168,7 @@ def clean_option(spec_entry):
     if spec_entry.get("required"):
         out["required"] = True
     if spec_entry.get("choices") is not None:
-        # Declaration order matters: real's choices error joins the spec's
+        # Declaration order matters: Ansible's choices error joins the spec's
         # own list order ("status, cleanup", not sorted).
         out["choices"] = spec_entry["choices"]
     if "default" in spec_entry:
@@ -180,7 +180,7 @@ def clean_option(spec_entry):
         out["elements"] = spec_entry["elements"]
     if spec_entry.get("options") is not None:
         # Nested sub-spec (suboptions): presence alone decides whether
-        # real's _list_no_log_values walk descends into the param's
+        # Ansible's _list_no_log_values walk descends into the param's
         # elements (a list/dict option WITHOUT options= never raises the
         # dict-parse error); the sub-options themselves are captured
         # recursively so the walk can validate one level down.
@@ -241,7 +241,7 @@ def extract(fqcn):
 #                systemctl); package -> the ansible_pkg_mgr module's spec
 #                (apt likewise). Both resolved from the host's facts at
 #                validation time, falling back to no validation when the
-#                fact is absent (real Ansible would run setup to detect).
+#                fact is absent (Ansible would run setup to detect).
 DELEGATES = {
     "ansible.builtin.template": ("ansible.builtin.copy", "ansible.legacy.copy"),
     "ansible.builtin.shell": ("ansible.builtin.command", "ansible.legacy.command"),
@@ -284,14 +284,14 @@ CONSUMED_BY_ACTION = {
 
 # Action-only directives: there is no module binary, so validation is
 # whatever the action plugin itself does (probed live; wordings and the
-# supported lists below are copied from real 2.19.11 output). action_level
+# supported lists below are copied from Ansible 2.19.11 output). action_level
 # selects the error-block chain shape (no "Module failed." middle segment).
 # Options the live-extracted spec misses (generator probes strip a few
 # dict/list-typed collection params), merged into the extracted spec.
 EXTRA_OPTIONS = {
     # ansible.mysql.mysql_query's session_vars: a list of dicts
     # (list of "SET var=value" statements), present in the module's own
-    # argument_spec and in real's unsupported-params listing.
+    # argument_spec and in Ansible's unsupported-params listing.
     "community.mysql.mysql_query": {
         "session_vars": {"type": "list", "elements": "dict"},
     },
@@ -301,7 +301,7 @@ VIRTUAL = {
     "ansible.builtin.debug": {
         "action_level": True,
         "unsupported_kind": "module",
-        # Real's debug action validates its OWN spec (plugins/action/
+        # Ansible's debug action validates its OWN spec (plugins/action/
         # debug.py validate_argument_spec) - msg raw / var
         # _check_type_str_no_conversion / verbosity int, mutually
         # exclusive (msg, var) - through the same ArgumentSpecValidator
@@ -316,7 +316,7 @@ VIRTUAL = {
             "verbosity": {"type": "int", "default": 0},
         },
         "mutually_exclusive": [["msg", "var"]],
-        # debug's fatal dump carries ONLY msg (real's callback shape).
+        # debug's fatal dump carries ONLY msg (Ansible's callback shape).
         "result_keys": ["msg"],
         "print": {
             "ansible.builtin.debug": "ansible_collections.ansible.builtin.plugins.action.debug",
@@ -325,7 +325,7 @@ VIRTUAL = {
     "ansible.builtin.pause": {
         "action_level": True,
         "unsupported_kind": "module",
-        # Real's pause action validates its OWN spec (plugins/action/
+        # Ansible's pause action validates its OWN spec (plugins/action/
         # pause.py validate_argument_spec): mutually exclusive first, then
         # types in declaration order, unsupported parameters LAST - a
         # wrong-typed seconds/minutes beats a typo'd param (live-verified
@@ -340,7 +340,7 @@ VIRTUAL = {
             "prompt": {"type": "str"},
         },
         "mutually_exclusive": [["minutes", "seconds"]],
-        # Real's UnsupportedError names the action plugin's RESOLVED fqcn
+        # Ansible's UnsupportedError names the action plugin's RESOLVED fqcn
         # (self._load_name) whatever spelling the task used - fixed, not
         # spelling-keyed.
         "print": {"fixed": "ansible_collections.ansible.builtin.plugins.action.pause"},
@@ -412,7 +412,7 @@ VIRTUAL = {
             },
 }
 
-# Modules real Ansible never argspec-validates on this class of host:
+# Modules Ansible never argspec-validates on this class of host:
 # action-only directives that ignore unknown keys entirely (fetch's typo'd
 # options are silently dropped - probed), and the yum/dnf family whose
 # action plugin fails at the backend-detection stage before any module
@@ -433,11 +433,11 @@ def ordered_table(table):
     """Serialize deterministically WITHOUT sorting each module's options.
 
     ``json.dump(sort_keys=True)`` flattened every module's options into
-    alphabetical order, but real ansible-core's own validation walks the
+    alphabetical order, but ansible-core's own validation walks the
     argument_spec dict in DECLARATION order
     (``_validate_argument_types``/``_validate_argument_values``: ``for
     param, spec in argument_spec.items()``), so the FIRST type/choices
-    error real reports is the first failing option in that order
+    error Ansible reports is the first failing option in that order
     (live-verified against 2.19.11: apt with both a wrong ``force`` bool
     and a wrong ``update_cache_retry_max_delay`` int reports the int,
     which is declared 4th vs force's 11th). Everything else stays sorted

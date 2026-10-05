@@ -11,7 +11,7 @@ module Krikri
       # name) against *value*, returning the structured result - or nil
       # whenever the mechanism is unavailable or fails, so the caller
       # raises the unchanged UnknownFilterError. The filter runs
-      # controller-side (real Ansible loads filter plugins during
+      # controller-side (Ansible loads filter plugins during
       # template rendering, never on the target), via the controller's
       # own python3.
       private def try_python_filter(value : JSON::Any, filter_name : String, filter_args : String) : JSON::Any?
@@ -46,11 +46,11 @@ module Krikri
         # is the filter's own error (an exception it raised), never an
         # unknown-filter condition. The blanket rescue below used to
         # swallow this too, so Accelize.aws_fpga's round-83177 task
-        # failed as "No filter named 'xrt_latest'." where real Ansible
+        # failed as "No filter named 'xrt_latest'." where Ansible
         # fails the same task with the filter's actual error ("The
         # filter plugin 'xrt_latest' failed: No XRT version found for
         # this OS", ansible-core 2.19.4 live-verified) - report the real
-        # cause, in real Ansible's wording. Everything else (no python3,
+        # cause, in Ansible's wording. Everything else (no python3,
         # no sources, name not defined by any source) still degrades to
         # nil -> the plain UnknownFilterError above, exactly as before.
         raise FilterFailureError.new(

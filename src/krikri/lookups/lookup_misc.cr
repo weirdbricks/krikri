@@ -11,7 +11,7 @@ module Krikri
         case lookup_type
         when "sequence"
           # lookup('sequence', 'start=1 end=5 stride=1 format=web%02d')
-          # - real Ansible's own sequence lookup: generates a numeric
+          # - Ansible's own sequence lookup: generates a numeric
           # range (the classic with_sequence: source), formatted via
           # format= (Python %-style, Crystal's String#% is the same
           # printf-family syntax) when given.
@@ -19,14 +19,14 @@ module Krikri
           return "undefined" unless raw_arg
           evaluate_sequence_lookup(raw_arg)
         when "indexed_items"
-          # lookup('indexed_items', list) - real Ansible's own
+          # lookup('indexed_items', list) - Ansible's own
           # indexed_items lookup: [index, item] pairs (Python's
           # enumerate()), the classic with_indexed_items: source.
           source = parts[1]?.try { |part| evaluate_lookup_term(part.strip) }
           return "undefined" unless source
           lookup_array(source).map_with_index { |item, i| [JSON::Any.new(i.to_i64), item] }.to_json
         when "random_choice"
-          # lookup('random_choice', list1, list2, ...) - real Ansible's
+          # lookup('random_choice', list1, list2, ...) - Ansible's
           # own random_choice lookup: every given term concatenated into
           # one list, then a single random element returned.
           # A single SCALAR result (unlike the always-array lookups
@@ -61,7 +61,7 @@ module Krikri
       # (only when unseeded - the real plugin skips the shuffle when
       # seed= is given, leaving min_* characters clustered at the
       # front, a documented quirk this replicates), then optional
-      # base64. No positional terms: real Ansible's own
+      # base64. No positional terms: Ansible's own
       # check_for_no_terms errors on them, this raises likewise rather
       # than silently ignoring the term.
       private def lookup_random_string(parts : Array(String), kwargs : Array(String)) : String
@@ -178,7 +178,7 @@ module Krikri
       # sshd_configs: "{{ lookup('community.general.merge_variables',
       # '_sshd_configs__to_merge', pattern_type='suffix',
       # initial_value=[]) }}" where NO variable ends with the suffix -
-      # real Ansible returns initial_value untouched (rendered, not
+      # Ansible returns initial_value untouched (rendered, not
       # "undefined"), so `when: sshd_configs | length > 0` skips the
       # task cleanly; unimplemented here, the lookup fell through to the
       # "undefined" fallback and resolve_loop_template turned the
@@ -239,7 +239,7 @@ module Krikri
 
       private def lookup_subelements(parts : Array(String)) : String
         # lookup('subelements', list_of_dicts, 'subkey', {
-        # skip_missing: true}) - real Ansible's own subelements
+        # skip_missing: true}) - Ansible's own subelements
         # lookup: for each dict, yields [parent_dict, child_item] for
         # every item in parent_dict[subkey] - the classic with_
         # subelements: source (e.g. iterating {user, group} for every
@@ -289,7 +289,7 @@ module Krikri
 
         file = opts["file"]?
         return "undefined" unless file
-        # Real's csvfile lookup defaults to a TAB delimiter, not a comma
+        # Ansible's csvfile lookup defaults to a TAB delimiter, not a comma
         # (live-verified vs 2.19.11: a comma file with no delimiter= given
         # finds nothing and answers default).
         delimiter = opts["delimiter"]? || "\t"
@@ -359,7 +359,7 @@ module Krikri
 
       # Splits the sequence lookup's raw argument into its remaining
       # tokens and an opts hash, handling the shorthand positional
-      # "start-end" form (`lookup('sequence', '1-5')`), real Ansible's
+      # "start-end" form (`lookup('sequence', '1-5')`), Ansible's
       # own alternate spelling - only when the whole first token has no
       # "=" at all, so it doesn't collide with the key=value form's own
       # values (a format= string could itself contain a literal "-").
@@ -379,7 +379,7 @@ module Krikri
         formatted.to_json
       end
 
-      # real Ansible's password lookup default charset (ascii_letters +
+      # Ansible's password lookup default charset (ascii_letters +
       # digits + ".,:-_", its own `DEFAULT_PASSWORD_CHARS`) and default
       # length (20).
       PASSWORD_CHARS  = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a + [".", ",", ":", "-", "_"]
@@ -398,7 +398,7 @@ module Krikri
           end
         end
 
-        # `/dev/null` is real Ansible's own documented idiom for "give me
+        # `/dev/null` is Ansible's own documented idiom for "give me
         # a fresh random password and DON'T persist it" - its password
         # lookup plugin special-cases that path (`if path == '/dev/null'`
         # it skips both the read-back and the write). Without the
@@ -410,7 +410,7 @@ module Krikri
         # the role then wrote two EMPTY password files and `step ca init
         # --password-file=<empty>` fell back to prompting for one
         # interactively - which is what actually made that role fail
-        # under this engine while real ansible-playbook ran it clean.
+        # under this engine while ansible-playbook ran it clean.
         if path == "/dev/null"
           return Array.new(length) { PASSWORD_CHARS.sample(Random::Secure) }.join
         end
@@ -423,7 +423,7 @@ module Krikri
         begin
           dir = File.dirname(resolved_path)
           Dir.mkdir_p(dir) unless Dir.exists?(dir)
-          # 0600, chmod BEFORE the bytes land - real Ansible's password
+          # 0600, chmod BEFORE the bytes land - Ansible's password
           # lookup also stores generated passwords owner-only; a default
           # 0644 lets any local user read the password while it persists.
           File.open(resolved_path, "w") do |io|

@@ -46,7 +46,7 @@ module Krikri
         KrikriJinja.from_json_any(prepared)
       end
 
-      # Real Ansible's `vars` magic variable: the whole current scope as a
+      # Ansible's `vars` magic variable: the whole current scope as a
       # dict, for dynamically computed names (`vars['prefix_' + suffix]`).
       # It never contains itself, matching `'vars' in vars` being False.
       private def build_vars_dict : KrikriJinja::AnyValue

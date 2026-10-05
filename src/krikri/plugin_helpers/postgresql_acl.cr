@@ -45,7 +45,7 @@ module Krikri
         "procedure" => {"EXECUTE" => 'X'},
         # PostgreSQL 15+ only (`pg_parameter_acl` doesn't exist before
         # that) - verified against a real PostgreSQL 17 server, not
-        # assumed. `ALTER_SYSTEM` (the name real Ansible's own
+        # assumed. `ALTER_SYSTEM` (the name Ansible's own
         # VALID_PRIVS uses, since privilege names can't contain spaces
         # as bare identifiers) maps to the real two-word SQL privilege
         # `ALTER SYSTEM` - see PostgresqlPrivsPlugin#sql_priv_list for

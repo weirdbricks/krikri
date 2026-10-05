@@ -22,7 +22,7 @@ module Krikri
   #     remove via lvremove (force: true required), (de)activate via
   #     lvchange -ay/-an
   #   - size grammar [+-]N[unit] and [+-]N%VG|PVS|FREE|ORIGIN, including
-  #     the real module's round-down-to-extent and "more than an extent
+  #     the Ansible module's round-down-to-extent and "more than an extent
   #     too large" shrink semantics
   #   - thin pools (-T), thin volumes (-V onto an existing pool) and
   #     snapshots (-s -n)
@@ -43,7 +43,7 @@ module Krikri
 
     # Real lvol.py's own argument_spec (community.general, declaration
     # order) - drives the module-setup validation below exactly the way
-    # real AnsibleModule does.
+    # AnsibleModule does.
     private LVOL_SPEC = {
       "vg"       => [] of String,
       "lv"       => [] of String,
@@ -64,14 +64,14 @@ module Krikri
     private LVOL_STATES = %w[absent present]
 
     def execute : PluginResult
-      # Real AnsibleModule setup validation, in real order: unsupported
+      # AnsibleModule setup validation, in real order: unsupported
       # params first (message wording live-verified via the podman-diff
       # lvol_edge_cases LV3 case: "Unsupported parameters for
       # (community.general.lvol) module: X. Supported parameters
       # include: ..."), then required (LV1: "missing required
       # arguments: vg" - the previous hand-rolled singular
       # "missing required argument: vg" was never real), then
-      # required_one_of (LV2), then state choices (LV5: real's choice
+      # required_one_of (LV2), then state choices (LV5: Ansible's choice
       # list is [absent, present] - active/inactive are NOT real
       # choices) and bool-typed params (LV4).
       unsupported = unsupported_param_keys(@params, LVOL_SPEC)
@@ -112,7 +112,7 @@ module Krikri
       # plugin previously parsed/validated size and probed the VG first
       # and reported its own downstream failures ("Bad size
       # specification of 'X'", "Volume group X does not exist.") on
-      # hosts where real stops at the executable lookup.
+      # hosts where Ansible stops at the executable lookup.
       unless find_required_binary("lvm")
         return PluginResult.new(changed: false, failed: true,
           msg: missing_executable_message("lvm"))
@@ -178,7 +178,7 @@ module Krikri
             return failed("No size given.")
           end
 
-          # Real's check-mode create runs `lvcreate --test` and falls
+          # Ansible's check-mode create runs `lvcreate --test` and falls
           # through to the final exit_json(changed=changed, msg=msg)
           # with the (empty) msg variable - the registered shape is
           # [changed, msg, failed] with msg "", not a "Would create"
@@ -204,7 +204,7 @@ module Krikri
       elsif state == "absent"
         return failed("Sorry, no removal of logical volume #{this_lv[:name]} without force=true.") unless force
 
-        # Real's check-mode removal runs `lvremove --test` and exits
+        # Ansible's check-mode removal runs `lvremove --test` and exits
         # exit_json(changed=True) - no msg key (lvol.py's absent branch).
         return PluginResult.new(changed: true, failed: false,
           key_order: %w[changed]) if check_mode
@@ -223,7 +223,7 @@ module Krikri
       else
         resized = resize(this_vg.first, this_lv, lv, parsed_size.not_nil!, opts, pvs,
           force, shrink, resizefs, check_mode)
-        # Real's resize failure carries the rc/err run_command kwargs,
+        # Ansible's resize failure carries the rc/err run_command kwargs,
         # which lead the registered result ahead of failed/msg
         # (round 992003 lvol_fail: [rc, err, failed, msg, changed,
         # exception], msg "Unable to resize kop_lv to 1G").
@@ -238,7 +238,7 @@ module Krikri
         end
         case resized[:early]
         when :matches
-          # Real's convergent no-op exit: exit_json(changed=False,
+          # Ansible's convergent no-op exit: exit_json(changed=False,
           # vg=vg, lv=this_lv["name"], size=this_lv["size"]) - no msg.
           return PluginResult.new(changed: false, failed: false,
             vg: vg, lv: this_lv[:name], size: this_lv[:size],
@@ -268,7 +268,7 @@ module Krikri
       end
 
       if this_lv
-        # Real's this_lv-exists exit (lvol.py's lvchange section, both
+        # Ansible's this_lv-exists exit (lvol.py's lvchange section, both
         # the active and inactive branches):
         # exit_json(changed=..., vg=vg, lv=this_lv["name"],
         # size=this_lv["size"]) - no msg key at all, not even in check
@@ -278,7 +278,7 @@ module Krikri
           vg: vg, lv: this_lv[:name], size: this_lv[:size],
           key_order: LVOL_LV_KEY_ORDER)
       else
-        # Real's create-path exit is the final
+        # Ansible's create-path exit is the final
         # exit_json(changed=changed, msg=msg) with the empty msg
         # variable passed explicitly - the key exists even when empty
         # (round 992003 lvol_create), and carries no vg/lv/size.
@@ -295,8 +295,8 @@ module Krikri
     # absolute-based), collapsed: both compute the requested size, pick
     # lvextend or lvreduce, and append the same command tail. Returns a
     # named tuple {changed_flag, failed, msg, rc, err, out, early} -
-    # rc/err/out carry real's fail_json kwargs on a command failure and
-    # early marks real's early exit_json branches (:matches,
+    # rc/err/out carry Ansible's fail_json kwargs on a command failure and
+    # early marks Ansible's early exit_json branches (:matches,
     # Observed behavior: not_larger) that bypass the lvchange tail.
     private def resize(
       vg_info : NamedTuple(name: String, size: Float64, free: Float64, ext_size: Float64),
@@ -374,7 +374,7 @@ module Krikri
       result = remote_exec(cmd)
       out = result[:stdout]
       err = result[:stderr]
-      # Real's own failure wording: fail_json(msg="Unable to resize {lv}
+      # Ansible's own failure wording: fail_json(msg="Unable to resize {lv}
       # to {size}{unit}", rc=rc, err=err) - the param lv name, the
       # requested size WITHOUT the operator, and the raw stderr as err
       # (round 992003 lvol_fail). The COW branch adds the out kwarg.
@@ -482,7 +482,7 @@ module Krikri
         # exist." msg was this engine's own invention there).
         PluginResult.new(changed: false, failed: false)
       else
-        # Real's present-state failure carries the vgs run_command
+        # Ansible's present-state failure carries the vgs run_command
         # result as rc/err kwargs, which lead the registered result
         # (lvol.py: fail_json(msg=..., rc=rc, err=err)).
         PluginResult.new(changed: false, failed: true,

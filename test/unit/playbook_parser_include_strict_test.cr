@@ -3,7 +3,7 @@ require "../../src/krikri/playbook_parser"
 
 # Round 194 regression cover (andrewrothstein.java-oracle / -jre):
 # a sub-include with `become:` / `become_user:` on the include
-# statement itself. Real ansible-core 2.19's TaskInclude/IncludeRole
+# statement itself. ansible-core 2.19's TaskInclude/IncludeRole
 # parsers validate against a fixed allowlist (TaskInclude's
 # VALID_INCLUDE_KEYWORDS frozenset) and reject become:/become_user:
 # with
@@ -15,13 +15,13 @@ require "../../src/krikri/playbook_parser"
 # be an exact same-failure. The andrewrothstein.java-oracle role's
 # alpine-glibc-shim dependency has exactly this pattern.
 # import_tasks:/import_role: are intentionally NOT validated this way
-# (real ansible's ImportRole inherits the full Task fattributes and
+# (Ansible's ImportRole inherits the full Task fattributes and
 # accepts them).
 describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
   include RaisesAssertion
   describe "include: directive strict attribute allowlist (round 194)" do
     include RaisesAssertion
-    it "rejects become_user: on include_tasks: like real ansible" do
+    it "rejects become_user: on include_tasks: like Ansible" do
       assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a TaskInclude/) do
         Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
@@ -35,7 +35,7 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       end
     end
 
-    it "rejects become: on include_tasks: like real ansible" do
+    it "rejects become: on include_tasks: like Ansible" do
       assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a TaskInclude/) do
         Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
@@ -49,7 +49,7 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       end
     end
 
-    it "rejects become_user: on include_role: like real ansible" do
+    it "rejects become_user: on include_role: like Ansible" do
       assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become_user' is not a valid attribute for a IncludeRole/) do
         Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
@@ -64,7 +64,7 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       end
     end
 
-    it "rejects become: on include_role: like real ansible" do
+    it "rejects become: on include_role: like Ansible" do
       assert_raises_message(Krikri::PlaybookParser::InvalidIncludeAttributeError, /'become' is not a valid attribute for a IncludeRole/) do
         Krikri::PlaybookParser.parse_string(<<-YAML)
           - name: t
@@ -80,7 +80,7 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
     end
 
     it "accepts allowed attrs on include_tasks: (when:/tags:/loop:/vars:/register:)" do
-      # These are all on real ansible's VALID_INCLUDE_KEYWORDS, and
+      # These are all on Ansible's VALID_INCLUDE_KEYWORDS, and
       # crystal's existing parser was already happy with them - this
       # test pins that the new allowlist didn't break the common shape.
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
@@ -100,9 +100,9 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       task.module_name.must_equal("_include_tasks")
     end
 
-    it "still accepts become:/become_user: on import_tasks: (real ansible does too)" do
+    it "still accepts become:/become_user: on import_tasks: (Ansible does too)" do
       # Negative case: the allowlist fix must NOT touch import_tasks:
-      # - real ansible's ImportPlaybook/ImportRole inherit the full
+      # - Ansible's ImportPlaybook/ImportRole inherit the full
       # Task fattributes and accept these keys. The patch deliberately
       # scopes the new validation to include_tasks:/include_role: only.
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
@@ -121,12 +121,12 @@ describe "Krikri::PlaybookParser (playbook_parser_include_strict_test.cr)" do
       pb.plays.size.must_equal(1)
     end
 
-    it "rejects notify: on include_tasks: like real ansible" do
+    it "rejects notify: on include_tasks: like Ansible" do
       # notify: was on TASK_INCLUDE_VALID_KEYWORDS until
       # juju4.ansible_role_mattermost's own `include_tasks: selinux.yml`
       # with a notify: on the include line itself (RHEL-family round
       # 60113) turned out to hit exactly this predicted gap live -
-      # real ansible-core's actual VALID_INCLUDE_KEYWORDS (verified
+      # ansible-core's actual VALID_INCLUDE_KEYWORDS (verified
       # directly, not assumed) does not include it. A task's own
       # notify: elsewhere (on an ordinary task, including one inside
       # an included file) is unaffected - only the include directive

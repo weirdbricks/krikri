@@ -5,12 +5,12 @@ require "../../src/krikri/plugin_manager"
 require "../../src/krikri/task_executor/result_display"
 
 # The reported bug this suite pins down: krikri's ad-hoc output used to
-# diverge from real ansible's in the result-dict SHAPE - "failed": false
-# and "msg": "" on every success (real Ansible's module protocol never
+# diverge from Ansible's in the result-dict SHAPE - "failed": false
+# and "msg": "" on every success (Ansible's module protocol never
 # emits those keys on a success path), and a 2-space JSON indent (real
 # minimal callback dumps with indent=4, sort_keys=True).
 #
-# Wire vs internal vs display, matching real Ansible's exact layering:
+# Wire vs internal vs display, matching Ansible's exact layering:
 # - module wire result (PluginResult#to_json): protocol shape - failed
 #   only after a fail-style exit, msg only when actually passed.
 # - engine ingestion (PluginManager.normalize_module_result): backfills
@@ -86,7 +86,7 @@ describe "ad-hoc result-dict shape (real-Ansible parity)" do
   end
 
   describe "ResultDisplay.adhoc_result_json" do
-    it "dumps a ping success exactly like real ansible's minimal callback (indent=4, sorted, no failed/msg)" do
+    it "dumps a ping success exactly like Ansible's minimal callback (indent=4, sorted, no failed/msg)" do
       result = JSON.parse(%({"changed": false, "failed": false, "ping": "pong"}))
       Krikri::ResultDisplay.adhoc_result_json(result, "ping").must_equal(%({\n    "changed": false,\n    "ping": "pong"\n}))
     end

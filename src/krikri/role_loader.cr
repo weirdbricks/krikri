@@ -30,7 +30,7 @@ module Krikri
     # own `import_role: name: buluma.service`, round 180) instead ran 5
     # of the role's OWN tasks first and only failed later at the runtime
     # `_include_role` dispatch, instead of refusing the whole playbook
-    # up front the way real Ansible does (rc=1, zero tasks run).
+    # up front the way Ansible does (rc=1, zero tasks run).
     # Process-wide parsed-YAML memo for role files. include_role: re-reads
     # and re-parses the SAME tasks/main.yml, handlers/main.yml, defaults/,
     # vars/ and meta/main.yml on EVERY invocation - once per loop item,
@@ -55,7 +55,7 @@ module Krikri
     end
 
     # Role-file tasks carry their own source file + position map, the
-    # way real Ansible's task objects do - a task parsed from a role's
+    # way Ansible's task objects do - a task parsed from a role's
     # tasks/main.yml reports Origins against THAT file (live-verified vs
     # 2.19.11: an include_role: inside a role whose role name resolves
     # nowhere points its runtime error's Origin at
@@ -72,7 +72,7 @@ module Krikri
       !resolve_role_dir(name, playbook_dir).nil?
     end
 
-    # The role search path list exactly as real ansible-core's
+    # The role search path list exactly as ansible-core's
     # RoleDefinition._load_role_path builds and REPORTS it
     # (definition.py: "the role '<name>' was not found in <paths>"):
     # the playbook dir's own roles/ subtree first, then the configured
@@ -137,7 +137,7 @@ module Krikri
       end
 
       hash = entry.as_h
-      # `src:` is real Ansible's own `RoleRequirement` key - the SAME
+      # `src:` is Ansible's own `RoleRequirement` key - the SAME
       # class ansible-core uses both for a `requirements.yml` entry AND
       # for a role's `meta/main.yml` dependency, so a dependency written
       # `- src: some.role, version: v1.0.0` (copied from the galaxy-
@@ -148,7 +148,7 @@ module Krikri
       # playbook parse (not just that one dependency) - found live via
       # andrewrothstein.github-release's own `meta/main.yml`
       # (`dependencies: [{src: andrewrothstein.unarchive-deps, version:
-      # v1.0.9}]`), which real Ansible resolves and installs fine.
+      # v1.0.9}]`), which Ansible resolves and installs fine.
       name = (hash["role"]? || hash["name"]? || hash["src"]?).try(&.as_s)
       raise "Role entry missing 'role' or 'name'" unless name
 
@@ -163,9 +163,9 @@ module Krikri
       # vars, so they must be excluded here the same way `role`/`name`
       # already are (a `version: v1.0.9` var leaking into the role's own
       # vars context, e.g. via `{{ version }}`, would be a real
-      # divergence from what real Ansible - which never exposes these
+      # divergence from what Ansible - which never exposes these
       # as vars either - provides). `version` is still captured (below)
-      # for the dependency-dedup key: real Ansible treats two dependency
+      # for the dependency-dedup key: Ansible treats two dependency
       # declarations differing ONLY in their `version:` pin as two
       # distinct invocations and runs both (verified live,
       # andrewrothstein.kafka-consumer's v1.0.13-via-kafka vs
@@ -182,13 +182,13 @@ module Krikri
 
       # `when:` on a roles: entry or a meta/main.yml dependency is real
       # Ansible's own RoleRequirement field - it does NOT gate the role
-      # "as a whole" the way it might look; real Ansible statically
+      # "as a whole" the way it might look; Ansible statically
       # resolves the role's tasks and combines this when: (parent
       # PREPENDED) onto EVERY one of them, same as import_role:'s own
       # when: propagation (see execute_include_role's identical fix).
       # Found via Graylog2.graylog's own `meta/main.yml` dependency on
       # lean_delivery.java (`when: graylog_install_java`, undefined -
-      # real Ansible skips the whole dependency's task tree; this
+      # Ansible skips the whole dependency's task tree; this
       # engine used to load and run it unconditionally, since neither
       # parse_role_entry nor load_role/load_meta_dependencies had any
       # notion of a `when:` on a role entry at all - it silently
@@ -215,13 +215,13 @@ module Krikri
       # every role can see (Play#all_role_defaults/#all_role_vars). True
       # for a static `roles:` entry and its meta dependencies, which real
       # Ansible loads at play setup; FALSE for include_role:, whose
-      # vars/defaults real Ansible keeps scoped to that inclusion unless
+      # vars/defaults Ansible keeps scoped to that inclusion unless
       # it is `public: true` - contributing them here would expose them
       # to every later task in the play instead.
       play_scope : Bool = false,
       # The dependency entry's `version:` pin, when declared - part of the
       # invocation identity #role_dedup_key dedupes on (not a role var,
-      # matching real Ansible, which never exposes it as one).
+      # matching Ansible, which never exposes it as one).
       role_version : String? = nil,
       role_when : String? = nil,
     )
@@ -236,19 +236,19 @@ module Krikri
       # #role_dedup_key) - found via andrewrothstein.kafka-consumer's
       # dependency graph, which reaches andrewrothstein.unarchive-deps
       # twice (via andrewrothstein.kafka AND via andrewrothstein.openjdk)
-      # with two different `version:` pins; real Ansible (verified live
+      # with two different `version:` pins; Ansible (verified live
       # against ansible-core 2.19.11, both with this exact role graph and
       # with synthetic same-name/different-params graphs) runs it twice,
       # while deduping by name alone silently dropped the second run.
       dedup_key = role_dedup_key(name, role_version, invocation_vars, invocation_tags, role_when)
       return Hash(String, JSON::Any).new if !meta_allows_duplicates?(role_dir) && seen.includes?(dedup_key)
       seen.add(dedup_key)
-      # Real Ansible's `role_path` magic var is always an ABSOLUTE path -
+      # Ansible's `role_path` magic var is always an ABSOLUTE path -
       # resolve_role_dir's own search dirs can be relative (a bare "roles"
       # search root, or a relative ANSIBLE_ROLES_PATH entry), and that
       # relative-ness was leaking straight into task.role_path below.
       # Found benchmarking linux-system-roles.timesync's own `paths:
-      # ["{{ role_path }}/vars"]` first_found idiom (real Ansible's own
+      # ["{{ role_path }}/vars"]` first_found idiom (Ansible's own
       # convention, since role_path is documented as always-absolute):
       # resolve_first_found_root's `return path if path.starts_with?("/")`
       # early-return never fired for a relative role_path, so it went on
@@ -271,13 +271,13 @@ module Krikri
 
       # meta/main.yml dependencies run BEFORE this role's own tasks - they
       # get the SAME parent_names as the declaring role itself (not
-      # extended further), matching real Ansible: a dependency isn't
+      # extended further), matching Ansible: a dependency isn't
       # "nested inside" the declaring role's own tasks the way an
       # include_role: call is.
       dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope)
 
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
-      # Real Ansible keeps a role's defaults visible for the rest of the
+      # Ansible keeps a role's defaults visible for the rest of the
       # PLAY once that role has run, not just for tasks physically inside
       # that role's own files - a role invoked via `include_role:` from
       # inside another role's tasks (prometheus.prometheus's own `_common`
@@ -286,7 +286,7 @@ module Krikri
       # `parent_defaults` is the accumulated chain from every ancestor
       # role that led here (root-first merge order, so a NEARER ancestor's
       # default wins over a more distant one on a naming collision -
-      # matches real Ansible's own "later-loaded role wins" precedence for
+      # matches Ansible's own "later-loaded role wins" precedence for
       # defaults); this role's own defaults win over all of them. Found
       # via that exact `_common` scenario: node_exporter's own `node_
       # exporter_textfile_dir` default (defaults/main.yml) went undefined
@@ -297,7 +297,7 @@ module Krikri
       # ancestor chain.
       #
       # A meta/main.yml DEPENDENCY's own defaults are in scope for the
-      # role that declares it, too - real Ansible loads a dependency
+      # role that declares it, too - Ansible loads a dependency
       # first and its defaults stay visible to the dependent role, which
       # is how the extremely common "role B declares role A as a
       # dependency and then references A's defaults" shape works at all
@@ -316,9 +316,9 @@ module Krikri
       invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
 
       # Contribute to the play-wide layers every role can see - see
-      # Play#all_role_defaults for why real Ansible makes these visible
+      # Play#all_role_defaults for why Ansible makes these visible
       # to roles that ran EARLIER too. Assigned in load order, so a
-      # later role wins a name collision, which is what real Ansible
+      # later role wins a name collision, which is what Ansible
       # answers outside any role (verified: post_tasks: sees the LAST
       # role's value for a name two roles both define).
       #
@@ -347,12 +347,12 @@ module Krikri
       templates_dir = existing_dir(File.join(role_dir, "templates"))
       vars_dir = existing_dir(File.join(role_dir, "vars"))
 
-      # Known at parse time, before facts gathering - real Ansible's own
+      # Known at parse time, before facts gathering - Ansible's own
       # constraint for what import_tasks:'s own file path may reference
       # (see try_parse_import_tasks in playbook_parser.cr). role_vars
       # wins over defaults, matching normal precedence.
       #
-      # role_path is a magic var real Ansible always has available here
+      # role_path is a magic var Ansible always has available here
       # (it's just this role's own directory, known as soon as parsing
       # begins) - found via infOpen.openjdk-jre's own `import_tasks:
       # "{{ role_path }}/tasks/manage_variables.yml"`, a real, if
@@ -360,15 +360,15 @@ module Krikri
       # target path independent of wherever the role happens to be
       # vendored under. Without it, that path template raised
       # StaticImportUndefinedError ("'role_path' is undefined") and
-      # refused to even start the play, where real ansible-core
+      # refused to even start the play, where ansible-core
       # resolves it immediately and moves on.
       known_vars = defaults.merge(role_vars)
       known_vars["role_path"] = JSON::Any.new(role_dir)
       # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
       # handlers/defaults/vars still always come from their normal
-      # main.yml locations regardless (matching real Ansible: only the
+      # main.yml locations regardless (matching Ansible: only the
       # entry-point TASKS file changes).
-      # Real Ansible accepts tasks_from: with OR without the extension
+      # Ansible accepts tasks_from: with OR without the extension
       # (prometheus.prometheus's own roles write it both ways across
       # different calls - `tasks_from: install.yml` as well as bare
       # names elsewhere) - append .yml only when it's not already there.
@@ -390,7 +390,7 @@ module Krikri
         task.role_templates_dir = templates_dir
         task.role_vars_dir = vars_dir
         # include_role_dir must stay anchored to the ORIGINAL playbook's
-        # own directory - real Ansible's role search paths are always
+        # own directory - Ansible's role search paths are always
         # relative to the playbook root (or configured roles_path), never
         # to whatever tasks file happens to be currently executing.
         # parse_task sets it from the file_dir of the tasks/main.yml file
@@ -423,8 +423,8 @@ module Krikri
 
     # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -
     # handlers/defaults/vars still always come from their normal main.yml
-    # locations regardless (matching real Ansible: only the entry-point
-    # TASKS file changes). Real Ansible accepts tasks_from: with OR
+    # locations regardless (matching Ansible: only the entry-point
+    # TASKS file changes). Ansible accepts tasks_from: with OR
     # without the extension (prometheus.prometheus's own roles write it
     # both ways across different calls - `tasks_from: install.yml` as
     # well as bare names elsewhere) - append .yml only when it's not
@@ -433,7 +433,7 @@ module Krikri
       return find_main_file(File.join(role_dir, "tasks")) || File.join(role_dir, "tasks", "main.yml") unless tasks_from
       return File.join(role_dir, "tasks", tasks_from) if tasks_from.ends_with?(".yml") || tasks_from.ends_with?(".yaml") || tasks_from.ends_with?(".json")
 
-      # Real Ansible resolves a bare tasks_from: name against ANY of its
+      # Ansible resolves a bare tasks_from: name against ANY of its
       # accepted extensions.
       ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "tasks", "#{tasks_from}.#{e}")) }
       File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
@@ -441,7 +441,7 @@ module Krikri
 
     # Returns the accumulated defaults of every dependency loaded (later
     # dependencies winning over earlier ones on a name collision, matching
-    # real Ansible's load order), for the declaring role to merge under
+    # Ansible's load order), for the declaring role to merge under
     # its own - see `load_role`'s `dependency_defaults` comment.
     private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false) : Hash(String, JSON::Any)
       collected = Hash(String, JSON::Any).new
@@ -464,7 +464,7 @@ module Krikri
     end
 
     # The dedup key for one role invocation: role name + its `version:`
-    # pin + its inline vars + tags + when. Real Ansible (ansible-core
+    # pin + its inline vars + tags + when. Ansible (ansible-core
     # 2.19.11, verified live with synthetic role graphs) deduplicates a
     # meta/dependency invocation only when this whole identity matches -
     # two declarations of the same role name that differ in ANY of these
@@ -481,7 +481,7 @@ module Krikri
     end
 
     # A shared dependency's own meta/main.yml `allow_duplicates: true` is
-    # real Ansible's escape hatch to opt out of dependency deduplication
+    # Ansible's escape hatch to opt out of dependency deduplication
     # entirely: with it, even two IDENTICAL invocations of the role both
     # run (probe-verified); without it (the default), only non-identical
     # invocations run more than once.
@@ -510,7 +510,7 @@ module Krikri
 
     private def self.resolve_role_dir(name : String, playbook_dir : String) : String?
       # A role name containing a path separator (absolute, or relative like
-      # "../common_roles/foo") is used directly, matching real Ansible -
+      # "../common_roles/foo") is used directly, matching Ansible -
       # only a bare name ("common") is looked up under roles:/ search paths.
       if name.includes?('/')
         return name if Dir.exists?(name)
@@ -528,7 +528,7 @@ module Krikri
       search_dirs.find { |dir| Dir.exists?(dir) }
     end
 
-    # Real Ansible's role search also checks `ANSIBLE_ROLES_PATH` (colon-
+    # Ansible's role search also checks `ANSIBLE_ROLES_PATH` (colon-
     # separated, like `ANSIBLE_ROLES_PATH`/`ANSIBLE_COLLECTIONS_PATH`) and
     # its own default `roles_path`, which is where `ansible-galaxy role
     # install <namespace>.<name>` (the standard way to fetch a plain,
@@ -563,7 +563,7 @@ module Krikri
     # collection-shipped role failed outright ("Role not found"). Real
     # Ansible resolves this by searching each configured collections path
     # for `ansible_collections/<namespace>/<collection>/roles/<role>` -
-    # mirrored here against the same locations real Ansible checks:
+    # mirrored here against the same locations Ansible checks:
     # ANSIBLE_COLLECTIONS_PATH (colon-separated, like ANSIBLE_ROLES_PATH),
     # a playbook-adjacent collections/ dir, ./collections relative to cwd,
     # and the two real default install locations (~/.ansible/collections,
@@ -601,7 +601,7 @@ module Krikri
 
       paths << File.join(playbook_dir, "collections")
       paths << "collections"
-      # Real Ansible's `~/.ansible/collections` default is a per-user
+      # Ansible's `~/.ansible/collections` default is a per-user
       # absolute path (the user's actual home directory), NOT a
       # path-relative-to-cwd starting with the literal character `~`.
       # Crystal's `File.expand_path` does NOT expand a leading `~` -
@@ -632,7 +632,7 @@ module Krikri
     # passwd entry), otherwise the path is returned unchanged. Used for
     # the `~/.ansible/collections` default in `collections_paths` above.
     #
-    # `ENV["HOME"]` MUST come first: real Ansible resolves `~` with
+    # `ENV["HOME"]` MUST come first: Ansible resolves `~` with
     # `os.path.expanduser`, which consults `$HOME` before the passwd
     # entry, and the two disagree whenever they are out of sync. This
     # order was the reverse of the other two copies, so the role-search-
@@ -673,11 +673,11 @@ module Krikri
       result
     end
 
-    # Loads a role's defaults/ or vars/ - real Ansible supports EITHER a
+    # Loads a role's defaults/ or vars/ - Ansible supports EITHER a
     # single `main.yml` file OR a `main/` directory of multiple `*.yml`
     # files (same convention `tasks/main/` uses), merged together in
     # alphabetical filename order (later files win on a key collision -
-    # matching real Ansible's own `main/` directory loading, which reads
+    # matching Ansible's own `main/` directory loading, which reads
     # files in sorted order and merges each into the accumulated dict).
     # Only ONE of the two forms is ever present for a given role.
     # Real bug found benchmarking kyl191.openvpn (round 160): its own
@@ -687,14 +687,14 @@ module Krikri
     # using the directory form - every one of its own defaults
     # (`openvpn_server_network`, `openvpn_server_ipv6_network`, ...)
     # came back undefined, tripping the role's own "fail if both
-    # tunnel networks are disabled" validation check that real Ansible
+    # tunnel networks are disabled" validation check that Ansible
     # never reaches (both are non-empty by default).
     def self.find_main_file(dir : String) : String?
-      # Real Ansible's loader accepts .yml/.yaml/.json interchangeably for
+      # Ansible's loader accepts .yml/.yaml/.json interchangeably for
       # every main-file lookup. Only main.yml was checked before, so a
       # role shipping defaults/main.YAML (buluma.ara_api does exactly
       # that - every defaults var then undefined, first observed as
-      # `'ara_api_root_dir' is undefined` while real ansible resolved it
+      # `'ara_api_root_dir' is undefined` while Ansible resolved it
       # fine, round 190) silently loaded an EMPTY defaults hash.
       %w[yml yaml json].each do |ext|
         candidate = File.join(dir, "main.#{ext}")
@@ -718,9 +718,9 @@ module Krikri
       result
     end
 
-    # Real Ansible auto-inserts a "Validating arguments against arg spec"
+    # Ansible auto-inserts a "Validating arguments against arg spec"
     # task as the first task of any role that ships meta/argument_specs.yml
-    # (verified against real ansible-playbook: exact banner text
+    # (verified against ansible-playbook: exact banner text
     # "Validating arguments against arg spec 'main' - <short_description>"),
     # checking the role's effective vars against the "main" entry point's
     # declared options before any of the role's own tasks run. Only "main"

@@ -42,7 +42,7 @@ describe Krikri::FactsGatherer do
   end
 
   it "always sets ansible_system_vendor, even when DMI info isn't readable" do
-    # Real Ansible's DMI collector falls back to "NA" rather than leaving
+    # Ansible's DMI collector falls back to "NA" rather than leaving
     # the fact undefined - a `when: ansible_system_vendor == 'QEMU'` guard
     # (sbaerlocher.qemu-guest-agent/.ovirt-guest-agent's own idiom) must
     # always have something to compare against, never raise "undefined".
@@ -61,7 +61,7 @@ describe Krikri::FactsGatherer do
   end
 
   it "always sets ansible_fips as a real boolean" do
-    # Real Ansible's FipsFactCollector always populates this (true only
+    # Ansible's FipsFactCollector always populates this (true only
     # when /proc/sys/crypto/fips_enabled reads exactly "1") - and as a
     # genuine JSON bool, NOT a "False" string: a string "False" is
     # truthy under Jinja2 semantics, so geerlingguy.postgresql's own
@@ -76,7 +76,7 @@ describe Krikri::FactsGatherer do
   end
 
   it "always sets ansible_processor_threads_per_core on hosts whose cpuinfo has siblings and cpu cores" do
-    # Real Ansible's Linux hardware collector always derives this fact
+    # Ansible's Linux hardware collector always derives this fact
     # (siblings / cpu cores from /proc/cpuinfo) - marvel-nccr.slurm's
     # templates/slurm.conf references it directly, and with the fact
     # never set the template died with "is undefined" while real
@@ -116,9 +116,9 @@ describe Krikri::FactsGatherer do
     # installed has neither `systemd-detect-virt` nor
     # `/run/systemd/container`, so #detect_virtualization's only other
     # checks (dockerenv/cgroup substring/systemd-detect-virt/DMI) all
-    # fell through to "None" while real ansible-playbook (whose primary
+    # fell through to "None" while ansible-playbook (whose primary
     # signal is PID 1's own `container=` environment variable, per
-    # the real module) correctly reported "podman".
+    # the Ansible module) correctly reported "podman".
     # `/proc/1/environ` is NUL-separated, not newline-separated.
     it "detects podman from a NUL-separated container=podman entry" do
       environ = "PATH=/usr/bin\x00container=podman\x00HOME=/root\x00"
@@ -131,7 +131,7 @@ describe Krikri::FactsGatherer do
     end
 
     it "normalizes any other non-empty container= marker to the generic literal 'container', not the raw value" do
-      # Real Ansible's `^container=.` branch (linux.py) only special-
+      # Ansible's `^container=.` branch (linux.py) only special-
       # cases lxc/podman above; every other value - docker, systemd-
       # nspawn, oci, ... - sets virtualization_type to the literal
       # string "container", never the matched value itself. Previously
@@ -140,7 +140,7 @@ describe Krikri::FactsGatherer do
       # the base rootfs having been built via `podman build`/
       # Containerfile, even though Kata boots a real, non-containerized
       # guest kernel) reported "docker" - matching a role's `== "docker"`
-      # when: check that real Ansible correctly left false. Found
+      # when: check that Ansible correctly left false. Found
       # benchmarking juju4.auditd's "Not in container" block guard.
       environ = "container=systemd-nspawn\x00PATH=/usr/bin\x00"
       Krikri::FactsGatherer.parse_container_env(environ).must_equal("container")
@@ -161,14 +161,14 @@ describe Krikri::FactsGatherer do
   end
 
   describe "#parse_lsb_release" do
-    # Real Ansible's LSBFactCollector always derives major_release from
+    # Ansible's LSBFactCollector always derives major_release from
     # release whenever the lsb dict has a release at all (lsb.py:
     # `lsb_facts['major_release'] = lsb_facts['release'].split('.')[0]`),
     # confirmed live: `ansible localhost -m setup -a filter=ansible_lsb`
     # on LMDE 7 (release "7", no dot) reports major_release "7" verbatim.
     # This engine only set id/description/release/codename, so avnes.plank's
     # own `when: ansible_lsb.major_release|int >= 16` raised
-    # "'ansible_lsb.major_release' is undefined" where real Ansible's
+    # "'ansible_lsb.major_release' is undefined" where Ansible's
     # when: passed cleanly (round900297).
     it "derives major_release as the portion of release before the first dot" do
       lsb = Krikri::FactsGatherer.parse_lsb_release(
@@ -180,7 +180,7 @@ describe Krikri::FactsGatherer do
 
     it "passes a dotless release through verbatim as major_release" do
       # Python's str.split('.')[0] is the whole string when there is no
-      # dot - LMDE 7's release is just "7" and real Ansible reports
+      # dot - LMDE 7's release is just "7" and Ansible reports
       # major_release "7" (verified live on this machine).
       lsb = Krikri::FactsGatherer.parse_lsb_release(
         %(DISTRIB_ID=Linuxmint\nDISTRIB_RELEASE=7\nDISTRIB_CODENAME=gigi\nDISTRIB_DESCRIPTION="LMDE 7 (gigi)"\n)
@@ -189,7 +189,7 @@ describe Krikri::FactsGatherer do
     end
 
     it "omits major_release (like the other keys) when release is absent" do
-      # Real Ansible gates the derivation on `'release' in lsb_facts` - a
+      # Ansible gates the derivation on `'release' in lsb_facts` - a
       # dict without release stays without major_release.
       lsb = Krikri::FactsGatherer.parse_lsb_release(%(DISTRIB_ID=Debian\nDISTRIB_CODENAME=bookworm\n))
       lsb.has_key?("major_release").must_equal(false)
@@ -203,7 +203,7 @@ describe Krikri::FactsGatherer do
   end
 
   describe "#detect_virtualization" do
-    it "returns a non-empty string on this real host, matching real Ansible's always-populated virtualization_type" do
+    it "returns a non-empty string on this real host, matching Ansible's always-populated virtualization_type" do
       # Live-environment smoke test, not a controlled-input unit test -
       # this repo's own convention for facts that read real /proc/DMI
       # state (see #parse_container_env above for the actual regression
@@ -253,7 +253,7 @@ describe Krikri::FactsGatherer do
       # `when: ansible_facts.memory_mb['swap']['total'] > 0` died with
       # "object of type 'dict' has no attribute 'memory_mb'" - only the
       # legacy ansible_memtotal_mb/ansible_swaptotal_mb/... flat facts
-      # existed, the namespaced dict real ansible-core's Linux hardware
+      # existed, the namespaced dict ansible-core's Linux hardware
       # collector produces (real/nocache/swap) was never gathered.
       facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
 
@@ -269,7 +269,7 @@ describe Krikri::FactsGatherer do
       swap["free"]?.wont_be_nil
       swap["used"]?.wont_be_nil
 
-      # Consistency with the legacy flat facts (real Ansible derives
+      # Consistency with the legacy flat facts (Ansible derives
       # both from the same /proc/meminfo line).
       if (legacy_total = facts["ansible_swaptotal_mb"]?.try(&.as_i64?)) && (ns_total = swap["total"].as_i64?)
         ns_total.must_equal(legacy_total)
@@ -284,7 +284,7 @@ describe Krikri::FactsGatherer do
     # Found via Tecnativa.hetzner_rescue_installimage's templates/autosetup.j2:
     # `{% for device in ansible_devices if device.startswith("sd") ... %}` died
     # with "can't iterate over undefined" because the fact was never gathered
-    # at all - real Ansible's setup module always defines the key (even as an
+    # at all - Ansible's setup module always defines the key (even as an
     # empty dict), so the role's "configure installation" task succeeds there.
     it "is always present, never omitted - even when the /sys/block scan finds nothing" do
       facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
@@ -306,7 +306,7 @@ describe Krikri::FactsGatherer do
       skip "no block devices on this host" if devices.empty?
 
       devices.keys.each do |name|
-        # Real Ansible's DEVICE_EXCLUDE_PATTERNS drops loopback and ram.
+        # Ansible's DEVICE_EXCLUDE_PATTERNS drops loopback and ram.
         name.wont_match(/^(loop|ram)/)
       end
       dev = devices.each_value.first.as_h
@@ -345,7 +345,7 @@ describe Krikri::FactsGatherer do
     end
   end
 
-  describe "min-bundle parity with real Ansible (podman-diff setup case)" do
+  describe "min-bundle parity with Ansible (podman-diff setup case)" do
     # Found adding the setup edge cases to the podman-diff harness: real
     # ansible-core's min bundle (`gather_subset: "!all"`) reports several
     # facts this engine never gathered at all, and two families
@@ -431,7 +431,7 @@ describe Krikri::FactsGatherer do
       facts["ansible_lvm"].as_h["vgs"].as_h?.wont_be_nil
     end
 
-    it "resolves the new family subsets like real Ansible's alias map" do
+    it "resolves the new family subsets like Ansible's alias map" do
       Krikri::FactsGatherer.resolve_enabled_families(["virtualization_type"]).must_include("virtual")
       Krikri::FactsGatherer.resolve_enabled_families(["is_chroot"]).must_include("is_chroot")
       Krikri::FactsGatherer.resolve_enabled_families(["all"]).must_include("virtual")

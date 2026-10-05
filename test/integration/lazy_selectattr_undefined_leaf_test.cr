@@ -6,11 +6,11 @@ require "../minitest_helper"
 # ever reads one field (`selectattr('state', ...)`) still failed on a
 # SIBLING field whose own template references an intentionally-undefined
 # caller variable (`name: "{{ libvirt_vm_name }}"` - the role's own
-# defaults leave it to the caller). Real Ansible templates container
+# defaults leave it to the caller). Ansible templates container
 # values lazily, on actual access, so the unaccessed leaf never renders
 # and the task runs.
 #
-# Every expectation below was verified against real ansible-playbook
+# Every expectation below was verified against ansible-playbook
 # 2.19.11 (localhost, no target host needed) before being written down.
 #
 # Scope note (deliberate, not a full laziness rewrite): the deferral only
@@ -18,10 +18,10 @@ require "../minitest_helper"
 # at an undefined name; every access point that DOES read the leaf still
 # renders it strictly (map(attribute=...), selectattr/rejectattr value
 # tests, the to_json/to_yaml/to_nice_json serializers), so all the
-# pre-laziness hard failures that real Ansible also produces still
+# pre-laziness hard failures that Ansible also produces still
 # happen. Filters that consume a whole container without an explicit
 # attribute extraction (sort/join/combine on deferred shapes) see the
-# raw template text where real Ansible would fail on access - accepted,
+# raw template text where Ansible would fail on access - accepted,
 # documented limitation; a full lazy-container architecture was out of
 # scope for one role's divergence.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -89,7 +89,7 @@ describe "a when: filter chain over a list of dicts with an untouched undefined-
   end
 
   it "skips when selectattr('name', 'defined') asks about the deferred leaf itself" do
-    # Real ansible-core 2.19.11 skips: the lazy attribute access bottoms
+    # ansible-core 2.19.11 skips: the lazy attribute access bottoms
     # out at an undefined name, so the 'defined' test yields False for
     # the entry, the filtered list is empty, and `length > 0` is false.
     status, output = run_playbook(playbook_for(

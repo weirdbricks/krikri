@@ -5,7 +5,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real Ansible's debug action plugin puts a `var:` result under the
+# Ansible's debug action plugin puts a `var:` result under the
 # VARIABLE NAME key - never under msg (podman-diff debug_edge_cases
 # D1/D4: a follow-up `d.msg | default('none')` prints 'none' on real
 # for both a defined and an undefined var, and an unresolvable var:
@@ -40,7 +40,7 @@ describe "debug: var result key" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "registers an undefined var as real 2.19.11's inline error marker and still succeeds" do
+  it "registers an undefined var as Ansible 2.19.11's inline error marker and still succeeds" do
     playbook = File.tempname("debug-var-undefined", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro

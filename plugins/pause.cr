@@ -4,29 +4,29 @@ require "json"
 require "../src/krikri/base_plugin"
 
 module Krikri
-  # pause plugin (ansible.builtin.pause) - waits, or (in real Ansible)
+  # pause plugin (ansible.builtin.pause) - waits, or (in Ansible)
   # interactively prompts. krikri-playbook has no interactive TTY/prompt
-  # model, so it never blocks on stdin - which matches real Ansible's
+  # model, so it never blocks on stdin - which matches Ansible's
   # own non-interactive behavior (verified against ansible-core: with
   # closed stdin and no duration, real pause warns "Not waiting for
   # response to prompt as stdin is not interactive" and continues
-  # immediately, ok). The prompt text is display-only in real Ansible:
+  # immediately, ok). The prompt text is display-only in Ansible:
   # the result's stdout is ALWAYS "Paused for X seconds|minutes"
   # computed from the actual elapsed wall-clock time (rounded to 2
   # decimals, minutes-unit divided by 60), never the requested amount
   # and never the prompt text.
   #
-  # Real 2.14 semantics behavior matched to the real module:
+  # Ansible 2.14 semantics behavior matched to the Ansible module:
   # - seconds/minutes are `{'type': int}`-validated BEFORE anything
   #   happens: float values truncate (1.5 -> 1), non-numerics fail the
   #   task (failed=True, no wait, no crash).
   # - a computed duration below 1 second is clamped up to 1 (so
   #   `minutes: 0` still waits ~1 second).
-  # - `seconds:` and `minutes:` are mutually exclusive in real Ansible
-  #   (verified against a real ansible-playbook run: passing both, even
+  # - `seconds:` and `minutes:` are mutually exclusive in Ansible
+  #   (verified against a ansible-playbook run: passing both, even
   #   `minutes: 0`, fails with "parameters are mutually exclusive:
   #   minutes|seconds"). Never `changed`, and (unlike
-  #   `uri`/`wait_for`/`fetch`) real Ansible's `pause` genuinely does
+  #   `uri`/`wait_for`/`fetch`) Ansible's `pause` genuinely does
   #   run under check mode - verified, not assumed - so this doesn't
   #   skip under `check_mode:` either.
   class PausePlugin < BasePlugin
@@ -68,17 +68,17 @@ module Krikri
         echo: true?(@params["echo"]?, default: true),
         user_input: "",
         # Registered-shape marker (stripped at register like every
-        # _ansible_* key): real's pause module does NOT derive
+        # _ansible_* key): Ansible's pause module does NOT derive
         # stdout_lines/stderr_lines from its stdout/stderr - the executor's
         # central line augmentation must skip this result (live-verified
         # vs 2.19.11 registered pause shape, see the action plugin twin).
         _ansible_omit_command_lines: true,
-        # Real 2.19.11's registered pause result key order - live-verified
+        # Ansible 2.19.11's registered pause result key order - live-verified
         # via `{{ r.keys() | list | to_json }}` on a registered
         # `pause: seconds: 1`: changed, rc, stderr, stdout, start, stop,
         # delta, echo, user_input, failed. The registered tail failed is
         # the executor backfill (pause's wire carries none); msg: "" never
-        # serializes, matching real's msg-less registered shape.
+        # serializes, matching Ansible's msg-less registered shape.
         key_order: ["changed", "rc", "stderr", "stdout", "start", "stop",
                     "delta", "echo", "user_input"],
       )

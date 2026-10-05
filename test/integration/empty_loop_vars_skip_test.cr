@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # A looped task's (or looped include_tasks:'s) own `vars:` block must only
-# ever be evaluated per ACTUAL loop iteration - real Ansible never evaluates
+# ever be evaluated per ACTUAL loop iteration - Ansible never evaluates
 # it at all when the loop resolves to zero items, so the whole task is a
 # plain skip. krikri's build_vars_context rendered the vars: block eagerly,
 # before the loop's iteration count was ever consulted, with `item` still
@@ -10,7 +10,7 @@ require "file_utils"
 # (stackhpc.luks's `item | luks_key` doing `device["device"]` on None -
 # round 960004, `with_items: "{{ luks_devices }}"` over the role's empty
 # `luks_devices: []` default) turned a should-be-skipped task into
-# failed=1 where real ansible-playbook recaps skipped=1. A filter that
+# failed=1 where ansible-playbook recaps skipped=1. A filter that
 # raises on its (None) argument surfaces as FilterFailureError - a
 # subclass of UnknownFilterError - which render_task_vars deliberately
 # re-raises for non-looped tasks, so only a live run against a real

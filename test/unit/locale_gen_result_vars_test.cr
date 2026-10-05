@@ -55,7 +55,7 @@ describe "locale_gen plugin result variables" do
     result["msg"]?.try(&.as_s).must_be_nil
   end
 
-  it "fails a missing required name argument with real's wording" do
+  it "fails a missing required name argument with Ansible's wording" do
     result = PluginSpecHelper.run("locale_gen", {"state" => "present"})
 
     result["failed"].as_bool.must_equal(true)

@@ -6,7 +6,7 @@ module Krikri
   # process by TaskExecutor#execute_async, not a Fiber - so it keeps
   # running even if it outlives the poll loop or the whole playbook run)
   # writes its result here; async_status: (plugins/async_status.cr) reads
-  # it back. Mirrors real Ansible's own ~/.ansible_async/<jid> convention,
+  # it back. Mirrors Ansible's own ~/.ansible_async/<jid> convention,
   # though only for local connections - see execute_async's own comment
   # for why remote async isn't implemented.
   module AsyncJobs
@@ -14,7 +14,7 @@ module Krikri
 
     # Jids are joined into file paths under the async dir, so anything
     # that isn't a bare, simple job-id-shaped token (generate_jid's
-    # "<unix_ts>.<hex>", real Ansible's own "12345.67890123" shape, or a
+    # "<unix_ts>.<hex>", Ansible's own "12345.67890123" shape, or a
     # lookup probe like
     # "no-such-job-...") is rejected before it can carry "/" or ".." into
     # the join - a traversal jid would otherwise let an async_status task
@@ -29,7 +29,7 @@ module Krikri
     # The controller-local async dir, resolved at call time (not require
     # time) so tests and concurrent processes can redirect it: env
     # ANSIBLE_ASYNC_DIR when set (the shell plugin's `async_dir` option;
-    # real Ansible's own env name and default ~/.ansible_async, confirmed
+    # Ansible's own env name and default ~/.ansible_async, confirmed
     # via `ansible-doc -t shell sh`), else the HOME default. A leading ~
     # in the configured value is expanded against HOME.
     def self.dir : String
@@ -104,7 +104,7 @@ module Krikri
       # The remote async launch runs the module binary directly and
       # collects its stdout into the status file via tmp+mv - the file's
       # APPEARANCE is the completion signal, so a status WITHOUT a
-      # "finished" key is the FINAL module result (real Ansible's own
+      # "finished" key is the FINAL module result (Ansible's own
       # async_wrapper writes started/finished around the module result;
       # the mv'd module output legitimately carries no such key). Only
       # the explicit stub ({"started": 1, "finished": 0, ...} written
@@ -119,7 +119,7 @@ module Krikri
       end
     end
 
-    # Deletes one job's status + config files (real Ansible's own
+    # Deletes one job's status + config files (Ansible's own
     # async_status mode=cleanup for a single jid). Returns true when
     # anything was removed.
     def self.cleanup(jid : String) : Bool
@@ -137,7 +137,7 @@ module Krikri
       removed
     end
 
-    # Removes every job file in the async dir - real Ansible's
+    # Removes every job file in the async dir - Ansible's
     # async_status mode=cleanup with jid: ALL. ~/.ansible_async
     # previously grew without bound for the lifetime of the account.
     # Stray .tmp leftovers from a crashed write are swept too. Returns

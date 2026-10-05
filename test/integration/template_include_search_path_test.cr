@@ -13,13 +13,13 @@ describe "template:'s {% include %} resolves against the role's templates/ root,
     # Real bug found benchmarking Oefenweb.haproxy (round 196): its
     # haproxy.cfg.j2 (at templates/etc/haproxy/haproxy.cfg.j2) does
     # `{% include 'global.cfg.j2' %}` - a bare filename, resolved by
-    # real Ansible's own Jinja2 FileSystemLoader against the role's
+    # Ansible's own Jinja2 FileSystemLoader against the role's
     # templates/ directory (and everything under it), so a sibling file
     # in the SAME subdirectory as the including template resolves fine
     # regardless of how deep it is. Crinja's default loader only
     # searches the process CWD (the work dir), so this failed with
     # "template global.cfg.j2 could not be found by
-    # FileSystemLoader(<work dir>)" while real ansible-playbook
+    # FileSystemLoader(<work dir>)" while ansible-playbook
     # rc=0'd. Fixed in template_action_plugin.cr by rooting the Crinja
     # loader's searchpath at the including template's own directory,
     # walking up to and including the role's templates/ root.
@@ -62,7 +62,7 @@ describe "template:'s {% include %} resolves against the role's templates/ root,
     # Real bug found via smlloyd.authselect (RHEL-family round 60487):
     # a template living directly in templates/ (not a subdirectory) does
     # `{% include 'templates/base-user-nsswitch.conf.j2' %}` - a path
-    # relative to the ROLE ROOT, resolved fine by real Ansible's own
+    # relative to the ROLE ROOT, resolved fine by Ansible's own
     # Jinja2 FileSystemLoader (whose searchpath includes the role root
     # itself), but Crinja's loader here only ever searched the templates/
     # directory and never found the "templates/..."-prefixed name inside

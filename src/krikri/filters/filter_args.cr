@@ -6,7 +6,7 @@ module Krikri
     # literal/dict/array parsing, kwarg extraction, and the expression resolvers
     # that turn argument text into values
     class FilterEngine
-      # `default(fallback)` or `default(fallback, boolean)` - real Jinja2's
+      # `default(fallback)` or `default(fallback, boolean)` - Jinja2's
       # second (boolean) form, used by dev-sec os_hardening's own
       # `mount.src | default(mountinfo.device, true)` to also treat an
       # empty string as needing the default (undefined? below already does
@@ -25,7 +25,7 @@ module Krikri
       # expression, which could also be a variable reference, but no
       # real usage seen so far needs that). Python's capital-T `True`
       # spelling is accepted too - it was previously silently ignored
-      # (treated as false), which real Jinja2 would honor.
+      # (treated as false), which Jinja2 would honor.
       private def default_boolean_arg?(args : String) : Bool
         split_top_level_args(args)[1]?.try(&.strip).in?("true", "True")
       end
@@ -33,7 +33,7 @@ module Krikri
       private def resolve_default_arg(args : String) : JSON::Any
         first_arg = split_top_level_args(args).first? || ""
 
-        # `default(omit)` - real Ansible's magic variable that drops the
+        # `default(omit)` - Ansible's magic variable that drops the
         # *parameter itself* from the module call rather than substituting
         # any real value (konstruktoid-hardening's "Allow outgoing
         # specified ports" task uses `proto: "{{ item.proto | default(omit)
@@ -253,7 +253,7 @@ module Krikri
 
       # Parses a `{...}` dict literal (as seen in `default({})`/`combine({a:
       # 1})` arguments, not a real value already carried as JSON::Any) -
-      # unquoted keys and single-quoted string values are both real Jinja2
+      # unquoted keys and single-quoted string values are both Jinja2
       # dict-literal syntax that plain `JSON.parse` would reject.
       private def parse_dict_literal(expr : String) : JSON::Any
         inner = expr[1..-2].strip
@@ -529,7 +529,7 @@ module Krikri
 
       private KWARG_PATTERNS = Hash(String, Regex).new
 
-      # A filter option real Ansible accepts both positionally and as a
+      # A filter option Ansible accepts both positionally and as a
       # named kwarg (regex_findall's multiline/ignorecase): the named
       # form wins when both are present.
       private def truthy_arg?(named : JSON::Any?, positional : String?) : Bool

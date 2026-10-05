@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1487"
+  VERSION = "0.9.1488"
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the
@@ -18,7 +18,7 @@ module Krikri
 
   # Baked into the binary at compile time (never read from disk at
   # runtime - a deployed binary has no shard.lock beside it), the same
-  # way real `ansible --version` reports the exact jinja/pyyaml/python
+  # way `Ansible --version` reports the exact jinja/pyyaml/python
   # versions it is actually running with.
   private SHARD_LOCK_TEXT = {{ read_file("#{__DIR__}/../../shard.lock") }}
   private SHARD_YML_TEXT  = {{ read_file("#{__DIR__}/../../shard.yml") }}
@@ -92,7 +92,7 @@ module Krikri
 
   # "0.9.0+git.commit.<sha>" -> "0.9.0" - the semantic version a user
   # comparing "what version of X am I running" actually wants, matching
-  # how pip reports jinja2/pyyaml in real `ansible --version`.
+  # how pip reports jinja2/pyyaml in `Ansible --version`.
   def self.semantic_shard_version(version : String) : String
     version.split('+').first
   end

@@ -12,10 +12,10 @@ module Krikri
   # Parameters:
   #   state (REQUIRED): enforcing, permissive, or disabled
   #   policy (optional): targeted, minimum, mls, or a custom name -
-  #     required by real Ansible whenever state is not "disabled"
+  #     required by Ansible whenever state is not "disabled"
   #   check_mode: dry-run (predict, don't apply)
   #
-  # Real ansible.posix.selinux enforces the running SELinux mode and
+  # Ansible.posix.selinux enforces the running SELinux mode and
   # rewrites /etc/selinux/config so the mode survives reboot. The
   # argument rules (state required, policy required unless
   # state=disabled, nonexistent policy rejected) live in
@@ -51,7 +51,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: gate[:msg])
       end
 
-      # Real ansible.posix.selinux ALWAYS fails when the config file is
+      # Ansible.posix.selinux ALWAYS fails when the config file is
       # missing - unconditionally, regardless of distro - confirmed
       # directly against the module's observed behavior
       # (`if not os.path.isfile(configfile): module.fail_json(msg=
@@ -62,7 +62,7 @@ module Krikri
       # previously assumed one (to let os_hardening "cleanly apply" to
       # Debian-family hosts), which was simply wrong: found live via
       # buluma.selinux on a Rocky 9.6 host missing the SELinux-policy
-      # package, where real Ansible failed with this exact message and
+      # package, where Ansible failed with this exact message and
       # this plugin silently reported success instead.
       unless File.exists?(CONFIG_PATH)
         return PluginResult.new(
@@ -73,7 +73,7 @@ module Krikri
         )
       end
 
-      # Real's policy-required rule fires after the config-file check and
+      # Ansible's policy-required rule fires after the config-file check and
       # before any change computation - a state=enforcing call with no
       # policy: is a hard failure even when the state already matches.
       if PluginHelpers::SelinuxConfig.policy_required?(state, policy)
@@ -101,7 +101,7 @@ module Krikri
       end
 
       if policy && policy != current_policy
-        # Real does the policy-store existence check inside
+        # Ansible does the policy-store existence check inside
         # set_config_policy - i.e. only on the non-check-mode write path
         # (check mode exits changed=true before reaching it).
         if @check_mode

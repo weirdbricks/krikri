@@ -8,13 +8,13 @@ require "file_utils"
 # --import argv, and each example asserts the import/failure decision for
 # a given fingerprint: string shape.
 #
-# Real ansible.builtin.rpm_key's own argument_spec types fingerprint: as
+# Ansible.builtin.rpm_key's own argument_spec types fingerprint: as
 # LIST, so after task-param substitution a
 # real YAML list arrives at the plugin as a JSON-array-shaped STRING -
 # the same wire-format situation unarchive.cr's parse_list_param
 # documents (a naive comma-split produced one garbage element still
 # wrapped in brackets). A comma-separated scalar stays accepted too:
-# real Ansible's check_type_list accepts it for backward compat, not
+# Ansible's check_type_list accepts it for backward compat, not
 # just a real list.
 #
 # Every expected outcome below was cross-checked against the real
@@ -95,7 +95,7 @@ describe "rpm_key plugin fingerprint param" do
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         result["changed"].as_bool.must_equal(true)
-        # Real 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
+        # Ansible 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
         # key_order_sweep8): the borrowed "Key imported" msg was dropped.
         result["msg"]?.must_be_nil
       end
@@ -103,18 +103,18 @@ describe "rpm_key plugin fingerprint param" do
   end
 
   it "keeps a Python-repr fingerprint list a plain string (never re-parsed into a list)" do
-    # Real ansible-core's native typing requires a template's whole
+    # ansible-core's native typing requires a template's whole
     # parsed AST to be exactly one output node wrapping one expression,
     # so a value that merely LOOKS like a container - a literal
     # `"['<fp>']"` string, or a `{% if %}...{% else %}['<fp>']{% endif
     # %}` block's rendered output - is a plain STRING (live-verified vs
     # ansible-playbook 2.19.11 for the same bug class on apt's name:
-    # real Ansible comma-splits the repr-looking string and fails
+    # Ansible comma-splits the repr-looking string and fails
     # looking the garbage names up). A whole-value `{{ list_var }}`
     # container arg arrives as double-quoted JSON (see
     # substitute_task_params's whole-single-span comment), so the
     # single-quote "repair" this spec used to assert was only ever
-    # reachable for values that are strings in real Ansible - here the
+    # reachable for values that are strings in Ansible - here the
     # garbage fingerprint text then fails the match exactly like real
     # Ansible's own comma-split would.
     with_rpm_key_shims do
@@ -129,7 +129,7 @@ describe "rpm_key plugin fingerprint param" do
     end
   end
 
-  it "accepts a comma-separated fingerprint string (real Ansible's check_type_list backward compat)" do
+  it "accepts a comma-separated fingerprint string (Ansible's check_type_list backward compat)" do
     with_rpm_key_shims do
       with_key_file do |key_path|
         result = PluginSpecHelper.run("rpm_key", {
@@ -138,14 +138,14 @@ describe "rpm_key plugin fingerprint param" do
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         result["changed"].as_bool.must_equal(true)
-        # Real 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
+        # Ansible 2.19.11 success exits carry no msg key (bare exit_json(changed=...),
         # key_order_sweep8): the borrowed "Key imported" msg was dropped.
         result["msg"]?.must_be_nil
       end
     end
   end
 
-  it "normalizes fingerprints with embedded spaces like real Ansible" do
+  it "normalizes fingerprints with embedded spaces like Ansible" do
     spaced = FPR.scan(/.{4}/).map(&.[0]).join(" ")
     with_rpm_key_shims do
       with_key_file do |key_path|

@@ -2,10 +2,10 @@ require "file_utils"
 require "../minitest_helper"
 
 # A looped include_tasks: whose per-item `when:` is false must recap the
-# whole looped task ONCE, like real Ansible recaps any looped task - not
+# whole looped task ONCE, like Ansible recaps any looped task - not
 # once per skipped item. The per-item "skipping: => (item=...)" lines are
 # display only; the recap books skipped=1 when EVERY iteration was
-# when:-skipped (plus the bare trailing "skipping:" line real prints for
+# when:-skipped (plus the bare trailing "skipping:" line Ansible prints for
 # that shape, byte-verified against ansible-core 2.19.11), and skipped=0
 # once any iteration actually ran. krikri booked one skipped per item,
 # because run_include_tasks_once's own when:-false branch incremented the
@@ -60,12 +60,12 @@ describe "a looped include_tasks: whose when: is false recaps once, not per item
     })
 
     status.success?.must_equal true
-    # One recap entry for the whole looped task, like real Ansible.
+    # One recap entry for the whole looped task, like Ansible.
     output.must_include("skipped=1")
     output.wont_include("skipped=2")
     output.wont_include("skipped=3")
     # The per-item skipping lines are still displayed, one per item, plus
-    # the bare trailing line real prints for the all-skipped shape.
+    # the bare trailing line Ansible prints for the all-skipped shape.
     output.must_include("skipping: [localhost] => (item=a) ")
     output.must_include("skipping: [localhost] => (item=b) ")
     output.must_include("skipping: [localhost] => (item=c) ")

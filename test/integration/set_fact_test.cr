@@ -35,11 +35,11 @@ describe "set_fact plugin" do
   end
 
   it "keeps a Python-repr-looking (single-quoted) string a plain string" do
-    # Real ansible-core's native typing requires the template's whole
+    # ansible-core's native typing requires the template's whole
     # parsed AST to be exactly one output node wrapping one expression,
     # so block-tag output (or a plain quoted literal) that merely LOOKS
     # like a container is stored as a string, never re-parsed. Verified
-    # live against real ansible-playbook 2.19.11 (both shapes):
+    # live against ansible-playbook 2.19.11 (both shapes):
     # `set_fact: repr_list: "['a', 'b']"` and a
     # `{% if false %}{{ x }}{% else %}['dummy']{% endif %}` block both
     # give `is string` -> True, and a later
@@ -47,7 +47,7 @@ describe "set_fact plugin" do
     # resolve to a 'list', not 'str'." The old single-quote repair pass
     # here turned both into real containers (found live via
     # HanXHX.debian_bootstrap's `dbs_repo_old` default, whose loop then
-    # silently iterated where real Ansible fails the task).
+    # silently iterated where Ansible fails the task).
     result = PluginSpecHelper.run("set_fact", {
       "my_list" => "['a', 'b', 'c']",
       "my_dict" => "{'x': 'y'}",
@@ -91,7 +91,7 @@ describe "set_fact plugin" do
   it "decodes a NATIVE_TYPED_PREFIX value as its JSON type, never re-coercing" do
     # A whole-single-span `{{ expr }}` fact arrives prefixed with the JSON
     # encoding of the expression's natively-typed result (see
-    # substitute_task_params). Real ansible-core 2.19 keeps the
+    # substitute_task_params). ansible-core 2.19 keeps the
     # expression's own type: a Jinja string expression stays a str even
     # when its text looks numeric ("{{ '8.9' }}" -> "8.9" str, pluggero.
     # openssh round 981024 - the coerced float made an `!=` version

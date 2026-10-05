@@ -6,7 +6,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real's assemble action plugin assembles the fragments on the controller
+# Ansible's assemble action plugin assembles the fragments on the controller
 # when remote_src is present and falsy, and it expands the destination's
 # user path (`dest = self._remote_expand_user(dest)`) before it ever hands
 # the task to the copy module - so a non-string YAML literal dest crashes

@@ -39,7 +39,7 @@ describe "find: age/size parse validation" do
     # float mtime can sit a fraction of a second ahead of the plugin's
     # integer `now` (negative elapsed), and an exactly-1h-old file sits
     # on the >= 3600 boundary - both fail `age: 1h` marginally, the
-    # same race real Ansible's own float time math has.
+    # same race Ansible's own float time math has.
     File.utime(Time.utc - 2.hours, Time.utc - 2.hours, path)
     result = run_find({"paths" => dir, "recurse" => "true", "age" => "1h", "size" => "-1m"})
     (result["failed"]?.nil? || result["failed"].as_bool == false).must_equal(true)

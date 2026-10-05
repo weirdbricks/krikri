@@ -1,12 +1,12 @@
 module Krikri
   module PluginHelpers
     # JavaCertCommand - builds the keytool/openssl command lines
-    # community.general.java_cert runs, mirroring the real module's
+    # community.general.java_cert runs, mirroring the Ansible module's
     # helpers (_check_cert_present, delete_cert, import_cert_path,
     # import_pkcs12_path, _export_public_cert_from_pkcs12,
     # _download_cert_url, _get_digest_from_x509_file, and
     # build_proxy_options). Each builder returns the raw ARGV the real
-    # module passes to run_command - that argv is also what real reports
+    # module passes to run_command - that argv is also what Ansible reports
     # as the result's `cmd` (a JSON list, not a string) - and callers
     # shell-join it with `.join(' ')` where a command STRING is what gets
     # executed. Pure string plumbing so the exact argv shapes are
@@ -69,7 +69,7 @@ module Krikri
       # _get_digest_from_x509_file's two steps: extract the first
       # certificate (PEM first, DER fallback), then hash it. Split
       # into the two commands so the plugin can branch on the extract
-      # rc the way the real module does.
+      # rc the way the Ansible module does.
       def self.extract_x509_cmd(openssl_bin : String, cert_file : String, out_file : String, der_fallback : Bool = false) : Array(String)
         cmd = [openssl_bin, "x509", "-in", cert_file, "-out", out_file]
         cmd << "-inform" << "der" if der_fallback
@@ -81,7 +81,7 @@ module Krikri
       end
 
       # build_proxy_options: honors https_proxy/no_proxy environment
-      # variables (the real module reads urllib's getproxies()); Java
+      # variables (the Ansible module reads urllib's getproxies()); Java
       # proxy flags go to the JVM with -J, nonProxyHosts entries are
       # '|' separated with leading dots rewritten to '*.'.
       def self.proxy_opts(https_proxy : String?, no_proxy : String?) : Array(String)
@@ -98,7 +98,7 @@ module Krikri
         opts
       end
 
-      # Wraps a command with the stdin data the real module's
+      # Wraps a command with the stdin data the Ansible module's
       # run_command(data=...) feeds it, via printf piped to the
       # command. Each data string is one line.
       def self.with_stdin(command : String, data : Array(String)) : String

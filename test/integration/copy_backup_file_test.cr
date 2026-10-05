@@ -6,7 +6,7 @@ require "file_utils"
 # subtree instead.
 
 # Regression (found via the testing/podman-diff harness, copy_edge_cases
-# case P3b): with backup: true and an overwrite, real Ansible's copy
+# case P3b): with backup: true and an overwrite, Ansible's copy
 # module exits with `backup_file` set to the created backup's path (the
 # backup file itself was always created on disk here, but the result
 # dict never carried the key, so `register:`ed results diverged).

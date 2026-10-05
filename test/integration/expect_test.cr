@@ -36,7 +36,7 @@ describe "expect plugin" do
     result["msg"].as_s.must_equal("non-zero return code")
   end
 
-  it "fails with real's 'command exceeded timeout' wording and rc None when no prompt ever matches" do
+  it "fails with Ansible's 'command exceeded timeout' wording and rc None when no prompt ever matches" do
     result = PluginSpecHelper.run("expect", {
       "command"   => "/bin/sleep 5",
       "responses" => {"never-appears" => "x"}.to_json,
@@ -73,7 +73,7 @@ describe "expect plugin" do
     result["rc"].as_i.must_equal(256)
   end
 
-  it "does not echo the sent response into captured output by default, matching real Ansible's echo: no default" do
+  it "does not echo the sent response into captured output by default, matching Ansible's echo: no default" do
     result = PluginSpecHelper.run("expect", {
       "command"   => %q(/bin/bash -c 'read -p "Password: " pw; echo "pw-was: $pw"'),
       "responses" => {"Password:" => "hunter2"}.to_json,
@@ -114,7 +114,7 @@ describe "expect plugin" do
     result["stdout"].as_s.must_include("answered three with yes")
   end
 
-  it "fails with real's 'No remaining responses' wording (changed=false) when a list response exhausts" do
+  it "fails with Ansible's 'No remaining responses' wording (changed=false) when a list response exhausts" do
     result = PluginSpecHelper.run("expect", {
       "command"   => %q(/bin/bash -c 'read -p "A? " x; read -p "B? " y'),
       "responses" => {"\\? $" => ["only-one"]}.to_json,
@@ -126,7 +126,7 @@ describe "expect plugin" do
     result["msg"].as_s.must_include("No remaining responses for '\\? $'")
   end
 
-  it "resends a plain string response on every prompt match (real's static-bytes behavior)" do
+  it "resends a plain string response on every prompt match (Ansible's static-bytes behavior)" do
     result = PluginSpecHelper.run("expect", {
       "command"   => %q(/bin/bash -c 'for item in one two; do read -p "Confirm $item? " ans; echo "answered $item with $ans"; done'),
       "responses" => {"Confirm \\w+\\?" => "yes"}.to_json,

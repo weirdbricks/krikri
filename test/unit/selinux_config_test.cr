@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/selinux_config"
 
-# ansible.posix.selinux's argument rules, behavior matched to the real module's
+# ansible.posix.selinux's argument rules, behavior matched to the Ansible module's
 # main() - see PluginHelpers::SelinuxConfig's class docs for the order
 # (arg-spec state check, then the /etc/selinux/config existence failure,
 # then policy-required-unless-disabled, then the policy-store existence
@@ -17,12 +17,12 @@ describe Krikri::PluginHelpers::SelinuxConfig do
         .must_equal("missing required arguments: state")
     end
 
-    it "rejects values outside real's choices" do
+    it "rejects values outside Ansible's choices" do
       Krikri::PluginHelpers::SelinuxConfig.state_validation_error("krikri_state")
         .must_equal("Invalid state: krikri_state. Must be one of: enforcing, permissive, disabled")
     end
 
-    it "accepts each of real's choices" do
+    it "accepts each of Ansible's choices" do
       ["enforcing", "permissive", "disabled"].each do |state|
         Krikri::PluginHelpers::SelinuxConfig.state_validation_error(state).must_be_nil
       end

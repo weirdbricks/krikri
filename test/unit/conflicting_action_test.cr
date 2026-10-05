@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/playbook_parser"
 
-# Regression tests for the CLI-mode output-parity work on real Ansible's
+# Regression tests for the CLI-mode output-parity work on Ansible's
 # ModuleArgsParser refusals (live-verified vs 2.19.11): a SECOND
 # non-keyword key beside the chosen action is a whole-playbook abort -
 # "conflicting action statements: <first>, <second>" named in task-key

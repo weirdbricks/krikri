@@ -4,7 +4,7 @@ require "json"
 
 # Pins the shared strict `type: bool` param validation
 # (PluginHelpers::StrictBoolValidation, applied through
-# BasePlugin#validate_bool_params!) against real ansible-core's
+# BasePlugin#validate_bool_params!) against ansible-core's
 # check_type_bool + boolean()
 # + the parameters.py failure
 # wrapper, live-verified against ansible-core 2.19.11.
@@ -58,7 +58,7 @@ private def msg_of(result : JSON::Any) : String
 end
 
 describe "StrictBoolValidation conversion rules (probe)" do
-  it "accepts every string spelling real's BOOLEANS lists, with case/whitespace slack" do
+  it "accepts every string spelling Ansible's BOOLEANS lists, with case/whitespace slack" do
     ["y", "Y", " yes ", "on", "ON", "1", "true", "TRUE", "t", "n", "no", "off", "0", "false", "f"].each do |v|
       result = probe_run(%({"flag": #{v.inspect}}))
       expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
@@ -71,12 +71,12 @@ describe "StrictBoolValidation conversion rules (probe)" do
     result["msg"].as_s.must_equal(bool_error("flag", "str", "sometimes"))
   end
 
-  it "rejects an empty string - real's boolean('') is not in either set" do
+  it "rejects an empty string - Ansible's boolean('') is not in either set" do
     result = probe_run(%({"flag": ""}))
     result["msg"].as_s.must_equal(bool_error("flag", "str", ""))
   end
 
-  it "reports a stringified-lookalike number as type str, like real does for a quoted YAML scalar" do
+  it "reports a stringified-lookalike number as type str, like Ansible does for a quoted YAML scalar" do
     result = probe_run(%({"flag": "1.0"}))
     result["msg"].as_s.must_equal(bool_error("flag", "str", "1.0"))
   end
@@ -129,7 +129,7 @@ describe "StrictBoolValidation conversion rules (probe)" do
     expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
   end
 
-  it "reports an alias spelling under the CANONICAL name, like real's alias resolution" do
+  it "reports an alias spelling under the CANONICAL name, like Ansible's alias resolution" do
     result = probe_run(%({"aliased-alias": "blah"}))
     result["msg"].as_s.must_equal(bool_error("aliased", "str", "blah"))
   end
@@ -150,14 +150,14 @@ BOOL_PARAM_TABLE = {
   "apt_key"        => %w[validate_certs],
   "apt_repository" => %w[install_python_apt update_cache validate_certs],
   # remote_src deliberately absent (see the dedicated case at the bottom):
-  # real's assemble action reads it through boolean(strict=False) FIRST,
+  # Ansible's assemble action reads it through boolean(strict=False) FIRST,
   # so the module only ever receives BOOLEANS_TRUE values and its own
   # strict conversion can never fail
   "assemble"    => %w[backup decrypt ignore_hidden unsafe_writes],
   "assert"      => %w[quiet],
   "blockinfile" => %w[append_newline backup create prepend_newline unsafe_writes],
   "command"     => %w[expand_argument_vars stdin_add_newline strip_empty_ends],
-  # follow is validated only on copy's remote_src branch: real's copy
+  # follow is validated only on copy's remote_src branch: Ansible's copy
   # ACTION plugin reads it through boolean(strict=False) and hands the
   # MODULE the coerced boolean (copy.py:328-335), so a bad spelling is
   # silently False on the controller-side path. Asserted by the
@@ -170,7 +170,7 @@ BOOL_PARAM_TABLE = {
   "dnf5"              => %w[allow_downgrade allowerasing auto_install_module_deps autoremove best bugfix cacheonly disable_gpg_check download_only install_repoquery install_weak_deps nobest security skip_broken sslverify update_cache update_only validate_certs],
   "expect"            => %w[echo],
   "fetch"             => %w[],
-  # ... because real's fetch ACTION plugin does the whole transfer
+  # ... because Ansible's fetch ACTION plugin does the whole transfer
   # itself (only slurp/copy ever run behind the scenes), so the fetch
   # module's own bool spec - flat/fail_on_missing/validate_checksum -
   # never runs; the action plugin reads all three through
@@ -205,7 +205,7 @@ BOOL_PARAM_TABLE = {
 }
 
 # Context params a plugin needs to REACH its bool validation (its own
-# required-args/controller gates sit first, exactly like real's
+# required-args/controller gates sit first, exactly like Ansible's
 # required-before-types argspec order).
 # unarchive's dest-existence + archive-handler checks sit before its bool
 # validation (both live-verified ordering vs real), so the sweep needs a
@@ -239,7 +239,7 @@ describe "core plugins' documented bool params (table sweep)" do
   # a runtime loop like crystal spec's closure-based `it` could.
   {% for plugin, params in BOOL_PARAM_TABLE %}
     {% for param, j in params %}
-      {% cname = plugin.id.stringify + ": " + param.id.stringify + " rejects a non-boolean value with real's wording" %}
+      {% cname = plugin.id.stringify + ": " + param.id.stringify + " rejects a non-boolean value with Ansible's wording" %}
       it {{ cname }} do
         base = CONTEXT[{{plugin}}]? || {} of String => String
         run_params = base.merge({ {{param}} => "krikri-not-a-bool" })
@@ -280,7 +280,7 @@ describe "core plugins' documented bool params (table sweep)" do
     result["msg"].as_s.must_equal(bool_error("sslverify", "str", "blah"))
   end
 
-  it "apt: native int/float/null values report real's native type names" do
+  it "apt: native int/float/null values report Ansible's native type names" do
     result = PluginSpecHelper.run_raw("apt", {"name" => JSON::Any.new("curl"), "force" => JSON::Any.new(2_i64)})
     result["msg"].as_s.must_equal(bool_error("force", "int", "2"))
 
@@ -309,7 +309,7 @@ describe "core plugins' documented bool params (table sweep)" do
   end
 
   it "copy/template: follow stays unvalidated on the action plugin's own path, like real" do
-    # real's copy action plugin reads follow through boolean(strict=False)
+    # Ansible's copy action plugin reads follow through boolean(strict=False)
     # and passes the COERCED boolean to the copy module, so an
     # unrecognized spelling is simply False and the module never rejects
     # it (live-verified vs 2.19.11: `follow: krikri-not-a-bool` copies
@@ -332,7 +332,7 @@ describe "core plugins' documented bool params (table sweep)" do
   end
 
   it "assemble: remote_src stays unvalidated, like real (the action reads it boolean(strict=False) first)" do
-    # real's action plugin dispatches the assemble module ONLY when
+    # Ansible's action plugin dispatches the assemble module ONLY when
     # boolean(remote_src, strict=False) is True - i.e. only for
     # BOOLEANS_TRUE spellings/natives, where the module's own strict
     # type: bool conversion then always succeeds. Every other value
@@ -348,7 +348,7 @@ describe "core plugins' documented bool params (table sweep)" do
   end
 
   it "fetch: flat/fail_on_missing/validate_checksum stay unvalidated, like real (the action reads them boolean(strict=False) first)" do
-    # real's fetch action plugin performs the whole transfer itself (only
+    # Ansible's fetch action plugin performs the whole transfer itself (only
     # slurp/copy run behind the scenes), so the fetch module's own bool
     # spec never runs: a bad spelling is simply truthy to the action
     # plugin's boolean(strict=False) read. Live-verified vs 2.19.11 - a

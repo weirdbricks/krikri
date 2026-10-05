@@ -8,7 +8,7 @@ require "../../src/krikri/variable_substitutor"
 # out of the role's defaults (genuinely undefined). The strict
 # `{% %}` block-tag pre-render scan (scan_block_tag_refs) raised
 # "'proxy_settings_http_proxy' is undefined" before Crinja ever
-# rendered, where real Ansible's Jinja2 takes the false branch and the
+# rendered, where Ansible's Jinja2 takes the false branch and the
 # whole block renders empty/skipped. The `{{ }}`-span scanner already
 # honored the `is defined`-family tolerance via
 # block_tag_ref_is_defined_test; the block-tag scan simply never
@@ -73,7 +73,7 @@ describe "strict block-tag scan: `is defined` on a plain undefined variable neve
   # %}` tag - lexically nested inside an earlier `{% if X is defined
   # %}`'s true-branch, but a wholly different tag - had no way to know
   # it could only ever be reached once X was already proven defined,
-  # and raised "'X' is undefined" where real ansible-playbook (verified
+  # and raised "'X' is undefined" where ansible-playbook (verified
   # live, ansible-core 2.19.11) short-circuits the entire guarded
   # branch away and never evaluates it at all.
   describe "nesting across SEPARATE {% %} tags (not just within one)" do
@@ -82,7 +82,7 @@ describe "strict block-tag scan: `is defined` on a plain undefined variable neve
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 
       # Verbatim from buluma.postfix's tasks/main.yml (Setting values
-      # for main.cf (2/2)) - real ansible-playbook renders " <None> "
+      # for main.cf (2/2)) - ansible-playbook renders " <None> "
       # when postfix_relay_domains is unset.
       result = sub.substitute(
         "{% if postfix_relay_domains is defined %} {% if postfix_relay_domains is string %} " \
@@ -108,7 +108,7 @@ describe "strict block-tag scan: `is defined` on a plain undefined variable neve
     it "does NOT carry the guarantee into the {% else %} branch of the SAME if" do
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
 
-      # Real Jinja gives no guarantee that `q` is defined inside the
+      # Jinja gives no guarantee that `q` is defined inside the
       # `else` of `{% if q is defined %}` - reaching else means the
       # guard was FALSE, so a reference to q there is exactly as
       # undefined as it ever was.

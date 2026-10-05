@@ -103,7 +103,7 @@ describe "blockinfile plugin" do
     File.delete(path) if path && File.exists?(path)
   end
 
-  # Unlike lineinfile (whose key is `backup`), real Ansible's blockinfile
+  # Unlike lineinfile (whose key is `backup`), Ansible's blockinfile
   # exits with `backup_file` (blockinfile.py: exit_json(..., backup_file=...),
   # key omitted entirely when no backup was made). Live-verified against
   # ansible-core 2.19.11 - pinned here so nobody "unifies" the two names.
@@ -122,7 +122,7 @@ describe "blockinfile plugin" do
     File.delete(backup)
   end
 
-  # An empty block: (real's default) means "remove the block", but the
+  # An empty block: (Ansible's default) means "remove the block", but the
   # task is still state: present - and real gates prepend_newline /
   # append_newline on that alone, not on there being a block to insert.
   # Folding the two together dropped the blank line they add and

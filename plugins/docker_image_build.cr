@@ -13,7 +13,7 @@ module Krikri
   # community.docker.docker_image_build module.
   #
   # Unlike docker_image.cr (which talks to the Docker Engine API
-  # directly), buildx builds have no API equivalent - real Ansible's own
+  # directly), buildx builds have no API equivalent - Ansible's own
   # module shells out to the `docker buildx build` CLI too, so this
   # plugin does the same via #remote_exec. Image-existence checking (for
   # the rebuild: never idempotency check) still goes straight to the
@@ -29,7 +29,7 @@ module Krikri
   # bearing on the common "build an image from a Dockerfile" case -
   # but their AnsibleModule VALIDATION surface is fully implemented
   # below (required/choices/type conversion/sub-spec required_if/
-  # mutually_exclusive/no_log censoring), because real Ansible runs all
+  # mutually_exclusive/no_log censoring), because Ansible runs all
   # of it in AnsibleModule setup BEFORE the module body's buildx probe
   # and path checks.
   class DockerImageBuildPlugin < BasePlugin
@@ -54,7 +54,7 @@ module Krikri
       "tls_hostname"   => %w[],
       "validate_certs" => %w[tls_verify],
     }
-    # Engine-internal executor keys that never reach the real module's
+    # Engine-internal executor keys that never reach the Ansible module's
     # params (see apt.cr's same exclusion list).
     INTERNAL_PARAMS = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
     # Sub-spec option names, for the deferred unsupported-params check.
@@ -72,7 +72,7 @@ module Krikri
     # convert_bool.py's BOOLEANS (repr'd, TRUE set then FALSE set) - real
     # Ansible iterates a Python SET here, so the order differs between
     # processes (PYTHONHASHSEED); this fixed order is one of the orders
-    # real emits.
+    # Ansible emits.
     BOOLEANS_REPR = %w[y yes on '1' 'true' 't' 1 1.0 True n no off '0' 'false' 'f' 0 0.0 False]
 
     @no_log_values = [] of String
@@ -96,7 +96,7 @@ module Krikri
 
     def execute : PluginResult
       result = execute_validated
-      # Real Ansible's remove_values() runs over the ENTIRE fail/exit
+      # Ansible's remove_values() runs over the ENTIRE fail/exit
       # payload, so a no_log'd secrets[].value leaks into no message
       # (podman-diff docker_image_build_edge_cases B11: the literal
       # value "v" is blanked even inside the word "exclusive").
@@ -129,7 +129,7 @@ module Krikri
       full_ref = PluginHelpers::DockerRef.join(ref_name, tag)
       existing_image = image_inspect(client, full_ref)
 
-      # Real's build_image returns the module dict {changed, actions,
+      # Ansible's build_image returns the module dict {changed, actions,
       # image} verbatim when the image already exists with rebuild: never
       # (BEFORE the check_mode branch, so a check-mode run against an
       # existing image lands here too) - no msg key at all.
@@ -137,7 +137,7 @@ module Krikri
         return no_build_result(existing_image, changed: false)
       end
 
-      # Check mode on an absent image: real still seeds image from
+      # Check mode on an absent image: Ansible still seeds image from
       # find_image - {} when the image isn't there - and reports changed:
       # true with no msg.
       return no_build_result(existing_image || JSON.parse("{}"), changed: true) if check_mode
@@ -174,7 +174,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
     end
 
-    # The no-build module dict shape: real's results = {"changed": ...,
+    # The no-build module dict shape: Ansible's results = {"changed": ...,
     # "actions": [], "image": image or {}} with no msg key at all -
     # exit_json is called without one (unlike the old "Image ... already
     # present"/"Would build image ..." texts this plugin used to emit).
@@ -185,7 +185,7 @@ module Krikri
       result
     end
 
-    # Real AnsibleModule validation for this module's argument_spec,
+    # AnsibleModule validation for this module's argument_spec,
     # following ansible-core's arg_spec.ArgumentSpecValidator.validate
     # order - only the FIRST error ever surfaces (fail_json reports
     # errors[0]): _list_no_log_values (which runs FIRST and itself
@@ -527,7 +527,7 @@ module Krikri
       msg
     end
 
-    # The buildx argv EXACTLY as real's module builds it (the same list
+    # The buildx argv EXACTLY as Ansible's module builds it (the same list
     # real registers under `command`) - unquoted here; shell quoting for
     # #remote_exec happens at the call site.
     private def build_args(ref_name : String, tag : String, path : String) : Array(String)

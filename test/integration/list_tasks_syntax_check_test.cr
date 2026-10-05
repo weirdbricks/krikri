@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # --syntax-check and --list-tasks. The expected output below is the
-# VERBATIM output of a real ansible-core 2.19.4 run of the same playbook
+# VERBATIM output of a ansible-core 2.19.4 run of the same playbook
 # (tabs included), not a reconstruction - these two modes are routinely
 # machine-read in CI, so the exact shape matters.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -69,11 +69,11 @@ describe "--syntax-check" do
 end
 
 describe "--list-tasks" do
-  # Byte-for-byte real ansible-playbook output. Note the TAB before
+  # Byte-for-byte ansible-playbook output. Note the TAB before
   # TAGS, the alphabetical tag sort ([inner, outer] from a task tagged
   # `inner` inside a block tagged `outer`), and that "always inner" is
-  # absent - real Ansible does not list a block's always: tasks.
-  it "matches real ansible-playbook's listing exactly" do
+  # absent - Ansible does not list a block's always: tasks.
+  it "matches ansible-playbook's listing exactly" do
     status, output = run_with(["--list-tasks"])
     status.exit_code.must_equal(0)
     output.must_equal(<<-OUT + "\n")

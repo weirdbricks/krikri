@@ -1,13 +1,13 @@
 require "../minitest_helper"
 
 # A genuinely undefined loop: source must FAIL the task at loop-resolution
-# time, before the task body runs at all - real Ansible's behavior,
+# time, before the task body runs at all - Ansible's behavior,
 # captured live against ansible-core 2.19.12 on Rocky 9.6 (round174
 # differential matrix; scenario numbers cited per example).
 #
-# Note real Ansible's wording here is a BARE "'x' is undefined" - it does
+# Note Ansible's wording here is a BARE "'x' is undefined" - it does
 # NOT carry the "Error while evaluating conditional: " prefix its when:
-# failures use (matrix scenario 13 vs 1). Real Ansible additionally wraps
+# failures use (matrix scenario 13 vs 1). Ansible additionally wraps
 # it in a generic "Task failed: " at the outer layer, exactly as it does
 # for the when: case this engine already matches.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -164,7 +164,7 @@ describe "undefined loop: source is strict" do
     output.must_include("failed=1")
   end
 
-  # The two with_dict: YAML SHAPES really do diverge in real Ansible
+  # The two with_dict: YAML SHAPES really do diverge in Ansible
   # (live-verified against ansible-core 2.19.11): a bare scalar whose
   # template resolves to an empty list becomes the lookup's TERMS LIST
   # itself (zero terms -> zero loop items -> "skipping"), while an
@@ -258,7 +258,7 @@ describe "undefined loop: source is strict" do
     output.wont_include("is undefined")
   end
 
-  # buluma.mount's own assert.yml (round174). Real Ansible consults the
+  # buluma.mount's own assert.yml (round174). Ansible consults the
   # task's when: before treating an undefined loop source as fatal, and
   # a condition that REFERENCES the loop variable still counts: with
   # `item` unbound, `item.backup is defined` is false, so the task
@@ -320,7 +320,7 @@ describe "undefined loop: source is strict" do
 
   # Round 701114/821007 (redhat_sap.sap_hana_hsr), all three shapes below
   # live-verified against ansible-playbook 2.19.11 in isolated minimal
-  # playbooks. Real Ansible consults the task's own when: BEFORE the loop
+  # playbooks. Ansible consults the task's own when: BEFORE the loop
   # source is ever templated, and what the when: itself references decides
   # the verdict on an undefined loop source:
   #
@@ -332,7 +332,7 @@ describe "undefined loop: source is strict" do
   #      the task FAILS with the loop's own error, it does not skip;
   #   C) when: references the yet-unbound loop variable itself (`item` /
   #      item.* / item[..], e.g. `item.backup is defined`) -> reads as
-  #      false and the task skips (real Ansible's own documented
+  #      false and the task skips (Ansible's own documented
   #      item-unbound-before-loop-known leniency).
   #
   # The distinguishing factor is whether the when:'s undefined reference
@@ -453,7 +453,7 @@ describe "undefined loop: source is strict" do
   end
 
   # Scenarios 12a/12b - include_tasks:/include_role: must fail BEFORE the
-  # included content is entered. Real Ansible never reaches it; this
+  # included content is entered. Ansible never reaches it; this
   # engine used to enter and start running it.
   it "fails include_tasks: without entering the included file" do
     inner = File.tempname("loop-strict-inner", ".yml")
@@ -539,7 +539,7 @@ end
 #   iteration runs; krikri used to render the literal string "undefined"
 #   and mkdir directories named "undefined" - rc=0 warm where real
 #   Ansible can never get past the task).
-# - `when: false` + an undefined loop item is a plain SKIP (real Ansible
+# - `when: false` + an undefined loop item is a plain SKIP (Ansible
 #   evaluates the task-level when: before ever templating the loop list).
 # - `when: item is defined` + an undefined loop item is also a skip
 #   (item unbound → lenient False).

@@ -21,7 +21,7 @@ describe "include_tasks: targeting a comment-only (blank) tasks file" do
     # this engine's `unless yaml.as_a?` check (written for a genuinely
     # malformed file) treated `nil` the same way, failing the whole
     # task ("Included tasks file must be a YAML list") instead of
-    # running zero tasks, matching real Ansible.
+    # running zero tasks, matching Ansible.
     dir = File.tempname("include-tasks-empty-file")
     Dir.mkdir_p(dir)
 

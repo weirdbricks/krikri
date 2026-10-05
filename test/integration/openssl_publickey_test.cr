@@ -93,13 +93,13 @@ describe "openssl_publickey plugin" do
     result["msg"].as_s.must_include("does not exist")
   end
 
-  # kpg35 sweep #247/#249/#251: the real module loads the key through
+  # kpg35 sweep #247/#249/#251: the Ansible module loads the key through
   # `cryptography` (byte-for-byte the message below); krikri used to
   # shell out to the openssl CLI, which the target container does not
   # ship. The message is produced natively by the shared Pkey helper
   # (unit-tested in openssl_pkey_helper_test.cr); this pins the plugin's
   # own wiring for both the content and the no-passphrase variants.
-  it "fails unparsable privatekey_content with real's exact message" do
+  it "fails unparsable privatekey_content with Ansible's exact message" do
     result = PluginSpecHelper.run("openssl_publickey", {
       "path"                  => PluginSpecHelper.tmp_path("garbage.pub"),
       "privatekey_content"    => "hpzbar",

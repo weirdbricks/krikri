@@ -11,16 +11,16 @@ module Krikri
   # `--async`/manual invocation.
   #
   # krikri has no interactive TTY/prompt model, so it never blocks on
-  # stdin - which matches real Ansible's own non-interactive behavior
+  # stdin - which matches Ansible's own non-interactive behavior
   # (verified against ansible-core 2.14: with closed stdin and no
   # duration, real pause warns "Not waiting for response to prompt as
   # stdin is not interactive" and continues immediately, ok). The
-  # prompt text is display-only in real Ansible: the result's stdout is
+  # prompt text is display-only in Ansible: the result's stdout is
   # ALWAYS "Paused for X seconds|minutes" computed from the actual
   # elapsed wall-clock time (rounded to 2 decimals, minutes-unit divided
   # by 60), never the requested amount and never the prompt text.
   #
-  # Real 2.19 semantics behavior matched to the real module:
+  # Ansible 2.19 semantics behavior matched to the Ansible module:
   # - seconds/minutes are `{'type': int}`-validated BEFORE anything
   #   happens: float values truncate (1.5 -> 1), non-numerics fail the
   #   task (failed=True, no wait, no crash).
@@ -33,18 +33,18 @@ module Krikri
   #   before waiting: "Pausing for <n> seconds" (plus " (output is
   #   hidden)" when echo: false), and - only when a prompt was given -
   #   a second line telling the user how to cut the wait short, which
-  #   carries a trailing CR because real prints it as `display(msg + "\r")`
+  #   carries a trailing CR because Ansible prints it as `display(msg + "\r")`
   #   on a TTY it never actually reaches with non-interactive stdin.
   #   A duration expressed in minutes prints the CONVERTED second count
   #   (`minutes: 1` -> "Pausing for 60 seconds"), not the minutes value.
   class PauseActionPlugin < ActionPlugin
-    # Real's Display deduplicates warnings globally - the non-interactive
+    # Ansible's Display deduplicates warnings globally - the non-interactive
     # stdin warning fires once per run even across hosts/tasks.
     @@stdin_warning_shown = false
 
     # The console line real appends to a duration-gated pause so the user
     # knows a TTY-less run is just sleeping (pause.py's seconds branch).
-    # Its trailing CR is real's, not ours.
+    # Its trailing CR is Ansible's, not ours.
     INTERRUPT_HINT = "(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)\r"
 
     def execute : ActionResult
@@ -82,7 +82,7 @@ module Krikri
       start = Time.local
       # Only a duration makes the prompt a "wait for N, interruptible" one.
       # The console lines are handed to ResultDisplay instead of written
-      # here: real's action plugin writes them itself, so they always land
+      # here: Ansible's action plugin writes them itself, so they always land
       # between the task's own output and this item's status line -
       # including per loop item, where krikri defers every item's display
       # to the end of the loop (executor_loops.cr's finish_looped_task)
@@ -104,20 +104,20 @@ module Krikri
         "echo"       => JSON::Any.new(echo),
         "user_input" => JSON::Any.new(""),
       }
-      # Engine-internal: the console lines never belong in real's pause
+      # Engine-internal: the console lines never belong in Ansible's pause
       # result dict, and the _ansible_ prefix is what keeps them out of
       # register: and of every LOOPED per-item results[] entry (both
       # strip the prefix).
       extra["_ansible_pause_console"] = JSON::Any.new(console_lines) if console_lines
       # Registered-shape marker (stripped at register like every
-      # _ansible_* key): pause carries stdout/stderr but real's pause
+      # _ansible_* key): pause carries stdout/stderr but Ansible's pause
       # module does NOT derive *_lines from them (live-verified vs
       # 2.19.11 - a registered pause result is changed, rc, stderr,
       # stdout, start, stop, delta, echo, user_input, failed with no
       # stdout_lines/stderr_lines), so the executor's central
       # stdout_lines/stderr_lines augmentation must skip it.
       extra["_ansible_omit_command_lines"] = JSON::Any.new(true)
-      # Real 2.19.11's registered pause result order (live-verified via
+      # Ansible 2.19.11's registered pause result order (live-verified via
       # `{{ r | to_json }}`): changed, rc, stderr, stdout, start, stop,
       # delta, echo, user_input, failed. The trailing failed is the
       # executor backfill (this result carries failed unconditionally but
@@ -126,7 +126,7 @@ module Krikri
         key_order: ["changed", "rc", "stderr", "stdout", "start", "stop", "delta", "echo", "user_input"]))
     end
 
-    # Real's pause always waits for Enter when no duration is given; with
+    # Ansible's pause always waits for Enter when no duration is given; with
     # a non-interactive stdin, display.prompt_until raises
     # AnsiblePromptNoninteractive and the action warns and continues
     # immediately (pause.py's AnsiblePromptNoninteractive handler).
@@ -144,7 +144,7 @@ module Krikri
     # before both the console line and the sleep, so `seconds: 0`,
     # `minutes: 0` and any negative all announce and wait the same 1
     # second. The interrupt hint is the PROMPT's slot, not an extra line:
-    # with a prompt real prints it after the "Pausing for" line, and with
+    # with a prompt Ansible prints it after the "Pausing for" line, and with
     # no prompt it REPLACES the prompt instead - which is never written at
     # all with non-interactive stdin.
     private def pause_console(wait : Int64?, echo_note : String) : Array(JSON::Any)?
@@ -156,9 +156,9 @@ module Krikri
       console.map { |line| JSON::Any.new(line) }
     end
 
-    # Real's own `if new_module_args['prompt']` truthiness test on the
+    # Ansible's own `if new_module_args['prompt']` truthiness test on the
     # spec-converted prompt: absent, explicit None and an empty string all
-    # take real's default "Press enter to continue" prompt (which then
+    # take Ansible's default "Press enter to continue" prompt (which then
     # becomes the interrupt hint instead of being printed).
     private def prompt_given? : Bool
       prompt = @params["prompt"]?

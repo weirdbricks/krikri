@@ -17,7 +17,7 @@ require "base64"
 # and SSH connections both work without any new plumbing.
 #
 # Deliberately scoped to role-private `library/` directories and the
-# playbook-adjacent `library/` (real Ansible's two most common search
+# playbook-adjacent `library/` (Ansible's two most common search
 # roots); third-party COLLECTION modules (bodsch.*, community.*) are
 # still the unchanged scope cut - those live inside installed
 # collections on the comparison side, not in the playbook tree this
@@ -33,9 +33,9 @@ module Krikri
     end
 
     # Finds a role-private module source for *module_name*, or nil.
-    # Search roots mirror real Ansible's two most-used locations: the
+    # Search roots mirror Ansible's two most-used locations: the
     # current role's own `library/` and the playbook-adjacent
-    # `library/`. First match wins (real Ansible's own nearest-first
+    # `library/`. First match wins (Ansible's own nearest-first
     # order).
     #
     # Takes the role's ROOT directory directly (`task.role_path`, always
@@ -49,7 +49,7 @@ module Krikri
     # to "unavailable modules" - the exact scope cut 0.9.819 was
     # supposed to have already closed for role-private modules. Found
     # re-testing linux-system-roles.storage/logging/timesync.
-    # Extensions real Ansible's legacy module finder never matches a
+    # Extensions Ansible's legacy module finder never matches a
     # module name against (ansible-core's MODULE_IGNORE_EXTS). A role
     # shipping a DOCUMENTATION stub next to its script -
     # linux-system-roles.timesync's library/timesync_provider.yml beside
@@ -67,18 +67,18 @@ module Krikri
       roots.each do |root|
         candidate = File.join(root, "#{short}.py")
         return candidate if File.file?(candidate)
-        # Extensionless module file - real Ansible's own action-plugin
+        # Extensionless module file - Ansible's own action-plugin
         # module finder accepts any file in library/ regardless of
         # extension (the shebang line determines the interpreter;
         # kunik.deploy-metadata's own library/deployment_facts has no
-        # .py extension and real ansible-playbook ran it fine).
+        # .py extension and ansible-playbook ran it fine).
         extensionless = File.join(root, short)
         return extensionless if File.file?(extensionless)
-        # Any OTHER extension: real Ansible's legacy module finder indexes
+        # Any OTHER extension: Ansible's legacy module finder indexes
         # every file in the search dir by its basename-minus-extension,
         # excluding only MODULE_IGNORE_EXTS (ansible-core loader.py
         # _find_plugin) - so library/timesync_provider.sh IS the
-        # timesync_provider module. Round 970350: real ansible-playbook
+        # timesync_provider module. Round 970350: ansible-playbook
         # ran linux-system-roles.timesync's shell module fine while this
         # engine - matching only .py or extensionless - found no source
         # and skipped the task ("Determine current NTP provider": ok on
@@ -92,10 +92,10 @@ module Krikri
     end
 
     # A role (or the playbook tree) shipping its OWN custom module_utils
-    # packages - e.g. linux-system-roles.storage's the real module
+    # packages - e.g. linux-system-roles.storage's the Ansible module
     # beside its library/blivet.py, which does `from
     # ansible.module_utils.storage_lsr.argument_validator import
-    # validate_parameters`. Real Ansible's AnsiballZ wrapper bundles the
+    # validate_parameters`. Ansible's AnsiballZ wrapper bundles the
     # role's own module_utils tree into the zipapp alongside the module
     # source so the import resolves; this runner previously uploaded only
     # the ONE module source file, so the import died with a plain Python
@@ -134,7 +134,7 @@ module Krikri
       files
     end
 
-    # Real Ansible's own new-style detection (ansiballz): a module
+    # Ansible's own new-style detection (ansiballz): a module
     # importing ansible.module_utils gets its args as a JSON dict (via
     # the ANSIBLE_MODULE_ARGS env var its basic.py reads when no argv
     # is given); everything else is old-style key=value argv.
@@ -144,7 +144,7 @@ module Krikri
         source.includes?("ansible.module_utils.basic")
     end
 
-    # Real Ansible refuses to ship a module payload whose first line is
+    # Ansible refuses to ship a module payload whose first line is
     # not a `#!` interpreter line: ActionBase._execute_module's
     # `if not module_shebang and module_style != 'binary'` guard raises
     # "module (name) is missing interpreter line" as a controller-side
@@ -164,7 +164,7 @@ module Krikri
     # stringified by the parser) re-typed as JSON where they parse -
     # the parser JSON-encodes list/dict-valued params verbatim, so
     # `"['a','b']"` becomes a real array for the module, the way real
-    # Ansible passes typed args. Plus real Ansible's own reserved
+    # Ansible passes typed args. Plus Ansible's own reserved
     # `_ansible_*` keys a new-style module's AnsibleModule reads.
     def build_module_args(params : Hash(String, String), check_mode : Bool) : String
       args = Hash(String, JSON::Any).new
@@ -191,7 +191,7 @@ module Krikri
       params.reject { |key, _| key.in?("check_mode", "diff_mode", "_verbosity", "_environment") }
         .map do |key, value|
           # A parser-marked non-string YAML literal serializes the way
-          # real's str() would (bools as True/False) - see
+          # Ansible's str() would (bools as True/False) - see
           # NON_STRING_PARAM_PREFIX.
           if native = Krikri.non_string_scalar(value)
             "#{key}=#{Krikri.python_str_scalar(native)}"
@@ -207,13 +207,13 @@ module Krikri
         # A whole-value `{{ list_var }}`/`{{ dict_var }}` container arg
         # arrives as the double-quoted JSON the wire serialized it to
         # (see substitute_task_params's whole-single-span comment) - a
-        # real Ansible module arg keeps the referenced value's native
+        # Ansible module arg keeps the referenced value's native
         # type for a whole-span template (live-verified vs
         # ansible-playbook 2.19.11: `apt: name: "{{ pkg_list }}"` with a
         # real list var looks up the clean elements), so parse it back
         # into a real container here the same way. ONLY valid JSON,
         # though - never a Python-repr repair pass: a value that merely
-        # LOOKS like a container is a plain STRING in real ansible-core
+        # LOOKS like a container is a plain STRING in ansible-core
         # (live-verified, see apt.cr's parse_package_names).
         parsed = begin
           JSON.parse(stripped)
@@ -233,17 +233,17 @@ module Krikri
 
     # The `ansible/module_utils` bundle a new-style module's
     # `from ansible.module_utils.basic import AnsibleModule` import needs.
-    # Real Ansible never relies on ansible-core being installed on the
+    # Ansible never relies on ansible-core being installed on the
     # target - the AnsiballZ wrapper bundles module_utils INTO the module
     # payload it ships - so every new-style role-private module runs on
     # any target with a python3. This engine runs the raw module script
     # instead, so on a target with no ansible-core installed the import
     # died with ModuleNotFoundError and the module printed no result JSON
-    # ("MODULE FAILURE") - hard-FAILING the task where real Ansible ran
+    # ("MODULE FAILURE") - hard-FAILING the task where Ansible ran
     # it successfully (found via newrelic.newrelic-infra's own
     # "Setup agent config *NIX" task: the role ships its own
     # library/merge_yaml.py, which took the py_module path and failed on
-    # every fresh target while real ansible-playbook succeeded). The shim
+    # every fresh target while ansible-playbook succeeded). The shim
     # covers what corpus role-private modules actually use - params
     # parsing/validation against argument_spec (with type coercion,
     # defaults, aliases, required), check_mode, exit_json/fail_json,
@@ -422,7 +422,7 @@ module Krikri
           # found + required fails via fail_json like real basic.py;
           # not required raises ValueError for the caller to catch
           # (systemd_units via linux-system-roles.systemd calls it
-          # with neither, and real ansible-playbook still succeeds
+          # with neither, and ansible-playbook still succeeds
           # there because systemctl is found).
           def get_bin_path(self, arg, required=False, opt_dirs=None):
               paths = []
@@ -465,7 +465,7 @@ module Krikri
     # sys.path - so the shim shadows any installed ansible-core exactly
     # when it's written, and the import resolves to it instead of dying
     # with ModuleNotFoundError. Written ONLY for a target where the probe
-    # import failed (see py_module.cr): where real ansible-core IS
+    # import failed (see py_module.cr): where ansible-core IS
     # installed the module keeps running against the real basic.py,
     # unchanged from pre-shim behavior.
     def self.write_module_utils_bundle(work_dir : String) : Nil
@@ -529,17 +529,17 @@ module Krikri
       PYTHON
 
     # In modern ansible-core the real text-conversion implementation
-    # moved from `the real module` to
-    # `the real module` - `_text` remains
+    # moved from `the Ansible module` to
+    # `the Ansible module` - `_text` remains
     # only as a deprecated re-export shim - and newer roles import the
     # new path directly. bodsch.users' own library/multi_users.py does
     # exactly that (`from ansible.module_utils.common.text.converters
     # import to_native`, round 813275) and died with
     # ModuleNotFoundError: No module named 'ansible.module_utils.common'
-    # on a target without ansible-core, while real Ansible - which ships
+    # on a target without ansible-core, while Ansible - which ships
     # both paths - succeeded on the same task. So this file ships
     # alongside _text.py, self-contained rather than importing from it,
-    # since role code may import either path (or both) and real Ansible
+    # since role code may import either path (or both) and Ansible
     # keeps both importable. Same to_bytes/to_text/to_native surface and
     # the same surrogateescape mapping of the Ansible error-handler
     # spellings as the _text shim above.
@@ -577,7 +577,7 @@ module Krikri
 
     # Parses the module's stdout into its result JSON: real modules
     # print a JSON object (pretty or single-line), possibly preceded by
-    # other output (warnings, prints) that real Ansible also strips.
+    # other output (warnings, prints) that Ansible also strips.
     # Walks backwards from the end for the first offset where a JSON
     # object parse succeeds.
     def parse_module_output(stdout : String) : JSON::Any?

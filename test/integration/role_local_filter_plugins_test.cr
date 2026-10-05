@@ -1,12 +1,12 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real Ansible loads a role's own `filter_plugins/*.py` (Python files
+# Ansible loads a role's own `filter_plugins/*.py` (Python files
 # exposing a FilterModule class whose filters() method returns a
 # {filter_name: callable} dict) on the CONTROLLER the same way it loads
 # role-private `library/*.py` modules - krikri had no equivalent for
 # filters at all before this, so any task referencing one hard-failed
-# with "No filter named 'X'." where real Ansible resolved and ran it.
+# with "No filter named 'X'." where Ansible resolved and ran it.
 # Found via stackhpc.luks's own `luks_key` and MichaelRigart.interfaces's
 # `bond_check`. See PythonFilterRunner for the mechanism (delegates to
 # the controller's own python3; every failure degrades to the plain
@@ -216,7 +216,7 @@ describe "role-local filter_plugins/*.py custom filters" do
   it "still hard-fails a genuinely unknown filter behind a leading paren instead of degrading to 'undefined'" do
     # The other half of the paren-path gate: with no filter_plugins
     # source defining the name, the expression must fail the task with
-    # real Ansible's wording - not silently collapse to the
+    # Ansible's wording - not silently collapse to the
     # "undefined" sentinel the fallback path used to produce.
     root = File.tempname("filter-plugins-paren-unknown")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
@@ -267,7 +267,7 @@ describe "role-local filter_plugins/*.py custom filters" do
   end
 
   it "passes a context stub as the first argument to a @pass_context-decorated filter (round 952562, stackhpc.luks)" do
-    # Real Jinja2's @pass_context makes Jinja auto-inject a Context as
+    # Jinja2's @pass_context makes Jinja auto-inject a Context as
     # the FIRST positional argument, ahead of the piped value - so
     # `{{ item | luks_key }}` calls `luks_key(context, item)`. krikri
     # used to call the function with just the piped value, putting the

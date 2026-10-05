@@ -38,11 +38,11 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # Real bug found benchmarking geerlingguy.nginx: role defaults/main.yml
     # commonly defines a var whose *value* is itself more Jinja -
     # `nginx_worker_processes: '"{{ ansible_processor_vcpus | default(
-    # ansible_processor_count) }}"'` - relying on real Ansible's own
+    # ansible_processor_count) }}"'` - relying on Ansible's own
     # recursive re-templating of every variable value wherever it's used,
     # including inside a real .j2 template FILE (not just a plain task
     # param `{{ }}`, which VarSubstitutor#substitute already handles via
-    # its own multi-pass loop). Real Jinja2 itself has no such recursive
+    # its own multi-pass loop). Jinja2 itself has no such recursive
     # behavior - a variable's string value is just a string to it - so
     # `{{ nginx_worker_processes }}` in nginx.conf.j2 rendered the
     # literal, still-unparsed inner `{{ ... }}` text straight into the
@@ -98,7 +98,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # Real bug found benchmarking robertdebock.functions (round 116):
     # the vendored Crinja fork's wordwrap filter chopped the source
     # line into fixed-width character chunks unconditionally, giving a
-    # completely different output shape than real Ansible's own
+    # completely different output shape than Ansible's own
     # wordwrap (which calls Python's textwrap.wrap - greedy whole-word
     # packing, only breaking within a word when it alone exceeds
     # width). Fixed upstream in the Crinja fork (crystal-play-0.9.11).
@@ -190,7 +190,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # }}/conf/{% endif %}`, used inside `command: "cp -r {{
     # solr_default_core_path }} {{ solr_home }}/data/{{ item }}/"` -
     # the space between the two cp arguments sits right after `{%
-    # endif %}` with no newline before the next `{{ }}`. Real Jinja2's
+    # endif %}` with no newline before the next `{{ }}`. Jinja2's
     # trim_blocks only ever removes a newline immediately following a
     # block tag - it should do nothing when there's no newline there.
     # Crinja's own StringTrimmer.trim, when the text segment right
@@ -218,7 +218,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # audit-rule template: `{% if vars['security_rhel7_audit_' +
     # command_sanitized] | bool %}` (picking which of ~40 individually-
     # named enable/disable flags applies to the audit rule currently
-    # being rendered) - real Ansible's own `vars` magic variable, a dict
+    # being rendered) - Ansible's own `vars` magic variable, a dict
     # of the whole current scope, entirely absent before ("vars is
     # undefined" failed the whole template render outright).
     v = Hash(String, JSON::Any).new
@@ -258,7 +258,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render("{{ false | ansible.builtin.ternary('YES', 'NO') }}").must_equal("NO")
   end
 
-  it "ternary returns the third (none_val) argument for a null condition, like real Ansible" do
+  it "ternary returns the third (none_val) argument for a null condition, like Ansible" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
@@ -269,13 +269,13 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
   it "renders a comma directly after a no-parens filter inside a call's arguments" do
     # Real bug found benchmarking rolehippie.nullmailer (round 811337):
     # its `remotes.j2` contains an inline ternary whose true-branch is
-    # `' --port=' + nullmailer_port | string` - real Jinja2 binds `|`
+    # `' --port=' + nullmailer_port | string` - Jinja2 binds `|`
     # tighter than binary `+`, so a COMMA legitimately lands directly
     # after the `string` filter's name, both inside a parenthesized call
     # argument list (`cond | ternary(' --port=' + port | string, '')`,
     # which template_action_plugin's own inline-ternary rewrite produces
     # for Crinja) and inside a bare tuple. Crinja's no-parenthesis call
-    # grammar (real Jinja2: at most ONE bare argument, like `is
+    # grammar (Jinja2: at most ONE bare argument, like `is
     # divisibleby 3`) mistook that COMMA for the start of an implicit
     # argument and the whole template render died with
     # "Unexpected COMMA"; the argument list must end at the COMMA.
@@ -286,7 +286,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
     renderer.render("{{ (true) | ternary(' --port=' + nullmailer_port | string, '') }}").must_equal(" --port=25")
-    # Real ansible-core evaluates both ternary branches eagerly, so a None
+    # ansible-core evaluates both ternary branches eagerly, so a None
     # operand in the unused branch still fails the render (live-verified:
     # "can only concatenate str (not \"NoneType\") to str").
     assert_raises(KrikriJinja::TemplateError) do
@@ -301,7 +301,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # style argument entirely (only `decoration=` was ever read) and
     # always fell back to the "plain" "#"-style border regardless of
     # style, producing a silently wrong (not crashing) comment banner -
-    # real Ansible's own `comment()` supports 'plain'/'erlang'/'c'/
+    # Ansible's own `comment()` supports 'plain'/'erlang'/'c'/
     # 'cblock'/'xml', each with its own decoration and (for cblock/xml)
     # distinct begin/end border lines.
     v = Hash(String, JSON::Any).new
@@ -320,7 +320,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # only special-cased false/0/nil/undefined, so an empty string was
     # truthy, and And/Or's own `op1.truthy? && op2.call.truthy?` always
     # collapsed to true here - the rendered file had a LIVE (wrong)
-    # `elasticsearch.username: ""` pair instead of real Ansible's own
+    # `elasticsearch.username: ""` pair instead of Ansible's own
     # commented-out `{% else %}` placeholder. Verified directly against
     # real Python's own jinja2.Environment, not just the real host.
     v = Hash(String, JSON::Any).new
@@ -334,8 +334,8 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
   it "renders a bare boolean as Python-style 'True'/'False', not Crystal's lowercase" do
     # Real bug found benchmarking geerlingguy.supervisor's own
     # supervisord.conf.j2: `nodaemon = {{ supervisor_nodaemon }}`
-    # (default `false`) rendered "nodaemon = false" - real Ansible's own
-    # rendered file (verified directly against real ansible-playbook)
+    # (default `false`) rendered "nodaemon = false" - Ansible's own
+    # rendered file (verified directly against ansible-playbook)
     # reads "nodaemon = False", Python's str(bool) capitalization.
     # Crinja's own Finalizer had no Bool-specific stringify overload and
     # fell through to Crystal's native lowercase Bool#to_s.
@@ -351,7 +351,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # elasticsearch-output.conf.j2: `hosts => {{
     # logstash_elasticsearch_hosts | to_json }}` - to_json was entirely
     # unimplemented, failing the whole template render. Python's own
-    # json.dumps() (what real Ansible's to_json filter wraps) defaults
+    # json.dumps() (what Ansible's to_json filter wraps) defaults
     # to ", "/": " separators, not Crystal stdlib's compact ","/":" -
     # verified directly against Python's own json.dumps.
     v = Hash(String, JSON::Any).new
@@ -361,7 +361,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ {"a": 1, "b": "two"} | to_json }})).must_equal(%({"a": 1, "b": "two"}))
   end
 
-  it "renders the hash filter, real Ansible's own filter" do
+  it "renders the hash filter, Ansible's own filter" do
     # Real bug found benchmarking geerlingguy.supervisor's own
     # supervisord.conf.j2: `{SHA}{{ supervisor_password|hash('sha1') }}`
     # - Crinja raised "no filter with name \"hash\" registered", failing
@@ -393,7 +393,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     #
     # The replacement argument carries a SINGLE backslash in the template
     # source (`'\1'`, exactly what the devsec role writes): this shared
-    # environment renders inline task params, where real ansible-core
+    # environment renders inline task params, where ansible-core
     # 2.19 passes string-literal escapes through verbatim (its own
     # AnsibleLexer doubles every backslash before Jinja's decode step),
     # so the filter receives the literal characters `\1` - a working
@@ -413,7 +413,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     ).must_equal("8.9")
   end
 
-  it "renders to_nice_yaml, real Ansible's own pretty-YAML filter" do
+  it "renders to_nice_yaml, Ansible's own pretty-YAML filter" do
     # Real bug found benchmarking cloudalchemy.prometheus's own alerting-
     # rules template: `{{ prometheus_alert_rules | to_nice_yaml(indent=2,
     # sort_keys=False) }}` - to_nice_yaml was entirely unimplemented,
@@ -472,11 +472,11 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ ("a: 1\nb: 2\n" | from_yaml).b }})).must_equal("2")
   end
 
-  it "from_yaml passes an already-structured (non-string) value through unchanged, matching real Ansible" do
+  it "from_yaml passes an already-structured (non-string) value through unchanged, matching Ansible" do
     # Found via christiangda.awscli_configure: `awscliconf_valid_
     # credentials_file | from_yaml`, where that variable had already
     # resolved to a real list (from a role default, not a literal YAML
-    # string). Real Ansible's own from_yaml filter (unlike from_json,
+    # string). Ansible's own from_yaml filter (unlike from_json,
     # confirmed live against ansible-core 2.19.12) only calls
     # yaml.safe_load when its input IS a string - any other type
     # returns as-is. Stringifying a real list/dict to Python-repr text
@@ -489,7 +489,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ mylist | from_yaml }})).must_equal("[{'a': 1}]")
   end
 
-  it "renders to_yaml, real Ansible's own filter (sorted keys, block style)" do
+  it "renders to_yaml, Ansible's own filter (sorted keys, block style)" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
 
@@ -511,7 +511,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ [1, 2, 3] | union(other) }})).must_equal("[1, 2, 3, 4]")
   end
 
-  it "renders is subset / is superset / is contains, real Ansible's own tests" do
+  it "renders is subset / is superset / is contains, Ansible's own tests" do
     v = Hash(String, JSON::Any).new
     v["small"] = JSON.parse(%(["a", "b"]))
     v["big"] = JSON.parse(%(["a", "b", "c"]))
@@ -570,7 +570,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
   end
 
   it "renders lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
-    # Round 849, bimdata.ferm: real Ansible's template lookup plugin
+    # Round 849, bimdata.ferm: Ansible's template lookup plugin
     # merges template_vars=dict(...) into the vars available to the
     # rendered template, ON TOP of the calling context's own vars. This
     # native Crinja :lookup path (jinja_filters.cr, independent of
@@ -636,7 +636,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # config variable via `some_var: "{{ some_dict.update(other_dict)
     # }}{{ some_dict }}"` - call .update() purely for its mutating side
     # effect, discard its None return, then render the now-merged dict.
-    # Real Ansible's templar preserves this as a genuine dict
+    # Ansible's templar preserves this as a genuine dict
     # (_AnsibleLazyTemplateDict); this engine's plain string-based
     # substitution used to coerce it to unparseable Python-repr text
     # instead, so a later `{% for key, val in some_var %}` (the
@@ -850,7 +850,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # The old macro generated a runtime `:zip_longest == "zip_longest"`
     # comparison (a symbol against a string), which was always false -
     # template-side zip_longest silently behaved as zip. All shapes
-    # live-verified against real ansible-core 2.19.11.
+    # live-verified against ansible-core 2.19.11.
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     renderer.render(%({{ [1, 2] | zip_longest([3], fillvalue="-") }})).must_equal(%([[1, 3], [2, '-']]))
@@ -990,7 +990,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     # over hosts with no ansible_host silently rendered empty values
     # instead of raising, because HostVarsVarsDict#crinja_attribute only
     # raises under strict templating and a plain `{{ }}` render isn't
-    # strict. Real Ansible's extract calls getattr on the container at
+    # strict. Ansible's extract calls getattr on the container at
     # filter time and hard-fails the task with the HostVarsVars message
     # (verified live against ansible-core 2.19.11).
     v = Hash(String, JSON::Any).new
@@ -1004,7 +1004,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     end
   end
 
-  it "extract words a plain dict's morekeys miss like real Ansible" do
+  it "extract words a plain dict's morekeys miss like Ansible" do
     v = Hash(String, JSON::Any).new
     v["mapping"] = JSON.parse(%({"x": {"a": 1}}))
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
@@ -1044,7 +1044,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ ("a: 1\n---\nb: 2\n" | from_yaml_all)[1].b }})).must_equal("2")
   end
 
-  it "vault/unvault round-trip through real ansible-vault ciphertext" do
+  it "vault/unvault round-trip through Ansible-vault ciphertext" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
     encrypted = renderer.render(%({{ "plaintext" | vault("secret123") }}))
@@ -1375,7 +1375,7 @@ describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contain
     # then fed "StandardOutput=syslog" to docuum as a CLI argument, the
     # service crash-looped, and the warm rerun's state=started failed.
     # The vendored Crinja fork now parses `+` natively, so the newline
-    # must survive (real Jinja2: `{%+ ... +%}` keeps the whitespace
+    # must survive (Jinja2: `{%+ ... +%}` keeps the whitespace
     # trim_blocks/lstrip_blocks would otherwise strip on both sides).
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
@@ -1400,7 +1400,7 @@ describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contain
     # reached Crinja's vars context as a non-empty (always-truthy) STRING
     # and the nested ternary picked the first (Debian) branch on every
     # host: krikri tried to `dnf install` bsd-mailx/amavisd-new on Rocky
-    # where real ansible-playbook's templar preserves the native boolean
+    # where ansible-playbook's templar preserves the native boolean
     # and cleanly installs the RedHat list. Quoted-string repro guard:
     # buluma.bind's round-170 case above must keep its literal "3"/"True"
     # strings - only an exact unquoted True/False/None render is re-typed.
@@ -1430,7 +1430,7 @@ end
 describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape)" do
   serial! # mutates process-global state (ENV / engine settings)
 
-  # Real ansible-playbook 2.19.11 does NOT decode string-literal escapes
+  # ansible-playbook 2.19.11 does NOT decode string-literal escapes
   # in inline `{{ }}` task-arg templating: its own AnsibleLexer doubles
   # every backslash before Jinja's `unicode-escape` decode, netting exact
   # passthrough. The vendored Crinja fork (crystal-play-0.9.58) implements
@@ -1450,8 +1450,8 @@ describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape
 
   it "keeps a regex_replace backreference argument working" do
     # The replacement arg arrives as the literal characters `\1`, which is
-    # what makes it a backreference for real Ansible's regex engine
-    # (real ansible renders fooX-123-Xbar; the octal corruption used to
+    # what makes it a backreference for Ansible's regex engine
+    # (Ansible renders fooX-123-Xbar; the octal corruption used to
     # produce fooX-<0x01>-Xbar and no substitution).
     renderer.render(%q({{ 'foo123bar' | regex_replace('(\d+)', 'X-\1-X') }})).must_equal("fooX-123-Xbar")
   end
@@ -1467,7 +1467,7 @@ describe "JinjaRenderer inline string-literal escapes (round 951xxx digit-escape
   end
 
   it "still DECODES escapes inside {% %} statement literals (inline and .j2 files decode; only {{ }} passes through)" do
-    # Real ansible renders exactly `3-4` for this: the statement decoded,
+    # Ansible renders exactly `3-4` for this: the statement decoded,
     # the expression did not.
     renderer.render(%q({% set z = 'a\nb' %}{{ z | length }}-{{ 'a\nb' | length }})).must_equal("3-4")
     renderer.render(%q({% if 'a\tb' | length == 3 %}LEN3{% endif %})).must_equal("LEN3")
@@ -1478,15 +1478,15 @@ describe "out-of-range subscript strictness (differential-fuzz fix, krikri-jinja
   serial! # mutates process-global state (ENV / engine settings)
 
   # The hand-rolled evaluator always hard-failed an out-of-range list
-  # index like real Ansible ("object of type 'list' has no attribute 9"),
+  # index like Ansible ("object of type 'list' has no attribute 9"),
   # but the delegation path (JinjaRenderer#evaluate_value!) rendered the
   # lenient "undefined" sentinel because the engine mapped a failed
   # subscript to its lenient chainable undefined. The engine now produces
-  # a STRICT undefined with real Jinja2 3.1.6's own message for an
+  # a STRICT undefined with Jinja2 3.1.6's own message for an
   # out-of-range list/tuple index, an integer subscript of a None base,
   # any chain off those failures, and a subscript into a lazy generator
   # result - so BOTH entry points fail the task, while `| default(...)`
-  # still catches the failure the way real Ansible answers it.
+  # still catches the failure the way Ansible answers it.
   it "raises on an out-of-range list index through evaluate_value!" do
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
       {"list_ints" => JSON.parse(%([3, 1, 2]))} of String => JSON::Any)
@@ -1520,7 +1520,7 @@ end
 describe "lazy generator stringification (differential-fuzz follow-up, krikri-jinja v0.4.23)" do
   serial! # mutates process-global state (ENV / engine settings)
 
-  # Real ansible-core 2.19 materializes a lazy filter generator into a
+  # ansible-core 2.19 materializes a lazy filter generator into a
   # real list before stringification - `{{ l | unique ~ 'x' }}` renders
   # "['b', 'a']x" (live-verified), not the leaked
   # #<KrikriJinja::GeneratorValue:0x...> repr both krikri evaluators used

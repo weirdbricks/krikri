@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Regression spec for the apt plugin's install-path registered-result
-# KEY ORDER and key SET, pinned against real ansible.builtin.apt on a
+# KEY ORDER and key SET, pinned against Ansible.builtin.apt on a
 # real Ubuntu 22.04 host (krikri-role-tester rounds 992002/992003,
 # kop_firewall/kop_storage *_helper_install probes; the real side of
 # those captures is the oracle here):

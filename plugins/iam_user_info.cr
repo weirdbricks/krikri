@@ -6,7 +6,7 @@
 # iam_user_info module (round 300141: deekayen.iam_access_simulation
 # uses it; previously unavailable -> rc=4 "unavailable modules").
 #
-# Semantics matching the real module (pure read, never changed):
+# Semantics matching the Ansible module (pure read, never changed):
 # - name (user_name alias) + default path_prefix + no group ->
 #   GetUser; a missing user is an empty result, not a failure.
 # - group (group_name alias) -> the group's member list (GetGroup),

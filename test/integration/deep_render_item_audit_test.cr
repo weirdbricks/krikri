@@ -31,7 +31,7 @@ describe "loop: item whose native-type value is itself unrendered Jinja" do
           real_value: 42
         tasks:
           # Two elements, not one - a single-element list holding one
-          # bare {{ }} span is real Ansible's own with_items: flatten-
+          # bare {{ }} span is Ansible's own with_items: flatten-
           # one-level idiom (a SEPARATE mechanism, find_loop_template in
           # playbook_parser.cr) and would exercise that instead of this
           # fix.

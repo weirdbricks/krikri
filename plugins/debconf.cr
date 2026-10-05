@@ -8,21 +8,21 @@ module Krikri
   # entries. Compatible with Ansible's ansible.builtin.debconf module.
   #
   # Shells to the real `debconf-set-selections`/`debconf-show`/
-  # `debconf-get-selections` binaries, mirroring real Ansible's own
+  # `debconf-get-selections` binaries, mirroring Ansible's own
   # module exactly (it does the same - no python-apt/libdebconf binding
   # either). apt-only; these binaries don't exist on RHEL-family hosts.
   #
-  # required_together: real Ansible's module declares
+  # required_together: Ansible's module declares
   # `required_together=(['question', 'vtype', 'value'],)` - passing any
   # one of question:/vtype:/value: (aliases selection:/setting: and
   # answer:) without the other two fails with AnsibleModule's own
   # validation message, "parameters are required together: question,
-  # vtype, value" (the real module's exact
+  # vtype, value" (the Ansible module's exact
   # wording).
   #
   # Not implemented: `vtype: password`'s own idempotency read-back
   # (`get_password_value`, parsing `debconf-get-selections`'s raw tab-
-  # separated dump for a password-typed question) - real Ansible's own
+  # separated dump for a password-typed question) - Ansible's own
   # docs recommend `no_log: true` for password questions precisely
   # because the value is sensitive, and this is a narrow, rarely-hit
   # shape; a `vtype: password` task here always re-applies (`changed:
@@ -46,7 +46,7 @@ module Krikri
       value = debconf_value
       unseen = true?(@params["unseen"]?)
 
-      # Real Ansible's module declares
+      # Ansible's module declares
       # `required_together=(['question', 'vtype', 'value'],)` - if any
       # one of the three is given, ALL three must be, or AnsibleModule's
       # own validation fails with (validation.py's exact wording):
@@ -54,7 +54,7 @@ module Krikri
       # Previously only the question-side half was checked here, so
       # `vtype:`/`value:` alone (or question+value without vtype)
       # silently "succeeded" as "No question given, nothing to set"
-      # instead of failing like real Ansible.
+      # instead of failing like Ansible.
       if error = validate_question_triple(question, vtype, value)
         return error
       end
@@ -66,7 +66,7 @@ module Krikri
       apply_selection(pkg, question, vtype, value, unseen)
     end
 
-    # Real's own flow from here on: read the package's current
+    # Ansible's own flow from here on: read the package's current
     # selections, refuse a null value, compare, and only then - outside
     # check mode - build and write the debconf-set-selections line, which
     # is where a non-string `value:` literal kills the module (see
@@ -75,7 +75,7 @@ module Krikri
     private def apply_selection(pkg : String, question : String, vtype : String, value : String, unseen : Bool) : PluginResult
       prev = get_selections(pkg)
 
-      # Real's `if vtype is None or value is None` guard (debconf.py:210)
+      # Ansible's `if vtype is None or value is None` guard (debconf.py:210)
       # sits AFTER get_selections (a debconf-show failure is reported
       # first) and BEFORE the comparison: a literal `value:` with no
       # value - or a template that natively resolved to Python None - is
@@ -95,7 +95,7 @@ module Krikri
         end
       end
 
-      # Real debconf.py exit shapes (live-verified against real 2.19.11
+      # Real debconf.py exit shapes (live-verified against Ansible 2.19.11
       # via registered {{ r | to_json }} dumps in the podman container):
       # a changed selection (check mode included) exits with
       # changed,msg,current,previous,diff; an already-set rerun with
@@ -118,7 +118,7 @@ module Krikri
           msg: "parameters are required together: question, vtype, value")
       end
 
-      # Real Ansible's argument_spec restricts vtype to a choices list
+      # Ansible's argument_spec restricts vtype to a choices list
       # (debconf.py); AnsibleModule's choice check (parameters.py's
       # exact wording) fires for a full triple with a bad vtype before
       # any debconf-show/debconf-set-selections call - previously a bad
@@ -158,7 +158,7 @@ module Krikri
         msg: "when supplying a question you must supply a valid vtype and value")
     end
 
-    # The failure real's set_selection (debconf.py:179) dies with for a
+    # The failure Ansible's set_selection (debconf.py:179) dies with for a
     # `value:` that is not a Python string: it builds the line with
     # `' '.join([pkg, question, vtype, value])`, and the uncaught
     # TypeError ends the module ("Task failed: Module failed: sequence
@@ -167,7 +167,7 @@ module Krikri
     # their `type: str` spec converts an int literal to its text, and
     # only `value:` (`type: raw`) keeps its own type.
     #
-    # `vtype: boolean` is the one carve-out - real runs the value through
+    # `vtype: boolean` is the one carve-out - Ansible runs the value through
     # `to_text(value).lower()` for its comparison (debconf.py:214), which
     # makes ANY type a string before the join is ever reached, so an int
     # value there seeds "76" like real.
@@ -193,12 +193,12 @@ module Krikri
       join_crash(3, Krikri.python_join_type_name(native))
     end
 
-    # Real's `", ".join(value)` for a multiselect list whose members are
+    # Ansible's `", ".join(value)` for a multiselect list whose members are
     # not all strings (debconf.py:239-243), which real catches and
     # reports as its own fail_json instead of crashing. It sorts the list
     # first, so a homogeneous non-string list always names its FIRST
     # element. A list mixing strings and non-strings never gets there -
-    # real's sorted() raises its own "'<' not supported between
+    # Ansible's sorted() raises its own "'<' not supported between
     # instances of ..." TypeError first, which is deliberately not
     # mirrored (the pair Python names there depends on list order).
     private def multiselect_join_failure(members : Array(JSON::Any)) : PluginResult?
@@ -221,7 +221,7 @@ module Krikri
       Krikri.non_string_list_members(raw)
     end
 
-    # The uncaught-module-crash shape real's own task executor renders:
+    # The uncaught-module-crash shape Ansible's own task executor renders:
     # the "Task failed: Module failed: " brief in the fatal msg, the bare
     # exception text in the [ERROR] block (see BasePlugin's
     # _ansible_error_detail bookkeeping, and mount's own os.makedirs('')).
@@ -233,7 +233,7 @@ module Krikri
 
     # Does the stored selection differ from the requested value?
     # Boolean questions are compared case-insensitively (debconf stores
-    # booleans lowercased; real Ansible's module normalizes the same way)
+    # booleans lowercased; Ansible's module normalizes the same way)
     private def value_differs?(prev : Hash(String, String), question : String, vtype : String, value : String) : Bool
       compare_value = vtype == "boolean" ? value.downcase : value
       existing = prev[question]?
@@ -248,7 +248,7 @@ module Krikri
 
     # `debconf-show <pkg>` prints one `[*] question: value` line per
     # known question (`*` marks it "seen") - strip the leading `*`/
-    # whitespace off the key, same as real Ansible's own `get_selections`.
+    # whitespace off the key, same as Ansible's own `get_selections`.
     private def get_selections(pkg : String) : Hash(String, String)
       result = remote_exec("debconf-show #{shell_single_quote(pkg)} 2>/dev/null")
       selections = Hash(String, String).new

@@ -23,7 +23,7 @@ describe "with_together: templated scalar sources" do
     # Round 700096/820006 (manala.accounts): with_together: was entirely
     # unimplemented - the keyword never appeared in the parser's loop
     # dispatch at all, so a task using it either errored or was silently
-    # mishandled. Real Ansible zips the sources elementwise
+    # mishandled. Ansible zips the sources elementwise
     # (itertools.zip_longest), padding shorter lists with null, with
     # access via item.0/item.1/...
     status, output = run_playbook(<<-YAML)
@@ -84,7 +84,7 @@ describe "with_together: templated scalar sources" do
   end
 
   it "iterates a literal string term one element per character" do
-    # Real ansible-core 2.19.11 (live-verified): the together lookup
+    # ansible-core 2.19.11 (live-verified): the together lookup
     # iterates each term directly as a sequence, so a literal string term
     # contributes one element per CHARACTER - `with_together: [cd, [1]]`
     # zips to [c,1] then [d,None], where krikri used to keep "cd" whole
@@ -114,7 +114,7 @@ describe "with_together: templated scalar sources" do
 
   it "zips a direct scalar source's string terms per character" do
     # The DIRECT scalar form (`with_together: "{{ var }}"`) resolves to
-    # the term LIST at runtime and real Ansible zips each term as a
+    # the term LIST at runtime and Ansible zips each term as a
     # sequence (live-verified: over combos = ["cd", [1]] it yields [c,1]
     # then [d,None]). krikri used to leave this form with no resolver at
     # all - the task ran once with `item` unbound and failed.

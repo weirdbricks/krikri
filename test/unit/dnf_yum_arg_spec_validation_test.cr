@@ -44,7 +44,7 @@ private def run_yum_raw(params_json : String) : JSON::Any
 end
 
 describe "dnf: argument-spec validation" do
-  it "rejects an out-of-spec parameter with real Ansible's message" do
+  it "rejects an out-of-spec parameter with Ansible's message" do
     result = run_dnf({"name" => "bash", "state" => "present", "krikri_not_a_dnf_param" => "true"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("Unsupported parameters for (ansible.builtin.dnf) module: krikri_not_a_dnf_param")
@@ -64,15 +64,15 @@ describe "dnf: argument-spec validation" do
     result["msg"].as_s.must_include("value of state must be one of: absent, installed, latest, present, removed, got: present-nowhere")
   end
 
-  # Real ansible-core 2.19.11, live-verified (use_backend: yum4 forced on
+  # ansible-core 2.19.11, live-verified (use_backend: yum4 forced on
   # a Debian host to reach argspec validation): each of dnf's four
   # `type: list` params given an explicit YAML null fails with the
   # generic NoneType list-conversion message, while an empty string and
   # an omitted param both coerce to an empty list and pass. Round 900905
   # officel.httpd: this engine used to silently drop the null and
-  # install the packages where real ansible-playbook failed the task.
+  # install the packages where ansible-playbook failed the task.
   {% for param in {"name", "enablerepo", "disablerepo", "exclude"} %}
-    it "rejects an explicit null {{param.id}} with real Ansible's NoneType message" do
+    it "rejects an explicit null {{param.id}} with Ansible's NoneType message" do
       params = {{param}} == "name" ? {"state" => "present"} : {"name" => "bash", "state" => "present"}
       result = run_dnf_raw(params.to_json.sub("}", ", \"{{param.id}}\":null}"))
       result["failed"].as_bool.must_equal(true)
@@ -118,9 +118,9 @@ describe "yum: argument-spec validation" do
   # Same live-verified NoneType argspec behavior as dnf's block above -
   # yum.py shares yumdnf's argument_spec for all four `type: list`
   # params (round 900905 officel.httpd's `enablerepo: ~` loop default
-  # made real ansible-playbook fail where this engine installed on).
+  # made ansible-playbook fail where this engine installed on).
   {% for param in {"name", "enablerepo", "disablerepo", "exclude"} %}
-    it "rejects an explicit null {{param.id}} with real Ansible's NoneType message" do
+    it "rejects an explicit null {{param.id}} with Ansible's NoneType message" do
       params = {{param}} == "name" ? {"state" => "present"} : {"name" => "bash", "state" => "present"}
       result = run_yum_raw(params.to_json.sub("}", ", \"{{param.id}}\":null}"))
       result["failed"].as_bool.must_equal(true)

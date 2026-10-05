@@ -7,7 +7,7 @@ module Krikri
     # real module's match semantics are unit-testable without a
     # modprobe.d directory to write to.
     #
-    # The real module (Blacklist in kernel_blacklist.py) matches with
+    # The Ansible module (Blacklist in kernel_blacklist.py) matches with
     # `^blacklist\s+<re.escape(name)>$` against each line STRIPPED,
     # skipping lines whose stripped form starts with "#", and rewrites
     # the file as one entry per line (each newline-terminated).
@@ -28,10 +28,10 @@ module Krikri
       end
 
       # Applies state to *lines*. Returns the (possibly new) line list
-      # and whether anything changed - including the real module's
+      # and whether anything changed - including the Ansible module's
       # quirk that creating a previously-missing file counts as a
       # change on its own (state=absent against a missing file still
-      # reports changed=true in real Ansible, because the file got
+      # reports changed=true in Ansible, because the file got
       # created).
       def self.apply(lines : Array(String)?, module_name : String, state : String) : {Array(String), Bool}
         file_created = lines.nil?

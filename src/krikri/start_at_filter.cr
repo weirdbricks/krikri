@@ -26,7 +26,7 @@ module Krikri
         end
 
         if task.block?
-          # The match may sit INSIDE a block. Real Ansible flattens the
+          # The match may sit INSIDE a block. Ansible flattens the
           # play into one task list, so starting at a task inside a block
           # runs the remainder of that block (and its rescue:/always:,
           # which are kept whole once the block is entered).

@@ -21,7 +21,7 @@ module Krikri
   class YumVersionlockPlugin < BasePlugin
     YUM_BIN = "/usr/bin/yum"
 
-    # The real module matches each locklist entry against two NEVRA
+    # The Ansible module matches each locklist entry against two NEVRA
     # shapes - yum's epoch-prefixed "1:name-version-release.arch" first,
     # then dnf's "name-1:version-release.arch" (on DNF-based distros yum
     # is a symlink to dnf, whose versionlock writes the other order).
@@ -33,7 +33,7 @@ module Krikri
     NEVRA_RE_DNF = /^(?<exclude>!)?(?<name>.+)-(?<epoch>\d+):(?<version>.+)-(?<release>.+)\.(?<arch>.+)$/
 
     def execute : PluginResult
-      # Real AnsibleModule validates required/choices at construction,
+      # AnsibleModule validates required/choices at construction,
       # BEFORE the module resolves the yum binary or runs any command -
       # so an invalid invocation fails with the argument-spec message
       # even on a host without yum (real order: arg-spec validation ->
@@ -57,7 +57,7 @@ module Krikri
 
       locklist = get_versionlock_packages
 
-      # The real module only shells out for the specs that would actually
+      # The Ansible module only shells out for the specs that would actually
       # change the locklist - under `present` a spec any locklist entry
       # already matches is skipped, under `absent` only matched specs go
       # to `yum versionlock delete`. Matching happens against the raw
@@ -90,7 +90,7 @@ module Krikri
       nil
     end
 
-    # Mirrors the real module's C(get_versionlock_packages): rc 0 returns
+    # Mirrors the Ansible module's C(get_versionlock_packages): rc 0 returns
     # stdout; the yum-plugin-versionlock-not-installed case is rc 1 with
     # "No such command:" on stderr (upstream's match is the mid-word
     # "o such command:" - kept verbatim); anything else fails with
@@ -104,7 +104,7 @@ module Krikri
       raise YumVersionlockError.new("Error: #{result[:errout]}#{result[:output]}")
     end
 
-    # Mirrors the real module's C(ensure_state): one `-q` invocation for
+    # Mirrors the Ansible module's C(ensure_state): one `-q` invocation for
     # all specs; stdout carrying "No package found for" fails even with
     # rc 0 - yum reports a spec it could not resolve that way and exits
     # successfully (checked BEFORE the rc, as upstream does).
@@ -116,7 +116,7 @@ module Krikri
       end
     end
 
-    # The real module's module-level C(match): a locklist entry matches a
+    # The Ansible module's module-level C(match): a locklist entry matches a
     # requested spec when its parsed package name globs against the spec
     # (fnmatch, so wildcard specs like "httpd-*" work) OR the entry
     # stripped of its trailing ".*" wildcard equals the spec verbatim.

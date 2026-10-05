@@ -1,13 +1,13 @@
 require "../minitest_helper"
 require "file_utils"
 
-# meta/argument_specs.yml required-ness: real ansible-core applies spec
+# meta/argument_specs.yml required-ness: ansible-core applies spec
 # defaults with set_default=False before check_required_arguments
-# (the real module _set_defaults), so only a default
+# (the Ansible module _set_defaults), so only a default
 # whose value is not None stands in for a missing option - `default: null`
 # alongside `required: true` still fails. Found via round 979000
 # (robertdebock.vault_agent): its vault_agent_address is `required: true,
-# default: null`, real ansible-playbook failed the synthesized "Validating
+# default: null`, ansible-playbook failed the synthesized "Validating
 # arguments against arg spec 'main'" task immediately with
 # {"argument_errors": ["missing required arguments: vault_agent_address"]},
 # while this engine treated the null default as a provided value, passed

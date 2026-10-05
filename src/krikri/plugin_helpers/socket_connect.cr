@@ -4,7 +4,7 @@ require "uri"
 module Krikri
   module PluginHelpers
     # SocketConnect - TCP connect helpers that report the error the kernel
-    # actually recorded, plus the Python-shaped text real Ansible's messages
+    # actually recorded, plus the Python-shaped text Ansible's messages
     # are built from.
     #
     # Why this exists: Crystal 1.21.1's polling event loop
@@ -89,13 +89,13 @@ module Krikri
 
       # Python's `str(OSError)`: "[Errno 111] Connection refused". Built from
       # the same libc strerror Python's os.strerror uses, so the text matches
-      # real Ansible's on the same host.
+      # Ansible's on the same host.
       def self.python_error_text(errno : Errno) : String
         "[Errno #{errno.value}] #{errno.message}"
       end
 
       # Python's exception class for an OSError carrying `errno` - the part
-      # real's messages put in parentheses (dnspython's OSError shape for
+      # Ansible's messages put in parentheses (dnspython's OSError shape for
       # nsupdate, urlopen's URLError text for uri/get_url).
       def self.python_exception_name(errno : Errno) : String
         case errno

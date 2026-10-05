@@ -1,8 +1,8 @@
 require "../minitest_helper"
 
 # Pins plugins/java_cert.cr's keytool probe against real
-# community.general.java_cert (live-diffed vs real ansible-playbook
-# 2.19.11 in the no-java container): real's test_keytool runs
+# community.general.java_cert (live-diffed vs ansible-playbook
+# 2.19.11 in the no-java container): Ansible's test_keytool runs
 # module.run_command([executable], check_rc=True) BEFORE any openssl use
 # (the openssl get_bin_path resolution is deferred to first use), so a
 # missing keytool surfaces the raw run_command OSError shape.

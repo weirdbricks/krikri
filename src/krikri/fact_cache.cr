@@ -1,7 +1,7 @@
 require "json"
 
 module Krikri
-  # Real Ansible's `fact_caching` support (`ANSIBLE_CACHE_PLUGIN`/
+  # Ansible's `fact_caching` support (`ANSIBLE_CACHE_PLUGIN`/
   # `ANSIBLE_CACHE_PLUGIN_CONNECTION` env vars - no ansible.cfg INI
   # parsing exists in this engine, matching the established pattern
   # elsewhere, e.g. ssh_manager.cr's own host_key_checking handling).
@@ -11,7 +11,7 @@ module Krikri
   # since @facts already IS that in-run cache; `redis`/`memcached`
   # would need real client libraries this project doesn't carry).
   #
-  # Real Ansible only ever CONSULTS the cache under `gathering: smart`
+  # Ansible only ever CONSULTS the cache under `gathering: smart`
   # (or explicit + a play that skips gather_facts:) - `gathering:
   # implicit` (the default) always re-gathers regardless of a
   # configured cache, verified live against ansible-core 2.19.12: a
@@ -19,11 +19,11 @@ module Krikri
   # `setup.py` every play. So this module is only ever consulted from
   # the executor's existing `@smart_gathering` path (see
   # `gather_facts_for_all_hosts`), never for implicit/explicit
-  # gathering - that mirrors real Ansible's own gating rather than
+  # gathering - that mirrors Ansible's own gating rather than
   # reintroducing a second, independent on/off switch.
   module FactCache
-    # Matches real Ansible's `fact_caching_timeout` default (24h, in
-    # seconds). `0` means never expire, same as real Ansible.
+    # Matches Ansible's `fact_caching_timeout` default (24h, in
+    # seconds). `0` means never expire, same as Ansible.
     DEFAULT_TIMEOUT = 86400
 
     def self.enabled? : Bool
@@ -43,7 +43,7 @@ module Krikri
       ENV["ANSIBLE_CACHE_PLUGIN_TIMEOUT"]?.try(&.to_i?) || DEFAULT_TIMEOUT
     end
 
-    # Real Ansible's jsonfile cache plugin uses the cache key (here,
+    # Ansible's jsonfile cache plugin uses the cache key (here,
     # the inventory host name) directly as the filename - no hashing or
     # sanitization beyond what the filesystem itself enforces.
     private def self.path_for(host_name : String) : String
@@ -54,7 +54,7 @@ module Krikri
       # Guard the filename: a host name from a dynamic inventory's
       # hostvars keys / add_host: containing "/" or being "." / ".."
       # would escape the cache dir and write attacker-influenced JSON
-      # elsewhere. (Real Ansible has the same shape; we sanitize instead
+      # elsewhere. (Ansible has the same shape; we sanitize instead
       # of inheriting it.)
       safe = host_name.gsub('/', '_')
       safe = "_dot_" if safe.empty? || safe == "." || safe == ".."
@@ -86,7 +86,7 @@ module Krikri
 
     # Persists *facts* for *host_name*. Best-effort: a cache write
     # failure (unwritable connection dir, disk full, ...) must never
-    # fail the play - real Ansible's own fact-cache writes are equally
+    # fail the play - Ansible's own fact-cache writes are equally
     # non-fatal.
     def self.write(host_name : String, facts : Hash(String, JSON::Any)) : Nil
       return unless enabled?

@@ -54,13 +54,13 @@ module Krikri
           rescue ex : FirstFoundLookupError | UndefinedVariableError
             # The generic lookup `errors='ignore'` option: same
             # empty-result tolerance the query()/with_ path already
-            # honors (real Ansible swallows the lookup error - a plain
+            # honors (Ansible swallows the lookup error - a plain
             # lookup renders EMPTY, not "[]").
             return "" if first_found_errors_ignore?(kwargs)
             raise ex
           end
         when "env"
-          # lookup('env', 'VAR_NAME') - real Ansible's own env lookup
+          # lookup('env', 'VAR_NAME') - Ansible's own env lookup
           # plugin, reads an environment variable from the CONTROLLER
           # (not the target - this always runs on the controller side,
           # same as first_found above). Entirely unimplemented before -
@@ -68,7 +68,7 @@ module Krikri
           # guard, always "undefined" regardless of the real env var.
           # Found via ansible-community.ansible-vault's own `vault_
           # version: "{{ lookup('env', 'VAULT_VERSION') | default(
-          # '2.0.3', true) }}"` - real Ansible's own env lookup returns
+          # '2.0.3', true) }}"` - Ansible's own env lookup returns
           # an empty string for an unset var (not an error), which is
           # what makes the `default(..., true)` fallback actually kick
           # in; "undefined" is a non-empty string, so default() never
@@ -89,7 +89,7 @@ module Krikri
 
       private def lookup_config(parts : Array(String), kwargs : Array(String)) : String
         # lookup('config', 'OPTION'[, 'OPTION2', ...], wantlist=True) -
-        # real Ansible's own config lookup plugin, returns the current
+        # Ansible's own config lookup plugin, returns the current
         # value of one or more ansible.cfg / ANSIBLE_* settings from the
         # CONTROLLER. Multi-arg form with wantlist=True returns a real
         # list (buluma.multi's own `loop: "{{ lookup('config', 'COLOR_OK',
@@ -113,7 +113,7 @@ module Krikri
 
       private def lookup_inventory_hostnames(parts : Array(String), kwargs : Array(String), query_mode : Bool = false) : String
         # lookup('inventory_hostnames', pattern[, pattern2, ...],
-        # wantlist=True) - real Ansible's own inventory_hostnames lookup
+        # wantlist=True) - Ansible's own inventory_hostnames lookup
         # plugin. Previously unimplemented (fell through to "undefined"),
         # the standard cross-group orchestration idiom (`delegate_to:
         # "{{ lookup('inventory_hostnames', 'kube-master[0]') }}"`,
@@ -127,12 +127,12 @@ module Krikri
         # `groups` magic var is already in every task's vars context
         # (TaskExecutor#build_vars_context), so this needs no inventory
         # plumbing at all. Pattern semantics behavior matched to
-        # the real module: comma-separated (colon
+        # the Ansible module: comma-separated (colon
         # fallback) terms, `&` intersection / `!` exclusion applied after
         # the regular terms, fnmatch glob over group names first and host
         # names only when no group matched (or the pattern carries glob
         # metacharacters), `~`-prefixed raw regexes, `[N]`/`[A:B]`
-        # subscripts (the range is INCLUSIVE of B, real Ansible's
+        # subscripts (the range is INCLUSIVE of B, Ansible's
         # hosts[start:end + 1]), and a no-match result that is an empty
         # list - the real lookup swallows its own AnsibleError and
         # returns [], never failing the task.
@@ -158,8 +158,8 @@ module Krikri
         # scalar when the caller asked for a scalar AND got something -
         # an EMPTY result stays a real empty list ([]), both for lookup()
         # and query() (verified: lookup('inventory_hostnames',
-        # 'nosuchgroup') renders [] in real ansible-core 2.19.4's msg,
-        # not an empty string). query() is real Ansible's list-forcing
+        # 'nosuchgroup') renders [] in ansible-core 2.19.4's msg,
+        # not an empty string). query() is Ansible's list-forcing
         # sibling: it returns the real list even without wantlist=True
         # (with_items/query loops must iterate hosts, not one joined
         # string) - the same convention lookup_url already follows for
@@ -172,7 +172,7 @@ module Krikri
       # the pattern matcher works over: every named group as-is, `all` =
       # the full host list (or the deduped union when the var lacks it),
       # and `ungrouped` = the var's own value when present, else every
-      # host in no named group - real Ansible's own groups magic var
+      # host in no named group - Ansible's own groups magic var
       # always carries both implicit groups.
       private def inventory_groups_from_vars(groups : Hash(String, JSON::Any)) : Hash(String, Array(String))
         named = Hash(String, Array(String)).new
@@ -271,7 +271,7 @@ module Krikri
         return matching_groups.flat_map { |name| groups[name] } if matching_groups.size > 0
 
         # No group matched, or the pattern carries glob metacharacters -
-        # real Ansible also checks host names in that case (its own
+        # Ansible also checks host names in that case (its own
         # "pattern might match host" branch).
         host_regex = fnmatch_regex(pattern)
         (groups["all"] || [] of String).select { |host| host_regex.matches?(host) }
@@ -353,7 +353,7 @@ module Krikri
       end
 
       private def lookup_url(parts : Array(String), kwargs : Array(String)) : String
-        # lookup('url', url_expr, wantlist=True) - real Ansible's own
+        # lookup('url', url_expr, wantlist=True) - Ansible's own
         # url lookup plugin, fetching a URL from the CONTROLLER (same
         # controller-side rule as env/first_found above). Entirely
         # unimplemented before - fell through to "undefined", so
@@ -371,7 +371,7 @@ module Krikri
         url = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless url
 
-        # Real Ansible's `lookup()` Jinja function only returns a real
+        # Ansible's `lookup()` Jinja function only returns a real
         # LIST when the call site explicitly passes `wantlist=True` -
         # otherwise it comma-joins the plugin's own (always-list)
         # result into a single plain STRING. `fetch_url_lines` always
@@ -391,7 +391,7 @@ module Krikri
       end
 
       private def lookup_vars(parts : Array(String), kwargs : Array(String)) : String
-        # lookup('vars', 'variable_name') - real Ansible's own vars
+        # lookup('vars', 'variable_name') - Ansible's own vars
         # lookup plugin: an INDIRECT variable lookup, the name itself
         # coming from an expression (commonly a computed string, e.g.
         # `lookup('vars', 'nginx_' + ansible_distribution)`) rather
@@ -405,14 +405,14 @@ module Krikri
         elsif default_kwarg = kwargs.find(&.strip.downcase.starts_with?("default="))
           # `lookup('vars', key, default=...)` - the real plugin's own
           # escape hatch for a missing key: an explicit default is
-          # rendered (real Ansible templates the option value through
+          # rendered (Ansible templates the option value through
           # the templar) and used INSTEAD of raising, so the common
           # `lookup('vars', 'pkg_' ~ distro, default='http://...')`
           # idiom keeps working. Only a missing key WITH a default
           # takes this branch - an existing key never gets here.
           evaluate(default_kwarg.split("=", 2)[1].strip)
         else
-          # Real Ansible's own vars lookup plugin raises
+          # Ansible's own vars lookup plugin raises
           # AnsibleUndefinedVariable ("No variable found with this
           # name: <key>") for a missing key with no default - it does
           # NOT fall back to a placeholder - so the whole enclosing
@@ -437,7 +437,7 @@ module Krikri
       # file) and returns its body as a JSON array of non-blank lines,
       # matching how cloudalchemy.prometheus's own `wantlist=True) |
       # list` usage then loops over each line looking for one containing
-      # a specific filename substring. Real Ansible's own url lookup
+      # a specific filename substring. Ansible's own url lookup
       # plugin has richer options (headers, auth, split_lines:) not
       # implemented here - narrowly scoped to what's actually been
       # needed so far, like several other lookup/filter gaps in this
@@ -445,7 +445,7 @@ module Krikri
       private def fetch_url_lines(url : String, redirects_left : Int32 = 5) : String
         return "undefined" if redirects_left < 0
 
-        # file:// URLs read a controller-local file - real Ansible's own
+        # file:// URLs read a controller-local file - Ansible's own
         # url lookup plugin supports the scheme through its shared
         # fetch_url helper, and it's the offline-testable form of the
         # with_url:/lookup('url', ...) checksum idiom. A missing file
@@ -474,7 +474,7 @@ module Krikri
         end
 
         unless response.success?
-          # Real Ansible's own url lookup plugin raises a hard
+          # Ansible's own url lookup plugin raises a hard
           # AnsibleError (failing the whole enclosing task, e.g. a
           # set_fact:) on ANY non-2xx response - verified against its
           # exact live error message ("Received HTTP error for <url> :
@@ -487,7 +487,7 @@ module Krikri
           # execution continue into a `with_items:` loop over a single
           # bogus "undefined" item instead of failing right at the
           # lookup, producing a real ok=/skipped= recap divergence from
-          # real Ansible even though both engines ultimately fail this
+          # Ansible even though both engines ultimately fail this
           # broken-upstream role identically overall. A raised
           # exception here propagates up through #evaluate/#substitute
           # to the task executor's own generic rescue, which converts
@@ -504,7 +504,7 @@ module Krikri
         # Genuine connection-level failures (DNS resolution, connection
         # refused, timeout) still degrade softly to "undefined" rather
         # than failing outright - only a real HTTP-level error response
-        # (raised explicitly above) matches real Ansible's hard-fail
+        # (raised explicitly above) matches Ansible's hard-fail
         # behavior; this project has no live evidence either way for
         # the connection-error case, so it's left at its prior,
         # conservative behavior rather than guessed at.

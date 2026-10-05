@@ -1,8 +1,8 @@
 # krikri - Ansible-Compatible Automation Tool
 
-**A single-binary automation tool that runs real Ansible playbooks - written in Crystal**
+**A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.1487-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.1488-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -28,8 +28,8 @@ equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
 | Open gaps and deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
 | Third-party collection modules natively ported | 62 |
 | Automated tests | 6,408 passing, 0 failures |
-| Cold run vs. real `ansible-playbook` | 2.36x faster |
-| Warm run vs. real `ansible-playbook` | 7.17x faster |
+| Cold run vs. `ansible-playbook` | 2.36x faster |
+| Warm run vs. `ansible-playbook` | 7.17x faster |
 | Fastest of the three benchmarked engines | 57 of 61 roles (93%) |
 
 ---
@@ -54,12 +54,12 @@ batched round trips make the biggest difference on **idempotent
 re-runs** - the common case for a config-management tool running on a
 schedule, where most tasks find nothing to change.
 
-A 3-way benchmark against real `ansible-playbook` and `ansible-playbook`
+A 3-way benchmark against `ansible-playbook` and `ansible-playbook`
 with the Mitogen strategy plugin, across a 100-role random sample, found
 61 roles where all three engines produced an identical successful
 outcome:
 
-| Phase | real Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
+| Phase | Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
 | Cold (total) | 2176.6s | 1246.2s | 920.6s | **2.36x faster** | **1.35x faster** |
 | Cold (median/role) | 22.04s | 11.54s | 5.32s | 3.43x faster | 1.82x faster |
@@ -171,7 +171,7 @@ The `krikri` binary is the ad-hoc counterpart of `krikri-playbook` (real
 Ansible's own `ansible`/`ansible-playbook` split): one module, one run,
 against a pattern of inventory hosts. It supports
 `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
-`-f`/`--forks`, `-l`/`--limit`, `-v`, and its output matches real ansible's
+`-f`/`--forks`, `-l`/`--limit`, `-v`, and its output matches Ansible's
 own minimal callback style (`host | SUCCESS => {...}` /
 `host | CHANGED | rc=0 >>`), not ansible-playbook's `ok: [host]` TASK-recap.
 
@@ -214,9 +214,9 @@ See [compat/README.md](compat/README.md) for what the compatibility
 harness covers and how it works.
 
 For output parity specifically, `scripts/output_parity.sh OUTDIR
-playbook.yml...` runs a playbook under real `ansible-playbook` and
+playbook.yml...` runs a playbook under `ansible-playbook` and
 `krikri-playbook` and diffs stdout, stderr and the exit code byte for byte
-(it needs a real `ansible-playbook` installed). The separate
+(it needs a `ansible-playbook` installed). The separate
 [krikri-playbook-generator](https://github.com/weirdbricks/krikri-playbook-generator)
 repo goes wider: it generates valid and deliberately mutated playbooks per
 module and compares both engines on them in fresh containers.
@@ -228,7 +228,7 @@ module and compares both engines on them in fresh containers.
 Contributions welcome! Please:
 
 1. Review the existing code structure and [KNOWN_MISSING.md](KNOWN_MISSING.md)
-2. Verify any Ansible-compatibility claims against real `ansible-playbook`
+2. Verify any Ansible-compatibility claims against `ansible-playbook`
    output, not just documentation
 3. Test your changes thoroughly (`scripts/minitest.sh`, and `compat/run.cr` for
    plugin behavior changes)

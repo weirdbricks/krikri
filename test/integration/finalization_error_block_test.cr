@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Task-arg finalization failures on tasks WITHOUT a name: (the task origin is
-# the module key line itself, so real prints two levels), free-form command
+# the module key line itself, so Ansible prints two levels), free-form command
 # args reported as _raw_params, action-only modules without a `changed` key,
 # and Python-typed attribute errors. Live-compared byte for byte with real
 # ansible-playbook 2.19.11 via scripts/output_parity.sh on the same playbook.

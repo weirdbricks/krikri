@@ -12,7 +12,7 @@ require "../../src/krikri/template_action_plugin"
 # "StandardOutput=syslog" to docuum as a CLI argument, the service
 # exited instantly and crash-looped into the start-limit `failed` state,
 # and the WARM rerun's `systemd: state=started` failed outright while
-# real Ansible reported ok. The vendored Crinja fork now parses `+`
+# Ansible reported ok. The vendored Crinja fork now parses `+`
 # natively, so the workaround is strictly a regression - this spec pins
 # the full plugin path (template: action, real file, trim_blocks on) to
 # the correct newline-preserving behavior.

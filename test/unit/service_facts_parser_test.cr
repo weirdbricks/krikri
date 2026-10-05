@@ -88,8 +88,8 @@ describe "Krikri::PluginHelpers::ServiceFactsParser (systemd unit parsing)" do
         .must_equal({state: "stopped", status: "not-found"})
     end
 
-    it "scans every field but the last, matching real Ansible's own `fields[:-1]`" do
-      # Deliberately NOT "ignores the description": real Ansible excludes
+    it "scans every field but the last, matching Ansible's own `fields[:-1]`" do
+      # Deliberately NOT "ignores the description": Ansible excludes
       # only the FINAL field, so a bad-state word earlier in a
       # multi-word description does get picked up as a status. Verified
       # against ansible-core 2.19's own SystemctlScanService. Asserting

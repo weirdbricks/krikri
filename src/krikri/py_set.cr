@@ -1,6 +1,6 @@
 module Krikri
   # Emulation of CPython 3.13's `set` iteration order for INT elements (the
-  # order real ansible's `union` / `intersect` / `difference` /
+  # order Ansible's `union` / `intersect` / `difference` /
   # `symmetric_difference` filters return, since they are
   # `list(set(a) OP set(b))`). Small-int hashes are deterministic, so the order
   # is reproducible: it is the open-addressing table order of Objects/setobject.c

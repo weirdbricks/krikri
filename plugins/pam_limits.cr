@@ -17,7 +17,7 @@ module Krikri
   #   comment (optional): a trailing `\t#comment` on the entry's own line
   #     (matching real pam_limits.py exactly - NOT a separate line above
   #     it, and NOT applied when an existing matching entry's value is
-  #     unchanged, same as real Ansible's own idempotency check).
+  #     unchanged, same as Ansible's own idempotency check).
   #   dest (optional): target file (defaults to /etc/security/limits.conf,
   #     but dev-sec os_hardening writes to /etc/security/limits.d/...).
   #   check_mode: dry-run
@@ -25,7 +25,7 @@ module Krikri
   # A matching existing entry (same domain/type/item) is updated in place
   # (preserving its own existing comment unless a new one is given);
   # otherwise a brand new entry is always appended at the true end of the
-  # file - real Ansible's own module has no special-casing for a `# End
+  # file - Ansible's own module has no special-casing for a `# End
   # of file` marker or any other comment line anywhere in the file, it
   # just copies every existing line through unchanged and appends after.
   # Idempotent: no write when the exact entry (domain/type/item/value) is
@@ -123,8 +123,8 @@ module Krikri
       end
 
       # Transliteration of real pam_limits.py's rewrite loop. Lines keep
-      # their newlines (real reads bytes); new_comment persists across
-      # iterations exactly like the real module's own variable, including
+      # their newlines (Ansible reads bytes); new_comment persists across
+      # iterations exactly like the Ansible module's own variable, including
       # being repopulated from the last seen line's comment when the
       # comment param was omitted, and the "\t#" prefix being folded into
       # it permanently once an entry is written.
@@ -261,7 +261,7 @@ module Krikri
       result
     end
 
-    # Real AnsibleModule setup surface: required args (sorted plural
+    # AnsibleModule setup surface: required args (sorted plural
     # wording), limit_type/limit_item choices in main()'s own list
     # order, bool conversion for the three type=bool params, then
     # unsupported params - all BEFORE the dest file is touched.
@@ -315,7 +315,7 @@ module Krikri
       nil
     end
 
-    # Naming matches real ansible's backup_local() helper: <path>.
+    # Naming matches Ansible's backup_local() helper: <path>.
     # <file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~ (same convention the pamd
     # plugin uses).
     private def backup_local(path : String) : String

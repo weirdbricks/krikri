@@ -11,7 +11,7 @@ require "http/server"
 # keys), response order kept. The HTTPError leg of fetch_url (4xx/5xx
 # and 304) never populates them, so a failed result carries neither.
 # Key position: between the transmogrified response headers and msg
-# (cookies_string first, then cookies - real's info-dict insertion
+# (cookies_string first, then cookies - Ansible's info-dict insertion
 # order).
 
 COOKIE_TEST_SERVER = HTTP::Server.new do |context|
@@ -54,7 +54,7 @@ describe "uri plugin cookies" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["cookies"].as_h["a"].as_s.must_equal("1")
     result["cookies"].as_h["b"].as_s.must_equal("2")
-    # A quoted cookie value stays quoted - real's cookiejar keeps the
+    # A quoted cookie value stays quoted - Ansible's cookiejar keeps the
     # raw value (live-verified: cookies_string 'c="quoted"').
     result["cookies"].as_h["c"].as_s.must_equal("\"quoted\"")
     result["cookies_string"].as_s.must_equal("a=1; b=2; c=\"quoted\"")
@@ -96,7 +96,7 @@ describe "uri plugin cookies" do
   end
 
   it "omits both keys on a 304 success" do
-    # 304 raises urllib's HTTPError even when in status_code, so real's
+    # 304 raises urllib's HTTPError even when in status_code, so Ansible's
     # fetch_url never reaches the jar-parsing lines.
     result = PluginSpecHelper.run("uri", {"url" => "#{COOKIE_BASE}/ims-304", "status_code" => "304"})
 

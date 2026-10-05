@@ -11,7 +11,7 @@ module Krikri
     module EasyInstall
       # executable resolution: explicit absolute path wins, an explicit
       # basename is searched with the virtualenv's bin dir first, else
-      # plain "easy_install" (the real module's _get_easy_install).
+      # plain "easy_install" (the Ansible module's _get_easy_install).
       def self.resolve_executable(executable : String?, virtualenv : String?) : String
         if executable && !executable.empty?
           return executable if executable.starts_with?("/")
@@ -22,7 +22,7 @@ module Krikri
       end
 
       # arguments before the package name: --upgrade when state=latest
-      # (the real module's executable_arguments), then the installed
+      # (the Ansible module's executable_arguments), then the installed
       # probe's extra --dry-run.
       def self.state_arguments(state : String?) : String
         state == "latest" ? "--upgrade" : ""
@@ -46,7 +46,7 @@ module Krikri
         cmd
       end
 
-      # The real module's _is_package_installed: "Downloading" in the
+      # The Ansible module's _is_package_installed: "Downloading" in the
       # --dry-run output means easy_install would fetch it, i.e. it is
       # not installed.
       def self.installed?(probe_output : String) : Bool

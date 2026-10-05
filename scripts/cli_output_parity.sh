@@ -4,7 +4,7 @@
 # NON-EXECUTION command-line modes and common flags - --list-tasks,
 # --list-tags, --list-hosts, --syntax-check, -t/--skip-tags, -l/--limit,
 # --start-at-task, --forks, -e variants, missing playbook, unknown option,
-# --version, --help - against real ansible-playbook, using the fixture
+# --version, --help - against ansible-playbook, using the fixture
 # corpus under /tmp/kpg-x/cli.
 #
 #   ./scripts/cli_output_parity.sh [out-dir] [case-name ...]
@@ -15,11 +15,11 @@
 # of stdout (justification inline, per case). Three justified
 # normalizations, same class as output_parity.sh's masks:
 #
-#   * real's interpreter-discovery warning (Python-specific, krikri can
+#   * Ansible's interpreter-discovery warning (Python-specific, krikri can
 #     never emit it - stripped from both sides, a no-op for krikri)
 #
 #   * the `hosts (N):` block in --list-hosts output: real lists those
-#     hosts in Python set/hash-randomized iteration order - two real runs
+#     hosts in Python set/hash-randomized iteration order - two Ansible runs
 #     already disagree byte-for-byte (verified) - so only the ORDER is
 #     normalized (sorted) on both sides; membership is still compared.
 #

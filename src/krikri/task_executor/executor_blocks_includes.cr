@@ -12,7 +12,7 @@ module Krikri
       return unless failed
       failed_task, failed_result = failed
       task_view = Hash(String, JSON::Any).new
-      # An unnamed task's default display name is its action as written; real's
+      # An unnamed task's default display name is its action as written; Ansible's
       # ansible_failed_task.name is the empty string for it.
       unnamed = failed_task.name == (failed_task.action_name || failed_task.module_name) || failed_task.name == failed_task.module_name
       task_view["name"] = JSON::Any.new(unnamed ? "" : failed_task.name)
@@ -44,7 +44,7 @@ module Krikri
 
       skip_hosts.each do |host|
         # A block's when: is inherited by every task inside block: and
-        # always: (verified against real ansible-playbook) - rescue: is
+        # always: (verified against ansible-playbook) - rescue: is
         # left alone since it only ever runs if the block itself
         # actually failed, which can't happen when it never ran at all.
         print_skipped_tasks(task.block_tasks || [] of Task, host)
@@ -124,7 +124,7 @@ module Krikri
           # Same degrade-to-one-clean-failed-task shape as execute_task's
           # own build_vars_context rescue (0.9.885): the include_tasks:
           # statement's own `vars:` block used an unknown filter (e.g. a
-          # role-local filter like stackhpc.luks's luks_key), real Ansible
+          # role-local filter like stackhpc.luks's luks_key), Ansible
           # fails just that include task with "No filter named 'X'." -
           # nothing here caught it, so the whole process crashed out of
           # run_task_batch instead. Only THIS host fails; the rest of
@@ -150,7 +150,7 @@ module Krikri
           text = Vault.maybe_decrypt(File.read(resolved_path))
           UnsafeValues.mark_yaml_text(text)
           yaml = YAML.parse(text)
-          # A comment-only (or entirely blank) tasks file - real Ansible
+          # A comment-only (or entirely blank) tasks file - Ansible
           # treats this as zero tasks, not an error (ansistrano.deploy's
           # own tasks/empty.yml, deliberately shipped as a no-op include
           # target for every before_*/after_* hook point a caller
@@ -195,14 +195,14 @@ module Krikri
           propagate_role_context(task, included_tasks)
 
           # The include_tasks: task itself counts as one `ok` per host in
-          # the recap, matching real Ansible and the single-host
+          # the recap, matching Ansible and the single-host
           # execute_include_tasks path - but only once the file has
           # actually parsed. Crediting at group-assembly time (the old
           # spot) double-counted a load-time failure: an included file
           # referencing a role that isn't installed (buluma.tomcat's
           # instance.yml import_role: buluma.service, round 979000) made
           # fail_include below book failed= on top of the already-credited
-          # ok=, recapping ok=46 failed=1 where real Ansible - which
+          # ok=, recapping ok=46 failed=1 where Ansible - which
           # counts the include task as failed only - recaps ok=45 failed=1
           # (verified live against ansible-core 2.19.11).
           group_hosts.each { |host| @results[host.name]["ok"] += 1 }
@@ -213,7 +213,7 @@ module Krikri
           run_task_batch(included_tasks, group_hosts)
         rescue ex : HandlerNotFoundError
           # A notify: naming a nonexistent handler aborts the whole run
-          # (real Ansible's own behavior) - it must not be swallowed
+          # (Ansible's own behavior) - it must not be swallowed
           # into a per-task "Failed to load included tasks" failure just
           # because the notifying task came from an included file. This
           # is the one path that made the pre-0.9.600 parse-time check
@@ -221,8 +221,8 @@ module Krikri
           raise ex
         rescue ex : UnresolvedModuleError
           # Same bypass, same reason: an included file's task naming a
-          # module real Ansible can't resolve anywhere aborts the whole
-          # run (real Ansible's playbook-load check), it must not
+          # module Ansible can't resolve anywhere aborts the whole
+          # run (Ansible's playbook-load check), it must not
           # degrade to a per-task "Failed to load included tasks"
           # failure. See UnresolvedModuleError's own comment.
           raise ex
@@ -275,7 +275,7 @@ module Krikri
       "#{role_name} : "
     end
 
-    # Real ansible-playbook -vv prints `task path: <abs playbook>:<line>`
+    # ansible-playbook -vv prints `task path: <abs playbook>:<line>`
     # right after each TASK banner (and for the implicit Gathering Facts
     # task, the play's own location). Best-effort: tasks parsed without a
     # source position print nothing.
@@ -307,7 +307,7 @@ module Krikri
       # entry from the SAME vars: block wasn't visible yet, because
       # each was rendered one at a time straight against the original
       # (unmodified) vars_context. A Hash has no meaningful evaluation
-      # order to Jinja - real Ansible's per-key lazy templating lets a
+      # order to Jinja - Ansible's per-key lazy templating lets a
       # vars: entry reference another regardless of which is written
       # first in the YAML - but this did: linux-system-roles.logging's
       # own `vars:` declares `rsyslog_custom_config_files: "{{
@@ -380,10 +380,10 @@ module Krikri
       # The ROLE ROOT itself - heytrav.influxdb's own tasks/debian.yml
       # does `include_vars: file: vars/debian.yml`, i.e. the path is
       # written role-relative ("<role>/vars/debian.yml"), not relative
-      # to the vars/ dir or the including file's dir. Real Ansible's
+      # to the vars/ dir or the including file's dir. Ansible's
       # include_vars first-found search covers the role root; this
       # engine's root list didn't and the include failed with "file
-      # not found: vars/debian.yml" where real ansible-playbook
+      # not found: vars/debian.yml" where ansible-playbook
       # succeeded.
       task.role_path.try { |role_dir| roots << role_dir }
       # A relative include_vars: path in a role's own top-level tasks/
@@ -401,7 +401,7 @@ module Krikri
       # The playbook dir itself - a play-level include_vars with a bare
       # relative path (`file: vars/m4-data.yml` in a play that lives in
       # testing/perf/) resolves against the playbook's own directory in
-      # real Ansible, but this engine's roots had no playbook-dir entry,
+      # Ansible, but this engine's roots had no playbook-dir entry,
       # so the include failed with "file not found: vars/m4-data.yml"
       # whenever krikri-playbook ran from a different cwd (found live
       # via modules_data.yml).
@@ -418,15 +418,15 @@ module Krikri
         # Same degrade-to-one-clean-failed-task shape as the include_
         # tasks/include_role paths' own build_vars_context rescues: the
         # include_vars: statement's own `vars:` block used an unknown
-        # filter, real Ansible fails just that task with "No filter
+        # filter, Ansible fails just that task with "No filter
         # named 'X'." - via this file's own include_vars failure shape
         # (stats/halt/print, respecting ignore_errors:).
         finish_include_vars_failure(task, host, ex.message || "Failed to render task vars")
         return
       end
 
-      # Real's include_vars action validates its own arguments at the
-      # START of its run (the real module's validate
+      # Ansible's include_vars action validates its own arguments at the
+      # START of its run (the Ansible module's validate
       # loop), before anything is looked up: the first unknown key fails
       # the task ("<key> is not a valid option in include_vars"), then a
       # file:-style key beside a dir:-style key fails ("You are mixing
@@ -445,7 +445,7 @@ module Krikri
         finish_include_vars_arg_failure(task, host, "You are mixing file only and dir only arguments, these are incompatible")
         return
       end
-      # A truthy non-string file:/dir: crashes real's own action plugin
+      # A truthy non-string file:/dir: crashes Ansible's own action plugin
       # where it uses the value as a path (include_vars.py's
       # _find_needle('vars', source_file) and _set_root_dir's
       # os.path.join), which is AFTER the validation loop above but
@@ -466,7 +466,7 @@ module Krikri
         # result's own `warnings` key (printed by the result display,
         # suppressed under ignore_errors: - live-verified vs 2.19.11),
         # so it is NOT printed here.
-        # Real's scope assignment (`scope[self.return_results_as_name] =
+        # Ansible's scope assignment (`scope[self.return_results_as_name] =
         # results`) happens AFTER _find_needle has already failed, so a
         # truthy unhashable `name:` supersedes the null-file failure
         # with the unhashable crash (see include_vars_name_shape).
@@ -502,7 +502,7 @@ module Krikri
       # as undefined and skipped every candidate - found live
       # benchmarking linux-system-roles.storage (round 159).
       # A TEMPLATED loop: (`loop: "{{ query('first_found', params) }}"` -
-      # buluma.confluence's own style, the modern idiom real ansible
+      # buluma.confluence's own style, the modern idiom Ansible
       # roles increasingly use in place of the with_first_found: keyword
       # below) isn't a literal YAML list, so task.loop_items is nil for
       # it - resolve_loop_template (the SAME general-purpose resolver
@@ -541,7 +541,7 @@ module Krikri
         # never populated at all - this whole loop body had no register
         # handling, so `vars_result` stayed entirely unset and any later
         # reference raised "'vars_result.results' is undefined". Each
-        # entry mirrors real Ansible's own include_vars module result
+        # entry mirrors Ansible's own include_vars module result
         # shape (`ansible_facts:` holding the loaded vars, `changed:
         # false` - include_vars never mutates remote state) plus `item:`,
         # matching the generic looped-task register shape in
@@ -604,7 +604,7 @@ module Krikri
             substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
             substitutor.substitute(task.include_vars_file || "", strict: true).strip
           rescue ex : UndefinedVariableError | FirstFoundLookupError
-            # Real Ansible templates include_vars's own path strictly
+            # Ansible templates include_vars's own path strictly
             # (verified live against 2.19.4: `include_vars: "{{ users }}"`
             # with no `users` anywhere fails THIS task - "Error while
             # resolving value for '_raw_params': 'users' is undefined",
@@ -618,7 +618,7 @@ module Krikri
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
             next
           end
-          # Real's scope assignment crashes on a truthy unhashable `name:`
+          # Ansible's scope assignment crashes on a truthy unhashable `name:`
           # after the per-item path lookup, superseding every file error
           # (see include_vars_name_shape); the whole task fails at the
           # first item whose path resolved.
@@ -675,7 +675,7 @@ module Krikri
           # Same ignore_errors: gap as finish_include_vars_failure's own
           # fix - a looped include_vars: (with_first_found:/loop:) that
           # fails on one of its items must count as ok+ignored under
-          # ignore_errors:, not failed, matching real Ansible.
+          # ignore_errors:, not failed, matching Ansible.
           if task.ignore_errors?
             @results[host.name]["ok"] += 1
             @results[host.name]["ignored"] += 1
@@ -712,12 +712,12 @@ module Krikri
 
       if items
         if items.empty?
-          # Real Ansible's first_found lookup plugin defaults `skip:` to
+          # Ansible's first_found lookup plugin defaults `skip:` to
           # false - with no candidate found, it raises ("The lookup
           # plugin 'first_found' failed: No file was found when using
           # first_found.") and the task FAILS, it does not silently skip.
           # `skip: true` (parsed into loop_first_found_skip) is the only
-          # thing that makes real Ansible tolerate a miss. Found live
+          # thing that makes Ansible tolerate a miss. Found live
           # benchmarking robertdebock.release on Rocky 9.6: no `CentOS-9.
           # yml`/`Rocky-9.yml` vars file exists in the role at all - real
           # ansible-playbook correctly fails at "load release_packages";
@@ -747,7 +747,7 @@ module Krikri
           vars_context[lv] = items.first
         end
       end
-      # Real Ansible prints the loop item on every result line of a
+      # Ansible prints the loop item on every result line of a
       # with_first_found: task (`ok: [host] => (item=...)`) - the found
       # candidate is the loop item, so the ok line carries its label just
       # like the looped include_vars: branch above.
@@ -758,7 +758,7 @@ module Krikri
         substitutor.scan_strict_include_vars_path(task.include_vars_file || "", task.vars)
         substitutor.substitute(task.include_vars_file || "", strict: true).strip
       rescue ex : UndefinedVariableError | FirstFoundLookupError
-        # Real Ansible fails the include_vars task ITSELF when its path
+        # Ansible fails the include_vars task ITSELF when its path
         # template references an undefined variable ("Error while resolving
         # value for '_raw_params': 'users' is undefined", rc=2 - verified
         # live against 2.19.4 with a minimal repro), it does not render the
@@ -772,7 +772,7 @@ module Krikri
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return
       end
-      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # Ansible's scope assignment crashes on a truthy unhashable `name:`
       # after _find_needle has run, superseding every file error (see
       # include_vars_name_shape).
       if unhashable = name_unhashable
@@ -803,9 +803,9 @@ module Krikri
 
       # A non-looped `include_vars: ... register: some_var` - same
       # register: gap as the looped branch above, just the plain
-      # (non-`.results`) shape real Ansible's own include_vars module
+      # (non-`.results`) shape Ansible's own include_vars module
       # returns: `{ansible_facts: {...loaded...}, changed: false}` -
-      # wrapped under the `name:` key when one is set (real's scope
+      # wrapped under the `name:` key when one is set (Ansible's scope
       # assignment).
       if register_name = task.register
         unless register_name.empty?
@@ -823,8 +823,8 @@ module Krikri
       @results[host.name]["ok"] += 1
     end
 
-    # include_vars: with `dir:` - real Ansible's directory form
-    # (the real module, verified live against
+    # include_vars: with `dir:` - Ansible's directory form
+    # (the Ansible module, verified live against
     # 2.19.4): loads every vars file under the directory, walking
     # subdirectories recursively by default (depth: 0 means UNLIMITED
     # levels - depth: 1 means top-level files only, each further level
@@ -834,7 +834,7 @@ module Krikri
     # ignore_files is a list of regexes matched end-anchored against the
     # basename, and a file whose extension isn't in `extensions:` (the
     # default yaml/yml/json) FAILS the task unless
-    # ignore_unknown_extensions: is true (real Ansible's default -
+    # ignore_unknown_extensions: is true (Ansible's default -
     # verified live: unknown extensions are a hard task failure, the
     # module's guard for skipping the role's own vars/main.yml is dead
     # code, so that file loads like any other). Same name:/register:
@@ -857,7 +857,7 @@ module Krikri
         return
       end
       name_key, name_unhashable = include_vars_name_shape(task)
-      # Real's scope assignment crashes on a truthy unhashable `name:`
+      # Ansible's scope assignment crashes on a truthy unhashable `name:`
       # after the directory checks, superseding every dir error (see
       # include_vars_name_shape).
       if unhashable = name_unhashable
@@ -952,7 +952,7 @@ module Krikri
     end
 
     # Depth-limited, sorted directory walk for dir:-mode include_vars: -
-    # mirrors real Ansible's _traverse_dir_depth (walk results sorted by
+    # mirrors Ansible's _traverse_dir_depth (walk results sorted by
     # root path, files within each dir sorted; depth 0 = unlimited, the
     # top dir itself is depth 1). `level` starts at 1 for the top dir.
     # Returns the first error message encountered, or nil when every
@@ -972,7 +972,7 @@ module Krikri
         next if ignore_patterns.any?(&.matches?(entry))
         ext = File.extname(entry).lstrip('.')
         unless extensions.includes?(ext)
-          # Real Ansible's default: an unknown-extension candidate file
+          # Ansible's default: an unknown-extension candidate file
           # fails the whole task - only ignore_unknown_extensions: true
           # skips it silently.
           next if ignore_unknown_extensions
@@ -1070,7 +1070,7 @@ module Krikri
     # truthy non-string name (int/float/bool literal) stores the facts
     # under the NATIVE key in real (Python dict key 27/True), which is
     # unreachable through every string-keyed lookup (`lookup('vars',
-    # '27')` is undefined in real 2.19.11, live-verified) - so krikri
+    # '27')` is undefined in Ansible 2.19.11, live-verified) - so krikri
     # records nothing rather than defining a string-keyed variable real
     # does not have; the register and result ansible_facts still carry
     # the wrapped key. A nil name_key (falsy or absent name) means real
@@ -1083,7 +1083,7 @@ module Krikri
     end
 
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
-      # Real Ansible's own failed_when: override applies to include_vars:'s
+      # Ansible's own failed_when: override applies to include_vars:'s
       # OWN file-not-found failure exactly as to any module result - the
       # include_vars action's failure is an ordinary task result dict real
       # Ansible runs through the same failed_when: evaluation as everything
@@ -1097,7 +1097,7 @@ module Krikri
       # nginx_docker/nginx_project: both roles' `include_vars: {file:
       # package.json, name: npm}` + `failed_when: false` (the file belongs
       # to the consumer project, not the role) halted this engine's play
-      # unconditionally where real ansible-playbook sailed on.
+      # unconditionally where ansible-playbook sailed on.
       # build_vars_context is re-run (not passed in) because this failure
       # path is reached both after it succeeded (file-not-found) and from
       # inside its own rescue (unknown filter in the vars: block) - a
@@ -1127,7 +1127,7 @@ module Krikri
       # AND `ignored`, never `failed`, and never halts the host. Found
       # via CyVerse-Ansible.ez's own "include variables ..., if error,
       # just ignore" task (`ignore_errors: yes` on a missing-file
-      # include_vars:): real Ansible's recap showed `ok=10 failed=0
+      # include_vars:): Ansible's recap showed `ok=10 failed=0
       # ignored=1`, this engine's own unconditional `failed += 1` here
       # (the only include_vars: failure path that never consulted
       # ignore_errors: at all for its OWN stats, unlike every other
@@ -1137,7 +1137,7 @@ module Krikri
 
     # The include_vars action's own argument-validation failures ("X is
     # not a valid option in include_vars", "You are mixing file only and
-    # dir only arguments, these are incompatible") - real's
+    # dir only arguments, these are incompatible") - Ansible's
     # AnsibleActionFail shape: the fatal dump carries ONLY changed + the
     # wrapped "Task failed: ..." msg (no ansible_facts/message keys), the
     # [ERROR] block is the single-level chain over the unwrapped text,
@@ -1167,7 +1167,7 @@ module Krikri
       include_vars_failure_stats(task, host)
     end
 
-    # The `message:` value real's own failed include_vars: result
+    # The `message:` value Ansible's own failed include_vars: result
     # carries, or nil when the failure is not a load failure (the
     # undefined-var finalization shape carries no `message` key).
     private def include_vars_failure_detail(task : Task, message : String) : String?
@@ -1188,7 +1188,7 @@ module Krikri
 
     # A suppressed (failed_when:-false) include_vars: failure still
     # defines the `name:` var as an empty hash and registers a
-    # changed:false / failed:false result - real Ansible's own shapes
+    # changed:false / failed:false result - Ansible's own shapes
     # (see finish_include_vars_failure's history note).
     private def include_vars_suppressed_success(task : Task, host : Host, detail : String? = nil) : Nil
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
@@ -1202,7 +1202,7 @@ module Krikri
       @hv_generation += 1
       if register_name = task.register
         unless register_name.empty?
-          # real 2.19.11 registers the SUPPRESSED failure result with
+          # Ansible 2.19.11 registers the SUPPRESSED failure result with
           # the action's own load-failure keys - failed: false, the
           # same `message`, and the failed_when: verdict - not the
           # three-key shape this engine used to register (live-verified
@@ -1231,23 +1231,23 @@ module Krikri
       end
     end
 
-    # include_vars failures through the standard result display (real 2.19.11,
+    # include_vars failures through the standard result display (Ansible 2.19.11,
     # live-verified): a missing/unparsable file is the action's own failure -
     # {ansible_facts: {}, ansible_included_var_files: [], changed: false,
     # message: <detail>, msg: "Task failed: Action failed: Unknown error"} with
     # a bare "Task failed: Action failed: Unknown error." block; an undefined
     # variable in the args is the usual multi-level finalization failure.
-    # The ansible_facts dict carries the `name:` wrap (real's scope
+    # The ansible_facts dict carries the `name:` wrap (Ansible's scope
     # assignment happens regardless of the load outcome - see
     # include_vars_name_shape). The unhashable-`name:` crash itself never
     # reaches this display (every load-failure path pre-empts it before
     # calling), and the undefined-var finalization path must keep its own
-    # shape - real's args templating fails before the action ever runs.
+    # shape - Ansible's args templating fails before the action ever runs.
     private def display_include_vars_failure(task : Task, host : Host, message : String) : Nil
       name_key, _ = include_vars_name_shape(task)
       h = Hash(String, JSON::Any).new
       if message == "include_vars: null file"
-        # Real's _find_needle('vars', None) - the dataloader refuses a
+        # Ansible's _find_needle('vars', None) - the dataloader refuses a
         # null lookup value WITHOUT the quoted-name form the missing-
         # file case gets: "Could not find file on the Ansible
         # Controller." (live-verified vs 2.19.11).
@@ -1259,7 +1259,7 @@ module Krikri
         h["msg"] = JSON::Any.new("Task failed: Action failed: Unknown error.")
         h["_ansible_action_level"] = JSON::Any.new(true)
         h["_ansible_error_detail"] = JSON::Any.new("Action failed: Unknown error.")
-        # real 2.19.11 carries a `warnings` entry LAST on THIS shape
+        # Ansible 2.19.11 carries a `warnings` entry LAST on THIS shape
         # only (live-verified: `include_vars: {name: a.yml}` with no
         # file/dir - the dataloader's "null lookup value" warning rides
         # the registered result but never the fatal dump).
@@ -1299,7 +1299,7 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
     end
 
-    # The "Could not find or access '<file>'" message real 2.19.11
+    # The "Could not find or access '<file>'" message Ansible 2.19.11
     # builds for a relative include_vars: file that matched nowhere.
     # An ABSOLUTE path gets no "Searched in:" list (the dataloader
     # never searches for it); a relative one lists every candidate the
@@ -1308,7 +1308,7 @@ module Krikri
     # root, or the play dir), the directory of the file the task was
     # included from or the role's own tasks/ dir (whichever applies),
     # A play-level task in a play dir therefore repeats the play-dir
-    # pair twice, exactly as real does (live-verified vs 2.19.11).
+    # pair twice, exactly as Ansible does (live-verified vs 2.19.11).
     private def include_vars_file_not_found_message(task : Task, file : String) : String
       tail = " on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option"
       return "Could not find or access '#{file}'#{tail}" if file.starts_with?("/")
@@ -1326,7 +1326,7 @@ module Krikri
     # spec" task (see there) - checks the role's effective vars (already
     # in vars_context via role_defaults/role_vars, same as any other role
     # task) against each declared option's `required:`/`type:`, matching
-    # real ansible-core's own role argument validation.
+    # ansible-core's own role argument validation.
     private def execute_block(task : Task, host : Host) : Nil
       # Propagate role context BEFORE the when: check - the when-false
       # early-exit path prints each child's own "TASK [role : name]"
@@ -1345,7 +1345,7 @@ module Krikri
         begin
           when_result = evaluate_when_items(task, vars_context, host)
         rescue WhenEvaluationError
-          # Real Ansible does NOT fail the block as a unit here. A
+          # Ansible does NOT fail the block as a unit here. A
           # block's when: is inherited by each child task, so the SAME
           # failing condition is re-evaluated once per task: the first
           # task of block: fails on it (halting the rest of that list),
@@ -1365,7 +1365,7 @@ module Krikri
 
         unless when_errored || when_result
           # A block's when: is inherited by every task inside block: and
-          # always: (verified against real ansible-playbook: each gets
+          # always: (verified against ansible-playbook: each gets
           # its own "skipping: [host]" line and recap count, not one
           # aggregate line for the block) - rescue: is left alone since
           # it only ever runs if the block itself actually failed, which
@@ -1379,7 +1379,7 @@ module Krikri
       failed_before = @results[host.name]["failed"]
       # A block:'s own notify: (as opposed to notify: on one of its
       # nested tasks) fires once if ANY task inside the block/rescue/
-      # always actually changed - real Ansible's own block-level notify
+      # always actually changed - Ansible's own block-level notify
       # semantics. Previously entirely unhandled: only a regular task's
       # own notify: was ever forwarded to HandlerRunner. Found via
       # robertdebock.swap's own "Manage swap files." block (wraps
@@ -1489,7 +1489,7 @@ module Krikri
         nested_task.ansible_collection_name = enclosing.ansible_collection_name
 
         # A block's own `vars:` is inherited by every task nested inside it
-        # (real Ansible scoping) - found via linux-system-roles/logging's
+        # (Ansible scoping) - found via linux-system-roles/logging's
         # `Check logging inputs` block, which computes `__logging_input_names:
         # "{{ logging_inputs | map(attribute='name') | list }}"` at the block
         # level and references it from a nested looped task's `when:`.
@@ -1514,7 +1514,7 @@ module Krikri
     private def execute_include_tasks(task : Task, host : Host) : Nil
       begin
         # loop_lenient_vars: a looped include_tasks:'s own vars: render
-        # with `item` unbound here, but real Ansible only ever evaluates
+        # with `item` unbound here, but Ansible only ever evaluates
         # them per actual iteration - a zero-iteration loop (stackhpc.luks
         # round 960004: `with_items: "{{ luks_devices }}"` over the role's
         # empty `luks_devices: []` default, vars: calling the role-local
@@ -1529,7 +1529,7 @@ module Krikri
         # Same degrade-to-one-clean-failed-task shape as the multi-host
         # execute_include_tasks_multi path's own build_vars_context
         # rescue: the include_tasks: statement's own `vars:` block used
-        # an unknown filter, real Ansible fails just that include task
+        # an unknown filter, Ansible fails just that include task
         # with "No filter named 'X'." instead of the whole process
         # crashing out of execute_task's include_tasks dispatch.
         swallow_when_error(task, host, WhenEvaluationError.new(ex.message || "Failed to render task vars"))
@@ -1601,7 +1601,7 @@ module Krikri
         end
         mark_unsafe_loop_items(loop_items) if unsafe_items
         looped_when_failed = false
-        # Real's loop-aggregate rule for a looped include_tasks: (same rule
+        # Ansible's loop-aggregate rule for a looped include_tasks: (same rule
         # finish_looped_task applies to a looped module task): the whole
         # looped task recaps ONCE - skipped=1 only when EVERY iteration's
         # when: was false (plus the bare trailing "skipping:" line real
@@ -1628,7 +1628,7 @@ module Krikri
           # render, so it is skipped - the item value is already rendered
           # data (see loop_items_derive_from_unsafe_data?).
           rendered_item = unsafe_items ? item : deep_render_item(item, loop_vars_context, host.name, strict: false)
-          # loop_control.loop_var REPLACES "item" - real ansible-core binds
+          # loop_control.loop_var REPLACES "item" - ansible-core binds
           # the item ONLY under the custom name (see the task-loop sites in
           # executor_loops.cr).
           if loop_var
@@ -1638,7 +1638,7 @@ module Krikri
           end
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
           # Each include_tasks loop iteration counts as one `ok` in the
-          # recap, matching real Ansible (which tallies the include plus
+          # recap, matching Ansible (which tallies the include plus
           # every included task per iteration) - but only once the
           # include's own when: (checked inside run_include_tasks_once,
           # since it may reference this iteration's `item`) actually
@@ -1666,7 +1666,7 @@ module Krikri
           puts "skipping: [#{host.name}]".colorize(:cyan)
           @results[host.name]["skipped"] += 1
         end
-        # Real Ansible runs a looped include in two phases: every
+        # Ansible runs a looped include in two phases: every
         # iteration's `included: ... => (item=...)` line prints under the
         # include's own banner FIRST, then the iterations' included tasks
         # run in order (pluggero.upgrade round 601548; byte-verified
@@ -1679,10 +1679,10 @@ module Krikri
         end
       else
         # Non-looped include_tasks: itself counts as one `ok` in the
-        # recap too, matching real Ansible - the looped branch above
+        # recap too, matching Ansible - the looped branch above
         # already credits this per iteration, but a plain (unlooped)
         # include_tasks: never did, undercounting the recap's `ok=`
-        # tally by exactly 1 versus real Ansible for every such task.
+        # tally by exactly 1 versus Ansible for every such task.
         # Found benchmarking robertdebock.openvpn's own "Setup openvpn
         # server or client" (a single, non-looped include_tasks:) -
         # functionally harmless (the included tasks all still ran
@@ -1710,7 +1710,7 @@ module Krikri
           when_result = evaluate_when_items(task, vars_context, host)
         rescue ex : WhenEvaluationError
           # A LOOPED include's per-item when: failure must not book stats
-          # here: real Ansible recaps the whole looped task ONCE no matter
+          # here: Ansible recaps the whole looped task ONCE no matter
           # how many items' conditionals raised (round 970558,
           # arillso.repositories' looped "include subtasks repository": 3
           # item-failure lines on screen, failed=1 in the recap - krikri
@@ -1727,13 +1727,13 @@ module Krikri
           suffix = item_label ? " => (item=#{item_label}) " : ""
           puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
           # defer_when_stats (the looped caller): the per-item skip must NOT
-          # bump the recap per iteration - real Ansible recaps a looped
+          # bump the recap per iteration - Ansible recaps a looped
           # include task ONCE, and only as skipped when EVERY iteration was
           # when:-skipped (any executed iteration makes the whole task ok).
           # konstruktoid.hardening's looped "Ensure restrict compilers access
           # via DNF post-transaction-actions Plugin" (when:-gated on RedHat,
           # so every item skips on Debian) previously booked one skipped per
-          # item: recap skipped=110 where real says 101 (rounds 999040/
+          # item: recap skipped=110 where Ansible says 101 (rounds 999040/
           # 999050). The looped caller books the single aggregate.
           @results[host.name]["skipped"] += 1 unless defer_when_stats
           return :skipped
@@ -1746,12 +1746,12 @@ module Krikri
       # booked failed= (fail_include below) ON TOP of the already-credited
       # ok=: buluma.tomcat (round 979000) has instance.yml pull in
       # buluma.service via import_role:, and with that dependency role
-      # not installed real Ansible recaps the include task as failed
+      # not installed Ansible recaps the include task as failed
       # only (ok=45 failed=1) while krikri recapped ok=46 failed=1.
       # Verified live against ansible-core 2.19.11 with a minimal
       # include_tasks: -> import_role: missing-role repro.
       # A host halted by an EARLIER loop iteration's included tasks (the
-      # looped branch in #execute_include_tasks): real Ansible registers
+      # looped branch in #execute_include_tasks): Ansible registers
       # every loop iteration's include before any included task executes
       # (all the "included:" lines print first, then the included tasks run
       # in order - pluggero.upgrade round 601548), so this iteration's
@@ -1873,7 +1873,7 @@ module Krikri
       # task's params rendered fine. Banners now render lazily at print
       # time (render_task_name_for_display -> build_vars_context), which
       # sees both the threaded `item`/loop_var (into task.vars, just above)
-      # and any facts set mid-iteration - matching real Ansible, which
+      # and any facts set mid-iteration - matching Ansible, which
       # templates each task's name at ITS OWN task-start with current
       # task_vars (verified live against ansible-core 2.19.4).
 
@@ -1886,19 +1886,19 @@ module Krikri
       # (false) and the whole role silently skipped. Mirror the way `vars:`
       # and `item` are threaded through above. role_defaults/role_vars here
       # carry the *role's* own scope (not the include statement's inline
-      # vars:, which is handled above), matching real Ansible where an
+      # vars:, which is handled above), matching Ansible where an
       # included file shares the enclosing role's defaults/vars.
       propagate_role_context(task, included_tasks)
 
       # The include itself counts as one `ok` in the recap, matching
-      # real Ansible and the non-looped branch's history (robertdebock.
+      # Ansible and the non-looped branch's history (robertdebock.
       # openvpn undercounted by exactly 1) - but only now that parsing
       # has succeeded, so a load-time failure recaps as failed only
       # (see the halted-host comment above for the round 979000
       # buluma.tomcat case that moved this credit here).
       @results[host.name]["ok"] += 1
 
-      # Real Ansible's v2_playbook_on_include line: `included: <path> for
+      # Ansible's v2_playbook_on_include line: `included: <path> for
       # <host>` (plus ` => (item=...)` for a looped include). Printed
       # after the load succeeds, before any included task runs.
       connection_names = [host.name]
@@ -1927,7 +1927,7 @@ module Krikri
       # Same ignore_errors: stats fix as finish_include_vars_failure -
       # a broken include_tasks:/include_role:/import_* (missing file,
       # bad YAML shape, load error) under ignore_errors: counts as
-      # ok+ignored, not failed, matching real Ansible. halt_if_failed
+      # ok+ignored, not failed, matching Ansible. halt_if_failed
       # already correctly skips halting under ignore_errors: - this
       # method's own stats increment never did.
       if task.ignore_errors?
@@ -1963,7 +1963,7 @@ module Krikri
       halt_if_failed(task, host, true, force_halt: true)
     end
 
-    # include_role: whose named role resolves nowhere - real Ansible's
+    # include_role: whose named role resolves nowhere - Ansible's
     # own fatal shape (live-verified vs 2.19.11, both from a play task
     # and from inside a role's own tasks): the loader's AnsibleError is
     # printed on STDERR as an "[ERROR]: the role 'x' was not found in
@@ -1989,7 +1989,7 @@ module Krikri
 
     # include_role:'s own boolean keyword (public/allow_duplicates/
     # rolespec_validate) whose value is not convertible to a Python bool.
-    # Real 2.19.11 (live-verified): this is an ORDINARY task failure, not
+    # Ansible 2.19.11 (live-verified): this is an ORDINARY task failure, not
     # a role-resolution failure - the three-link chain ("Task failed." ->
     # "Error processing keyword 'x'." -> "The value 'v' could not be
     # converted to 'bool'.") prints on stdout, the task result is the
@@ -2041,7 +2041,7 @@ module Krikri
     # again. Under the default implicit mode every play re-gathers
     # anyway, so this just clears facts for the remainder of this play.
     #
-    # Matches real ansible-playbook, verified against ansible-core 2.19.4:
+    # Matches ansible-playbook, verified against ansible-core 2.19.4:
     # under gathering=smart, a `meta: clear_facts` in play 2 causes play 3
     # to re-run Gathering Facts.
     # Produces no per-host output line and does not count toward the
@@ -2053,7 +2053,7 @@ module Krikri
         # loop_lenient_vars: same zero-iteration-loop reasoning as
         # execute_include_tasks's own build above (stackhpc.luks round
         # 960004) - a looped include_role:'s vars: render here with `item`
-        # unbound, and real Ansible never evaluates them at all when the
+        # unbound, and Ansible never evaluates them at all when the
         # loop has zero iterations. See build_vars_context's
         # loop_lenient_vars comment.
         base_vars_context = build_vars_context(task, host, loop_lenient_vars: task_has_loop?(task))
@@ -2108,7 +2108,7 @@ module Krikri
         loop_items.each_with_index do |item, idx|
           vars_context = base_vars_context.dup
           # Same loop_var-replaces-item rule as the task loop paths
-          # (executor_loops.cr) - real ansible-core binds the item ONLY
+          # (executor_loops.cr) - ansible-core binds the item ONLY
           # under the custom name.
           vars_context["item"] = item unless loop_var
           vars_context[loop_var] = item if loop_var
@@ -2122,7 +2122,7 @@ module Krikri
 
     private def run_include_role_once(task : Task, host : Host, vars_context : Hash(String, JSON::Any), item_label : String?) : Nil
       # A static import_role: (Task#is_static_import) is resolved at
-      # parse time in real Ansible - the import line itself produces NO
+      # parse time in Ansible - the import line itself produces NO
       # task result at all, ever (see the "ok" comment below), and a
       # `when:` on the import is combined onto EVERY task the role
       # expands to, not evaluated once against the import as a whole.
@@ -2130,7 +2130,7 @@ module Krikri
       # role's tasks - each shows its own "TASK [...]"/"skipping:"
       # banner under its own real name - rather than being treated as
       # one atomic no-op with nothing printed at all. Found via
-      # brunobenchimol.certbot_dns (round855): real Ansible's recap
+      # brunobenchimol.certbot_dns (round855): Ansible's recap
       # showed every one of geerlingguy.certbot's own tasks individually
       # skipped (`TASK [geerlingguy.certbot : Symlink certbot into
       # place.]` / `skipping:`, etc.) where this engine printed nothing
@@ -2138,7 +2138,7 @@ module Krikri
       # entire task count.
       #
       # A DYNAMIC include_role: (not static) keeps the old behavior
-      # unchanged - real Ansible's own IncludeRole task DOES produce a
+      # unchanged - Ansible's own IncludeRole task DOES produce a
       # single result of its own when its `when:` is false, so returning
       # early with one "skipping:" line for the include_role: task
       # itself is correct there (see the "ok" comment below for the
@@ -2161,7 +2161,7 @@ module Krikri
       end
 
       # The include_role: task itself counts as one `ok` in the recap,
-      # matching real Ansible (verified against ansible-core 2.19.4's
+      # matching Ansible (verified against ansible-core 2.19.4's
       # own strategy/__init__.py: an IncludeRole result still hits the
       # same `self._tqm._stats.increment('ok', ...)` as a plain task) -
       # same fix already applied to execute_include_tasks's
@@ -2169,13 +2169,13 @@ module Krikri
       # here. Placed after the when: check, like that one, so a
       # when:-gated include_role: that skips isn't double-counted as
       # both `ok` and `skipped`. Found benchmarking andrewrothstein.
-      # terraform (round 154 v3): real Ansible's cold-run recap was
+      # terraform (round 154 v3): Ansible's cold-run recap was
       # `ok=12`, crystal's was `ok=10` - both `include_role:` calls in
       # the role (andrewrothstein.hashi, andrewrothstein.unarchivedeps)
       # were silently undercounted despite running correctly.
       #
       # NOT applied for a static import_role: (Task#is_static_import) -
-      # real Ansible's own IncludeRole result/stats increment only fires
+      # Ansible's own IncludeRole result/stats increment only fires
       # for the genuinely dynamic include_role:; import_role: is resolved
       # at parse time and produces no task result of its own at all (see
       # is_static_import's own comment - found via round171's
@@ -2186,7 +2186,7 @@ module Krikri
       # load at all (nonexistent role name): both this "ok" AND
       # fail_include's own "failed" fired for the same task. Found round185
       # benchmarking andrewrothstein.libvirt (a broken meta dependency on
-      # the since-removed andrewrothstein.qemu): real Ansible's recap was
+      # the since-removed andrewrothstein.qemu): Ansible's recap was
       # `ok=0 failed=1` (a fatal, unrescued include_role halts the play for
       # that host immediately, same as any other fatal task), crystal's was
       # `ok=1 failed=1`.
@@ -2241,8 +2241,8 @@ module Krikri
         )
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d
-        # role whose own tasks name a module real Ansible can't resolve
-        # anywhere aborts the whole run (real Ansible's playbook-load
+        # role whose own tasks name a module Ansible can't resolve
+        # anywhere aborts the whole run (Ansible's playbook-load
         # check), rather than degrading to a per-task
         # "Failed to load role" failure. See UnresolvedModuleError's
         # own comment for the graceful/hard-stop boundary.
@@ -2276,7 +2276,7 @@ module Krikri
         # Handlers are deliberately excluded: they're only ever executed
         # when notified via flush_handlers, not gated by whatever
         # skipped the import itself - propagating the import's when:
-        # onto a handler DEFINITION would be a behavior real Ansible
+        # onto a handler DEFINITION would be a behavior Ansible
         # doesn't have, not a fix for anything seen live.
         import_when_list = task.when_condition_list
         included_tasks.each do |included_task|
@@ -2391,7 +2391,7 @@ module Krikri
       return params if src.nil? || src.starts_with?('/')
 
       # synchronize (ansible.posix) shares the copy:/assemble: files/-
-      # dir dwim (real Ansible's own _get_absolute_path resolves a
+      # dir dwim (Ansible's own _get_absolute_path resolves a
       # relative synchronize path against the role's files/). The
       # remote-path guard matters ONLY for synchronize - pull mode's
       # src: (and an explicit user@host:path anywhere) is an rsync
@@ -2411,7 +2411,7 @@ module Krikri
       role_dir = case task.module_name
                  when "ansible.builtin.copy" then task.role_files_dir
                  when "ansible.builtin.template"
-                   # No templates/ dir at all: real Ansible's own search
+                   # No templates/ dir at all: Ansible's own search
                    # list for a relative template: src: goes from
                    # <role>/templates/<src> straight to <role>/<src> (the
                    # ROLE ROOT - verified against ansible-core 2.19's
@@ -2422,7 +2422,7 @@ module Krikri
                    # role-root candidate, so without this the
                    # role_templates_dir-nil guard below returned params
                    # unresolved and the task failed with "Template file
-                   # not found on controller" where real ansible-playbook
+                   # not found on controller" where ansible-playbook
                    # changed the file.
                    task.role_templates_dir || task.role_path
                  when "ansible.builtin.assemble"  then task.role_files_dir
@@ -2430,7 +2430,7 @@ module Krikri
                  end
       return params unless role_dir
 
-      # Real Ansible searches a role task's ENTIRE parent-role chain for
+      # Ansible searches a role task's ENTIRE parent-role chain for
       # a relative src:, not just the currently-executing role's own
       # files:/templates: dir - a shared/generic role commonly relies on
       # this to let each CALLING role supply its own asset under the
@@ -2507,7 +2507,7 @@ module Krikri
     # copy.cr already has a fully-working content-write path (used by
     # any `copy: {content: ..., dest: ...}` task), so this reuses it
     # rather than needing a separate upload mechanism. Left alone for
-    # `remote_src: true` (real Ansible's own remote-to-remote copy,
+    # `remote_src: true` (Ansible's own remote-to-remote copy,
     # where src: already refers to a path on the target, not the
     # controller - reading it here would be wrong) and for a local
     # connection (copy.cr already runs on the same filesystem as the

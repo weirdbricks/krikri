@@ -1,9 +1,9 @@
 require "../minitest_helper"
 require "file_utils"
 
-# assert: with an undefined variable in that: prints real 2.19.11's two-level
+# assert: with an undefined variable in that: prints Ansible 2.19.11's two-level
 # [ERROR] block whose second Origin points at the failing that: item
-# (live-compared byte for byte with real ansible-playbook via
+# (live-compared byte for byte with ansible-playbook via
 # scripts/output_parity.sh on the same playbook).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

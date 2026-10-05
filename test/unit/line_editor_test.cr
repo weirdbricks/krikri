@@ -43,12 +43,12 @@ describe LineEditor do
       changed.must_equal(true)
     end
 
-    it "replaces the LAST line matching the regexp, not the first (matches real Ansible's lineinfile)" do
+    it "replaces the LAST line matching the regexp, not the first (matches Ansible's lineinfile)" do
       # Found live benchmarking geerlingguy.phpmyadmin: its "Add default
       # username and password for MySQL connection." lineinfile tasks use
       # regexp `^.+\[['"]host['"]\].+$`, which matches BOTH the package's
       # populated `['host'] = $dbserver;` line and the commented
-      # `// ...['host'] = 'localhost';` template near EOF. Real ansible
+      # `// ...['host'] = 'localhost';` template near EOF. Ansible
       # only rewrites the last matching line; crystal previously rewrote
       # the first, producing a config.inc.php that diverged byte-for-byte.
       lines = [
@@ -111,7 +111,7 @@ describe LineEditor do
       # concurrent option": `regexp: ^(\s*)concurrent =`, `line:
       # \1concurrent = 5`, backrefs: true against "concurrent = 1" -
       # the regexp only matches the "concurrent =" prefix, not the
-      # whole line. Real Ansible's backrefs mode expands `line:`'s own
+      # whole line. Ansible's backrefs mode expands `line:`'s own
       # backreferences and uses that as the COMPLETE new line
       # (Python's `match.expand(line)`); this previously used
       # `String#gsub(Regex, String)`, which replaces only the matched
@@ -129,7 +129,7 @@ describe LineEditor do
       # Real bug found by testing/perf/modules_files.yml's divergence
       # probe: `line: 'MaxAuthTriesProbe \1\nMaxAuthTriesProbeBench \1'`
       # with backrefs must expand BOTH the \1 groups AND the \n escape -
-      # real Ansible writes two physical lines; the old expansion only
+      # Ansible writes two physical lines; the old expansion only
       # handled \N group refs and left `\n` as two literal characters.
       lines, changed = LineEditor.ensure_present(
         ["MaxAuthTriesProbe 6"],
@@ -212,7 +212,7 @@ describe LineEditor do
     end
 
     it "replaces the FIRST line matching the regexp when firstmatch is set (live-verified against ansible-core 2.19.4)" do
-      # Confirmed live krikri bug: real ansible-playbook 2.19.4 with
+      # Confirmed live krikri bug: ansible-playbook 2.19.4 with
       # regexp '^foo=' against "foo=1/bar=2/foo=3/baz=4" and
       # firstmatch: true rewrites the FIRST "foo=" line; krikri
       # previously ignored firstmatch entirely and always replaced the
@@ -229,7 +229,7 @@ describe LineEditor do
     end
 
     it "anchors the insertion at the LAST insertafter match by default (live-verified against ansible-core 2.19.4)" do
-      # Real Ansible's insertafter loop keeps scanning and only stops
+      # Ansible's insertafter loop keeps scanning and only stops
       # early under firstmatch - both lineinfile and blockinfile. The
       # previous first-match-always behavior diverged on any anchor
       # pattern matching more than one line.
@@ -287,7 +287,7 @@ describe LineEditor do
       changed.must_equal(true)
     end
 
-    it "when regexp is given it decides alone - search_string and line are not consulted (real Ansible's matcher chain)" do
+    it "when regexp is given it decides alone - search_string and line are not consulted (Ansible's matcher chain)" do
       lines, changed = LineEditor.remove_matching(["rx here", "substring here", "exact"], "exact", "^rx", "substring")
       lines.must_equal(["substring here", "exact"])
       changed.must_equal(true)

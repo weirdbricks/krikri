@@ -13,7 +13,7 @@ module Krikri
   # Backed by the `openssl` CLI through the shared X509CertInfo helper
   # (see its header for the field-by-field provenance). Params:
   # path (a PEM or DER certificate file) or content (PEM text), exactly
-  # one of the two, matching the real module's required_one_of plus
+  # one of the two, matching the Ansible module's required_one_of plus
   # mutually_exclusive pair.
   #
   # Known divergence, deliberate: `extensions_by_oid` is not returned
@@ -22,7 +22,7 @@ module Krikri
   class X509CertificateInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dump on a self-signed cert: absent
     # extension/detail keys are simply skipped by the reorder. The
     # executor backfills failed/changed after the plugin JSON; real puts
@@ -39,7 +39,7 @@ module Krikri
       issuer_uri valid_at failed changed warnings
     ]
 
-    # The real module's argument_spec - no file-common args (no
+    # The Ansible module's argument_spec - no file-common args (no
     # add_file_common_args), no aliases.
     SPEC = {
       "path"                  => [] of String,
@@ -84,7 +84,7 @@ module Krikri
       res
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). Types are str/path/dict here; the
     # dict-typed valid_at's elements each must be a string (a check the
@@ -145,7 +145,7 @@ module Krikri
     end
 
     # A PEM file may hold the certificate among other blocks (a fullchain
-    # bundle); the real module reads the first certificate.
+    # bundle); the Ansible module reads the first certificate.
     private def extract_pem(raw : String) : String?
       start = raw.index("-----BEGIN CERTIFICATE-----")
       return nil unless start

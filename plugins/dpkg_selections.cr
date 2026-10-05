@@ -2,7 +2,7 @@
 
 # dpkg_selections module (ansible.builtin.dpkg_selections) - sets a
 # package's dpkg selection state (hold/install/deinstall/purge) via the
-# real `dpkg`/`dpkg-query` binaries, same approach real Ansible's own
+# real `dpkg`/`dpkg-query` binaries, same approach Ansible's own
 # module takes (it shells out to dpkg --set-selections too, no python-apt
 # binding).
 #
@@ -27,14 +27,14 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "value of selection must be one of: #{VALID_SELECTIONS.join(", ")}, got: #{selection}")
       end
 
-      # Real Ansible's own module refuses to set a selection for a
+      # Ansible's own module refuses to set a selection for a
       # package dpkg has never heard of ("Failed to find package 'tree'
       # to perform selection 'install'.", verified live against a real
       # Ubuntu host for a package that was never installed) - `dpkg
       # --set-selections` itself has no such guard (it happily records a
       # selection for an unknown package name, which then has no effect
       # until/unless that package is ever installed), so without this
-      # check this plugin silently "succeeded" at a no-op real Ansible
+      # check this plugin silently "succeeded" at a no-op Ansible
       # treats as a hard error.
       known = remote_exec("dpkg-query -W #{shell_quote(name)} 2>/dev/null")
       if known[:exit_code] != 0
@@ -48,7 +48,7 @@ module Krikri
       if current_selection == selection
         # Real dpkg_selections.py: every exit is
         # `module.exit_json(changed=changed, before=current, after=selection)`
-        # - no msg on any success path (live-verified against real 2.19.11:
+        # - no msg on any success path (live-verified against Ansible 2.19.11:
         # check mode, changed and unchanged runs all identical).
         return PluginResult.new(changed: false, failed: false, before: current_selection, after: selection, key_order: ["changed", "before", "after"])
       end

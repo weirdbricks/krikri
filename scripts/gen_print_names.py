@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe real ansible-playbook for the module-name each task spelling prints
+"""Probe ansible-playbook for the module-name each task spelling prints
 in "Unsupported parameters for (...) module" - and capture the full fatal
 dump - by running one typo'd task per krikri-supported module.
 
@@ -24,7 +24,7 @@ TYPO = "zznope"
 
 # Minimal per-module task args that let the task reach MODULE-LEVEL
 # validation. Everything else fails earlier, at the action-plugin layer
-# (missing src/content/dest), which is exactly what real Ansible does
+# (missing src/content/dest), which is exactly what Ansible does
 # too - these are the only modules whose action plugin checks inputs
 # before the module's own argspec validation runs.
 ARGS = {

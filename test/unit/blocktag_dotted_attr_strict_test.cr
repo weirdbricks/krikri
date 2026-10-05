@@ -23,7 +23,7 @@ require "../../src/krikri/variable_substitutor"
 # variable became Crinja::Undefined and a bare `{{ traefik_install_ver }}`
 # rendered the sentinel text.
 #
-# Every expectation below was verified against real ansible-core 2.19.4:
+# Every expectation below was verified against ansible-core 2.19.4:
 # `{% if d.attr == 'x' %}` with `d` defined does NOT raise there (a missing
 # ATTRIBUTE is a different error class, "has no attribute"); `{% if
 # nosuch.attr %}` DOES raise "'nosuch' is undefined" (the root, not the

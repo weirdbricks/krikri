@@ -3,13 +3,13 @@ require "file_utils"
 
 # Regression spec for `package:`'s cache-refresh-only path
 # (`update_cache: true` with no `name:`, the buluma.security round-952553
-# divergence). Real Ansible's `package:` delegates to the apt module on
+# divergence). Ansible's `package:` delegates to the apt module on
 # apt hosts, whose refresh is gated on `cache_valid_time:` staleness - a
 # positive window the apt-cache mtime is still inside skips `apt-get
 # update` entirely and exits changed=false. package.cr's
 # `update_cache_only` never read `cache_valid_time:` at all and always
 # ran the refresh, so a warm rerun inside the window still touched the
-# apt lists and reported changed: true where real Ansible reported ok.
+# apt lists and reported changed: true where Ansible reported ok.
 # apt.cr's own equivalent path (test/integration/apt_cache_updated_test.cr)
 # already pins the correct behavior; this mirrors it for the
 # OS-agnostic package plugin.
@@ -39,7 +39,7 @@ private def env_param(path : String, marker : String) : String
   {"PATH" => path, "KRIKRI_FAKE_MARKER" => marker}.to_json
 end
 
-# Real Ansible's apt module cannot run at all in check mode without the
+# Ansible's apt module cannot run at all in check mode without the
 # python3-apt bindings (same refusal package.cr's own cache-refresh-only
 # path mirrors), so the stubbed-PATH runs below - which must get past
 # that refusal to reach the gate under test - only mean anything on a

@@ -2,14 +2,14 @@ require "../minitest_helper"
 
 # Failure-path result SHAPE parity for command/shell, found via the
 # podman-diff harness (testing/podman-diff/cases/command_edge_cases.yml):
-# real Ansible's command/shell module fails these cases inside
+# Ansible's command/shell module fails these cases inside
 # AnsibleModule.run_command / before any process spawns, so the
 # registered result keeps the FULL command-module shape (cmd, stdout,
 # stdout_lines, stderr, stderr_lines, start, end, delta) with rc either
 # null (chdir failure) or the raw OSError errno (bad shell executable)
 # - and changed stays FALSE. This engine used to return either a bare
 # msg-only result (rc key absent entirely -> registered `.rc` reads
-# undefined where real Ansible hands back null) or a shell "command not
+# undefined where Ansible hands back null) or a shell "command not
 # found" exit code with changed=true.
 describe "command/shell failure-path result shape" do
   describe "command with a nonexistent chdir" do
@@ -26,7 +26,7 @@ describe "command/shell failure-path result shape" do
       result["stderr"].as_s.must_equal("")
       result["stdout_lines"].as_a.must_be_empty
       result["stderr_lines"].as_a.must_be_empty
-      # real 2.19.11's fatal msg is the generic text; the path lives only in
+      # Ansible 2.19.11's fatal msg is the generic text; the path lives only in
       # the [ERROR] block's detail (carried in _ansible_error_detail)
       result["msg"].as_s.must_equal("Unable to change directory before execution.")
       result["_ansible_error_detail"].as_s.must_include("/nonexistent-krikri-spec-dir-zzz")
@@ -97,7 +97,7 @@ describe "command/shell failure-path result shape" do
     end
   end
 
-  # A spawn that never started is failed by real's run_command with its
+  # A spawn that never started is failed by Ansible's run_command with its
   # OWN shape, not the module's: the fixed message "Error executing
   # command.", the OS errno as rc, empty stdout/stderr, and `cmd` set to
   # the shlex-quoted join of the argv it tried to spawn (a STRING, not
@@ -108,7 +108,7 @@ describe "command/shell failure-path result shape" do
   # {"changed": false, "cmd": "/does/not/exist/anywhere", "msg": "Error
   # executing command.", "rc": 2, "stderr": "", "stdout": ""}.
   describe "command with a nonexistent executable" do
-    it "fails with real's run_command spawn shape, not a changed result with the OSError text as stderr" do
+    it "fails with Ansible's run_command spawn shape, not a changed result with the OSError text as stderr" do
       result = PluginSpecHelper.run("command", {"cmd" => "/does/not/exist/anywhere --version"})
 
       result["failed"].as_bool.must_equal(true)

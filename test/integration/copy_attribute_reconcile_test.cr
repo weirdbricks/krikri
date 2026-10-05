@@ -8,7 +8,7 @@ describe "copy plugin - identical-content attribute reconciliation" do
     # shape from bitintheskud.ansible-role-ecs-agent: file: recurse:
     # immediately followed by copy: on a file inside that tree - made
     # copy: silently report ok forever while fixing the mode on disk
-    # every run. Real Ansible reports `changed` once (live-verified
+    # every run. Ansible reports `changed` once (live-verified
     # against ansible-core 2.19), then ok.
     dest = File.tempname("copy-reconcile")
     File.write(dest, "hello")

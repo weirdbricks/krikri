@@ -116,7 +116,7 @@ describe Krikri::RoleLoader do
     tasks[0].role_defaults.as(Hash(String, JSON::Any))["port"].as_i.must_equal(8080)
   end
 
-  it "loads a defaults/main.yml dict keyed by a bare YAML boolean without crashing (real Ansible/Jinja2 idiom: dict[some_bool])" do
+  it "loads a defaults/main.yml dict keyed by a bare YAML boolean without crashing (Ansible/Jinja2 idiom: dict[some_bool])" do
     build_role("bool_keyed") do |role|
       role.tasks(<<-YAML)
         - name: t
@@ -198,7 +198,7 @@ describe Krikri::RoleLoader do
     # that relative-ness leaked straight into task.role_path - but real
     # Ansible's own role_path magic var is documented as always
     # absolute. The role's own `paths: ["{{ role_path }}/vars"]`
-    # first_found idiom (a real Ansible convention, since role_path is
+    # first_found idiom (a Ansible convention, since role_path is
     # supposed to always be absolute already) relies on
     # resolve_first_found_root's `return path if path.starts_with?("/")`
     # early return - with a relative role_path, that never fired, so it
@@ -237,7 +237,7 @@ describe Krikri::RoleLoader do
     # (what a static import's own path template may reference, per
     # try_parse_import_tasks in playbook_parser.cr) never included
     # role_path at all, even though it's just this role's own directory
-    # and trivially known as soon as parsing begins - real ansible-core
+    # and trivially known as soon as parsing begins - ansible-core
     # resolves it immediately. Without it, this raised
     # StaticImportUndefinedError ("'role_path' is undefined") and
     # refused to even start the whole play.
@@ -279,16 +279,16 @@ describe Krikri::RoleLoader do
   end
 
   # Real bug found benchmarking andrewrothstein.github-release (0.9.622):
-  # `src:` is real Ansible's own `RoleRequirement` key, used both for a
+  # `src:` is Ansible's own `RoleRequirement` key, used both for a
   # `requirements.yml` entry AND for a role's `meta/main.yml` dependency
   # (`- src: some.role, version: v1.0.0` - the galaxy-requirements
   # convention, copied verbatim into many real published roles' own meta
   # dependencies). Only "role"/"name" were recognized as the dependency's
   # name key - a `src:`-keyed dependency raised "Role entry missing
   # 'role' or 'name'" and aborted parsing the WHOLE PLAYBOOK (not just
-  # that one dependency), even though real Ansible resolves and installs
+  # that one dependency), even though Ansible resolves and installs
   # it completely normally.
-  it "resolves a meta dependency written with 'src:' (real Ansible's own RoleRequirement key), not just 'role:'/'name:'" do
+  it "resolves a meta dependency written with 'src:' (Ansible's own RoleRequirement key), not just 'role:'/'name:'" do
     build_role("base") { |role| role.tasks(<<-YAML) }
       - name: base task
         ansible.builtin.debug:
@@ -310,7 +310,7 @@ describe Krikri::RoleLoader do
   end
 
   it "keeps a meta dependency's defaults in scope for the role that declares it" do
-    # Real Ansible loads a dependency first and leaves its defaults
+    # Ansible loads a dependency first and leaves its defaults
     # visible to the dependent role - the shape buluma.phpmyadmin uses
     # to read `mysql_root_password` out of its buluma.mysql dependency.
     # Previously a dependency's defaults were used for that dependency's
@@ -374,7 +374,7 @@ describe Krikri::RoleLoader do
   # Real divergence found via andrewrothstein.kafka-consumer's dependency
   # graph: it reaches andrewrothstein.unarchive-deps TWICE (once via
   # andrewrothstein.kafka, once via andrewrothstein.openjdk) with two
-  # different `version:` pins (v1.0.13 vs v1.0.12). Real Ansible
+  # different `version:` pins (v1.0.13 vs v1.0.12). Ansible
   # (ansible-core 2.19.11, probe-verified) deduplicates a dependency only
   # when the WHOLE invocation identity matches - name + version: pin +
   # inline vars - so a shared dependency declared with different
@@ -461,7 +461,7 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).count("shared task").must_equal(1)
   end
 
-  # Real Ansible's escape hatch (probe-verified): allow_duplicates: true
+  # Ansible's escape hatch (probe-verified): allow_duplicates: true
   # in the SHARED dependency's own meta/main.yml opts it out of
   # deduplication entirely - even two identical invocations both run.
   it "runs identical declarations twice when the shared dependency's own meta declares allow_duplicates: true" do
@@ -491,7 +491,7 @@ describe Krikri::RoleLoader do
   end
 
   it "raises with a clear message when the role directory can't be found" do
-    # Real 2.19.11's message names the full search-path list it looked
+    # Ansible 2.19.11's message names the full search-path list it looked
     # through (definition.py's "the role '<name>' was not found in
     # <paths>").
     assert_raises_message(Exception, /the role 'nonexistent' was not found in #{roles_root}\/roles:/) do
@@ -517,7 +517,7 @@ describe Krikri::RoleLoader do
 
   it "resolves a namespace.collection.role FQCN via ANSIBLE_COLLECTIONS_PATH" do
     # Real bug found benchmarking prometheus.prometheus.node_exporter (a
-    # real Ansible Collection, distinct from a plain Galaxy role install)
+    # Ansible Collection, distinct from a plain Galaxy role install)
     # - resolve_role_dir only ever looked under a playbook's own roles:/
     # directory, so any collection-shipped role failed outright ("Role
     # not found"), entirely missing functionality.
@@ -583,7 +583,7 @@ describe Krikri::RoleLoader do
     # (CI), create a minimal stand-in collection with the same FQCN and
     # shape and remove it afterward.
     # NOTE: the fixture home must be resolved EXACTLY like the loader
-    # resolves it - ENV["HOME"] first (real's `os.path.expanduser` order,
+    # resolves it - ENV["HOME"] first (Ansible's `os.path.expanduser` order,
     # which the loader's own `expand_home_path` mirrors), then the passwd
     # database - because the two can disagree: GitHub Actions container
     # jobs set HOME=/github/home while root's passwd home is /root, and a

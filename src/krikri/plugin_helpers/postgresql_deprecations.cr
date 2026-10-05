@@ -8,7 +8,7 @@ module Krikri
     # spells one of the shared connection params with its deprecated
     # alias. The aliases are still accepted - PostgresqlConnection's
     # #resolve_login_params resolves them to the same values - but
-    # real's AnsibleModule prints a [DEPRECATION WARNING] line for each
+    # Ansible's AnsibleModule prints a [DEPRECATION WARNING] line for each
     # one AND appends a `deprecations` entry to the module result, which
     # is where a task registering the result sees it.
     #
@@ -29,7 +29,7 @@ module Krikri
     # order the aliases appear in the task - verified with a postgresql_privs
     # task setting login:, unix_socket: and db: together.
     #
-    # The version string is real's own `deprecated_aliases` metadata for
+    # The version string is Ansible's own `deprecated_aliases` metadata for
     # community.postgresql 4.2.0, hard-coded: it names the collection
     # RELEASE that will drop the alias (5.0.0), not the installed one,
     # so it is a constant of the collection's deprecation policy and not
@@ -48,13 +48,13 @@ module Krikri
         "db"          => "login_db",
       }
 
-      # The warning real's AnsibleModule emits (via self.warn(), which
+      # The warning Ansible's AnsibleModule emits (via self.warn(), which
       # both prints `[WARNING]: <text>` on stderr and appends to the
       # result's `warnings` list) when a community.postgresql module is
       # asked to connect without naming a database, so psycopg2 falls
       # back to the connection default.
       #
-      # Live-verified against real ansible-core 2.19.11 +
+      # Live-verified against ansible-core 2.19.11 +
       # community.postgresql 4.2.0, per module:
       # - postgresql_query: warns, on success AND on failure (the
       #   fail_json "unable to connect to database: ..." result carries
@@ -62,7 +62,7 @@ module Krikri
       #   as a database name, so it does NOT warn then.
       # - postgresql_db / postgresql_user: NEVER warn - their own
       #   `db`/`name` param is the database they manage and their login
-      #   database is a documented default; real's result has no
+      #   database is a documented default; Ansible's result has no
       #   `warnings` key at all when login_db is absent.
       # - postgresql_privs: real REQUIRES login_db ("missing required
       #   arguments: login_db"), so the warning can never fire there.
@@ -71,7 +71,7 @@ module Krikri
       # Adds DEFAULT_DB_WARNING to `result.extra["warnings"]` when the
       # task named no database at all (neither `login_db` nor the `db`
       # alias). Call BEFORE PostgresqlDeprecations.finalize so the
-      # registered result orders the two lists as real does:
+      # registered result orders the two lists as Ansible does:
       # ..., failed, warnings, deprecations.
       def self.add_default_db_warning(result : PluginResult, params : Hash(String, String)) : PluginResult
         return result if params.has_key?("login_db") || params.has_key?("db")
@@ -86,7 +86,7 @@ module Krikri
       # Adds the deprecations a task's params trigger to an otherwise
       # finished PluginResult. `db_alias:` is false for postgresql_db,
       # whose own `db` param (the database it manages, aliased `name`)
-      # is NOT the shared spec's deprecated login_db alias - real emits
+      # is NOT the shared spec's deprecated login_db alias - Ansible emits
       # no deprecation for it.
       def self.finalize(result : PluginResult, params : Hash(String, String), db_alias : Bool = true) : PluginResult
         used = ALIASES.keys.select do |name|

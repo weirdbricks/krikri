@@ -16,7 +16,7 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.must_include("name")
   end
 
-  it "rejects unknown parameters like real Ansible's module-arg validation (ansible-core 2.15 has no body_string)" do
+  it "rejects unknown parameters like Ansible's module-arg validation (ansible-core 2.15 has no body_string)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"        => "testrepo-body",
       "body_string" => "Types: deb\nURIs: http://example.com\n",
@@ -28,7 +28,7 @@ describe "deb822_repository plugin" do
     result["msg"].as_s.must_include("body_string")
   end
 
-  it "succeeds without uris/suites (real Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
+  it "succeeds without uris/suites (Ansible treats both as optional - a name-only task writes just X-Repolib-Name + Types: deb)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "testrepo-name-only",
       "_ansible_check_mode" => "true",
@@ -38,7 +38,7 @@ describe "deb822_repository plugin" do
     result["changed"].as_bool.must_equal(true)
   end
 
-  it "fails with changed=False when types contains an invalid choice (real Ansible's own choices check)" do
+  it "fails with changed=False when types contains an invalid choice (Ansible's own choices check)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"       => "testrepo-badtype",
       "types"      => "banana",
@@ -66,7 +66,7 @@ describe "deb822_repository plugin" do
     result["changed"].as_bool.must_equal(true)
   end
 
-  it "fails on a space-separated types scalar like real Ansible's comma-only check_type_list split" do
+  it "fails on a space-separated types scalar like Ansible's comma-only check_type_list split" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "testrepo-spacetype",
       "types"               => "deb deb-src",
@@ -101,7 +101,7 @@ describe "deb822_repository plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  it "fails on an invalid types choice even with state: absent (the real module's choices check lives in module-arg validation, before state handling)" do
+  it "fails on an invalid types choice even with state: absent (the Ansible module's choices check lives in module-arg validation, before state handling)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"  => "totally-fake-absent-badtype",
       "types" => "banana",
@@ -114,7 +114,7 @@ describe "deb822_repository plugin" do
   end
 
   it "gates on python3-debian deterministically: a stub `debian` package on PYTHONPATH forces the missing-lib branch on any host" do
-    # The real module fails with missing_required_lib wording on any
+    # The Ansible module fails with missing_required_lib wording on any
     # target without python3-debian - before state handling, so both
     # states fail identically. Instead of depending on whether THIS
     # host has the library, the failure branch is forced
@@ -149,7 +149,7 @@ describe "deb822_repository plugin" do
   it "succeeds on hosts that actually have python3-debian (skipped elsewhere; the PYTHONPATH-stub spec covers the failure branch)" do
     # Companion to the deterministic gate spec above: on a host WITH
     # python3-debian (and no PYTHONPATH override) the gate probe finds
-    # the real module and the task proceeds normally.
+    # the Ansible module and the task proceeds normally.
     probe = Process.run("python3", {"-c", "from debian.deb822 import Deb822"}, error: Process::Redirect::Close)
     skip "python3-debian not installed on this host" unless probe.success?
 
@@ -219,7 +219,7 @@ describe "deb822_repository plugin" do
 
   it "does not reject the executor-injected _module_name internal param" do
     # The task executor injects `_module_name` into EVERY task's plugin
-    # params (the invoked spelling real Ansible's check-mode skip
+    # params (the invoked spelling Ansible's check-mode skip
     # messages echo); the plugin's own internal-keys set predating that
     # injection rejected it as unsupported, failing every single
     # deb822_repository task with "Unsupported parameters ...

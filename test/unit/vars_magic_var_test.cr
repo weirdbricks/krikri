@@ -1,14 +1,14 @@
 require "../minitest_helper"
 require "../../src/krikri/conditional_evaluator"
 
-# Real Ansible's `vars` magic variable - a dict of every variable in
-# scope. Most real uses are membership tests rather than value reads:
+# Ansible's `vars` magic variable - a dict of every variable in
+# scope. Most Ansible uses are membership tests rather than value reads:
 # `prometheus.prometheus`'s own preflight does
 #
 #   __common_parent_role_short_name ~ '_skip_install' not in vars
 #
 # which crystal failed with "'vars' is undefined", stopping that role at
-# task 6 while real ansible-playbook completed all 33 (round 198). That
+# task 6 while ansible-playbook completed all 33 (round 198). That
 # blocked the whole prometheus.prometheus collection.
 #
 # The Crinja path already synthesised a `vars` dict; the hand-rolled
@@ -48,7 +48,7 @@ describe "vars magic variable" do
   end
 
   it "does not let the snapshot contain itself" do
-    # Verified against real ansible-core 2.19.4, where `'vars' in vars`
+    # Verified against ansible-core 2.19.4, where `'vars' in vars`
     # is False. A self-containing snapshot would also nest one copy per
     # task, since the context is layered on cached base contexts.
     context_with_vars["vars"].as_h.has_key?("vars").must_equal(false)

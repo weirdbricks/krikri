@@ -6,7 +6,7 @@ module Krikri
     module DockerPorts
       record Mapping, host_ip : String?, host_port : String, container_port : String, proto : String
 
-      # Parses one ports: entry. Supported forms (matching real Ansible's
+      # Parses one ports: entry. Supported forms (matching Ansible's
       # docker_container `ports:` syntax):
       #   "80"                          -> container_port=host_port=80, no host_ip
       #   "8080:80"                     -> host_port=8080, container_port=80

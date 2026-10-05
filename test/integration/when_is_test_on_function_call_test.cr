@@ -14,7 +14,7 @@ require "../minitest_helper"
 # Found via inmotionhosting.apache's own "Check required Apache
 # variables (strings)" assert (`when: lookup('vars', item) is not
 # string or lookup('vars', item) == 0`, looping every required
-# variable) - real Ansible skips it (every variable genuinely IS a
+# variable) - Ansible skips it (every variable genuinely IS a
 # string); this engine ran the ansible.builtin.fail: on every single
 # iteration instead.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

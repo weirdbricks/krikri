@@ -1,10 +1,10 @@
 require "../minitest_helper"
 
 # Pins plugins/shell.cr's AnsibleModule argument-validation surface
-# against real ansible.builtin.shell (bookworm ansible-core 2.14, where
+# against Ansible.builtin.shell (bookworm ansible-core 2.14, where
 # the shell module IS command.py with _uses_shell=True; live-diffed via
 # the podman-diff shell_edge_cases harness). Previously only warn: was
-# hand-rolled with 2.19-era wording that real 2.14 never emits - real
+# hand-rolled with 2.19-era wording that Ansible 2.14 never emits - real
 # names the module "ansible.legacy.command" and lists the 10-param
 # argspec with no cmd: and no expand_argument_vars: (SH14/SH17), the
 # missing-command failure is "no command given" not
@@ -29,7 +29,7 @@ describe "shell plugin argument validation" do
                                   "executable, removes, stdin, stdin_add_newline, strip_empty_ends.")
   end
 
-  it "fails a missing command with real's 'no command given' wording (SH15)" do
+  it "fails a missing command with Ansible's 'no command given' wording (SH15)" do
     result = PluginSpecHelper.run("shell", {} of String => String)
 
     result["failed"].as_bool.must_equal(true)

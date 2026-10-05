@@ -5,7 +5,7 @@
 # collivier.xtesting uses it; previously unavailable -> rc=4
 # "unavailable modules").
 #
-# Detection is the real module's best-effort chain, local to wherever
+# Detection is the Ansible module's best-effort chain, local to wherever
 # the plugin process runs (the target):
 # - /proc/self/cpuset: /docker/<id> -> docker, /azpl_job/<id> ->
 #   azure_pipelines, /actions_job/<id> -> github_actions

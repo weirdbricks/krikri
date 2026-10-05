@@ -6,8 +6,8 @@ require "file_utils"
 # documented module params (gather_subset / gather_timeout / filter /
 # fact_path), pinned against live ansible-core 2.19.4 behavior - every
 # expected value below was either observed directly (`ansible localhost
-# -m setup -a '...'`) or read out of the real module's source
-# (modules/setup.py, the real module,
+# -m setup -a '...'`) or read out of the Ansible module's source
+# (modules/setup.py, the Ansible module,
 # module_utils/facts/{collector,timeout,system/local}.py).
 private def config_with(params : String)
   JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":#{params},"vars":{}}))
@@ -20,7 +20,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
       families.must_equal(Set.new(%w[min local network hardware mounts virtual is_chroot loadavg fibre_channel_wwn iscsi hostnqn]))
     end
 
-    it "keeps the min floor for !all, exactly like real Ansible" do
+    it "keeps the min floor for !all, exactly like Ansible" do
       families = Krikri::FactsGatherer.resolve_enabled_families(["!all"])
       families.must_equal(Set.new(%w[min local]))
     end
@@ -39,7 +39,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
     end
 
     it "lets an explicit positive token override a negation of the same family (real exclude-minus-explicit rule)" do
-      # Not "later tokens win": real Ansible's difference_update only
+      # Not "later tokens win": Ansible's difference_update only
       # removes (exclude - explicitly_added), so a family named
       # positively is kept even when a negation elsewhere targets it.
       Krikri::FactsGatherer.resolve_enabled_families(["network", "!network"])
@@ -60,7 +60,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
     end
 
     it "activates a whole family from one of its per-fact aliases" do
-      # real Ansible's fact_id -> collector map: all_ipv4_addresses is
+      # Ansible's fact_id -> collector map: all_ipv4_addresses is
       # an alias of the network collector's family.
       Krikri::FactsGatherer.resolve_enabled_families(["all_ipv4_addresses"])
         .must_equal(Set.new(%w[min local network]))
@@ -70,14 +70,14 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
 
     it "accepts valid-but-unimplemented subset names without failing" do
       # dns/selinux/... are real collectors this engine has no
-      # implementation for - real Ansible accepts the token, so this
+      # implementation for - Ansible accepts the token, so this
       # must too (gathering nothing extra). virtual IS implemented now
       # (its own family), so only dns stays a gather-nothing token.
       Krikri::FactsGatherer.resolve_enabled_families(["virtual", "dns"])
         .must_equal(Set.new(%w[min local virtual]))
     end
 
-    it "fails on an unknown positive token with real Ansible's message" do
+    it "fails on an unknown positive token with Ansible's message" do
       # Live-verified against 2.19.4: setup fails with "Bad subset
       # 'bogus' given to Ansible. gather_subset options allowed: all, ..."
       ex = assert_raises(Krikri::FactsGatherer::BadSubsetError) do
@@ -88,8 +88,8 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
   end
 
   describe "#run" do
-    it "fails the module on a whitespace-padded token, exactly like real Ansible" do
-      # real Ansible's type=list conversion splits on ',' WITHOUT
+    it "fails the module on a whitespace-padded token, exactly like Ansible" do
+      # Ansible's type=list conversion splits on ',' WITHOUT
       # stripping (live-verified: `gather_subset: "network, virtual"`
       # fails with "Bad subset ' virtual'"). The old strip-on-split
       # behavior here was a divergence.
@@ -207,7 +207,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
       # facts were gathered due to timeout." warning) is not asserted
       # here: it needs a deterministically slow collector, which none of
       # the real gatherers can be on CI. The fiber/scratch-drop
-      # mechanism in gather_family_timed mirrors real Ansible's
+      # mechanism in gather_family_timed mirrors Ansible's
       # ThreadPool-based timeout decorator; its parse/validate surface
       # is what this spec pins.
     end
@@ -220,13 +220,13 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
         FileUtils.mkdir_p(PluginSpecHelper.tmp_path("fact-path"))
       end
 
-      it "gathers JSON, sectioned ini, and script facts; stores real Ansible's error strings for the rest" do
+      it "gathers JSON, sectioned ini, and script facts; stores Ansible's error strings for the rest" do
         dir = PluginSpecHelper.tmp_path("fact-path")
         File.write("#{dir}/json.fact", %({"json_key": 42, "nested": {"a": 1}}))
         File.write("#{dir}/ini.fact", "[main]\nhello=world\nfoo: bar\n")
         # A bare key=value with no [section] header is what real
         # configparser rejects (MissingSectionHeaderError) - the fact
-        # becomes the same error string real Ansible stores.
+        # becomes the same error string Ansible stores.
         File.write("#{dir}/noheader.fact", "hello=world\n")
         File.write("#{dir}/plain.fact", "plain text\n")
         script = "#{dir}/script.fact"
@@ -259,7 +259,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
   end
 
   describe "#fnmatch_to_regex" do
-    it "translates the shell-style dialect real Ansible's fnmatch uses" do
+    it "translates the shell-style dialect Ansible's fnmatch uses" do
       {
         {"ansible_*_mb", "ansible_memfree_mb", true},
         {"ansible_*_mb", "ansible_memfree_mb_total", false},

@@ -35,7 +35,7 @@ module Krikri
       # Unsafe gate (see VarSubstitutor.unsafe_root?): a value resolved
       # through an execution-resolved root (registered result / set_fact /
       # fact / loop item) is never re-rendered, no matter how much its text
-      # looks like a template - real ansible-core marks module results and
+      # looks like a template - ansible-core marks module results and
       # facts AnsibleUnsafe. Every rerender_if_templated call site here
       # consults this with the expression it resolved FROM.
       private def unsafe_root?(expr : String?) : Bool
@@ -217,7 +217,7 @@ module Krikri
               pos += 1
             end
             part = suffix[dot_start...pos]
-            # Real Ansible/Jinja2 lets a dotted numeric index chain
+            # Ansible/Jinja2 lets a dotted numeric index chain
             # (`.0.0`) walk arbitrarily deep into nested lists/dicts.
             # This fallback path's own hand-rolled branch below only
             # handled Hash key lookup - unlike the already-correct
@@ -230,7 +230,7 @@ module Krikri
             # instead of indexing into the array. Found in round
             # 813338, role xolyu.mariadb: `( item | regex_findall(...)
             # ).0.0`-style version-string parsing lost `major`/`minor`/
-            # `build` to "undefined" (real Ansible: "10"/"6"/"12").
+            # `build` to "undefined" (Ansible: "10"/"6"/"12").
             # Delegate to `apply_dotted_parts` so walk gets Hash key
             # lookup, string methods, AND Array numeric-dot-indexing
             # with no duplicated logic; its nil return propagates via
@@ -268,7 +268,7 @@ module Krikri
         @origin = key
       end
 
-      # Real Ansible's recursive re-templating, applied to a dotted-access
+      # Ansible's recursive re-templating, applied to a dotted-access
       # BASE variable before walking `.method()`/`.attr` off of it - one
       # more independent copy of the same bug class this engine has fixed
       # repeatedly elsewhere (ExpressionEvaluator's bare-lookup fallback,
@@ -308,7 +308,7 @@ module Krikri
         # Rerender module's), so the counter has to be the same one.
         # Without it a mutually-templated var pair (`a: "{{ b }}"` /
         # `b: "{{ a }}"`) blew the C stack and crashed the whole process;
-        # real ansible-core fails the task with "Recursive loop detected
+        # ansible-core fails the task with "Recursive loop detected
         # in template" instead.
         Rerender.with_depth_guard do
           rerender_if_templated_inner(raw, render_vars)
@@ -321,7 +321,7 @@ module Krikri
         # ExpressionEvaluator has no concept of block tags at all. Real
         # bug found benchmarking prometheus.prometheus._common's own
         # vars/main.yml: `_common_dependencies: "{% if (...) %}{{ (...)
-        # -}}{% else %}{% endif %}"` (a role default, real Ansible-
+        # -}}{% else %}{% endif %}"` (a role default, Ansible-
         # written Jinja - block tags ARE valid anywhere a template
         # string is processed, not just in .j2 template FILES) - handing
         # this whole raw text to ExpressionEvaluator (which only knows
@@ -351,7 +351,7 @@ module Krikri
         # before the opening `{{`, or more than one span) need the full
         # template renderer, which understands arbitrary mixed
         # literal-text-plus-`{{ }}` content the way a real `.j2` file or
-        # a real Ansible template string does. The single-span,
+        # a Ansible template string does. The single-span,
         # whole-string case below is a narrower, faster path for the
         # overwhelmingly common shape (`vars: x: "{{ y }}"` with nothing
         # else in the string) and is kept as-is for it.
@@ -372,7 +372,7 @@ module Krikri
 
         inner = inner[2..-3].strip if whole_span
         # Whole-single-span values keep the expression's NATIVE type
-        # (real ansible-core 2.19 native typing - see
+        # (ansible-core 2.19 native typing - see
         # Rerender.whole_span_structured): `{{ 42 }}` is the int 42,
         # `{{ '42' }}` the str "42". The old render-then-
         # parse_json_or_python_literal detour re-typed by TEXT shape
@@ -438,12 +438,12 @@ module Krikri
       # #apply_method_suffix for that public entry point - added for
       # ExpressionEvaluator's `lookup(...).method()` shape, where the
       # "base" is a lookup() call's return value, not a `@vars` name.
-      # Real Jinja2 3.x groupby yields _GroupTuple namedtuples (a pair
+      # Jinja2 3.x groupby yields _GroupTuple namedtuples (a pair
       # with fields grouper/list that ALSO tuple-indexes and
       # JSON-serializes as an array) - the groupby filter emits a plain
       # 2-element array, so these two field names resolve to the pair's
       # elements the way the namedtuple would. A plain list has no such
-      # attribute in real Jinja either (renders undefined), but no real
+      # attribute in Jinja either (renders undefined), but no real
       # template reads .grouper off a non-groupby list.
       private def groupby_pair_attr(raw : Array(JSON::Any), part : String) : JSON::Any?
         return nil unless raw.size == 2 && (part == "grouper" || part == "list")
@@ -472,7 +472,7 @@ module Krikri
             current = fetched
           when Array
             # Numeric dot-indexing into a list (`item.1` meaning
-            # `item[1]`) - real Jinja2 attribute access falls back to
+            # `item[1]`) - Jinja2 attribute access falls back to
             # item access, which for a list means an integer index.
             # `with_indexed_items`/`with_together`/`zip()` all yield
             # each item as a plain `[index_or_a, b]` pair, and the
@@ -606,7 +606,7 @@ module Krikri
           # Python's str.lstrip(chars) strips any LEADING character that
           # is a MEMBER of chars (a character set, not a prefix-string
           # match) - repeated until a non-member is hit; no argument
-          # strips whitespace, matching Python's default. Real Ansible's
+          # strips whitespace, matching Python's default. Ansible's
           # Jinja2 environment calls this straight through as a native
           # Python string method (not a `| filter`), so any string
           # variable can use it directly in a plain `{{ }}` expression.
@@ -1000,7 +1000,7 @@ module Krikri
           enter_hostvars_origin(current, key.to_s) if fetched && key.is_a?(String)
           fetched
         when String
-          # Real Jinja2/Python character indexing (`elasticsearch_version[0]`
+          # Jinja2/Python character indexing (`elasticsearch_version[0]`
           # on a plain "7.x" string) - real bug found benchmarking
           # geerlingguy.elasticsearch's own version-branch `when:`
           # (`elasticsearch_version[0] | int < 7` / `>= 7`): this fell
@@ -1021,14 +1021,14 @@ module Krikri
       # Renders a variable's value the way Ansible/Jinja2 does when it's
       # interpolated directly into template text - notably, Python's
       # capitalized True/False for booleans, not Crystal's lowercase
-      # true/false (verified against real ansible-playbook: a `{{ boolvar }}`
+      # true/false (verified against ansible-playbook: a `{{ boolvar }}`
       # in a copy/template content string renders "True"/"False"). Public
       # (not just used internally) so FilterEngine's caller can render a
       # filter chain's final JSON::Any result the same way a plain variable
       # lookup would be.
       # The FINAL, user-facing rendering of a `{{ }}` span's value:
       # identical to #format_value except that a container comes out in
-      # Python's `repr` form, which is what real Ansible produces
+      # Python's `repr` form, which is what Ansible produces
       # (`{{ ['a', 'b'] }}` renders `['a', 'b']` there, and rendered
       # `["a","b"]` here). Only the outermost substitution may use this -
       # anything internal needs #format_value's JSON, per its comment.
@@ -1042,11 +1042,11 @@ module Krikri
       end
 
       # Python's `repr` for a JSON::Any, used to render containers the
-      # way real Ansible does. Scalars follow Python's own spellings
+      # way Ansible does. Scalars follow Python's own spellings
       # (`True`/`False`/`None`); strings follow its quote choice: single
       # quotes normally, double quotes when the string contains a single
       # quote and no double quote, and single quotes with `\'` escapes
-      # when it contains both (verified against real Ansible's output
+      # when it contains both (verified against Ansible's output
       # for all three shapes).
       def python_repr(value : JSON::Any) : String
         case raw = value.raw
@@ -1056,7 +1056,7 @@ module Krikri
           raw ? "True" : "False"
         when Nil
           # Only INSIDE a container: a bare `{{ none_var }}` renders as
-          # empty text in real Ansible, which #format_value handles.
+          # empty text in Ansible, which #format_value handles.
           "None"
         when Array
           "[" + raw.map { |item| python_repr(item) }.join(", ") + "]"
@@ -1082,7 +1082,7 @@ module Krikri
       def format_value(value : JSON::Any) : String
         case value.raw
         when String
-          # Real Jinja2 NEVER strips a rendered value's own whitespace -
+          # Jinja2 NEVER strips a rendered value's own whitespace -
           # `{{ some_string }}` renders exactly what the variable holds,
           # leading/trailing spaces included (only `{%- -%}` BLOCK-TAG
           # whitespace control, an orthogonal template-syntax feature,
@@ -1099,7 +1099,7 @@ module Krikri
           # underlying raw type, raising `OverflowError` for any real
           # Int64 value outside Int32's range (~2.1 billion) - a real
           # crash for byte-scale numbers, not just a wrong result.
-          # `ansible_facts['mounts'][n].size_available` (real Ansible's
+          # `ansible_facts['mounts'][n].size_available` (Ansible's
           # own field, gigabyte/terabyte-scale byte counts) hits this on
           # any host with more than ~2GB free - found via robertdebock.
           # diskspace's own `item.size_available | int >= kilobytes_

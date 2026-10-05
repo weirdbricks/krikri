@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Regression tests for the -vv console lines real ansible-playbook emits
+# Regression tests for the -vv console lines ansible-playbook emits
 # around handlers and static imports: the strategy's "Notification for
 # handler ... has been saved.", the default callback's "NOTIFIED HANDLER
 # ... for ..." and the handler's own `task path:` line, plus the parser's
@@ -95,7 +95,7 @@ describe "-vv handler and static-import console lines" do
 
     text = output.to_s
     text.must_include("statically imported: #{File.join(dir, "inner.yml")}")
-    # Real prints it after the config-file line and before the two
+    # Ansible prints it after the config-file line and before the two
     # Skipping callback lines.
     cfg_idx = text.index("No config file found; using defaults")
     import_idx = text.index("statically imported: ")

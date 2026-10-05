@@ -11,7 +11,7 @@ describe "mysql_user plugin parameter validation" do
     result["msg"].as_s.must_include("name")
   end
 
-  it "fails with real AnsibleModule's plural 'missing required arguments' when name is missing" do
+  it "fails with AnsibleModule's plural 'missing required arguments' when name is missing" do
     # podman-diff mysql_user_edge_cases W8: real community.mysql says
     # "missing required arguments: name" (plural even for one param);
     # this engine had the singular form.
@@ -20,10 +20,10 @@ describe "mysql_user plugin parameter validation" do
     result["msg"].as_s.must_equal("missing required arguments: name")
   end
 
-  it "rejects an invalid state with real Ansible's choices message before any connection" do
+  it "rejects an invalid state with Ansible's choices message before any connection" do
     # podman-diff mysql_user_edge_cases W7: state: present-nowhere
     # previously fell through as if it were present and CREATED the
-    # account (changed=true) where real Ansible fails the argument-spec
+    # account (changed=true) where Ansible fails the argument-spec
     # choices check before connecting (live-verified message).
     result = PluginSpecHelper.run("mysql_user", {
       "name"  => "alice",

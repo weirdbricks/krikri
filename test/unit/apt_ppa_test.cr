@@ -29,7 +29,7 @@ describe Krikri::PluginHelpers::AptPpa do
   end
 
   describe ".expand_line" do
-    it "builds the exact deb line shape real Ansible's own _expand_ppa produces" do
+    it "builds the exact deb line shape Ansible's own _expand_ppa produces" do
       info = Krikri::PluginHelpers::AptPpa::Info.new("nginx", "stable")
       Krikri::PluginHelpers::AptPpa.expand_line(info, "jammy").must_equal(
         "deb https://ppa.launchpadcontent.net/nginx/stable/ubuntu jammy main"
@@ -45,7 +45,7 @@ describe Krikri::PluginHelpers::AptPpa do
   end
 
   describe ".filename_source" do
-    it "matches real Ansible's own pre-expansion _suggest_filename input" do
+    it "matches Ansible's own pre-expansion _suggest_filename input" do
       info = Krikri::PluginHelpers::AptPpa::Info.new("nginx", "stable")
       Krikri::PluginHelpers::AptPpa.filename_source(info, "jammy").must_equal("ppa:nginx/stable_jammy")
     end
@@ -58,7 +58,7 @@ describe Krikri::PluginHelpers::AptPpa do
   end
 
   describe ".keyfile_name" do
-    it "matches real Ansible's own os.path.basename(source)-derived keyfile name" do
+    it "matches Ansible's own os.path.basename(source)-derived keyfile name" do
       info = Krikri::PluginHelpers::AptPpa::Info.new("nginx", "stable")
       Krikri::PluginHelpers::AptPpa.keyfile_name(info, "jammy").must_equal("ubuntu-jammy-main-nginx-stable.gpg")
     end

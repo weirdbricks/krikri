@@ -24,7 +24,7 @@ module Krikri
       @groups["ungrouped"] = HostGroup.new("ungrouped")
     end
 
-    # Real Ansible's host-pattern language: terms separated by `:` or
+    # Ansible's host-pattern language: terms separated by `:` or
     # `,`, where a plain term is UNIONed, `!term` excludes and `&term`
     # intersects, applied left to right. Previously only a single term
     # was understood, so `web:db`, `!web`, `prod:!db` and `web:&prod` all
@@ -134,7 +134,7 @@ module Krikri
           [host]
           # Pattern matching (simple wildcards)
         elsif pattern.includes?("*") || pattern.includes?("?") || pattern.includes?("[")
-          # fnmatch semantics, matching real Ansible's own pattern
+          # fnmatch semantics, matching Ansible's own pattern
           # matcher (`Inventory._match` = fnmatch.fnmatch): ONLY `*`,
           # `?`, and `[seq]` are special, every other regex metacharacter
           # is LITERAL. The old `gsub("*", ".*")` left `.`, `(`, `+` etc
@@ -189,11 +189,11 @@ module Krikri
     end
 
     # Every group *host_name* belongs to, following :children upward, in
-    # the sorted order real Ansible's `group_names` uses. Only "all" is
+    # the sorted order Ansible's `group_names` uses. Only "all" is
     # excluded (verified: a host in [web] under [prod:children] reports
     # exactly "prod, web").
     #
-    # "ungrouped" is NOT excluded, though it used to be: real Ansible
+    # "ungrouped" is NOT excluded, though it used to be: Ansible
     # reports `group_names == ["ungrouped"]` for a host that belongs to
     # no other group, and that is genuine membership rather than an
     # internal artifact like "all" - a host listed above any [section]
@@ -272,7 +272,7 @@ module Krikri
     # is what lets a single shared instance (krikri-playbook.cr's own
     # `inventory` local plus every play's TaskExecutor `@inventory`, all
     # the SAME object) see the refresh without any callback/reference-
-    # cell plumbing between the two - matches real Ansible's own
+    # cell plumbing between the two - matches Ansible's own
     # documented behavior, verified live: refreshing does NOT change
     # which hosts the CURRENT play iterates over (already fixed before
     # this runs), only what a LATER play's own `hosts:` pattern match
@@ -310,7 +310,7 @@ module Krikri
 
   # Inventory Parser - supports INI and YAML formats
   class InventoryParser
-    # Real Ansible's INVENTORY_IGNORE_EXTS default: files with these
+    # Ansible's INVENTORY_IGNORE_EXTS default: files with these
     # suffixes are skipped when an inventory DIRECTORY is read, so an
     # editor backup or a stray README next to the real sources doesn't
     # get parsed as inventory. Taken verbatim from `ansible-config dump`
@@ -323,14 +323,14 @@ module Krikri
     # comma-separated host list (auto-detect).
     #
     # *playbook_dir* is the playbook's directory when known (nil for the
-    # ad-hoc CLI). Real Ansible loads group_vars/host_vars from BOTH the
+    # ad-hoc CLI). Ansible loads group_vars/host_vars from BOTH the
     # inventory's directory and the playbook's, with the playbook side
     # winning a same-key conflict between the two file trees - the
     # dirless-infra shape (ansible/inventory/backend_hosts.yml next to
-    # the real module) silently lost every playbook-adjacent
+    # the Ansible module) silently lost every playbook-adjacent
     # group_vars var before this parameter existed.
     def self.parse(path : String, playbook_dir : String? = nil) : Inventory
-      # `-i "web1,web2,"` - real Ansible's host_list source. The trailing
+      # `-i "web1,web2,"` - Ansible's host_list source. The trailing
       # comma is what disambiguates a single-host list from a filename
       # (`-i localhost` is a file; `-i localhost,` is a host list), which
       # is why the rule is "contains a comma", not "isn't a file".
@@ -343,7 +343,7 @@ module Krikri
       end
 
       # An executable inventory file is a dynamic inventory script, same
-      # detection rule real Ansible uses (the executable bit, not the
+      # detection rule Ansible uses (the executable bit, not the
       # extension) - see parse_dynamic.
       if File::Info.executable?(path)
         return parse_dynamic(path, playbook_dir)
@@ -359,7 +359,7 @@ module Krikri
     end
 
     # An inventory DIRECTORY: every source inside it is parsed and the
-    # results merged, which is how real Ansible lets a project split
+    # results merged, which is how Ansible lets a project split
     # `production/` into `01-web.ini`, `02-db.ini`, `hosts.yml` and so
     # on. Sources are read in filename order; ignored extensions
     # (IGNORED_INVENTORY_EXTENSIONS), hidden files and nested
@@ -367,7 +367,7 @@ module Krikri
     #
     # Group vars are re-applied AFTER the merge, not just per file: an
     # `[all:vars]` block in one file has to reach hosts defined in
-    # another (verified against real Ansible), and each file's own
+    # another (verified against Ansible), and each file's own
     # parse only ever saw its own hosts.
     def self.parse_directory(path : String, playbook_dir : String? = nil) : Inventory
       merged = Inventory.new
@@ -375,7 +375,7 @@ module Krikri
       # `constructed` sources transform hosts contributed by the OTHER
       # sources in the directory rather than contributing hosts of their
       # own, so they are applied after everything else is merged - same
-      # order real Ansible processes inventory sources in.
+      # order Ansible processes inventory sources in.
       deferred_constructed = [] of {String, YAML::Any}
 
       sources = Dir.children(path).sort!.map { |child| File.join(path, child) }
@@ -440,7 +440,7 @@ module Krikri
 
     # `-i "alpha,beta,"` - a literal list of hosts rather than a file.
     # Range syntax works here exactly as it does in an INI file
-    # (`-i "web[01:03],"`), since real Ansible runs the same expansion
+    # (`-i "web[01:03],"`), since Ansible runs the same expansion
     # over host_list entries.
     def self.parse_host_list(path : String, playbook_dir : String? = nil) : Inventory
       inventory = Inventory.new
@@ -457,7 +457,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's host_list source has no inventory directory, but
+      # Ansible's host_list source has no inventory directory, but
       # playbook-adjacent group_vars/host_vars still apply (the common
       # `ansible-playbook -i localhost, play.yml` shape).
       load_group_and_host_vars(inventory, nil, playbook_dir)
@@ -477,7 +477,7 @@ module Krikri
     #   }
     #
     # If the script doesn't provide _meta.hostvars, falls back to the
-    # older, slower per-host `--host <name>` convention real Ansible also
+    # older, slower per-host `--host <name>` convention Ansible also
     # supports. Only inventory scripts (the original, universal dynamic
     # inventory mechanism - any executable, any language) are implemented;
     # Ansible's newer YAML-defined inventory *plugins* (aws_ec2.yml and
@@ -747,7 +747,7 @@ module Krikri
     private def self.parse_host_line(line : String, group_name : String, inventory : Inventory) : Nil
       # Format: hostname key=value key=value
       #
-      # Split the way real Ansible does - `shlex.split`, not a plain
+      # Split the way Ansible does - `shlex.split`, not a plain
       # whitespace split. Two things follow from that, both verified
       # against ansible-core 2.19.4: a quoted value may CONTAIN spaces
       # (`w1 motd='hello there'` is one token), and the quotes are
@@ -870,7 +870,7 @@ module Krikri
 
     # Load group_vars/*.yml and host_vars/*.yml from the directories
     # adjacent to the inventory file AND, when known, the playbook's
-    # directory (real Ansible checks both; the playbook side wins a
+    # directory (Ansible checks both; the playbook side wins a
     # same-key conflict between the two file trees - live-verified
     # against ansible-core 2.19.11), and apply them to matching hosts.
     # Only a single group_vars/<name>.yml / host_vars/<name>.yml file per
@@ -884,7 +884,7 @@ module Krikri
     # applied - are never overwritten), so the net precedence is: inline
     # host vars > playbook host_vars file > playbook group_vars file >
     # inventory host_vars file > inventory group_vars file > (afterward,
-    # in apply_group_vars) inline group vars. Real Ansible's actual
+    # in apply_group_vars) inline group vars. Ansible's actual
     # precedence has host_vars files outrank inline host vars too, but
     # group_vars/host_vars files and inline vars on the
     # very same key is a rare enough combination that this simpler,
@@ -937,7 +937,7 @@ module Krikri
       # real two-play run whose group var failed exactly that way; the
       # earlier delegate_facts: play beside it was coincidence, not cause -
       # the trigger is purely the inventory shape.) Deeper (leaf) groups
-      # apply first - real Ansible ranks a child group's vars above its
+      # apply first - Ansible ranks a child group's vars above its
       # parents', and set-if-absent gives the first-applied file the win;
       # sorting by child depth (ties in inventory declaration order)
       # encodes that without re-opening the inline-vs-file precedence.
@@ -1066,7 +1066,7 @@ module Krikri
       end
     end
 
-    # Parse a value (attempt to infer type). Matches real Ansible's INI parser:
+    # Parse a value (attempt to infer type). Matches Ansible's INI parser:
     # - Quoted values are always strings (no type inference).
     # - Unquoted `true`/`false`/`yes`/`no` → boolean.
     # - Unquoted integers/floats → numeric.
@@ -1131,7 +1131,7 @@ module Krikri
       tokens
     end
 
-    # An INI inventory value, typed exactly as real Ansible types it -
+    # An INI inventory value, typed exactly as Ansible types it -
     # by running the raw text through Python's `ast.literal_eval` and
     # keeping the string when that raises. That is a narrower rule than
     # it looks, and the difference is not cosmetic:
@@ -1147,7 +1147,7 @@ module Krikri
     # This engine previously treated `true`/`yes`/`no`/`false` as
     # booleans and left `[1, 2]` as text, which broke two things
     # silently. A `[all:vars] enabled=false` is the *string* "false" on
-    # real Ansible - which is TRUTHY - so `when: enabled` there fails
+    # Ansible - which is TRUTHY - so `when: enabled` there fails
     # the task outright under 2.19's strict conditionals ("Conditional
     # result (True) was derived from value of type 'str'"), where this
     # engine quietly took the false branch and skipped it. And a
@@ -1204,7 +1204,7 @@ module Krikri
     # `String#to_i64?`: a leading zero may only be followed by more
     # zeros (`0` and `00` are ints, `0123` is a SyntaxError and stays a
     # string - which is exactly how a zero-padded value like an
-    # `id=0123` survives as text on real Ansible), and `_` is a legal
+    # `id=0123` survives as text on Ansible), and `_` is a legal
     # digit separator (`1_000` is 1000). Verified against ansible-core
     # 2.19.4 over all six shapes.
     private def self.python_int(value : String) : Int64?

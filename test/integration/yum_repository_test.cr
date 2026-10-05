@@ -50,7 +50,7 @@ describe "yum_repository plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  it "regenerates the section from scratch each run, dropping keys not passed this time (matches real ansible-playbook, not a bug)" do
+  it "regenerates the section from scratch each run, dropping keys not passed this time (matches ansible-playbook, not a bug)" do
     PluginSpecHelper.run("yum_repository", {
       "name" => "regen", "description" => "d", "baseurl" => "https://example.com", "gpgcheck" => "true", "reposdir" => repo_dir,
     })
@@ -116,10 +116,10 @@ describe "yum_repository plugin" do
     File.read(repo_path("listtest")).must_include("includepkgs = foo bar")
   end
 
-  # baseurl/gpgkey are real Ansible's own `type: list` params, joined with
+  # baseurl/gpgkey are Ansible's own `type: list` params, joined with
   # a tab-indented continuation line rather than a space when there's more
   # than one - verified directly against real Python configparser output
-  # (what real Ansible's own module uses to write the file), not assumed.
+  # (what Ansible's own module uses to write the file), not assumed.
   # A single value renders as a plain `key = value` line either way, with
   # no continuation - only multiple values trigger it.
   it "tab-continuation-joins multi-value baseurl/gpgkey, matching real configparser output" do
@@ -168,7 +168,7 @@ describe "yum_repository plugin" do
   end
 
   # Real argument_spec aliases are resolved to the canonical key and the
-  # alias spelling never lands in the file as its own key (real Ansible
+  # alias spelling never lands in the file as its own key (Ansible
   # pops aliases from the params dict before its write loop).
   it "resolves the excludepkgs alias to exclude" do
     PluginSpecHelper.run("yum_repository", {
@@ -209,7 +209,7 @@ describe "yum_repository plugin" do
 
   # Two yum_repository tasks sharing one `file:` with different `name:`
   # sections is the normal main + source repo pattern (real role:
-  # round900982 jaredledvina.sensu_go_ansible). Real Ansible's own module
+  # round900982 jaredledvina.sensu_go_ansible). Ansible's own module
   # merges via Python's configparser and converges to ok/ok on rerun;
   # overwriting the whole file with one section made both tasks report
   # changed: true on every rerun forever.
@@ -252,7 +252,7 @@ describe "yum_repository plugin" do
   end
 
   # A .repo file can also be hand-edited or managed by a role with other
-  # repos already in it - real Ansible's configparser-based rewrite
+  # repos already in it - Ansible's configparser-based rewrite
   # leaves those sections byte-for-byte alone.
   it "preserves an unrelated pre-existing section byte-for-byte when writing its own" do
     File.write(repo_path("preexisting"), "[unrelated]\nfoo = bar\ncomment = hand-edited\n\n[mine]\nbaseurl = https://old\nname = old\n\n")
@@ -310,7 +310,7 @@ describe "yum_repository plugin" do
 
   # A present alias beats the canonical name when both are given - real
   # ansible-core's _handle_aliases overwrite order (same convention stat.cr
-  # verified against real Ansible).
+  # verified against Ansible).
   it "lets a present alias win over the canonical name when both are given" do
     PluginSpecHelper.run("yum_repository", {
       "name"        => "bothtest",
@@ -331,12 +331,12 @@ describe "yum_repository plugin" do
   # the helper itself, distinct from copy/get_url's inline attribute code.
   # Found benchmarking kilip.chezmoi (round900811): a present-but-empty
   # owner:/group: was silently treated as "no ownership change requested"
-  # instead of failing like real Ansible's basic.py, which only skips the
+  # instead of failing like Ansible's basic.py, which only skips the
   # chown/chgrp when the param is None and fails the empty-name lookup
   # with "chown failed: failed to look up user " (basic.py:789,
   # trailing space) / "chgrp failed: failed to look up group "
   # (basic.py:830). Verified live against ansible-core 2.19.11.
-  it "fails with real Ansible's exact message when owner: is an explicit empty string (shared helper)" do
+  it "fails with Ansible's exact message when owner: is an explicit empty string (shared helper)" do
     result = PluginSpecHelper.run("yum_repository", {
       "name"        => "empty-owner",
       "description" => "d",
@@ -349,7 +349,7 @@ describe "yum_repository plugin" do
     result["msg"].as_s.must_equal("chown failed: failed to look up user ")
   end
 
-  it "fails with real Ansible's exact message when group: is an explicit empty string (shared helper)" do
+  it "fails with Ansible's exact message when group: is an explicit empty string (shared helper)" do
     result = PluginSpecHelper.run("yum_repository", {
       "name"        => "empty-group",
       "description" => "d",

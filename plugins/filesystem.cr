@@ -10,7 +10,7 @@ module Krikri
   #
   # Entirely unimplemented before - robertdebock.swap's own "Make swap
   # file system" task (fstype: swap on a freshly dd'd swap file)
-  # silently dropped while real Ansible actually ran mkswap.
+  # silently dropped while Ansible actually ran mkswap.
   #
   # `resizefs:`/`uuid:` are not implemented (real module's own resize/
   # UUID-reset paths per fstype) - same class of documented, narrow
@@ -66,7 +66,7 @@ module Krikri
       # AnsibleModule's choice check (parameters.py's exact wording)
       # fires before anything else param-wise - previously a bogus
       # state silently behaved as present and a bogus fstype fell
-      # through to the device/blkid checks first. Real's choice list
+      # through to the device/blkid checks first. Ansible's choice list
       # is set-ordered (nondeterministic wording across runs); the
       # set of choices matches (minus FreeBSD-only ufs) and the
       # podman-diff case only compares failed=/changed= here.
@@ -107,7 +107,7 @@ module Krikri
     # AnsibleModule's choice check (parameters.py's exact wording)
     # fires before anything else param-wise - previously a bogus
     # state silently behaved as present and a bogus fstype fell
-    # through to the device/blkid checks first. Real's choice list
+    # through to the device/blkid checks first. Ansible's choice list
     # is set-ordered (nondeterministic wording across runs); the
     # set of choices matches (minus FreeBSD-only ufs) and the
     # podman-diff case only compares failed=/changed= here.

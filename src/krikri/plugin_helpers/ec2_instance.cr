@@ -17,7 +17,7 @@ module Krikri
     # the exact mutating calls to make; the full #run wires it together
     # and specs drive it through the Ec2Api transport seam.
     #
-    # Behavior mirrors the real module's surface (params confirmed against
+    # Behavior mirrors the Ansible module's surface (params confirmed against
     # `ansible-doc amazon.aws.ec2_instance`):
     # - Targeting: `name` (the Name tag) or `instance_ids`, optionally
     #   narrowed by `filters`. The idempotency lookup always adds a
@@ -28,7 +28,7 @@ module Krikri
     # - state=present: launch (RunInstances) when no match; otherwise a
     #   no-op except for tag drift (missing tags applied via CreateTags,
     #   extra tags deleted via DeleteTags when both `tags` and
-    #   purge_tags are set - the real module's default - with
+    #   purge_tags are set - the Ansible module's default - with
     #   aws:-reserved keys left alone).
     #   Attribute drift (instance_type, user_data, ...) is deliberately
     #   not diffed: present "ensures instances exist, but does not
@@ -43,7 +43,7 @@ module Krikri
     # - count: always launches that many new instances (never reconciles).
     #   exact_count: reconciles the match set to N - launching the
     #   difference, or terminating the surplus oldest-first (least
-    #   recently created, per the real module's documented Launch Time
+    #   recently created, per the Ansible module's documented Launch Time
     #   ordering).
     # - Tags: the `name` param is the Name tag; user `tags` are applied
     #   after RunInstances via a separate CreateTags call (RunInstances
@@ -52,9 +52,9 @@ module Krikri
     #   call until every affected instance reaches the target state
     #   (running/stopped/terminated; a terminated instance that has left
     #   DescribeInstances entirely counts as terminated), up to
-    #   wait_timeout (default 600s, the real module's default).
+    #   wait_timeout (default 600s, the Ansible module's default).
     #
-    # Result shape matches real Ansible: `instances` is the list of
+    # Result shape matches Ansible: `instances` is the list of
     # DescribeInstances items shaped by Ec2Info.jsonify (camel_to_snake'd
     # boto3 keys, `state` as the code/name dict, `tags` as the key-value
     # dict).
@@ -196,7 +196,7 @@ module Krikri
 
       # RunInstances wire params. UserData is Base64-encoded (the EC2
       # Query API expects the encoded blob; boto3 does this conversion for
-      # the real module).
+      # the Ansible module).
       def self.run_instances_params(params : Hash(String, String), count : Int32) : Array(Tuple(String, String))
         wire = [
           {"MinCount", "1"},
@@ -220,7 +220,7 @@ module Krikri
       end
 
       # security_group (single) + security_groups (list) collapse into one
-      # SecurityGroupId.N list - the real module treats them as mutually
+      # SecurityGroupId.N list - the Ansible module treats them as mutually
       # exclusive spellings of the same thing.
       def self.security_groups(params : Hash(String, String)) : Array(String)
         groups = Ec2Info.string_list(params["security_groups"]?)
@@ -467,7 +467,7 @@ module Krikri
         end
 
         if existing.size > exact_count
-          # Least recently created first, per the real module's documented
+          # Least recently created first, per the Ansible module's documented
           # Launch Time ordering.
           surplus = existing.sort_by(&.launch_time).first(existing.size - exact_count)
           plan = plan_terminate(surplus, wait)

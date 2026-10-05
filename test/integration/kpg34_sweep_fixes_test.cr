@@ -5,7 +5,7 @@ require "json"
 # krikri-playbook-generator sweep (seed 34) flagged: parted, lvg, lvol,
 # firewalld, selinux, sefcontext, filesystem, mount_facts,
 # kernel_blacklist, async_status, make and deploy_helper. The expected
-# strings are real ansible-playbook 2.19.11's own, captured from local
+# strings are ansible-playbook 2.19.11's own, captured from local
 # runs (ansible_connection=local, no gather caching) or live-verified
 # module source; the missing-binary/library gates use a restricted child
 # PATH (or a failing python shim) so they stay deterministic on hosts
@@ -34,7 +34,7 @@ private def binary_findable?(name : String) : Bool
 end
 
 describe "parted plugin - get_bin_path ordering (kpg34)" do
-  it "fails with real's executable-not-found message before any device check" do
+  it "fails with Ansible's executable-not-found message before any device check" do
     return if binary_findable?("parted")
 
     result = PluginSpecHelper.run("parted", {"device" => "/dev/krikri-no-such-disk"})
@@ -50,7 +50,7 @@ describe "parted plugin - get_bin_path ordering (kpg34)" do
     result["msg"].as_s.must_equal("value of state must be one of: absent, info, present, got: bogus")
   end
 
-  it "reports real's get_device_info script failure when parted exists but the device does not" do
+  it "reports Ansible's get_device_info script failure when parted exists but the device does not" do
     # Needs the real parted binary on PATH (any dev host has it); the
     # restricted-PATH variants above cover hosts without it.
     unless Process.find_executable("parted")
@@ -67,7 +67,7 @@ describe "parted plugin - get_bin_path ordering (kpg34)" do
 end
 
 describe "lvg plugin - kpg34 arg surface and vgs gate" do
-  it "accepts pvresize/remove_extra_pvs/reset_vg_uuid/reset_pv_uuid like real's argspec" do
+  it "accepts pvresize/remove_extra_pvs/reset_vg_uuid/reset_pv_uuid like Ansible's argspec" do
     result = PluginSpecHelper.run("lvg", {
       "vg"               => "krikri-nosuch-vg",
       "pvs"              => "/dev/krikri-no-such-pv",
@@ -79,7 +79,7 @@ describe "lvg plugin - kpg34 arg surface and vgs gate" do
 
     # The parameters are part of the accepted spec: whatever happens
     # downstream (the vgs binary gate on a host without LVM2, the
-    # vgcreate attempt on one with it), real's unsupported-params
+    # vgcreate attempt on one with it), Ansible's unsupported-params
     # error must be gone.
     result["msg"].as_s.wont_include("Unsupported parameters for (community.general.lvg) module")
   end
@@ -91,14 +91,14 @@ describe "lvg plugin - kpg34 arg surface and vgs gate" do
     result["msg"].as_s.must_include("Unsupported parameters for (community.general.lvg) module: bogus_param")
   end
 
-  it "accepts state=inactive (real 7.1.0 active/inactive choices)" do
+  it "accepts state=inactive (Ansible 7.1.0 active/inactive choices)" do
     result = PluginSpecHelper.run("lvg",
       {"vg" => "krikri-nosuch-vg", "state" => "inactive"})
 
     result["msg"].as_s.wont_include("value of state must be one of")
   end
 
-  it "still rejects an invalid state with real's choice list order" do
+  it "still rejects an invalid state with Ansible's choice list order" do
     result = PluginSpecHelper.run("lvg",
       {"vg" => "vg0", "pvs" => "/dev/sdz99", "state" => "bogus"})
 
@@ -133,7 +133,7 @@ describe "lvol plugin - lvm binary gate (kpg34)" do
 end
 
 describe "firewalld plugin - firewall library gate (kpg34)" do
-  it "fails with real's missing_required_lib wording plus the version suffix" do
+  it "fails with Ansible's missing_required_lib wording plus the version suffix" do
     scratch = PluginSpecHelper.tmp_path("kpg34-fw-shim")
     Dir.mkdir_p(scratch)
     write_failing_python_shim(scratch, "python3.13")
@@ -147,7 +147,7 @@ describe "firewalld plugin - firewall library gate (kpg34)" do
     result["msg"].as_s.must_match(/\. Version 0\.2\.11 or newer required \(0\.3\.9 or newer for offline operations\)\z/)
   end
 
-  it "fails with real's wording before the offline/permanent and zone checks" do
+  it "fails with Ansible's wording before the offline/permanent and zone checks" do
     scratch = PluginSpecHelper.tmp_path("kpg34-fw-shim2")
     Dir.mkdir_p(scratch)
     write_failing_python_shim(scratch, "python3.13")
@@ -158,13 +158,13 @@ describe "firewalld plugin - firewall library gate (kpg34)" do
       env: {"PATH" => "#{scratch}:/nonexistent-kpg34-path"})
 
     # The offline-without-permanent error and the zone resolution both
-    # come AFTER the import gate in real's sanity_check ordering.
+    # come AFTER the import gate in Ansible's sanity_check ordering.
     result["msg"].as_s.must_match(/\AFailed to import the required Python library \(firewall\) on /)
   end
 end
 
 describe "selinux plugin - libselinux-python gate (kpg34)" do
-  it "fails with real's missing_required_lib wording before the config-file check" do
+  it "fails with Ansible's missing_required_lib wording before the config-file check" do
     scratch = PluginSpecHelper.tmp_path("kpg34-sel-shim")
     Dir.mkdir_p(scratch)
     write_failing_python_shim(scratch, "python3.13")
@@ -179,7 +179,7 @@ describe "selinux plugin - libselinux-python gate (kpg34)" do
 end
 
 describe "sefcontext plugin - SELinux bindings gates (kpg34)" do
-  it "fails with real's libselinux-python wording before the getenforce probe" do
+  it "fails with Ansible's libselinux-python wording before the getenforce probe" do
     scratch = PluginSpecHelper.tmp_path("kpg34-sefc-shim")
     Dir.mkdir_p(scratch)
     write_failing_python_shim(scratch, "python3.13")
@@ -192,9 +192,9 @@ describe "sefcontext plugin - SELinux bindings gates (kpg34)" do
     result["msg"].as_s.must_match(/\AFailed to import the required Python library \(libselinux-python\) on /)
   end
 
-  it "fails with real's policycoreutils-python wording when only seobject is missing" do
+  it "fails with Ansible's policycoreutils-python wording when only seobject is missing" do
     # This host has the selinux binding but (typically) not seobject -
-    # exactly real's second gate. When both are present the gate
+    # exactly Ansible's second gate. When both are present the gate
     # passes and the module proceeds, so only assert the gate while it
     # is reachable.
     python = Process.find_executable("python3") || Process.find_executable("python")
@@ -225,7 +225,7 @@ describe "filesystem plugin - ufs choice (kpg34)" do
 end
 
 describe "mount_facts plugin - dedup warning format (kpg34)" do
-  it "renders real's Python-list-repr duplicates wording" do
+  it "renders Ansible's Python-list-repr duplicates wording" do
     source = PluginSpecHelper.tmp_path("kpg34-mounts", "custom")
     Dir.mkdir_p(File.dirname(source))
     File.write(source, "/dev/a /dup ext4 defaults 0 0\n/dev/b /dup ext4 defaults 0 0\n/dev/c /other ext4 defaults 0 0\n")
@@ -239,7 +239,7 @@ describe "mount_facts plugin - dedup warning format (kpg34)" do
 end
 
 describe "kernel_blacklist plugin - failure result surface (kpg34)" do
-  it "carries real's filename/name/state/output/vars keys on the OSError failure" do
+  it "carries Ansible's filename/name/state/output/vars keys on the OSError failure" do
     file = PluginSpecHelper.tmp_path("kpg34-no-such-dir", "blacklist-ansible.conf")
 
     result = PluginSpecHelper.run("kernel_blacklist", {"name" => "ocgcbu", "blacklist_file" => file})
@@ -274,7 +274,7 @@ describe "async_status plugin - not-found result surface (kpg34)" do
 end
 
 describe "make plugin - unspawnable explicit make binary (kpg34)" do
-  it "reports real's run_command OSError shape at the -q check" do
+  it "reports Ansible's run_command OSError shape at the -q check" do
     missing = PluginSpecHelper.tmp_path("kpg34-no-such-make")
 
     result = PluginSpecHelper.run("make", {
@@ -292,7 +292,7 @@ describe "make plugin - unspawnable explicit make binary (kpg34)" do
     result["stderr"].as_s.must_equal("")
   end
 
-  it "drops an invalid chdir like real's ignore_invalid_cwd instead of failing on it" do
+  it "drops an invalid chdir like Ansible's ignore_invalid_cwd instead of failing on it" do
     # /bin/true as the make binary: the -q check succeeds (exit 0), so
     # the module reports a clean no-op - what must NOT happen is the
     # old `cd: no such file or directory` shell failure this plugin
@@ -303,7 +303,7 @@ describe "make plugin - unspawnable explicit make binary (kpg34)" do
       "target" => "krikri-no-such-target",
     })
 
-    # Real's make module carries failed: false explicitly (second key,
+    # Ansible's make module carries failed: false explicitly (second key,
     # right after changed - live-verified 2.19.11).
     result["failed"].as_bool.must_equal(false)
     result["changed"].as_bool.must_equal(false)
@@ -312,7 +312,7 @@ describe "make plugin - unspawnable explicit make binary (kpg34)" do
 end
 
 describe "deploy_helper plugin - finalize without the release tree (kpg34)" do
-  it "reports real's module-crash OSError wording with paths joined onto path:" do
+  it "reports Ansible's module-crash OSError wording with paths joined onto path:" do
     root = PluginSpecHelper.tmp_path("kpg34-deploy-finalize")
 
     result = PluginSpecHelper.run("deploy_helper", {
@@ -332,7 +332,7 @@ describe "deploy_helper plugin - finalize without the release tree (kpg34)" do
       "'#{root}/zilrji/ljthig' -> '#{root}/current'")
   end
 
-  it "fails with real's dangling-source wording when current points elsewhere" do
+  it "fails with Ansible's dangling-source wording when current points elsewhere" do
     root = PluginSpecHelper.tmp_path("kpg34-deploy-dangling")
     Dir.mkdir_p(File.join(root, "releases", "old"))
     File.symlink(File.join(root, "releases", "old"), File.join(root, "current"))

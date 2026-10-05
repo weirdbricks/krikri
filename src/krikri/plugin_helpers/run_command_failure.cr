@@ -1,6 +1,6 @@
 module Krikri
   module PluginHelpers
-    # Real AnsibleModule.run_command's two failure shapes, for plugins
+    # AnsibleModule.run_command's two failure shapes, for plugins
     # that shell out the way real modules do (module.run_command with
     # check_rc):
     #
@@ -8,7 +8,7 @@ module Krikri
     #    surfaces the caught OSError: rc=errno, empty stdout/stderr,
     #    msg "Error executing command.", the cleaned (space-joined)
     #    command string, and the exception text "[Errno N] <reason>:
-    #    b'<exe>'". Real 2.19 composes the display header as
+    #    b'<exe>'". Ansible 2.19 composes the display header as
     #    "<msg>: <exception str>" from that exception field while the
     #    dumped result keeps the bare msg - krikri's result display
     #    mirrors that whenever a failed result carries a real
@@ -58,7 +58,7 @@ module Krikri
         )
       end
 
-      # Real the real module get_bin_path's ValueError
+      # Real the Ansible module get_bin_path's ValueError
       # when the binary is nowhere to be found. Real surfaces it as a
       # bare fail_json-style msg (live-verified vs 2.19.11: the fatal
       # msg carries no "Task failed:" chain prefix).
@@ -67,14 +67,14 @@ module Krikri
       end
 
       # True when *exe* (an executable override param, used VERBATIM like
-      # real's `executable.split(" ")` - never a PATH search) would fail
+      # Ansible's `executable.split(" ")` - never a PATH search) would fail
       # execve. Returns the errno/reason pair it fails with, or nil when
       # a real subprocess would find and exec it.
       def exec_check(exe : String) : {Int32, String}?
         if exe.includes?("/")
           return {2, "No such file or directory"} unless File.exists?(exe)
           # execve on a directory fails with EACCES even when the dir bits
-          # allow traversal - real's npm `_exec` runs right after its own
+          # allow traversal - Ansible's npm `_exec` runs right after its own
           # os.makedirs(path), so an executable:/path pointing at the
           # freshly-created path DIRECTORY surfaces [Errno 13]
           # (live-verified vs 2.19.11, npm #184).

@@ -22,8 +22,8 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "boom")
       end
 
-      # Real's registered ping result runs ping, failed, changed
-      # (live-verified vs 2.19.11 via `{{ r | to_json }}`). Real's module
+      # Ansible's registered ping result runs ping, failed, changed
+      # (live-verified vs 2.19.11 via `{{ r | to_json }}`). Ansible's module
       # wire carries ONLY {ping} - exit_json passes no changed, and the
       # task executor backfills failed, changed at the tail - so the
       # wire omits changed too (omit_changed) and normalize_module_result

@@ -12,7 +12,7 @@ describe "include_role: naming a role that doesn't exist" do
   it "counts the task as failed only, not failed AND ok, and halts the play for that host" do
     # Real bug found benchmarking andrewrothstein.libvirt (round 185): its
     # own tasks/main.yml does `include_role: name: andrewrothstein.qemu`,
-    # a meta dependency that had been removed from Galaxy. Real Ansible
+    # a meta dependency that had been removed from Galaxy. Ansible
     # treats the failed dynamic role resolution as an ordinary fatal task
     # result - `ok=0 failed=1`, and the next task in the role never runs.
     # This engine counted the include_role: task as `ok` UNCONDITIONALLY
@@ -43,7 +43,7 @@ describe "include_role: naming a role that doesn't exist" do
     output = `cd #{src_dir} && #{BINARY} -i #{INVENTORY} pb.yml 2>&1`
     exit_code = $?.exit_code
 
-    # Real 2.19.11's fatal include shape (live-verified, both from a play
+    # Ansible 2.19.11's fatal include shape (live-verified, both from a play
     # task and from inside a role's own tasks): the loader's AnsibleError
     # goes to STDERR as an "[ERROR]: the role 'x' was not found in <search
     # paths>" block whose Origin points at the role-name VALUE inside the
@@ -62,8 +62,8 @@ describe "include_role: naming a role that doesn't exist" do
 end
 
 describe "include_tasks: naming a file that doesn't exist" do
-  it "fails with real's fatal include shape, ignoring ignore_errors:" do
-    # Real 2.19.11 (live-verified): the DataLoader error block goes to
+  it "fails with Ansible's fatal include shape, ignoring ignore_errors:" do
+    # Ansible 2.19.11 (live-verified): the DataLoader error block goes to
     # STDERR with no Origin, STDOUT gets the two-key fatal dump with the
     # as-written file under "include:", the task counts as failed only -
     # ignore_errors: does NOT apply (failed=1 ignored=0) - and the play
@@ -99,7 +99,7 @@ describe "include_tasks: naming a file that doesn't exist" do
   end
 
   it "keeps a non-string literal file path's own type in the fatal dump" do
-    # Real 2.19.11 (live-verified): the "include" value is echoed as the
+    # Ansible 2.19.11 (live-verified): the "include" value is echoed as the
     # playbook wrote it, so a YAML int stays a JSON int (`"include": 21`)
     # even though the path it resolved - and the error text - is that
     # value's Python str(). A bool keeps its own type too, while the path

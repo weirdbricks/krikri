@@ -10,7 +10,7 @@ require "socket"
 # `(1524, "Plugin '...' is not loaded")` msg shape, while on a server with
 # the plugin loaded the account is created as a mysql_native_password
 # account. krikri used to issue `IDENTIFIED BY` (server-default hashing)
-# and succeeded everywhere. Live-verified against real 2.19.11 +
+# and succeeded everywhere. Live-verified against Ansible 2.19.11 +
 # community.mysql 5.0.2 on MySQL 8.4.
 #
 # Both documented live-server conventions are exercised when up (the
@@ -66,7 +66,7 @@ private def drop_spec_user(server : NamedTuple(host: String, port: Int32, passwo
 end
 
 describe "mysql_user default-plugin password path" do
-  it "matches real's create behavior (native-password account, or real's 1524 failure)" do
+  it "matches Ansible's create behavior (native-password account, or Ansible's 1524 failure)" do
     servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
     skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
 
@@ -96,7 +96,7 @@ describe "mysql_user default-plugin password path" do
           "name" => SPEC_USER, "host" => "%", "password" => "krikri-np-pass",
         }.merge(login_args(server)))
         failed?(result).must_equal(true)
-        # Real's fail_json(msg=to_native(e)) passes pymysql's str(Exception)
+        # Ansible's fail_json(msg=to_native(e)) passes pymysql's str(Exception)
         # through: the (errno, "message") tuple form.
         result["msg"].as_s.must_equal(%((1524, "Plugin 'mysql_native_password' is not loaded")))
         # The failed CREATE must not have left the account behind.
@@ -108,7 +108,7 @@ describe "mysql_user default-plugin password path" do
     end
   end
 
-  it "matches real's password-update behavior on an existing account" do
+  it "matches Ansible's password-update behavior on an existing account" do
     servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
     skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
 
@@ -137,7 +137,7 @@ describe "mysql_user default-plugin password path" do
       else
         # A server with mysql_native_password not loaded is MySQL 8.4+,
         # where caching_sha2_password is available to seed a non-native
-        # account (the same setup real's own update path fails on).
+        # account (the same setup Ansible's own update path fails on).
         seeded = PluginSpecHelper.run("mysql_user", {
           "name" => SPEC_USER, "host" => "%", "plugin" => "caching_sha2_password",
         }.merge(login_args(server)))

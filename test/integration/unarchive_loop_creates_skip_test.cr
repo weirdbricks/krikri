@@ -44,11 +44,11 @@ end
 describe "looped unarchive with per-item creates: skip (executor_loops#finish_looped_task)" do
   it "counts the whole task as skipped=1 (not ok=1) when EVERY item's creates: file already exists, printing per-item skipping: lines plus the bare trailing one" do
     # Real bug found via jjahrik.nerd_fonts round 813005 plus a live
-    # repro against real ansible-playbook (ansible-core 2.19): the
+    # repro against ansible-playbook (ansible-core 2.19): the
     # looped executor path ignored a plugin's own per-item
     # "skipped": true (unarchive's creates:-already-exists result),
     # printing "ok:" per item and booking the task in ok= instead of
-    # skipped=. Real Ansible prints one skipping: line per item, THEN
+    # skipped=. Ansible prints one skipping: line per item, THEN
     # one bare trailing `skipping: [host]` line (same as the
     # genuinely-empty-loop case), and recaps skipped=1.
     dest = fresh_dest("all-skip")

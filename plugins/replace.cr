@@ -31,9 +31,9 @@ module Krikri
   #   check_mode (optional): Dry-run mode
   #
   # Only rewrites the file when the substitution actually changes its
-  # contents (idempotent), matching real Ansible: a "changed" result means
+  # contents (idempotent), matching Ansible: a "changed" result means
   # the file was modified, and re-running with no remaining matches reports
-  # changed: false. Real Ansible fails if the file doesn't exist.
+  # changed: false. Ansible fails if the file doesn't exist.
   class ReplacePlugin < BasePlugin
     # ansible.builtin.replace's `type: bool` options, in the real argument-spec
     # declaration order (ansible-doc -j ansible.builtin.replace). Validated at
@@ -52,18 +52,18 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real ansible's replace module rejects ANY parameter outside its
+      # Ansible's replace module rejects ANY parameter outside its
       # own argument_spec at module-arg validation, before any action
       # runs - notably `ignorecase:`, which belongs to lineinfile, not
       # replace, so a role that copies lineinfile's params onto a
-      # replace task fails loudly under real Ansible while this engine
+      # replace task fails loudly under Ansible while this engine
       # silently ignored the unknown key and ran anyway. Found via the
       # podman-diff replace_edge_cases R9 harness case; message live-
-      # verified against the real module's own output for this exact
+      # verified against the Ansible module's own output for this exact
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
       # not part of the real argument_spec, so none are rejected. The
-      # parenthesized alias list mirrors real Ansible's msg (attr, dest,
+      # parenthesized alias list mirrors Ansible's msg (attr, dest,
       # destfile, name).
       replace_supported = {"after", "attributes", "backup", "before", "encoding", "group", "mode", "owner", "path", "regexp", "replace", "selevel", "serole", "setype", "seuser", "unsafe_writes", "validate", "attr", "dest", "destfile", "name"}
       replace_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
@@ -79,7 +79,7 @@ module Krikri
         )
       end
 
-      # path (aliases: dest, name) - matches real Ansible's own
+      # path (aliases: dest, name) - matches Ansible's own
       # argument_spec, where `dest:` is the long-standing legacy alias
       # most existing playbooks/roles still write (lineinfile.cr already
       # supports the same three spellings). Found via konstruktoid-
@@ -106,7 +106,7 @@ module Krikri
         )
       end
 
-      # Real Ansible's replace fails on a directory (rc=256) before the
+      # Ansible's replace fails on a directory (rc=256) before the
       # existence check (rc=257) - replace.py's own main() ordering.
       if Dir.exists?(path)
         return PluginResult.new(
@@ -117,7 +117,7 @@ module Krikri
         )
       end
 
-      # Real Ansible's replace fails if the file doesn't exist (no `creates`
+      # Ansible's replace fails if the file doesn't exist (no `creates`
       # tolerance), and that failure isn't recoverable without the file
       # appearing - so it raises rather than silently no-op'ing.
       unless File.exists?(path)
@@ -126,7 +126,7 @@ module Krikri
           failed: true,
           msg: "Path #{path} does not exist !",
           rc: 257,
-          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc,
+          # Ansible's fail_json(rc=257, msg=...) puts the kwarg first: rc,
           # failed, msg, changed, exception (live-verified against
           # 2.19.11, same module_utils pattern as lineinfile's failure)
           key_order: %w[rc failed msg changed exception]
@@ -138,13 +138,13 @@ module Krikri
       # real replace.py decodes the file's bytes with this name inside
       # to_text(), so a name CPython has no codec for dies with a
       # LookupError there - which its own `except OSError` does NOT
-      # catch, i.e. the module crash path, reaching the user as real's
+      # catch, i.e. the module crash path, reaching the user as Ansible's
       # "Task failed: Module failed: unknown encoding: 20" (msg and
       # [ERROR] line live-verified against 2.19.11). Deciding that
       # verdict from Crystal's own encoding set instead (the old
       # behavior: any name iconv rejects was reported as "Failed to
       # read <path>: Invalid encoding: <name>") gets it wrong both
-      # ways - it never matched real's wording, and it failed the task
+      # ways - it never matched Ansible's wording, and it failed the task
       # for every name Python resolves but this host's iconv does not
       # take verbatim ("latin-1", "cp1252", "us-ascii", ...).
       unless PythonCodecs.known?(encoding)
@@ -158,7 +158,7 @@ module Krikri
       end
       # The spelling iconv converts with, or nil for a codec Python
       # resolves but no iconv here can - the file's bytes are then read
-      # and written verbatim, which is the same round trip real's
+      # and written verbatim, which is the same round trip Ansible's
       # decode/encode pair produces for a single-byte codec.
       iconv_encoding = PythonCodecs.iconv_name(encoding)
 
@@ -245,7 +245,7 @@ module Krikri
         # failed: Module failed: missing ), unterminated subpattern at
         # position 10" (the position of the '(' inside the composed
         # pattern). PythonPattern.scan rejects first what PCRE2 would
-        # happily compile (real's Python rejects it, same crash).
+        # happily compile (Ansible's Python rejects it, same crash).
         section_scan = PythonPattern.scan(section_pattern)
         if err = section_scan.error
           return crash_result(err)
@@ -258,7 +258,7 @@ module Krikri
 
         match = section_regex.match(content)
         unless match
-          # Real's no-match exit also carries an `rc: 0` alongside the
+          # Ansible's no-match exit also carries an `rc: 0` alongside the
           # msg (the module's run_command convention; live-verified vs
           # 2.19.11 at -v).
           return PluginResult.new(
@@ -275,7 +275,7 @@ module Krikri
         section = content.byte_slice(section_start, section_end - section_start)
       end
 
-      # Real Ansible compiles the regexp with re.MULTILINE (replace.py), so
+      # Ansible compiles the regexp with re.MULTILINE (replace.py), so
       # ^ and $ anchor at every line boundary, not just the start/end of the
       # whole file - e.g. inmotionhosting.apache's "Listen 443$" against
       # /etc/apache2/ports.conf, whose Listen lines sit indented inside
@@ -290,7 +290,7 @@ module Krikri
       # unterminated subpattern at position 10" for regexp: 'unmatched (',
       # live-verified vs 2.19.11), not this engine's old "Invalid regular
       # expression: ..." fail_json. PythonPattern.scan rejects first what
-      # PCRE2 would happily compile (real's Python rejects it first, same
+      # PCRE2 would happily compile (Ansible's Python rejects it first, same
       # crash), and a PCRE2 compile error is translated into Python's own
       # wording/position where the mapping is exact.
       pattern_scan = PythonPattern.scan(pattern)
@@ -348,7 +348,7 @@ module Krikri
 
       backup_file = ""
       if changed && !@check_mode
-        # Real Ansible's backup_local runs before write_changes, so the
+        # Ansible's backup_local runs before write_changes, so the
         # backup always holds the PRE-substitution content.
         if true?(@params["backup"]?)
           backup_file = write_backup(path)
@@ -360,11 +360,11 @@ module Krikri
       end
 
       # Apply any requested attribute changes (owner/group/mode), matching
-      # real Ansible which also sets them even on a no-matches run
+      # Ansible which also sets them even on a no-matches run
       # (check mode never writes).
       attr_changed = @check_mode ? false : apply_attributes(path)
 
-      # Real's result carries ONLY rc/msg/changed (+diff in diff mode,
+      # Ansible's result carries ONLY rc/msg/changed (+diff in diff mode,
       # +backup_file when a backup was actually taken) - no path echo,
       # no file-common stat fields. msg is "N replacements made" (the
       # subn count), "" when nothing changed, with check_file_attrs
@@ -391,7 +391,7 @@ module Krikri
       result
     end
 
-    # Real ansible.builtin.replace's registered-result key order
+    # Ansible.builtin.replace's registered-result key order
     # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
     # replace: tasks): rc leads, then backup_file only when a backup was
     # taken, then msg (empty string included on a no-matches run), then
@@ -400,7 +400,7 @@ module Krikri
     # stat fields.
     private SUCCESS_KEY_ORDER = %w[rc backup_file msg changed failed]
 
-    # The module-crash wrapper: real's executor renders an exception that
+    # The module-crash wrapper: Ansible's executor renders an exception that
     # escapes the module (a bad re.compile of regexp:/after:/before:, an
     # unknown codec, an IndexError from the replacement template) as
     # "Task failed: Module failed: <text>" with no rc key - distinct from
@@ -498,7 +498,7 @@ module Krikri
     # `replace: '\1 changed'` fails with "invalid group reference 1 at
     # position 1" and the file is left untouched).
     #
-    # The parser has two failure classes because real's replace.py
+    # The parser has two failure classes because Ansible's replace.py
     # handles them differently: everything raised as an re.error is
     # caught by its own `except re.error` and re-raised through
     # fail_json ("Unable to process replace due to error: <text>"), while
@@ -544,7 +544,7 @@ module Krikri
       # Scanned off the pattern text because Crystal's Regex exposes the
       # capture COUNT (Regex#capture_count) but not the names, and the
       # template parser has to know whether a `\g<name>` reference
-      # exists (real raises IndexError - not fail_json - when it does
+      # exists (Ansible raises IndexError - not fail_json - when it does
       # not).
       def self.named_groups(pattern : String) : Set(String)
         names = Set(String).new
@@ -678,7 +678,7 @@ module Krikri
       end
 
       # \0, \01, \012 - up to three octal digits in total, masked to a
-      # byte exactly as real's `chr(int(this[1:], 8) & 0xff)` is.
+      # byte exactly as Ansible's `chr(int(this[1:], 8) & 0xff)` is.
       private def parse_zero_escape(text : String::Builder) : Nil
         digits = ['0']
         digits << take.not_nil![0] if digit?(OCT_DIGITS)
@@ -777,7 +777,7 @@ module Krikri
     # up identically), and encode() restores the exact original bytes on
     # write. The twin collision is the one Python itself carries: a
     # file legitimately containing the mapped codepoint round-trips
-    # wrong under real Ansible too (its U+DC80..U+DCFF), just in a
+    # wrong under Ansible too (its U+DC80..U+DCFF), just in a
     # different range.
     private module SurrogateText
       extend self
@@ -887,7 +887,7 @@ module Krikri
     #
     # \N{name} is left to PCRE2 (which rejects it): resolving Unicode
     # character names here is out of scope, so such patterns fail with
-    # PCRE2's wording where real fails with "undefined character name".
+    # PCRE2's wording where Ansible fails with "undefined character name".
     # Also unchecked: \8/\9 group-reference semantics, class ranges over
     # escapes, (?P=name) resolution, global-flags placement - all left
     # to PCRE2 or absent by design.
@@ -1237,7 +1237,7 @@ module Krikri
 
       # A present owner:/group: value (explicit empty string included)
       # is always resolved - and an unresolvable name fails the task
-      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # like Ansible's basic.py (round900811 kilip.chezmoi) -
       # instead of the old `&&`-short-circuit that silently skipped the
       # chown whenever the lookup came back empty.
       if owner = @params["owner"]?
@@ -1301,7 +1301,7 @@ module Krikri
         # settled onto the temp at creation, or apply_attributes below
         # sees no drift after the rename and the result msg loses real
         # replace.py's "and ownership, perms or SE linux context changed"
-        # suffix (real's atomic_move preserves the DEST's mode, and
+        # suffix (Ansible's atomic_move preserves the DEST's mode, and
         # check_file_attrs runs after the write and detects the drift
         # itself - same reasoning as lineinfile's own apply_task_mode:
         # false, see staging_temp_mode's block comment).

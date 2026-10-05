@@ -6,7 +6,7 @@ module Krikri
     module PostgresqlRoleFlags
       FLAGS = %w[LOGIN CREATEDB CREATEROLE SUPERUSER INHERIT REPLICATION BYPASSRLS]
 
-      # Parses "LOGIN,CREATEDB,NOSUPERUSER" (real Ansible's own
+      # Parses "LOGIN,CREATEDB,NOSUPERUSER" (Ansible's own
       # role_attr_flags: format) into {"LOGIN" => true, "CREATEDB" => true,
       # "SUPERUSER" => false}.
       def self.parse(spec : String) : Hash(String, Bool)

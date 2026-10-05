@@ -6,7 +6,7 @@ require "yaml"
 module Krikri
   # Vault - Ansible Vault (AES256) encrypt/decrypt.
   #
-  # File format (verified against real `ansible-vault`, not assumed from
+  # File format (verified against `Ansible-vault`, not assumed from
   # memory):
   #   $ANSIBLE_VAULT;1.1;AES256
   #   <hex, wrapped at 80 columns>
@@ -127,7 +127,7 @@ module Krikri
       case raw = value.raw
       when String
         # A blob none of the supplied secrets can open is left AS IS
-        # rather than aborting the parse. Real Ansible defers the
+        # rather than aborting the parse. Ansible defers the
         # failure to the point of USE - a playbook carrying a prod-only
         # vault var still runs fine on a dev box with only the dev
         # secret, as long as no task actually references it. The

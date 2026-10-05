@@ -12,17 +12,17 @@ module Krikri
   class SetFactActionPlugin < ActionPlugin
     CONTROL_PARAMS = {"cacheable"}
 
-    # real's utils/vars.py validate_variable_name allowlist: a Python
+    # Ansible's utils/vars.py validate_variable_name allowlist: a Python
     # str.isidentifier() (ASCII-only enforced here) that is not one of
     # the few Jinja-reserved words.
     JINJA_KEYWORD_KEYS = {"True", "False", "None", "true", "false", "none", "not"}
 
     def execute : ActionResult
-      # real's set_fact action plugin pops `cacheable` and runs it
+      # Ansible's set_fact action plugin pops `cacheable` and runs it
       # through convert_bool.boolean() with strict=True BEFORE anything
-      # else - a value that is not one of real's booleans fails the
+      # else - a value that is not one of Ansible's booleans fails the
       # whole task there. The plain TypeError is not a result-
-      # contributing exception, so real's fatal msg is the collapsed
+      # contributing exception, so Ansible's fatal msg is the collapsed
       # chain brief: "Task failed: " + the conversion error.
       if raw = @params["cacheable"]?
         if error = strict_boolean_error(cacheable_native(raw))
@@ -35,15 +35,15 @@ module Krikri
 
       @params.each do |key, value|
         # execute_action injects its own engine-wire keys into every
-        # action plugin's params (real's _task.args never sees them);
-        # they are not user facts and must not satisfy real's
+        # action plugin's params (Ansible's _task.args never sees them);
+        # they are not user facts and must not satisfy Ansible's
         # no-key/value-pairs check either.
         next if CONTROL_PARAMS.includes?(key) || key == "_verbosity" || key == "_ansible_check_mode"
         # real validates EVERY fact key with validate_variable_name() in
         # insertion order and fails on the first invalid one; the raised
         # AnsibleError contributes no result, so the fatal msg again
         # carries the "Task failed: " brief prefix (the error block's
-        # cause segment then points at the key's own Origin with real's
+        # cause segment then points at the key's own Origin with Ansible's
         # help text - see ResultDisplay's emit path).
         unless valid_variable_name?(key)
           return ActionResult.final(Krikri.mark_failed_key_order(
@@ -60,7 +60,7 @@ module Krikri
       end
 
       extra = {"ansible_facts" => JSON::Any.new(facts)}
-      # Real's registered set_fact result runs ansible_facts, failed,
+      # Ansible's registered set_fact result runs ansible_facts, failed,
       # changed (live-verified vs 2.19.11 via `{{ r | to_json }}`).
       ActionResult.final(ActionResult.plugin_result_json(false, false, "", extra,
         key_order: ["ansible_facts", "failed", "changed"]))
@@ -69,7 +69,7 @@ module Krikri
     # The executor marks every set_fact param value with
     # NATIVE_TYPED_PREFIX + the JSON encoding of the value's native type
     # (see #coerce) - decode `cacheable` back to that native value so
-    # the strict check sees what real's boolean() sees (an int 5 is not
+    # the strict check sees what Ansible's boolean() sees (an int 5 is not
     # a boolean, the float 1.0 is, a bare `esfzey` is the string it
     # looks like).
     private def cacheable_native(raw : String) : JSON::Any
@@ -87,8 +87,8 @@ module Krikri
     end
 
     # convert_bool.boolean(strict=True) over the value's native type:
-    # the boolean spellings real accepts case-insensitively after strip,
-    # plus the ints 1/0 and floats 1.0/0.0 (real's BOOLEANS set holds
+    # the boolean spellings Ansible accepts case-insensitively after strip,
+    # plus the ints 1/0 and floats 1.0/0.0 (Ansible's BOOLEANS set holds
     # them as numbers - a quoted "1.0" STRING is NOT valid there, but a
     # demoted literal is text this wire cannot distinguish; the native
     # form is the common one).
@@ -116,8 +116,8 @@ module Krikri
       "The value '#{python_value_text(native)}' is not a valid boolean. Valid booleans include: #{ArgspecValidator::BOOLEANS_REPR.join(", ")}"
     end
 
-    # to_text(value) for the error message: scalars match real's str()
-    # directly; JSON-shaped containers get real's Python str() spacing
+    # to_text(value) for the error message: scalars match Ansible's str()
+    # directly; JSON-shaped containers get Ansible's Python str() spacing
     # (", " between items).
     private def python_value_text(native : JSON::Any) : String
       case raw = native.raw
@@ -148,7 +148,7 @@ module Krikri
       # A whole-single-span `{{ expr }}` fact arrives prefixed with the
       # JSON encoding of the expression's natively-typed result (see
       # substitute_task_params / NATIVE_TYPED_PREFIX): decode it verbatim
-      # instead of re-coercing by string shape. Real ansible-core 2.19
+      # instead of re-coercing by string shape. ansible-core 2.19
       # keeps the expression's own type - a Jinja string expression stays
       # a str even when it looks like a number (pluggero.openssh round
       # 981024: the coerced float made an `!=` version comparison always
@@ -174,7 +174,7 @@ module Krikri
           # Same class of bug, one zero shorter: an octal-MODE-shaped
           # string with no leading zero ("1777" - os_hardening's own
           # /dev/shm, /tmp and /var/tmp entries are exactly this shape)
-          # decimal-coerced into the int 1777. Real Ansible's native
+          # decimal-coerced into the int 1777. Ansible's native
           # typing keeps a string-sourced fact a string, and the string
           # is what downstream mode:/consumers need - a fed-back int
           # instead re-triggers the executor's int-mode reformatting
@@ -213,7 +213,7 @@ module Krikri
     # AST to be exactly one output node wrapping one expression, so a
     # `{% if %}...{% else %}['dummy']{% endif %}` block (or a plain quoted
     # `"['a']"` literal) renders to a plain str and set_fact stores it as
-    # a string, period. Found live vs real ansible-playbook via
+    # a string, period. Found live vs ansible-playbook via
     # HanXHX.debian_bootstrap: its `dbs_repo_old` block-tag default whose
     # output text happens to be `['dummy']` became a real ARRAY here, so
     # a later `loop: "{{ dbs_repo_old }}"` silently iterated where real

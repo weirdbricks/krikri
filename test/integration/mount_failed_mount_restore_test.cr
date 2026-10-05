@@ -56,7 +56,7 @@ describe "mount plugin - failed mount restores fstab (round 993003)" do
 
     # The pre-edit fstab content is restored byte-for-byte, and the
     # mountpoint dir the failed attempt created is gone again - so a
-    # later state=absent finds nothing to do (real's ok).
+    # later state=absent finds nothing to do (Ansible's ok).
     File.read(fstab).must_equal("# krikri mount restore test\n")
     File.exists?(path).must_equal(false)
   end
@@ -78,7 +78,7 @@ describe "mount plugin - failed mount restores fstab (round 993003)" do
       "fstab"  => fstab,
     }, env: mount_shim_env(write_mount_shim(tmp, 1)))
 
-    # Real's undo rmdir only removes the dirs it created; a mountpoint
+    # Ansible's undo rmdir only removes the dirs it created; a mountpoint
     # that already existed (here: non-empty, so even an rmdir would fail)
     # survives the failed mount.
     File.exists?(File.join(path, "keepme")).must_equal(true)

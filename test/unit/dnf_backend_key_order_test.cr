@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 require "json"
 
-# round994003 kop_rocky: real ansible-core 2.19.11's `dnf:` registers
+# round994003 kop_rocky: ansible-core 2.19.11's `dnf:` registers
 # [msg, changed, results, rc, failed] on Rocky Linux 9 (the dnf4
 # backend's `response` dict order - selinux_helper_packages) while the
 # same plugin previously emitted the dnf5 kwargs order
@@ -87,7 +87,7 @@ describe "dnf plugin - per-backend registered key order (round994003)" do
   it "emits the real transaction shape (empty msg kept) on a real install" do
     with_fake_dnf do
       # A group with Install/Upgrade count lines resolves as a real
-      # transaction: msg "" (kept - real's exit_json(**response) carries
+      # transaction: msg "" (kept - Ansible's exit_json(**response) carries
       # the key), results naming the spec.
       shim_dir = PluginSpecHelper.tmp_path("fake-dnf-order-real")
       Dir.mkdir_p(shim_dir)

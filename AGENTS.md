@@ -8,9 +8,9 @@ part of that platform).
 ## What this is
 
 `krikri-playbook` (binary name `krikri-playbook`) is a from-scratch
-reimplementation of `ansible-playbook` in Crystal: parses real Ansible
+reimplementation of `ansible-playbook` in Crystal: parses Ansible
 playbooks/roles/inventories and executes them, aiming for full
-behavioral parity with real `ansible-core` - not just "the common
+behavioral parity with `ansible-core` - not just "the common
 cases work." Two Jinja2/expression evaluators exist side by side: a
 hand-rolled `{{ }}` evaluator (`ExpressionEvaluator`/
 `ConditionalEvaluator`/`ComparisonEvaluator`/`FilterEngine`, under
@@ -159,10 +159,10 @@ from this repo.
    idempotency (each phase already runs the role twice) and the known plugin-upload UNREACHABLE
    race (same-host retry, up to 3, no reboot dance) itself - see its README's "Known divergences"
    section. Do **not** make engine code changes during this phase.
-   - Any divergence still needs a minimal repro confirmed against real `ansible-playbook` (not
+   - Any divergence still needs a minimal repro confirmed against `ansible-playbook` (not
      assumed) before treating it as a krikri-playbook bug - plenty of "bugs" turn out to be broken
      upstream repos, missing Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no
-     `vars/Debian.yml` at all) that affect real Ansible identically.
+     `vars/Debian.yml` at all) that affect Ansible identically.
    - **Coverage bar: 100% for core (`ansible.builtin`) modules, 100% for community modules krikri
      has deliberately chosen to support, and zero obligation for every other community module.**
      A divergence whose root cause is an unsupported community module doesn't count - not a bug to

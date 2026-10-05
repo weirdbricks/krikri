@@ -15,7 +15,7 @@ describe Krikri::PluginHelpers::FileAttributes do
       charset.must_equal("binary")
     end
 
-    it "falls back to unknown/unknown (real Ansible's own fallback) on unparseable output" do
+    it "falls back to unknown/unknown (Ansible's own fallback) on unparseable output" do
       mimetype, charset = Krikri::PluginHelpers::FileAttributes.parse_mime("")
       mimetype.must_equal("unknown")
       charset.must_equal("unknown")
@@ -37,13 +37,13 @@ describe Krikri::PluginHelpers::FileAttributes do
       attributes.must_equal([] of String)
     end
 
-    it "maps multiple flags to their real Ansible attribute names" do
+    it "maps multiple flags to their Ansible attribute names" do
       _, attr_flags, attributes = Krikri::PluginHelpers::FileAttributes.parse_lsattr("1  ----i---------e------- /x")
       attr_flags.must_equal("ie")
       attributes.must_equal(["immutable", "extents"])
     end
 
-    it "falls back to nil/empty/[] (real Ansible's own fallback) on unparseable output" do
+    it "falls back to nil/empty/[] (Ansible's own fallback) on unparseable output" do
       version, attr_flags, attributes = Krikri::PluginHelpers::FileAttributes.parse_lsattr("")
       version.must_be_nil
       attr_flags.must_equal("")

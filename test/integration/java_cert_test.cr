@@ -74,7 +74,7 @@ describe "java_cert plugin" do
     result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'keytool'")
   end
 
-  # kpg35 sweep #101: the real module has NO "pkcs12/content import
+  # kpg35 sweep #101: the Ansible module has NO "pkcs12/content import
   # requires cert_alias" check - a content import without cert_alias
   # proceeds to test_keytool, which fails with the run_command OSError
   # shape before anything alias-related runs. Krikri used to reject the
@@ -97,7 +97,7 @@ describe "java_cert plugin" do
     result["exception"].as_s.must_equal("[Errno 2] No such file or directory: b'coacvd'")
   end
 
-  # Round 995004 java_cert_fail: real's failing openssl extract command
+  # Round 995004 java_cert_fail: Ansible's failing openssl extract command
   # carries a python tempfile.mkstemp() path (/tmp/tmp + 8 chars from
   # [a-z0-9_]) as cmd[5]; krikri's File.tempname leaked a
   # date-pid-prefixed name instead. Shim keytool (bare probe exits 0,

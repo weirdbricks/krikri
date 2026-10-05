@@ -15,7 +15,7 @@ require "../minitest_helper"
 #      drop mid-play) hit the same unguarded raise in
 #      PluginManager#execute_remote_plugin.
 #
-# Real Ansible never ends a run for one bad host: every transport
+# Ansible never ends a run for one bad host: every transport
 # failure becomes a per-host UNREACHABLE result. Port 9 (discard) on
 # 127.0.0.1 reliably refuses without depending on external hosts.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

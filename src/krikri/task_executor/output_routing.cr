@@ -34,7 +34,7 @@ module Krikri
     # nothing rescuing it, dumped a full Crystal stack trace to stderr
     # and exited 1.
     #
-    # Real ansible-playbook is silent here and exits 0 (verified against
+    # ansible-playbook is silent here and exits 0 (verified against
     # ansible-playbook/ansible: `--help | head -1` and
     # `--version | head -1` both produce no stderr and PIPESTATUS[0]=0),
     # so match that. Note this is deliberately NOT fixed by restoring the

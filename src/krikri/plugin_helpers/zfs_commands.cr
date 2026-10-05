@@ -2,10 +2,10 @@ module Krikri
   module PluginHelpers
     # ZfsCommands - command construction and output parsing for
     # community.general.zfs (see plugins/zfs.cr). Pure string plumbing
-    # mirroring the real module's Zfs class (create/destroy/set_property/
+    # mirroring the Ansible module's Zfs class (create/destroy/set_property/
     # list_properties/get_property), unit-testable without a ZFS pool.
     module ZfsCommands
-      # The real module reverses Python bools to "on"/"off" before any
+      # The Ansible module reverses Python bools to "on"/"off" before any
       # command is built; properties arrive here already normalized.
       def self.normalize_value(value : JSON::Any) : String
         case value.raw
@@ -15,7 +15,7 @@ module Krikri
         end
       end
 
-      # The real module's create(): special-cases volsize (-V) and
+      # The Ansible module's create(): special-cases volsize (-V) and
       # volblocksize (-b), everything else -o prop=value; -p (parents)
       # for create/clone; snapshot instead of create when the name has
       # an @; clone when origin is set (mutually exclusive with @).

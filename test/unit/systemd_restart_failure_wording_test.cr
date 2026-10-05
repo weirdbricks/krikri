@@ -4,14 +4,14 @@ require "file_utils"
 # Regression specs for the systemd plugin's state-change failure wording
 # and verb selection, added in 0.9.x after the fix-systemd-restart
 # investigation. Found live in a systemd-repro podman container (a
-# Type=oneshot unit whose ExecStart fails): real Ansible's
+# Type=oneshot unit whose ExecStart fails): Ansible's
 # systemd module picks the
 # state-change VERB by the unit's CURRENT state - for `state: restarted`
 # on an inactive unit it runs `systemctl start`, never `restart` - and
 # words every state-change failure "Unable to <action> service <name>:
 # <err>". This engine used to always run `restart` and word the failure
 # "Failed to restart <name>: <stderr>", so the same failing task showed a
-# different message than real ansible-playbook (the failed/changed recap
+# different message than ansible-playbook (the failed/changed recap
 # counters already agreed).
 #
 # The plugin talks to the host only through #remote_exec, so every
@@ -33,7 +33,7 @@ private def with_systemd_shim(active_state : String, change_rc : Int32, &)
         # Real systemctl's `show X --property=ActiveState --value`
         # prints the bare state; the state-change verbs must be
         # observable failing with real systemctl's job-failure stderr.
-        # LoadState=loaded as well: real's module decides up front whether
+        # LoadState=loaded as well: Ansible's module decides up front whether
         # the unit exists at all and refuses the state: step outright for one
         # that doesn't, so a spec about the VERB an existing unit gets has to
         # present a unit that exists.
@@ -99,7 +99,7 @@ describe "systemd plugin - restart verb selection and failure wording" do
     end
   end
 
-  it "words a failing restart of an inactive unit like real Ansible's start action" do
+  it "words a failing restart of an inactive unit like Ansible's start action" do
     with_systemd_shim("inactive", 1) do |env, _log|
       result = PluginSpecHelper.run("systemd", {
         "name"         => "krikri-fake-svc",
@@ -113,7 +113,7 @@ describe "systemd plugin - restart verb selection and failure wording" do
     end
   end
 
-  it "words a failing restart of an active unit like real Ansible's restart action" do
+  it "words a failing restart of an active unit like Ansible's restart action" do
     with_systemd_shim("active", 1) do |env, _log|
       result = PluginSpecHelper.run("systemd", {
         "name"         => "krikri-fake-svc",

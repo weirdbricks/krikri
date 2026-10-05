@@ -14,7 +14,7 @@ describe "a handler using include_tasks:" do
   it "runs the included file's tasks instead of crashing the whole run" do
     # Real crash found benchmarking Anthony25.unbound (round828): its
     # "restart unbound" handler is `include_tasks: tasks/restart_unbound.yml`
-    # - a real Ansible pattern (a handler can include a task file exactly
+    # - a Ansible pattern (a handler can include a task file exactly
     # like a regular task can). #execute_handler_plugin_once only ever
     # special-cased ansible.builtin.reboot before falling through to
     # normal plugin dispatch - a handler's include_tasks: (the synthetic

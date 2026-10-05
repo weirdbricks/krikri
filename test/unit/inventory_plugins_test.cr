@@ -217,7 +217,7 @@ describe Krikri::InventoryPlugins do
     it "supports a custom separator, sanitizing group names" do
       doc = yaml_doc("plugin: constructed\nkeyed_groups:\n  - key: instance_type\n    prefix: aws\n    separator: '-'\n")
       inventory = Krikri::InventoryPlugins.apply_constructed_options(inventory_with_host, doc)
-      # a dash is not a valid group-name character, so real Ansible
+      # a dash is not a valid group-name character, so Ansible
       # sanitizes it to an underscore
       inventory.groups.keys.must_include("aws_t3_micro")
     end

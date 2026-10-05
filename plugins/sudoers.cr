@@ -16,7 +16,7 @@ module Krikri
   #   commands: required when state: present - list (or comma-separated
   #     string) of allowed commands, or "ALL"
   #   defaults: list of Defaults directives written before the rule,
-  #     scoped to the user/group owner (real's 13.1.0 `defaults` param)
+  #     scoped to the user/group owner (Ansible's 13.1.0 `defaults` param)
   #   noexec / nopassword (default true) / setenv: bools
   #   host: default "ALL"
   #   runas: optional target user
@@ -61,7 +61,7 @@ module Krikri
       write_rule(file, name, sudoers_path, check_mode)
     end
 
-    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # AnsibleModule setup surface, in the validator's errors[0]
     # order (arg_spec.py: mutually exclusive -> required -> types ->
     # choices -> required_if -> unsupported).
     private def validate_arguments : PluginResult?
@@ -105,7 +105,7 @@ module Krikri
       end
 
       # required_if=[("state", "present", ["commands"])]: only a MISSING
-      # key fails. An empty list passes real's required_if (the key is
+      # key fails. An empty list passes Ansible's required_if (the key is
       # present) and dies at visudo/write instead - S20 vs S21 in the
       # podman-diff case file.
       if state == "present" && !@params["commands"]?
@@ -119,7 +119,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: false, msg: "Sudoers rule #{name} already absent") unless File.exists?(file)
 
       File.delete(file) unless check_mode
-      # Real 2.19.11 registered sudoers create result (live-verified):
+      # Ansible 2.19.11 registered sudoers create result (live-verified):
       # changed, failed - the module's wire is just {changed}.
       PluginResult.new(changed: true, failed: false, msg: "Removed sudoers rule #{name}", key_order: ["changed"])
     end

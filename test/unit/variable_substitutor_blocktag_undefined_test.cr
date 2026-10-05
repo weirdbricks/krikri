@@ -6,7 +6,7 @@ require "../../src/krikri/variable_substitutor"
 #   "{{ openjdk_install_dir }}/jdk-...{% if openjdk_app == \"jre\" %}
 #    -jre{% endif %}"
 # and a stat task uses `path: "{{ openjdk_install_subdir }}"`.
-# Real ansible-core 2.19's strict Jinja2 environment raises on the
+# ansible-core 2.19's strict Jinja2 environment raises on the
 # undefined `openjdk_app` inside the `{% if %}` comparison (the `==`
 # propagates the UndefinedError), aborting the task with rc=2 at
 # "Finalization of task args for 'ansible.builtin.stat' failed:
@@ -86,7 +86,7 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       # Found via geerlingguy.mysql's own vars/setup-Debian.yml:
       # `deb_mysql_python_package: "{% if 'python3' in
       # ansible_python_interpreter|default('') %}python3-mysqldb{% else
-      # %}python-mysqldb{% endif %}"`. Real Jinja2's `default` filter
+      # %}python-mysqldb{% endif %}"`. Jinja2's `default` filter
       # exists specifically to suppress Undefined - `x | default(y)`
       # never raises regardless of x's own definedness, even under a
       # strict environment. This scan previously only carved out an
@@ -115,7 +115,7 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       # Found via noobient.github_release's headers: param (round 900944):
       # "{% if github_token is defined and github_token | length %}Bearer
       # {{ github_token }}{% else %}None{% endif %}" with github_token
-      # genuinely undefined. Real ansible-playbook renders "None" - `and`
+      # genuinely undefined. ansible-playbook renders "None" - `and`
       # short-circuits left-to-right, so the `is defined` clause being
       # false means the later `github_token | length` clause never runs.
       # Crinja's own `and` operator already does this correctly; the strict
@@ -167,7 +167,7 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       # reached the enclosing frame's stack entry - so a NESTED `{% set
       # y = ext.name %}` inside the loop body was scanned with only its
       # own set-target carved out, and the scanner raised "'ext' is
-      # undefined" where real Ansible/Jinja2 scopes `ext` over the
+      # undefined" where Ansible/Jinja2 scopes `ext` over the
       # loop's whole body and renders fine.
       v = {
         "items" => JSON.parse(%(["a", "b"])),
@@ -188,8 +188,8 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       # that tuple-unpacking case with its own repro rather than relying
       # on the single-variable case above to exercise the split path.
       # Confirmed live: krikri v0.9.1066 failed this task with
-      # "'k' is undefined" while real ansible-playbook renders fine;
-      # current krikri renders identically to real ansible-playbook.
+      # "'k' is undefined" while ansible-playbook renders fine;
+      # current krikri renders identically to ansible-playbook.
       v = {
         "d" => JSON.parse(%({"a": 1, "b": 2})),
       } of String => JSON::Any

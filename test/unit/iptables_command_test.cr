@@ -1,8 +1,8 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/iptables_command"
 
-# Flag ordering verified against real Ansible's own ansible.builtin.iptables
-# module (`construct_rule()` in the real module) - see
+# Flag ordering verified against Ansible's own ansible.builtin.iptables
+# module (`construct_rule()` in the Ansible module) - see
 # plugins/iptables.cr's own doc comment for why this is split out (real
 # `iptables -C`/`-A` need CAP_NET_ADMIN, unavailable in the spec sandbox).
 describe Krikri::PluginHelpers::IptablesCommand do
@@ -76,7 +76,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       ])
     end
 
-    it "negates individual match: items with ! like real Ansible's list append_param" do
+    it "negates individual match: items with ! like Ansible's list append_param" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "match" => "tcp,!udp",
       })
@@ -96,7 +96,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       ])
     end
 
-    # Corrected against real ansible-core 2.19.11 (kpg32 seed 32):
+    # Corrected against ansible-core 2.19.11 (kpg32 seed 32):
     # append_tcp_flags' own guard is `'flags' in param and 'flags_set'
     # in param`, and the argspec fills BOTH suboptions with None for a
     # partial dict - so the guard passes and the very next expression,
@@ -104,14 +104,14 @@ describe Krikri::PluginHelpers::IptablesCommand do
     # This test previously asserted the skip-the-flag behavior, which is
     # what the module would do with no dict at all - not what it does
     # with a partial one.
-    it "fails with real's join TypeError when tcp_flags is missing a suboption" do
+    it "fails with Ansible's join TypeError when tcp_flags is missing a suboption" do
       Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "tcp_flags" => %({"flags": ["ALL"]}),
         "jump"      => "DROP",
       }).must_equal("can only join an iterable")
     end
 
-    it "fails with real's join TypeError for an empty tcp_flags dict" do
+    it "fails with Ansible's join TypeError for an empty tcp_flags dict" do
       Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "tcp_flags" => "{}",
         "jump"      => "DROP",
@@ -122,7 +122,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
     # append_match_flag takes the flag value unconditionally, so real
     # appends None and `' '.join(...)` trips on it. The index in the
     # message is that None's own position in the rule list.
-    it "fails with real's NoneType join error when match_set has no match_set_flags" do
+    it "fails with Ansible's NoneType join error when match_set has no match_set_flags" do
       Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "match_set" => "admin_hosts",
       }).must_equal("sequence item 4: expected str instance, NoneType found")
@@ -158,7 +158,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.must_equal(["-j", "tee", "--gateway", "192.0.2.1"])
     end
 
-    it "ignores gateway unless jump is TEE (real Ansible)" do
+    it "ignores gateway unless jump is TEE (Ansible)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "jump"    => "ACCEPT",
         "gateway" => "192.0.2.1",
@@ -292,7 +292,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.must_equal(["-m", "conntrack-x", "-m", "conntrack", "--ctstate", "NEW"])
     end
 
-    it "emits both icmp flags for ip_version: both (real Ansible quirk)" do
+    it "emits both icmp flags for ip_version: both (Ansible quirk)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "ip_version" => "both",
         "icmp_type"  => "echo-request",
@@ -329,7 +329,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
   end
 
   describe ".push_arguments" do
-    it "frames a -C check like real Ansible's push_arguments" do
+    it "frames a -C check like Ansible's push_arguments" do
       cmd = Krikri::PluginHelpers::IptablesCommand.push_arguments(
         "iptables", "-C", "INPUT", "filter",
         rule: ["-p", "tcp", "-j", "ACCEPT"],
@@ -468,7 +468,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       err = Krikri::PluginHelpers::IptablesCommand.validate({} of String => String)
       err.must_equal("flush is False but all of the following are missing: chain")
 
-      # Even a policy task without a chain fails this way in real Ansible.
+      # Even a policy task without a chain fails this way in Ansible.
       err = Krikri::PluginHelpers::IptablesCommand.validate({"policy" => "DROP"} of String => String)
       err.must_equal("flush is False but all of the following are missing: chain")
 
@@ -504,7 +504,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       }).must_be_nil
     end
 
-    it "checks mutually_exclusive before required_by (real Ansible's order)" do
+    it "checks mutually_exclusive before required_by (Ansible's order)" do
       err = Krikri::PluginHelpers::IptablesCommand.validate({
         "chain"               => "OUTPUT",
         "set_dscp_mark"       => "8",

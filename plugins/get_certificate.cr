@@ -10,23 +10,23 @@ module Krikri
   # get_certificate plugin (community.crypto.get_certificate) - connects
   # to host:port over TLS, retrieves the certificate the server presents,
   # and reports its facts (subject/issuer/validity/extensions/
-  # fingerprints) through the shared X509CertInfo helper. The real module
+  # fingerprints) through the shared X509CertInfo helper. The Ansible module
   # writes nothing to disk and never changes state - the cert is only
   # returned in the `cert` fact (earlier revisions here invented a
-  # `path:` writing feature the real module does not have).
+  # `path:` writing feature the Ansible module does not have).
   #
-  # Params (the real module's argument_spec, no aliases): host, port
+  # Params (the Ansible module's argument_spec, no aliases): host, port
   # (both required), ca_cert (verifies the chain against a PEM file - the
   # real module's caveat applies: this checks the chain, not that the
   # cert is valid for the host), server_name (SNI, defaults to host),
   # timeout, proxy_host/proxy_port (the TCP hop goes to the proxy pair,
-  # proxy_port defaulting to 8080 like the real module), starttls
+  # proxy_port defaulting to 8080 like the Ansible module), starttls
   # (mysql), ciphers, asn1_base64, tls_ctx_options, select_crypto_backend
   # (accepted; only the OpenSSL CLI path is implemented),
   # get_certificate_chain (the unverified chain comes from the same
   # connection; verified_chain is not implemented - see KNOWN_MISSING.md).
   #
-  # Real AnsibleModule validation order is mirrored: required -> types
+  # AnsibleModule validation order is mirrored: required -> types
   # (spec declaration order) -> choices -> unsupported (deferred last).
   class GetCertificatePlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
@@ -47,7 +47,7 @@ module Krikri
       "get_certificate_chain" => [] of String,
     }
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps against a local TLS server:
     # changed leads, cert follows, then the parsed info keys, then
     # verified_chain/unverified_chain (only with
@@ -59,7 +59,7 @@ module Krikri
       unverified_chain ansible_facts failed warnings
     ]
 
-    # The parsed-info keys real's result dict actually carries
+    # The parsed-info keys Ansible's result dict actually carries
     # (get_certificate.py's own result assembly). X509CertInfo.parse
     # serves the wider x509_certificate_info vocabulary too
     # (fingerprints, public_key*, key_usage, subject_alt_name, ...);
@@ -77,7 +77,7 @@ module Krikri
       host = @params["host"]
       port = @params["port"].to_i
 
-      # Real's main() order: the get_certificate_chain Python-version
+      # Ansible's main() order: the get_certificate_chain Python-version
       # gate, then assert_required_cryptography_version, then the
       # timeout, then the ca_cert existence check - all BEFORE the
       # connection attempt (live-verified vs 2.19.11).
@@ -124,7 +124,7 @@ module Krikri
       res
     end
 
-    # Real AnsibleModule validation order: required -> types (spec
+    # AnsibleModule validation order: required -> types (spec
     # declaration order) -> choices -> unsupported (deferred last).
     private def validate_arguments : PluginResult?
       missing = %w[host port].select { |param| @params[param]?.nil? }
@@ -161,7 +161,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # The interpreter real's module would run under (the discovered one):
+    # The interpreter Ansible's module would run under (the discovered one):
     # the first existing python3/python, resolved to its realpath the way
     # interpreter discovery reports it (/usr/bin/python3.13-style).
     private def target_python : String?
@@ -223,7 +223,7 @@ module Krikri
     end
 
     # One native TCP connect with Python's error classification: the
-    # getaddrinfo failure (gaierror) short-circuits exactly like real's
+    # getaddrinfo failure (gaierror) short-circuits exactly like Ansible's
     # create_connection; resolution hits then try each address in order,
     # reporting the last connect errno the way create_connection does.
     private def probe_tcp(host : String, port : Int32) : String?
@@ -280,7 +280,7 @@ module Krikri
 
     # s_client prints the server's chain (leaf first) as PEM blocks on
     # stdout. With ca_cert the connection additionally demands a chain
-    # that verifies against that store (the real module's validation
+    # that verifies against that store (the Ansible module's validation
     # scope: the chain, not the hostname). With proxy_host the TCP hop
     # goes through an HTTP CONNECT proxy (s_client -proxy).
     private def s_client_certs(host : String, port : Int32, sni : String, ca_cert : String?, proxy : String?) : Array(String)?

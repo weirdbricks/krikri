@@ -22,7 +22,7 @@ module Krikri
   #     user's home-directory default (the user's NSS home + /.ssh/authorized_keys)
   #   manage_dir (optional, default yes): create ~/.ssh (mode 0700) if missing
   class AuthorizedKeyPlugin < BasePlugin
-    # Registered key order of the echoed params dict: real's module.params
+    # Registered key order of the echoed params dict: Ansible's module.params
     # dict starts from the CONTROLLER-SORTED task args (the module-args
     # handoff is serialized with sort_keys, so explicitly-passed params
     # echo alphabetically), then the not-passed params in a fixed order
@@ -47,7 +47,7 @@ module Krikri
       order
     end
 
-    # The real module's own VALID_SSH2_KEY_TYPES allowlist (ansible.posix
+    # The Ansible module's own VALID_SSH2_KEY_TYPES allowlist (ansible.posix
     # authorized_key's parsekey): a new-key line is valid iff one of its
     # whitespace-separated tokens is exactly one of these.
     VALID_SSH2_KEY_TYPES = [
@@ -86,11 +86,11 @@ module Krikri
       # Real module's looks_like_url/fetch_file: a key that is a URL
       # (http/https/ftp/file) is fetched first and the fetched body
       # becomes the key material - "invalid key specified: https://..."
-      # never happens on real Ansible (lucasmaurice.users, jtprogru.hosts).
+      # never happens on Ansible (lucasmaurice.users, jtprogru.hosts).
       key = fetch_url_key(key)
       return PluginResult.new(changed: false, failed: true, msg: @fetch_error) if key.nil?
 
-      # Real Ansible's keyfile() does a real pwd.getpwnam(user) and
+      # Ansible's keyfile() does a real pwd.getpwnam(user) and
       # hard-fails the task when the user isn't in the passwd DB - it
       # never guesses a home directory for a user that doesn't exist
       # (round 811277, jtprogru.profile: krikri silently invented
@@ -103,7 +103,7 @@ module Krikri
       path = resolve_path
       return PluginResult.new(changed: false, failed: true, msg: "Could not determine authorized_keys path: provide 'path' or a valid 'user'") unless path
 
-      # Real Ansible splits the key into lines, drops blank and
+      # Ansible splits the key into lines, drops blank and
       # '#'-prefixed ones, and hard-fails the task on the FIRST line
       # without a known SSH2 key-type token ("invalid key specified:") -
       # garbage is never silently appended.
@@ -129,7 +129,7 @@ module Krikri
       path = prepared.path
 
       # key_options: replaces whatever options the key line itself
-      # carries (the real module's parsed_options overwrite), so the line
+      # carries (the Ansible module's parsed_options overwrite), so the line
       # is rewritten as "<key_options> <type> <blob> <comment>". Both it
       # and the comment param replace fields of the parsed key BEFORE
       # the idempotency comparison, so a difference in either is a real
@@ -149,7 +149,7 @@ module Krikri
         return error
       end
 
-      # Real Ansible's own module returns its ENTIRE module.params dict
+      # Ansible's own module returns its ENTIRE module.params dict
       # (enforce_state mutates `params` in place and main() does
       # `exit_json(**results)`), with `keyfile` (the resolved keyfile
       # path) and `changed` merged in - so every effective parameter is
@@ -182,7 +182,7 @@ module Krikri
       result.extra["validate_certs"] = JSON::Any.new(@params["validate_certs"]?.nil? || true?(@params["validate_certs"]?))
       result.extra["follow"] = JSON::Any.new(true?(@params["follow"]?))
 
-      # Real Ansible's AnsibleModule.exit_json runs add_path_info over
+      # Ansible's AnsibleModule.exit_json runs add_path_info over
       # the result dict: the stat fields appear only because the echoed
       # `path` param (null when not given) points at an existing file -
       # exactly what this mirrors (an absent `path:` param means no stat
@@ -200,7 +200,7 @@ module Krikri
 
     @fetch_error : String = ""
 
-    # Mirrors the real module's fetch_file: file:// reads the local path,
+    # Mirrors the Ansible module's fetch_file: file:// reads the local path,
     # http(s):// fetches over the network (validate_certs honored), and a
     # failed fetch is a task failure, never silently treated as key
     # material. ftp:// is not supported by this engine's fetch.
@@ -223,7 +223,7 @@ module Krikri
         return nil
       end
 
-      # Kept working (real Ansible fetches http:// fine - parity), but a
+      # Kept working (Ansible fetches http:// fine - parity), but a
       # key pulled over cleartext HTTP can be swapped in transit and
       # grant SSH access, so the fetch announces itself loudly.
       if url.starts_with?("http://")
@@ -244,7 +244,7 @@ module Krikri
       nil
     end
 
-    # A real Ansible playbook can legitimately compute an empty key
+    # A Ansible playbook can legitimately compute an empty key
     # value at render time (weareinteractive.users' own `key: "{{
     # user.authorized_keys | default([]) | join('\n') }}"`, empty
     # whenever authorized_keys isn't set for that user) - real
@@ -255,7 +255,7 @@ module Krikri
     # key's signature is nil, and blank lines are filtered out of
     # the "existing lines" list before the signature comparison even
     # runs) - non-idempotent forever, `changed: true` on every run.
-    # The real module's new_keys split: blank ("") and '#'-prefixed
+    # The Ansible module's new_keys split: blank ("") and '#'-prefixed
     # lines are dropped entirely - not validated, not written.
     private def new_key_lines(key : String) : Array(String)
       key.split("\n").reject { |line| line.empty? || line.starts_with?("#") }
@@ -272,7 +272,7 @@ module Krikri
     end
 
     # Strips any inline options (everything before the key-type token)
-    # and prefixes the given options, like the real module's serialize
+    # and prefixes the given options, like the Ansible module's serialize
     # step (options are canonicalized to "type blob comment" + options).
     private def apply_key_options(line : String, key_options : String) : String
       tokens = line.split
@@ -312,7 +312,7 @@ module Krikri
       File.join(home, ".ssh", "authorized_keys")
     end
 
-    # Real Ansible's keyfile() does a real pwd.getpwnam(user) lookup and
+    # Ansible's keyfile() does a real pwd.getpwnam(user) lookup and
     # fails the task when the user isn't in the passwd DB - the lookup
     # also feeds the keyfile's uid/gid ownership, so it runs in normal
     # mode even when an explicit path: is given; only check mode +
@@ -330,11 +330,11 @@ module Krikri
 
     # Resolves a user's home directory natively via System::User
     # (which looks up through NSS, the same source getent reads).
-    # Returns nil when the user doesn't exist: real Ansible's
+    # Returns nil when the user doesn't exist: Ansible's
     # authorized_key does a real pwd.getpwnam(user) and fails the task
     # rather than guessing /home/<user> for a user that isn't in the
     # passwd DB (round 811277, jtprogru.profile - execute() turns this
-    # into the real module's failure before reaching here).
+    # into the Ansible module's failure before reaching here).
     private def home_directory(user : String) : String?
       sys_user = System::User.find_by?(name: user)
       return unless sys_user
@@ -345,9 +345,9 @@ module Krikri
       "/home/#{user}"
     end
 
-    # Real Ansible's keyfile() creates ONLY the .ssh directory itself
+    # Ansible's keyfile() creates ONLY the .ssh directory itself
     # (os.mkdir, a single level - a missing grandparent is the exact
-    # "Failed to create directory" OSError real Ansible fails with, not
+    # "Failed to create directory" OSError Ansible fails with, not
     # something to mkdir -p through), then chowns/chmods it 0700
     # unconditionally, even when it already existed. Python's
     # os.path.dirname of a bare relative filename ("9") is "" - NOT
@@ -422,7 +422,7 @@ module Krikri
       nil
     end
 
-    # The uid/gid real's keyfile() chowns everything to -
+    # The uid/gid Ansible's keyfile() chowns everything to -
     # pwd.getpwnam(user)'s pw_uid/pw_gid. {-1, -1} (skip the chown) when
     # no user param was given (a path-only call in check mode never
     # reaches here) or the user has no passwd entry.
@@ -446,7 +446,7 @@ module Krikri
     end
 
     # Formats the Errno the way Python's str(OSError) does - that text
-    # is exactly what the real module's fail_json message embeds.
+    # is exactly what the Ansible module's fail_json message embeds.
     private def os_error_text(e : File::Error, dir : String) : String
       errno = e.os_error.try(&.value)
       case errno

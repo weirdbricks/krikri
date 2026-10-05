@@ -34,16 +34,16 @@ module Krikri
   # - releasever: Different OS release version
   # - sslverify: Repo-server SSL validation (default true)
   # - download_only / download_dir: Download without installing
-  # - install_repoquery: Accepted as a no-op, matching real Ansible's
+  # - install_repoquery: Accepted as a no-op, matching Ansible's
   #   own documented behavior for DNF (deprecated, removed in 2.20)
   # - lock_timeout: Accepted as a no-op for the dnf backend, matching
-  #   real Ansible's own dnf.py (the dnf python API handles lock
+  #   Ansible's own dnf.py (the dnf python API handles lock
   #   waiting internally; only the retired yum backend consumed it)
-  # - use_backend: Which backend module real Ansible would dispatch to
-  #   (auto/dnf/yum/yum4/dnf4/dnf5); validated against real Ansible's
+  # - use_backend: Which backend module Ansible would dispatch to
+  #   (auto/dnf/yum/yum4/dnf4/dnf5); validated against Ansible's
   #   choice list, then treated as a no-op since krikri has a single
   #   dnf implementation to select between
-  # - validate_certs: Accepted as a no-op; real Ansible only applies it
+  # - validate_certs: Accepted as a no-op; Ansible only applies it
   #   controller-side when fetching an https RPM URL before install,
   #   which krikri doesn't do (URL rpms are installed on-target by dnf
   #   itself, governed by sslverify instead)
@@ -79,7 +79,7 @@ module Krikri
       }
     end
 
-    # These default to None in real's argspec, so an explicit null skips
+    # These default to None in Ansible's argspec, so an explicit null skips
     # type validation there (see BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
       %w[best nobest]
@@ -91,7 +91,7 @@ module Krikri
       "dnf"
     end
 
-    # Whether the request resolved to the dnf5 backend. Real's `dnf:`
+    # Whether the request resolved to the dnf5 backend. Ansible's `dnf:`
     # ACTION plugin rewrites the module
     # name from use_backend (default "auto") - and for auto/yum resolves
     # the host's ansible_pkg_mgr fact, running the dnf5 MODULE on a host
@@ -146,10 +146,10 @@ module Krikri
       @dnf5_backend ? DNF5_LIST_ORDER : DNF4_LIST_ORDER
     end
 
-    # Real ansible.builtin.dnf's argument-spec validation rejects ANY
+    # Ansible.builtin.dnf's argument-spec validation rejects ANY
     # parameter outside its argument_spec at module-arg validation,
     # before any module code runs - found via the podman-diff
-    # dnf_edge_cases N2 harness case (real ansible-core rejected
+    # dnf_edge_cases N2 harness case (ansible-core rejected
     # krikri_not_a_dnf_param with the message below while this engine
     # silently ignored the unknown key and proceeded to the backend
     # failure). Message live-verified against bookworm's
@@ -185,7 +185,7 @@ module Krikri
         )
       end
 
-      # Real AnsibleModule type-converts every bool-typed argument_spec
+      # AnsibleModule type-converts every bool-typed argument_spec
       # param and fails the task on a non-boolean value at module setup -
       # now via the shared BasePlugin#validate_bool_params! (message
       # live-verified against ansible-core 2.19.11; the <class 'str'>
@@ -194,7 +194,7 @@ module Krikri
       # sometimes` as a truthy value and ran the transaction anyway.
       validate_bool_params!
 
-      # Real AnsibleModule's `type: list` argspec coercion fails an
+      # AnsibleModule's `type: list` argspec coercion fails an
       # EXPLICIT None with its generic list-conversion message (param
       # name substituted), while an omitted param and an empty string
       # both coerce to an empty list and pass - live-verified against
@@ -228,7 +228,7 @@ module Krikri
         return failure
       end
 
-      # use_backend: real Ansible's argument spec (dnf.py:
+      # use_backend: Ansible's argument spec (dnf.py:
       # choices=['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5']) rejects
       # anything else with the standard choices-validation message
       # before any module code runs. 'yum'/'yum4'/'dnf4' are accepted
@@ -292,7 +292,7 @@ module Krikri
 
     # Parse package names from various parameter formats
 
-    # Real ansible.builtin.dnf's module code goes through dnf's Python API
+    # Ansible.builtin.dnf's module code goes through dnf's Python API
     # directly, which treats an `enablerepo:` naming a repo ID that isn't
     # configured on the host (e.g. `enablerepo: epel` with no epel-release
     # installed - buluma.elasticsearch_curator's own setup-RedHat.yml does
@@ -300,10 +300,10 @@ module Krikri
     # whatever repos ARE available. The raw `dnf` CLI this plugin shells
     # out to is stricter and hard-fails with "Error: Unknown repo: 'X'"
     # instead - found benchmarking round166's buluma.elasticsearch_curator
-    # on Rocky 9.6 (krikri-playbook failed the task, real ansible-playbook
+    # on Rocky 9.6 (krikri-playbook failed the task, ansible-playbook
     # installed successfully via whatever repos were already present).
     # Strip the offending --enablerepo=X flag(s) and retry rather than
-    # failing the task, matching real Ansible's lenient behavior.
+    # failing the task, matching Ansible's lenient behavior.
 
     # Build DNF command line options
 

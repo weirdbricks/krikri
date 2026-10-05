@@ -3,7 +3,7 @@ require "json"
 module Krikri
   module PluginHelpers
     # PemBundle.key_first - reorders the PEM blocks of `openssl pkcs12`
-    # output so the private key comes first, matching the real module's
+    # output so the private key comes first, matching the Ansible module's
     # parse output ([privatekey, certificate, other certificates]).
     # A block counts as the key ONLY from its `-----BEGIN <LABEL>-----`
     # header line, when the label ends in "PRIVATE KEY" (covers PRIVATE
@@ -26,7 +26,7 @@ module Krikri
           scanner = scanner[(line_end || scanner.size)..]
         end
         return nil if blocks.empty?
-        # Each block is newline-terminated in the real module's output;
+        # Each block is newline-terminated in the Ansible module's output;
         # extract_block cuts before the '\n', so re-join with separators
         # and a trailing newline.
         keys, others = blocks.partition { |is_key, _| is_key }

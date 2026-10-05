@@ -7,11 +7,11 @@
 # `datadir` and sets `innodb_fast_shutdown` through it; previously
 # unavailable -> rc=4 "unavailable modules").
 #
-# Semantics matching the real module:
+# Semantics matching the Ansible module:
 # - variable is required=True in the real argument_spec, so a missing
 #   variable fails at module setup with "missing required arguments:
 #   variable" (the module body's own "Cannot run without variable to
-#   operate with" check is unreachable dead code in the real module -
+#   operate with" check is unreachable dead code in the Ansible module -
 #   not reproduced); unknown variable ->
 #   "Variable not available \"X\"".
 # - no value -> pure read: exits with the variable's current value as
@@ -22,7 +22,7 @@
 #   difference issues SET GLOBAL (mode: global/persist/persist_only).
 # - returns queries=[executed SET ...] on change, msg
 #   "Variable change succeeded prev_value=X".
-# - the real module declares no supports_check_mode, so real Ansible
+# - the Ansible module declares no supports_check_mode, so Ansible
 #   skips the task with "remote module (...) does not support check
 #   mode" after argument validation - reproduced.
 require "json"
@@ -37,10 +37,10 @@ module Krikri
   class MysqlVariablesPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Real 2.19.11's exit_json for a variable change leads with msg
+    # Ansible 2.19.11's exit_json for a variable change leads with msg
     # (live-verified: msg, changed, queries, failed); its "already set"
     # no-op is msg, changed, failed. Key order live-verified against
-    # real ansible-playbook 2.19.11 with community.mysql 5.0.2 (via
+    # ansible-playbook 2.19.11 with community.mysql 5.0.2 (via
     # ansible.mysql), `{{ r | to_json }}` on a MySQL 8.4 server.
     private SUCCESS_KEY_ORDER = %w[msg changed queries failed]
 
@@ -61,7 +61,7 @@ module Krikri
     # default failed, msg, changed, exception order.
     private UNKNOWN_VARIABLE_KEY_ORDER = %w[changed failed msg exception]
 
-    # The real module's merged argument_spec (mysql_common_argument_spec
+    # The Ansible module's merged argument_spec (mysql_common_argument_spec
     # + mysql_variables' own update) in declaration order.
     SPEC = {
       "login_user"        => [] of String,
@@ -145,7 +145,7 @@ module Krikri
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
-    # Real AnsibleModule setup order for this spec (no mutually-exclusive
+    # AnsibleModule setup order for this spec (no mutually-exclusive
     # constraints): required args, then the spec's types in declaration
     # order, then the mode choices (all arg_spec.py errors, of which the
     # module surfaces errors[0] in that collection order), then

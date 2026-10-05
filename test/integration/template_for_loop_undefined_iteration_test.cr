@@ -17,7 +17,7 @@ describe "a {% for %} loop over an undefined variable" do
     # ansible-playbook fails the whole render with
     # "'resolv_nameservers' is undefined" when that var is never set,
     # while crinja's plain (non-strict) Undefined used to iterate as
-    # an empty sequence and quietly succeed. Real Jinja2's own vanilla
+    # an empty sequence and quietly succeed. Jinja2's own vanilla
     # default Undefined does NOT raise here (Ansible's environment is
     # stricter than vanilla Jinja2 for this specific operation), so
     # crinja's own for-tag specs (behavior matched to pallets/jinja) were
@@ -43,7 +43,7 @@ describe "a {% for %} loop over an undefined variable" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(false)
-    # Real ansible-core 2.19.11's failure wording for the same render
+    # ansible-core 2.19.11's failure wording for the same render
     # ("msg": "Task failed: 'resolv_nameservers' is undefined") - NOT
     # Crinja's internal TypeError text "can't iterate over undefined"
     # that used to leak through as the render error detail.
@@ -58,7 +58,7 @@ describe "a {% for %} loop over an undefined variable" do
 
   it "reports the real-Ansible undefined wording for a {% for %}...{% else %} over an unset variable" do
     # Same raise as the plain-for case above, exercised through the
-    # for-else form: real ansible-core 2.19.11 fails the template task
+    # for-else form: ansible-core 2.19.11 fails the template task
     # with msg "Task failed: 'missing' is undefined" (the UndefinedError
     # wording), while krikri used to surface Crinja's internal
     # TypeError detail "Failed to render template: can't iterate over

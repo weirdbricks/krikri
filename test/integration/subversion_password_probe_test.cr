@@ -118,7 +118,7 @@ describe "subversion password handling" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    # --password-from-stdin is a PASSWD_ARG_RE match, so real's _clean_args
+    # --password-from-stdin is a PASSWD_ARG_RE match, so Ansible's _clean_args
     # redacts the token AFTER it - here the "checkout" operation word.
     result["cmd"].as_s.must_equal(
       "#{shim} --non-interactive --no-auth-cache --trust-server-cert --username bob " \

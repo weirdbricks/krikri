@@ -12,7 +12,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # own idiom - `with_subelements: - "{{ authorized_key_list_all |
 # selectattr('authorized_keys', 'defined') | list }}" - authorized_keys`
 # - failed with "'item' is undefined" on an empty source list instead of
-# correctly skipping (real Ansible: skipped=1). resolve_template_value
+# correctly skipping (Ansible: skipped=1). resolve_template_value
 # only understands a bare/dotted variable reference; a filter chain
 # doesn't match its regex and returned nil immediately - not because
 # the list was empty, but because it was never evaluated - which fell
@@ -76,11 +76,11 @@ describe "with_subelements: with a filter-chain source" do
   end
 end
 
-# Real ansible-core's subelements lookup hands the task a parent COPY with
+# ansible-core's subelements lookup hands the task a parent COPY with
 # the subelement key REMOVED (live-verified against 2.19.11:
 # `msg="{{ item.0 | to_json }}"` over {"name": "s1", "kids": [...]} prints
 # the msg string `parent={"name": "s1"}`, JSON-escaped by the callback). krikri used to hand the full parent dict through, so
-# item.0 exposed the whole raw subelement list where real Ansible never
+# item.0 exposed the whole raw subelement list where Ansible never
 # shows it.
 describe "with_subelements: parent dict shape" do
   it "hands item.0 a copy with the subelement key removed" do
@@ -104,7 +104,7 @@ describe "with_subelements: parent dict shape" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    # The debug callback JSON-escapes the msg value (real ansible-core
+    # The debug callback JSON-escapes the msg value (ansible-core
     # 2.19.11 prints `"msg": "parent={\"name\": \"s1\"}"` - the to_json
     # quotes are escaped INSIDE the msg string), so the expected substring
     # carries the backslashes. %-literals process \\ escapes, hence the

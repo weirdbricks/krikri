@@ -5,7 +5,7 @@ require "../minitest_helper"
 # method that builds its result hash around a live SSH wait loop - not
 # reachable from a unit spec without stubbing the whole SSH layer.
 #
-# Real Ansible's reboot module ALWAYS returns an "elapsed" field (integer
+# Ansible's reboot module ALWAYS returns an "elapsed" field (integer
 # seconds) in its registered result - confirmed against ansible-core's
 # action plugin source: every path after the shutdown command is issued
 # sets result['elapsed'], check mode returns {'changed': True, 'elapsed':
@@ -13,7 +13,7 @@ require "../minitest_helper"
 # 'elapsed': 0 on its failure result. Round900541 derjd.reboot: the
 # role's reboot: handler registers its result as rv and a follow-up
 # debug: task reads rv.elapsed, which this engine crashed with "object of
-# type 'dict' has no attribute 'elapsed'" where real Ansible succeeded.
+# type 'dict' has no attribute 'elapsed'" where Ansible succeeded.
 #
 # The real wait loop can't run in a spec (a real reboot would kill the
 # controller), so these cover the paths that don't need SSH: check mode
@@ -58,7 +58,7 @@ describe "ansible.builtin.reboot's elapsed result field" do
   end
 
   it "is present on the local-connection failure result too" do
-    # Real Ansible refuses a local-connection reboot with
+    # Ansible refuses a local-connection reboot with
     # {'elapsed': 0, ..., 'failed': True} - the field is there even
     # though nothing was rebooted, so the follow-up debug: still works
     # under ignore_errors.

@@ -61,7 +61,7 @@ describe "community.general.xml plugin" do
       File.delete(path)
     end
 
-    it "rejects create_if_missing like real AnsibleModule (live-verified 2026-09-24)" do
+    it "rejects create_if_missing like AnsibleModule (live-verified 2026-09-24)" do
       path = File.tempname("xmlspec", ".xml")
       File.write(path, %(<business><name>co</name></business>))
       result = run_xml(xml_params({"path" => path, "xpath" => "/business/missing", "value" => "x", "create_if_missing" => "false"}))

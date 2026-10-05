@@ -26,13 +26,13 @@ module Krikri
   #     (while still reporting changed - real cronvar's own quirk)
   #   backup (optional): write a timestamped backup before changing
   #
-  # Unlike the real module (supports_check_mode=False, so real Ansible
+  # Unlike the Ansible module (supports_check_mode=False, so Ansible
   # skips the task under --check), this plugin honors check_mode by
   # computing the would-be result without writing - consistent with
   # every other check_mode-aware plugin here, and strictly safer than
   # real cronvar's "run it for real or skip" behavior.
   class CronVarPlugin < BasePlugin
-    # argument_spec's `state` choices, in the real module's order (the
+    # argument_spec's `state` choices, in the Ansible module's order (the
     # wording "value of state must be one of: absent, present, got: X"
     # is ansible-core's own choices error, not a cronvar-specific one).
     STATE_CHOICES = ["absent", "present"]
@@ -44,7 +44,7 @@ module Krikri
       state = @params["state"]? || "present"
       value = @params["value"]?
 
-      # Real Ansible validates in argument-spec order: mutually_exclusive
+      # Ansible validates in argument-spec order: mutually_exclusive
       # first (arg_spec.py), then the per-parameter type/choices checks
       # (parameters.py), and only then the module's own body checks
       # ("You must specify 'value'..."). Verified live against
@@ -93,7 +93,7 @@ module Krikri
     end
 
     private def execute_file(raw_cron_file : String, name : String, value : String?, state : String, insert_before : String?, insert_after : String?, check_mode : Bool) : PluginResult
-      # Real Ansible resolves a relative cron_file: against /etc/cron.d -
+      # Ansible resolves a relative cron_file: against /etc/cron.d -
       # only an absolute path is used as-is (CronVar.__init__).
       path = raw_cron_file.starts_with?("/") ? raw_cron_file : File.join("/etc/cron.d", raw_cron_file)
 
@@ -115,7 +115,7 @@ module Krikri
         name: name,
         vars: PluginHelpers::CronVar.var_names(new_content),
         cron_file: path,
-        # Real 2.19.11 registered cronvar result (live-verified, changed
+        # Ansible 2.19.11 registered cronvar result (live-verified, changed
         # and unchanged identical): vars, changed, failed.
         key_order: ["vars", "changed"]
       )
@@ -132,7 +132,7 @@ module Krikri
 
       # A user with no crontab yet makes `crontab -l` exit non-zero
       # ("no crontab for <user>") - not a real error, just "start from
-      # empty" (same as cron.cr / real Ansible's CronTab.read).
+      # empty" (same as cron.cr / Ansible's CronTab.read).
       list_result = remote_exec("crontab #{crontab_target} -l 2>/dev/null")
       original_content = list_result[:exit_code] == 0 ? list_result[:stdout] : ""
 

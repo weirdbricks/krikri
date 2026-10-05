@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/archive_paths"
 
-# arcroot values below are verified against real ansible-playbook's actual
+# arcroot values below are verified against ansible-playbook's actual
 # output for the equivalent path sets (community.general 11.2.1 /
 # ansible-core 2.19), not derived from documentation - this is where a
 # real bug was caught: Crystal's File.dirname on a trailing-slash path

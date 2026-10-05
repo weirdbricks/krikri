@@ -143,7 +143,7 @@ describe "htpasswd plugin" do
   end
 
   # kpg32 seed 32: every one of the sweep's htpasswd playbooks passed a
-  # scheme name real's passlib does not know. Real's message is the
+  # scheme name Ansible's passlib does not know. Ansible's message is the
   # passlib CryptContext ValueError, whose str() carries the algorithm
   # name in single quotes inside the module's own double quotes.
   it "reports an unknown hash_scheme exactly like passlib's CryptContext" do
@@ -158,7 +158,7 @@ describe "htpasswd plugin" do
     result["msg"].as_s.must_equal(%("no crypt handler found for algorithm: 'nosuchscheme'"))
   end
 
-  it "reports real's passlib None-secret error for state=present without a password" do
+  it "reports Ansible's passlib None-secret error for state=present without a password" do
     path = PluginSpecHelper.tmp_path("htpasswd-no-password")
     File.delete(path) if File.exists?(path)
 
@@ -168,7 +168,7 @@ describe "htpasswd plugin" do
     result["msg"].as_s.must_equal("secret must be unicode or bytes, not None")
   end
 
-  it "does not validate hash_scheme for state=absent, like real's absent()" do
+  it "does not validate hash_scheme for state=absent, like Ansible's absent()" do
     path = PluginSpecHelper.tmp_path("htpasswd-absent-bad-scheme")
     File.write(path, "johndoe:hash\n")
 
@@ -180,7 +180,7 @@ describe "htpasswd plugin" do
     result["changed"].as_bool.must_equal(true)
   end
 
-  it "reports real's IsADirectoryError when path: is a directory" do
+  it "reports Ansible's IsADirectoryError when path: is a directory" do
     dir = PluginSpecHelper.tmp_path("htpasswd-a-directory")
     Dir.mkdir_p(dir)
 
@@ -190,7 +190,7 @@ describe "htpasswd plugin" do
     result["msg"].as_s.must_equal("[Errno 21] Is a directory: '#{dir}'")
   end
 
-  it "words the create=false failure like real's present() ValueError" do
+  it "words the create=false failure like Ansible's present() ValueError" do
     path = PluginSpecHelper.tmp_path("htpasswd-create-false")
     File.delete(path) if File.exists?(path)
 
@@ -201,7 +201,7 @@ describe "htpasswd plugin" do
     result["msg"].as_s.must_equal("Destination #{path} does not exist")
   end
 
-  it "says \"Remove <user>\" on an absent removal, like real's absent()" do
+  it "says \"Remove <user>\" on an absent removal, like Ansible's absent()" do
     path = PluginSpecHelper.tmp_path("htpasswd-remove-msg")
     File.write(path, "johndoe:hash\n")
 
@@ -211,7 +211,7 @@ describe "htpasswd plugin" do
   end
 
   # ldap_sha1 is one of the four apache_hashes passlib's htpasswd
-  # context always carries, so real accepts it everywhere - and being
+  # context always carries, so Ansible accepts it everywhere - and being
   # unsalted it is the one non-plaintext scheme computable without
   # shelling out at all.
   it "hashes with ldap_sha1, one of passlib's apache_hashes" do

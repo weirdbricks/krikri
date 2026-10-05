@@ -25,7 +25,7 @@ describe "package_facts plugin" do
   it "fails when an explicitly-requested manager's backing tool isn't installed, unlike auto" do
     # Root cause of the oVirt.engine-setup DIVERGENT recap (round 601116):
     # `package_facts: manager: rpm` on a dpkg-only host with no `rpm`
-    # binary at all. Real Ansible fails the task outright ("Could not
+    # binary at all. Ansible fails the task outright ("Could not
     # detect a supported package manager ... or the required library is
     # not installed"); this plugin used to call rpm_packages()
     # unconditionally, and `capture` swallows the missing-executable
@@ -37,7 +37,7 @@ describe "package_facts plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "accepts manager: apt (real Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do
+  it "accepts manager: apt (Ansible's own distinct, python-apt-backed value), not just auto/dpkg" do
     # Found via a live 100-role confirm round: nvidia.enroot's own
     # `package_facts: manager: apt` (verified live against ansible-core
     # 2.19.12: a real, accepted manager value, not an alias this engine
@@ -50,7 +50,7 @@ describe "package_facts plugin" do
     (packages.size > 0).must_equal(true)
   end
 
-  it "stamps every package entry with source, matching real Ansible's always-present fields" do
+  it "stamps every package entry with source, matching Ansible's always-present fields" do
     # Real package_facts's RETURN doc: name, version AND source are present
     # for every entry regardless of manager (apt entries carry source: apt,
     # rpm entries source: rpm). This plugin used to emit only name/version.
@@ -77,7 +77,7 @@ describe "package_facts plugin" do
     (packages.size > 0).must_equal(true)
   end
 
-  it "fails an invalid strategy with real Ansible's exact argument-spec error" do
+  it "fails an invalid strategy with Ansible's exact argument-spec error" do
     # Verified live against ansible-core 2.19.4 (`ansible localhost -m
     # package_facts -a "strategy=bogus"`): the task fails with the
     # AnsibleModule choices-validation message, case-sensitively.
@@ -87,8 +87,8 @@ describe "package_facts plugin" do
     result["msg"].as_s.must_equal("value of strategy must be one of: first, all, got: bogus")
   end
 
-  it "accepts manager as a list (real Ansible's own type: list, elements: str)" do
-    # manager is type: list in real Ansible's argument_spec; a templated
+  it "accepts manager as a list (Ansible's own type: list, elements: str)" do
+    # manager is type: list in Ansible's argument_spec; a templated
     # `{{ list_var }}` reaches the plugin as a JSON-array string. This
     # plugin used to `.to_s` the whole thing into one garbage manager name.
     result = PluginSpecHelper.run("package_facts", {"manager" => "[\"auto\"]"})
@@ -99,7 +99,7 @@ describe "package_facts plugin" do
   end
 
   it "keeps a Python-repr manager list a plain string (never re-parsed into a list)" do
-    # Real ansible-core's native typing requires a template's whole
+    # ansible-core's native typing requires a template's whole
     # parsed AST to be exactly one output node wrapping one expression,
     # so a value that merely LOOKS like a container (a literal
     # `manager: "['auto']"` string, or a `{% if %}...{% else %}['auto']
@@ -109,8 +109,8 @@ describe "package_facts plugin" do
     # arrives as double-quoted JSON (see substitute_task_params's
     # whole-single-span comment), so the single-quote "repair" this
     # spec used to assert was only ever reachable for values that are
-    # strings in real Ansible - and the garbage manager text then fails
-    # the unsupported-manager check the same way real Ansible's
+    # strings in Ansible - and the garbage manager text then fails
+    # the unsupported-manager check the same way Ansible's
     # comma-split garbage does.
     result = PluginSpecHelper.run("package_facts", {"manager" => "['auto']"})
 
@@ -118,7 +118,7 @@ describe "package_facts plugin" do
     result["msg"].as_s.must_include("Unsupported package managers requested")
   end
 
-  it "accepts a comma-separated manager string (real AnsibleModule's check_type_list split)" do
+  it "accepts a comma-separated manager string (AnsibleModule's check_type_list split)" do
     result = PluginSpecHelper.run("package_facts", {"manager" => "apt,rpm"})
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -126,7 +126,7 @@ describe "package_facts plugin" do
     (packages.size > 0).must_equal(true)
   end
 
-  it "maps rpm aliases (yum/dnf/dnf5/zypper) onto the rpm gatherer, like real Ansible's ALIASES" do
+  it "maps rpm aliases (yum/dnf/dnf5/zypper) onto the rpm gatherer, like Ansible's ALIASES" do
     # Real package_facts.py ALIASES: {'rpm': ['dnf', 'dnf5', 'yum',
     # 'zypper']}. On this dpkg-only dev host an alias must resolve to rpm,
     # find no usable tool, and fail with the found==0 message (below) -
@@ -137,7 +137,7 @@ describe "package_facts plugin" do
     result["msg"].as_s.must_include("Could not detect a supported package manager")
   end
 
-  it "fails an unknown manager name with real Ansible's exact 'Unsupported package managers requested' error" do
+  it "fails an unknown manager name with Ansible's exact 'Unsupported package managers requested' error" do
     # Real module fails BEFORE any gathering when a requested name isn't a
     # known manager or alias (verified live against ansible-core 2.19.4:
     # "Unsupported package managers requested: bogusmgr"). This plugin used
@@ -150,7 +150,7 @@ describe "package_facts plugin" do
     result["msg"].as_s.must_equal("Unsupported package managers requested: bogusmgr")
   end
 
-  it "fails with real Ansible's exact not-detectable wording when no requested manager yields packages" do
+  it "fails with Ansible's exact not-detectable wording when no requested manager yields packages" do
     # Real found==0 failure, verified live against ansible-core 2.19.4 on
     # this rpm-less host: "Could not detect a supported package manager
     # from the following list: ['rpm'], or the required Python library is
@@ -186,7 +186,7 @@ describe "package_facts plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
-  it "fails manager: dpkg as unsupported, like real Ansible (no version has a dpkg manager)" do
+  it "fails manager: dpkg as unsupported, like Ansible (no version has a dpkg manager)" do
     # Verified live vs ansible-core 2.14 AND 2.19: "Unsupported package
     # managers requested: dpkg" - dpkg-query is only the implementation
     # detail of this engine's apt manager, never a real manager name.
@@ -197,7 +197,7 @@ describe "package_facts plugin" do
     result["msg"].as_s.must_equal("Unsupported package managers requested: dpkg")
   end
 
-  it "uses real's different auto-detect wording when 'auto' accompanies an unsupported name" do
+  it "uses Ansible's different auto-detect wording when 'auto' accompanies an unsupported name" do
     # Real package_facts.py main(): the unsupported-names failure message
     # depends on whether 'auto' was in the ORIGINAL manager param -
     # `if 'auto' in module.params['manager']` switches the same

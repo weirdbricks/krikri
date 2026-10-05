@@ -5,7 +5,7 @@ module Krikri
     module MysqlPrivileges
       record Grant, target : String, privileges : Set(String)
 
-      # Parses a priv: param string in real Ansible's own format:
+      # Parses a priv: param string in Ansible's own format:
       # "db.table:PRIV1,PRIV2/db2.table2:PRIV3" (multiple grants separated
       # by "/", privileges within one grant separated by ",").
       def self.parse_spec(spec : String) : Array(Grant)
@@ -22,7 +22,7 @@ module Krikri
       # Parses one line of real `SHOW GRANTS FOR user@host` output, e.g.
       # `GRANT SELECT, INSERT ON \`db\`.* TO \`user\`@\`host\``,
       # optionally suffixed `WITH GRANT OPTION` (mapped to a "GRANT"
-      # pseudo-privilege, matching real Ansible's own priv: convention for
+      # pseudo-privilege, matching Ansible's own priv: convention for
       # the grant option). Returns nil for the baseline
       # `GRANT USAGE ON *.* TO ... IDENTIFIED BY ...` identity row every
       # MySQL/MariaDB account has regardless of what's actually been

@@ -49,7 +49,7 @@ module Krikri::Lint
         # Upstream's fqcn match carries its own details
         # ("Use `...` or `...` instead."), so
         # _enrich_matcherror_with_task_details leaves it alone. Verified
-        # against real ansible-lint 25.2.1 on a playbook with `- ping:`.
+        # against ansible-lint 25.2.1 on a playbook with `- ping:`.
         violations = run_rules_yaml(
           "---\n- hosts: localhost\n  tasks:\n    - ping:\n",
           [FqcnActionCoreRule.new, NameRule.new],

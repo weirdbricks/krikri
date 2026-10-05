@@ -4,7 +4,7 @@ module Krikri
     # ACL management via getfacl(1)/setfacl(1)) - split out from
     # plugins/acl.cr so it can be unit-tested without a real ACL-capable
     # filesystem or superuser (mirrors the ufw/iptables split). Every
-    # shape here is ported field-for-field from real ansible.posix's own
+    # shape here is ported field-for-field from Ansible.posix's own
     # acl.py (build_command/split_entry/build_entry/acl_changed/run_acl)
     # and cross-checked against the actual setfacl 2.3.2 --test output
     # (see test/unit/acl_command_test.cr's notes).
@@ -15,7 +15,7 @@ module Krikri
       # entry, and an entry with only two ':'-separated sections (the
       # state: absent form, e.g. `user:joe`) gets a nil permissions
       # slot. The etype is normalized by its first letter, exactly like
-      # the real module - anything else becomes nil (which then flows
+      # the Ansible module - anything else becomes nil (which then flows
       # through to setfacl as-is and fails there, matching real
       # Ansible's behavior for a garbage entry string).
       def self.split_entry(entry : String) : {Bool?, String?, String?, String?}
@@ -67,7 +67,7 @@ module Krikri
 
       # Builds the argv for one getfacl/setfacl invocation - mirrors
       # real acl.py's build_command, including the exact flag ordering
-      # real Ansible produces (which matters: `-d` is inserted right
+      # Ansible produces (which matters: `-d` is inserted right
       # after the binary name, and everything else appends). Linux
       # only, matching this engine's Linux-target binaries - the real
       # module's FreeBSD `-h` branch (and its non-Linux fail) is not
@@ -121,7 +121,7 @@ module Krikri
       # run_acl's line filtering, in a pure form (real acl.py drops any
       # line starting with '#', strips each remaining line, then trims a
       # single trailing empty line - blank separator lines BETWEEN
-      # entries survive, which is what real Ansible's recursive `acl`
+      # entries survive, which is what Ansible's recursive `acl`
       # return value looks like).
       def self.filter_lines(raw : String) : Array(String)
         lines = [] of String

@@ -12,7 +12,7 @@ module Krikri
   # Entirely unimplemented before - robertdebock.node_red's own "Install
   # node-red" task (`community.general.npm: name: node-red, global:
   # yes, unsafe_perm: yes`) silently skipped ("Plugin not available")
-  # while real Ansible actually installed the package.
+  # while Ansible actually installed the package.
   #
   # Supported parameters (the ones any role benchmarked so far actually
   # uses): name, version, path, global, production, registry,
@@ -20,7 +20,7 @@ module Krikri
   # `latest`'s own additional `npm outdated`-driven update pass isn't
   # implemented, no role seen so far uses it).
   #
-  # Idempotency: mirrors real Ansible's own algorithm exactly - `npm
+  # Idempotency: mirrors Ansible's own algorithm exactly - `npm
   # list --json --long [-g]` (from `path` if given), read the
   # `dependencies` hash; a dependency missing an entry, or present with
   # `"missing"`/`"invalid"` set, counts as NOT installed. `state:
@@ -62,7 +62,7 @@ module Krikri
         return invalid
       end
 
-      # Real Ansible's npm module resolves the executable via
+      # Ansible's npm module resolves the executable via
       # `module.get_bin_path("npm", True)` inside the Npm() constructor -
       # AFTER the required_if checks (validate_npm_args above), BEFORE any
       # command runs - failing "Failed to find required executable ... in
@@ -108,8 +108,8 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "path #{path} is not a directory")
       end
 
-      # The first command real runs is the exec's failure surface: with
-      # ci=true real runs `npm ci` DIRECTLY (main()'s ci branch never
+      # The first command Ansible runs is the exec's failure surface: with
+      # ci=true Ansible runs `npm ci` DIRECTLY (main()'s ci branch never
       # lists), for every other state it's the list probe (check_rc=False,
       # so only an exec-start failure kills the task here) - a missing or
       # unexecutable `executable:` path surfaces run_command's OSError
@@ -141,7 +141,7 @@ module Krikri
     # Validate the parameter combinations; returns the failure result or
     # nil when the arguments are valid.
     private def validate_npm_args(state : String, name : String?) : PluginResult?
-      # Real Ansible's own arg-spec requires `name:` when `state:
+      # Ansible's own arg-spec requires `name:` when `state:
       # absent` (uninstalling with no target makes no sense) - the sweep
       # environment's community.general (11.2.1, Debian trixie's ansible
       # package) keeps that as required_if wording, and its `path` check
@@ -166,7 +166,7 @@ module Krikri
       end
       result = run_npm(exe_parts, ["uninstall"], name_version, global, path)
       return failure(exe_parts, result, ["uninstall"]) unless result[:exit_code] == 0
-      # Real 2.19.11 (live-verified + module source): npm.py has ONE
+      # Ansible 2.19.11 (live-verified + module source): npm.py has ONE
       # exit - exit_json(changed=changed) - so success results carry no
       # msg/stdout at all (the "Package removed"/"already absent" msgs
       # were this plugin's own borrow).
@@ -175,7 +175,7 @@ module Krikri
 
     # state: present (or latest) - install when anything is missing
     private def handle_present(exe_parts : Array(String), name_version : String?, global : Bool, path : String?, missing : Array(String)) : PluginResult
-      # Real Ansible's own `state: present` branch checks `if missing:`
+      # Ansible's own `state: present` branch checks `if missing:`
       # alone - it does NOT require a name_version to be given at all.
       # Gating this short-circuit on `name_version &&` (previously)
       # meant a bare `path:`-only install (no `name:`, the common
@@ -252,7 +252,7 @@ module Krikri
     # production gated to install/update/ci commands. Exec failure
     # (missing/unexecutable binary) surfaces before anything runs as
     # run_command's OSError shape with the SPACE-JOINED raw args as cmd
-    # (real's _clean_args - no shell quoting).
+    # (Ansible's _clean_args - no shell quoting).
     private def run_npm(exe_parts : Array(String), subcommand : Array(String), name_version : String?, global : Bool, path : String?, mutating : Bool = true) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       args = build_args(subcommand, name_version, global, mutating)
 
@@ -261,7 +261,7 @@ module Krikri
       remote_exec(cmd)
     end
 
-    # The flag sequence real's CmdRunner composes, in its own order
+    # The flag sequence Ansible's CmdRunner composes, in its own order
     # ("exec_args global_ production ignore_scripts unsafe_perm
     # name_version registry no_optional no_bin_links force"), with
     # production gated to install/update/ci commands.
@@ -281,7 +281,7 @@ module Krikri
         args << "--force" if true?(@params["force"]?)
       else
         # The list probe still carries the truthy-only flags and the
-        # registry override (real passes the full param set through
+        # registry override (Ansible passes the full param set through
         # CmdRunner for list too) - but never the package name.
         args << "--ignore-scripts" if true?(@params["ignore_scripts"]?)
         args << "--unsafe-perm" if true?(@params["unsafe_perm"]?)

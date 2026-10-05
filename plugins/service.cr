@@ -14,21 +14,21 @@ module Krikri
   #   use (optional): force a service manager (systemd/sysvinit/service/
   #                   openrc/auto) instead of auto-detecting
   #   runlevel (optional): OpenRC runlevel for enable/disable (default:
-  #                        "default") - real Ansible's own param
+  #                        "default") - Ansible's own param
   #   arguments (optional): extra command-line arguments appended to the
   #                         init system's stop/start/restart/status command
-  #                         (SysV and OpenRC forms, per real Ansible's
+  #                         (SysV and OpenRC forms, per Ansible's
   #                         LinuxService.service_control). Under systemd
-  #                         it is IGNORED with real Ansible's exact warning.
+  #                         it is IGNORED with Ansible's exact warning.
   #   sleep (optional): seconds between the stop and start halves of a
-  #                     SysV restart (real Ansible sleeps in-process;
+  #                     SysV restart (Ansible sleeps in-process;
   #                     this engine shells out to `sleep`). Under systemd
-  #                     it is IGNORED with real Ansible's exact warning.
+  #                     it is IGNORED with Ansible's exact warning.
   #   pattern (optional): accepted but NOT implemented by this engine's
-  #                       SysV/OpenRC paths (real Ansible only applies it
+  #                       SysV/OpenRC paths (Ansible only applies it
   #                       in a ps-output fallback used when an init script
   #                       has no usable status). Under systemd it is
-  #                       IGNORED with real Ansible's exact warning.
+  #                       IGNORED with Ansible's exact warning.
   #   check_mode (optional): Dry-run mode
   #
   # Examples:
@@ -37,7 +37,7 @@ module Krikri
   #     state: started
   #     enabled: yes
   #
-  # Init-system detection: real Ansible's `service:` is a WRAPPER, not a
+  # Init-system detection: Ansible's `service:` is a WRAPPER, not a
   # systemd module. Its action plugin dispatches on the
   # `ansible_service_mgr` fact (or an explicit `use:`), and when that
   # doesn't name a loadable module it falls through to the generic
@@ -46,7 +46,7 @@ module Krikri
   # ran `systemctl` unconditionally, so on any host where systemd is not
   # PID 1 every `service:` task failed with systemctl's own "System has
   # not been booted with systemd as init system (PID 1). Can't operate."
-  # where real Ansible succeeded via `service <name> start`. Found while
+  # where Ansible succeeded via `service <name> start`. Found while
   # confirming the 0.9.726 fixes in a container (no init at all): both
   # engines were expected to agree and only krikri failed.
   class ServicePlugin < BasePlugin
@@ -58,7 +58,7 @@ module Krikri
       %w[enabled]
     end
 
-    # Every bool option here defaults to None in real's argspec, so an
+    # Every bool option here defaults to None in Ansible's argspec, so an
     # explicit null skips type validation there (see
     # BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
@@ -76,14 +76,14 @@ module Krikri
       SysV
     end
 
-    # Binaries real Ansible looks for, and the extra directories it
+    # Binaries Ansible looks for, and the extra directories it
     # searches beyond `$PATH` (`get_bin_path`'s `opt_dirs`) - `/sbin` and
     # `/usr/sbin` are routinely absent from a non-login shell's PATH,
     # which is exactly where `service`/`update-rc.d` live.
     TOOL_BINARIES  = %w[service chkconfig update-rc.d rc-service rc-update initctl systemctl insserv]
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
 
-    # Real Ansible's service ACTION plugin
+    # Ansible's service ACTION plugin
     # defines UNUSED_PARAMS['systemd'] = ['pattern', 'runlevel', 'sleep',
     # 'arguments', 'args']: documented `service:` options the systemd module
     # has no use for. When the resolved service-manager module is systemd,
@@ -97,7 +97,7 @@ module Krikri
     # pattern/runlevel/sleep/arguments order. `args` is deliberately absent
     # here: it is a task-level keyword the parser merges into the module
     # params before this plugin ever sees it, so it can never appear as a
-    # param key the way it can't in real Ansible's action plugin either.
+    # param key the way it can't in Ansible's action plugin either.
     SYSTEMD_UNUSED_PARAMS = %w[pattern runlevel sleep arguments]
 
     @tools = Hash(String, String).new
@@ -110,7 +110,7 @@ module Krikri
     @systemd_load_state = ""
     @systemd_active_state = ""
     @probe_service_mgr = ""
-    # The full `systemctl show <name>` property dict - real Ansible's
+    # The full `systemctl show <name>` property dict - Ansible's
     # service ACTION plugin dispatches to the systemd module on a
     # systemd host, and that module's registered result carries the
     # whole status dict (name, changed, status, [enabled], state).
@@ -133,7 +133,7 @@ module Krikri
     # auto-detected and `use: systemd` - because that is exactly when real
     # Ansible's action plugin resolves the module name to "systemd" and
     # strips them. (An unresolvable `use:` value is this engine's auto-detect
-    # fallback, so it warns too; real Ansible would fall back to the generic
+    # fallback, so it warns too; Ansible would fall back to the generic
     # service module there, an obscure edge not worth the divergence risk.)
     private def systemd_unused_param_warnings : Array(String)?
       return nil unless @manager == Manager::Systemd
@@ -147,7 +147,7 @@ module Krikri
 
     # Attaches #systemd_unused_param_warnings to a result using the same
     # extra["warnings"] convention command.cr's executable: warning uses.
-    # Real Ansible emits these from the action plugin BEFORE the module
+    # Ansible emits these from the action plugin BEFORE the module
     # runs, so they surface on failure results too (a systemd unit that
     # doesn't exist still carries the warning alongside "Could not find
     # the requested service").
@@ -158,7 +158,7 @@ module Krikri
       result
     end
 
-    # Real Ansible appends `arguments:` verbatim after the action for both
+    # Ansible appends `arguments:` verbatim after the action for both
     # its SysV (`service <name> <action> <arguments>`, or the init script
     # directly) and OpenRC (`rc-service <name> <action> <arguments>`)
     # command forms - including for the status probe, which goes through
@@ -215,7 +215,7 @@ module Krikri
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
-        # Real's systemd module reports the unit's NEW enabled state in
+        # Ansible's systemd module reports the unit's NEW enabled state in
         # result['enabled'] - which is always the requested value (the
         # unchanged case is exactly the case where the old state already
         # equals it).
@@ -230,7 +230,7 @@ module Krikri
         end
         changed ||= result[:changed]
         messages << result[:message] unless result[:message].empty?
-        # Real's systemd module echoes the requested state, except that
+        # Ansible's systemd module echoes the requested state, except that
         # its restarted/reloaded branch settles result['state'] on
         # "started" (both actions leave the unit running).
         if @manager == Manager::Systemd
@@ -244,7 +244,7 @@ module Krikri
       end
 
       if @manager == Manager::Systemd
-        # Real 2.19.11's registered `service` result on a systemd host IS
+        # Ansible 2.19.11's registered `service` result on a systemd host IS
         # the systemd module's result (the action plugin dispatches to
         # it): name, changed, status, [enabled], state, failed - and NO
         # msg key at all (round994002 virt_net_helper_service /
@@ -256,7 +256,7 @@ module Krikri
         # except restarted/reloaded settle on "started" (the systemd
         # module's own `result['state'] = 'started'` for its restart/
         # reload branch). The krikri-only human msg texts are dropped
-        # here to keep the registered shape byte-identical with real's.
+        # here to keep the registered shape byte-identical with Ansible's.
         result = PluginResult.new(
           changed: changed,
           failed: false,
@@ -269,7 +269,7 @@ module Krikri
         return with_unused_param_warnings(result)
       end
 
-      # Non-systemd managers keep the historical shape (real's generic
+      # Non-systemd managers keep the historical shape (Ansible's generic
       # service module result differs per init system and is not pinned
       # by any live capture yet).
       with_unused_param_warnings(PluginResult.new(
@@ -284,7 +284,7 @@ module Krikri
     # ------------------------------------------------------------------
 
     # Populates @manager/@svc_cmd/@enable_cmd/@svc_initscript, following
-    # real Ansible's `LinuxService.get_service_tools`. Returns an error
+    # Ansible's `LinuxService.get_service_tools`. Returns an error
     # message when no usable tooling exists, nil otherwise.
     #
     # One round trip: everything the Python module reads via os.path/
@@ -316,7 +316,7 @@ module Krikri
       systemd = probe.includes?("systemd_managed=yes")
       upstart_conf = probe.includes?("upstart_conf=yes")
 
-      # `use:` - real Ansible's own escape hatch, handled in its action
+      # `use:` - Ansible's own escape hatch, handled in its action
       # plugin (which strips the param before the module ever sees it).
       # "auto" is the default and means detect; anything else pins the
       # manager, so a role that knows better than the probe still wins.
@@ -332,7 +332,7 @@ module Krikri
         return use_upstart
       end
 
-      # Real Ansible's service ACTION plugin dispatches on the
+      # Ansible's service ACTION plugin dispatches on the
       # ansible_service_mgr fact: `systemd` runs the systemd module,
       # every other value (including ones that name no module at all -
       # a container whose PID 1 is, say, "sleep" becomes the fact value
@@ -343,14 +343,14 @@ module Krikri
       # (a shell, or "init"), it checks systemctl presence + canaries,
       # then whether /sbin/init is a symlink to systemd
       # (is_systemd_managed_offline) - so a container with systemd
-      # INSTALLED but not running reports "systemd". Real Ansible then
+      # INSTALLED but not running reports "systemd". Ansible then
       # runs the systemd module, whose systemctl calls fail on a host
       # with no running init, and honestly reports "Service is in
       # unknown state". This plugin used to skip the fact entirely and
       # auto-detect via canaries only, landing on the SysV path and
       # "starting" the service by driving its init script directly - a
-      # changed: true success where real Ansible failed. Found via an
-      # ad-hoc CLI comparison sweep against real ansible, 2026-09-13.
+      # changed: true success where Ansible failed. Found via an
+      # ad-hoc CLI comparison sweep against Ansible, 2026-09-13.
       fact_mgr = @vars["ansible_service_mgr"]?.try(&.as_s?) || @probe_service_mgr
       if PluginHelpers::ServiceMgrFact.runs_systemd_module?(use_param, fact_mgr)
         return use_systemd(name)
@@ -367,7 +367,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's `systemd` module reads the unit's status ONCE at the
+    # Ansible's `systemd` module reads the unit's status ONCE at the
     # top of the run and reuses it for both the enabled: and state:
     # decisions, so this does the same - one `systemctl show` instead of
     # one per branch.
@@ -377,7 +377,7 @@ module Krikri
       @svc_cmd = cmd
       @enable_cmd = cmd
 
-      # One full `systemctl show` - real Ansible's systemd module reads
+      # One full `systemctl show` - Ansible's systemd module reads
       # the whole property dict once (its `result['status']`), and this
       # plugin reuses the same output for both the enabled:/state:
       # decisions (LoadState/ActiveState) and the registered status dict.
@@ -431,10 +431,10 @@ module Krikri
     private def use_sysv(name : String) : String?
       @manager = Manager::SysV
 
-      # Enable/disable tool, in real Ansible's own precedence order - and,
+      # Enable/disable tool, in Ansible's own precedence order - and,
       # as there, ONLY when this service actually has an init script.
       # That coupling is what makes a typo'd/nonexistent service name fail
-      # with real Ansible's own "Could not find the requested service X:
+      # with Ansible's own "Could not find the requested service X:
       # host" (its `fail_if_missing`, reached because no branch of the
       # detection chain matched at all) instead of a confusing error from
       # whatever command got run against a name that doesn't exist.
@@ -442,7 +442,7 @@ module Krikri
       # `service: name=definitely-not-a-service state=started`.
       @enable_cmd = @svc_initscript.nil? ? nil : (@tools["update-rc.d"]? || @tools["insserv"]? || @tools["chkconfig"]?)
 
-      # fail_if_missing: real Ansible reports this even for a state-only
+      # fail_if_missing: Ansible reports this even for a state-only
       # task, so a host with no init script (or one with a script but no
       # way to enable it) fails identically here.
       if @enable_cmd.nil?
@@ -458,7 +458,7 @@ module Krikri
       nil
     end
 
-    # Single shell probe replacing real Ansible's get_bin_path/os.path
+    # Single shell probe replacing Ansible's get_bin_path/os.path
     # lookups. `systemd_managed` mirrors module_utils' own
     # `is_systemd_managed`: systemctl present, then systemd's documented
     # sd_booted canaries, then /proc/1/comm - NOT merely "systemctl
@@ -484,7 +484,7 @@ module Krikri
         if [ "$managed" = no ] && [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ]; then managed=yes; fi
       fi
       printf 'systemd_managed=%s\\n' "$managed"
-      # ansible_service_mgr fact chain - real Ansible's
+      # ansible_service_mgr fact chain - Ansible's
       # ServiceMgrFactCollector, in its own order. PID 1 first
       # ("init" and anything ending in "sh" - a container's shell -
       # is untrusted and falls through), then the proc_1_map, then
@@ -561,7 +561,7 @@ module Krikri
       end
     end
 
-    # Debian's update-rc.d has no query mode, so real Ansible reads the
+    # Debian's update-rc.d has no query mode, so Ansible reads the
     # runlevel symlinks directly: an S?? link in any /etc/rc?.d means
     # enabled. A service with no K?? links at all has never been
     # registered, so `defaults` has to run before `enable` can do
@@ -603,7 +603,7 @@ module Krikri
       end
 
       # Runlevels 3 and 5 are the ones chkconfig reports for the normal
-      # multi-user/graphical targets - real Ansible treats agreement on
+      # multi-user/graphical targets - Ansible treats agreement on
       # both as "already in the requested state".
       return unchanged if out.includes?("3:#{action}") && out.includes?("5:#{action}")
       return would("#{should_enable ? "enable" : "disable"} #{name}") if @check_mode
@@ -647,7 +647,7 @@ module Krikri
 
     # insserv has no query mode either, but it does have a dry run
     # (`-n -v`) that reports on stderr what it WOULD do - which is how
-    # real Ansible decides whether anything needs changing.
+    # Ansible decides whether anything needs changing.
     private def enable_via_insserv(name : String, should_enable : Bool, cmd : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
       dry_run = should_enable ? "#{cmd} -n -v #{shell_single_quote(name)}" : "#{cmd} -n -r -v #{shell_single_quote(name)}"
       marker = should_enable ? "enable service" : "remove service"
@@ -677,7 +677,7 @@ module Krikri
     # ------------------------------------------------------------------
 
     private def set_state(name : String, state : String) : NamedTuple(changed: Bool, message: String, failure: PluginResult?)
-      # Real Ansible's systemd module reads the unit's ActiveState once
+      # Ansible's systemd module reads the unit's ActiveState once
       # via `systemctl show`; on a host where systemd is NOT PID 1 that
       # command fails and produces no ActiveState at all, and the
       # module's own "this should not happen?" branch fails with
@@ -705,12 +705,12 @@ module Krikri
         return would("restart #{name}") if @check_mode
         run_action(name, "restart", "Service restarted")
       else # "reloaded" - validated by the caller
-        # real Ansible's service module: `state: reloaded` reloads a
+        # Ansible's service module: `state: reloaded` reloads a
         # RUNNING service but STARTS an inactive one (systemctl reload
         # of an inactive unit fails "not active, cannot reload") -
         # nginxinc.nginx's "(Handler) Start/reload NGINX" handler on a
         # fresh-boot Debian target, where nginx had never started,
-        # exposed it: real Ansible started the service, krikri failed.
+        # exposed it: Ansible started the service, krikri failed.
         return would("start #{name}") if @check_mode && !is_running
         return would("reload #{name}") if @check_mode
         return run_action(name, "start", "Service started") unless is_running
@@ -723,7 +723,7 @@ module Krikri
       when Manager::Systemd
         # `systemctl is-active` only exits 0 for ActiveState=active - a unit
         # that's `activating`/`auto-restart` (e.g. crash-looping under
-        # Restart=on-failure) exits non-zero even though real Ansible's
+        # Restart=on-failure) exits non-zero even though Ansible's
         # systemd module already considers it "running" and won't reissue
         # `start` for it. Read the raw ActiveState instead (captured by
         # #use_systemd's single status read) so a crash-looping unit
@@ -737,7 +737,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's own SysV status heuristics, in its order: LSB exit
+    # Ansible's own SysV status heuristics, in its order: LSB exit
     # codes first, then single-line keyword matching, then "rc=0 means
     # running". Init scripts are wildly inconsistent about all three,
     # which is why the fallbacks exist at all - reproducing them is what
@@ -782,11 +782,11 @@ module Krikri
           remote_exec("#{@svc_cmd} #{shell_single_quote(name)} #{action}#{init_arguments_suffix}")
         else
           if action == "restart"
-            # Real Ansible does NOT trust a SysV init script to implement
+            # Ansible does NOT trust a SysV init script to implement
             # `restart` - plenty don't - and issues stop-then-start
             # instead, merging the two results the same way.
             first = run_sysv(name, "stop")
-            # Real Ansible's LinuxService.service_control: stop, sleep,
+            # Ansible's LinuxService.service_control: stop, sleep,
             # start - the sleep runs unconditionally between the two
             # halves (its `time.sleep(self.sleep)`; this engine shells
             # out to `sleep` instead, same observable delay).
@@ -815,7 +815,7 @@ module Krikri
     end
 
     # `service <name> <action>`, or the init script directly when no
-    # `service` binary exists - real Ansible's own two SysV command forms,
+    # `service` binary exists - Ansible's own two SysV command forms,
     # with `arguments:` appended verbatim after the action (its
     # service_control() appends it for every action, status included).
     private def run_sysv(name : String, action : String) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)

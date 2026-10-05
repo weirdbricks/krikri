@@ -22,12 +22,12 @@ describe "hostname plugin" do
 
     result["changed"].as_bool.must_equal(false)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real 2.19.11's success result carries no msg key at all
+    # Ansible 2.19.11's success result carries no msg key at all
     # (live-verified registered shape: changed, name, ansible_facts,
     # failed) - the old "hostname is already X" msg was krikri-only.
     result["msg"]?.must_equal(nil)
     result["name"].as_s.must_equal(current)
-    # Facts come back at the result top level, matching real Ansible.
+    # Facts come back at the result top level, matching Ansible.
     result["ansible_facts"]["ansible_hostname"].as_s.must_equal(current)
     result["ansible_facts"]["ansible_nodename"].as_s.must_equal(current)
   end
@@ -40,7 +40,7 @@ describe "hostname plugin" do
 
     result["changed"].as_bool.must_equal(true)
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real's check-mode registered shape: changed, name, ansible_facts,
+    # Ansible's check-mode registered shape: changed, name, ansible_facts,
     # diff, failed - no msg (live-verified).
     result["msg"]?.must_equal(nil)
     result["name"].as_s.must_equal(target)

@@ -8,7 +8,7 @@ module Krikri
   # makes real playbooks use it conditionally. plugins/fail.cr is kept
   # as a real, working binary for `--async`/manual invocation.
   #
-  # msg carries the task arg's NATIVE type: real's action assigns
+  # msg carries the task arg's NATIVE type: Ansible's action assigns
   # `result['msg'] = self._task.args.get('msg')` verbatim (no str()
   # anywhere), so a non-string YAML literal stays an int/float/bool/
   # None/list/dict in the wire result, the fatal dump AND the registered
@@ -35,7 +35,7 @@ module Krikri
         FAILED_KEY_ORDER_DEFAULT))
     end
 
-    # The flat result hash with msg ALWAYS present (real's action sets
+    # The flat result hash with msg ALWAYS present (Ansible's action sets
     # result['msg'] unconditionally - an empty-string msg stays in the
     # registered var and the fatal dump, unlike plugin_result_json's
     # module-side "only when non-empty" rule).

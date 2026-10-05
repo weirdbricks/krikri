@@ -3,7 +3,7 @@ require "../minitest_helper"
 # community.crypto.openssl_pkcs12's removed-param deprecation (maciter_size)
 # is gated on the module's actual OUTCOME, and openssl_privatekey's
 # deprecated-curve warning rides on the generation path. Both expectations
-# were captured live against real ansible-playbook 2.19.11 +
+# were captured live against ansible-playbook 2.19.11 +
 # community.crypto (local, ansible_connection=local, 2026-10):
 #
 #   * an uncaught module exception ("Task failed: Module failed: [Errno 2]

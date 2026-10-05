@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.crypto.openssl_privatekey. Every expectation here was
-# differentialed against the real module (community.crypto 3.1.1 on
+# differentialed against the Ansible module (community.crypto 3.1.1 on
 # ansible-core 2.19.4) rather than taken from its documentation - the
 # idempotency matrix in particular, which is what roles like
 # robertdebock.openssl, buluma.ca and mrlesmithjr.haproxy depend on
@@ -54,7 +54,7 @@ describe "openssl_privatekey plugin" do
     File.read(path).must_equal(before)
   end
 
-  # The real module regenerates on a size or type mismatch under its
+  # The Ansible module regenerates on a size or type mismatch under its
   # default regenerate: full_idempotence.
   it "regenerates when the requested size differs" do
     path = key_path("rsa.key")
@@ -79,7 +79,7 @@ describe "openssl_privatekey plugin" do
     File.read(path).must_equal(before)
   end
 
-  it "fails rather than regenerating with regenerate: fail, using the real module's wording" do
+  it "fails rather than regenerating with regenerate: fail, using the Ansible module's wording" do
     path = key_path("rsa.key")
     seed_key(path, {"size" => "2048"})
     result = PluginSpecHelper.run("openssl_privatekey",
@@ -116,7 +116,7 @@ describe "openssl_privatekey plugin" do
     key_text(path).must_include("ASN1 OID: secp384r1")
   end
 
-  it "rejects an unknown curve with the real module's argspec message" do
+  it "rejects an unknown curve with the Ansible module's argspec message" do
     result = PluginSpecHelper.run("openssl_privatekey",
       {"path" => key_path("nope.key"), "type" => "ECC", "curve" => "nonsense"})
 
@@ -243,8 +243,8 @@ describe "openssl_privatekey plugin" do
     expect(str_starts_with?(result["privatekey"].as_s, "-----BEGIN RSA PRIVATE KEY-----")).must_equal(true)
   end
 
-  # The real module fingerprints the DER SubjectPublicKeyInfo of the
-  # public key; verified equal to the real module's own output for the
+  # The Ansible module fingerprints the DER SubjectPublicKeyInfo of the
+  # public key; verified equal to the Ansible module's own output for the
   # same key file, algorithm by algorithm.
   it "reports public-key fingerprints matching openssl's own digests" do
     path = key_path("fp.key")

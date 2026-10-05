@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real's include_vars action plugin uses
+# Ansible's include_vars action plugin uses
 # the `file:`/`dir:` value AS a path in two places, before it ever copies it
 # to text: `os.path.join(current_dir, self.source_dir)` for dir: and
 # `_find_needle('vars', self.source_file)`'s `source.startswith('~')` for
@@ -11,8 +11,8 @@ require "../minitest_helper"
 # plain null-file failure. Both were previously a Crystal cast crash at PARSE
 # time (`file: 0` dropped the whole task with a parse warning instead of
 # running it). The free-form form (`include_vars: 21`) never becomes
-# real's _raw_params at all: mod_args refuses it with a whole-playbook abort.
-# Every expectation below was probed against real ansible-playbook 2.19.11.
+# Ansible's _raw_params at all: mod_args refuses it with a whole-playbook abort.
+# Every expectation below was probed against ansible-playbook 2.19.11.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -116,7 +116,7 @@ describe "include_vars with a non-string file:/dir: literal" do
     invalid.must_include("[ERROR]: Task failed: files_macthing is not a valid option in include_vars")
   end
 
-  it "aborts the whole playbook on a non-string free-form value, like real's mod_args" do
+  it "aborts the whole playbook on a non-string free-form value, like Ansible's mod_args" do
     _, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

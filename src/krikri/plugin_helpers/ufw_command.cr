@@ -55,11 +55,11 @@ module Krikri
         append_interface(parts, params)
         parts << "log" if truthy?(params["log"]?)
         append_endpoints(parts, params)
-        # Real Ansible checks these with `if p['proto']:`-style TRUTHINESS,
+        # Ansible checks these with `if p['proto']:`-style TRUTHINESS,
         # not presence: Oefenweb.ufw (round 196) maps missing item keys
         # via `default('')`, so the params carry empty STRINGS - appending
         # "port "/"proto "/"app ''" for those produced malformed commands
-        # ("ERROR: Wrong number of arguments") where real ansible skipped
+        # ("ERROR: Wrong number of arguments") where Ansible skipped
         # the clause entirely.
         append_trailing_clauses(parts, params)
 
@@ -73,10 +73,10 @@ module Krikri
       end
 
       # from_ip/from_port/to_ip/to_port are four independent appends in
-      # real Ansible's source (a plain list of (key, template) pairs each
+      # Ansible's source (a plain list of (key, template) pairs each
       # checked on their own), not two ip+port pairs - a port given
       # without its matching ip still gets appended alone. Crucially,
-      # from_ip/to_ip default to `'any'` in real Ansible's argument spec
+      # from_ip/to_ip default to `'any'` in Ansible's argument spec
       # (`from_ip=dict(..., default='any', ...)`), not unset/None - so
       # "from any"/"to any" is *always* emitted, even when the task only
       # gave a bare `to_port:`/`from_port:` with no ip at all. Omitting it
@@ -85,7 +85,7 @@ module Krikri
       # 'to' or 'from' clause" - found running konstruktoid-hardening's
       # "Allow outgoing specified ports" task, which does exactly this.
       private def self.append_endpoints(parts : Array(String), params : Hash(String, String)) : Nil
-        # from_ip/to_ip are ALWAYS emitted (real Ansible's own argument
+        # from_ip/to_ip are ALWAYS emitted (Ansible's own argument
         # defaults are 'any', so "from any"/"to any" appear even for a
         # bare port rule - omitting them makes real ufw reject the
         # command with "Need 'to' or 'from' clause"). The PORTS are
@@ -97,7 +97,7 @@ module Krikri
         # rejects a bare port rule with "Need 'to' or 'from' clause"
         # (konstruktoid-hardening's outgoing-ports task). A key that is
         # PRESENT but empty is a different case and skips its clause,
-        # like every other one: real Ansible gates on the value's
+        # like every other one: Ansible gates on the value's
         # truthiness, and a role's own `default('')` mapping produces
         # exactly that.
         parts << "from #{Shell.quote_if_needed(params.has_key?("from_ip") ? params["from_ip"] : "any")}" if !params.has_key?("from_ip") || present?(params, "from_ip")
@@ -106,7 +106,7 @@ module Krikri
         parts << "port #{Shell.quote_if_needed(params["to_port"])}" if present?(params, "to_port")
       end
 
-      # Real Ansible builds its command as a list of [value, template]
+      # Ansible builds its command as a list of [value, template]
       # pairs and keeps only the entries whose VALUE is truthy
       # (`filter(itemgetter(0), cmd)`), so an empty string skips its
       # clause entirely. Two things followed from getting this wrong
@@ -138,7 +138,7 @@ module Krikri
 
       # Real ufw.py's ufw_version(): parses the first non-empty line of
       # `ufw --version` ("ufw 0.36.2") for major.minor[.rev]; anything
-      # else fails the module with real's own fail_json wording
+      # else fails the module with Ansible's own fail_json wording
       # ("Failed to get ufw version.").
       def self.version_parses?(output : String) : Bool
         line = output.lines.find { |text| !text.strip.empty? }
@@ -207,7 +207,7 @@ module Krikri
       # the failing command wrote nothing to stderr. Every ufw
       # invocation (pre/post status probes, the state/rule command
       # itself) goes through that helper, so this is the failure
-      # message real Ansible shows whenever the ufw CLI exits non-zero
+      # message Ansible shows whenever the ufw CLI exits non-zero
       # - e.g. a container without CAP_NET_ADMIN, where even `ufw
       # status verbose` dies with iptables' "Permission denied (you
       # must be root)". This engine used to read only the probes'
@@ -231,7 +231,7 @@ module Krikri
       #
       # Returns nil if the resolved position would fall past the last
       # existing rule - real ufw rejects an insert number larger than the
-      # maximum rule number, so real Ansible drops the `insert` flag
+      # maximum rule number, so Ansible drops the `insert` flag
       # entirely in that case (the rule is just appended normally)
       # instead of sending a command ufw would refuse.
       def self.resolve_insert(insert : Int32, relative_to_cmd : String, numbered_status : String) : Int32?

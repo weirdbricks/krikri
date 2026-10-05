@@ -44,7 +44,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "one of the following is required: _raw_params, cmd") if script_path.nil? || script_path.empty?
       args = parts[1]?
 
-      # Partial check-mode support, mirroring real Ansible's script action
+      # Partial check-mode support, mirroring Ansible's script action
       # plugin (live-verified against ansible-core 2.19.11): with NO
       # creates:/removes: gate the task reports `skipping:` and the
       # script never runs ("Check mode is not supported for this
@@ -93,7 +93,7 @@ module Krikri
 
       stdout = result[:stdout].rstrip("\r\n")
       stderr = result[:stderr].rstrip("\r\n")
-      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+      # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
       # rc, stdout, stdout_lines, stderr, stderr_lines, changed - the
       # executor's failed: false backfill lands after changed. The script
       # action plugin builds stdout_lines/stderr_lines itself (module-side
@@ -134,7 +134,7 @@ module Krikri
     private def skip_reason : PluginResult?
       if creates = @params["creates"]?
         if path_or_glob_exists?(expand_tilde(creates))
-          # Real 2.19.11 (live-verified): the script ACTION plugin's
+          # Ansible 2.19.11 (live-verified): the script ACTION plugin's
           # short-circuit skip registers skipped, msg, changed - no failed
           # key (unlike a module-side skip, which the executor backfills).
           return PluginResult.new(changed: false, failed: false, msg: "#{creates} exists, matching creates option", skipped: true, key_order: %w[skipped msg changed])

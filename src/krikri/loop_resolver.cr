@@ -19,7 +19,7 @@ module Krikri
 
     # The element list ONE with_nested:/with_together: term contributes:
     # a list term contributes its own elements, a STRING term contributes
-    # one element per CHARACTER (real Ansible's nested/together lookups
+    # one element per CHARACTER (Ansible's nested/together lookups
     # iterate each term directly as a sequence, live-verified against
     # ansible-core 2.19.11: `with_nested: [cd, [1]]` yields [c,1] then
     # [d,1], `with_together: [cd, [1]]` yields [c,1] then [d,None]), and
@@ -47,7 +47,7 @@ module Krikri
     end
 
     # with_together: [[a, b], [x, y]] -> [[a,x], [b,y]]
-    # Real Ansible zips the sources elementwise (itertools.zip_longest),
+    # Ansible zips the sources elementwise (itertools.zip_longest),
     # padding every shorter list with None, so the row count is the LONGEST
     # source's size - unlike with_nested's cartesian product above. Access
     # in a task via item[0], item[1], ... (round 700096/820006,
@@ -76,10 +76,10 @@ module Krikri
     # dict) and item[1] (the subelement). dev-sec os_hardening uses it to
     # iterate the stdout_lines each of several shell/find results.
     # The parent handed to the task is a COPY with the subelement_key
-    # REMOVED, matching real ansible-core's subelements lookup
+    # REMOVED, matching ansible-core's subelements lookup
     # (live-verified against 2.19.11: `msg="{{ item.0 | to_json }}"` over
     # {"name": "s1", "kids": [...]} prints {"name": "s1"} - keeping the
-    # key exposed the whole raw list through item.0 where real Ansible
+    # key exposed the whole raw list through item.0 where Ansible
     # never shows it).
     def self.with_subelements(list : Array(JSON::Any), subelement : String) : Array(JSON::Any)
       result = [] of JSON::Any

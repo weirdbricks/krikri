@@ -9,9 +9,9 @@ module Krikri
   # Compatible with Ansible's ansible.builtin.iptables module.
   #
   # Idempotency and apply both shell straight to the real `iptables`/
-  # `ip6tables` binary, mirroring the real module exactly: `-C` (check)
+  # `ip6tables` binary, mirroring the Ansible module exactly: `-C` (check)
   # to test whether a rule is already present, `-A`/`-I` to add it,
-  # `-D` to remove it - real Ansible's own module works the same way
+  # `-D` to remove it - Ansible's own module works the same way
   # (no netlink/library binding, just CLI wrapping), so this matches it
   # rule-construction-flag-for-flag rather than reimplementing netfilter
   # semantics.
@@ -19,14 +19,14 @@ module Krikri
   # All parameter flags, the command framing (rule_num only on `-I`,
   # `-w wait` on every operation, `--numeric` on the `-L` probes) and
   # the argument-spec validations (mutually_exclusive / required_if /
-  # required_by, including real Ansible's exact failure messages) live
-  # in `PluginHelpers::IptablesCommand`, mirroring the real module's
+  # required_by, including Ansible's exact failure messages) live
+  # in `PluginHelpers::IptablesCommand`, mirroring the Ansible module's
   # `construct_rule()`/`push_arguments()`/argument_spec.
   #
   # Scope-cut (matching this codebase's usual practice of covering the
   # common real-world shape rather than every flag - see `firewalld.cr`'s
   # own doc comment for the same trade-off): `wait` is passed through
-  # verbatim without real Ansible's iptables-version gating (it drops
+  # verbatim without Ansible's iptables-version gating (it drops
   # `-w` entirely below iptables 1.4.20 and seconds support below 1.6.0;
   # every current distro ships >= 1.6.0).
   class IptablesPlugin < BasePlugin
@@ -52,20 +52,20 @@ module Krikri
       chain_management = true?(@params["chain_management"]?)
       state = @params["state"]? || "present"
 
-      # Real Ansible's argument-spec validation (mutually_exclusive /
+      # Ansible's argument-spec validation (mutually_exclusive /
       # required_if / required_by), with its own failure messages.
       if err = PluginHelpers::IptablesCommand.validate(@params)
         return PluginResult.new(changed: false, failed: true, msg: err)
       end
 
-      # Real Ansible's main() builds the args dict - including
+      # Ansible's main() builds the args dict - including
       # `rule=' '.join(construct_rule(module.params))` - BEFORE its own
       # log-jump enforcement, so a construct_rule crash wins over the
       # "Logging options can only be used with the LOG jump target."
       # failure. Live-verified against ansible-core 2.19.11.
       rule_flags = PluginHelpers::IptablesCommand.construct_rule(@params)
       if rule_flags.is_a?(String)
-        # Both quirks are uncaught exceptions inside real's own
+        # Both quirks are uncaught exceptions inside Ansible's own
         # construct_rule(), so they reach the user through the
         # module-crash wrapper rather than fail_json - the "Task failed:
         # Module failed: " brief in the fatal msg, the bare exception
@@ -75,9 +75,9 @@ module Krikri
           msg: "Task failed: Module failed: #{rule_flags}", _ansible_error_detail: rule_flags)
       end
 
-      # Real Ansible's log-jump enforcement: logging options force
+      # Ansible's log-jump enforcement: logging options force
       # jump=LOG when unset and fail with any other jump target. Mutates
-      # @params exactly as real's main() does (it fills the jump in
+      # @params exactly as Ansible's main() does (it fills the jump in
       # BEFORE construct_rule is ever re-read).
       if failure = enforce_log_jump
         return PluginResult.new(changed: false, failed: true, msg: failure)
@@ -97,7 +97,7 @@ module Krikri
         )
       end
 
-      # Real ansible-core 2.19.11 iptables exits with a single
+      # ansible-core 2.19.11 iptables exits with a single
       # `exit_json(**args)` where args is the dict built at the top of
       # main(): changed, failed, ip_version, table, chain, flush, rule,
       # state, chain_management, wait - in exactly that insertion order
@@ -121,9 +121,9 @@ module Krikri
       )
     end
 
-    # Real Ansible's log-jump enforcement block, lifted out of #execute.
+    # Ansible's log-jump enforcement block, lifted out of #execute.
     # Fills @params["jump"] with LOG when unset (mutating params exactly
-    # as real's main() does), and returns the failure message for any
+    # as Ansible's main() does), and returns the failure message for any
     # other explicit jump target.
     private def enforce_log_jump : String?
       return nil unless @params["log_prefix"]? || @params["log_level"]?
@@ -164,7 +164,7 @@ module Krikri
     private def apply_policy(bin : String, chain : String?, policy : String, check_mode : Bool, msgs : Array(String)) : Bool
       current = current_policy(bin, chain)
       if current.nil?
-        # Real Ansible fails here rather than guessing.
+        # Ansible fails here rather than guessing.
         @failure = "Can't detect current policy"
         return false
       end
@@ -197,7 +197,7 @@ module Krikri
       true
     end
 
-    # Real Ansible runs every mutating operation (the -F/-P/-N/-X/-A/-I/-D
+    # Ansible runs every mutating operation (the -F/-P/-N/-X/-A/-I/-D
     # call sites) through module.run_command(check_rc=True) - a non-zero
     # exit from the real iptables/ip6tables binary fails the task with
     # the binary's stderr as the message. It is never swallowed into a
@@ -212,7 +212,7 @@ module Krikri
       @failure ||= "Failure executing command, exit code: #{result[:exit_code]}"
     end
 
-    # Real Ansible's push_arguments(): one shared command framing for
+    # Ansible's push_arguments(): one shared command framing for
     # every operation this plugin runs, including `-w wait` (when set)
     # and the `-I`-only insert position.
     private def push(bin : String, action : String, chain : String? = nil,

@@ -26,7 +26,7 @@ module Krikri
     # The plugins run wherever krikri-playbook executes their task (the
     # target host, or locally for ansible_connection=local /
     # delegate_to: localhost), so the credentials must be present in that
-    # process's environment - same contract real Ansible's aws modules
+    # process's environment - same contract Ansible's aws modules
     # have, just without the boto profile machinery.
     module Ec2Api
       EC2_API_VERSION = "2016-11-15"

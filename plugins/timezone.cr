@@ -24,11 +24,11 @@
 # `hwclock --systohc --utc|--localtime`.
 #
 # Both backends verify the planned zone exists as
-# /usr/share/zoneinfo/<name> at init, failing with real's wrapped abort
+# /usr/share/zoneinfo/<name> at init, failing with Ansible's wrapped abort
 # format ("Error message:" / "Other message(s):" lines), and `changed` is
-# real's own before!=after comparison of EVERY planned key - so a name
+# Ansible's own before!=after comparison of EVERY planned key - so a name
 # that was already current reports changed: false and no command runs at
-# all (real skips the change in that case entirely).
+# all (Ansible skips the change in that case entirely).
 
 require "json"
 require "../src/krikri/base_plugin"
@@ -90,7 +90,7 @@ module Krikri
       systemd_backend = pick_backend
       init_nosystemd_paths unless systemd_backend
 
-      # Backend init, in real's own order.
+      # Backend init, in Ansible's own order.
       if error = init_backend(planned, systemd_backend)
         return error
       end
@@ -101,7 +101,7 @@ module Krikri
       return apply_error if apply_error
 
       changed = before != after
-      # Real 2.19.11 registered timezone result (live-verified): changed,
+      # Ansible 2.19.11 registered timezone result (live-verified): changed,
       # diff, failed - the module's exit_json passes changed itself, so
       # only failed is backfilled at the tail. msg is krikri-only.
       PluginResult.new(
@@ -113,7 +113,7 @@ module Krikri
       )
     end
 
-    # Backend init, in real's own order. NosystemdTimezone.__init__
+    # Backend init, in Ansible's own order. NosystemdTimezone.__init__
     # verifies the planned zone FIRST, then resolves its helper binaries
     # - cp, then hwclock, then the Debian branch's ln - so a bad timezone
     # name is reported even on a host that has no hwclock at all, and a
@@ -196,9 +196,9 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: lines.join("\n"))
     end
 
-    # the real module get_bin_path(required=True) failure: plain
+    # the Ansible module get_bin_path(required=True) failure: plain
     # fail_json, no abort() "Error message:" wrapper (confirmed live
-    # against real ansible-playbook 2.19.11 on a host without hwclock).
+    # against ansible-playbook 2.19.11 on a host without hwclock).
     private def missing_binary(name : String) : PluginResult
       PluginResult.new(changed: false, failed: true,
         msg: PluginHelpers::GetBinPath.missing_executable_error(name, @searched_paths))
@@ -243,7 +243,7 @@ module Krikri
 
     # Real SystemdTimezone.get: scrape `timedatectl status` (cached per
     # phase there; the values can't change mid-task here). A status line
-    # that matches neither regexp would be real's own uncaught
+    # that matches neither regexp would be Ansible's own uncaught
     # AttributeError - can't be reproduced with a sane failure, the
     # scrape simply yields "".
     private def get_value(key : String, systemd_backend : Bool, planned_value : String) : String
@@ -358,7 +358,7 @@ module Krikri
     private def set_hwclock_nosystemd(value : String) : Nil
       utc = value == "local" ? "no" : "yes"
       option = value == "local" ? "--localtime" : "--utc"
-      # The hwclock config file may not exist yet (real's allow_no_file
+      # The hwclock config file may not exist yet (Ansible's allow_no_file
       # treats ENOENT as an empty file and creates it); the edit always
       # runs on this branch.
       deleted = edit_config_file(@hwclock_conf, /^UTC\s*=/, "UTC=#{utc}\n")
@@ -384,8 +384,8 @@ module Krikri
       matched.size
     end
 
-    # ENOENT reads as missing content (real's allow_no_file); any other
-    # OSError would abort with real's "could not read configuration
+    # ENOENT reads as missing content (Ansible's allow_no_file); any other
+    # OSError would abort with Ansible's "could not read configuration
     # file" wording - not reproduced, the plugin runs as root wherever
     # the module would.
     private def read_config(path : String) : String?

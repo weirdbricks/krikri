@@ -6,7 +6,7 @@ describe "template plugin - directory-style dest (trailing /)" do
     # Same l3d.unbound failure shape as copy's trailing-slash case: the
     # role's config-fragment tasks pass `dest: /etc/unbound/unbound.conf.d/`
     # (trailing slash, directory created by an earlier file: task in the
-    # play). Real Ansible's template appends the template's own basename
+    # play). Ansible's template appends the template's own basename
     # whenever dest signals a directory; this used to rename the rendered
     # tmp file straight onto the literal directory path and failed with
     # "Not a directory".

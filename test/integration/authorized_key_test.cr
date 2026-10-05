@@ -9,8 +9,8 @@ end
 private RSA_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC test@example.com"
 
 describe "authorized_key plugin" do
-  it "creates the file (and the .ssh dir itself, real Ansible's single os.mkdir) and adds the key" do
-    # Real Ansible's keyfile() does os.mkdir on the .ssh dir only - a
+  it "creates the file (and the .ssh dir itself, Ansible's single os.mkdir) and adds the key" do
+    # Ansible's keyfile() does os.mkdir on the .ssh dir only - a
     # missing grandparent is a real "Failed to create directory" OSError
     # (verified live), so the spec's base dir must exist up front.
     base = tmp_path("authorized-key-create")
@@ -24,7 +24,7 @@ describe "authorized_key plugin" do
     File.info(File.join(base, ".ssh")).permissions.must_equal(File::Permissions.new(0o700))
   end
 
-  it "no-ops on an empty key, without even creating the file (matches real Ansible)" do
+  it "no-ops on an empty key, without even creating the file (matches Ansible)" do
     # Real bug found benchmarking weareinteractive.users' own `key: "{{
     # user.authorized_keys | default([]) | join('\n') }}"` (empty
     # whenever a user has no authorized_keys set) - previously always
@@ -32,8 +32,8 @@ describe "authorized_key plugin" do
     # on rerun (a blank line's key signature is nil, and blank lines are
     # filtered out of the comparison list before the signature check
     # runs), so it reported changed: true on every single run forever.
-    # Real Ansible's own module doesn't even create the file for an
-    # empty key - verified live against real ansible-playbook.
+    # Ansible's own module doesn't even create the file for an
+    # empty key - verified live against ansible-playbook.
     path = File.join(tmp_path("authorized-key-empty"), ".ssh", "authorized_keys")
     `rm -rf #{tmp_path("authorized-key-empty")}`
 
@@ -54,13 +54,13 @@ describe "authorized_key plugin" do
     # Real module sets NO changed at all on the idempotent path
     # (enforce_state only sets params['changed']=True on the do_write
     # paths); the executor backfills failed-then-changed, which is why
-    # real's registered shape there ends [..., keyfile, failed, changed]
+    # Ansible's registered shape there ends [..., keyfile, failed, changed]
     # (live-verified vs 2.19.11, round 992000's authorized_key_exists).
     result.as_h.has_key?("changed").must_equal(false)
     result["keyfile"].as_s.must_equal(path)
   end
 
-  it "rewrites the line when only the trailing comment differs (real Ansible compares the comment as part of the key tuple)" do
+  it "rewrites the line when only the trailing comment differs (Ansible compares the comment as part of the key tuple)" do
     path = tmp_path("authorized-key-comment")
     File.write(path, "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC different-comment\n")
 
@@ -100,7 +100,7 @@ describe "authorized_key plugin" do
     result = PluginSpecHelper.run("authorized_key", {"user" => "root", "key" => RSA_KEY, "_ansible_check_mode" => "true"})
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real Ansible echoes the resolved path back as `keyfile` (its own
+    # Ansible echoes the resolved path back as `keyfile` (its own
     # params["keyfile"] set by enforce_state); the `path` echo is the
     # raw `path:` param, i.e. JSON null when not given.
     result["keyfile"].as_s.must_equal("/root/.ssh/authorized_keys")
@@ -115,11 +115,11 @@ describe "authorized_key plugin" do
 
   # Round 811277 (jtprogru.profile): a role default left a username that
   # doesn't exist on the host, and krikri silently "succeeded" by
-  # inventing /home/<user>/.ssh/authorized_keys for it. Real Ansible's
+  # inventing /home/<user>/.ssh/authorized_keys for it. Ansible's
   # keyfile() does a real pwd.getpwnam(user) and hard-fails instead.
-  # All messages below verified live against real ansible-playbook
+  # All messages below verified live against ansible-playbook
   # (ansible.posix 2.1.0).
-  it "fails like real Ansible when the user doesn't exist and no path is given" do
+  it "fails like Ansible when the user doesn't exist and no path is given" do
     result = PluginSpecHelper.run("authorized_key", {
       "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY,
     })
@@ -130,7 +130,7 @@ describe "authorized_key plugin" do
     )
   end
 
-  it "fails in check mode with real Ansible's own check-mode message for a nonexistent user" do
+  it "fails in check mode with Ansible's own check-mode message for a nonexistent user" do
     result = PluginSpecHelper.run("authorized_key", {
       "user" => "definitely-not-a-user-xyz", "key" => RSA_KEY, "_ansible_check_mode" => "true",
     })
@@ -139,7 +139,7 @@ describe "authorized_key plugin" do
     result["msg"].as_s.must_equal("Either user must exist or you must provide full path to key file in check mode")
   end
 
-  it "fails in normal mode even with an explicit path when the user doesn't exist (real Ansible still does the lookup for ownership)" do
+  it "fails in normal mode even with an explicit path when the user doesn't exist (Ansible still does the lookup for ownership)" do
     path = File.join(tmp_path("authorized-key-explicit-no-user"), ".ssh", "authorized_keys")
     `rm -rf #{tmp_path("authorized-key-explicit-no-user")}`
 
@@ -153,7 +153,7 @@ describe "authorized_key plugin" do
     )
   end
 
-  it "skips the user lookup entirely in check mode with an explicit path (real Ansible's early return)" do
+  it "skips the user lookup entirely in check mode with an explicit path (Ansible's early return)" do
     path = File.join(tmp_path("authorized-key-explicit-cm"), ".ssh", "authorized_keys")
     `rm -rf #{tmp_path("authorized-key-explicit-cm")}`
 
@@ -171,7 +171,7 @@ describe "authorized_key plugin" do
     result["keyfile"].as_s.must_equal("/root/.ssh/authorized_keys")
   end
 
-  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): real
+  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): real
   # ansible.posix.authorized_key returns its ENTIRE module.params dict
   # (with keyfile/changed merged in), so every effective parameter -
   # including defaulted (manage_dir/exclusive/validate_certs/follow) and
@@ -218,7 +218,7 @@ describe "authorized_key plugin" do
   # and '#'-prefixed ones, and hard-fails on the FIRST line without a
   # known SSH2 key-type token ("invalid key specified:") - garbage is
   # never silently appended.
-  it "fails with real Ansible's invalid-key message on garbage key material" do
+  it "fails with Ansible's invalid-key message on garbage key material" do
     path = tmp_path("authorized-key-invalid")
     `rm -rf #{tmp_path("authorized-key-invalid")}`
 

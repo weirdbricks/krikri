@@ -180,7 +180,7 @@ describe "json_query filter (FilterEngine / Crinja)" do
     rendered.strip.must_equal(%(['htop']))
   end
 
-  it "fails the template on an invalid expression, like real Ansible" do
+  it "fails the template on an invalid expression, like Ansible" do
     assert_raises_message(Exception, /json_query/) do
       krikri_jinja_render(%({{ packages | json_query('..') }}), {"packages" => [1]})
     end

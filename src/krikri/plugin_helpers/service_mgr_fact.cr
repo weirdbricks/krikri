@@ -1,10 +1,10 @@
 module Krikri
   module PluginHelpers
-    # The pure half of real Ansible's ServiceMgrFactCollector
+    # The pure half of Ansible's ServiceMgrFactCollector
     # Observed behavior: what PID 1's comm
     # contributes to the ansible_service_mgr fact.
     #
-    # Real Ansible discards "init" (too many systems name it) and
+    # Ansible discards "init" (too many systems name it) and
     # anything ending in "sh" (a container's PID 1 shell) as
     # unidentifiable - those fall through to the Linux fallbacks
     # (systemd canaries, upstart, openrc, the OFFLINE systemd check of
@@ -23,8 +23,8 @@ module Krikri
     module ServiceMgrFact
       extend self
 
-      # Real Ansible's proc_1_map: PID 1 comm values that mean a custom
-      # init, mapped to the fact value real Ansible reports for them.
+      # Ansible's proc_1_map: PID 1 comm values that mean a custom
+      # init, mapped to the fact value Ansible reports for them.
       PROC1_MAP = {
         "procd"       => "openwrt_init",
         "runit-init"  => "runit",

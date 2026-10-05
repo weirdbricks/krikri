@@ -8,7 +8,7 @@ require "../../src/krikri/variable_substitutor"
 require "../../src/krikri/krikri_jinja_filters"
 
 # Real bug found benchmarking robertdebock.bios_update on Rocky 9.6 (round
-# 161): real Ansible's Jinja2 templating for module args is
+# 161): Ansible's Jinja2 templating for module args is
 # strict-undefined by default - `debug: msg: "Error: {{ some_var }}"`
 # where some_var is genuinely never set anywhere raises "Finalization of
 # task args ... failed: 'some_var' is undefined" and fails the task. This
@@ -18,7 +18,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # VariableSubstitutor - NOT changed). `VarSubstitutor#substitute`'s new
 # `strict:` parameter (used only by #substitute_task_params, the one
 # place that assembles a task's final module-arg hash) narrowly re-adds
-# real Ansible's strictness for the single most common, unambiguous
+# Ansible's strictness for the single most common, unambiguous
 # shape of this bug: a BARE variable reference (`foo`, `foo.bar`,
 # `foo['bar'][0]` - no filters/operators/function calls) that resolves to
 # nothing.
@@ -69,7 +69,7 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
   # with no match at all - the role's own configured package wasn't a real
   # apt package, so `apt show` never printed a "Version:" line) silently
   # rendered the "undefined" sentinel and the whole play ran green, where
-  # real ansible-playbook (2.19.11) hard-fails the task with
+  # ansible-playbook (2.19.11) hard-fails the task with
   # "Error while resolving value for '...': None has no element 0".
   # Indexing past the end of a real-but-too-short list is a DIFFERENT
   # Python error shape ("object of type 'list' has no attribute 5",
@@ -121,7 +121,7 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       # (`evaluate_leading_paren_crinja_first`), which re-encodes the
       # expression's string literals so Crinja's lexer-level escape
       # decoding (crystal-play-0.9.52+) round-trips back to the original
-      # text: real ansible-playbook 2.19.11 does NOT decode string
+      # text: ansible-playbook 2.19.11 does NOT decode string
       # escapes in inline YAML templating (live-verified - a single
       # backslash `'\1'` works as the group backreference there and a
       # doubled `'\\1'` FAILS with "NoneType' object has no attribute
@@ -138,7 +138,7 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       # Narrow for-else-of-the-bug guard, same live-verified real-Ansible
       # wording: `{{ ('x\ny' | b64encode) }}` with parens (Crinja
       # delegation) must render the backslash verbatim, exactly like
-      # real ansible-playbook 2.19.11 inline ("eFxueQ==" - the b64 of
+      # ansible-playbook 2.19.11 inline ("eFxueQ==" - the b64 of
       # the 4 characters x\ny, NOT the b64 of a real newline, "eAp5").
       # Before the delegation re-encoded string literals, Crinja decoded
       # `\n` into a real newline here.
@@ -156,7 +156,7 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       sub.substitute("{{ lst[5] | default('x') }}", strict: true).must_equal("x")
     end
 
-    it "keeps an undefined BASE lenient (real Ansible's 'x is undefined' shape, not a None-index)" do
+    it "keeps an undefined BASE lenient (Ansible's 'x is undefined' shape, not a None-index)" do
       sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
       sub.substitute("{{ (no_such_var)[0] | default('y') }}", strict: true).must_equal("y")
     end
@@ -172,7 +172,7 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
   # undefined probes matched Jinja2's bare boolean/null literal spellings
   # against REGEX_BARE_VAR_REF as if they were variable NAMES, so both a
   # bare `{{ true }}` and a filter-chain `{{ true | bool }}` failed the
-  # task with "'true' is undefined" where real ansible-playbook
+  # task with "'true' is undefined" where ansible-playbook
   # (live-verified, 2.19.11) renders the literal. The role-level symptom
   # was `cwa_need_credentials: "{{ true | bool if cwa_agent_mode ==
   # 'onPremise' else cwa_use_credentials }}"` behind a bare `when:` - the

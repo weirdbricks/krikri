@@ -5,7 +5,7 @@
 # cchurch.virtualenv uses it; previously unavailable -> rc=4
 # "unavailable modules").
 #
-# Semantics matching the real module:
+# Semantics matching the Ansible module:
 # - state present/latest (latest adds --upgrade); there is no absent -
 #   easy_install can only install.
 # - virtualenv: created with virtualenv_command (default virtualenv)
@@ -13,7 +13,7 @@
 #   virtualenv_site_packages is set; easy_install is then resolved from
 #   the venv's bin dir first.
 # - installed probe: `easy_install --dry-run <name>` - "Downloading" in
-#   the output means not installed (the real module's
+#   the output means not installed (the Ansible module's
 #   _is_package_installed).
 # - executable: explicit path/basename override (default easy_install).
 require "json"

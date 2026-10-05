@@ -6,9 +6,9 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real's copy and template ACTION plugins read `follow` themselves with
+# Ansible's copy and template ACTION plugins read `follow` themselves with
 # boolean(value, strict=False) and pass the COERCED boolean to the copy
-# module, so a `follow:` spelling real would reject never fails the task -
+# module, so a `follow:` spelling Ansible would reject never fails the task -
 # and what does fail it is the typo'd option that sits next to it. Under
 # --check the copy spec never runs at all. All live-verified vs 2.19.11
 # (this engine used to fail both with a bool-conversion error).

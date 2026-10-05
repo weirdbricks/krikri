@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# The three inventory SOURCE shapes real Ansible accepts beyond a single
+# The three inventory SOURCE shapes Ansible accepts beyond a single
 # file: a directory of sources, a comma-separated host list, and no
 # usable inventory at all (implicit localhost). All differentialed
 # against ansible-core 2.19.4.
@@ -114,7 +114,7 @@ describe "inventory sources" do
     output.must_include("HOST=[web03]")
   end
 
-  # Real Ansible does not abort for an unusable inventory
+  # Ansible does not abort for an unusable inventory
   # (INVENTORY_UNPARSED_IS_FAILED is false): it warns and leaves the
   # implicit localhost as the only reachable host.
   it "runs a localhost play with no inventory at all" do
@@ -165,7 +165,7 @@ describe "inventory sources" do
     output.wont_include("SHOULD-NOT-RUN")
   end
 
-  # Real Ansible reports ["ungrouped"] for a host that belongs to no
+  # Ansible reports ["ungrouped"] for a host that belongs to no
   # other group - genuine membership, unlike "all", which is always
   # excluded.
   it "reports ungrouped in group_names for a host with no group of its own" do

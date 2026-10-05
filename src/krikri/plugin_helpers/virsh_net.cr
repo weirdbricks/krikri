@@ -4,7 +4,7 @@ module Krikri
   module PluginHelpers
     # VirshNet - command construction and output parsing for
     # community.libvirt.virt_net (see plugins/virt_net.cr). Pure string
-    # plumbing mirroring the real module's LibvirtConnection/VirtNetwork
+    # plumbing mirroring the Ansible module's LibvirtConnection/VirtNetwork
     # helpers, unit-testable without a libvirt daemon.
     module VirshNet
       record DhcpHost, mac : String, name : String?, ip : String?
@@ -33,9 +33,9 @@ module Krikri
       end
 
       # forward_mode / domain / macaddress come from the network's XML
-      # (the real module xpath-scans XMLDesc) - regex equivalents over
+      # (the Ansible module xpath-scans XMLDesc) - regex equivalents over
       # `virsh net-dumpxml` output, nil when the element is absent
-      # (matching the real module's "skip the fact" behavior).
+      # (matching the Ansible module's "skip the fact" behavior).
       def self.parse_forward_mode(xml : String) : String?
         xml.match(/<forward[^>]*\smode=['"]([^'"]+)['"]/).try(&.[1])
       end
@@ -59,7 +59,7 @@ module Krikri
         end
       end
 
-      # All command builders take the connection URI (the real module
+      # All command builders take the connection URI (the Ansible module
       # always opens its own connection with it, default
       # qemu:///system - same default virsh itself uses).
       def self.virsh(uri : String, subcommand : String, *args : String) : Array(String)
@@ -67,7 +67,7 @@ module Krikri
       end
 
       # `modify`'s virsh net-update mapping for a <host/> DHCP entry -
-      # the one section the real module implements (ADD_LAST /
+      # the one section the Ansible module implements (ADD_LAST /
       # IP_DHCP_HOST), applied live+config when the network is active
       # and config-only when it isn't.
       def self.net_update_command(uri : String, name : String, xml : String, live : Bool) : Array(String)?

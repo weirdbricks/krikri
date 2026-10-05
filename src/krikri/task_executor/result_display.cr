@@ -7,9 +7,9 @@ require "../argspec_validator"
 require "./error_block"
 
 module Krikri
-  # A module result's "failed" flag read the way real Ansible's Python
+  # A module result's "failed" flag read the way Ansible's Python
   # truthiness reads it: the wire protocol normally carries a JSON bool,
-  # but real ansible-core's TaskExecutor puts INTEGER 0 in the async
+  # but ansible-core's TaskExecutor puts INTEGER 0 in the async
   # fire-and-forget launch result ("failed: 0" - confirmed via the
   # podman-diff async_status cases), and a hard as_bool cast crashes the
   # executor on it. 0 is falsy, 1 truthy, matching Python.
@@ -23,7 +23,7 @@ module Krikri
 
   # ResultDisplay - Handles displaying task results and diffs
   module ResultDisplay
-    # Real ansible-playbook -v and above append a small JSON dump to every
+    # ansible-playbook -v and above append a small JSON dump to every
     # "skipping:" line. A when:-false skip carries the RAW when: condition
     # under "false_condition" (a literal YAML false stays an unquoted
     # `false`, anything written as a string keeps its quotes); a looped
@@ -50,7 +50,7 @@ module Krikri
       " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
     end
 
-    # Single-line sorted JSON dump at -v/-vv; real's pretty 4-space-indent
+    # Single-line sorted JSON dump at -v/-vv; Ansible's pretty 4-space-indent
     # shape from -vvv up. Shared by every skip suffix helper.
     def self.dump_suffix(value : JSON::Any) : String
       RunOptions.verbosity >= 3 ? dump_pretty(value) : python_json_dump(value)
@@ -82,9 +82,9 @@ module Krikri
 
     # Core-emitted deprecation lines already printed this run (real
     # Display._deprecated dedups on the formatted message) and the
-    # one-time "Deprecation warnings can be disabled" hint real prints
+    # one-time "Deprecation warnings can be disabled" hint Ansible prints
     # before the first deprecation of a run - both shared across every
-    # deprecation source, exactly like real's Display state.
+    # deprecation source, exactly like Ansible's Display state.
     @@deprecation_texts = Set(String).new
     @@deprecation_hint_seen = false
 
@@ -107,7 +107,7 @@ module Krikri
     # A collection-redirect deprecation (community.mysql.<module> ->
     # ansible.mysql.<module>): one [DEPRECATION WARNING] console line per
     # distinct message per run through emit_core_deprecation, exactly like
-    # real's Display. nil module names (pseudo-tasks) and non-redirected
+    # Ansible's Display. nil module names (pseudo-tasks) and non-redirected
     # modules are no-ops.
     def self.emit_module_redirect_deprecation(module_name : String?) : Nil
       return unless module_name
@@ -137,7 +137,7 @@ module Krikri
 
     # Emits the stashed removed-param deprecations for this module unless
     # the result says the module never ran (skip, unreachable, connection
-    # failure) or died with an uncaught exception (real's crash wrapper
+    # failure) or died with an uncaught exception (Ansible's crash wrapper
     # drops the collected deprecations - live-verified vs 2.19.11 with
     # openssl_pkcs12's maciter_size). Consumes the stash either way.
     def self.consume_pending_module_deprecations(result : JSON::Any, module_name : String?) : Nil
@@ -154,7 +154,7 @@ module Krikri
     end
 
     # The result shape of an uncaught module exception (the plugins'
-    # module_crash_result/unhandled_error mimicry): real's module wrapper
+    # module_crash_result/unhandled_error mimicry): Ansible's module wrapper
     # builds that result WITHOUT the deprecations the module bootstrap
     # collected, so `_ansible_core_deprecations` riding on it must not be
     # displayed (live-verified vs 2.19.11 with openssl_pkcs12's
@@ -169,7 +169,7 @@ module Krikri
     # item_label is set for looped tasks, rendering `ok: [host] => (item=x)`
     # to match how Ansible annotates per-iteration output.
     # source_task carries the task's parsed source position and module
-    # identity so a failed result can render real ansible-core 2.19's
+    # identity so a failed result can render ansible-core 2.19's
     # `[ERROR]: Task failed:` block (see ErrorBlock) before the fatal/
     # failed line; nil (or a task without a parsed position) suppresses
     # the block.
@@ -181,12 +181,12 @@ module Krikri
 
     private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
       # A validation-passed removed-param deprecation waits for this
-      # result to learn whether real's module run would have shown it
+      # result to learn whether Ansible's module run would have shown it
       # (normal/fail_json return) or dropped it (uncaught crash, skip,
       # unreachable) - emit it before anything else this result prints.
       consume_pending_module_deprecations(result, module_name)
 
-      # delegate_to: renders the host line as real Ansible does:
+      # delegate_to: renders the host line as Ansible does:
       # `ok: [source -> target]` - the task ran against the delegate
       # target even though it reports under the play host.
       host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
@@ -205,7 +205,7 @@ module Krikri
       # Core-emitted deprecations (a module's result carrying the
       # `_ansible_core_deprecations` marker - e.g. ansible.posix.mount's
       # `warnings`-in-exit_json deprecation) print on stderr BEFORE the
-      # module-warnings block: real emits the deprecation inside the
+      # module-warnings block: Ansible emits the deprecation inside the
       # module's own _return_formatted, before any self.warn() calls it
       # makes afterwards. The formatted [DEPRECATION WARNING] line dedups
       # like every Display message, and the "Deprecation warnings can be
@@ -215,7 +215,7 @@ module Krikri
       # (stripped below, like the `_ansible_*` register strip) - the
       # result's real `deprecations` list stays untouched for register.
       # An uncaught module exception's result is the one shape that shows
-      # nothing: real's crash wrapper rebuilds the result without the
+      # nothing: Ansible's crash wrapper rebuilds the result without the
       # collected deprecations (see module_crash_result?).
       unless module_crash_result?(result)
         result["_ansible_core_deprecations"]?.try(&.as_a?).try &.each do |deprecation|
@@ -237,7 +237,7 @@ module Krikri
 
       # Console lines a controller-side action plugin produced ITSELF
       # rather than through the result (pause's "Pausing for N seconds"
-      # and its ctrl+C hint). Real's action plugin writes those with
+      # and its ctrl+C hint). Ansible's action plugin writes those with
       # Display.display() while the task is still running, so they always
       # land between the task's own output and this item's status line -
       # once per loop item, in iteration order. Displaying them here (the
@@ -249,27 +249,27 @@ module Krikri
         puts line.as_s? || line.to_s
       end
 
-      # Real's callback (CallbackBase._dump_results) drops these top-level
+      # Ansible's callback (CallbackBase._dump_results) drops these top-level
       # keys before any dump at verbosity < 3: `warnings`/`deprecations` are
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
       # unless -vvv (getent-style results carry one for `register`). At -vvv
-      # and above real keeps all of them inside the dumps.
+      # and above Ansible keeps all of them inside the dumps.
       if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
         result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
       end
 
       # no_log: print the status line and NOTHING else - no msg, no
-      # stdout, no diff, no error detail. Real ansible-playbook shows
+      # stdout, no diff, no error detail. ansible-playbook shows
       # exactly `changed: [host]` / `ok: [host]` for such a task and
       # leaks nothing even under -v (verified against 2.19.4). This is a
       # security control, so it is applied before any other branch below
       # can print part of the result.
       if no_log
-        # Real 2.19 DOES print the error block for a failed no_log task
+        # Ansible 2.19 DOES print the error block for a failed no_log task
         # (with the raw, uncensored message - an upstream leak), but
         # krikri deliberately does not replicate that leak: the block
         # would echo the secret this control exists to hide. Everything
-        # else matches real 2.19.11: a solo failed no_log task prints the
+        # else matches Ansible 2.19.11: a solo failed no_log task prints the
         # censored fatal dump (which carries no secret) plus "...ignoring"
         # when ignore_errors: caught it; ok/changed and looped results
         # stay bare status lines (live-verified against 2.19.11).
@@ -285,7 +285,7 @@ module Krikri
                       else
                         "ok".colorize(:green)
                       end
-        # Real Ansible censors the loop item too under no_log - the item
+        # Ansible censors the loop item too under no_log - the item
         # value can itself be a secret (e.g. `loop: "{{ keepass_attrs }}"`
         # on a credential-reading task), so `(item=<value>)` must never
         # print verbatim.
@@ -305,7 +305,7 @@ module Krikri
 
       suffix = item_label ? " => (item=#{item_label})" : ""
 
-      # A failed (non-loop) task's real ansible-core 2.19 display is ONE
+      # A failed (non-loop) task's ansible-core 2.19 display is ONE
       # line: `fatal: [host]: FAILED! => {json}` with the whole result
       # JSON dumped sorted (live-verified: a command: failure shows
       # `fatal: [target]: FAILED! => {"changed": true, "cmd": [...],
@@ -315,18 +315,18 @@ module Krikri
       # produces (found live via modules_systems.yml's wrong-checksum
       # rescue probe, where the recap-parity task-status diff flagged
       # fatal-vs-failed on the one failing task in the whole play).
-      # Loop-item failures keep the loop display below unchanged - real's
+      # Loop-item failures keep the loop display below unchanged - Ansible's
       # loop-failure line uses a different shape again
       # (`failed: [host] (item=X) => {json}`), and the engine's own
       # loop display (`failed: [host] => (item=X)` plus detail lines) is
       # a documented, deliberately-not-yet-matched cosmetic gap - so only
       # the NON-loop (no item_label) case takes the single-line dump.
       if failed && item_label.nil?
-        # Real's stdout callbacks strip failed/skipped/_ansible_* before
+        # Ansible's stdout callbacks strip failed/skipped/_ansible_* before
         # dumping (as_callback_task_result), so the FAILED! dump carries
         # neither "failed": true nor any _ansible_* key.
         emit_task_error_block(source_task, result, msg)
-        # Real 2.19.11's fatal dump has three shapes:
+        # Ansible 2.19.11's fatal dump has three shapes:
         # - a task-level when:/loop-source failure (marked by
         #   when_error_result) dumps ONLY the msg:
         #   {"msg": "Task failed: ..."} - no changed key (live-verified
@@ -341,17 +341,17 @@ module Krikri
           puts "fatal: [#{host_label}]: FAILED! => #{dump}".colorize(:red)
         elsif result["_ansible_verbose_always"]?.try(&.as_bool) == true
           # A debug task's own failed result (failed_when:) dumps msg-ONLY
-          # pretty (real 2.19.11: {"msg": "fw"} - the verbose-always path
+          # pretty (Ansible 2.19.11: {"msg": "fw"} - the verbose-always path
           # with debug's msg-only clean; live-verified) - the generic
           # clean kept changed/failed_when_result in the dump.
           cleaned = module_name.try(&.ends_with?("debug")) ? debug_clean_result(result) : clean_for_display(result)
           puts "fatal: [#{host_label}]: FAILED! => #{dump_pretty(cleaned)}".colorize(:red)
         else
-          # Real's _dump_results flips to pretty (indent=4) for every dump
+          # Ansible's _dump_results flips to pretty (indent=4) for every dump
           # at -vvv, fatal lines included - not just the ok/changed ones.
           puts "fatal: [#{host_label}]: FAILED! => #{ResultDisplay.dump_suffix(clean_for_display(result))}".colorize(:red)
         end
-        # Real ansible-playbook prints a bare "...ignoring" line right
+        # ansible-playbook prints a bare "...ignoring" line right
         # after a failed task's output when ignore_errors: caught it
         # (live-verified against a real run) - the single-line dump above
         # replaced the old multi-line failure display, which carried this
@@ -361,7 +361,7 @@ module Krikri
         return
       end
 
-      # Loop-item failures: real's shape is a single line per failed item,
+      # Loop-item failures: Ansible's shape is a single line per failed item,
       # `failed: [host] (item=X) => {json}` (item BEFORE the `=>`, the whole
       # result dumped inline sorted), with `...ignoring` printed ONCE after
       # the whole loop rather than per item (finish_looped_task owns that).
@@ -369,7 +369,7 @@ module Krikri
       # /`  Exit code:` detail block and a per-item `...ignoring` - a
       # different word-order, extra lines, and repeated suffix vs real.
       if failed && !item_label.nil?
-        # Real's default callback runs its exception handling (the error
+        # Ansible's default callback runs its exception handling (the error
         # block) once per failed ITEM result, before that item's line;
         # ErrorBlock's Display-level dedup collapses identical repeats.
         emit_task_error_block(source_task, result, msg)
@@ -382,7 +382,7 @@ module Krikri
           return
         end
         dumped = clean_for_display(result)
-        # Real's strategy merges the loop item itself into every per-item
+        # Ansible's strategy merges the loop item itself into every per-item
         # result before the callback dumps it, so a failed item's dump
         # carries "ansible_loop_var" plus the item under the loop var's
         # name (live-verified: a looped fail: item shows
@@ -404,18 +404,18 @@ module Krikri
         return
       end
 
-      # Real ansible appends the full result JSON (pretty, 4-space indent,
+      # Ansible appends the full result JSON (pretty, 4-space indent,
       # sorted keys) to the status line when the run is verbose OR the
       # result carries _ansible_verbose_always (the debug and assert
       # action plugins tag their results that way). At default verbosity
-      # without the tag, real prints ONLY the status line - never a msg
+      # without the tag, Ansible prints ONLY the status line - never a msg
       # body - so the engine's old `  msg` display for successful tasks
       # is gone: a non-verbose success shows just `ok: [host]`.
       verbose_always = !failed &&
                        result["_ansible_verbose_always"]?.try(&.as_bool) == true &&
                        result["_ansible_verbose_override"]?.try(&.as_bool) != true
 
-      # Real's callback prints a file diff BEFORE the task's own status
+      # Ansible's callback prints a file diff BEFORE the task's own status
       # line (live-verified against 2.19.11: diff block, blank, `changed:
       # [host]`), so the diff prints here, ahead of every status branch
       # below; the trailing blank line inside display_diff separates it
@@ -430,7 +430,7 @@ module Krikri
       elsif Krikri::RunOptions.verbosity >= 1
         # Real -v/-vv appends the whole (cleaned) result as a single-line
         # sorted JSON dump to every ok/changed status line; at -vvv and
-        # above the dump flips to real's pretty 4-space-indented shape.
+        # above the dump flips to Ansible's pretty 4-space-indented shape.
         # A looped item's dump carries the merged loop keys
         # (ansible_loop_var + the item under the loop var's name), same
         # as the failed-item path below.
@@ -476,7 +476,7 @@ module Krikri
         end
 
         # Show exit code if available. rc can legitimately be NULL (not
-        # just absent) - real Ansible's chdir-before-execution failure
+        # just absent) - Ansible's chdir-before-execution failure
         # fails the module with rc: null (its run_command never spawned
         # anything, live-verified against 2.19.4), and `.as_i` on a
         # JSON null hard-crashed the whole engine here where real
@@ -487,9 +487,9 @@ module Krikri
           end
         end
 
-        # Real ansible-playbook always prints a bare "...ignoring" line
+        # ansible-playbook always prints a bare "...ignoring" line
         # right after a failed task's own output when ignore_errors:
-        # caught it - verified directly against a real ansible-playbook
+        # caught it - verified directly against a ansible-playbook
         # run. This was previously never printed at all for a normal
         # ignored failure (only added, narrowly, for the when:-raises-
         # an-exception case - see WhenEvaluationError's own history);
@@ -499,7 +499,7 @@ module Krikri
       end
     end
 
-    # Builds and prints real ansible-core 2.19's `[ERROR]: Task failed:`
+    # Builds and prints ansible-core 2.19's `[ERROR]: Task failed:`
     # block for a failed task result, labeled with the task's parsed
     # playbook origin. No-op when the task has no parsed position, the
     # failure is a conditional-evaluation failure (whose two-level chain
@@ -530,7 +530,7 @@ module Krikri
       origin = error_origin_context(source_task)
       return unless origin
 
-      # A fail_json(exception=ex) result (real 2.19 composes its error
+      # A fail_json(exception=ex) result (Ansible 2.19 composes its error
       # header as "<msg>: <exception str>" from the ErrorSummary chain,
       # while the dumped result keeps the bare msg and drops the
       # exception key entirely). Krikri plugins signal this with a
@@ -541,7 +541,7 @@ module Krikri
       # exception), so it is ignored here.
       if (exc = result["exception"]?.try(&.as_s?)) && !exc.empty? &&
          exc != "(traceback unavailable)"
-        # Real's own _text_utils.concat_message (ported on ErrorBlock)
+        # Ansible's own _text_utils.concat_message (ported on ErrorBlock)
         # strips a trailing ". " from the left side - "Error, could not
         # touch target." + "[Errno 20] ..." collapses to "...target: [Errno 20] ...".
         msg = ErrorBlock.concat_message(msg, exc)
@@ -550,16 +550,16 @@ module Krikri
       # failure) hands the block its own text via _ansible_error_detail.
       msg = result["_ansible_error_detail"]?.try(&.as_s?) || msg
       # failed_when: turned an otherwise successful module result into a
-      # failure: real's block is just "Task failed: Action failed."
+      # failure: Ansible's block is just "Task failed: Action failed."
       if result["failed_when_result"]?.try(&.as_bool?) == true && result["msg"]?.try(&.as_s?).to_s.empty?
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.")))
         return
       end
       # A failed result carrying _ansible_fail_param names the task param
-      # whose VALUE real's action plugin attached as the raise's obj
+      # whose VALUE Ansible's action plugin attached as the raise's obj
       # (add_host's "Groups must be specified as a list." AnsibleActionFail):
-      # the chain cannot collapse - real's cause event carries the param
+      # the chain cannot collapse - Ansible's cause event carries the param
       # value's own Origin, producing the two-segment block with the
       # brief "Task failed: <msg>." header line.
       if (fail_param = result["_ansible_fail_param"]?.try(&.as_s?)) &&
@@ -569,7 +569,7 @@ module Krikri
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return
       end
-      # A plugin flagging _ansible_action_level failed in real's controller-
+      # A plugin flagging _ansible_action_level failed in Ansible's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.
       if result["_ansible_action_level"]?.try(&.as_bool?) == true
@@ -577,7 +577,7 @@ module Krikri
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         return
       end
-      # set_fact's validate_variable_name failure: real's cause carries
+      # set_fact's validate_variable_name failure: Ansible's cause carries
       # the invalid key's own Origin (the mapping key inside the task)
       # plus a fixed help_text paragraph, so the chain cannot collapse.
       if (match = msg.match(/\ATask failed: Invalid variable name '(.*)'\.\z/)) &&
@@ -672,7 +672,7 @@ module Krikri
     # Origin context of a set_fact mapping key named `key`: the key's own
     # line/column inside the task, found by scanning the task's source
     # lines for the key followed by ':' (a quoted key points at the
-    # opening quote, like real's per-key Origin).
+    # opening quote, like Ansible's per-key Origin).
     private def self.set_fact_key_origin(task : Task, key : String) : String?
       path = task.source_file
       return nil unless path && task.source_line > 0 && File.file?(path)
@@ -680,7 +680,7 @@ module Krikri
       lines = File.read_lines(path)
       # A QUOTED key carries its colon AFTER the closing quote
       # (`"bad-name": 1`), so a bare "<key>:" needle never matches it -
-      # real still points its per-key Origin at the opening quote, and at
+      # Ansible still points its per-key Origin at the opening quote, and at
       # the same column as the bare form (live-verified vs 2.19.11: both
       # `bad-name: 1` and `"bad-name": 1` give column 9 on an
       # 8-space-indented line). Match whichever spelling occurs first.
@@ -696,7 +696,7 @@ module Krikri
       nil
     end
 
-    # The Origin of a task param's VALUE (the position real's
+    # The Origin of a task param's VALUE (the position Ansible's
     # AnsibleActionFail obj= attaches as the failing event's source
     # context - e.g. add_host's `groups: 5` points at the 5, column of
     # the value, not the key). Same best-effort text scan as
@@ -731,7 +731,7 @@ module Krikri
       ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)
     end
 
-    # The cause chain real ansible-core 2.19 builds for each failure
+    # The cause chain ansible-core 2.19 builds for each failure
     # class, as an ErrorBlock event tree rooted at the task-level
     # AnsibleTaskError ("Task failed."):
     #
@@ -743,7 +743,7 @@ module Krikri
     # - copy's controller-side src miss (its action raises
     #   `AnsibleActionFail(result=result) from ex` with an empty message,
     #   so the type name becomes the middle segment): collapsed chain
-    #   carrying real's exact wording.
+    #   carrying Ansible's exact wording.
     # - every other module-level failure: "Module failed." + the result
     #   message (the module API's own wrapper), collapsed.
     private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
@@ -759,7 +759,7 @@ module Krikri
         return root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..]))
       end
 
-      # An argspec-validation failure we emitted has real's own chain
+      # An argspec-validation failure we emitted has Ansible's own chain
       # shape, which differs from every other failure class: module-level
       # validation (the generated spec table) is the generic collapsed
       # "Module failed." chain - this matters for template:, whose usual
@@ -778,10 +778,10 @@ module Krikri
       short = module_name.try { |name| name.split(".").last }
       case short
       when "template"
-        # real's template action plugin raises AnsibleActionFail
+        # Ansible's template action plugin raises AnsibleActionFail
         # directly for every arg-validation failure (state/src+dest/
         # newline_sequence) - a bare raise, no exception context, so
-        # real's renderer COLLAPSES the chain into one segment. Only the
+        # Ansible's renderer COLLAPSES the chain into one segment. Only the
         # _find_needle failure is re-raised inside `except` (its
         # AnsibleFileNotFound becomes the __context__), producing the
         # two-segment handling chain (live-verified against 2.19.11:
@@ -793,12 +793,12 @@ module Krikri
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
         end
       when "set_fact"
-        # real's set_fact action plugin raises AnsibleActionFail
+        # Ansible's set_fact action plugin raises AnsibleActionFail
         # directly (no key/value pairs) - bare action-level failure,
         # collapsed chain, no middle segment.
         root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
       when "unarchive"
-        # real's unarchive action raises a non-contributing AnsibleError
+        # Ansible's unarchive action raises a non-contributing AnsibleError
         # for a controller-side src miss (live-verified: the fatal msg
         # carries the "Task failed: " brief prefix itself and the block
         # is the single collapsed segment).
@@ -824,7 +824,7 @@ module Krikri
         # the local-connection variant, whose fatal msg carries the
         # "Unexpected AnsibleActionFail error: " prefix itself - both
         # live-verified): the chain is the collapsed
-        # "Unexpected AnsibleActionFail error." shape carrying real's
+        # "Unexpected AnsibleActionFail error." shape carrying Ansible's
         # full not-found text (now including the Searched-in list).
         if (msg.starts_with?("Task failed: Could not find or access '") ||
            msg.starts_with?("Unexpected AnsibleActionFail error: Could not find or access '")) &&
@@ -835,7 +835,7 @@ module Krikri
               {"src and content are mutually exclusive", "src (or content) is required", "dest is required"}.includes?(msg)
           # copy's action-level src/content conflict (raised before
           # argspec validation, ordering live-verified against 2.19.11):
-          # real's chain is the action-level "Action failed." shape.
+          # Ansible's chain is the action-level "Action failed." shape.
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Action failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
@@ -854,7 +854,7 @@ module Krikri
     # Ad-hoc-only output modifiers, set by krikri.cr (the `ansible`
     # counterpart binary) from its own CLI flags:
     #
-    # -o/--one-line switches to real Ansible's deprecated `oneline`
+    # -o/--one-line switches to Ansible's deprecated `oneline`
     # callback shape - everything on ONE line: command-shaped results
     # render as `host | STATUS | rc=N | (stdout) ...` with newlines
     # escaped (verified against ansible-core 2.19.4's
@@ -865,10 +865,10 @@ module Krikri
     class_property? adhoc_oneline : Bool = false
 
     # -t/--tree DIR: additionally log each result as pretty JSON in
-    # DIR/<hostname>, like real Ansible's tree callback plugin.
+    # DIR/<hostname>, like Ansible's tree callback plugin.
     class_property adhoc_tree_dir : String? = nil
 
-    # Real ansible's ad-hoc ("minimal" and "oneline") callbacks pass the
+    # Ansible's ad-hoc ("minimal" and "oneline") callbacks pass the
     # ENTIRE multi-line result buffer to `Display.display(msg, color=...)`,
     # whose `stringc()` wraps EACH line of the buffer individually with
     # one shared SGR code (`\e[<code>m<line>\e[0m`, joined by "\n") after
@@ -901,7 +901,7 @@ module Krikri
     end
 
     # Returns {state word, SGR color code} for an ad-hoc result, mirroring
-    # real ansible's minimal/oneline callbacks: unreachable wins over
+    # Ansible's minimal/oneline callbacks: unreachable wins over
     # failed, failed over changed. Public so the state-to-color mapping
     # (especially unreachable's distinct bright red, not plain red) can
     # be regression-tested without a live host.
@@ -944,7 +944,7 @@ module Krikri
       elsif rc && stdout
         # Same shape as ansible's minimal callback `_command_generic_msg`:
         # header line, then raw stdout, then stderr - all one buffer, one
-        # color (real ansible does NOT color stderr separately here).
+        # color (Ansible does NOT color stderr separately here).
         buffer = String.build do |str|
           str << "#{connection_host} | #{state} | rc=#{rc} >>\n"
           str << stdout
@@ -985,9 +985,9 @@ module Krikri
       end
     end
 
-    # The exact JSON string real Ansible's ad-hoc stdout callbacks dump
+    # The exact JSON string Ansible's ad-hoc stdout callbacks dump
     # after the `host | STATUS => ` prefix. The result dict the callbacks
-    # see has already been through real Ansible's cleaning pipeline by
+    # see has already been through Ansible's cleaning pipeline by
     # the time it is dumped: executor/task_result.py's
     # as_callback_task_result strips `failed`/`skipped` for EVERY stdout
     # callback (a real FAILED! => dump does not contain "failed": true -
@@ -1022,7 +1022,7 @@ module Krikri
       end
     end
 
-    # Real Ansible strips `failed`/`skipped` and every private `_ansible_*`
+    # Ansible strips `failed`/`skipped` and every private `_ansible_*`
     # key from the callback-visible result, recursively
     # (executor/task_result.py's _IGNORE + vars/clean.py's
     # strip_internal_keys).
@@ -1034,7 +1034,7 @@ module Krikri
           # `failed`/`skipped` only leave the TOP-level result (a registered
           # skipped result printed via debug var: keeps its nested `skipped`)
           next if top_level && (key == "failed" || key == "skipped" || key == "exception")
-          # Real's callback POPS `diff` out of every result before dumping
+          # Ansible's callback POPS `diff` out of every result before dumping
           # (it renders as the diff section only, and only in diff mode) -
           # status-line dumps must never carry it. Registered variables
           # keep their `diff` key (a check-mode template result registers
@@ -1051,9 +1051,9 @@ module Krikri
       end
     end
 
-    # Real ansible's CallbackBase._clean_results for a debug action, run
+    # Ansible's CallbackBase._clean_results for a debug action, run
     # before the verbose dump: a msg: result keeps ONLY msg (plus keys
-    # real's own pipeline strips later - failed/skipped/_ansible_* are
+    # Ansible's own pipeline strips later - failed/skipped/_ansible_* are
     # already gone via clean_for_display), a var: result additionally
     # drops the _hide_in_debug bookkeeping keys. clean_for_display must
     # run first - it strips exactly the keys _dump_results would.
@@ -1114,7 +1114,7 @@ module Krikri
       end
     end
 
-    # Display diff (delegates to specific diff types). Real's callback
+    # Display diff (delegates to specific diff types). Ansible's callback
     # prints a file diff BEFORE the task's status line - the diff block,
     # one blank line, then `changed: [host]` (live-verified 2.19.11) -
     # and starts it immediately after the TASK banner with no leading
@@ -1122,7 +1122,7 @@ module Krikri
     def self.display_diff(diff : JSON::Any) : Nil
       # lineinfile's diff is a LIST of diff dicts (content entry + a file
       # attributes entry); an empty list (a no-change run) renders
-      # nothing, like real's callback skipping the empty diff.
+      # nothing, like Ansible's callback skipping the empty diff.
       if (arr = diff.as_a?)
         arr.each { |entry| display_diff_entry(entry) }
       else
@@ -1155,7 +1155,7 @@ module Krikri
     end
 
     # Display attribute diff (for file attributes like mode, owner).
-    # Real's callback renders a DICT diff exactly like a content diff:
+    # Ansible's callback renders a DICT diff exactly like a content diff:
     # both sides are pretty-printed as sorted 4-space-indented JSON and
     # fed through the unified differ (live-verified vs 2.19.11 --diff:
     # `--- before` / `+++ after` / `@@ -1,5 +1,5 @@` with the JSON lines
@@ -1169,7 +1169,7 @@ module Krikri
     end
 
     # Python's json.dumps(obj, sort_keys=True, indent=4): sorted keys,
-    # 4-space indent, ": " separators, trailing newline (real's
+    # 4-space indent, ": " separators, trailing newline (Ansible's
     # difflib-based renderer feeds it both sides with trailing
     # newlines - no "\ No newline at end of file" markers ever appear).
     def self.python_pretty_json(value : JSON::Any) : String
@@ -1256,16 +1256,16 @@ module Krikri
       if failed && !ignore_errors
         stats["failed"] += 1
       else
-        # Real Ansible's own recap counters overlap, not mutually
+        # Ansible's own recap counters overlap, not mutually
         # exclusive: "ok" counts every successful task (changed or not),
         # and "changed" is a separate tally on top of that - verified
-        # against a real ansible-playbook run (ok=3, changed=2 for 2
+        # against a ansible-playbook run (ok=3, changed=2 for 2
         # changed + 1 unchanged successful tasks), not assumed.
         stats["ok"] += 1
         stats["changed"] += 1 if changed
 
         # A task that failed but was caught by ignore_errors: still
-        # increments "ok" (and "changed") above - real Ansible's own
+        # increments "ok" (and "changed") above - Ansible's own
         # strategy/__init__.py does the exact same `increment('ok', ...)`
         # + `increment('ignored', ...)` pair for this case (verified
         # against its source, not assumed) - but it ALSO increments a
@@ -1275,14 +1275,14 @@ module Krikri
       end
     end
 
-    # Show recap of all host results, matching real ansible-playbook's
+    # Show recap of all host results, matching ansible-playbook's
     # v2_playbook_on_stats byte-for-byte: host column padded to 26 plain
     # (37 when colorized, padding applied AROUND the ANSI-wrapped name
-    # the way real's `%-37s` does), then " : ", then the seven counters
+    # the way Ansible's `%-37s` does), then " : ", then the seven counters
     # each shaped `lead=%-4s` and joined with single spaces - so every
     # counter carries trailing padding, including the last one.
     def self.show_recap(hosts : Array(Host), results : Hash(String, Hash(String, Int32))) : Nil
-      # Sorted by host name, matching real ansible-playbook - this used
+      # Sorted by host name, matching ansible-playbook - this used
       # to print in inventory order, so a recap for db1/web1/web2 came
       # out web1, web2, db1 and could not be diffed against a real run.
       hosts.sort_by(&.name).each do |host|
@@ -1292,7 +1292,7 @@ module Krikri
         # are all skipped (no tasks, or none matching --tags) used to crash
         # here with `Missing hash key`. Zeroes are the honest recap for a
         # host nothing ran on - but such a host is then left out of the printout
-        # (see the all-zero check below), like real ansible-playbook.
+        # (see the all-zero check below), like ansible-playbook.
         stats = results[host.name]? || {
           "ok" => 0, "changed" => 0, "unreachable" => 0, "failed" => 0, "skipped" => 0, "rescued" => 0, "ignored" => 0,
         }
@@ -1302,16 +1302,16 @@ module Krikri
         rescued = stats["rescued"]? || 0
         ignored = stats["ignored"]? || 0
 
-        # Real only lists a host once some counter for it is non-zero: a play
+        # Ansible only lists a host once some counter for it is non-zero: a play
         # with no tasks, a --tags filter that matches nothing, or nothing but
         # meta tasks (which record no stats) leaves the recap without that
         # host's line, while a `when: false` task (skipped=1) still prints one.
         next if [stats["ok"]? || 0, stats["changed"]? || 0, unreachable, stats["failed"]? || 0, skipped, rescued, ignored].all?(&.zero?)
 
-        # Real's colorize(lead, num, color) shapes `lead=%-4s` and colors
+        # Ansible's colorize(lead, num, color) shapes `lead=%-4s` and colors
         # the WHOLE field only when num != 0 (zero counters stay plain
         # even on a tty). rescued shares ok's green, ignored shares
-        # changed's warning color - both per real's own v2_playbook_on_stats.
+        # changed's warning color - both per Ansible's own v2_playbook_on_stats.
         counters = [
           {"ok", stats["ok"], :green},
           {"changed", stats["changed"], :yellow},
@@ -1332,7 +1332,7 @@ module Krikri
         end
 
         host_field = if Colorize.enabled?
-                       # Real's hostcolor colored branch pads the ANSI-wrapped name to
+                       # Ansible's hostcolor colored branch pads the ANSI-wrapped name to
                        # 37 (26 visible + 11 for the escape bytes); failure or
                        # unreachability wins over changed, which wins over plain ok.
                        color = if stats["failed"] != 0 || unreachable != 0
@@ -1351,14 +1351,14 @@ module Krikri
       end
     end
 
-    # Serializes *result* the way real Ansible dumps a failed task's JSON:
+    # Serializes *result* the way Ansible dumps a failed task's JSON:
     # keys sorted alphabetically at every level, single line, Python's
     # json.dumps default separators (", " between items, ": " after keys).
     def self.python_json_dump(result : JSON::Any) : String
       python_json_value(result)
     end
 
-    # Python's repr() of a value, matching how real Ansible renders a loop
+    # Python's repr() of a value, matching how Ansible renders a loop
     # item in its `failed:`/`changed:` display (`True`/`False`/`None`,
     # single-quoted strings/dict-keys, insertion-order dict `{k: v}`, `[..]`
     # lists) - distinct from the JSON dump used for the result object, which

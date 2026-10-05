@@ -15,7 +15,7 @@ module Krikri
   # result's `ansible_facts` into that host's fact store, so set_fact just
   # needs to be a plain module that returns one.
   class SetFactPlugin < BasePlugin
-    # Real ansible-core 2.19 validates set_fact's cacheable: CONTROLLER-
+    # ansible-core 2.19 validates set_fact's cacheable: CONTROLLER-
     # side (the task executor's fact path, not a module argspec), so the
     # failure carries no "argument 'cacheable' is of type ..." wrapper -
     # just check_type_bool's own TypeError text under the "Task failed: "
@@ -49,7 +49,7 @@ module Krikri
         facts[key] = coerce(value)
       end
 
-      # Real's registered set_fact result runs ansible_facts, failed,
+      # Ansible's registered set_fact result runs ansible_facts, failed,
       # changed (live-verified vs 2.19.11 via `{{ r | to_json }}`) - the
       # module-plugin copy mirrors the action plugin's key_order.
       PluginResult.new(
@@ -71,7 +71,7 @@ module Krikri
       # Whole-single-span `{{ expr }}` facts arrive prefixed with the JSON
       # encoding of the expression's natively-typed result (see
       # substitute_task_params / NATIVE_TYPED_PREFIX): decode verbatim
-      # instead of re-coercing by string shape - real ansible-core 2.19
+      # instead of re-coercing by string shape - ansible-core 2.19
       # keeps the expression's own type, so a Jinja string expression
       # stays a str even when it looks numeric (pluggero.openssh round
       # 981024). Literal/mixed/block-tag values keep the legacy coercion.
@@ -115,7 +115,7 @@ module Krikri
           # Same class of bug, one zero shorter: an octal-MODE-shaped
           # string with no leading zero ("1777" - os_hardening's own
           # /dev/shm, /tmp and /var/tmp entries are exactly this shape)
-          # decimal-coerced into the int 1777. Real Ansible's native
+          # decimal-coerced into the int 1777. Ansible's native
           # typing keeps a string-sourced fact a string, and the string
           # is what downstream mode:/consumers need - a fed-back int
           # instead re-triggers the executor's int-mode reformatting
@@ -156,12 +156,12 @@ module Krikri
       # them to; a value that merely LOOKS like a container (a
       # `{% if %}...{% else %}['dummy']{% endif %}` block's rendered
       # output, or a plain quoted "['a']" literal) is a plain STRING in
-      # real ansible-core - native typing requires the template's whole
+      # ansible-core - native typing requires the template's whole
       # AST to be one output node wrapping one expression, so block-tag
-      # output is never re-parsed. Found live vs real ansible-playbook
+      # output is never re-parsed. Found live vs ansible-playbook
       # via HanXHX.debian_bootstrap: the repr-looking string became a
       # real ARRAY here, so `loop: "{{ dbs_repo_old }}"` silently
-      # iterated where real Ansible hard-fails with "The `loop` value
+      # iterated where Ansible hard-fails with "The `loop` value
       # must resolve to a 'list', not 'str'."
       JSON.parse(value)
     rescue JSON::ParseException

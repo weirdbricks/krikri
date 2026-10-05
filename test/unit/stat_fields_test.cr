@@ -57,8 +57,8 @@ describe Krikri::PluginHelpers::StatFields do
         block_size: 4096_i64, blocks: 8_i64, device_type: 0_i64
       )
 
-      # Same stat.py definitions real Ansible uses: raw st_blksize/
-      # st_blocks/st_rdev. Real 2.19.11's stat result carries NO
+      # Same stat.py definitions Ansible uses: raw st_blksize/
+      # st_blocks/st_rdev. Ansible 2.19.11's stat result carries NO
       # disk_usage_bytes (live-verified: a stat of a 6-byte file with
       # blocks 8 returns block_size/blocks/device_type and nothing
       # else in that family), so krikri must not invent one.

@@ -13,12 +13,12 @@ describe "when: evaluation raising an exception" do
   # gaps: `mounts | selectattr(...) | first` on an empty match (the
   # exact shape from robertdebock.mount_options, round140) already
   # raised correctly inside `{{ }}` module-arg templating (a clean
-  # failed task, matching real Ansible - fixed earlier via
+  # failed task, matching Ansible - fixed earlier via
   # substitute_task_params's own rescue), but the IDENTICAL expression
   # used inside a bare when: condition instead crashed the entire
   # process with an unhandled Crystal exception and stack trace -
   # #when_passes? (7 call sites: solo/looped/batched tasks and meta:)
-  # had no rescue at all. Real ansible-playbook degrades to one clean
+  # had no rescue at all. ansible-playbook degrades to one clean
   # failed task ("Task failed: Error while evaluating conditional:
   # ...") and continues/exits normally.
   it "fails the task cleanly instead of crashing the whole process" do
@@ -84,7 +84,7 @@ describe "when: evaluation raising an exception" do
   # swallowing it, but a LOOPED task's own per-item when_passes? calls
   # (execute_task_once, execute_looped_task_batched) originally still
   # treated a raise as an ordinary skip (returning nil for that item),
-  # so the aggregate recap showed skipped=1 instead of real Ansible's
+  # so the aggregate recap showed skipped=1 instead of Ansible's
   # failed=1 ("One or more items failed"). Fixed by having those two
   # call sites build a real failed: true result instead of returning
   # nil, so finish_looped_task's own aggregation counts it correctly.
@@ -120,14 +120,14 @@ describe "when: evaluation raising an exception" do
 end
 
 describe "ignore_errors: on an ordinary (non-when-related) task failure" do
-  # Real bug found while fixing the when: crash above: real Ansible
+  # Real bug found while fixing the when: crash above: Ansible
   # ALWAYS prints a bare "...ignoring" line right after any failed
   # task's output when ignore_errors: catches it (verified directly
-  # against a real ansible-playbook run) - this engine never printed it
+  # against a ansible-playbook run) - this engine never printed it
   # for an ordinary failure, only (after the fix above landed) for the
   # narrower when:-raises-an-exception case. Fixed in
   # ResultDisplay.display_result generally, not just for when:.
-  it "prints ...ignoring the same way real Ansible does" do
+  it "prints ...ignoring the same way Ansible does" do
     playbook = File.tempname("ignore-errors-normal", ".yml")
     File.write(playbook, <<-YAML)
       - hosts: localhost
@@ -154,7 +154,7 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  # Real ansible-core 2.19 tracks where a conditional's tested value was
+  # ansible-core 2.19 tracks where a conditional's tested value was
   # DEFINED and labels the non-boolean error with that position:
   #   "Conditional result (True) was derived from value of type 'str' at
   #   '<playbook>:<line>:<col>'. Conditionals must have a boolean result."

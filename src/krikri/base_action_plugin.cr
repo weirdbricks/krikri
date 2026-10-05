@@ -1,9 +1,9 @@
 require "json"
 
 module Krikri
-  # Real ansible-core 2.19.11's REGISTERED key order for a FAILED
+  # ansible-core 2.19.11's REGISTERED key order for a FAILED
   # action-level result, live-verified per action with `{{ r | to_json }}`
-  # under `ignore_errors: true` (real's registered dict keeps the module
+  # under `ignore_errors: true` (Ansible's registered dict keeps the module
   # action's own insertion order - these orders genuinely differ per
   # action, so each builder picks its own). The order travels with the
   # result as the private `_ansible_key_order` marker key (stripped at
@@ -20,7 +20,7 @@ module Krikri
   # assert: its own condition keys sit between failed and msg.
   FAILED_KEY_ORDER_ASSERT = ["failed", "evaluated_to", "assertion", "msg", "changed", "exception"]
   # include_vars: the action's own keys lead, and the wrapped msg comes
-  # last (real keeps it after changed/exception).
+  # last (Ansible keeps it after changed/exception).
   FAILED_KEY_ORDER_INCLUDE_VARS = ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
 
   # Tags *result* with the real key order its registered FAILED form must
@@ -47,7 +47,7 @@ module Krikri
     # The task's OWN host (the play's hosts: entry) when the task carries
     # delegate_to: - nil when it doesn't (and always nil-equal to @host
     # then, since resolve_delegate_host falls back to the original host).
-    # Only synchronize reads it: real Ansible runs its rsync on the
+    # Only synchronize reads it: Ansible runs its rsync on the
     # delegate but qualifies the OTHER rsync end from the ORIGINAL host's
     # connection details, which the delegate-resolved @host alone can't
     # reconstruct.
@@ -102,7 +102,7 @@ module Krikri
     property? action_level : Bool
 
     # The [ERROR] block's own text when it differs from the result's msg.
-    # Real's task executor wraps an UNCAUGHT Python exception raised inside
+    # Ansible's task executor wraps an UNCAUGHT Python exception raised inside
     # an action plugin itself ("Task failed: %s" % to_native(e)), so such a
     # failure's fatal msg carries that prefix while the block still shows
     # the bare message - which is what this carries. A deliberate
@@ -134,10 +134,10 @@ module Krikri
     end
 
     # Create a failure raised by an UNCAUGHT Python exception inside the
-    # action plugin - the codec-stack crash real's template action plugin
+    # action plugin - the codec-stack crash Ansible's template action plugin
     # dies with on a non-string output_encoding ("encode() argument
     # 'encoding' must be str, not _AnsibleTaggedInt") and its
-    # unknown-codec LookupError. Real's task executor wraps such an
+    # unknown-codec LookupError. Ansible's task executor wraps such an
     # exception itself, so the fatal dump's msg keeps the "Task failed: "
     # prefix while the [ERROR] block shows the bare message (see
     # #error_detail).
@@ -166,7 +166,7 @@ module Krikri
       h = Hash(String, JSON::Any).new
       h["changed"] = JSON::Any.new(changed)
       # Unlike a module's own wire result (PluginResult#to_json), these
-      # controller-computed results are already in real Ansible's
+      # controller-computed results are already in Ansible's
       # post-normalization shape - the executor's failed/changed-if-absent
       # pass has no second look at them - so failed/changed are carried
       # unconditionally, exactly like a registered var sees. msg follows
@@ -182,7 +182,7 @@ module Krikri
       # Same wire-key reorder PluginResult#key_order gives module results
       # (see its comment): when *key_order* is set, the listed keys emit
       # first in that order (absent ones skipped) and every unlisted key
-      # follows in its current order - real's registered action-result
+      # follows in its current order - Ansible's registered action-result
       # dict order (e.g. debug's msg/failed/changed, set_fact's
       # ansible_facts/failed/changed, assert's changed/msg/failed),
       # live-verified via `{{ r | to_json }}` on registered tasks.

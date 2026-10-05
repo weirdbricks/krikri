@@ -4,7 +4,7 @@ require "../minitest_helper"
 # containers.podman.podman_image's AnsibleModule setup (source-verified
 # against the module's main() argument_spec; live-diffed vs real
 # ansible-playbook via the podman-diff podman_image_edge_cases harness -
-# real runs all of this BEFORE the podman executable probe, the only
+# Ansible runs all of this BEFORE the podman executable probe, the only
 # byte-comparable surface without a podman binary):
 #
 # - required name
@@ -16,7 +16,7 @@ require "../minitest_helper"
 # - build (it has suboptions) fails a non-dict with the BARE
 #   check_type_dict wording, not the wrapped "argument ... is of type" one
 # - the spec is the GALAXY-release one: pull_policy/retry/retry_delay are
-#   main-only, real rejects them with Unsupported parameters (live-
+#   main-only, Ansible rejects them with Unsupported parameters (live-
 #   verified); unsupported params render spec keys sorted then ONE
 #   trailing parenthetical holding every alias sorted
 describe "podman_image plugin argument validation" do

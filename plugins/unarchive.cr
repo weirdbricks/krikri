@@ -18,9 +18,9 @@ module Krikri
   #   plugin already handles local-vs-remote; a plain `remote_src` param
   #   is accepted for compatibility but otherwise has no effect. If src:
   #   contains "://" (a URL), it's fetched first regardless of
-  #   remote_src:'s own value - real Ansible's own documented behavior
+  #   remote_src:'s own value - Ansible's own documented behavior
   # - dest: existing directory to extract into (required - krikri-playbook
-  #   fails if it doesn't already exist, same as real Ansible: this module
+  #   fails if it doesn't already exist, same as Ansible: this module
   #   never creates dest itself)
   # - creates: skip extraction if this path already exists (checked
   #   before doing anything else, same idempotency shortcut command:/
@@ -29,7 +29,7 @@ module Krikri
   #   straight through to tar's --exclude / zip's -x and file-list
   #   arguments - real tar/zip's own matching semantics apply (a pattern
   #   with no "/" matches by path component, one with "/" matches the
-  #   literal relative path - verified against real ansible-playbook,
+  #   literal relative path - verified against ansible-playbook,
   #   which itself just forwards these to the same underlying tools)
   # - keep_newer: don't overwrite an existing file that's newer than the
   #   archive's copy (default false)
@@ -37,13 +37,13 @@ module Krikri
   #   (default false)
   # - mode / owner / group: applied RECURSIVELY to every extracted path
   #   under dest (`chown -R`/`chgrp -R`/`chmod -R` reaching everything
-  #   dest CONTAINS) - matches real ansible-playbook's actual behavior
+  #   dest CONTAINS) - matches ansible-playbook's actual behavior
   #   (verified against unarchive.py's own post-extraction
   #   `set_fs_attributes_if_different` walk over files_in_archive plus
   #   the top-level archive folders, ansible#35426), even though its
   #   OWN return value shape (`mode`/`owner`/`group`/`uid`/`gid`) only
   #   ever describes dest itself, not each member. dest ITSELF is
-  #   never touched: real Ansible requires it to already exist and
+  #   never touched: Ansible requires it to already exist and
   #   leaves its attributes alone.
   #
   # Archive contents are attacker-controlled whenever src: is (a
@@ -51,11 +51,11 @@ module Krikri
   # compromised build), so every path derived from a member name is
   # containment-checked against dest (see contained_member_path) and
   # never dereferenced through a symlink member:
-  # - chown/chgrp run with -h (real Ansible's set_owner_if_different /
+  # - chown/chgrp run with -h (Ansible's set_owner_if_different /
   #   set_group_if_different always use os.lchown, never following a
   #   link), so an archive can't redirect an owner:/group: change onto
   #   an arbitrary file outside dest via a symlink member;
-  # - chmod never runs against a symlink member (real Ansible's
+  # - chmod never runs against a symlink member (Ansible's
   #   set_mode_if_different chmods through the link and then RESTORES
   #   the underlying mode; net effect on the target is unchanged, so
   #   never touching it at all reaches the same end state without the
@@ -64,37 +64,37 @@ module Krikri
   #   itself with stripping active) are dropped from BOTH the
   #   attribute pass and the zip idempotency comparison - GNU tar
   #   refuses `..` members at extraction anyway and Info-ZIP unzip
-  #   strips them (with a warning, and exit code 1 that real Ansible
+  #   strips them (with a warning, and exit code 1 that Ansible
   #   fails the task on - which is why extract_zip doesn't use -q:
   #   `-q` suppresses that very warning and unzip then exits 0,
   #   letting a hostile zip "succeed" into the attribute pass), but
   #   the member LISTING still carries the raw names.
   #
   # Archive type is auto-detected by attempting to read it (`tar tf`, then
-  # `unzip -l`), not by file extension - matches real Ansible's own
+  # `unzip -l`), not by file extension - matches Ansible's own
   # handler-probing approach (`can_handle_archive`), and means GNU tar's
   # own compression auto-detection handles gz/bz2/xz/plain tar uniformly
   # without needing a --format: parameter the way community.general's
   # `archive` plugin does.
   #
   # Idempotency for tar-based archives uses `tar --compare` against dest,
-  # the same mechanism real Ansible's TgzArchive#is_unarchived uses. For
+  # the same mechanism Ansible's TgzArchive#is_unarchived uses. For
   # zip, a simpler per-member checksum comparison is used instead of
-  # replicating real Ansible's much more involved zipinfo/permission-based
+  # replicating Ansible's much more involved zipinfo/permission-based
   # check - an approximation, documented as such.
   #
   # - extra_opts: raw flags passed straight through to `tar` (e.g.
   #   `--strip-components=1`) - NOT forwarded to `unzip` for zip archives
-  #   (real Ansible's own extra_opts only ever documents tar-oriented
+  #   (Ansible's own extra_opts only ever documents tar-oriented
   #   flags in practice; zip's own flag syntax is different enough that
   #   passing the same list through would usually just error).
   #
-  # remote_src (default false, real Ansible's own default too) - a
+  # remote_src (default false, Ansible's own default too) - a
   # controller-side src: path is transparently SCP'd to a remote scratch
   # path before this plugin ever runs (see TaskExecutor#stage_unarchive_
   # remote_src, the same mechanism copy: uses); this plugin itself always
   # just reads src: from wherever it's actually executing, same as
-  # real Ansible's module does once the action-plugin layer has already
+  # Ansible's module does once the action-plugin layer has already
   # staged the file.
   #
   # Accepted without effect (all read via the same unknown-key-tolerant
@@ -109,22 +109,22 @@ module Krikri
   #   target). Read straight through by executor_task_exec.cr's
   #   `stage_unarchive_remote_src` for that controller-vs-target
   #   staging decision (round 812047, CVi.thanos - `copy: no` treated
-  #   as remote_src: false there failed a task real Ansible succeeds);
+  #   as remote_src: false there failed a task Ansible succeeds);
   #   this plugin itself never reads it, since staging already resolved
   #   src: to wherever it actually needs to be read from by the time
   #   this process runs.
-  # - `io_buffer_size` - sizes a manual byte-copy loop real Ansible's own
+  # - `io_buffer_size` - sizes a manual byte-copy loop Ansible's own
   #   module uses for zip extraction; this plugin shells out to
   #   `tar`/`unzip` entirely, so there's no Crystal-side read loop for
   #   this to size
-  # - `validate_certs` - only relevant to real Ansible's shared
+  # - `validate_certs` - only relevant to Ansible's shared
   #   controller-side URL-fetch code path; this plugin's own #download
   #   always validates certs (no insecure-fetch option exists here)
   # - `decrypt` (vault auto-decryption - `src` isn't read through
   #   `Vault.maybe_decrypt` here), SELinux options, `unsafe_writes`,
   #   `attributes`.
   #
-  # include:/exclude: are mutually exclusive (real Ansible's own
+  # include:/exclude: are mutually exclusive (Ansible's own
   # argument-spec validation) - giving both fails immediately.
   class UnarchivePlugin < BasePlugin
     # ansible.builtin.unarchive's `type: bool` options, in the real
@@ -156,7 +156,7 @@ module Krikri
       # Real bug found benchmarking geerlingguy.node_exporter's own
       # "Download and unarchive node_exporter into temporary location."
       # task: `src: "{{ node_exporter_download_url }}"` (a real HTTPS
-      # URL) with `remote_src: true`. Real Ansible's own unarchive
+      # URL) with `remote_src: true`. Ansible's own unarchive
       # module explicitly documents this combination - "If remote_src
       # is yes and src contains ://, the remote machine will download
       # the file from the url first" - previously entirely
@@ -174,13 +174,13 @@ module Krikri
         # real: AnsibleActionFail in the controller-side action plugin - a bare
         # "Task failed: <msg>" block with no "Module failed." segment
         return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
-          # Real's unarchive action-failure order (unarchive.cr's plugin
+          # Ansible's unarchive action-failure order (unarchive.cr's plugin
           # binary does not link base_action_plugin.cr, so the shared
           # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
           key_order: ["failed", "exception", "msg", "changed"])
       end
 
-      # Real AnsibleModule validates bool-typed params at module setup -
+      # AnsibleModule validates bool-typed params at module setup -
       # but live-verified against ansible-core 2.19.11, unarchive's own
       # dest-existence check ("dest '...' must be an existing dir") and
       # the controller's src lookup both still fire BEFORE it, and an
@@ -188,7 +188,7 @@ module Krikri
       # blah` from failing. This engine therefore validates after
       # resolve_src/validate_src_and_dest (mirroring the src/dest gates)
       # but before the creates: short-circuit below - which now sits
-      # after validation exactly like real's module main() does.
+      # after validation exactly like Ansible's module main() does.
       validate_bool_params!
 
       begin
@@ -206,10 +206,10 @@ module Krikri
       # skipped: true - finish_single_task turns this into real
       # ansible's "skipping: [host]" display + skipped= accounting.
       # Without it the skip displayed as `ok:` with the message as
-      # body and counted ok=1, off-by-one vs real ansible's recap on
+      # body and counted ok=1, off-by-one vs Ansible's recap on
       # every creates:-guarded unarchive (cloudalchemy.node_exporter /
       # mysqld_exporter, round 195 re-verification: crystal ok=14/17
-      # skipped=2/15 where real ansible ok=13/16 skipped=3/16 - same
+      # skipped=2/15 where Ansible ok=13/16 skipped=3/16 - same
       # skip, different counter).
       PluginResult.new(changed: false, failed: false, msg: "Skipped: #{creates} already exists", skipped: true)
     end
@@ -245,7 +245,7 @@ module Krikri
       File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
       # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
       # remote_src when src: named a controller-side path (unarchive's
-      # own real Ansible default, remote_src: false) that had to be
+      # own Ansible default, remote_src: false) that had to be
       # SCP'd to a remote scratch path first, same reasoning as copy:'s
       # own __cleanup_after_copy. Best-effort.
       if @params["__cleanup_after_unarchive"]? == "true"
@@ -313,7 +313,7 @@ module Krikri
         # ONLY valid JSON - never a Python-repr repair pass. A value that
         # merely LOOKS like a container (a literal `exclude: "['x']"`
         # string, or a `{% if %}...{% else %}['x']{% endif %}` block's
-        # rendered output) is a plain STRING in real ansible-core -
+        # rendered output) is a plain STRING in ansible-core -
         # native typing requires the template's whole AST to be one
         # output node wrapping one expression, so block-tag output is
         # never re-parsed (live-verified vs ansible-playbook 2.19.11,
@@ -322,7 +322,7 @@ module Krikri
         # serialized it to (see substitute_task_params's
         # whole-single-span comment), which the plain JSON parse above
         # already handles; anything else falls through to the comma
-        # split, matching real Ansible's own comma-split of a plain
+        # split, matching Ansible's own comma-split of a plain
         # string list param.
       end
       raw.split(",").map(&.strip).reject(&.empty?)
@@ -333,7 +333,7 @@ module Krikri
       include_files = parse_list_param(@params["include"]?)
       keep_newer = true?(@params["keep_newer"]?, default: false)
       list_files = true?(@params["list_files"]?, default: false)
-      # extra_opts - passed straight through to `tar`, real Ansible's own
+      # extra_opts - passed straight through to `tar`, Ansible's own
       # documented behavior (raw flags like `--strip-components=1`, the
       # standard way to unpack a GitHub-release-style tarball whose
       # single top-level directory shouldn't be preserved). Previously
@@ -375,7 +375,7 @@ module Krikri
 
       files = list_files ? members(handler, src) : nil
 
-      # Real's registered unarchive result runs handler, dest, src, then
+      # Ansible's registered unarchive result runs handler, dest, src, then
       # extract_results (only on the changed path - res_args gets it
       # inserted before changed), changed, files (only with list_files),
       # then add_path_info's uid/gid/owner/group/mode/state/size -
@@ -417,7 +417,7 @@ module Krikri
     end
 
     # A meaningful-difference line from `tar --compare`'s own output -
-    # matches real Ansible's TgzArchive#is_unarchived exactly (down to
+    # matches Ansible's TgzArchive#is_unarchived exactly (down to
     # the regex set), NOT a raw exit-code check. GNU tar's own exit code
     # from --compare is nonzero for CATEGORIES of output krikri-playbook
     # must NOT treat as "changed": most notably the bogus "Cannot stat:
@@ -427,7 +427,7 @@ module Krikri
     # extra_opts: ['--strip-components=1'] unpack, previously always
     # non-idempotent (every rerun re-extracted and reported changed:
     # true) purely because of that one benign warning line, verified via
-    # real ansible-playbook staying changed: false on the identical
+    # ansible-playbook staying changed: false on the identical
     # rerun.
     UID_DIFF_PATTERN                = /: Uid differs$/
     GID_DIFF_PATTERN                = /: Gid differs$/
@@ -443,7 +443,7 @@ module Krikri
       result = remote_exec(cmd)
       lines = (result[:stdout].split("\n") + result[:stderr].split("\n"))
 
-      # Real Ansible's own TgzArchive#is_unarchived (unarchive.py) only
+      # Ansible's own TgzArchive#is_unarchived (unarchive.py) only
       # treats a Uid/Gid/Mode-differs line as a real change when the
       # matching owner:/group:/mode: param was NOT itself given on the
       # task - when it WAS given, `set_fs_attributes_if_different()` is
@@ -464,14 +464,14 @@ module Krikri
       # ownership anyway (every extracted file ends up owned by the
       # extracting user regardless of what the archive itself records),
       # so a Uid/Gid mismatch against the archive's OWN embedded owner is
-      # neither a real change nor fixable - real Ansible ignores it
+      # neither a real change nor fixable - Ansible ignores it
       # entirely in that case. Found via `juju4.polarproxy` (RHEL-family
       # round 60152), whose `unarchive: {mode: '0755', remote_src: true}`
       # (no owner:/group: given) runs under `become_user:` (a non-root
       # system user): this engine reported `changed: true` on every warm
       # rerun purely from "Uid differs"/"Gid differs" lines against the
       # archive's embedded (irrelevant, unreachable-as-non-root) owner,
-      # while real ansible-playbook, running as that same non-root user,
+      # while ansible-playbook, running as that same non-root user,
       # never even looks at them. Verified live: extracting the real
       # PolarProxy tarball as a non-root become_user and running `tar
       # --compare` reproduces exactly these two line kinds alongside
@@ -509,7 +509,7 @@ module Krikri
       end
     end
 
-    # Approximation of real Ansible's much more involved zipinfo/
+    # Approximation of Ansible's much more involved zipinfo/
     # permission-based idempotency check: compares each member file's
     # content checksum (from inside the zip) against what's already at
     # dest/member, ignoring members that are directories.
@@ -525,7 +525,7 @@ module Krikri
         # on-disk counterpart - and the literal joined path would point
         # OUTSIDE dest, making the idempotency comparison read/hash an
         # arbitrary attacker-chosen file. Skip it (reporting "unchanged"
-        # for that member; real Ansible's own zipinfo comparison lstats
+        # for that member; Ansible's own zipinfo comparison lstats
         # the literal joined path instead, i.e. it reads the escaping
         # file - a divergence documented in favor of containment).
         dest_path = contained_member_path(dest, member)
@@ -561,13 +561,13 @@ module Krikri
 
     private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool
       overwrite_flag = keep_newer ? "-n" : "-o"
-      # No -q: real Ansible invokes plain `unzip -o src -d dest`, and
+      # No -q: Ansible invokes plain `unzip -o src -d dest`, and
       # Info-ZIP unzip exits 1 (warning) when it has to sanitize a
       # member - e.g. "skipped \"../\" path component(s)". -q suppresses
       # the warning AND the nonzero exit, so a zip-slip-shaped archive
-      # extracted "successfully" here while real Ansible failed the task
+      # extracted "successfully" here while Ansible failed the task
       # outright - and krikri's post-extraction attribute pass then ran
-      # over the raw (unsanitized) member names. Matching real Ansible's
+      # over the raw (unsanitized) member names. Matching Ansible's
       # exact invocation means matching its exact failure.
       cmd = "unzip #{overwrite_flag} -d #{shell_single_quote(dest)} #{shell_single_quote(src)}#{zip_flags(exclude, include_files)}"
       remote_exec(cmd)[:exit_code] == 0
@@ -578,11 +578,11 @@ module Krikri
     # failure silently discarded" shape as apt_repository.cr's own
     # update_cache bug and sysctl.cr's own apply_kernel_value bug found
     # this round): applied to every extracted path, not just to dest
-    # itself - real Ansible's unarchive module does a final pass over
+    # itself - Ansible's unarchive module does a final pass over
     # every extracted path when owner:/group:/mode: is given. Verified
     # live: robertdebock.nextcloud's `Install nextcloud` task (`owner:
     # www-data, group: www-data`) left the ENTIRE extracted tree
-    # www-data:www-data on real ansible-playbook (dest itself, every
+    # www-data:www-data on ansible-playbook (dest itself, every
     # subdirectory, every file down to AUTHORS) - krikri-playbook's own
     # previous `chown #{owner} #{dest}` (no `-R`) left everything but
     # dest itself still root:root, which then broke the role's own
@@ -591,7 +591,7 @@ module Krikri
     # config.php/config/data, relying on unarchive's owner: for
     # everything else (apps/, 3rdparty/, etc).
     #
-    # Real Ansible's own unarchive module applies owner:/group:/mode: to
+    # Ansible's own unarchive module applies owner:/group:/mode: to
     # every EXTRACTED path (dest/<member> for each archive member,
     # ansible#35426) on every run - including an already-extracted
     # rerun - and NEVER to dest itself, which it requires to already
@@ -599,7 +599,7 @@ module Krikri
     # approximated with a blanket `find dest -mindepth 1 -exec ...` -
     # which reaches every extracted member correctly, but ALSO reaches
     # any pre-existing, unrelated file that already happened to live
-    # under dest, which real Ansible never touches. Found live via
+    # under dest, which Ansible never touches. Found live via
     # buluma.daemonize (a 400-role regression sweep): its own
     # `get_url: {dest: /root/daemonize-X.tar.gz, mode: "0644"}` followed
     # by `unarchive: {dest: /root, mode: "0755"}` shares /root as BOTH
@@ -607,7 +607,7 @@ module Krikri
     # downloaded tarball (an unrelated sibling, not a member of the
     # archive being extracted) from 0644 to 0755, so get_url's own
     # idempotency check saw a corrupted mode on the next run and
-    # reported changed: true where real Ansible (which never touches
+    # reported changed: true where Ansible (which never touches
     # anything outside the archive's own member list) stayed unchanged.
     #
     # Fixed by applying attributes to each archive member's own
@@ -681,7 +681,7 @@ module Krikri
     # are attacker-controlled (remote_src archives, downloaded URLs,
     # release artifacts), so:
     # - a leading '/' is stripped exactly the way GNU tar (--no-absolute-
-    #   names), Info-ZIP unzip and real Ansible's own TgzArchive#
+    #   names), Info-ZIP unzip and Ansible's own TgzArchive#
     #   files_in_archive (`if filename.startswith('/'): filename =
     #   filename[1:]`) all treat absolute member names;
     # - a member whose normalized path is not dest or under dest is
@@ -696,7 +696,7 @@ module Krikri
     #   is out of scope the same way it is for the extraction tools.
     # dest itself is a legitimate result (the self-referential "./"
     # member of a `tar czf x.tar.gz .` archive normalizes onto dest and
-    # real Ansible applies requested attributes to it - see the "./"
+    # Ansible applies requested attributes to it - see the "./"
     # comment in apply_dest_attributes).
     private def contained_member_path(dest : String, member : String) : String?
       cleaned = member.lstrip('/')
@@ -730,7 +730,7 @@ module Krikri
         # (the "./" self-reference shape) is exactly what tar skips - it
         # extracts nothing there. Without stripping, the "./" member
         # deliberately KEEPS dest as its own path (see the "./" comment
-        # above - real Ansible applies the requested mode to dest there).
+        # above - Ansible applies the requested mode to dest there).
         next nil if strip.positive? && path == dest
         shell_single_quote(path)
       end
@@ -748,7 +748,7 @@ module Krikri
       # 700, an archive whose own "./" entry records 775, and a task
       # requesting mode: "0644" all converge to dest ending up 644 (the
       # TASK's own requested mode - neither the pre-existing 700 nor the
-      # archive's embedded 775). Real Ansible treats "./" as an ordinary
+      # archive's embedded 775). Ansible treats "./" as an ordinary
       # member like any other; it just happens to resolve to dest's own
       # path. Only a member that ISN'T dest (the overwhelmingly common
       # shape - an archive listing individual named files/dirs rather
@@ -798,7 +798,7 @@ module Krikri
           # ! -type l: chmod has no no-dereference form on Linux, so a
           # symlink member must be SKIPPED entirely - chmodding through
           # it would change the mode of whatever file the archive points
-          # the link at, anywhere on the filesystem. Real Ansible's
+          # the link at, anywhere on the filesystem. Ansible's
           # set_mode_if_different on a symlink chmods through the link
           # and then restores the underlying mode (net effect: the
           # target's mode is unchanged); never touching it reaches the

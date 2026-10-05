@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Re-order data/argspecs.json's required_by entries into real ansible's spec order.
+"""Re-order data/argspecs.json's required_by entries into Ansible's spec order.
 
 gen_argspecs.py dumps with sort_keys=True, which alphabetizes the required_by dict;
-real's check_required_by iterates it in spec order, so the FIRST failing key differs
+Ansible's check_required_by iterates it in spec order, so the FIRST failing key differs
 (systemd reports 'state' before 'enabled'). Run after gen_argspecs.py.
 """
 import json

@@ -15,7 +15,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real's per-item conditional-skip dict, in its own key order, with the
+# Ansible's per-item conditional-skip dict, in its own key order, with the
 # item and the loop variable name filled in per call site.
 private def skipped_item(item : String, false_condition : String) : String
   %({"changed": false, "skipped": true, "skip_reason": "Conditional result was False", ) +
@@ -183,7 +183,7 @@ describe "looped task register shape with when:-skipped items" do
 end
 
 describe "non-looped skipped task register shape" do
-  it "registers changed, skipped, skip_reason, false_condition in real's order" do
+  it "registers changed, skipped, skip_reason, false_condition in Ansible's order" do
     expected = %({"changed": false, "skipped": true, "skip_reason": "Conditional result was False", "false_condition": false})
     run_registered_dump(<<-YAML).must_equal(expected)
       - name: repro

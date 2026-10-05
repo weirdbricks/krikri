@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/modprobe_command"
 
 # Real bug found via a proactive scope-cut audit: params: (extra
 # modprobe arguments, e.g. "numdummies=2") was entirely unimplemented.
-# Verified against real community.general the real module's observed behavior:
+# Verified against real community.general the Ansible module's observed behavior:
 # only ever applied at initial load time (`load_module` is only called
 # from `not modprobe.module_loaded()`), never re-checked against an
 # already-loaded module.
@@ -29,7 +29,7 @@ describe Krikri::PluginHelpers::ModprobeCommand do
   # Regression anchor for the 2026-09-13 ad-hoc CLI comparison sweep:
   # the plugin used to short-circuit on its own /sys/module state check
   # and report "already unloaded" SUCCESS on a host with no modprobe
-  # binary at all, where real Ansible resolves - and requires - the
+  # binary at all, where Ansible resolves - and requires - the
   # binary before any state check. parse_bin_probe is the piece that
   # turns the resolution probe's output into that decision: a missing
   # binary must come back as path: nil (fail), never as a usable path.

@@ -151,7 +151,7 @@ module Krikri
         # transport (local exec, one-shot ssh, the batch script's
         # interpret_remote_result, the solo daemon response): a
         # successful module's wire JSON carries neither key (BasePlugin
-        # #to_json omits `failed` on success, mimicking real Ansible's
+        # #to_json omits `failed` on success, mimicking Ansible's
         # module protocol, where the controller - not the module -
         # backfills), so this batch response is the one result shape in
         # the codebase a registered variable could be missing `failed`

@@ -3,7 +3,7 @@ require "file_utils"
 
 # Pins plugins/archive.cr's dest-already-exists behavior against real
 # community.general.archive: when dest exists but is NOT a valid archive
-# of the requested format, the real module's dest-checksums fallback
+# of the requested format, the Ansible module's dest-checksums fallback
 # fails outright for format=tar ("tar is not a valid format" - the
 # fallback routes a non-tar dest through _open_compressed_file, which
 # fail_json's on "tar") but overwrites with changed=True for every other

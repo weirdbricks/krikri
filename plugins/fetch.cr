@@ -11,12 +11,12 @@ module Krikri
   # remote target; a local connection is a plain file copy via the same
   # helper.
   #
-  # Real Ansible's fetch documents full check-mode support, but actually
+  # Ansible's fetch documents full check-mode support, but actually
   # skips outright under --check with "check mode not (yet) supported for
-  # this module" (verified against a real ansible-playbook --check run,
+  # this module" (verified against a ansible-playbook --check run,
   # not the docs) - reused verbatim here.
   class FetchPlugin < BasePlugin
-    # Real's fetch ACTION plugin does the whole transfer itself and only
+    # Ansible's fetch ACTION plugin does the whole transfer itself and only
     # ever executes slurp/copy behind the scenes, so the fetch MODULE's
     # own `type: bool` argument spec (flat, fail_on_missing,
     # validate_checksum) never runs and none of those three options can
@@ -60,7 +60,7 @@ module Krikri
       success_result(dest_path, remote_checksum, src)
     end
 
-    # real's boolean(value, strict=False) for the three options its action
+    # Ansible's boolean(value, strict=False) for the three options its action
     # plugin reads (see the class comment): only the BOOLEANS spellings
     # (and the native true/1/1.0) decide, anything else is truthy, and a
     # missing option keeps the argspec's own default.
@@ -74,12 +74,12 @@ module Krikri
     # dest's message OVERWRITES src's), then the presence check LAST
     # overwrites both, and the single AnsibleActionFail carries whatever
     # survived. The old module-level "missing required argument:
-    # src/dest" results were never real's shape - the action plugin fails
+    # src/dest" results were never Ansible's shape - the action plugin fails
     # before the module ever validates anything (live-verified vs
-    # 2.19.11). Real's presence check is a None check: an explicitly null
+    # 2.19.11). Ansible's presence check is a None check: an explicitly null
     # param counts as absent, an empty string does not. krikri's own
     # unsafe-dest-hostname guard stays ahead of it - it protects krikri's
-    # own dest handling and real has no equivalent failure.
+    # own dest handling and Ansible has no equivalent failure.
     private def action_preflight_result(src : String?, dest : String?) : PluginResult?
       return unsafe_host_result(src ? src : "") if !lenient_bool(@params["flat"]?) && unsafe_host_dir_name?(@host.name)
       return check_mode_result if true?(@params["_ansible_check_mode"]?)
@@ -122,7 +122,7 @@ module Krikri
     end
 
     private def check_mode_result : PluginResult
-      # Real's registered fetch check-mode result runs skipped, msg,
+      # Ansible's registered fetch check-mode result runs skipped, msg,
       # changed - and carries NO failed key (live-verified vs 2.19.11
       # via `{{ r | to_json }}`).
       PluginResult.new(changed: false, failed: false, msg: "check mode not (yet) supported for this module", skipped: true,
@@ -136,14 +136,14 @@ module Krikri
     # Real fetch's results carry NO msg key on either the success or the
     # already-present path (live-verified vs 2.19.11 at -v).
     private def unchanged_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
-      # Real's registered already-present result: changed, md5sum, file,
+      # Ansible's registered already-present result: changed, md5sum, file,
       # dest, checksum (live-verified vs 2.19.11).
       PluginResult.new(changed: false, failed: false, checksum: remote_checksum, md5sum: native_checksum(dest_path, "md5"), dest: dest_path, file: src,
         key_order: ["changed", "md5sum", "file", "dest", "checksum"])
     end
 
     private def success_result(dest_path : String, remote_checksum : String, src : String) : PluginResult
-      # Real's registered changed result: changed, md5sum, dest,
+      # Ansible's registered changed result: changed, md5sum, dest,
       # remote_md5sum, checksum, remote_checksum (live-verified vs 2.19.11).
       PluginResult.new(
         changed: true, failed: false,
@@ -178,7 +178,7 @@ module Krikri
     private def missing_src_result(src : String) : PluginResult
       msg = "the remote file does not exist, not transferring, ignored"
       fail_on_missing = lenient_bool(@params["fail_on_missing"]?, default: true)
-      # fail_on_missing (default): real 2.19.11's action plugin ends up with
+      # fail_on_missing (default): Ansible 2.19.11's action plugin ends up with
       # the slurp module's failure - the fatal dump carries only changed+msg
       # (no `file` key) while the [ERROR] block shows the module's own text
       # (carried in _ansible_error_detail, stripped from every dump).
@@ -190,7 +190,7 @@ module Krikri
     end
 
     # The unchanged/changed decision itself is a plain checksum
-    # comparison (fetch.py:172) - real's validate_checksum only guards
+    # comparison (fetch.py:172) - Ansible's validate_checksum only guards
     # the POST-transfer re-check of what was just written (fetch.py:192),
     # so a destination that already holds the source's content is
     # reported ok whatever validate_checksum says (live-verified vs
@@ -201,7 +201,7 @@ module Krikri
       native_checksum(dest_path, "sha1") == remote_checksum
     end
 
-    # `flat: false` (the default) mirrors real Ansible's own layout:
+    # `flat: false` (the default) mirrors Ansible's own layout:
     # dest/<inventory_hostname>/<src, kept exactly as given, leading slash
     # and all>. `flat: true` writes straight to dest (or dest/<basename of
     # src> when dest ends with a path separator, same convention copy:

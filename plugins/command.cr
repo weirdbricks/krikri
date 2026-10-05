@@ -16,7 +16,7 @@ module Krikri
   #   stdin_add_newline: Append a newline to stdin: (default true)
   #   strip_empty_ends: Rstrip trailing newlines from stdout:/stderr:
   #     (default true)
-  #   executable: Accepted but IGNORED with a warning (real Ansible 2.4+
+  #   executable: Accepted but IGNORED with a warning (Ansible 2.4+
   #     behavior - see #executable_warning below)
   #   check_mode: Dry-run mode (command plugin always skips in check mode)
   #
@@ -29,7 +29,7 @@ module Krikri
   #     creates: /opt/myapp/built.flag
   #
   # stdout:/stderr: are rstripped of a trailing \r\n before being returned
-  # (matching real Ansible's own AnsibleModule.run_command(), which does
+  # (matching Ansible's own AnsibleModule.run_command(), which does
   # the same) - found the hard way, not assumed: a real playbook
   # comparing `result.stdout == "someuser"` after `command: whoami`
   # failed here despite the values looking identical when printed,
@@ -37,7 +37,7 @@ module Krikri
   # ansible-playbook strips it, so real playbooks are routinely written
   # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
-    # Real ansible-core 2.19.11's registered command/shell result key
+    # ansible-core 2.19.11's registered command/shell result key
     # order - live-verified via `{{ r | to_json }}` on a registered
     # command: task (the -v dump sorts alphabetically, so the order is
     # only observable programmatically). The module builds its result
@@ -49,13 +49,13 @@ module Krikri
     # on the creates:/removes: skip paths (start/end/delta null) and on
     # the shell variant (cmd a string there). krikri's success result
     # passes failed_flag: false, so its `failed` lands at the listed
-    # tail position; real's `ansible_facts`/`warnings` keys have no
+    # tail position; Ansible's `ansible_facts`/`warnings` keys have no
     # krikri equivalent (warnings, when the executable: warning fires,
-    # is listed last to match real's position after failed).
+    # is listed last to match Ansible's position after failed).
     private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
 
     # A FAILED command/shell result (rc != 0) is NOT the success shape with
-    # `failed` moved: real's registered failure (live-verified against
+    # `failed` moved: Ansible's registered failure (live-verified against
     # ansible-core 2.19.11 via `{{ r | to_json }}` for both command and
     # shell) runs changed, stdout, stderr, rc, cmd, start, end, delta -
     # the module's own result dict in its construction order - then
@@ -83,7 +83,7 @@ module Krikri
     end
 
     # Resolves a creates:/removes: path for the existence check above:
-    # a RELATIVE path is joined onto chdir: (real Ansible's own
+    # a RELATIVE path is joined onto chdir: (Ansible's own
     # behavior), an already-absolute path is used as-is (chdir: never
     # changes an absolute path's meaning), and a leading ~ was already
     # expanded by #expand_tilde to an absolute home path. No Dir.cd
@@ -95,7 +95,7 @@ module Krikri
       File.join(chdir, expanded)
     end
 
-    # Real Ansible 2.19.4's command module still ACCEPTS `executable:` but
+    # Ansible 2.19.4's command module still ACCEPTS `executable:` but
     # ignores it entirely - main() drops it with `module.warn(...)` when
     # _uses_shell is false, and the task succeeds normally. Live-verified:
     # `command: {cmd: "echo hi", executable: /bin/bash}` runs `echo` via
@@ -115,7 +115,7 @@ module Krikri
 
     # Attaches #executable_warning to a result using the same
     # extra["warnings"] convention apache2_module.cr already uses
-    # (matches real Ansible's top-level result["warnings"] list).
+    # (matches Ansible's top-level result["warnings"] list).
     private def with_executable_warning(result : PluginResult) : PluginResult
       if warnings = executable_warning
         result.extra["warnings"] = JSON.parse(warnings.to_json)
@@ -124,7 +124,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Real ansible-core 2.19 removed the long-deprecated `warn:` param
+      # ansible-core 2.19 removed the long-deprecated `warn:` param
       # from command/shell and now rejects it at module-arg validation
       # with exactly this message. Found live-benchmarking
       # cloudalchemy.node_exporter / cloudalchemy.bind_exporter (round
@@ -132,7 +132,7 @@ module Krikri
       # command tasks carry `warn:`, which only runs on the WARM pass
       # (the version probe is skipped cold because the binary doesn't
       # exist yet), so cold ran clean on both engines and warm diverged -
-      # real ansible rc=2 "Unsupported parameters ... warn", crystal
+      # Ansible rc=2 "Unsupported parameters ... warn", crystal
       # tolerated it and rc=0'd. This engine now rejects it the same way
       # (same message, shell.cr shares this via its own copy below).
       if @params.has_key?("warn")
@@ -155,13 +155,13 @@ module Krikri
         )
       end
 
-      # Bool-typed params: real AnsibleModule type-converts them at module
+      # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
       validate_bool_params!
 
       # `argv:` gives the exact argument list literally - no shell
-      # quoting/splitting at all, real ansible-core's own command.py runs
+      # quoting/splitting at all, ansible-core's own command.py runs
       # it via `run_command(argv, ...)` (a list) rather than shlex-
       # splitting a string. Kept as its own cmd_parts source rather than
       # joining into a `cmd` string and reusing #parse_command below,
@@ -169,20 +169,20 @@ module Krikri
       # avoid (kyl191.openvpn's own `-subj /CN={{ openvpn_ca_cn[:64]
       # }}/` argv element, containing spaces from a CN value, must reach
       # openssl as ONE argument). `cmd` is left nil (not the joined
-      # argv) for `changed_when:`/display purposes - real Ansible's own
+      # argv) for `changed_when:`/display purposes - Ansible's own
       # `result['cmd']` is the argv LIST itself in this shape, but this
       # plugin's PluginResult#cmd is typed String; the argv path skips
       # the `unless cmd` check above via the OR, so this is unreachable
       # with cmd nil only via that path.
       argv_parts = argv.try { |raw| parse_argv_list(raw) }
-      # real returns the (shlex-split, unexpanded) argv list as `cmd` on every path
+      # Ansible returns the (shlex-split, unexpanded) argv list as `cmd` on every path
       cmd_list = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
-      # Check creates parameter (idempotency). Real Ansible reports this
+      # Check creates parameter (idempotency). Ansible reports this
       # as an ORDINARY "ok" result (changed: false), never a task-level
       # "skipping:" - `skipped:` here used to be a genuine divergence in
       # its own right (this codebase's recap counted it under
-      # `skipped=`, real Ansible's own recap counts it under `ok=`),
+      # `skipped=`, Ansible's own recap counts it under `ok=`),
       # confirmed live against ansible-core 2.19.4: `ok: [localhost] =>
       # {"changed": false, ..., "msg": "Did not run command since '...'
       # exists"}`, recap `ok=1 skipped=0`.
@@ -195,11 +195,11 @@ module Krikri
       # its changed_when: (rc==0 AND stdout not containing 'skipped' ->
       # changed: false) - with `rc` missing the attribute access hard-
       # failed the warm run ("object of type 'dict' has no attribute
-      # 'rc'") where real Ansible evaluates cleanly.
+      # 'rc'") where Ansible evaluates cleanly.
       # Read chdir here (a pure parameter read, no side effect - the
       # actual Dir.cd still only happens further down, right before
       # executing the command) so the creates:/removes: checks below can
-      # resolve a RELATIVE path against it. Real Ansible's own
+      # resolve a RELATIVE path against it. Ansible's own
       # command/shell action plugin resolves a relative creates:/removes:
       # against chdir: when both are given (chdir changes what
       # "relative" means for the whole task, not just the command's own
@@ -209,7 +209,7 @@ module Krikri
       # the check below tested "ca-key.pem" against the plugin process's
       # own inherited cwd (the SSH session's home) instead of
       # openvpn_key_dir, never finding the file and always concluding
-      # "must run" - where real ansible-playbook reported changed=0.
+      # "must run" - where ansible-playbook reported changed=0.
       chdir = @params["chdir"]?.try { |itm| expand_tilde(itm) }
 
       # real command.py os.chdir()s BEFORE its creates:/removes: checks, so a
@@ -219,7 +219,7 @@ module Krikri
       if !chdir_invalid && (creates = @params["creates"]?)
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
-          # Real ansible-core 2.19.11 words the check-mode variant of this
+          # ansible-core 2.19.11 words the check-mode variant of this
           # msg "Would not run command since ..." (the ordinary run says
           # "Did not run command since ..." - live-verified both).
           skip_msg = @check_mode ? "Would not run command since '#{creates}' exists" : "Did not run command since '#{creates}' exists"
@@ -308,7 +308,7 @@ module Krikri
       stdin_data = @params["stdin"]?
 
       # Fail the task up front when chdir doesn't exist or isn't a
-      # directory (real Ansible's command module does the same), but do
+      # directory (Ansible's command module does the same), but do
       # NOT mutate this process's own cwd at all - the child below gets
       # its cwd via Process.new's chdir: instead. The old approach
       # (process-global Dir.cd) relied on this plugin process being
@@ -319,7 +319,7 @@ module Krikri
       # (round 813358, markosamuli.nvm - a later task deleted the chdir
       # directory and a still-later plain command: inherited the stale
       # deleted cwd and failed with a getcwd/shell-init error, something
-      # real Ansible can never hit since it execs a fresh process per
+      # Ansible can never hit since it execs a fresh process per
       # task). An earlier variant that tried to RESTORE the original cwd
       # after the run was worse still: on a remote SSH+`become_user:`
       # invocation the process starts with cwd inherited from the SSH
@@ -333,14 +333,14 @@ module Krikri
       # task, `chdir: /var/www/html/nextcloud`, `become_user: www-data`).
       if chdir && !File.directory?(chdir)
         # The result carries the FULL real command-module shape with
-        # rc: NULL (not absent, not 0) - real Ansible's chdir failure
+        # rc: NULL (not absent, not 0) - Ansible's chdir failure
         # happens inside run_command, whose fail_json populates
         # cmd/stdout/stdout_lines/stderr/stderr_lines/start/end/delta
         # alongside rc: null (live-verified against 2.19.4: `{"changed":
         # false, "cmd": ["pwd"], ..., "rc": null, "msg": "Unable to
         # change directory before execution: ..."}`). With `rc` absent
         # a registered result's `.rc` reference was genuinely undefined
-        # where real Ansible hands back null - same divergence class as
+        # where Ansible hands back null - same divergence class as
         # the creates:/removes: skip above (found via the podman-diff
         # command_edge_cases C7 harness case).
         return with_executable_warning(PluginResult.new(
@@ -369,13 +369,13 @@ module Krikri
       # but works for most cases
       # Declared here (not inside the begin below) so the normal-result
       # PluginResult after the begin/rescue can carry it as the result's
-      # `cmd` key - real Ansible's command module returns the argv LIST
+      # `cmd` key - Ansible's command module returns the argv LIST
       # itself (live-verified against 2.19.4: `cmd: ["echo", "hi"]`).
       cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
 
       started_at = Time.utc
       begin
-        # Real Ansible's AnsibleModule.run_command (expand_user_and_vars,
+        # Ansible's AnsibleModule.run_command (expand_user_and_vars,
         # driven by the command module's expand_argument_vars, default true)
         # expands BOTH `~` (including the `~user` form, via the passwd
         # database - not a shell, so this happens even though command: runs
@@ -383,7 +383,7 @@ module Krikri
         # just the executable. `command: tar -xzf /tmp/x.tar.gz -C ~root/bin
         # starship` (viasite-ansible.zsh's "Extract starship to ~root/bin"
         # task, round 200970) left `~root/bin` literal as tar's -C argument
-        # and failed with "tar: ~root/bin: Cannot open" where real Ansible
+        # and failed with "tar: ~root/bin: Cannot open" where Ansible
         # ran it at /root/bin. Order matches Python's own
         # os.path.expanduser(os.path.expandvars(x)): variables first, then
         # tilde, so `~$USER` resolves.
@@ -391,12 +391,12 @@ module Krikri
           cmd_parts = cmd_parts.map { |part| expand_user_and_vars(part) }
         end
         command_name = cmd_parts.first
-        # Real Ansible's AnsibleModule.run_command (expand_user=True, the
+        # Ansible's AnsibleModule.run_command (expand_user=True, the
         # default) os.path.expanduser's the executable, so
         # `command: '~/.rvm/bin/rvm autolibs 4'` runs the binary at the
         # invoking user's home (rvm.ruby's own "Configure rvm" task:
         # `command: '{{ rvm1_rvm }} autolibs ...'` with
-        # `rvm1_rvm: ~/.rvm/bin/rvm` - real Ansible changed, this engine
+        # `rvm1_rvm: ~/.rvm/bin/rvm` - Ansible changed, this engine
         # failed with "Error executing process: '~/.rvm/bin/rvm': No such
         # file or directory"). expand_tilde is the same HOME-first
         # expansion Python's own expanduser does.
@@ -407,7 +407,7 @@ module Krikri
         # executable lookup itself (execvp) searches the PARENT's PATH -
         # so `environment: PATH: <venv>/bin` + `command: ara-manage`
         # failed with "No such file or directory" even though the binary
-        # exists in the overridden PATH (real Ansible runs commands via
+        # exists in the overridden PATH (Ansible runs commands via
         # /bin/sh -c with the env exported FIRST, so its lookup uses the
         # new PATH - buluma.ara_api's migration task, round 190).
         # Resolve the executable against the task's own PATH override
@@ -426,7 +426,7 @@ module Krikri
         # stdout/stderr of the spawned command are untouched by this:
         # the tty is reachable only by explicitly opening /dev/tty, so
         # stdout and stderr stay the separate pipes they already were
-        # (real Ansible's own module keeps them separate too - only its
+        # (Ansible's own module keeps them separate too - only its
         # ssh-level channel is merged by -tt).
         ControllingTty.ensure
 
@@ -440,7 +440,7 @@ module Krikri
           input: stdin_data ? Process::Redirect::Pipe : Process::Redirect::Close
         )
 
-        # Send stdin if provided. Real Ansible appends a newline to the
+        # Send stdin if provided. Ansible appends a newline to the
         # data unless stdin_add_newline is explicitly false (its
         # run_command: `if not binary_data: data += '\n'`, with
         # binary_data wired to `not stdin_add_newline`) - live-verified
@@ -457,7 +457,7 @@ module Krikri
         ended_at = Time.utc
       rescue ex
         # A failed SPAWN never reaches the command module's own result
-        # shape: real Ansible's AnsibleModule.run_command catches the
+        # shape: Ansible's AnsibleModule.run_command catches the
         # OSError itself and calls fail_json with its fixed "Error
         # executing command." message, the errno as `rc`, EMPTY
         # stdout/stderr and the printable argv as `cmd` - so a
@@ -474,7 +474,7 @@ module Krikri
         return with_executable_warning(spawn_failure_result(ex, cmd_parts, command_name || ""))
       end
 
-      # strip_empty_ends (bool, default true): when true, real Ansible
+      # strip_empty_ends (bool, default true): when true, Ansible
       # rstrips ALL trailing \r/\n characters from stdout/stderr
       # (`to_text(r['stdout']).rstrip("\r\n")` in its command.py, applied
       # only `if strip`); when false, the raw bytes are returned untouched
@@ -482,7 +482,7 @@ module Krikri
       # strip_empty_ends: false, collapses to "out" with the default).
       # The result carries the FULL real command-module shape: cmd is the
       # argv LIST itself, stdout_lines/stderr_lines are derived here
-      # (module-side, exactly where real Ansible's command.py sets them)
+      # (module-side, exactly where Ansible's command.py sets them)
       # from the same splitlines() semantics the executor used to derive
       # them centrally from (Python's str.splitlines()), and msg is an
       # explicit "" on success - real command.py initializes r['msg'] =
@@ -518,7 +518,7 @@ module Krikri
         delta: python_delta(ended_at - started_at),
         failed_flag: false,
         # Success paths only - a non-zero rc is a failure result and takes
-        # FAILED_KEY_ORDER (real's separate failure shape).
+        # FAILED_KEY_ORDER (Ansible's separate failure shape).
         key_order: exit_code == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER
       ))
     end
@@ -527,10 +527,10 @@ module Krikri
     # that never started fails the module with its fixed message, the
     # errno as rc, empty stdout/stderr and the printable argv as `cmd`
     # (its `_clean_args`, a shlex-quoted JOIN - not the argv list the
-    # success path returns). Real's Python names the errno in a separate
+    # success path returns). Ansible's Python names the errno in a separate
     # `exception` key that only the [ERROR] block composes; krikri's
     # display layer reads that key and drops it from the dumped result
-    # exactly like real's.
+    # exactly like Ansible's.
     private def spawn_failure_result(ex : Exception, argv : Array(String), command_name : String) : PluginResult
       result = PluginResult.new(
         changed: false,
@@ -548,7 +548,7 @@ module Krikri
     end
 
     # Crystal raises a per-errno File::Error subclass out of Process.new
-    # and keeps no numeric errno on the exception; real reports the C
+    # and keeps no numeric errno on the exception; Ansible reports the C
     # errno as the result's `rc` (and for a non-OSError, 257).
     private def spawn_errno(ex : Exception) : Int32
       case ex
@@ -583,11 +583,11 @@ module Krikri
     # arguments. A naive space-split mangles a quoted arg like
     # `awk -F: '{print $1}' /etc/passwd` (used by dev-sec os_hardening)
     # into three broken pieces - awk then gets `'{print` as its program and
-    # fails. Real Ansible's command module delivers the quoted text as one
+    # fails. Ansible's command module delivers the quoted text as one
     # argv element, so a quoted argument here is kept whole and the quotes
     # (single or double) stripped, matching how Process.new would have
     # received it under a shell-less invocation.
-    # `environment:` (real Ansible's per-task env-var keyword), forwarded
+    # `environment:` (Ansible's per-task env-var keyword), forwarded
     # here as a JSON blob under the `_environment` param key by
     # TaskExecutor#build_plugin_config (already {{ }}-substituted). Unlike
     # every other plugin, command.cr execs `command_name`/`args` directly
@@ -596,7 +596,7 @@ module Krikri
     # shelled-out commands go through automatically) has nothing to attach
     # to here, so this reads the same `_environment` param directly and
     # passes it through Process.new's own `env:` instead.
-    # Per-token expansion mirroring real Ansible's
+    # Per-token expansion mirroring Ansible's
     # `os.path.expanduser(os.path.expandvars(x))` (basic.py run_command):
     # variables first, then tilde.
     private def expand_user_and_vars(token : String) : String
@@ -640,7 +640,7 @@ module Krikri
     # JSON is parsed - never a Python-repr repair pass, since a value that
     # merely LOOKS like a container (a literal `"['a']"` string, or a
     # `{% if %}...{% else %}['a']{% endif %}` block's rendered output) is
-    # a plain STRING in real ansible-core (live-verified vs
+    # a plain STRING in ansible-core (live-verified vs
     # ansible-playbook 2.19.11, see apt.cr's parse_package_names).
     private def parse_argv_list(raw : String) : Array(String)
       Array(String).from_json(raw.strip)
@@ -696,7 +696,7 @@ module Krikri
           when '\\'
             next_is_space_or_end = i + 1 >= chars.size || {' ', '\t', '\n'}.includes?(chars[i + 1])
             if !started && next_is_space_or_end
-              # Real Ansible's task-arg parser (ansible.parsing.splitter.
+              # Ansible's task-arg parser (ansible.parsing.splitter.
               # split_args, run BEFORE Jinja templating on the whole `cmd:`/
               # `command:` string) treats a bare `\` - a whole token on its
               # own, delimited by whitespace or string boundaries on both
@@ -711,7 +711,7 @@ module Krikri
               # behavior below) produced a malformed `" --host"` argv
               # element (stray leading space) that real `influx`'s cobra-
               # based CLI parser rejects outright as an unknown
-              # subcommand - while real ansible-playbook strips the lone
+              # subcommand - while ansible-playbook strips the lone
               # `\` and rejoins the remaining words with single spaces,
               # producing the well-formed `influx ping --host <url>` and
               # succeeding.
@@ -720,7 +720,7 @@ module Krikri
               # Unquoted backslash-escape (shlex/POSIX shell semantics,
               # not just a literal character) - the char immediately
               # after is taken verbatim and the backslash itself dropped.
-              # Real Ansible's command module parses `cmd:` the same way
+              # Ansible's command module parses `cmd:` the same way
               # (Python's shlex.split). Found via konstruktoid-hardening's
               # own `find ... -exec aa-enforce {} \;` - without this, the
               # final argv token was the two characters `\;` instead of

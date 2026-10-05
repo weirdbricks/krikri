@@ -7,7 +7,7 @@ require "../../src/krikri/plugin_helpers/systemd_unit_found"
 # ansible-playbook refuses the enabled:/state: steps on a unit that doesn't
 # exist, so the task's own failed_when swallows "Could not find the
 # requested service" and the task reports `ok`. This engine never asked
-# whether the unit existed, masked it (which real also does - systemctl
+# whether the unit existed, masked it (which Ansible also does - systemctl
 # masks a never-installed unit happily) and then reported `changed`. See
 # SystemdUnitFound's own comment for the real-side source.
 describe "Krikri::SystemdUnitFound" do
@@ -24,7 +24,7 @@ describe "Krikri::SystemdUnitFound" do
   end
 
   it "is not found when show exits 0 but prints no LoadState at all" do
-    # real's `'LoadState' in result['status']` is a dict-membership test:
+    # Ansible's `'LoadState' in result['status']` is a dict-membership test:
     # a truncated/empty property dump leaves the key out entirely, which is
     # as missing as an explicit "not-found".
     Krikri::SystemdUnitFound.found?(0, "", false).must_equal(false)
@@ -57,14 +57,14 @@ describe "Krikri::SystemdUnitFound" do
 
   it "ignores a property whose value merely looks like a LoadState" do
     # The parser splits on the FIRST '=' and keys strictly on what came
-    # before it, matching real's KEY=VALUE dict build.
+    # before it, matching Ansible's KEY=VALUE dict build.
     Krikri::SystemdUnitFound.load_state_from_show("Description=LoadState=loaded\n").must_equal(nil)
   end
 end
 
 describe "Krikri::SystemdUnitFound.missing_service_message" do
-  it "matches real's fail_if_missing wording, including the trailing ': host'" do
-    # the real module: "'Could not find the requested service %s: %s'"
+  it "matches Ansible's fail_if_missing wording, including the trailing ': host'" do
+    # the Ansible module: "'Could not find the requested service %s: %s'"
     # with msg='host' passed by systemd_service.py's enabled:/state: blocks -
     # konstruktoid.hardening's failed_when matches on the
     # "Could not find the requested service" substring, but the whole string

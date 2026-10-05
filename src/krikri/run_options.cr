@@ -6,7 +6,7 @@ module Krikri
     class_property skip_tags : Array(String) = [] of String
     class_property play_name : String = ""
     class_property inventory_sources : Array(String) = [] of String
-    # nil = not given on the command line (real ansible's default is 5)
+    # nil = not given on the command line (Ansible's default is 5)
     class_property forks : Int32? = nil
     # Numeric -v/-vv/... verbosity, readable from output paths that don't
     # carry the executor (HandlerRunner, ResultDisplay).

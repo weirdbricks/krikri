@@ -8,18 +8,18 @@ module Krikri
   #
   #   - SynchronizeActionPlugin (controller-side action plugin - the normal
   #     task-execution path; see its own file for why synchronize is
-  #     controller-side here, same as real Ansible)
+  #     controller-side here, same as Ansible)
   #   - plugins/synchronize.cr (the standalone/fat plugin binary, kept for
   #     `--async`/manual invocation on whatever host the "local" rsync end
   #     is - same split as debug/pause)
   #
-  # Behavior matched to real ansible.posix's the real module (the
+  # Behavior matched to Ansible.posix's the Ansible module (the
   # module half; the action-plugin half only munges src/dest into remote
   # `user@host:path` form and resolves the private key/port before handing
   # over). Argument order, flag spelling, and the itemize-changes protocol
   # all follow that source verbatim:
   #
-  #   - every flag rsync gets is the real module's own (including the
+  #   - every flag rsync gets is the Ansible module's own (including the
   #     non-obvious ones: --delete-after for delete:, --delay-updates -F
   #     by default, --archive plus explicit --no-X for each toggle that
   #     was EXPLICITLY turned off under a default-on archive:)
@@ -27,7 +27,7 @@ module Krikri
   #     `--out-format=<<CHANGED>>%i %n%L`, so every item rsync actually
   #     created/updated/attribute-changed/deleted gets a `<<CHANGED>>`-
   #     prefixed itemize line and an untouched tree prints nothing at
-  #     all - "any marker line => changed" is exactly real Ansible's own
+  #     all - "any marker line => changed" is exactly Ansible's own
   #     `changed = changed_marker in out` test (with the documented
   #     link_dest exception, where a leading `.` itemize char means
   #     "hard-linked, no change")
@@ -47,7 +47,7 @@ module Krikri
     # Builds the full rsync argv for one synchronize invocation. *src* and
     # *dest* must already be FINAL (the caller munged remote ends into
     # user@host:path form first); everything else is read from *params*
-    # with the real module's own defaults. *private_key*/*dest_port* are
+    # with the Ansible module's own defaults. *private_key*/*dest_port* are
     # the caller-resolved connection values (param override, then
     # inventory vars) that feed the `--rsh=` ssh command when either path
     # is remote (contains ':').
@@ -128,13 +128,13 @@ module Krikri
       argv
     end
 
-    # The command STRING the real module reports as `cmd`: every element
+    # The command STRING the Ansible module reports as `cmd`: every element
     # space-joined, with shlex.quote applied exactly where the real
     # module applies it - the values of --rsh=, --rsync-path=,
     # --out-format= and --link-dest=, plus the trailing src and dest
     # (cmd.append(shlex_quote(source)) / cmd.append(shlex_quote(dest))).
     # Safe tokens stay bare (Shell.quote_arg mirrors shlex.quote), so
-    # plain local paths render unquoted exactly like real's.
+    # plain local paths render unquoted exactly like Ansible's.
     QUOTED_VALUE_PREFIXES = ["--rsh=", "--rsync-path=", "--out-format=", "--link-dest="]
 
     def self.cmd_string(argv : Array(String)) : String
@@ -183,7 +183,7 @@ module Krikri
     end
 
     # True when either final path is an rsync remote spec (`host:path`,
-    # `user@host:path`, or rsync:// URL) - the real module's
+    # `user@host:path`, or rsync:// URL) - the Ansible module's
     # is_rsh_needed. Two plain local paths (the delegate_to: localhost
     # idiom) need no remote shell.
     def self.needs_rsh?(src : String, dest : String) : Bool
@@ -191,9 +191,9 @@ module Krikri
       src.includes?(':') || dest.includes?(':')
     end
 
-    # The real module's changed test: any itemize line at all - except the
+    # The Ansible module's changed test: any itemize line at all - except the
     # link_dest case, where rsync prints a leading-`.` itemize char for
-    # each file it hard-linked WITHOUT changing, and the real module's own
+    # each file it hard-linked WITHOUT changing, and the Ansible module's own
     # test is literally `(changed_marker + '.') not in out`.
     def self.changed?(output : String, link_dest : Bool = false) : Bool
       if link_dest
@@ -204,11 +204,11 @@ module Krikri
     end
 
     # Strips the markers back off, keeping one itemize line (marker
-    # removed) per real change - the real module's msg/stdout_lines/diff
-    # payload. Real's msg is `out.replace(changed_marker, '')`: the raw
+    # removed) per real change - the Ansible module's msg/stdout_lines/diff
+    # payload. Ansible's msg is `out.replace(changed_marker, '')`: the raw
     # rsync stdout WITH its trailing newline (round 995004
     # synchronize_push: real msg ends 'a\\n', a join("\n") loses that).
-    # stdout_lines still drops empty lines, exactly like real's split +
+    # stdout_lines still drops empty lines, exactly like Ansible's split +
     # remove-'' loop.
     def self.clean_output(output : String) : String
       cleaned = output.lines.reject(&.empty?).map do |line|
@@ -248,7 +248,7 @@ module Krikri
 
     # Tri-state form: nil when the param is absent (the caller decides
     # what "absent" follows - for the archive toggles that's archive's
-    # own value, per the real module's type: bool-without-default spec).
+    # own value, per the Ansible module's type: bool-without-default spec).
     def self.bool_opt(value : String?) : Bool?
       return nil unless value
       normalized = value.strip.downcase
@@ -286,7 +286,7 @@ module Krikri
         # ONLY valid JSON - never a Python-repr repair pass. A value that
         # merely LOOKS like a container (a literal `"['a']"` string, or a
         # `{% if %}...{% else %}['a']{% endif %}` block's rendered
-        # output) is a plain STRING in real ansible-core - native typing
+        # output) is a plain STRING in ansible-core - native typing
         # requires the template's whole AST to be one output node
         # wrapping one expression, so block-tag output is never
         # re-parsed (live-verified vs ansible-playbook 2.19.11, see

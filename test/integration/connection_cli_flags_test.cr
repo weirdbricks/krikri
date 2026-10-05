@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # The connection/become/misc CLI flags added in 0.9.565. Behavior checked
-# against a real ansible-core 2.19.4 where observable.
+# against a ansible-core 2.19.4 where observable.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
@@ -40,7 +40,7 @@ describe "connection CLI flags" do
     output.must_include("c=local")
   end
 
-  # Real Ansible's -b sets an internal default and leaves the VARIABLE
+  # Ansible's -b sets an internal default and leaves the VARIABLE
   # unset - `{{ ansible_become | default(false) }}` still renders False
   # under -b. Setting the var would be visible to playbooks reading it.
   it "-b does not expose itself as the ansible_become variable" do
@@ -55,9 +55,9 @@ describe "connection CLI flags" do
     status.exit_code.must_equal(0)
   end
 
-  # Real Ansible's own short forms, which this engine previously lacked.
+  # Ansible's own short forms, which this engine previously lacked.
   # -C's observable effect: a command task reports "skipping:" (the
-  # module does not run in check mode), like real ansible-playbook -C.
+  # module does not run in check mode), like ansible-playbook -C.
   it "supports -C for check mode and -D for diff mode" do
     _, check = run_with(["-C"], <<-YAML)
       - hosts: localhost
@@ -79,8 +79,8 @@ describe "connection CLI flags" do
     output.wont_include("CHECK")
   end
 
-  # Real Ansible's own long aliases (both still listed in ansible-core
-  # 2.19.4's --help) - a command line copied from a real ansible-playbook
+  # Ansible's own long aliases (both still listed in ansible-core
+  # 2.19.4's --help) - a command line copied from a ansible-playbook
   # invocation must parse here too.
   it "accepts --inventory-file and --vault-pass-file as aliases" do
     status, output = run_with(["--inventory-file", INVENTORY, "--vault-pass-file", "/dev/null"], SHOW_VARS)

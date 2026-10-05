@@ -10,7 +10,7 @@ describe "getent plugin" do
   it "returns getent_passwd keyed by username with field lists" do
     result = PluginSpecHelper.run("getent", {"database" => "passwd"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real's getent module wire carries no changed (exit_json passes
+    # Ansible's getent module wire carries no changed (exit_json passes
     # none; the task executor backfills failed, changed onto the
     # registered result).
     result["changed"]?.must_equal(nil)
@@ -35,7 +35,7 @@ describe "getent plugin" do
   end
 
   it "returns just one entry, still keyed by username (not a bare field list), for a single key lookup" do
-    # Real bug found benchmarking robertdebock.git: real Ansible's own
+    # Real bug found benchmarking robertdebock.git: Ansible's own
     # getent_passwd fact is ALWAYS a dict keyed by the looked-up
     # username, even for a single-key lookup (`{"root": [...]}` - never
     # a bare field-array). This plugin's single-key branch previously
@@ -63,12 +63,12 @@ describe "getent plugin" do
     result["msg"].as_s.must_include("could not be found")
   end
 
-  it "reports invocation.module_args matching real Ansible on a keyed lookup" do
+  it "reports invocation.module_args matching Ansible on a keyed lookup" do
     # Round 813375 (galaxyproject.pulsar): the role reads
     # `item.invocation.module_args.key` off a looped+registered getent
     # task to recover the ORIGINAL key that produced each results[]
     # entry, then indexes `ansible_facts.getent_passwd[...][2]` with it.
-    # Real Ansible's module protocol (the real module's
+    # Ansible's module protocol (the Ansible module's
     # _return_formatted) always attaches this block; without it the
     # expression resolved to None and crashed with "None has no element
     # 2". module_args carries the raw param values: `split` stays null
@@ -101,7 +101,7 @@ describe "getent plugin" do
   it "does not fail a missing key when fail_key is false, and maps it to a real null (not an empty array)" do
     # Real bug found benchmarking filviu.activemq/.tomcat's own "env |
     # determine if <user> exists" -> "setup | create system user" pair
-    # (when: getent_passwd[user] == none): real Ansible's own getent
+    # (when: getent_passwd[user] == none): Ansible's own getent
     # module sets the value to None for a not-found key with fail_key:
     # false, not an empty list - `[] == none` is always false under
     # real Python/Jinja equality regardless of emptiness, so storing an
@@ -113,10 +113,10 @@ describe "getent plugin" do
   end
 
   it "splits non-colon databases on whitespace runs, not ':' (hosts)" do
-    # Real ansible.builtin.getent colon-splits
+    # Ansible.builtin.getent colon-splits
     # by default ONLY for passwd/shadow/group/gshadow (its own `colon`
     # list); every other database splits on runs of whitespace - live
-    # verified against real ansible-playbook 2.19.4 on this machine
+    # verified against ansible-playbook 2.19.4 on this machine
     # (`getent hosts localhost` emits "127.0.0.1  localhost ...", tab/
     # multi-space delimited, so `::1` maps to
     # ["localhost", "ip6-localhost", "ip6-loopback"]). The old always-
@@ -146,9 +146,9 @@ describe "getent plugin" do
   end
 
   it "stores duplicate keys as a list of field-lists (services tcp/udp pairs)" do
-    # Real Ansible 2.11+ keeps every result for the same key: a second
+    # Ansible 2.11+ keeps every result for the same key: a second
     # line with an already-seen key turns the value into a list of field
-    # lists (the real module's `seen` bookkeeping). The old
+    # lists (the Ansible module's `seen` bookkeeping). The old
     # parser silently kept only the last line. /etc/services on any
     # normal system lists many services for both tcp and udp (e.g.
     # "domain 53/tcp" and "domain 53/udp"), so enumeration must produce
@@ -186,7 +186,7 @@ describe "getent plugin" do
 
   it "returns only the FIRST matching line for a duplicated key (services tcp/udp)" do
     # Real `getent services domain` emits one line - "domain 53/tcp" -
-    # so the real module's keyed fact is getent_services["domain"] ==
+    # so the Ansible module's keyed fact is getent_services["domain"] ==
     # ["53/tcp"], a single field list (live-verified against real
     # ansible-playbook 2.19.4). The tcp+udp list-of-lists merge happens
     # only on enumeration, never on a keyed lookup.
@@ -197,11 +197,11 @@ describe "getent plugin" do
   end
 
   it "accepts service: and keeps returning the files-backed data" do
-    # `service:` is real Ansible's `-s <service>` NSS restriction. Krikri
+    # `service:` is Ansible's `-s <service>` NSS restriction. Krikri
     # always reads the local database files (the `files` backend), so the
     # param is accepted and a `service: files` lookup - pin the answer to
     # /etc/passwd and bypass LDAP/SSSD, the overwhelmingly common role
-    # usage - behaves exactly like real Ansible. Redirecting to a
+    # usage - behaves exactly like Ansible. Redirecting to a
     # non-local backend (ldap, sss, ...) is a documented deliberate limit
     # (see KNOWN_MISSING.md and the plugin's own comment), not a failure.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "root", "service" => "files"})
@@ -212,7 +212,7 @@ describe "getent plugin" do
 
   it "resolves a numeric UID key for passwd, fact keyed by the entry's own username" do
     # Real getent accepts a numeric UID: `getent passwd 0` emits root's
-    # entry (verified live), and the real module keys the fact by the
+    # entry (verified live), and the Ansible module keys the fact by the
     # OUTPUT's first field, so getent_passwd["root"] - not ["0"]. The old
     # literal-first-field lookup failed this outright.
     result = PluginSpecHelper.run("getent", {"database" => "passwd", "key" => "0"})
@@ -224,7 +224,7 @@ describe "getent plugin" do
   it "resolves a hostname alias for hosts, fact keyed by the address" do
     # `getent hosts localhost` (verified live) emits the first /etc/hosts
     # line whose fields mention localhost - "127.0.0.1  localhost ..." -
-    # so the real module's fact is getent_hosts["127.0.0.1"], not
+    # so the Ansible module's fact is getent_hosts["127.0.0.1"], not
     # getent_hosts["localhost"]. The old literal-first-field lookup
     # failed a plain `database: hosts, key: localhost` task outright.
     result = PluginSpecHelper.run("getent", {"database" => "hosts", "key" => "localhost"})

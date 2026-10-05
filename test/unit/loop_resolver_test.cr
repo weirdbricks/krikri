@@ -34,7 +34,7 @@ describe Krikri::LoopResolver do
 
   describe ".source_term_elements" do
     it "splits a string term into one element per character" do
-      # Real Ansible's nested/together lookups iterate each term directly
+      # Ansible's nested/together lookups iterate each term directly
       # as a sequence, so a literal string term is itself a sequence
       # (live-verified against ansible-core 2.19.11: `with_nested: [cd,
       # [1]]` yields [c,1] then [d,1]).
@@ -63,8 +63,8 @@ describe Krikri::LoopResolver do
       ])
     end
 
-    it "null-pads shorter lists (real Ansible's zip_longest semantics)" do
-      # Real Ansible's with_together: runs itertools.zip_longest over the
+    it "null-pads shorter lists (Ansible's zip_longest semantics)" do
+      # Ansible's with_together: runs itertools.zip_longest over the
       # sources, padding every shorter list with None - a with_together:
       # over a 3-element and a 2-element list must still iterate 3 times,
       # with item.1 null (not the empty/undefined sentinel) on the third.
@@ -83,7 +83,7 @@ describe Krikri::LoopResolver do
   end
 
   describe ".with_indexed_items" do
-    # Real Ansible's with_indexed_items is Python's enumerate(): the
+    # Ansible's with_indexed_items is Python's enumerate(): the
     # index is an INT, not a string (live-verified vs ansible-core
     # 2.19.11: debug shows `item=[0, 'x']` and `item[0] + 1` arithmetic
     # works).

@@ -4,7 +4,7 @@ require "../minitest_helper"
 # `environment:` by prefixing the command string with `export K='V'; ...`.
 # That prefix lived INSIDE the `/bin/bash -c <string>` argv element, so any
 # local user on the machine could read the (often secret) values with `ps`
-# while the task ran - real Ansible instead hands the environment dict to
+# while the task ran - Ansible instead hands the environment dict to
 # the module process's own environment, where it never appears in an argv.
 #
 # Driven through the real shell plugin binary via PluginSpecHelper: shell
@@ -46,7 +46,7 @@ describe "environment: values stay out of the spawned process argv" do
     result["stdout"].as_s.includes?("s3cr3t").must_equal(false)
   end
 
-  it "shell: still interpolates the exported value like real Ansible" do
+  it "shell: still interpolates the exported value like Ansible" do
     result = PluginSpecHelper.run("shell", {
       "cmd"          => "echo \"$KRIKRI_SPEC_SECRET\"",
       "_environment" => %({"KRIKRI_SPEC_SECRET": #{secret.to_json}}),

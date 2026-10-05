@@ -2,14 +2,14 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_health_wait"
 
 # The wait loop of community.docker docker_container state=healthy,
-# behavior matched to real's the real module
+# behavior matched to Ansible's the Ansible module
 # wait_for_state (called there with wait_states=['starting',
 # 'unhealthy'], complete_states=['healthy', None],
 # max_wait=healthy_wait_timeout, health_state=True). The failure
-# wordings (including real's own "Encontered" typo) and the
+# wordings (including Ansible's own "Encontered" typo) and the
 # exponential-backoff/timeout arithmetic below were verified against
-# real's source; the timeout and unhealthy-keeps-waiting behaviors
-# were additionally verified live against real ansible-playbook 2.19.11
+# Ansible's source; the timeout and unhealthy-keeps-waiting behaviors
+# were additionally verified live against ansible-playbook 2.19.11
 # (see the plugin's doc comment).
 module DockerHealthWaitSpecHelpers
   # Raised when the canned sequence is exhausted - keeps fake_inspect
@@ -62,7 +62,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
       calls.call.must_equal(1)
     end
 
-    it "polls through 'starting' with real's exponential backoff (1.0, *1.1, cap 10) until healthy" do
+    it "polls through 'starting' with Ansible's exponential backoff (1.0, *1.1, cap 10) until healthy" do
       inspect_fn, sleeps, calls, sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(["starting", "starting", "healthy"])
       result = Krikri::PluginHelpers::DockerHealthWait.wait_for_healthy("id0", 300.0, inspect_fn, sleep_fn)
       result.as_h["State"].as_h["Health"].as_h["Status"].as_s.must_equal("healthy")
@@ -73,7 +73,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
     it "keeps waiting through 'unhealthy' (a wait state, not an immediate failure) and caps the delay at 10s" do
       # 30 polls all unhealthy with no timeout: delays 1.0, 1.1, 1.21,
       # ... capped at 10.0 once 1.1**n would exceed it (1.1**24 < 10,
-      # 1.1**25 > 10 - real's own comment). The fake inspect raises
+      # 1.1**25 > 10 - Ansible's own comment). The fake inspect raises
       # Exhausted after 30 calls so the no-timeout loop is bounded.
       sequence = Array(String? | Symbol).new(30, "unhealthy")
       inspect_fn, sleeps, calls, _sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(sequence, max_calls: 30)
@@ -88,7 +88,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
       sleeps.select { |delay| delay > 10.0 }.must_be_empty
     end
 
-    it "fails with real's timeout wording when max_wait is exceeded, carrying the last inspect as container" do
+    it "fails with Ansible's timeout wording when max_wait is exceeded, carrying the last inspect as container" do
       inspect_fn, sleeps, calls, sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(["unhealthy"])
       error = assert_raises(Krikri::PluginHelpers::DockerHealthWait::Failure) do
         Krikri::PluginHelpers::DockerHealthWait.wait_for_healthy("cid123", 2.5, inspect_fn, sleep_fn)
@@ -97,7 +97,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
         %(Timeout of 2.5 seconds exceeded while waiting for container "cid123"))
       last = error.container_json || raise "container_json missing"
       last.as_h["State"].as_h["Health"].as_h["Status"].as_s.must_equal("unhealthy")
-      # Real's clamp-then-check arithmetic: sleeps 1.0, 1.1, then
+      # Ansible's clamp-then-check arithmetic: sleeps 1.0, 1.1, then
       # clamped to 2.5 - 2.1 = ~0.4, then a final clamped-to-zero sleep
       # (2.5 + next delay > 2.5), and only the NEXT loop's
       # delay < 1e-4 escape fires the timeout - five inspects, four
@@ -118,7 +118,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
       error.message.to_s.must_include("Timeout of 8.0 seconds exceeded")
     end
 
-    it "fails with real's vanished-container wording (typo mirrored) when inspect returns nil" do
+    it "fails with Ansible's vanished-container wording (typo mirrored) when inspect returns nil" do
       inspect_fn, sleeps, calls, sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(["starting", :vanished])
       error = assert_raises(Krikri::PluginHelpers::DockerHealthWait::Failure) do
         Krikri::PluginHelpers::DockerHealthWait.wait_for_healthy("id0", nil, inspect_fn, sleep_fn)
@@ -130,7 +130,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
       calls.call.must_equal(2)
     end
 
-    it "fails with real's unexpected-state wording for a health status outside both state lists" do
+    it "fails with Ansible's unexpected-state wording for a health status outside both state lists" do
       inspect_fn, _sleeps, _calls, sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(["bogus"])
       error = assert_raises(Krikri::PluginHelpers::DockerHealthWait::Failure) do
         Krikri::PluginHelpers::DockerHealthWait.wait_for_healthy("id0", nil, inspect_fn, sleep_fn)
@@ -141,7 +141,7 @@ describe Krikri::PluginHelpers::DockerHealthWait do
       last.as_h["State"].as_h["Health"].as_h["Status"].as_s.must_equal("bogus")
     end
 
-    it "runs forever without a timeout when max_wait is nil (real's <= 0 convention)" do
+    it "runs forever without a timeout when max_wait is nil (Ansible's <= 0 convention)" do
       inspect_fn, _sleeps, calls, sleep_fn = DockerHealthWaitSpecHelpers.fake_inspect(["unhealthy", "unhealthy", "healthy"])
       result = Krikri::PluginHelpers::DockerHealthWait.wait_for_healthy("id0", nil, inspect_fn, sleep_fn)
       result.as_h["State"].as_h["Health"].as_h["Status"].as_s.must_equal("healthy")

@@ -17,7 +17,7 @@ module Krikri
     #   dialects agree).
     # They are NOT full injection defenses (they assume the caller
     # passes a lone identifier/literal, not arbitrary SQL fragments) -
-    # same trust boundary real Ansible's own DB modules work within.
+    # same trust boundary Ansible's own DB modules work within.
     module SqlQuoting
       # matches community.postgresql's pg_quote_identifier
       # which itself wraps Ansible's shared

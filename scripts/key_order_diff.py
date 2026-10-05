@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare registered-result KEY ORDER of krikri-playbook vs real ansible-playbook.
+"""Compare registered-result KEY ORDER of krikri-playbook vs ansible-playbook.
 
 One call replaces the usual write-play / run-real / run-krikri / parse / diff loop:
 
@@ -10,7 +10,7 @@ One call replaces the usual write-play / run-real / run-krikri / parse / diff lo
 tasks.yml is a plain YAML *list of tasks* (no play wrapper). Every task whose
 result you want compared needs `register: <name>`. The script wraps the tasks
 in a localhost play, appends a `debug: msg="{{ <name> | to_json }}"` per
-registered name, runs both engines (real ansible with the cache/gathering env
+registered name, runs both engines (Ansible with the cache/gathering env
 vars unset), and prints per-name key lists plus SAME/DIFF. `$TMP` inside
 tasks.yml expands to a fresh per-run scratch directory shared by both runs
 (re-created between the engines so state does not leak).

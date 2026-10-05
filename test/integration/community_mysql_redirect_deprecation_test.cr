@@ -1,9 +1,9 @@
 require "../minitest_helper"
 
-# Real ansible-core 2.19.11's console output and registered-result shape
+# ansible-core 2.19.11's console output and registered-result shape
 # for the community.mysql -> ansible.mysql collection-redirect
 # deprecation (community.mysql 5.0.2's meta/runtime.yml plugin_routing,
-# live-verified against real ansible-playbook with
+# live-verified against ansible-playbook with
 # `env -u ANSIBLE_GATHERING -u ANSIBLE_CACHE_PLUGIN
 # -u ANSIBLE_CACHE_PLUGIN_CONNECTION`, tmp paths masked):
 #
@@ -14,7 +14,7 @@ require "../minitest_helper"
 #   be removed from collection 'community.mysql' version 6.0.0.
 #
 # - the trailer prints ONCE per run, before the first deprecation line;
-# - one [DEPRECATION WARNING] line per DISTINCT module per run (real's
+# - one [DEPRECATION WARNING] line per DISTINCT module per run (Ansible's
 #   Display dedups on the message) - two mysql_info tasks print one line;
 # - the lines print even for a `when: false`-skipped task (module
 #   resolution happens at task load, before conditionals) and under
@@ -66,7 +66,7 @@ ensure
 end
 
 # A guaranteed-failing read-only mysql task (nothing listens on the
-# port): real's own result for it carries the deprecations entry, so
+# port): Ansible's own result for it carries the deprecations entry, so
 # failure vs success is irrelevant to the assertions - only that the
 # task executed rather than skipped.
 private FAILING_MYSQL_INFO = [
@@ -99,7 +99,7 @@ describe "community.mysql redirect deprecation" do
     output.scan(TRAILER_LINE).size.must_equal(1)
     output.scan(deprecation_line("mysql_info")).size.must_equal(1)
     output.scan(deprecation_line("mysql_query")).size.must_equal(1)
-    # Both stderr lines land before the play banner, like real's
+    # Both stderr lines land before the play banner, like Ansible's
     # task-load-time emission.
     trailer_idx = output.index!(TRAILER_LINE)
     play_idx = output.index!("PLAY [localhost]")
@@ -162,7 +162,7 @@ describe "community.mysql redirect deprecation" do
     success.must_equal(true, output)
     # The skipped result carries no deprecations entry...
     output.includes?("skipped=NONE").must_equal(true, output)
-    # ...and the executed one carries exactly real's entry shape.
+    # ...and the executed one carries exactly Ansible's entry shape.
     output.includes?("community.mysql.mysql_info has been deprecated. Use ansible.mysql.mysql_info instead.").must_equal(true, output)
     output.includes?("\\\"collection_name\\\": \\\"community.mysql\\\"").must_equal(true, output)
     output.includes?("\\\"version\\\": \\\"6.0.0\\\"").must_equal(true, output)

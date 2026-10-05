@@ -5,7 +5,7 @@ require "../minitest_helper"
 # (source-verified against the collection's docker_image_build.py +
 # ansible-core 2.14's arg_spec.ArgumentSpecValidator.validate order; the
 # podman-diff docker_image_build_edge_cases harness ran every case against
-# real ansible-playbook in a throwaway container):
+# ansible-playbook in a throwaway container):
 #
 # - required name+path render together, sorted ("missing required
 #   arguments: name, path") - krikri previously failed one-param-at-a-time

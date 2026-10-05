@@ -1,6 +1,6 @@
 # hostvars scope regression matrix: every value read through
 # hostvars[<other host>] must render in THAT host's own variable context
-# (real Ansible's HostVarsVars templar), never the reading host's. The
+# (Ansible's HostVarsVars templar), never the reading host's. The
 # templated group vars (`who`/`nm`/`cfg_a`/`lst`) are the probe: their
 # rendered text is per-host by construction.
 #

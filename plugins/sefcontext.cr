@@ -9,7 +9,7 @@ require "../src/krikri/plugin_helpers/sefcontext_commands"
 module Krikri
   # sefcontext plugin (community.general.sefcontext) - manages SELinux
   # file context mapping definitions via the `semanage fcontext` CLI,
-  # the same tool the real module's libsemanage binding drives.
+  # the same tool the Ansible module's libsemanage binding drives.
   # Params (real module's argument spec, declaration order):
   # - target: required (alias path). The path expression.
   # - ftype: one of a/b/c/d/f/l/p/s, default "a" (all files).
@@ -24,16 +24,16 @@ module Krikri
   #   every commit; there is no way to suppress that from `semanage`).
   # - ignore_selinux_state: skip the getenforce pre-check.
   #
-  # Real AnsibleModule setup surface (live-verified against the real
+  # AnsibleModule setup surface (live-verified against the real
   # module via the podman-diff sefcontext case): missing required-args,
   # then choices/bool conversion in spec declaration order, then
   # mutually-exclusive pairs in tuple order (ONE pair per error, first
   # match wins), then required_if - which uses the all=True variant, so
-  # real's wording is "state is present but any of the following are
+  # Ansible's wording is "state is present but any of the following are
   # missing: setype, substitute" - then unsupported params (sorted).
   # All of that runs BEFORE the SELinux-enabled gate.
   #
-  # The real module never relabels existing files (its own documented
+  # The Ansible module never relabels existing files (its own documented
   # note) - a mapping change is persistent policy only, and idempotency
   # compares the exact (target, ftype) record's type/user/range.
   class SefcontextPlugin < BasePlugin
@@ -161,7 +161,7 @@ module Krikri
     end
 
     # Splits a "seuser:role:setype:range" context string; "<<None>>"
-    # maps to no user/type/range at all (the real module's nil fields).
+    # maps to no user/type/range at all (the Ansible module's nil fields).
     private def split_context(context : String) : {String?, String?, String?}
       return {nil, nil, nil} if context == "<<None>>"
       parts = context.split(':')
@@ -169,11 +169,11 @@ module Krikri
       {parts[0], parts[2], parts[3]?}
     end
 
-    # Real AnsibleModule setup surface, live-verified via the podman-diff
+    # AnsibleModule setup surface, live-verified via the podman-diff
     # sefcontext case: missing required-args (sorted plural), then
     # choices/bool conversion in spec declaration order, then the
     # mutually-exclusive tuples in their own order (one per error,
-    # canonical name on both sides - real prints selevel for the
+    # canonical name on both sides - Ansible prints selevel for the
     # selevel/serange alias), then required_if's all=True wording
     # ("but any of the following are missing"), then unsupported params
     # (sorted, single trailing parenthetical of all aliases).

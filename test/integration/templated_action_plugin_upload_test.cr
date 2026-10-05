@@ -4,7 +4,7 @@ require "../minitest_helper"
 # Real crash found benchmarking cchurch.admin-users (round 811129): its
 # "ensure sudo package is installed" task is
 # `action: {module: "{{ ansible_pkg_mgr }}", name: ..., state: present}`
-# - real Ansible's dynamic-module-dispatch idiom, where the MODULE NAME
+# - Ansible's dynamic-module-dispatch idiom, where the MODULE NAME
 # itself is a template only resolvable once ansible_pkg_mgr (a fact) is
 # known. PlaybookParser correctly recognizes this at parse time
 # (Task#templated_action, resolved later by

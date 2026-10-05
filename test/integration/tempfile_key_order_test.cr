@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered tempfile result key order -
+# ansible-core 2.19.11's registered tempfile result key order -
 # live-verified via `{{ r | to_json }}` on registered tempfile: tasks:
 # changed, path, then the add_path_info stat block, failed - identical
 # for state file and directory (mode 0600/0700 from mktemp itself), and

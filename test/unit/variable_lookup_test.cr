@@ -5,7 +5,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
   it "resolves a simple string variable, preserving its own whitespace" do
     # Real bug found benchmarking robertdebock.functions (round 116):
     # format_value used to unconditionally strip every string value -
-    # real Jinja2 never strips a rendered value's own whitespace (only
+    # Jinja2 never strips a rendered value's own whitespace (only
     # `{%- -%}` block-tag whitespace control does, an orthogonal
     # template-syntax feature operating on the surrounding text, not a
     # variable's own value). A variable whose real content legitimately
@@ -43,7 +43,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     lookup.indexed("items[1]").must_equal("b")
   end
 
-  it "resolves character indexing on a plain string, matching real Jinja2/Python str[0]" do
+  it "resolves character indexing on a plain string, matching Jinja2/Python str[0]" do
     # Real bug found benchmarking geerlingguy.elasticsearch: its own
     # version-branch `when: elasticsearch_version[0] | int < 7` (on
     # elasticsearch_version: "7.x", a plain string) fell through
@@ -76,7 +76,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
 
   # Booleans rendered directly into template text (`{{ boolvar }}`) must
   # come out as Python/Jinja2's capitalized "True"/"False", not Crystal's
-  # lowercase "true"/"false" - verified against real ansible-playbook (a
+  # lowercase "true"/"false" - verified against ansible-playbook (a
   # `copy: content:` with `{{ stat_result.stat.exists }}` renders "True").
   # This is distinct from ComparisonEvaluator's own internal "true"/"false"
   # protocol used for `when:` truthiness, which already tolerates both
@@ -193,7 +193,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     # `.split(...)`) - resolve_nested's fallthrough (current isn't a
     # Hash) returned nil/undefined, and `undefined != -1` evaluated
     # true, so failed_when always fired regardless of the actual
-    # message - real ansible-playbook's own run of the identical role
+    # message - ansible-playbook's own run of the identical role
     # reports this task as "changed", not failed.
     v = Hash(String, JSON::Any).new
     v["r"] = JSON.parse(%({"stdout": "hello world"}))
@@ -301,7 +301,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     # its own closing bracket) as the key text instead of the intended
     # `other['key']` sub-expression, so the whole lookup silently missed
     # and every use of it in a `when:` raised "... is undefined" where
-    # real Ansible resolves it and just evaluates the comparison. Fixed
+    # Ansible resolves it and just evaluates the comparison. Fixed
     # with a depth-aware `matching_bracket_close` (mirrors the existing
     # `top_level_char_index` depth tracking) instead of the plain
     # `String#index`.
@@ -313,7 +313,7 @@ describe Krikri::VariableSubstitutor::VariableLookup do
   end
 
   it "re-renders a dotted-access BASE variable that is itself still-unrendered {{ }} text before walking .method()/.attr off of it" do
-    # Real Ansible's recursive re-templating - one more independent copy
+    # Ansible's recursive re-templating - one more independent copy
     # of this bug class (already fixed at several OTHER call sites: the
     # bare-lookup fallback, the filter-chain head, default()'s own
     # argument, a bare comparison operand), this time for the dotted-

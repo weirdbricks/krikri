@@ -15,7 +15,7 @@ describe "unknown filter in a task's own vars: block" do
   # inside a set_fact task's vars: block: krikri detected the unknown filter
   # and raised the right error, but nothing between render_task_vars and
   # krikri-playbook's top-level run caught it, so the whole process crashed
-  # with an unhandled Crystal exception. Real ansible-playbook fails just
+  # with an unhandled Crystal exception. ansible-playbook fails just
   # that task ("No filter named 'X'.") and recaps failed=1.
   it "fails the task cleanly instead of crashing the whole process" do
     playbook = File.tempname("unknown-filter-task-vars", ".yml")

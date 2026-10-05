@@ -1,10 +1,10 @@
 require "../minitest_helper"
 
-# The 0.9.1267 open gap, live-verified against real ansible-core 2.19.11:
+# The 0.9.1267 open gap, live-verified against ansible-core 2.19.11:
 # a set_fact: whose single-pass render OUTPUT contains brace text (here
 # via a quoted literal - the stored value is the literal string
 # `{{ inner_undefined_name }}`), or a registered command: stdout holding
-# the same, is RESOLVED. Real Ansible tags facts/module results resolved
+# the same, is RESOLVED. Ansible tags facts/module results resolved
 # and never re-scans their text: a later msg: that references the value
 # prints the brace text verbatim, rc=0. krikri treated the stored text as
 # ANOTHER template level, looked the inner name up, and died with
@@ -46,7 +46,7 @@ describe "resolved set_fact/register values containing brace text" do
 
   # The brace text must enter the registered stdout through a QUOTED
   # LITERAL (the round-191 shape), not raw braces in the cmd: itself -
-  # arg finalization renders those, and real Ansible fails that shape
+  # arg finalization renders those, and Ansible fails that shape
   # identically.
   it "passes a registered command stdout holding brace text through verbatim" do
     status, output = run_playbook(<<-YAML)

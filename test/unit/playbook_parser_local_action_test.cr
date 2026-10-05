@@ -6,7 +6,7 @@ require "../../src/krikri/playbook_parser"
 # previously `local_action` itself became the module name, plugin lookup
 # failed, and the task was skipped as an unimplemented plugin (4
 # confirming roles: xlab_si.nuage_remove_entity, xlab_si.nuage_create_
-# entity, jdauphant.intellij, mrlesmithjr.lsi-megaraid). Real Ansible
+# entity, jdauphant.intellij, mrlesmithjr.lsi-megaraid). Ansible
 # treats it as "run this module on the controller" - the value parses
 # exactly like `action:` and the task delegates to localhost.
 describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
@@ -88,7 +88,7 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
 
     it "reports the RESOLVED module name in the legacy-key conflict error" do
       # mrlesmithjr.lsi-megaraid: `local_action: wait_for port=22 ...`
-      # next to a legacy `sudo:` - real Ansible's ModuleArgsParser
+      # next to a legacy `sudo:` - Ansible's ModuleArgsParser
       # resolves the directive first, so the message names wait_for, not
       # the literal local_action key.
       assert_raises_message(Krikri::ConflictingActionStatementsError, "conflicting action statements: wait_for, sudo") do

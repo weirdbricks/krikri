@@ -9,7 +9,7 @@ module Krikri
   #
   # Entirely unimplemented before - robertdebock.alternatives' own
   # "Configure alternatives" task (community.general.alternatives)
-  # silently dropped while real Ansible actually ran update-alternatives.
+  # silently dropped while Ansible actually ran update-alternatives.
   #
   # Debian/Ubuntu (`update-alternatives`) only - `family:` is RHEL-only
   # and not supported (no RHEL host available to verify against).
@@ -20,7 +20,7 @@ module Krikri
     # on RHEL - the module compares it verbatim against `family:`).
     alias Alternative = NamedTuple(priority: Int32, family: String?)
 
-    # real's `module.get_bin_path("update-alternatives", True)`, resolved
+    # Ansible's `module.get_bin_path("update-alternatives", True)`, resolved
     # through the UPDATE_ALTERNATIVES property - lazily, so the first
     # call is parse()'s `--display`. The absolute path it resolves to is
     # also what the `cmd` of any run_command failure reads back.
@@ -75,7 +75,7 @@ module Krikri
 
       # Real community.general.alternatives: result = dict(changed=False,
       # diff=...) then msg appended (alternatives.py:165,231) - live-verified
-      # against real 2.19.11 via a registered {{ r | to_json }} dump in the
+      # against Ansible 2.19.11 via a registered {{ r | to_json }} dump in the
       # podman container (check mode, changed and unchanged runs identical).
       PluginResult.new(changed: !messages.empty?, failed: false, msg: messages.join(' '), key_order: ["changed", "diff", "msg"])
     end
@@ -115,14 +115,14 @@ module Krikri
     end
 
     # state: selected - point the alternative at path, or at family when
-    # only `family:` was given (real's set(): "path takes precedence over
+    # only `family:` was given (Ansible's set(): "path takes precedence over
     # family as it is more specific"); state: auto - switch it back to
     # auto mode. Returns the failure result when update-alternatives
     # rejects the command.
     #
-    # The gate is real's `not (is_same_path or is_same_family)`, NOT a
+    # The gate is Ansible's `not (is_same_path or is_same_family)`, NOT a
     # `path &&` guard: with only `family:` given, self.path is None so
-    # is_same_path is always false and real still runs
+    # is_same_path is always false and Ansible still runs
     # `--set <name> <family>`.
     private def select_or_auto(bin : String, state : String, name : String, path : String?, family : String?, current_path : String?, current_mode : String?, current_alternatives : Hash(String, Alternative), messages : Array(String), check_mode : Bool) : PluginResult?
       is_same_path = !path.nil? && current_path == path
@@ -156,7 +156,7 @@ module Krikri
     end
 
     # The update-alternatives absolute path (get_bin_path), resolved once
-    # on the target so every `cmd` real reports names the same binary.
+    # on the target so every `cmd` Ansible reports names the same binary.
     private def resolve_update_alternatives : String?
       return @update_alternatives if @update_alternatives
       resolved = remote_exec("command -v update-alternatives 2>/dev/null")[:stdout].strip

@@ -15,7 +15,7 @@
 # below (required name, bool/int type conversion, state/pull_policy
 # choices in declaration order, username/password required-together,
 # auth_file/username etc. mutual exclusions, unsupported params) -
-# real runs all of it in AnsibleModule setup BEFORE the podman
+# Ansible runs all of it in AnsibleModule setup BEFORE the podman
 # executable probe, and password is no_log there (censored from every
 # message).
 #
@@ -34,7 +34,7 @@ module Krikri
     # Real argument_spec (containers.podman podman_image.py), name =>
     # aliases - as shipped in the latest GALAXY release the podman-diff
     # harness installs: pull_policy/retry/retry_delay exist on MAIN only
-    # (live-verified - real rejects both with Unsupported parameters).
+    # (live-verified - Ansible rejects both with Unsupported parameters).
     SPEC = {
       "name"              => %w[],
       "arch"              => %w[],
@@ -77,16 +77,16 @@ module Krikri
       force = true?(@params["force"]?)
       executable = @params["executable"]?.presence || "podman"
 
-      # Real Ansible hands every one of these to module.run_command as
+      # Ansible hands every one of these to module.run_command as
       # separate argv elements (executable resolved once via get_bin_path,
       # the image reference as one element), so metacharacters in a task
       # param are inert there. Krikri builds a shell string instead, so
       # each param-derived token is shell-quoted (quote_arg keeps
       # well-formed values byte-identical); pull_extra_args is a
-      # multi-argument string the real module shlex.splits into argv
+      # multi-argument string the Ansible module shlex.splits into argv
       # elements, so it is tokenized the same way below and each token is
       # quoted on its own.
-      # `command` is a shell BUILTIN, and real runs every podman
+      # `command` is a shell BUILTIN, and Ansible runs every podman
       # invocation through run_command (a shell), so this probe has to go
       # through one too - the engine's metacharacter-free argv fast path
       # would otherwise try to exec a binary literally named "command".
@@ -125,7 +125,7 @@ module Krikri
       censor(shape(changed, find_image(executable, reference), ["Pulled image #{reference}"]))
     end
 
-    # Real's own result dict (podman_image.py main): changed, actions,
+    # Ansible's own result dict (podman_image.py main): changed, actions,
     # podman_actions, image, stdout - then Ansible's own stdout_lines and
     # failed. Live-verified against containers.podman 1.17.0.
     KEY_ORDER = %w[changed actions podman_actions image stdout stdout_lines failed]
@@ -142,7 +142,7 @@ module Krikri
       result
     end
 
-    # Every podman invocation, recorded the way real's _run does (the
+    # Every podman invocation, recorded the way Ansible's _run does (the
     # full command line, unquoted).
     @podman_actions = [] of String
 
@@ -151,7 +151,7 @@ module Krikri
       remote_exec("#{Shell.quote_arg(executable)} #{args}")
     end
 
-    # Real's find_image: `podman image ls <ref> --format json` followed by
+    # Ansible's find_image: `podman image ls <ref> --format json` followed by
     # `podman inspect <ref> --format json`, both lists concatenated.
     private def find_image(executable : String, reference : String) : JSON::Any
       entries = [] of JSON::Any
@@ -168,7 +168,7 @@ module Krikri
       JSON::Any.new(entries)
     end
 
-    # Real AnsibleModule validation, in arg_spec.ArgumentSpecValidator
+    # AnsibleModule validation, in arg_spec.ArgumentSpecValidator
     # validate order: mutually_exclusive -> required -> types
     # (declaration order) -> choices -> required_together -> unsupported
     # (deferred to last). All of it precedes the podman executable

@@ -5,15 +5,15 @@ require "file_utils"
 # the current PV list against the requested pvs and runs vgextend for the
 # additions and `vgreduce --force` for the removals (remove_extra_pvs
 # defaults to true). The probe role's cold-run cleanup cannot remove kop_vg
-# (it still holds kop_lv; real refuses without force=true), so on the warm
+# (it still holds kop_lv; Ansible refuses without force=true), so on the warm
 # run the VG survived with its old PV while the role attached a fresh loop
-# device - real then failed lvg_create/lvg_exists with
+# device - Ansible then failed lvg_create/lvg_exists with
 # "Unable to reduce kop_vg by /dev/loop3." (rc 5, "still in use") while
 # krikri silently vgextend'ed and reported changed:true.
 #
 # Root-free pins via fake vgs/pvs/pvcreate/vgcreate/vgextend/vgreduce/
 # vgremove shims on a restricted child PATH: every mutating command appends
-# to a shared log so both the command sequence (real's exact argv shapes,
+# to a shared log so both the command sequence (Ansible's exact argv shapes,
 # including vgreduce's hardcoded --force and vgextend's lack of vg_options)
 # and the registered result shapes are asserted.
 private VGS_SHIM = "#!/bin/sh\ncat \"$LVG_TEST_DIR/vgs.out\" 2>/dev/null\n"
@@ -79,7 +79,7 @@ private def logged_commands(dir : String) : Array(Array(String))
 end
 
 describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
-  it "pvcreates+vgextends the new PV, then vgreduces the stale one, failing with real's rc/err/message" do
+  it "pvcreates+vgextends the new PV, then vgreduces the stale one, failing with Ansible's rc/err/message" do
     dir = lvg_shim_dir
     pv_old = File.join(dir, "pv_old")
     pv_new = File.join(dir, "pv_new")
@@ -103,7 +103,7 @@ describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
     result["err"].as_s.must_equal("  Physical volume \"#{pv_old}\" still in use\n")
     result["msg"].as_s.must_equal("Unable to reduce kop_vg by #{pv_old}.")
 
-    # Real's exact command sequence: adds first (pvcreate -f then vgextend,
+    # Ansible's exact command sequence: adds first (pvcreate -f then vgextend,
     # no vg_options on vgextend), then `vgreduce --force` with the removals.
     logged_commands(dir).must_equal([
       ["pvcreate", "-f", pv_new],
@@ -175,7 +175,7 @@ describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
     logged_commands(dir).must_be_empty
   end
 
-  it "fails with real's used-PV message when a requested PV belongs to another VG" do
+  it "fails with Ansible's used-PV message when a requested PV belongs to another VG" do
     dir = lvg_shim_dir
     pv_new = File.join(dir, "pv_new")
     pv_other = File.join(dir, "pv_other")
@@ -196,7 +196,7 @@ describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
     logged_commands(dir).must_be_empty
   end
 
-  it "creates PVs then the VG with real's argument order on a fresh VG" do
+  it "creates PVs then the VG with Ansible's argument order on a fresh VG" do
     dir = lvg_shim_dir
     pv_new = File.join(dir, "pv_new")
     File.touch(pv_new)
@@ -217,7 +217,7 @@ describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
     ])
   end
 
-  it "refuses to remove a non-empty VG without force=true (real's exact message, no vgremove)" do
+  it "refuses to remove a non-empty VG without force=true (Ansible's exact message, no vgremove)" do
     dir = lvg_shim_dir
     File.write(File.join(dir, "vgs.out"), "kop_vg;1;1\n")
 
@@ -247,7 +247,7 @@ describe "lvg plugin - PV diff on an existing VG (round 993003 warm run)" do
     logged_commands(dir).must_equal([["vgremove", "--force", "kop_vg"]])
   end
 
-  it "surfaces real's Failed executing pvs command. failure with the probe's rc/err" do
+  it "surfaces Ansible's Failed executing pvs command. failure with the probe's rc/err" do
     dir = lvg_shim_dir
     pv_new = File.join(dir, "pv_new")
     File.touch(pv_new)

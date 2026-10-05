@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/yaml_source_map"
 
 # Regression coverage for YamlSourceMap, the libyaml event pass that
-# labels tasks with their playbook origin for real ansible 2.19's
+# labels tasks with their playbook origin for Ansible 2.19's
 # `[ERROR]: Task failed:` blocks.
 #
 # The historical bug here was NOT the path logic: scan_events allocated
@@ -19,7 +19,7 @@ require "../../src/krikri/yaml_source_map"
 # across repeated scans and subsequent allocations).
 #
 # A task's recorded position is the start of its own YAML mapping - the
-# position of its first key, matching real ansible's Origin column
+# position of its first key, matching Ansible's Origin column
 # (e.g. `name` at column 5 of `  - name: x`).
 describe Krikri::YamlSourceMap do
   it "maps task positions by path through plays and task lists" do

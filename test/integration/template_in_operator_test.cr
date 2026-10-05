@@ -8,7 +8,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-describe "a real Jinja2 `in` test inside {% if %} against a variable-bound list" do
+describe "a Jinja2 `in` test inside {% if %} against a variable-bound list" do
   it "works against a dotted-path container, not just a literal list" do
     # Real bug found benchmarking dev-sec.os-hardening's own "rebuild
     # initramfs" task template: `{% if ('amd' in ansible_facts.

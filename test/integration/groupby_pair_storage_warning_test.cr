@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# groupby's result shape and its variable-storage warning. Real Jinja2
+# groupby's result shape and its variable-storage warning. Jinja2
 # 3.x do_groupby yields _GroupTuple namedtuples: json.dumps (debug:) shows
 # each group as a [grouper, list] ARRAY, item.0/item.1 indexing works, and
 # .grouper/.list attribute access works (namedtuple fields). Real
@@ -45,7 +45,7 @@ describe "groupby pair shape and GroupTuple storage warning" do
       YAML
 
     # stdout and stderr into SEPARATE buffers: the warning goes to stderr
-    # (like real's Display) and the play to stdout, and both arrive through
+    # (like Ansible's Display) and the play to stdout, and both arrive through
     # two independent pipes drained by two fibers. Merging them into one
     # IO::Memory lets a stderr chunk land between two stdout chunks, which
     # makes "this substring came from stdout" a property of the schedule

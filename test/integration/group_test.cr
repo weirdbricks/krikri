@@ -61,7 +61,7 @@ describe "group plugin" do
     result = PluginSpecHelper.run("group", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    # Real's check-mode absent branch exits with bare exit_json(changed=True).
+    # Ansible's check-mode absent branch exits with bare exit_json(changed=True).
     result.as_h.keys.must_equal(["changed"])
     `getent group root`.strip.wont_be_empty
   end

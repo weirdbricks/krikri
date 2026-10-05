@@ -5,7 +5,7 @@ require "file_utils"
 # never mutates host state.
 
 describe "shell plugin" do
-  it "rstrips a trailing newline from stdout, matching real Ansible's own AnsibleModule.run_command()" do
+  it "rstrips a trailing newline from stdout, matching Ansible's own AnsibleModule.run_command()" do
     result = PluginSpecHelper.run("shell", {"cmd" => "echo hello"})
 
     result["stdout"].as_s.must_equal("hello")
@@ -64,7 +64,7 @@ describe "shell plugin" do
     FileUtils.rm_rf(dir) if dir
   end
 
-  # Proactive param-coverage pass: real Ansible's `shell` doesn't document
+  # Proactive param-coverage pass: Ansible's `shell` doesn't document
   # `argv:` in its own docs but it IS functional there (shell and command
   # share the same underlying module implementation - command.py with
   # _uses_shell=True, where `args = args or argv` picks the argv list and
@@ -83,14 +83,14 @@ describe "shell plugin" do
   it "keeps shell operators inert inside argv: elements (quoted, not split)" do
     # Same argv contract as command: - an element containing shell
     # metacharacters must reach the command as ONE literal argument
-    # (real Ansible shlex_quote's it), not be re-interpreted by the
+    # (Ansible shlex_quote's it), not be re-interpreted by the
     # shell that runs the joined string.
     result = PluginSpecHelper.run("shell", {"argv" => ["echo", "a > b | c"].to_json})
 
     result["stdout"].as_s.must_equal("a > b | c")
   end
 
-  # Proactive param-coverage pass: real Ansible's `shell` documents
+  # Proactive param-coverage pass: Ansible's `shell` documents
   # `stdin` as "Set the stdin of the command directly to the specified
   # value" - live-verified against ansible-core 2.19.4 that it behaves
   # identically on shell to command (shared implementation). Not
@@ -101,7 +101,7 @@ describe "shell plugin" do
     result["stdout"].as_s.must_equal("HELLO")
   end
 
-  # Proactive param-coverage pass: real Ansible's `shell` documents
+  # Proactive param-coverage pass: Ansible's `shell` documents
   # `stdin_add_newline` as "Whether to append a newline to stdin data"
   # (bool, default yes) - live-verified against ansible-core 2.19.4 that
   # it behaves identically on shell to command: `wc -l` fed "line1\nline2"
@@ -119,7 +119,7 @@ describe "shell plugin" do
     result["stdout"].as_s.must_equal("1")
   end
 
-  # Proactive param-coverage pass: real Ansible's `shell` doesn't document
+  # Proactive param-coverage pass: Ansible's `shell` doesn't document
   # `strip_empty_ends` in its own docs but it IS functional there (shared
   # command.py implementation: stdout/stderr are rstripped of "\r\n" only
   # `if strip`, default yes). Live-verified against ansible-core 2.19.4.
@@ -136,7 +136,7 @@ describe "shell plugin" do
     result["stdout"].as_s.must_equal("a\nb\n\n\n")
   end
 
-  # Real Ansible REJECTS `expand_argument_vars:` on shell outright - the
+  # Ansible REJECTS `expand_argument_vars:` on shell outright - the
   # shell module's own argspec (which IS command.py's, bookworm 2.14
   # reference) doesn't include it, so the task fails before the command
   # runs, naming the module ansible.legacy.command with the full
@@ -149,7 +149,7 @@ describe "shell plugin" do
   # what's implemented. (2.19-era real re-ADDED expand_argument_vars to
   # the argspec - the 2.14 podman-diff harness reference is what this
   # engine matches here.)
-  it "rejects expand_argument_vars: exactly like real Ansible's shell module" do
+  it "rejects expand_argument_vars: exactly like Ansible's shell module" do
     result = PluginSpecHelper.run("shell", {"cmd" => "echo hi", "expand_argument_vars" => "false"})
 
     result["failed"].as_bool.must_equal(true)
@@ -157,7 +157,7 @@ describe "shell plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  # Real Ansible's shell module declares no check-mode support, so a
+  # Ansible's shell module declares no check-mode support, so a
   # --check run reports `skipping:` and the command never executes. The
   # marker-file probe is the whole point: the old regression was the
   # shell command running FOR REAL under --check.
@@ -174,7 +174,7 @@ describe "shell plugin" do
   end
 end
 
-# Real ansible-core 2.19.11's registered shell result runs changed,
+# ansible-core 2.19.11's registered shell result runs changed,
 # stdout, stderr, rc, cmd, start, end, delta, msg, stdout_lines,
 # stderr_lines, (ansible_facts,) failed - live-verified via
 # `{{ r | to_json }}` on a registered shell: task (the -v dump sorts
@@ -183,7 +183,7 @@ end
 # stdout_lines, and the creates: skip path keeps the same order with
 # null start/end/delta (all live-verified). krikri emits failed: false
 # on the executed-success path only (failed_flag), so the skip/check
-# pins below stop at stderr_lines - real also appends failed: false
+# pins below stop at stderr_lines - Ansible also appends failed: false
 # there.
 describe "shell plugin result key order" do
   it "serializes the executed-success result in real shell's key order" do

@@ -49,7 +49,7 @@ module Krikri
     # Real apt.py's own argument_spec (bookworm's ansible-core 2.14,
     # the harness reference) - names mapped to their alias lists. Drives
     # the unsupported-param/choices/bool-type validation below the same
-    # way real AnsibleModule setup does.
+    # way AnsibleModule setup does.
     private APT_SPEC = {
       "state"                        => [] of String,
       "update_cache"                 => ["update-cache"],
@@ -98,7 +98,7 @@ module Krikri
       }
     end
 
-    # install_recommends/update_cache default to None in real's argspec,
+    # install_recommends/update_cache default to None in Ansible's argspec,
     # so an explicit null skips type validation there (see
     # BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
@@ -112,9 +112,9 @@ module Krikri
 
     # Set true only when an `apt-get update` actually ran here and
     # genuinely moved the cache mtime (the same before/after stat pair
-    # real Ansible's get_updated_cache_time() diffs); surfaced as the
+    # Ansible's get_updated_cache_time() diffs); surfaced as the
     # result's `cache_updated` key on EVERY exit path via #execute's
-    # wrapper below - real Ansible's apt module always includes the key
+    # wrapper below - Ansible's apt module always includes the key
     # in exit_json, and the very common
     # `changed_when: apt_cache.cache_updated` idiom (hifis.gitlab's own
     # cache-refresh task) hard-fails with "object of type 'dict' has no
@@ -173,7 +173,7 @@ module Krikri
     end
 
     def execute_inner : PluginResult
-      # Real ansible's apt module rejects ANY parameter outside its own
+      # Ansible's apt module rejects ANY parameter outside its own
       # argument_spec at module-arg validation, before any action runs -
       # notably `use:`, which is a PACKAGE action-plugin parameter (the
       # action plugin consumes it to pick a backend and never forwards it
@@ -207,7 +207,7 @@ module Krikri
       # AnsibleModule's own check_mutually_exclusive. Previously this
       # engine let name+upgrade through to its own later
       # "unable to install additional packages when upgrading all
-      # installed packages" guard - real Ansible's mutually-exclusive
+      # installed packages" guard - Ansible's mutually-exclusive
       # check fires first and that wording is only reachable via
       # state=latest + name "*" + extra packages (kept there).
       mutex_group = [] of String
@@ -227,7 +227,7 @@ module Krikri
       # absent, build-dep, fixed, latest, present, got: <value>").
       # Previously the rejection came from this plugin's own fall-through
       # ("Invalid state: ... Must be present, absent, or latest") and
-      # only recognized a third of real's choice list.
+      # only recognized a third of Ansible's choice list.
       state = @params["state"]? || "present"
       unless APT_STATES.includes?(state)
         return choices_error("state", APT_STATES, state)
@@ -244,7 +244,7 @@ module Krikri
       # Ansible never gets past argument validation.
       validate_bool_params!
 
-      # Real ansible's apt module on a non-Debian-family host: it first
+      # Ansible's apt module on a non-Debian-family host: it first
       # auto-installs its python3-apt dependency ("Updating cache and
       # auto-installing missing dependency: python3-apt" warning) via
       # AnsibleModule.run_command, which fails ENOENT with exactly
@@ -262,7 +262,7 @@ module Krikri
         )
       end
 
-      # Real Ansible's apt module auto-installs the python3-apt bindings
+      # Ansible's apt module auto-installs the python3-apt bindings
       # (with an `apt-get update` prefetch) at module start when missing
       # and then respawns - see AptLockRetry#apt_auto_install_python_apt
       # for why this has to be a real, persistent host mutation rather
@@ -270,7 +270,7 @@ module Krikri
       # without the bindings stays on the "absent → changed=false"
       # cache-refresh path forever instead of moving to the mtime-diff
       # path after the first apt task (found via geerlingguy.kubernetes,
-      # rounds 65166/65311). Check mode skips this - real Ansible fails
+      # rounds 65166/65311). Check mode skips this - Ansible fails
       # fast in check mode instead (refusal mirrored inside the
       # update-cache block below, where it has always lived here).
       unless @check_mode
@@ -292,7 +292,7 @@ module Krikri
       end
       update_cache = true?(@params["update_cache"]?)
       cache_valid_time = @params["cache_valid_time"]?.try(&.to_i) || 0
-      # Real Ansible treats a bare `cache_valid_time: N` with NO name/
+      # Ansible treats a bare `cache_valid_time: N` with NO name/
       # upgrade/deb as a cache-refresh-only invocation (apt.py's own
       # `if p['cache_valid_time']:` branch runs the update pass and
       # early-exits ok) - a common "keep the apt cache fresh" idiom
@@ -302,12 +302,12 @@ module Krikri
       # parameter: name". cache_valid_time=0 is Python-falsy = absent,
       # matching apt.py exactly.
       has_cache_valid_time = cache_valid_time > 0
-      # Real Ansible's apt module exposes `lock_timeout` (default 60s) for
+      # Ansible's apt module exposes `lock_timeout` (default 60s) for
       # install/remove/upgrade operations and `update_cache_retries`
       # (default 5) + `update_cache_retry_max_delay` (default 12s) for
       # `apt-get update`. Found missing in round 153 (2026-08-20) when a
       # fresh Atlantic.net Ubuntu host's unattended-upgr held the dpkg
-      # lock during `apt:`; real Ansible's apt module waited up to 60s
+      # lock during `apt:`; Ansible's apt module waited up to 60s
       # for the lock and succeeded, krikri-playbook failed fast. See
       # `KNOWN_MISSING.md` / round 153 results for the full trace.
       # Wire the same parameter names here so user playbooks that
@@ -359,7 +359,7 @@ module Krikri
       changed = false
       messages = [] of String
 
-      # Real Ansible's own apt.py only lets a cache refresh contribute to
+      # Ansible's own apt.py only lets a cache refresh contribute to
       # the task's overall `changed:` when update_cache: is the ONLY
       # thing requested (`if not p['package'] and not p['upgrade'] and
       # not p['deb']: module.exit_json(changed=updated_cache, ...)`) -
@@ -378,7 +378,7 @@ module Krikri
       # `name: '{{ php_packages_extra }}'` with the var defaulting to `[]`
       # renders as the literal string "[]", a present-but-empty name: that
       # is exactly as "sole operation" as no name: at all (0ta2.php_role's
-      # "Install extra package.", round 84000: real Ansible folded the
+      # "Install extra package.", round 84000: Ansible folded the
       # cache refresh's own changed: in here; this engine saw a present
       # name: param and never did, losing the changed: entirely).
       no_effective_packages = (raw_name = name_or_pkg_param?).nil? || parse_package_names(raw_name).empty?
@@ -395,7 +395,7 @@ module Krikri
 
       # Handle cache update
       if update_cache || has_cache_valid_time
-        # Real Ansible's apt module cannot run at all in check mode when
+        # Ansible's apt module cannot run at all in check mode when
         # it can't see the python3-apt bindings (its auto-install fallback
         # is a real mutation, so check mode fails fast instead) - mirror
         # that refusal. On hosts WITH python3-apt nothing changes here.
@@ -418,10 +418,10 @@ module Krikri
           elsif !python_apt_present?
             # Normal flow never reaches this branch - the module-start
             # auto-install above either puts the bindings in place or
-            # fails the task, matching real Ansible's respawn. It is the
+            # fails the task, matching Ansible's respawn. It is the
             # fallback for a host where the install "succeeded" but the
             # bindings still won't import. On a host WITHOUT python3-apt,
-            # real Ansible auto-installs it
+            # Ansible auto-installs it
             # before its measurement window even opens - and that auto-install
             # step runs a full `apt-get update` first (apt.py's "Updating cache
             # and auto-installing missing dependency" path), then RESPAWNS the
@@ -429,7 +429,7 @@ module Krikri
             # that prefetch. A cache-refresh-only invocation therefore reports
             # `ok` on such hosts even when the prefetch genuinely fetched new
             # lists (verified live: deleting a lists file + aging the dir
-            # mtime, real Ansible fetched - /var/lib/apt/lists's mtime moved -
+            # mtime, Ansible fetched - /var/lib/apt/lists's mtime moved -
             # and still reported changed=False while python3-apt was absent,
             # and changed=True once it was present). Since this plugin shells
             # out to the CLI and never installs python3-apt, emulate real
@@ -450,7 +450,7 @@ module Krikri
               )
             end
           else
-            # Real Ansible's apt module wraps the cache update with
+            # Ansible's apt module wraps the cache update with
             # `update_cache_retries` + `update_cache_retry_max_delay`
             # (defaults 5 and 12): retries on failure with exponential
             # backoff, doubled each attempt, capped at the max delay. We
@@ -458,7 +458,7 @@ module Krikri
             # non-lock errors (broken repo, network failure, signature
             # mismatch) still fail-fast on the first attempt.
             #
-            # Real Ansible's own get_updated_cache_time() stats the same
+            # Ansible's own get_updated_cache_time() stats the same
             # update-success-stamp/lists-dir mtime BEFORE and AFTER
             # running the cache update, and only reports changed=true if
             # that mtime actually moved - with python3-apt present, both
@@ -494,7 +494,7 @@ module Krikri
       end
 
       # Get package name(s) - can be optional if just updating cache, or
-      # running autoremove/autoclean/clean (real Ansible's apt module
+      # running autoremove/autoclean/clean (Ansible's apt module
       # supports all four with no `name:` at all - konstruktoid-hardening's
       # own "Run apt-get autoremove"/"Run apt-get clean" handlers do
       # exactly `autoremove: true` and `autoclean: true, clean: true`
@@ -506,7 +506,7 @@ module Krikri
       upgrade = @params["upgrade"]?
       upgrade = nil if upgrade == "no"
 
-      # Real Ansible's apt module NEVER reaches its own cleanup()
+      # Ansible's apt module NEVER reaches its own cleanup()
       # (autoremove/autoclean) when `upgrade:` is set: upgrade() always
       # exits the module (exit_json/fail_json) before the `if not
       # packages: if autoclean/autoremove: cleanup(...)` tail runs, and
@@ -519,10 +519,10 @@ module Krikri
       # autoremovable), the cold run's autoremove had nothing to remove
       # yet, the upgrade then created the leftovers, and the WARM run's
       # standalone autoremove removed them - so warm reruns reported
-      # `changed: true` forever where real Ansible reported `ok`
+      # `changed: true` forever where Ansible reported `ok`
       # (entanet_devops.common / entanet_devops.upgrade, rounds 73358+).
       if (autoremove || autoclean || clean) && !upgrade
-        # Real Ansible's cleanup() builds `apt-get -y <dpkg_options>
+        # Ansible's cleanup() builds `apt-get -y <dpkg_options>
         # <purge> <force_yes> <operation>` - the purge/force flags and
         # the dpkg options apply to autoremove/autoclean too (`purge:
         # true` + `autoremove: true` is its own documented idiom: "Remove
@@ -530,7 +530,7 @@ module Krikri
         # configuration files"). `apt-get clean` is the exception: real
         # Ansible's aptclean() runs the bare command with no options at
         # all, so it stays bare here.
-        # Real Ansible's main() builds its `dpkg_options` ONCE - the
+        # Ansible's main() builds its `dpkg_options` ONCE - the
         # expanded list PLUS the lock-timeout override - and passes that
         # same value to cleanup(), install(), remove() and upgrade()
         # alike, so the lock timeout rides along on the cleanup command
@@ -554,8 +554,8 @@ module Krikri
 
           # `autoremove`/`autoclean` are apt-get operations that contend
           # for the dpkg lock - wrap with lock_timeout retry, matching
-          # real Ansible's `apt` module behavior (see execute's param
-          # parsing comment for the full trace). Real Ansible wraps its
+          # Ansible's `apt` module behavior (see execute's param
+          # parsing comment for the full trace). Ansible wraps its
           # cleanup() command in its PolicyRcD context manager like every
           # other package operation - mirrored below.
           result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
@@ -563,7 +563,7 @@ module Krikri
             return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
           end
 
-          # Real Ansible's apt module checks for a specific marker
+          # Ansible's apt module checks for a specific marker
           # string in apt-get's own stdout, per operation
           # (CLEAN_OP_CHANGED_STR in apt.py) - NOT empty-vs-non-empty
           # output. `autoclean`/`autoremove` (and plain `apt-get
@@ -571,7 +571,7 @@ module Krikri
           # boilerplate to stdout unconditionally, whether or not
           # anything was actually removed, so the previous "non-empty
           # stdout means changed" heuristic always reported changed:
-          # true for autoclean specifically. `clean:` (real Ansible's
+          # true for autoclean specifically. `clean:` (Ansible's
           # own `aptclean()`) reports changed: true UNCONDITIONALLY
           # when called with no package/upgrade/deb - not based on
           # output at all.
@@ -614,7 +614,7 @@ module Krikri
         # check_arg, upgrade_command) - the empty flag fields KEEP their
         # separators, and upgrade_command itself carries a trailing space
         # whenever autoremove is unset ("dist-upgrade " / "upgrade
-        # --with-new-pkgs "). That exact string is what real's failure
+        # --with-new-pkgs "). That exact string is what Ansible's failure
         # msg quotes ("'%s %s' failed: %s" over APT_GET_CMD and
         # upgrade_command), so the spacing is load-bearing for wording
         # parity, not cosmetics. Like install(), the command RUNS in
@@ -628,7 +628,7 @@ module Krikri
         # `apt-get upgrade`/`dist-upgrade` contend for the dpkg lock -
         # wrap with lock_timeout retry (same rationale as the
         # autoremove/autoclean wrap above), inside the same
-        # policy-rc.d lifecycle real Ansible's upgrade() uses.
+        # policy-rc.d lifecycle Ansible's upgrade() uses.
         result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}", lock_timeout, ->remote_exec(String)) }
         if result[:exit_code] != 0
           # Real upgrade() failure: fail_json(msg="'%s %s' failed: %s"
@@ -646,7 +646,7 @@ module Krikri
 
         upgrade_stdout = result[:stdout]
         upgrade_stderr = result[:stderr]
-        # Real Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
+        # Ansible screenscrapes APT_GET_ZERO - "\n0 upgraded, 0
         # newly installed, 0 to remove" with a LEADING newline. The
         # previous check here omitted the newline, so any summary
         # whose upgraded-count ends in 0 ("10 upgraded, 0 newly
@@ -789,7 +789,7 @@ module Krikri
           )
         else
           # Same no-name-ok behavior for the empty-name-list case (see
-          # the branch above) - real Ansible's install()/remove() no-ops
+          # the branch above) - Ansible's install()/remove() no-ops
           # exit_json with nothing to say, not a "Nothing to do" msg.
           # Real apt.py: exit_json(changed=False) - the bare
           # no-name/no-operations ok.
@@ -801,7 +801,7 @@ module Krikri
         end
       end
 
-      # Process each package based on state. Real Ansible's own apt
+      # Process each package based on state. Ansible's own apt
       # module only ever folds a cache update into the overall changed:
       # when no package/upgrade/deb was requested at all (its own
       # early-return branch, matched above) - once packages are given,
@@ -819,7 +819,7 @@ module Krikri
       when "absent"
         handle_remove(packages, lock_timeout)
       when "latest"
-        # `name: "*"` is real Ansible's apt.py spelling for "upgrade
+        # `name: "*"` is Ansible's apt.py spelling for "upgrade
         # everything installed" (its own `all_installed = '*' in
         # unfiltered_packages` check) - a DISTINCT code path from a
         # per-package install, not a package literally named "*". See
@@ -828,7 +828,7 @@ module Krikri
         # just a style choice.
         if packages.includes?("*")
           if packages.size > 1
-            # apt.py's own fail_json message verbatim - real Ansible
+            # apt.py's own fail_json message verbatim - Ansible
             # refuses to mix "*" with real package names rather than
             # guessing which one the caller meant.
             PluginResult.new(
@@ -878,12 +878,12 @@ module Krikri
       # value that merely LOOKS like a container (a literal
       # `name: "['pkg1']"` string, or a `{% if %}...{% else %}
       # ['pkg1']{% endif %}` block's rendered output) is a plain STRING
-      # in real ansible-core - native typing requires the template's
+      # in ansible-core - native typing requires the template's
       # whole AST to be one output node wrapping one expression, so
       # block-tag output is never re-parsed (live-verified vs
       # ansible-playbook 2.19.11: `apt: name: "['probe-pkg-one',
       # 'probe-pkg-two']"` fails with "No package(s) matching
-      # '['probe-pkg-one'' available" - real Ansible comma-splits the
+      # '['probe-pkg-one'' available" - Ansible comma-splits the
       # repr-looking string into garbage names and fails looking them
       # up, exactly what the plain comma-split below now produces,
       # instead of the old single-quote repair that decomposed it into
@@ -900,7 +900,7 @@ module Krikri
       end
 
       # Split by comma and clean up whitespace. Empty segments are KEPT:
-      # real Ansible treats each comma-split piece as a real package
+      # Ansible treats each comma-split piece as a real package
       # name and fails with "No package matching '' is available" for
       # an empty one (live-verified in check mode for `name: ""`,
       # leading `",probe-pkg-one"`, middle `"bash,,bash"` - with bash
@@ -909,11 +909,11 @@ module Krikri
       # gitlab_buildpkg_tools's `name: "{{ lookup('env',
       # 'DEB_PACKAGES_NAME') }}"` with the env var unset - the lookup
       # correctly yields "") into "no packages, cache update only" and
-      # reported ok where real Ansible fails the task.
+      # reported ok where Ansible fails the task.
       name_param.split(",").map(&.strip)
     end
 
-    # Real Ansible's apt module supports real apt's own `name=version`
+    # Ansible's apt module supports real apt's own `name=version`
     # pinning syntax (e.g. `rabbitmq-server={{ rabbitmq_version }}-1`,
     # geerlingguy.rabbitmq's own install task) - `dpkg -l` doesn't
     # understand that syntax at all (it takes a bare package-name glob,
@@ -929,7 +929,7 @@ module Krikri
     # Real install()'s spec construction for one package: a pinned spec
     # keeps its pin, a plain name gets the resolved candidate version
     # pinned on ("tree" -> "tree=2.0.2-1"), and a purely virtual name
-    # (Candidate: (none)) stays bare - real's version_installable=True
+    # (Candidate: (none)) stays bare - Ansible's version_installable=True
     # path. Wildcard pins keep their raw pattern (real resolves them
     # through package_best_match's fnmatch; the raw pin is the same
     # string for the exact-pin common case).
@@ -941,7 +941,7 @@ module Krikri
 
     # Real install()'s per-spec candidate probe: does this package name
     # exist in the apt cache at all, and what candidate version does it
-    # resolve to? Real does the lookup in-process (python-apt's
+    # resolve to? Ansible does the lookup in-process (python-apt's
     # cache[pkgname] + get_providing_packages for virtual names) with NO
     # apt-get invocation at all, so `apt-cache policy` is the CLI
     # stand-in. The stanza's Candidate: line is the tell: an unknown
@@ -1027,7 +1027,7 @@ module Krikri
     end
 
     # Handle `deb:` - install a local .deb file or a URL (downloaded to a
-    # temp path first). Idempotency mirrors real Ansible's own apt module:
+    # temp path first). Idempotency mirrors Ansible's own apt module:
     # read the package's own name+version out of the .deb's control
     # metadata via `dpkg-deb -f`, and skip the install if that exact
     # name/version is already installed.
@@ -1045,7 +1045,7 @@ module Krikri
           # arbitrary file as root.
           # The suffix is not cosmetic: command-line apt-get/dpkg refuse
           # non-.deb files with "E: Unsupported file ... given on
-          # commandline" (real Ansible's apt module uses python-apt, which
+          # commandline" (Ansible's apt module uses python-apt, which
           # never sees the filename, so this only bit us).
           tmp = File.tempfile(".krikri-playbook-deb-", ".deb")
           path = tmp.path
@@ -1063,7 +1063,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's fetch_file registers the downloaded temp with
+      # Ansible's fetch_file registers the downloaded temp with
       # module.add_cleanup_file, so it lives for the whole module run
       # (the very next thing apt.py does with it is `dpkg-deb -f`) and is
       # removed only at module exit. An ensure-scoped delete around just
@@ -1108,7 +1108,7 @@ module Krikri
       end
 
       # Read the .deb's own control metadata to find its real package
-      # name/version, the same identity real Ansible's apt module checks
+      # name/version, the same identity Ansible's apt module checks
       # against dpkg's installed-package database for idempotency.
       info_result = remote_exec("dpkg-deb -f #{shell_single_quote(path)} Package Version")
       if info_result[:exit_code] != 0
@@ -1155,7 +1155,7 @@ module Krikri
       dpkg_flags += " --force-all" if @force
       dpkg_cmd = "dpkg #{dpkg_flags} -i #{path}"
 
-      # Check mode: real still RUNS the command - with --simulate - and
+      # Check mode: Ansible still RUNS the command - with --simulate - and
       # registers its output (round-99500x apt_check_deb capture:
       # changed=True, the simulate output as stdout, parse_diff ALWAYS
       # applied here - install_deb has no m._diff guard, unlike
@@ -1163,7 +1163,7 @@ module Krikri
       deb_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive dpkg #{dpkg_flags} -i #{shell_single_quote(path)}", lock_timeout, ->remote_exec(String)) }
       if deb_result[:exit_code] == 0 || @check_mode
         unless deb_result[:exit_code] == 0
-          # a --simulate run failing is real's same "<cmd> failed" shape
+          # a --simulate run failing is Ansible's same "<cmd> failed" shape
           return PluginResult.new(
             changed: false,
             failed: true,
@@ -1188,8 +1188,8 @@ module Krikri
       # pre-installs them through python-apt's missing_deps and its own
       # install() first. Without a dependency resolver here, fall back
       # to `apt-get install <deb>`, which resolves them (its output then
-      # differs from real's deps-then-dpkg concatenation - a known
-      # residual); when that also fails, real's dpkg failure shape is
+      # differs from Ansible's deps-then-dpkg concatenation - a known
+      # residual); when that also fails, Ansible's dpkg failure shape is
       # what a no-dependency .deb (e.g. a failing preinst script)
       # produces, so it is what gets registered.
       fallback_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{shell_single_quote(path)}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
@@ -1226,7 +1226,7 @@ module Krikri
     private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false) : PluginResult
       # An empty package name (from `name: ""` or an empty comma
       # segment - parse_package_names keeps those now) is a hard failure
-      # in real Ansible's apt module, same as any other name missing
+      # in Ansible's apt module, same as any other name missing
       # from the cache: "No package matching '' is available"
       # (live-verified vs ansible-playbook 2.19.11 in check mode for
       # state present AND latest; state absent with an empty name is
@@ -1249,7 +1249,7 @@ module Krikri
       # to_install split below.
       installed_status = dpkg_installed_status(packages)
 
-      # Real Ansible's install() resolves each spec against the apt cache
+      # Ansible's install() resolves each spec against the apt cache
       # BEFORE running apt-get, failing on the first spec it can't
       # satisfy (live-verified wordings via the podman-diff
       # apt_edge_cases A4/A5 cases):
@@ -1261,25 +1261,25 @@ module Krikri
       # "E: Unable to locate package ..."/"E: Version ... was not found"
       # and wrapped them in a "Failed to install ...: <stderr>" msg -
       # entirely different wording, and the same wrong-first-error for a
-      # name LIST where real fails on the first unsatisfiable spec.
+      # name LIST where Ansible fails on the first unsatisfiable spec.
       # Real install()'s spec construction resolves each plain name to
       # its candidate version and pins it onto the apt-get spec
       # ("'tree=2.0.2-1'"), so the resolved candidate is captured here
       # alongside the resolvability check. A name whose Candidate: is
-      # "(none)" (purely virtual) stays bare, matching real's
+      # "(none)" (purely virtual) stays bare, matching Ansible's
       # version_installable=True path.
       candidates = {} of String => String?
       unless build_dep
         packages.each do |pkg|
           base_name, pinned_version = split_name_version(pkg)
           installed_probe, installed_ver_probe = installed_status[base_name]?.try { |pair| pair } || {false, nil}
-          # installed specs never reach the candidate check (real's
+          # installed specs never reach the candidate check (Ansible's
           # installed_version short-circuit)
           next if installed_probe && (pinned_version.nil? || installed_ver_probe == pinned_version)
           next if @only_upgrade && !installed_probe
           if pinned_version
             unless pinned_version_installable?(base_name, pinned_version)
-              # Real's failure travels through install()'s retvals into
+              # Ansible's failure travels through install()'s retvals into
               # fail_json - main() appends the cache keys BEFORE the
               # failed/msg pair lands (round-99500x apt_fail_candidate
               # capture: [cache_updated, cache_update_time, failed, msg,
@@ -1314,7 +1314,7 @@ module Krikri
         if installed && (pinned_version.nil? || installed_ver == pinned_version)
           already_installed << pkg
         elsif !installed && @only_upgrade
-          # Real Ansible's install(): `if not installed and only_upgrade:
+          # Ansible's install(): `if not installed and only_upgrade:
           # continue` - only_upgrade upgrades already-installed packages
           # and never newly installs one. The --only-upgrade flag passed
           # below makes apt-get itself skip these the same way.
@@ -1343,7 +1343,7 @@ module Krikri
         # only_upgrade, fixed, force_yes, autoremove, fail_on_autoremove,
         # check_arg, packages) - the empty flag fields KEEP their
         # separators, so the default shape carries the seven-space run
-        # before "install" that real's "'cmd' failed" msg shows
+        # before "install" that Ansible's "'cmd' failed" msg shows
         # (round-99500x apt_fail_install_dpkgopt capture). build_dep's
         # own format has no autoremove slot ("%s -y %s %s %s %s %s %s
         # build-dep %s").
@@ -1364,12 +1364,12 @@ module Krikri
         # registered msg.
         exec_cmd = "DEBIAN_FRONTEND=noninteractive #{install_cmd}"
         # `apt-get install` of named packages contends for the dpkg lock
-        # - wrap with lock_timeout retry, matching real Ansible's
-        # `apt` module behavior. Also wraps real Ansible's implicit
+        # - wrap with lock_timeout retry, matching Ansible's
+        # `apt` module behavior. Also wraps Ansible's implicit
         # recovery from a corrupt/unparseable on-disk package index: on
         # that specific failure (not a plain locate-miss on a valid
         # cache) the whole install is retried once behind an implicit
-        # `apt-get update` - real only does that at cache-acquisition
+        # `apt-get update` - Ansible only does that at cache-acquisition
         # time, and check mode never runs the update, so check mode gets
         # the plain lock retry only.
         install_result = if @check_mode
@@ -1391,13 +1391,13 @@ module Krikri
           # install" here. Real apt-get's own exit code is 0 either
           # way, so trusting exit_code alone previously always
           # reported changed: true even when apt's own summary line
-          # shows "0 upgraded, 0 newly installed" - real Ansible's own
+          # shows "0 upgraded, 0 newly installed" - Ansible's own
           # apt module (python-apt bindings, not this CLI-based
           # shell-out) correctly resolves the Provides: relationship
           # and reports changed: false here.
           # changed stays false when apt's own summary shows nothing was
           # actually installed (see the virtual-package comment above);
-          # check mode matches real's unconditional changed=True for a
+          # check mode matches Ansible's unconditional changed=True for a
           # reached-apt-get install.
           if @check_mode || !apt_summary_had_no_effect?(install_result[:stdout])
             changed = true
@@ -1443,14 +1443,14 @@ module Krikri
 
       # Real apt.py's install-path exit: exit_json(**retvals) with
       # retvals = {changed, stdout, stderr, diff} + cache_updated/
-      # cache_update_time (live-verified against real 2.19.11 via a
+      # cache_update_time (live-verified against Ansible 2.19.11 via a
       # registered {{ r | to_json }} dump in the podman container, and
       # against the round-992003 zfs_helper_install capture:
       # [changed, stdout, stderr, diff, cache_updated, cache_update_time,
       # stdout_lines, stderr_lines, failed]). There is NO msg key on
       # either install shape - the per-package "already installed"/
       # "installed" wording this engine used to invent is not part of
-      # real's result - and `diff` is ALWAYS present once packages reach
+      # Ansible's result - and `diff` is ALWAYS present once packages reach
       # apt-get (a bare {} when diff mode is off, parse_diff's
       # {prepared: ...} slice of apt-get's own output when on). The
       # controller appends stdout_lines/stderr_lines.
@@ -1458,7 +1458,7 @@ module Krikri
       # m._diff); diff mode on: parse_diff's prepared slice. The
       # stdout_lines/stderr_lines pair is emitted MODULE-side (like the
       # command/shell plugins) rather than left to the executor's
-      # post-backfill, so the registered order matches real's - real
+      # post-backfill, so the registered order matches Ansible's - real
       # appends stdout_lines/stderr_lines BEFORE its failed backfill.
       diff = @diff_mode ? apt_install_diff(install_stdout) : JSON.parse("{}")
       PluginResult.new(
@@ -1496,7 +1496,7 @@ module Krikri
       # NAME regardless of any `=version` pin (matching real apt-get
       # remove semantics), so only the base name is checked here. One
       # batched query for the whole list (see dpkg_installed_status).
-      # With purge: true, real Ansible's remove() also includes packages
+      # With purge: true, Ansible's remove() also includes packages
       # that aren't installed but still have files on the filesystem
       # (dpkg 'removed but config-files remain' state - `has_files and
       # purge` in apt.py): those still need a purge pass to drop the
@@ -1580,7 +1580,7 @@ module Krikri
       )
     end
 
-    # `name: "*"` + `state: latest` - real Ansible's apt.py builds
+    # `name: "*"` + `state: latest` - Ansible's apt.py builds
     # EXACTLY the same command as `upgrade: yes` here (its own
     # `upgrade(module, 'yes', ...)` call in the `if latest and
     # all_installed:` branch), never a per-package `apt-get install`.
@@ -1592,7 +1592,7 @@ module Krikri
     # jtreg6 held vs. jtreg7 available) it tries to pull in packages a
     # real `apt-get upgrade` never touches (upgrade only touches
     # packages that don't require installing/removing others) and fails
-    # outright with "you have held broken packages" where real Ansible
+    # outright with "you have held broken packages" where Ansible
     # reports a clean upgrade. Found via MonolithProjects.system_update's
     # own "Update Debian/Ubuntu system" task (round 601048).
     private def handle_wildcard_latest(messages : Array(String), autoremove : Bool, lock_timeout : Int32) : PluginResult
@@ -1637,7 +1637,7 @@ module Krikri
 
     # Handle upgrading packages to latest
     private def handle_latest(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32) : PluginResult
-      # Same empty-name hard failure real Ansible's apt module produces
+      # Same empty-name hard failure Ansible's apt module produces
       # for state: latest as for state: present (live-verified, see
       # handle_install's guard) - only handle_remove's absent path
       # tolerates one.
@@ -1649,7 +1649,7 @@ module Krikri
         )
       end
 
-      # only_upgrade: real Ansible's install() skips packages that are
+      # only_upgrade: Ansible's install() skips packages that are
       # not installed at all when only_upgrade is set (`if not installed
       # and only_upgrade: continue` - only upgrades, never newly
       # installs), for state: latest the same as for state: present.
@@ -1682,7 +1682,7 @@ module Krikri
         # `--only-upgrade` skips a package that isn't ALREADY installed
         # entirely ("Skipping grafana, it is not installed and only
         # upgrades are requested" - exit 0, "0 upgraded, 0 newly
-        # installed") - real Ansible's own state: latest installs a
+        # installed") - Ansible's own state: latest installs a
         # not-yet-present package too (apt-get's plain `install` already
         # does both: fresh-install when absent, upgrade when present and
         # outdated), so this plugin's own `--only-upgrade` flag was
@@ -1697,12 +1697,12 @@ module Krikri
         # unparseable lists that handle_install above gets. The
         # dpkg_options:/only_upgrade:/force:/fail_on_autoremove: flags,
         # the -t <default_release> and the -o APT::Install-Recommends=...
-        # / --allow-* flags all mirror real Ansible's install() command
+        # / --allow-* flags all mirror Ansible's install() command
         # construction (state: latest flows through install() there
         # with upgrade=True), inside the policy-rc.d lifecycle.
-        # Real's state=latest routes through the SAME install() as
+        # Ansible's state=latest routes through the SAME install() as
         # state=present (apt.py main(): `state_upgrade = True` for
-        # latest, then one install() call), so the command is real's
+        # latest, then one install() call), so the command is Ansible's
         # install() shape verbatim - `-y <dpkg_options> <only_upgrade>
         # install <specs><trailing>` with the lock-timeout-augmented
         # dpkg_options and the resolved candidate pinned onto each spec
@@ -1731,7 +1731,7 @@ module Krikri
         # apt-get exits 100 when a package can't be located at all
         # ("E: Unable to locate package sensu" - e.g. a repo that carries
         # no candidate for this release). That's a hard failure the way
-        # real Ansible's apt module fails with "No package matching X is
+        # Ansible's apt module fails with "No package matching X is
         # available", NOT a clean "already at latest" - the previous code
         # fell through to success here (found via buluma.sensu-install,
         # where packagecloud's sensu/stable repo has no jammy candidate).
@@ -1765,7 +1765,7 @@ module Krikri
       end
 
       # Real apt.py's state=latest flows through install() (its retvals
-      # shape - live-verified against real 2.19.11: changed installs
+      # shape - live-verified against Ansible 2.19.11: changed installs
       # carry stdout/stderr/diff + the cache keys, unchanged reruns the
       # cache keys only).
       PluginResult.new(
@@ -1776,7 +1776,7 @@ module Krikri
       )
     end
 
-    # Real Ansible's expand_dpkg_options (apt.py): the comma-separated
+    # Ansible's expand_dpkg_options (apt.py): the comma-separated
     # `dpkg_options:` list, each option becoming its own
     # `-o Dpkg::Options::=--<option>` flag. Default
     # "force-confdef,force-confold" reproduces the pair this plugin
@@ -1791,7 +1791,7 @@ module Krikri
     # #expand_dpkg_options builds) plus the lock-timeout override it
     # appends: `-o "Dpkg::Options::=--force-confdef" -o
     # "Dpkg::Options::=--force-confold" -o DPkg::Lock::Timeout=60`. The
-    # exact text is quoted verbatim inside real's "'cmd' failed" failure
+    # exact text is quoted verbatim inside Ansible's "'cmd' failed" failure
     # msg, so the quoting is load-bearing.
     private def real_dpkg_options(lock_timeout : Int32) : String
       opts = @dpkg_options.split(",").map(&.strip).reject(&.empty?)
@@ -1820,7 +1820,7 @@ module Krikri
       end
     end
 
-    # The flags real Ansible's install() places BEFORE the package list
+    # The flags Ansible's install() places BEFORE the package list
     # (apt.py cmd construction: only_upgrade, fixed, force_yes,
     # fail_on_autoremove all precede `install`). `fixed` has no module
     # param (state: fixed is a separate state this plugin doesn't offer
@@ -1833,7 +1833,7 @@ module Krikri
       flags.empty? ? "" : " " + flags.join(" ")
     end
 
-    # The options real Ansible's install() appends AFTER the package
+    # The options Ansible's install() appends AFTER the package
     # list, in its own construction order: -t <default_release>, the
     # APT::Install-Recommends override (only when install_recommends: is
     # explicitly set - nil keeps apt's own default), then the three
@@ -1854,7 +1854,7 @@ module Krikri
       flags.empty? ? "" : " " + flags.join(" ")
     end
 
-    # The flags real Ansible's upgrade() places before the upgrade
+    # The flags Ansible's upgrade() places before the upgrade
     # subcommand (force_yes, fail_on_autoremove, allow_unauthenticated,
     # allow_downgrades - upgrade() takes no only_upgrade/
     # install_recommends/allow_change_held_packages, matching above).
@@ -1874,14 +1874,14 @@ module Krikri
       release
     end
 
-    # Real Ansible's PolicyRcD context manager (apt.py): when
+    # Ansible's PolicyRcD context manager (apt.py): when
     # `policy_rc_d:` is non-null, back up any existing /usr/sbin/
     # policy-rc.d, write one that always exits with the given code (the
     # file dpkg's package maintainer scripts consult via invoke-rc.d to
     # decide whether to (re)start services on install), run the apt
     # operation inside that window, then restore the backup - or remove
     # the written file when none existed - ALWAYS, including when the
-    # operation failed. Every package-operation command real Ansible
+    # operation failed. Every package-operation command Ansible
     # runs (install/remove/cleanup/upgrade/deb) gets its own
     # PolicyRcD window; the cache update does not, matching here (only
     # the handle_*/cleanup call sites below are wrapped). Restore
@@ -1916,7 +1916,7 @@ module Krikri
       end
 
       # Restore failure fails the task even when the operation itself
-      # succeeded - real Ansible's __exit__ fail_json's the same way.
+      # succeeded - Ansible's __exit__ fail_json's the same way.
       # When the operation already failed its own error surfaces
       # instead (the task fails either way).
       if @policy_rc_d_restore_failed && inner[:exit_code] == 0
@@ -1938,7 +1938,7 @@ module Krikri
     private def should_update_cache?(cache_valid_time : Int32) : Bool
       return true if cache_valid_time == 0
 
-      # Real Ansible's apt.py checks /var/lib/apt/periodic/update-success-
+      # Ansible's apt.py checks /var/lib/apt/periodic/update-success-
       # stamp's mtime if present (written by APT::Periodic's own update
       # timer/unattended-upgrades), else falls back to the /var/lib/apt/
       # lists DIRECTORY's own mtime. This previously stat'd /var/lib/apt/
@@ -1946,7 +1946,7 @@ module Krikri
       # barely touches, not a real freshness signal - so its mtime stayed
       # old (image-build time) and `age > cache_valid_time` was almost
       # always true, refreshing (and reporting changed: true for) a cache
-      # real Ansible correctly saw as still valid and left alone. Found
+      # Ansible correctly saw as still valid and left alone. Found
       # benchmarking Stouts.apt's own "Update apt cache" task (default
       # apt_cache_valid_time: 3600) - py reported `ok`, cr `changed`.
       last_update = cache_mtime

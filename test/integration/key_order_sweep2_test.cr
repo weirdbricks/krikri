@@ -4,25 +4,25 @@ require "file_utils"
 # Registered-result key orders for the cron/cronvar/git/package_facts/
 # service_facts/sudoers/systemd/timezone plugins plus the
 # normalize_module_result warnings tail, pinned to the orders
-# live-verified against real ansible-core 2.19.11 by registering each
+# live-verified against ansible-core 2.19.11 by registering each
 # module's result and dumping `{{ r | to_json }}` (the -v dump sorts
 # alphabetically, so the order is only observable programmatically).
 #
 # Live-verification constraints on this dev box (no passwordless sudo):
-# every shape here was captured either in real's check mode (systemd,
+# every shape here was captured either in Ansible's check mode (systemd,
 # timezone - whose registered shape is identical for changed and
 # unchanged: name, changed, status, [enabled,] state, failed /
-# changed, diff, failed) or through genuinely unprivileged real runs
+# changed, diff, failed) or through genuinely unprivileged Ansible runs
 # (cron/cronvar against the invoking user's own crontab, git against a
 # local file:// repo, package_facts/service_facts/sudoers with the
 # module's own temp-path parameters). user/group/authorized_key could
 # NOT be verified this way (their registered shapes need root or a
 # writable ~/.ssh) and carry no pin.
 #
-# krikri-only keys (msg and echoed params real's module does not return)
+# krikri-only keys (msg and echoed params Ansible's module does not return)
 # trail the pinned keys; the assertions below pin krikri's full
 # registered order so a later edit cannot silently reshuffle the shared
-# keys relative to real's verified one.
+# keys relative to Ansible's verified one.
 #
 # pip's changed path was verified live too (changed, cmd, name, version,
 # state, requirements, virtualenv, stdout, stderr, stdout_lines,
@@ -31,7 +31,7 @@ require "file_utils"
 #
 # The user/systemd `warnings` tail that normalize_module_result now
 # re-appends AFTER the failed/changed backfill was verified through
-# real's find module (Skipped-path warning): registered find with a
+# Ansible's find module (Skipped-path warning): registered find with a
 # skipped path runs files, changed, msg, matched, examined,
 # skipped_paths, failed, warnings - warnings last, after the backfilled
 # failed.
@@ -57,7 +57,7 @@ ensure
 end
 
 describe "cron plugin result key order" do
-  it "registers jobs, envs, changed first (real 2.19.11: jobs, envs, changed, failed, changed/unchanged identical)" do
+  it "registers jobs, envs, changed first (Ansible 2.19.11: jobs, envs, changed, failed, changed/unchanged identical)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -80,7 +80,7 @@ describe "cron plugin result key order" do
 end
 
 describe "cronvar plugin result key order" do
-  it "registers vars, changed first (real 2.19.11: vars, changed, failed, changed/unchanged identical)" do
+  it "registers vars, changed first (Ansible 2.19.11: vars, changed, failed, changed/unchanged identical)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -102,7 +102,7 @@ describe "cronvar plugin result key order" do
 end
 
 describe "git plugin result key order" do
-  it "registers changed, before, after on a fresh clone (real 2.19.11: changed, before, after, failed)" do
+  it "registers changed, before, after on a fresh clone (Ansible 2.19.11: changed, before, after, failed)" do
     base = PluginSpecHelper.tmp_path("git-order-#{Random::Secure.hex(4)}")
     repo = File.join(base, "repo")
     clone = File.join(base, "clone")
@@ -132,7 +132,7 @@ describe "git plugin result key order" do
     FileUtils.rm_r(base) if base && Dir.exists?(base)
   end
 
-  it "keeps the same shared order on an idempotent update (real 2.19.11: changed, before, remote_url_changed, after, failed)" do
+  it "keeps the same shared order on an idempotent update (Ansible 2.19.11: changed, before, remote_url_changed, after, failed)" do
     base = PluginSpecHelper.tmp_path("git-order-#{Random::Secure.hex(4)}")
     repo = File.join(base, "repo")
     clone = File.join(base, "clone")
@@ -166,7 +166,7 @@ describe "git plugin result key order" do
 end
 
 describe "package_facts plugin result key order" do
-  it "registers ansible_facts, failed, changed (real 2.19.11: ansible_facts, failed, changed - exit_json passes no changed)" do
+  it "registers ansible_facts, failed, changed (Ansible 2.19.11: ansible_facts, failed, changed - exit_json passes no changed)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -181,14 +181,14 @@ describe "package_facts plugin result key order" do
       YAML
     keys.first.must_equal("ansible_facts")
     keys.last(2).must_equal(["failed", "changed"])
-    # Full shape - real has NO msg key (a krikri-only "Gathered N package
+    # Full shape - Ansible has NO msg key (a krikri-only "Gathered N package
     # facts" msg used to sit between ansible_facts and failed).
     keys.must_equal(["ansible_facts", "failed", "changed"])
   end
 end
 
 describe "service_facts plugin result key order" do
-  it "registers ansible_facts, failed, changed (real 2.19.11: ansible_facts, failed, changed - exit_json passes no changed)" do
+  it "registers ansible_facts, failed, changed (Ansible 2.19.11: ansible_facts, failed, changed - exit_json passes no changed)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -207,7 +207,7 @@ describe "service_facts plugin result key order" do
 end
 
 describe "sudoers plugin result key order" do
-  it "registers changed first (real 2.19.11: changed, failed - the module's wire is just {changed})" do
+  it "registers changed first (Ansible 2.19.11: changed, failed - the module's wire is just {changed})" do
     dir = PluginSpecHelper.tmp_path("sudoers-order-#{Random::Secure.hex(4)}")
     FileUtils.mkdir_p(dir)
     keys = run_registered_dump2(<<-YAML)
@@ -256,7 +256,7 @@ describe "systemd plugin result key order" do
   # by injecting a fake systemctl via PATH; that env injection can't reach
   # a real playbook run here, so this pin skips precisely when systemctl
   # cannot answer, and stays strict wherever it can.
-  it "registers name, changed, status, enabled, state (real 2.19.11 check mode: name, changed, status, enabled, state, failed)" do
+  it "registers name, changed, status, enabled, state (Ansible 2.19.11 check mode: name, changed, status, enabled, state, failed)" do
     skip "no usable systemctl on this host to report cron.service's real ActiveState" unless systemd_show_works?
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
@@ -280,7 +280,7 @@ describe "systemd plugin result key order" do
 end
 
 describe "timezone plugin result key order" do
-  it "registers changed, diff (real 2.19.11: changed, diff, failed, changed/unchanged identical)" do
+  it "registers changed, diff (Ansible 2.19.11: changed, diff, failed, changed/unchanged identical)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local
@@ -301,7 +301,7 @@ describe "timezone plugin result key order" do
 end
 
 describe "normalize_module_result warnings tail" do
-  it "re-appends module warnings after the failed/changed backfill (real 2.19.11 find: skipped_paths, failed, warnings)" do
+  it "re-appends module warnings after the failed/changed backfill (Ansible 2.19.11 find: skipped_paths, failed, warnings)" do
     keys = run_registered_dump2(<<-YAML)
       - hosts: localhost
         connection: local

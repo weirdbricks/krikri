@@ -29,7 +29,7 @@ module Krikri
         verify_tls : Bool = true,
         username : String? = nil,
         password : String? = nil,
-        # Basic auth timing, mirroring real Ansible's fetch_url: true sends
+        # Basic auth timing, mirroring Ansible's fetch_url: true sends
         # the Authorization header on the FIRST request; false (real
         # get_url/uri's default) holds it back until a 401 challenge, then
         # retries once WITH the header. The default here is true only to
@@ -42,13 +42,13 @@ module Krikri
         unredirected_headers : Array(String) = [] of String
 
       # What the FINAL response of a redirect-following download looked
-      # like: real Ansible's get_url derives a directory-dest download's
+      # like: Ansible's get_url derives a directory-dest download's
       # filename from the final response's Content-Disposition header
       # (falling back to the FINAL post-redirect URL's basename), so
       # callers need both pieces of the last hop, not the original URL.
       record Result, final_url : String, headers : HTTP::Headers
 
-      # A download that failed, carrying the pieces of real Ansible's
+      # A download that failed, carrying the pieces of Ansible's
       # fetch_url result dict the CALLING module needs to build its own
       # message around.
       #
@@ -106,7 +106,7 @@ module Krikri
       # Downloads `url` to `dest`, following up to `max_redirects`
       # redirects and streaming the raw body byte-for-byte. Returns nil on
       # success; raises FetchError on a response other than 200 (including
-      # 304, which real's own url_get handles one branch higher up),
+      # 304, which Ansible's own url_get handles one branch higher up),
       # raises on too many redirects, and on an unsupported scheme.
       def self.download(
         url : String,
@@ -145,7 +145,7 @@ module Krikri
             end
 
             # Real url_get accepts ONLY 200: anything else (304 included -
-            # real handles that one a branch higher up, in url_get itself)
+            # Ansible handles that one a branch higher up, in url_get itself)
             # is urllib's HTTPError, whose str() is "HTTP Error <code>:
             # <reason>" with the reason phrase the SERVER sent.
             raise http_error(response) unless response.status_code == 200
@@ -208,7 +208,7 @@ module Krikri
 
       # Streams the response body onto the staging path. perm 0666 (not
       # Crystal's 0644 default): this staged file becomes the final dest
-      # after the rename, and real Ansible's atomic_move gives a new dest
+      # after the rename, and Ansible's atomic_move gives a new dest
       # 0666 & ~umask (umask 002 -> 0664, umask 022 -> 0644). Ignored when
       # overwriting an existing file.
       #
@@ -242,7 +242,7 @@ module Krikri
       end
 
       # A redirect hop drops the headers named in unredirected_headers
-      # (real Ansible's fetch_url applies the same list after each
+      # (Ansible's fetch_url applies the same list after each
       # redirect). The remaining headers, and the auth credentials they
       # were derived from, carry over untouched.
       private def self.redirect_options(options : Options) : Options

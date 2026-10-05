@@ -37,16 +37,16 @@ module Krikri
     # regardless. Measured as a consistent ~1.8x cold-run wall-time
     # regression on a real 2-host cluster playbook (apt installs,
     # kubeadm image pulls) across two independent host pairs
-    # (247.4s/252.1s vs a stable ~137s/135s for real ansible-playbook on
+    # (247.4s/252.1s vs a stable ~137s/135s for ansible-playbook on
     # the same playbook) - not host-to-host jitter, since both engines'
     # own repeated measurements were reproducible within ~2%.
-    # --step: ask before each task. Real ansible-playbook prompts
+    # --step: ask before each task. ansible-playbook prompts
     # "Perform task: TASK: <name> (N)o/(y)es/(c)ontinue: " and treats
     # anything other than y/c as No (the capital N is the default), with
     # `c` disabling every later prompt for the rest of the run. Answering
     # No skips the task outright - it does not run and is not counted.
     #
-    # Not reproduced: real Ansible prints the prompt line TWICE, once
+    # Not reproduced: Ansible prints the prompt line TWICE, once
     # plain and once padded out with asterisks, which is an artifact of
     # routing it through its display banner rather than intended output.
     @step_continue = false
@@ -152,13 +152,13 @@ module Krikri
 
         parsed = parse_list_result(result, vars_context)
         if parsed && kind == "with_items"
-          # Real Ansible's with_items: flattens its resolved list by one
+          # Ansible's with_items: flattens its resolved list by one
           # level - a filter chain like `results | map(attribute='stdout_
           # lines') | list | unique` produces a list of one-element lists,
-          # and real ansible-playbook iterates the bare inner scalars, not
+          # and ansible-playbook iterates the bare inner scalars, not
           # the nested lists. Found via round 813350 (RedHatOfficial.
           # rhel9_hipaa), whose `rpm --restore '{{ item }}'` task broke
-          # because item stayed a nested list where real Ansible had
+          # because item stayed a nested list where Ansible had
           # already flattened it to a scalar package name.
           parsed = flatten_with_items_one_level(parsed)
         end
@@ -175,7 +175,7 @@ module Krikri
         # SCALAR - parse_list_result only recognizes list shapes, so it
         # returned nil here and the function bailed with no loop items at
         # all: the task ran once with `item` unbound ("'item' is
-        # undefined") where real ansible flattens the one-element array
+        # undefined") where Ansible flattens the one-element array
         # one level and iterates ONCE with the scalar as `item`. Same
         # array-wrapped fallback the direct-resolution path below applies.
         return [JSON::Any.new(result)] if task.loop_template_array_wrapped?
@@ -185,7 +185,7 @@ module Krikri
       case kind
       when "with_items"
         # with_items: has its OWN, distinct legacy scalar-wrapping
-        # behavior - real Ansible ALWAYS wraps a non-list resolution
+        # behavior - Ansible ALWAYS wraps a non-list resolution
         # into a single-item iteration, whether the source was written
         # array-wrapped (`with_items: ["{{ var }}"]`) or as a DIRECT
         # scalar template (`with_items: "{{ var }}"`, no square
@@ -231,7 +231,7 @@ module Krikri
         # single-element ARRAY-WRAPPED source as exactly one iteration
         # with that scalar as `item`.
         #
-        # Real Ansible's loop: is `items = template(the whole source
+        # Ansible's loop: is `items = template(the whole source
         # list)`: the source LIST is the item list, so a one-element
         # array whose element templates to a list stays exactly ONE
         # iteration whose item is that whole list - never its elements.
@@ -243,7 +243,7 @@ module Krikri
         # in the YAML at all) really does iterate the list - there the
         # templated value IS the item list.
         #
-        # with_list: is loop: under its legacy name (real Ansible
+        # with_list: is loop: under its legacy name (Ansible
         # rewrites it to the same `loop:` machinery), with exactly one
         # difference: it tolerates a scalar in EITHER shape - live-
         # verified against 2.19.11, `with_list: "{{ myscalar }}"` runs
@@ -252,7 +252,7 @@ module Krikri
         #
         # The array-wrapped leniency that strict-fails is only real for
         # the loop: form above - task.loop_template_array_wrapped is
-        # false for the DIRECT scalar form, and there real Ansible hard-
+        # false for the DIRECT scalar form, and there Ansible hard-
         # fails a non-list resolution instead: round174 differential
         # matrix scenarios 11a (`null`) / 11c (a scalar string),
         # live-verified against ansible-core 2.19.12 -
@@ -277,7 +277,7 @@ module Krikri
           if (arr = value.as_a?) && arr.empty? && !task.loop_template_array_wrapped?
             # The bare-scalar source shape (`with_dict: "{{ var }}"`, NO
             # YAML list wrapper - buluma.rsyslog's own `rsyslog_rsyslog_
-            # d_files: []` default, round 180): real Ansible templates the
+            # d_files: []` default, round 180): Ansible templates the
             # bare scalar into the lookup's TERMS LIST itself, so a
             # resolution that IS an empty list means zero terms, zero
             # loop items, task reported "skipping". The original fix's
@@ -295,8 +295,8 @@ module Krikri
             # Live-verified against ansible-core 2.19.11 that the two
             # shapes really diverge this way (bare scalar skips,
             # list-wrapped fails) - previously BOTH hit the empty-list
-            # leniency above and silently skipped where real Ansible
-            # fails. The type name real Ansible prints is a 2.19-internal
+            # leniency above and silently skipped where Ansible
+            # fails. The type name Ansible prints is a 2.19-internal
             # lazy-templating container class not reproducible here;
             # "list" is the direct `dict()` equivalent.
             raise UndefinedVariableError.new(
@@ -331,7 +331,7 @@ module Krikri
     LOOP_LOOKUP_TERM_VAR = "krikri_loop_lookup_term"
 
     # Generic legacy `with_<lookup>:` source (with_url:, with_lines:,
-    # with_env:, with_pipe:, ...). Real Ansible converts the keyword to
+    # with_env:, with_pipe:, ...). Ansible converts the keyword to
     # `loop: "{{ lookup('<plugin>', <terms>, wantlist=True) }}"` with each
     # term templated against the variable context first
     # (listify_lookup_plugin_terms), then runs the lookup plugin on the
@@ -355,7 +355,7 @@ module Krikri
       # expression source text. Splicing re-templated the `{{ }}` inside a
       # term's string literal, so host-derived text reaching a term
       # (`with_env: "{{ r.stdout }}"`) executed `lookup('pipe', ...)` on
-      # the controller; real Ansible passes terms as data. Jinja markers
+      # the controller; Ansible passes terms as data. Jinja markers
       # left in a rendered term are data, so they are registered as unsafe
       # text and never rendered again.
       terms = raw_terms.flat_map do |term|
@@ -385,7 +385,7 @@ module Krikri
           raise ex
         rescue ex
           # A lookup plugin's own failure (unreadable file, HTTP error)
-          # fails the TASK, like real Ansible - it must never escape as an
+          # fails the TASK, like Ansible - it must never escape as an
           # unhandled exception that kills the whole controller run.
           raise UndefinedVariableError.new(ex.message || "The lookup plugin '#{plugin}' failed")
         end
@@ -593,7 +593,7 @@ module Krikri
           # chain where the var IS set but the underlying value is
           # itself an empty list, so the finalization renders it as
           # the JSON-string "[]") - is "no value", not "one item with
-          # that value". Real Ansible's with_community.general.
+          # that value". Ansible's with_community.general.
           # flattened yields zero items for any of these no-value
           # sentinels. Pushing the bogus value would cascade into
           # downstream `{{ item.X }}` rendering as "undefined" again
@@ -619,7 +619,7 @@ module Krikri
     # The element list one resolved with_nested:/with_together: source
     # contributes: a resolved list contributes its own elements, a scalar
     # contributes one element, and a resolved STRING contributes one
-    # element per CHARACTER - real Ansible's nested/together lookups
+    # element per CHARACTER - Ansible's nested/together lookups
     # iterate their terms directly, so a string term is itself a sequence
     # (live-verified against ansible-core 2.19.11: `with_nested: [ruby]`
     # really does iterate 'r', 'u', 'b', 'y', one item per character).
@@ -744,7 +744,7 @@ module Krikri
     # flattened - verified by grep before making this raise unconditional).
     # A bare/dotted reference (REGEX_BARE_VAR_REF's exact shape) that
     # resolves to nothing now RAISES rather than silently returning nil -
-    # round174 differential matrix: real Ansible fails a genuinely
+    # round174 differential matrix: Ansible fails a genuinely
     # undefined loop:/with_items:/with_dict:/with_community.general.
     # flattened: source with "'the_var' is undefined" at loop-resolution
     # time, before the task ever runs (not "runs once with an unbound
@@ -770,17 +770,17 @@ module Krikri
       # as an unrescued exception all the way out of #run and crashed the
       # ENTIRE krikri-playbook process instead of just failing this one
       # task, losing every other host/task the run would otherwise have
-      # completed. Real Ansible's own AnsibleFilterError for an unknown
+      # completed. Ansible's own AnsibleFilterError for an unknown
       # filter fails only the task.
       raise WhenEvaluationError.new(ex.message)
     rescue ex : FirstFoundLookupError
       # Same channel again: a templated `loop: "{{ query('first_found',
       # params) }}"` whose lookup finds nothing (and has no skip: true)
-      # is a task failure in real Ansible, never a silent empty loop.
+      # is a task failure in Ansible, never a silent empty loop.
       raise WhenEvaluationError.new(ex.message)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
-        # Real Ansible evaluates the task's own when: BEFORE the loop source
+        # Ansible evaluates the task's own when: BEFORE the loop source
         # is ever templated, and WHAT the when: itself references decides
         # the verdict on an undefined loop source - round 701114/821007
         # (redhat_sap.sap_hana_hsr), all three shapes live-verified against
@@ -796,7 +796,7 @@ module Krikri
         #      skippable);
         #   C) when: references the yet-unbound loop variable itself
         #      (`item` / item.* / item[..], e.g. `item.backup is defined`)
-        #      -> reads as false and the task skips (real Ansible's own
+        #      -> reads as false and the task skips (Ansible's own
         #      documented item-unbound-before-loop-known leniency).
         # So the lenient path is scoped to exactly one thing: whether the
         # when:'s OWN strictly-raised undefined reference is item-rooted
@@ -827,7 +827,7 @@ module Krikri
     # loop variable itself - the A/B/C scoping rule documented on
     # resolve_loop_items_or_raise above (round 701114/821007,
     # redhat_sap.sap_hana_hsr). Item-rooted (`item`, `item.attr`,
-    # `item[...]`) keeps real Ansible's own item-unbound-before-loop-known
+    # `item[...]`) keeps Ansible's own item-unbound-before-loop-known
     # leniency (Case C, skip); anything else is an independently-undefined
     # variable (Case B) and must not swallow the loop's own error. Parses
     # the name out of the raised error's message ('x' is undefined - the
@@ -843,7 +843,7 @@ module Krikri
       name == "item" || name.starts_with?("item.") || name.starts_with?("item[")
     end
 
-    # Real Ansible resolves a task's module/action plugin before it ever
+    # Ansible resolves a task's module/action plugin before it ever
     # looks at what the loop would iterate over - an unresolvable module
     # is a fatal error regardless of whether the loop it's attached to
     # turns out to have zero items. Shared by when_passes? (the per-item/
@@ -852,13 +852,13 @@ module Krikri
     # case (loop_items.empty?, where when_passes? is never reached at all
     # - nothing to iterate means nothing to call it on - so this module
     # check would otherwise silently never run and the task would just
-    # print "skipping:" instead of the fatal rc=4 real Ansible gives).
+    # print "skipping:" instead of the fatal rc=4 Ansible gives).
     # Found via robertdebock.postgres's "Create postgres database" task:
     # community.postgresql.postgresql_db, looped over the (empty-by-
     # default) postgres_databases, with the community.postgresql
     # collection not installed.
     # Renders every loop item strictly (deep_render_item's default), with
-    # real Ansible's when:-before-loop ordering on failure: a task-level
+    # Ansible's when:-before-loop ordering on failure: a task-level
     # `when:` that evaluates False leniently (including the `when: item is
     # defined` idiom with `item` unbound) means the task is SKIPPED before
     # any item would ever have been templated (live-verified against
@@ -908,13 +908,13 @@ module Krikri
       rescue ex : Exception
         # A lookup failure inside a loop item's own template (`lookup('file',
         # '~/.ssh/id_rsa.pub')` on a host without that file, ngine_io.
-        # exoscale_compute) is a failed TASK in real Ansible ("The lookup
+        # exoscale_compute) is a failed TASK in Ansible ("The lookup
         # plugin 'file' failed: ..."), never a process crash - this render
         # ran OUTSIDE every other rescue (the substitute_task_params one,
         # the resolve_loop_items_or_raise one above), so the bare Exception
         # escaped to #run and killed the whole binary with a stack trace
         # instead of failing exactly this task. Deliberately NOT routed
-        # through the when:-skippable check above: real Ansible fails the
+        # through the when:-skippable check above: Ansible fails the
         # task even when a `when:` would have skipped it (its keyword
         # finalization happens before the when: verdict matters - the
         # dockpack.gitlab_runner delegate_to case), and a lookup error is
@@ -930,7 +930,7 @@ module Krikri
       loop_items : Array(JSON::Any),
       exec_host : Host = host,
     )
-      # An empty loop means the task skips cleanly - real Ansible resolves
+      # An empty loop means the task skips cleanly - Ansible resolves
       # a looped task's module per-item inside _execute_internal, so with
       # zero items the module name is NEVER resolved and an unimplemented
       # module here is never reported (live-verified against ansible-core
@@ -955,13 +955,13 @@ module Krikri
       # so `item != ""` was always true and a should-have-been-skipped
       # item ran for real, on a bogus literal path.
       # Item rendering is part of loop-SOURCE resolution - the strict
-      # render sees the alias-free snapshot (real Ansible's own scoping,
+      # render sees the alias-free snapshot (Ansible's own scoping,
       # see #synthesize_legacy_ssh_aliases), while the per-iteration
       # task-arg context below keeps the full one.
       rendered_items = render_loop_items_strict_or_raise(task, loop_items, loop_source_vars_context(task, host, base_vars_context), host.name)
       if rendered_items.nil?
         # Strict item templating failed but the task's own when: evaluates
-        # False without `item` bound - real Ansible evaluates the when:
+        # False without `item` bound - Ansible evaluates the when:
         # before ever templating the loop list, so this is a plain skip
         # (live-verified: `when: false` + an undefined loop item prints
         # "skipping:" and counts skipped=1, never an error).
@@ -996,7 +996,7 @@ module Krikri
                      else
                        # A running (not re-dup'd-from-base) vars_context
                        # carries each iteration's ansible_facts forward
-                       # into the next - real Ansible does the same for
+                       # into the next - Ansible does the same for
                        # set_fact:, and dev-sec os_hardening's own account-
                        # list building depends on it: `set_fact:
                        # system_users: "{{ system_users | default([]) +
@@ -1014,7 +1014,7 @@ module Krikri
                          # a loop_var; live-verified against 2.19.11), and
                          # its registered per-item results carry the custom
                          # key, never "item". Binding both made krikri see an
-                         # "item" real Ansible fails as undefined.
+                         # "item" Ansible fails as undefined.
                          vars_context["item"] = item unless loop_var
                          vars_context[loop_var] = item if loop_var
                          vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
@@ -1109,7 +1109,7 @@ module Krikri
                          # finish_looped_task like the batched path does: the
                          # executed items are displayed there too, so printing the
                          # skip inline here would put every skip ahead of them
-                         # (real prints in iteration order).
+                         # (Ansible prints in iteration order).
                          if task.when_condition
                            passes = begin
                              when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item)
@@ -1122,7 +1122,7 @@ module Krikri
                            end
                          end
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
-                                    # Real Ansible retries each loop item
+                                    # Ansible retries each loop item
                                     # independently under until:/retries: - the
                                     # loop_items branch used to return before the
                                     # until branch in execute_task, silently
@@ -1221,7 +1221,7 @@ module Krikri
         # raise-to-absent rescue, and the key was deleted from the base
         # context entirely - then the batched steps templated the module
         # arg `state: "{{ state }}"` against that context and every item
-        # failed with "'state' is undefined" where real Ansible (which
+        # failed with "'state' is undefined" where Ansible (which
         # evaluates task vars per item) ran all six apt iterations fine.
         # Restoring the raw task.vars values and re-rendering them with
         # this item bound mirrors executor_loops's non-batched branch
@@ -1248,7 +1248,7 @@ module Krikri
           item_lbl = item_label_for(task, item, vars_context, host)
           unless when_passes?(task, vars_context, host, item_label: item_lbl, shared: item_substitutor, defer_stats: true, defer_display: true, item: item)
             # Defer the "skipping:" print to finish_looped_task so it lands
-            # in iteration order with the executed items (real's ordering);
+            # in iteration order with the executed items (Ansible's ordering);
             # printing here (during batch-prep, before the shared round
             # trip) would put skips ahead of the changed/ok lines.
             skipped_items[idx] = SkippedLoopItem.new(item_lbl, @last_false_condition)
@@ -1298,7 +1298,7 @@ module Krikri
     end
 
     # One iterated item whose `when:` evaluated false: everything
-    # finish_looped_task needs to replay real Ansible's registered shape for
+    # finish_looped_task needs to replay Ansible's registered shape for
     # it - the label its `skipping:` line shows, and the expression real
     # reports as that item's own `false_condition` (which is per-item, not
     # per-task: a `when:` LIST's failing clause, or the single condition
@@ -1317,7 +1317,7 @@ module Krikri
       # True when at least one executed item failed at the TASK level (a
       # when:-evaluation failure routed through when_error_result, whose
       # marker ResultDisplay consumes) rather than at the module level -
-      # real 2.19.11 prints the aggregate fatal for that shape only:
+      # Ansible 2.19.11 prints the aggregate fatal for that shape only:
       # module item failures show per-item lines with no trailing fatal,
       # while when-failed items end with
       # `fatal: [host]: FAILED! => {"msg": "One or more items failed"}`
@@ -1348,7 +1348,7 @@ module Krikri
         # A per-item `when:`-false iteration (batched path only - the
         # one-at-a-time path prints its own skips inline in execute_task_
         # once): print it here, in iteration order, so the "skipping:" line
-        # interleaves with the executed items exactly as real does.
+        # interleaves with the executed items exactly as Ansible does.
         if (skipped = skipped_items[idx]?)
           connection_host = host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : skipped.label
@@ -1356,7 +1356,7 @@ module Krikri
           # Real records EVERY iterated item in the registered `results`,
           # the when:-false ones included - dropping them left a later
           # `loop: "{{ registered.results }}"` iterating an empty list and
-          # printing a single bare `skipping:` where real prints one line
+          # printing a single bare `skipping:` where Ansible prints one line
           # per skipped item (konstruktoid.hardening's audit loop over an
           # earlier all-skipped loop's results).
           results << JSON::Any.new(loop_item_skip_result(task, item, idx, skipped.false_condition))
@@ -1393,7 +1393,7 @@ module Krikri
                        # (aisbergg.beats' `label: "{{ (state in ['present',
                        # 'latest']) | ternary('install', 'uninstall') }}
                        # {{ item }}"` showed "undefined auditbeat" instead of
-                       # real Ansible's "uninstall auditbeat").
+                       # Ansible's "uninstall auditbeat").
                        task.vars.each do |key, raw_value|
                          next if key == "item" || key == task.loop_var || key == task.index_var
                          label_context[key] = raw_value
@@ -1420,7 +1420,7 @@ module Krikri
         # check being the canonical case) - the single-task path has
         # always honored that, but this looped path treated such a
         # result as a normal execution: it printed "ok:", counted in
-        # ok=/changed=, and even fed merge_ansible_facts. Real Ansible
+        # ok=/changed=, and even fed merge_ansible_facts. Ansible
         # instead prints each individually-skipped item as its own
         # "skipping: [host] => (item=...)" line (cyan) and leaves it out
         # of the executed set entirely - only the items that actually
@@ -1459,7 +1459,7 @@ module Krikri
         results << JSON::Any.new(result_hash)
       end
 
-      # Real's own aggregate rule (task_executor.py): the loop result
+      # Ansible's own aggregate rule (task_executor.py): the loop result
       # starts out skipped and any item that did NOT report itself skipped
       # clears the flag - an item result with no `skipped` key at all
       # counts as executed. Both shapes of when:-skip (all items vs some)
@@ -1480,8 +1480,8 @@ module Krikri
         # bare trailing `skipping: [host]` line: the empty case printed
         # nothing at all otherwise, and the all-items-skipped case needs
         # it IN ADDITION to its own per-item `skipping: => (item=...)`
-        # lines above - verified live against real ansible-playbook 2.19
-        # (found via jahrik.nerd_fonts round 813005): real Ansible emits
+        # lines above - verified live against ansible-playbook 2.19
+        # (found via jahrik.nerd_fonts round 813005): Ansible emits
         # the bare line in BOTH shapes, so both share this same
         # executed_count == 0 condition.
         connection_host = host.name
@@ -1518,7 +1518,7 @@ module Krikri
           end
           # A looped task with ignore_errors: that had at least one item
           # fail prints a single bare `...ignoring` after the per-item
-          # lines (real prints it once for the whole task, not per item).
+          # lines (Ansible prints it once for the whole task, not per item).
           # The per-item display no longer emits it (the loop-failure branch
           # in result_display returns before that suffix).
           puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(task, base_vars_context)
@@ -1531,7 +1531,7 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
-          # Real's loop-aggregate register shape, in real's own insertion
+          # Ansible's loop-aggregate register shape, in Ansible's own insertion
           # order (ansible-core's itemized-task handler builds it key by
           # key, and the order is observable - a later `to_json` of the
           # register, or a loop over its `results`, prints it verbatim):
@@ -1542,7 +1542,7 @@ module Krikri
           # nothing reads {results, skipped, msg, changed} while a
           # changing one reads {results, skipped, changed, ...}.
           #
-          # A zero-item loop never reaches that at all: real returns the
+          # A zero-item loop never reaches that at all: Ansible returns the
           # "No items in the list" shape instead, with `changed` FIRST, a
           # `skipped_reason` (not `skip_reason`), and no `msg` - so the
           # empty case is built separately rather than by the flags below.
@@ -1551,7 +1551,7 @@ module Krikri
           # `msg` is "All items completed" / "All items skipped" / "One
           # or more items failed" - an aggregate that always carried
           # failed: false made `r.failed | default('none')` print False
-          # where real prints None (live-verified, git_config GC14).
+          # where Ansible prints None (live-verified, git_config GC14).
           aggregate = {} of String => JSON::Any
           if loop_items.empty?
             aggregate["changed"] = JSON::Any.new(false)
@@ -1580,7 +1580,7 @@ module Krikri
     end
 
     # The registered `results` entry for one iterated item whose `when:`
-    # evaluated false. Real Ansible's per-item conditional skip is the SAME
+    # evaluated false. Ansible's per-item conditional skip is the SAME
     # dict its non-looped task skip uses
     # (`dict(changed=False, skipped=True, skip_reason='Conditional
     # result was False') | result_context`, the conditional's own
@@ -1609,7 +1609,7 @@ module Krikri
     # ansible_loop_var, with index_var's `i`/`ansible_index_var` after
     # them when loop_control sets one).
     #
-    # loop_control.loop_var REPLACES "item" - real ansible-core's
+    # loop_control.loop_var REPLACES "item" - ansible-core's
     # registered per-item result carries the CUSTOM key only (plus
     # ansible_loop_var), never "item" (live-verified against 2.19.11:
     # out.results[0].keys() with loop_var: p is
@@ -1631,7 +1631,7 @@ module Krikri
     end
 
     # Render a loop item for display purposes (Ansible shows `(item=...)`).
-    # loop_control.extended - real Ansible's `ansible_loop` dict for the
+    # loop_control.extended - Ansible's `ansible_loop` dict for the
     # current iteration. Keys and semantics verified against ansible-core
     # 2.19.4 over a 3-item loop: index is 1-based, revindex counts down
     # from length, and nextitem/previtem are ABSENT (not null) at the
@@ -1675,7 +1675,7 @@ module Krikri
       # evaluates its until at all and registers NO attempts key, because
       # the whole condition/retry block only engages when there is more
       # than one run), and an until task with retries unset runs 1 + 3
-      # (real's implicit default, kept here via the parser's 3).
+      # (Ansible's implicit default, kept here via the parser's 3).
       total_runs = 1 + (task.retries < 0 ? 0 : task.retries)
       # Real clamps a negative delay to 1.
       delay = task.delay < 0 ? 1 : task.delay
@@ -1705,27 +1705,27 @@ module Krikri
 
         break if attempt >= total_runs
 
-        # Real's v2_runner_retry callback line (default callback plugin),
+        # Ansible's v2_runner_retry callback line (default callback plugin),
         # printed after every failed attempt that still has retries left,
-        # before the delay sleep. Real's task_name is the task's get_name()
+        # before the delay sleep. Ansible's task_name is the task's get_name()
         # (the same text the TASK banner shows); the loop item is NOT part
         # of the line. Color DEBUG - plain text in a non-tty run.
         puts "FAILED - RETRYING: [#{host.name}]: #{render_task_name_for_display(task, host)} (#{total_runs - attempt} retries left)."
         sleep(delay.seconds)
       end
 
-      # Real's post-loop shape, live-verified vs 2.19.11: the registered
+      # Ansible's post-loop shape, live-verified vs 2.19.11: the registered
       # result of an until task carries an attempts int - the successful
       # attempt's 1-based number, or the retries value when the loop ran
       # out (real sets attempts = total_runs - 1 there even though
       # total_runs runs actually happened), and marks the result
       # failed: true (the fatal display + ...ignoring/recap follow from
       # the ordinary failure pipeline below). The exhausted result also
-      # carries real's error-event projection exception:
+      # carries Ansible's error-event projection exception:
       # "(traceback unavailable)" AFTER attempts (live-verified - both a
       # retries-exhausted and every other failed registered result project
       # it; the fatal path just never gets to show it off). A single-run
-      # until task (retries: 0) gets NEITHER key (real never engages the
+      # until task (retries: 0) gets NEITHER key (Ansible never engages the
       # loop machinery).
       if result && total_runs > 1
         result_hash = result.as_h.dup
@@ -1771,14 +1771,14 @@ module Krikri
     end
 
     # Prints and counts each of *tasks* as individually skipped - used
-    # when a block:'s own when: is false, since real Ansible expands a
+    # when a block:'s own when: is false, since Ansible expands a
     # block into its member tasks rather than reporting one aggregate
     # skip for the block itself. Recurses into a nested block so its own
     # members are reported individually too, matching how a nested
     # block's when: (false or not) would otherwise be evaluated.
     # AND a block's own when: onto each of its children, so a condition
     # that raised at the block level is re-evaluated (and re-raised) once
-    # per child task the way real Ansible's own when: inheritance does.
+    # per child task the way Ansible's own when: inheritance does.
     # Idempotent: the Task objects are shared across hosts in a
     # multi-host play, so a second host reaching the same failing block
     # must not wrap the condition twice.

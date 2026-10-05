@@ -69,7 +69,7 @@ describe "yum: package-group install idempotency" do
       result = PluginSpecHelper.run("yum", {"name" => "@Development tools", "state" => "present"})
       result["failed"]?.must_be_nil
       result["changed"].as_bool.must_equal(false)
-      # real's no-op shape (dnf/yum exit_json(**response) with nothing
+      # Ansible's no-op shape (dnf/yum exit_json(**response) with nothing
       # resolved): msg "Nothing to do", empty results - NOT a prose
       # summary naming the already-satisfied group.
       result["msg"].as_s.must_equal("Nothing to do")

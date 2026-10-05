@@ -3,10 +3,10 @@ require "../base_plugin"
 
 module Krikri
   module PluginHelpers
-    # AnsibleArgValidation - reusable fragments of real AnsibleModule's
+    # AnsibleArgValidation - reusable fragments of AnsibleModule's
     # argument-validation surface (ansible-core's parameters.py /
     # validation.py / arg_spec.py wordings), for the plugins that
-    # hand-roll their own argument-spec checks the way the real module's
+    # hand-roll their own argument-spec checks the way the Ansible module's
     # AnsibleModule setup does. Each plugin owns its own merged-spec
     # ORDER (real iterates the merged argument_spec in declaration
     # order and only ever surfaces errors[0]); this module only owns
@@ -17,7 +17,7 @@ module Krikri
       # are always strings). boolean() lowercases and strips first.
       REAL_TRUE  = %w[y yes on 1 true t]
       REAL_FALSE = %w[n no off 0 false f]
-      # convert_bool.py's BOOLEANS, repr'd - real Ansible iterates a
+      # convert_bool.py's BOOLEANS, repr'd - Ansible iterates a
       # Python SET here, so the order differs between module processes
       # (PYTHONHASHSEED); this fixed order is one of the orders real
       # emits, and only the wording shape is deterministic.
@@ -81,7 +81,7 @@ module Krikri
 
       # Real _get_unsupported_parameters: any param key outside the spec
       # names and their aliases. Engine-internal executor keys never
-      # reach the real module's params - real strips the _ansible_*
+      # reach the Ansible module's params - real strips the _ansible_*
       # internal-args namespace generically before argspec validation
       # (check_mode/diff_mode ride in there), while a user-supplied
       # check_mode is NOT in that namespace and fails validation like

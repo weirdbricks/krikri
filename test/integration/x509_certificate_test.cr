@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.crypto.x509_certificate, providers selfsigned and ownca.
-# Behavior differentialed against the real module (community.crypto
+# Behavior differentialed against the Ansible module (community.crypto
 # 3.1.1 / ansible-core 2.19.4), including its extension output
 # (SubjectKeyIdentifier always, AuthorityKeyIdentifier for ownca) and
 # its idempotency rules - a certificate carries a random serial and
@@ -66,7 +66,7 @@ describe "x509_certificate plugin" do
   end
 
   # The CSR's extensions have to survive into the certificate, and a
-  # SubjectKeyIdentifier is added on top - the real module's output
+  # SubjectKeyIdentifier is added on top - the Ansible module's output
   # exactly.
   it "copies the CSR's extensions and adds a subject key identifier" do
     key = make_key("ext.key")
@@ -160,7 +160,7 @@ describe "x509_certificate plugin" do
   # The case a subject comparison alone cannot see: the CA is rebuilt
   # under the same name, so every certificate it signed is now
   # unverifiable and has to be reissued. Caught via the authority key
-  # identifier, which is what the real module compares too.
+  # identifier, which is what the Ansible module compares too.
   it "reissues when the CA is regenerated under the same subject name" do
     ca_key = make_key("ca.key")
     ca_csr = make_csr("ca.csr", ca_key, "My CA",
@@ -180,7 +180,7 @@ describe "x509_certificate plugin" do
     # The case a subject comparison alone cannot see: the CA is rebuilt
     # under the same name, so every certificate it signed is now
     # unverifiable and has to be reissued. Caught via the authority key
-    # identifier, which is what the real module compares too.
+    # identifier, which is what the Ansible module compares too.
     PluginSpecHelper.run("openssl_privatekey", {"path" => ca_key, "size" => "2048", "force" => "true"})
     ca_csr = make_csr("ca.csr", ca_key, "My CA",
       {"basic_constraints" => %(["CA:TRUE"]), "basic_constraints_critical" => "true",

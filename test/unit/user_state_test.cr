@@ -48,7 +48,7 @@ describe UserState do
     it "omits a flag whose value is an empty string, not just nil" do
       # Real bug found benchmarking ansible-community.ansible-vault:
       # `groups: "{{ vault_groups }}"` where vault_groups: null renders
-      # to the empty string "" (real Ansible's own format_value for
+      # to the empty string "" (Ansible's own format_value for
       # Nil), not nil - the old `if groups` check treated "" as truthy
       # (Crystal only treats nil/false as falsy), adding a value-less
       # "-G " flag. Joined into one shell command string with the
@@ -67,7 +67,7 @@ describe UserState do
       # non-native `{{ }}` substitution to the literal text "[]" (same
       # as Python's `str([])`), which `groups.presence` alone treats as
       # a real (single, malformed) group name - `useradd: group '[]'
-      # does not exist`. Real Ansible's `groups:` argspec is `type:
+      # does not exist`. Ansible's `groups:` argspec is `type:
       # list`, and `check_type_list` parses a `[...]`-shaped string back
       # into a real list via `ast.literal_eval` before ever reaching
       # useradd, so it passes no `-G` at all for an empty list.
@@ -90,7 +90,7 @@ describe UserState do
     end
 
     it "passes a Python-repr-looking groups: string through raw (never re-parsed into a list)" do
-      # Real ansible-core's native typing requires a template's whole
+      # ansible-core's native typing requires a template's whole
       # parsed AST to be exactly one output node wrapping one
       # expression, so a value that merely LOOKS like a container - a
       # literal `groups: "['a', 'b']"` string, or a `{% if %}...{% else
@@ -110,7 +110,7 @@ describe UserState do
       args.must_equal(["-u '60000'", "-o", "-m", "'dup'"])
     end
 
-    it "never emits -o without a uid (real Ansible nests it inside its own uid branch)" do
+    it "never emits -o without a uid (Ansible nests it inside its own uid branch)" do
       args = UserState.useradd_args("dup", nil, nil, nil, nil, nil, nil, false, true, non_unique: true)
       args.must_equal(["-m", "'dup'"])
     end
@@ -124,7 +124,7 @@ describe UserState do
       args.must_equal(["-u '60000'", "-o", "-d '/home/sk'", "-m", "-k '/etc/skel.custom'", "-K 'UMASK=027'", "-f '30'", "'sk'"])
     end
 
-    it "silently drops skeleton/umask when create_home is off (real Ansible ignores them there too)" do
+    it "silently drops skeleton/umask when create_home is off (Ansible ignores them there too)" do
       args = UserState.useradd_args("sk", nil, nil, nil, nil, "/home/sk", nil, false, false,
         skeleton: "/etc/skel.custom", umask: "027")
       args.must_equal(["-d '/home/sk'", "-M", "'sk'"])
@@ -182,7 +182,7 @@ describe UserState do
       UserState.usermod_flags(SAMPLE_USER, nil, nil, nil, "/home/alice", nil, move_home: true).must_equal([] of String)
     end
 
-    it "emits -f for password_expire_account_disable even when everything else already matches (real Ansible has no idempotency check for it)" do
+    it "emits -f for password_expire_account_disable even when everything else already matches (Ansible has no idempotency check for it)" do
       flags = UserState.usermod_flags(SAMPLE_USER, nil, nil, nil, nil, nil, inactive: "30")
       flags.must_equal(["-f '30'"])
     end
@@ -286,7 +286,7 @@ describe UserState do
       UserState.expires_date(0_i64).must_equal("1970-01-01")
     end
 
-    it "returns an empty string for a negative timestamp (real Ansible's own '-1 to remove' convention)" do
+    it "returns an empty string for a negative timestamp (Ansible's own '-1 to remove' convention)" do
       UserState.expires_date(-1_i64).must_equal("")
     end
   end
@@ -294,7 +294,7 @@ describe UserState do
   describe ".expires_changed?" do
     it "is false when the requested timestamp maps to the same calendar day already set" do
       # 2015-01-28 00:00:00 UTC and 2015-01-28 23:59:59 UTC are the same
-      # day-since-epoch (16463) - real Ansible's own usermod-path
+      # day-since-epoch (16463) - Ansible's own usermod-path
       # comparison is day-level, not full-timestamp.
       UserState.expires_changed?(1422403387_i64, 16463).must_equal(false)
     end
@@ -314,7 +314,7 @@ describe UserState do
   end
 
   describe ".local_expiry_days" do
-    # Live-verified against the real module's local branch: expires:
+    # Live-verified against the Ansible module's local branch: expires:
     # 1893456000 emits `lchage -E 21915` (whole days since epoch,
     # unlike the normal path's `-e YYYY-MM-DD`).
     it "converts a timestamp to whole days since epoch" do

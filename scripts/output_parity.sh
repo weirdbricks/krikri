@@ -20,7 +20,7 @@
 #
 # Allowed substitutions policy: NONE by default. A mask entry may only
 # be added for a substitution that is provably unavoidable (absolute
-# paths in real ansible's `Origin:` lines, timestamps/durations), and
+# paths in Ansible's `Origin:` lines, timestamps/durations), and
 # each entry must carry a comment justifying why it cannot be matched
 # byte-for-byte by both engines. The mask list currently contains ONE
 # justified entry (the interpreter-discovery warning, below); nothing
@@ -51,14 +51,14 @@ if [ ${#playbooks[@]} -eq 0 ]; then
 fi
 
 # Provably-unavoidable masks - ONE justified entry:
-# Real ansible-playbook emits the interpreter-discovery warning below on
+# ansible-playbook emits the interpreter-discovery warning below on
 # stderr for any run that executes a Python module under an auto*
 # interpreter mode. Krikri has no Python interpreter to discover, so
 # this line cannot be matched by design (emulating it would be false).
 # The mask strips exactly that one line - hostname and interpreter path
 # wildcarded - from stderr on both sides (a no-op for krikri, which
 # never emits it). Nothing else may be masked.
-# Second entry, same class: real ansible also attaches the discovered
+# Second entry, same class: Ansible also attaches the discovered
 # interpreter to a failed task's result, so its `fatal: ... FAILED! => {..}`
 # JSON dump carries a lone `"ansible_facts": {"discovered_interpreter_python":
 # "..."}, ` key. Krikri has no Python interpreter and can never emit it.
@@ -88,7 +88,7 @@ MASKS=(
   # engines must reproduce it verbatim.
   "s/(ansible\\.)[a-z0-9_]{8}([^'\"]*)(')/\\1<RND>\\2\\3/g"
   # Sixth-and-a-half entry: a CHANGED copy:/template: result quotes the
-  # STAGED SOURCE file's path under "src" - real ansible stages the
+  # STAGED SOURCE file's path under "src" - Ansible stages the
   # content under a random ansible-tmp-<epoch>-<pid>-<random>/.source.txt
   # path that is different on every run by construction, so only that
   # whole key/value pair is masked (krikri has no equivalent staged path
@@ -109,7 +109,7 @@ MASKS=(
   # prefix and trailing ~ must still match byte for byte.
   "s/\\.([0-9]+)\\.([0-9]{4}-[0-9]{2}-[0-9]{2}@[0-9]{2}:[0-9]{2}:[0-9]{2})~/.<PID>.<BACKUP-TIME>~/g"
   # Ninth entry: a copy:/template: validate: failure's stderr quotes the
-  # STAGED copy of the content the validator ran against - real ansible
+  # STAGED copy of the content the validator ran against - Ansible
   # stages under ~/.ansible/tmp/ansible-tmp-<random>/.source<suffix>,
   # krikri under /tmp/.krikri-playbook-<module>-<random>.tmp - both
   # per-run by construction. Both sides normalize to <STAGED> so the
@@ -193,7 +193,7 @@ mask() {
     # random per real process (string hash randomization): sort the list on both
     # sides so only the order is normalized, never the membership.
     s/(Invalid options for [\w.]+: )([\w,]+)/$1.join(",", sort split(",", $2))/ge;
-    # With several wrong-typed string options real reports one of them chosen by
+    # With several wrong-typed string options Ansible reports one of them chosen by
     # random Python set order (same playbook alternates tasks_from/vars_from).
     s/Expected a string for (?:defaults_from|handlers_from|tasks_from|vars_from) but got/Expected a string for <OPT> but got/g;
     s/,\n[ ]*"warnings": \[\n[ ]*"Host \x27[^\x27]*\x27 is using the discovered Python interpreter[^\n]*"\n[ ]*\]//g;

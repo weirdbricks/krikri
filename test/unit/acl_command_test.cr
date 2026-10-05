@@ -34,7 +34,7 @@ describe Krikri::PluginHelpers::AclCommand do
       Krikri::PluginHelpers::AclCommand.split_entry("default:group:www-data").must_equal({true, "group", "www-data", nil})
     end
 
-    it "leaves an unrecognized type as nil (flows through to setfacl and fails there, like real Ansible)" do
+    it "leaves an unrecognized type as nil (flows through to setfacl and fails there, like Ansible)" do
       Krikri::PluginHelpers::AclCommand.split_entry("bogus:joe:r--").must_equal({nil, nil, "joe", "r--"})
     end
   end

@@ -7,25 +7,25 @@ require "../src/krikri/plugin_helpers/locale_gen_command"
 module Krikri
   # locale_gen plugin - a native reimplementation of community.general.locale_gen
   # (read from a live collection install; Debian/Ubuntu is a supported
-  # platform here, per the real module's own NOTES).
+  # platform here, per the Ansible module's own NOTES).
   #
-  # Follows the real module's control flow:
+  # Follows the Ansible module's control flow:
   #   - mechanism selection: /etc/locale.gen present -> glibc;
   #     /var/lib/locales/supported.d/ present -> ubuntu_legacy
   #     (deprecated upstream, ported anyway since roles still hit it);
-  #     neither -> the real module's "Is the package 'locales'
+  #     neither -> the Ansible module's "Is the package 'locales'
   #     installed?" failure
   #   - assert_available: every requested locale must appear in
   #     /usr/share/i18n/SUPPORTED (or /usr/local/share/i18n/SUPPORTED)
   #     or already be compiled per `locale -a`; otherwise the real
   #     module's "locales you have entered are not available" failure
-  #   - presence: `locale -a` lines compared through the real module's
+  #   - presence: `locale -a` lines compared through the Ansible module's
   #     LOCALE_NORMALIZATION case-folding (en_US.utf8 == en_US.UTF-8)
   #   - glibc apply: comment/uncomment the locale's line in
   #     /etc/locale.gen, then run locale-gen; ubuntu_legacy apply:
   #     plain locale-gen to add, or filter
   #     /var/lib/locales/supported.d/local + locale-gen --purge to
-  #     remove (the real module's "regenerate everything" behavior,
+  #     remove (the Ansible module's "regenerate everything" behavior,
   #     kept as-is)
   #   - `name:` accepts the post-9.3.0 list form and the legacy single
   #     string; check mode skips the apply
@@ -40,9 +40,9 @@ module Krikri
     def execute : PluginResult
       names = parse_names
       # A required argument counts as missing only when the key is
-      # absent: real's AnsibleModule accepts an explicitly empty list
+      # absent: Ansible's AnsibleModule accepts an explicitly empty list
       # and runs it through to an unchanged success (verified live
-      # against real ansible-playbook 2.19.11).
+      # against ansible-playbook 2.19.11).
       unless @params.has_key?("name")
         return PluginResult.new(changed: false, failed: true,
           msg: "missing required arguments: name")
@@ -52,11 +52,11 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "value of state must be one of: absent, present, got: #{state}") unless ["present", "absent"].includes?(state)
 
-      # The real module is a community.general ModuleHelper: every
+      # The Ansible module is a community.general ModuleHelper: every
       # variable it holds is echoed back as a top-level key of the wire
       # result, and a do_raise() failure carries those keys plus an
       # `output`/`vars` copy of the whole VarDict (verified live against
-      # real ansible-playbook 2.19.11 - found via the kpg32 generator
+      # ansible-playbook 2.19.11 - found via the kpg32 generator
       # sweep, where every locale_gen failure dropped all of them).
       mechanism = detect_mechanism
       return raise_result(MECHANISM_MISSING_MESSAGE, names, nil) unless mech = mechanism
@@ -91,10 +91,10 @@ module Krikri
         return apply_result if apply_result
       end
 
-      # Real's exit_json(changed=..., **output): the ModuleHelper's
+      # Ansible's exit_json(changed=..., **output): the ModuleHelper's
       # visible variables only - name, ubuntu_mode and mechanism, with
       # NO msg key (the module never sets one on success). Order
-      # live-verified against real 2.19.11 via registered {{ r | to_json }}
+      # live-verified against Ansible 2.19.11 via registered {{ r | to_json }}
       # dumps in the podman container (changed/unchanged/check all
       # identical).
       PluginResult.new(changed: changed, failed: false,
@@ -126,12 +126,12 @@ module Krikri
       end
     end
 
-    # Real's do_raise() path (ModuleHelperException caught by the
+    # Ansible's do_raise() path (ModuleHelperException caught by the
     # module_fails_on_exception decorator): fail_json carries msg, the
     # VarDict's visible variables BOTH as top-level keys and as the
     # `output`/`vars` copies. The mechanism-missing raise happens before
     # the mechanism/ubuntu_mode variables are ever set, so that one
-    # carries `name` alone (live-verified against real ansible-playbook
+    # carries `name` alone (live-verified against ansible-playbook
     # 2.19.11 through the generator sweep's missing-locales case).
     private def raise_result(msg : String, names : Array(String), mechanism : String?) : PluginResult
       name_json = JSON::Any.new(names.map { |name| JSON::Any.new(name) })
@@ -186,7 +186,7 @@ module Krikri
       end
     end
 
-    # The real module's set_locale_glibc: rewrite /etc/locale.gen with
+    # The Ansible module's set_locale_glibc: rewrite /etc/locale.gen with
     # each requested locale's line commented in/out, charset column
     # preserved. Read/transform/write happens on the target host - the
     # plugin binary itself runs there (see BasePlugin's note on the

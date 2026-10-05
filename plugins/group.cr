@@ -13,42 +13,42 @@ module Krikri
   #   state (optional): present (default) or absent
   #   gid (optional)
   #   system (optional, default no): pass -r to groupadd for a system group
-  #     (passed to lgroupadd on the local path too - real Ansible emits it
+  #     (passed to lgroupadd on the local path too - Ansible emits it
   #     there unconditionally and libuser's lgroupadd accepts it)
   #   force (optional, default no): groupdel's -f flag - delete the group
   #     even when it is some user's primary group. DELETE-only: real
   #     ansible.builtin.group's Linux path never passes anything to
   #     groupadd/groupmod for force (its documented meaning is "delete a
   #     group even if it is the primary group of a user", live-verified:
-  #     `groupdel -f root`). Mutually exclusive with local: - real Ansible
+  #     `groupdel -f root`). Mutually exclusive with local: - Ansible
   #     fails before anything runs (live-verified text below); libuser's
   #     lgroupdel has no -f and the module's local branch never emits one.
   #   non_unique (optional, default no): allow a duplicate gid -
   #     groupadd/groupmod `-o`, only ever emitted together with a gid that
-  #     is being set (create) or changed (modify), matching real Ansible's
-  #     own nesting of -o inside its gid branches. Real Ansible REQUIRES
+  #     is being set (create) or changed (modify), matching Ansible's
+  #     own nesting of -o inside its gid branches. Ansible REQUIRES
   #     gid: whenever non_unique: is given (required_if - live-verified
   #     failure text replicated below).
   #   gid_min/gid_max (optional): groupadd's -K GID_MIN=.../-K GID_MAX=...
   #     - constrains the auto-assigned gid range at CREATION only (real
   #     Ansible's group_mod branch never emits them, live-verified).
-  #     Mutually exclusive with local: (real Ansible fails before anything
+  #     Mutually exclusive with local: (Ansible fails before anything
   #     runs - live-verified texts below).
   #   local (optional, default no): operate on the local group files only,
   #     bypassing NSS - existence is checked by reading /etc/group directly
   #     (never `getent`, which would find a directory/SSSD/LDAP group; the
-  #     scan is real Ansible's own reversed-lines one, so the LAST matching
+  #     scan is Ansible's own reversed-lines one, so the LAST matching
   #     "name:" line wins), and every mutation routes through libuser's
   #     tools (lgroupadd/lgroupmod/lgroupdel) instead of shadow-utils.
-  #     Before every lgroupadd/lgroupmod carrying a gid, real Ansible
+  #     Before every lgroupadd/lgroupmod carrying a gid, Ansible
   #     pre-checks the NSS-wide group list (grp.getgrall) and fails with
   #     "GID '<gid>' already exists with group '<owner>'" when a DIFFERENT
   #     group already owns that gid - even with non_unique: (live-verified);
-  #     gid 0 skips that check (the real module's Python `if self.gid:`
+  #     gid 0 skips that check (the Ansible module's Python `if self.gid:`
   #     truthiness, live-verified). Mirrors the user module's
   #     already-implemented local: pattern.
   #
-  # Real Ansible returns name/state always, and gid/system whenever the
+  # Ansible returns name/state always, and gid/system whenever the
   # group exists after the task - attached to the result here the same way.
   #
   # Registered-result key order (live-verified vs ansible-core 2.19.11 on
@@ -60,7 +60,7 @@ module Krikri
   # exit_json(changed=True) -> [changed, failed], and the absent path
   # never carries system/gid at all. Command failures fail_json(name=,
   # msg=) and register [name, failed, msg, changed, exception] - the name
-  # kwarg LEADS, before failed/msg (real's fail_json kwargs-first rule).
+  # kwarg LEADS, before failed/msg (Ansible's fail_json kwargs-first rule).
   class GroupPlugin < BasePlugin
     # group_exists-after-task result: name/state, then changed, then the
     # group_info fields (system first, gid last).
@@ -86,7 +86,7 @@ module Krikri
       return missing_param("name") unless name
       validate_bool_params!
 
-      # Real Ansible's argument-validation order (live-verified): the
+      # Ansible's argument-validation order (live-verified): the
       # AnsibleModule ctor's required_if check first, then main()'s
       # force+local mutual-exclusion, then Group.__init__'s gid_min/gid_max
       # + local refusals - all before any state read.
@@ -97,7 +97,7 @@ module Krikri
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      # Real Ansible's own group_exists guard for local: os.path.exists on
+      # Ansible's own group_exists guard for local: os.path.exists on
       # /etc/group first, exact message (it fails BEFORE any state read).
       if local?
         probe = remote_exec("test -f /etc/group")
@@ -116,7 +116,7 @@ module Krikri
       end
     end
 
-    # `local: true` bypasses NSS for the existence check: real Ansible's
+    # `local: true` bypasses NSS for the existence check: Ansible's
     # own group_exists() reads /etc/group directly (its own comment: the
     # grp module "does not distinguish between local and directory
     # accounts"), because getent would happily report a directory/SSSD/
@@ -138,7 +138,7 @@ module Krikri
       true?(@params["local"]?)
     end
 
-    # Real Ansible's own argument validations, each with its exact
+    # Ansible's own argument validations, each with its exact
     # live-verified message:
     # - required_if: [['non_unique', True, ['gid']]] (AnsibleModule ctor)
     # - force+local mutual exclusion (main(), before Group.__init__)
@@ -168,7 +168,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's own _local_check_gid_exists, run before every
+    # Ansible's own _local_check_gid_exists, run before every
     # lgroupadd/lgroupmod carrying a gid: scan the NSS-wide group list
     # (getent group, full db) for a DIFFERENT group owning the same gid.
     private def local_gid_conflict(name : String, gid : String?) : PluginResult?
@@ -193,7 +193,7 @@ module Krikri
         return absent
       end
 
-      # Real exits with bare exit_json(changed=True) in check mode - no
+      # Ansible exits with bare exit_json(changed=True) in check mode - no
       # name/state echo at all (registered shape: [changed, failed]).
       return PluginResult.new(changed: true, failed: false, key_order: GROUP_CHECK_ONLY_ORDER) if check_mode
 
@@ -216,7 +216,7 @@ module Krikri
       non_unique = true?(@params["non_unique"]?)
 
       unless current
-        # Real exits with bare exit_json(changed=True) in check mode - the
+        # Ansible exits with bare exit_json(changed=True) in check mode - the
         # create branch early-outs before anything else runs.
         return PluginResult.new(changed: true, failed: false, key_order: GROUP_CHECK_ONLY_ORDER) if check_mode
 
@@ -239,7 +239,7 @@ module Krikri
           name, state: "present", facts: current)
       end
 
-      # Check mode with an actual change: real's group_mod returns rc=0
+      # Check mode with an actual change: Ansible's group_mod returns rc=0
       # without running groupmod - the full exists-after shape with the
       # requested change reported.
       return attach_facts(PluginResult.new(changed: true, failed: false, key_order: GROUP_EXISTS_ORDER),
@@ -261,7 +261,7 @@ module Krikri
       result.extra["state"] = JSON.parse(state.to_json)
     end
 
-    # Real Ansible's result shape: name/state always, gid/system whenever
+    # Ansible's result shape: name/state always, gid/system whenever
     # the group exists after the task (gid as a real int, system as the
     # requested param, not a derived fact). A create/modify may have
     # changed exactly the gid a later registered-var consumer reads, so
@@ -278,12 +278,12 @@ module Krikri
       result
     end
 
-    # Real Ansible's group create/modify/delete failures are all
+    # Ansible's group create/modify/delete failures are all
     # `fail_json(name=group.name, msg=err)` - msg is the raw stderr
     # (trailing newline included, live-verified vs 2.19.11: "groupadd:
     # Invalid configuration: GID_MIN (1000), GID_MAX (86)\n"), plus the
     # name echo. No "Failed to <action>: " prefix, no stdout fallback:
-    # real passes err (stderr) only, even when it is empty.
+    # Ansible passes err (stderr) only, even when it is empty.
     private def command_failure(name : String, action : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
       failure = PluginResult.new(changed: false, failed: true, msg: result[:stderr], key_order: GROUP_FAIL_ORDER)
       failure.extra["name"] = JSON.parse(name.to_json)

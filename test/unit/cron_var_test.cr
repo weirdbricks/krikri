@@ -147,7 +147,7 @@ describe CronVar do
       text.must_equal("A=1\nC=3\nB=2\n")
     end
 
-    it "reproduces the real module's quirk: a missing insertafter target silently drops the new variable but reports changed" do
+    it "reproduces the Ansible module's quirk: a missing insertafter target silently drops the new variable but reports changed" do
       text, changed = CronVar.upsert("A=1\n", "C", "3", nil, "NOSUCH")
       changed.must_equal(true)
       text.must_equal("A=1\n")

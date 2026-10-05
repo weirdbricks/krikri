@@ -28,7 +28,7 @@ module Krikri
     end
 
     # One argv element: like quote_if_needed, but whitespace is NOT a
-    # safe character here - a value that real Ansible hands to
+    # safe character here - a value that Ansible hands to
     # run_command as a single argv element (an executable, an image
     # reference, a path, a package name) must never word-split into
     # extra arguments. Well-formed tokens stay byte-identical; an empty
@@ -38,7 +38,7 @@ module Krikri
       single_quote(str)
     end
 
-    # Python `shlex.split` in posix mode, the way real Ansible modules
+    # Python `shlex.split` in posix mode, the way Ansible modules
     # turn a multi-argument string param (e.g. podman_image's
     # pull_extra_args) into argv elements: whitespace-separated tokens,
     # single-quoted runs literal, double-quoted runs honoring backslash

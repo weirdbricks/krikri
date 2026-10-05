@@ -14,7 +14,7 @@ describe Krikri::PluginHelpers::MysqlInfoVersion do
       v["major"].as_i64.must_equal(10)
       v["minor"].as_i64.must_equal(11)
       v["release"].as_i64.must_equal(14)
-      # The real module only ever looks inside the third dot component, so
+      # The Ansible module only ever looks inside the third dot component, so
       # the ".24.04.1" tail lands in components it never reads - the
       # suffix really is "MariaDB-0ubuntu0" there, verified live.
       v["suffix"].as_s.must_equal("MariaDB-0ubuntu0")

@@ -13,7 +13,7 @@ module Krikri
   #   value: the value to set (required when state: present)
   #   state: present (default) / absent
   #   scope: file / local / global / system (default: system, matching
-  #     real Ansible's own determine_scope - NOT git's own default of
+  #     Ansible's own determine_scope - NOT git's own default of
   #     "local" when no --scope flag is passed)
   #   repo: required when scope: local - the repo to run `git config` in
   #   file: required when scope: file - path to an ad-hoc config file
@@ -21,7 +21,7 @@ module Krikri
   class GitConfigPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Live-verified against real ansible-core 2.19.11 (community.general
+    # Live-verified against ansible-core 2.19.11 (community.general
     # git_config) via `{{ r | to_json }}` dumps. The write path (set or
     # unset, changed, including check mode) is msg/diff/changed; the
     # converged no-op path is changed/msg - different module code paths,
@@ -108,7 +108,7 @@ module Krikri
       return nil if unset
 
       if old_values.includes?(value) && (old_values.size == 1 || add_mode == "add")
-        # Real's no-op path passes msg='' to exit_json explicitly, so the
+        # Ansible's no-op path passes msg='' to exit_json explicitly, so the
         # result keeps an EMPTY msg key (msg | default('none') shows ''
         # there, not 'none' - live-verified GC9b).
         return PluginResult.new(changed: false, failed: false, msg: "", include_empty_msg: true, key_order: UNCHANGED_KEY_ORDER)
@@ -116,7 +116,7 @@ module Krikri
       nil
     end
 
-    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # AnsibleModule setup surface, in the validator's errors[0]
     # order (arg_spec.py: required -> choices -> required_if ->
     # unsupported). No bool/int params in the spec, so no type checks.
     private def validate_arguments : PluginResult?
@@ -179,7 +179,7 @@ module Krikri
     end
 
     private def build_base_args(effective_scope : String) : Array(String)
-      # Real's get_bin_path resolved the binary to an absolute path
+      # Ansible's get_bin_path resolved the binary to an absolute path
       # before any command ran, and its failure results carry the RESOLVED
       # args - so the array-typed cmd field shows "/usr/bin/git", not the
       # bare name.
@@ -209,7 +209,7 @@ module Krikri
       {old_values, !list_result[:stdout].empty?, nil}
     end
 
-    # Real's write-path set_args: the resolved-git base args, then
+    # Ansible's write-path set_args: the resolved-git base args, then
     # --unset-all name, or --{add_mode} name value.
     private def build_set_args(base_args : Array(String), name : String, value : String, unset : Bool, add_mode : String) : Array(String)
       set_args = base_args.dup
@@ -221,7 +221,7 @@ module Krikri
       set_args
     end
 
-    # Real's exit_json(diff=dict(before_header/after_header/
+    # Ansible's exit_json(diff=dict(before_header/after_header/
     # " ".join(set_args), before/after=build_diff_value(...))): the value
     # builder turns an empty list into "\n", a single value into
     # "value\n", and several values into the list itself. after_values

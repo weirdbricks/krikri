@@ -38,7 +38,7 @@ private def unique_tmp(*parts : String) : String
 end
 
 describe "sysctl plugin result key order (round 992001)" do
-  # Real ansible.posix.sysctl has exactly one success exit -
+  # Ansible.posix.sysctl has exactly one success exit -
   # module.exit_json(changed=result.changed) (sysctl.py:416) - so the
   # registered result is the bare changed plus the controller-backfilled
   # failed: false, and nothing else (no name/sysctl_file echo, no msg).
@@ -193,7 +193,7 @@ describe "mount_facts plugin result key order (round 992001)" do
   # leading the block_* group, then ansible_context, then uuid LAST.
   # (Wire-level pin - the registered dump helper only exposes top-level
   # keys.)
-  it "serializes each mount entry in real's field order" do
+  it "serializes each mount entry in Ansible's field order" do
     source = unique_tmp("kop-entry-order-mounts")
     mountpoint = unique_tmp("kop-entry-order-dir")
     Dir.mkdir_p(mountpoint)
@@ -229,7 +229,7 @@ describe "modprobe plugin failure key order (round 992001)" do
   # lands last - capture-verified order below. modprobe of a
   # nonexistent module fails identically unprivileged (same FATAL
   # message shape the capture host produced).
-  it "registers a failed load with real's full kwargs-lead shape" do
+  it "registers a failed load with Ansible's full kwargs-lead shape" do
     skip "no modprobe binary on this host" unless modprobe_available?
     skip "no #{MODPROBE_BUILTIN} on this host" unless File.exists?(MODPROBE_BUILTIN)
 
@@ -258,7 +258,7 @@ describe "modprobe plugin failure key order (round 992001)" do
   # Value-level pins for the same failure (capture: rc 1, empty stdout,
   # msg identical to stderr including the trailing newline, stderr_lines
   # the splitlines of stderr, changed false, params "").
-  it "carries real's failure values: rc 1, msg == stderr, derived lines" do
+  it "carries Ansible's failure values: rc 1, msg == stderr, derived lines" do
     skip "no modprobe binary on this host" unless modprobe_available?
     skip "no #{MODPROBE_BUILTIN} on this host" unless File.exists?(MODPROBE_BUILTIN)
 

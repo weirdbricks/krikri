@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered slurp result key order -
+# ansible-core 2.19.11's registered slurp result key order -
 # live-verified via `{{ r | to_json }}` on a registered slurp: task:
 # content, source, encoding, failed, changed - `failed: false` present
 # and `changed` LAST (unlike every other module here, where failed

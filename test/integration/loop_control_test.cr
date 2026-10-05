@@ -46,7 +46,7 @@ end
 
 describe "loop_control: extended" do
   # index is 1-based, revindex counts down from length.
-  it "exposes ansible_loop with real Ansible's values" do
+  it "exposes ansible_loop with Ansible's values" do
     code, output = run_play(<<-YAML)
       - hosts: all
         gather_facts: false
@@ -101,13 +101,13 @@ describe "loop_control: extended" do
   end
 end
 
-# loop_control.loop_var REPLACES "item" - real ansible-core binds the item
+# loop_control.loop_var REPLACES "item" - ansible-core binds the item
 # ONLY under the custom name: `item | default(...)` reads unset alongside a
 # loop_var, and the registered per-item results carry the custom key (plus
 # ansible_loop_var), never "item". Live-verified against ansible-core
 # 2.19.11 (2026-09 with_items-taint round); krikri used to bind BOTH, so a
 # task referencing `item` alongside its own loop_var silently worked where
-# real Ansible fails with "'item' is undefined".
+# Ansible fails with "'item' is undefined".
 describe "loop_control: loop_var replaces item" do
   it "does not bind item alongside the custom name" do
     code, output = run_play(<<-YAML)

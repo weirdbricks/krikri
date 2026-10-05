@@ -1,8 +1,8 @@
 require "../minitest_helper"
 
 # seport's argument validation must happen BEFORE the SELinux-enabled
-# gate, matching real's argument_spec (podman-diff harness R4/R5/R11:
-# real reports the proto/state choices failure and the bool-conversion
+# gate, matching Ansible's argument_spec (podman-diff harness R4/R5/R11:
+# Ansible reports the proto/state choices failure and the bool-conversion
 # failure on a host with no SELinux at all; krikri used to reach the
 # "SELinux is disabled" gate first). No SELinux host is needed here:
 # the point is precisely that these failures happen without one.
@@ -32,7 +32,7 @@ describe "seport argument validation order" do
       "value of state must be one of: absent, present, got: krikri_state")
   end
 
-  it "rejects state with wrong case like real's case-sensitive choices check" do
+  it "rejects state with wrong case like Ansible's case-sensitive choices check" do
     result = PluginSpecHelper.run("seport", {
       "ports"  => "8080",
       "proto"  => "tcp",

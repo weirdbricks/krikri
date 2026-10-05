@@ -16,10 +16,10 @@ describe "a play with an empty tasks: list" do
     # independent of the play's own task list (unless gather_facts:
     # false) - this engine's "Skipping play - no tasks defined" early
     # exit used to fire unconditionally on an empty task list, skipping
-    # fact gathering entirely too and recapping ok=0. Real ansible-core
+    # fact gathering entirely too and recapping ok=0. ansible-core
     # 2.19.11 recaps ok=1 for a task-less play (verified live,
     # cache-free) - the implicit facts task counts like any task; the
-    # once-committed ok=0 expectation came from measuring real Ansible
+    # once-committed ok=0 expectation came from measuring Ansible
     # with a warm fact cache still active, which makes it silently skip
     # Gathering Facts on a rerun.
     playbook = File.tempname("task-less-play", ".yml")
@@ -52,7 +52,7 @@ describe "a play with an empty tasks: list" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(true)
-    # real prints nothing between the PLAY banner and the recap for a task-less play
+    # Ansible prints nothing between the PLAY banner and the recap for a task-less play
     output.to_s.wont_include("Skipping play")
     output.to_s.must_include("PLAY [repro]")
     output.to_s.wont_include("TASK [Gathering Facts]")

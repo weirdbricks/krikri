@@ -3,10 +3,10 @@ require "../minitest_helper"
 
 # Regression specs for PluginHelpers::AptRepositoryCacheRetry - the
 # apt_repository plugin's update_cache_retries/update_cache_retry_max_delay
-# support. The delay formula mirrors real ansible-core's own
+# support. The delay formula mirrors ansible-core's own
 # apt_repository.py (`delay = 2 ** retry + randomize`, capped at
 # `update_cache_retry_max_delay + randomize`, verified against
-# the real module);
+# the Ansible module);
 # the retry loop mirrors its `for retry in range(update_cache_retries)`
 # attempt bound. The exec endpoint is injected so nothing here touches a
 # real apt-get; max_delay is kept tiny so the between-attempt sleeps
@@ -31,7 +31,7 @@ end
 
 describe Krikri::AptRepositoryCacheRetry do
   describe "#apt_repository_retry_delay" do
-    it "matches real Ansible's exponential backoff (2**retry + jitter)" do
+    it "matches Ansible's exponential backoff (2**retry + jitter)" do
       harness = RetryHarness.new
       harness.apt_repository_retry_delay(0, 12, jitter: 0.5).must_equal(1.5)
       harness.apt_repository_retry_delay(1, 12, jitter: 0.5).must_equal(2.5)
@@ -68,7 +68,7 @@ describe Krikri::AptRepositoryCacheRetry do
       harness.calls.size.must_equal(1)
     end
 
-    it "defaults match real Ansible's argument_spec (5 retries, 12s cap)" do
+    it "defaults match Ansible's argument_spec (5 retries, 12s cap)" do
       Krikri::AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRIES.must_equal(5)
       Krikri::AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY.must_equal(12)
     end

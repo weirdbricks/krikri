@@ -50,7 +50,7 @@ describe "pam_limits plugin" do
     # {limit_item}\t{new_value}{new_comment}\n"` with `new_comment =
     # f"\t#{comment}"` - a trailing inline comment on the entry's own
     # line. This plugin previously wrote the comment as its own
-    # SEPARATE preceding line ("# comment"), a format real Ansible
+    # SEPARATE preceding line ("# comment"), a format Ansible
     # never produces.
     dest = dest_path("comment.conf")
 
@@ -64,12 +64,12 @@ describe "pam_limits plugin" do
   end
 
   it "appends a brand new entry at the true end of the file, not before a '# End of file' marker" do
-    # Real Ansible's own module has no special-casing for a `# End of
+    # Ansible's own module has no special-casing for a `# End of
     # file` marker (or any other comment line) anywhere in the file -
     # it copies every existing line through unchanged and only ever
     # appends the new entry after the whole file. This plugin
     # previously inserted BEFORE that marker instead, an invented
-    # behavior not in the real module at all.
+    # behavior not in the Ansible module at all.
     dest = dest_path("eof_marker.conf")
     File.write(dest, "*\tsoft\tnofile\t1024\n\n# End of file\n")
 
@@ -104,7 +104,7 @@ describe "pam_limits plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): real
+  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): real
   # community.general.pam_limits' result is `msg` = the EFFECTIVE limits
   # line (the new entry when changed, the existing matched line when
   # already present, trailing newline included) plus a whole-file diff,

@@ -5,7 +5,7 @@ require "../../src/krikri/task_lister"
 
 # Regression tests for the CLI-mode output-parity work: a task's effective
 # tags are the union of its own tags, every enclosing block's tags AND the
-# PLAY's tags - real ansible-playbook lists and selects on that union
+# PLAY's tags - ansible-playbook lists and selects on that union
 # (verified against 2.19.11: `--list-tasks` shows the play's tags on every
 # task, `-t <play-tag>` runs the play's tasks, `--skip-tags <play-tag>`
 # skips them and skips the play's fact gathering entirely).

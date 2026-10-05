@@ -20,7 +20,7 @@ module Krikri
   # `use_backend`. (2.19 still validates the retired `install_repoquery`
   # as a bool - live-verified - so it stays in the supported set.)
   #
-  # Live-verified against real ansible-core 2.21.4 on Fedora 41 (dnf5
+  # Live-verified against ansible-core 2.21.4 on Fedora 41 (dnf5
   # 5.2.17): the whole option matrix is checked side-by-side in
   # testing/dnf5/dnf5_options.yml.
   class Dnf5Plugin < BasePlugin
@@ -40,7 +40,7 @@ module Krikri
       }
     end
 
-    # These default to None in real's argspec, so an explicit null skips
+    # These default to None in Ansible's argspec, so an explicit null skips
     # type validation there (see BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
       %w[best nobest]
@@ -143,7 +143,7 @@ module Krikri
     # does still validate install_repoquery as a bool (live-verified:
     # `dnf5: {install_repoquery: blah}` fails with the bool wording), so
     # it stays supported here. The
-    # trailing "(expire-cache, pkg)" is real's aliases appended to the list.
+    # trailing "(expire-cache, pkg)" is Ansible's aliases appended to the list.
     private def unsupported_rejection : PluginResult?
       dnf5_supported = {"allow_downgrade", "allowerasing", "auto_install_module_deps",
                         "autoremove", "best", "bugfix", "cacheonly", "conf_file",
@@ -170,16 +170,16 @@ module Krikri
       )
     end
 
-    # Real AnsibleModule fails a bool-typed arg given a non-boolean value
+    # AnsibleModule fails a bool-typed arg given a non-boolean value
     # at module setup - now via the shared BasePlugin#validate_bool_params!
-    # raised inside the same rejection chain, keeping real's check order
+    # raised inside the same rejection chain, keeping Ansible's check order
     # (unsupported params -> bool types -> list coercion -> mutual
     # exclusion; see plugins/dnf.cr for the message-provenance story).
     private def bool_rejection : Nil
       validate_bool_params!
     end
 
-    # Real AnsibleModule's `type: list` coercion fails an EXPLICIT None
+    # AnsibleModule's `type: list` coercion fails an EXPLICIT None
     # with its generic list-conversion message; an omitted param and an
     # empty string both coerce to an empty list and pass (see plugins/
     # dnf.cr's identical gate for the story).
@@ -195,7 +195,7 @@ module Krikri
       )
     end
 
-    # Real AnsibleModule enforces the shared yumdnf `mutually_exclusive`
+    # AnsibleModule enforces the shared yumdnf `mutually_exclusive`
     # pairs after coercion: name|list and best|nobest, each firing with the
     # standard message only when BOTH members are non-empty.
     private def mutual_exclusion_rejection : PluginResult?

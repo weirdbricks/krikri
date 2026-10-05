@@ -7,7 +7,7 @@ require "file_utils"
 # with no service manager at all - a plain container, e.g. the GitHub CI
 # image, where `systemctl` is missing or answers "Failed to connect to
 # system scope bus" - those probes yield no ActiveState, and the module
-# correctly reports "Service is in unknown state" (real Ansible does the
+# correctly reports "Service is in unknown state" (Ansible does the
 # same there). The specs are not about that failure path, so they get a
 # fake `systemctl` answering exactly like a healthy systemd host whose
 # only units are the not-found ones they ask about: identical on every
@@ -39,7 +39,7 @@ private def systemd_run(params : Hash(String, String)) : JSON::Any
         # A unit that exists but has never been started still yields a full
         # property dump (LoadState=loaded, ActiveState=inactive); a unit
         # with no file at all yields the same dump with LoadState=not-found
-        # instead. Real Ansible's module tells those two apart ONCE, up
+        # instead. Ansible's module tells those two apart ONCE, up
         # front (`found = is_systemd or is_initd`), and refuses the
         # enabled:/state: steps for the not-found one - so a fake unit has
         # to be able to answer both ways. Only units named
@@ -71,8 +71,8 @@ end
 # check-mode predictions. Never run a non-check-mode state/mask/enable call
 # here; that would actually start/stop/mask a unit on the dev machine.
 describe "systemd plugin" do
-  it "fails when no action parameter is given, with real Ansible's required_one_of message" do
-    # Real AnsibleModule validation:
+  it "fails when no action parameter is given, with Ansible's required_one_of message" do
+    # AnsibleModule validation:
     # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
     # 'daemon_reexec']]. Replaces the previous ad-hoc guard's own
     # "Must specify at least one of ..." wording.
@@ -82,7 +82,7 @@ describe "systemd plugin" do
       "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
   end
 
-  # Real Ansible's name-only query semantics:
+  # Ansible's name-only query semantics:
   # required_one_of is satisfied by a name alone - the module runs
   # `systemctl show <name>` and populates result['status'] with the unit's
   # current properties, changed stays False, and no management action runs.
@@ -114,7 +114,7 @@ describe "systemd plugin" do
     result["name"].as_s.must_equal("nonexistent-krikri-playbook-unit.service")
   end
 
-  it "fails when state is given without a name, with real Ansible's required_by message" do
+  it "fails when state is given without a name, with Ansible's required_by message" do
     # required_by={state: name, enabled: name, masked: name} - real
     # Ansible's check_required_by wording, per-parameter. Replaces the
     # previous "Must specify 'name' when using ..." wording.
@@ -124,7 +124,7 @@ describe "systemd plugin" do
   end
 
   {% for key, value in {"enabled" => "true", "masked" => "true"} %}
-    it "fails when {{ key.id }} is given without a name, with real Ansible's required_by message" do
+    it "fails when {{ key.id }} is given without a name, with Ansible's required_by message" do
       result = systemd_run({ {{ key.id.stringify }} => {{ value.id.stringify }} })
       result["failed"].as_bool.must_equal(true)
       result["msg"].to_s.must_equal("missing parameter(s) required by '{{ key.id }}': name")
@@ -157,12 +157,12 @@ describe "systemd plugin" do
 
   # Real bug found via round 813233 (role libre_ops.multi_redis): the
   # role passes `systemd: {name: ..., status: ...}` - `status` is not a
-  # parameter of real Ansible's systemd module at all
+  # parameter of Ansible's systemd module at all
   # so real
   # ansible-playbook rejects the task outright at argument-spec
   # validation time, before the module runs. This plugin previously
   # silently accepted and ignored the unknown key and ran anyway.
-  it "rejects an unsupported parameter with real Ansible's argument-spec message" do
+  it "rejects an unsupported parameter with Ansible's argument-spec message" do
     result = systemd_run({
       "name"   => "foo.service",
       "state"  => "started",
@@ -175,7 +175,7 @@ describe "systemd plugin" do
       "(daemon-reexec, daemon-reload, service, unit).")
   end
 
-  it "sorts multiple unsupported parameters alphabetically in real Ansible's argument-spec message" do
+  it "sorts multiple unsupported parameters alphabetically in Ansible's argument-spec message" do
     result = systemd_run({
       "name"    => "foo.service",
       "state"   => "started",
@@ -196,8 +196,8 @@ describe "systemd plugin" do
   end
 
   it "predicts a daemon-reload in check mode without touching the system, reporting unchanged" do
-    # Verified against a real ansible-playbook --check run of a bare
-    # `systemd: {daemon_reload: true}` task: real Ansible's own module
+    # Verified against a ansible-playbook --check run of a bare
+    # `systemd: {daemon_reload: true}` task: Ansible's own module
     # has no notion of daemon-reload "changedness" and always reports
     # `ok:`, in check mode and for real.
     result = systemd_run({"daemon_reload" => "true", "_ansible_check_mode" => "true"})
@@ -234,7 +234,7 @@ describe "systemd plugin" do
   end
 
   # Real bug found benchmarking konstruktoid.docker_rootless (0.9.619):
-  # `scope: user` (real Ansible's `systemd_service`/`systemd` parameter
+  # `scope: user` (Ansible's `systemd_service`/`systemd` parameter
   # for targeting the invoking user's OWN systemd session manager - the
   # idiomatic way a rootless-Docker/Podman role enables its own user
   # unit) was completely unhandled: every `systemctl` call always hit
@@ -262,7 +262,7 @@ describe "systemd plugin" do
   # "Reload_Teleport" handler (`ansible.builtin.systemd: {name: teleport,
   # state: reloaded, daemon_reload: yes, enabled: yes}`) fired on a fresh
   # install where the unit file was created in the same play and the
-  # service had never started. Real Ansible's systemd module STARTS an
+  # service had never started. Ansible's systemd module STARTS an
   # inactive unit for `state: reloaded` (plain `systemctl reload` of an
   # inactive unit fails "is not active, cannot reload" - exactly the
   # error krikri's handler died with); krikri ran the reload
@@ -291,7 +291,7 @@ describe "systemd plugin" do
   # so `not timesyncd_start.enabled == true` failed the task with
   # "object of type 'dict' has no attribute 'enabled'" while real
   # ansible-playbook ran the same task fine.
-  describe "top-level result fields (real Ansible's systemd_service shape)" do
+  describe "top-level result fields (Ansible's systemd_service shape)" do
     it "exposes enabled as a top-level bool when the enabled param was given" do
       result = systemd_run({
         "name"                => "inactive-krikri-playbook-unit.service",
@@ -300,7 +300,7 @@ describe "systemd plugin" do
       })
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       # check mode predicts the enable, so the reported enabled state is
-      # the post-change one (real Ansible sets result['enabled'] = not
+      # the post-change one (Ansible sets result['enabled'] = not
       # enabled outside its check_mode guard)
       result["enabled"].as_bool.must_equal(true)
       result["name"].as_s.must_equal("inactive-krikri-playbook-unit.service")
@@ -371,7 +371,7 @@ private def with_fake_systemctl(params : Hash(String, String)) : JSON::Any
   PluginSpecHelper.run("systemd", params, env: {"PATH" => "#{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin"})
 end
 
-# The no-service-manager failure path (real's bare
+# The no-service-manager failure path (Ansible's bare
 # `module.run_command(systemctl, check_rc=True)` fallback after
 # show/is-enabled/list-unit-files all fail): its echoed cmd carries the
 # FULL prefix the module builds once up front - scope flag, then
@@ -380,7 +380,7 @@ end
 # "/usr/bin/systemctl --no-block --force", scope user+force →
 # "/usr/bin/systemctl --user --force").
 describe "systemd plugin - no-service-manager failure cmd" do
-  it "echoes --force in the failure cmd, with real's run_command result shape" do
+  it "echoes --force in the failure cmd, with Ansible's run_command result shape" do
     result = with_fake_systemctl({"name" => "ssh.service", "force" => "true"})
     result["failed"].as_bool.must_equal(true)
     result["cmd"].as_s.must_equal("/usr/bin/systemctl --force")
@@ -422,7 +422,7 @@ describe "systemd plugin - no-service-manager failure cmd" do
 end
 
 # A throwaway fake `systemctl` for a host where the unit the task names has
-# NO unit file at all: `show` answers the full property dump real's systemd
+# NO unit file at all: `show` answers the full property dump Ansible's systemd
 # gives for an absent unit (LoadState=not-found), is-enabled answers
 # "not-found", and every state-changing verb is logged so the ORDER of
 # operations is observable - the dev machine's own systemd is never
@@ -460,7 +460,7 @@ private def with_missing_unit_systemctl(params : Hash(String, String), &)
       *)
         # mask/unmask/disable/stop all "succeed" here, exactly as they do on
         # a real host for a unit that isn't installed - which is the whole
-        # point: only real's fail_if_missing stands between this and a
+        # point: only Ansible's fail_if_missing stands between this and a
         # `changed` report.
         exit 0;;
     esac
@@ -471,18 +471,18 @@ private def with_missing_unit_systemctl(params : Hash(String, String), &)
   yield result, File.exists?(log) ? File.read_lines(log) : [] of String
 end
 
-# Real Ansible's systemd module computes `found = is_systemd or is_initd`
+# Ansible's systemd module computes `found = is_systemd or is_initd`
 # ONCE, before it acts on the unit, and calls fail_if_missing(module, found,
 # unit, msg='host') at the top of both the `enabled:` and the `state:`
 # block (systemd_service.py; the message itself is
-# the real module). It never did that here, so a task
-# naming a unit no package installs came back `changed` where real's own
+# the Ansible module). It never did that here, so a task
+# naming a unit no package installs came back `changed` where Ansible's own
 # failed_when - konstruktoid.hardening's kdump.service / kdump-tools.service
 # / systemd-journal-remote.* / atd tasks, all of which swallow exactly this
 # message - turned it into `ok`. Found on real Ubuntu 22.04 hosts, round
 # 999001.
 describe "systemd plugin - unit that systemd does not know" do
-  it "fails the enabled: step with real's missing-service message, without ever disabling" do
+  it "fails the enabled: step with Ansible's missing-service message, without ever disabling" do
     with_missing_unit_systemctl({
       "name"    => "missing-krikri-playbook-unit.service",
       "enabled" => "false",
@@ -507,9 +507,9 @@ describe "systemd plugin - unit that systemd does not know" do
     end
   end
 
-  it "still masks the absent unit before failing (real's order: mask block, then fail_if_missing)" do
+  it "still masks the absent unit before failing (Ansible's order: mask block, then fail_if_missing)" do
     # `systemctl mask` succeeds for a unit that isn't installed - it just
-    # drops the symlink in /etc/systemd/system - and real Ansible really
+    # drops the symlink in /etc/systemd/system - and Ansible really
     # does mask it, so the side effect has to have happened by the time the
     # enabled:/state: failure comes back. This is the exact task shape
     # konstruktoid.hardening runs on kdump.service.
@@ -531,7 +531,7 @@ describe "systemd plugin - unit that systemd does not know" do
   end
 
   it "leaves a masked-only task on an absent unit successful and changed" do
-    # No enabled:/state: means no fail_if_missing at all - real Ansible's
+    # No enabled:/state: means no fail_if_missing at all - Ansible's
     # own comment on the mask block says so ("can operate on services
     # before they are installed"), so masking something not yet installed
     # is a supported thing to do, not an error.
@@ -545,7 +545,7 @@ describe "systemd plugin - unit that systemd does not know" do
     end
   end
 
-  it "fails the same way in check mode (real's fail_if_missing is mode-independent)" do
+  it "fails the same way in check mode (Ansible's fail_if_missing is mode-independent)" do
     with_missing_unit_systemctl({
       "name"                => "missing-krikri-playbook-unit.service",
       "enabled"             => "false",
@@ -559,7 +559,7 @@ describe "systemd plugin - unit that systemd does not know" do
   end
 
   it "treats a MASKED unit as found - masking is what creates it" do
-    # LoadState=masked is still a unit systemd knows about (real's check is
+    # LoadState=masked is still a unit systemd knows about (Ansible's check is
     # only for "not-found"), so an enabled:/state: task on it must run
     # normally rather than report the unit missing.
     bin_dir = PluginSpecHelper.tmp_path("masked-unit-systemctl-bin")

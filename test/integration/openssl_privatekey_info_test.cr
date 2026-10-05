@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.crypto.openssl_privatekey_info - read-only private key
-# facts. Result shape matched against the real module (community.crypto
+# facts. Result shape matched against the Ansible module (community.crypto
 # 3.1.1): can_load_key/can_parse_key always present, key_is_consistent
 # nil unless checked, PEM public key, all-algorithm fingerprints of the
 # DER SubjectPublicKeyInfo, type + public_data per key type.

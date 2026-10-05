@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # ansible.mariadb.mariadb_db / mariadb_user - previously unimplemented
-# collection modules (rc=4 "unavailable modules" where real ansible
+# collection modules (rc=4 "unavailable modules" where Ansible
 # ran them; fauust.mariadb, round 6002). The real modules are
 # functionally identical forks of community.mysql's mysql_db/mysql_user
 # (verified against both collections' sources), so they resolve through

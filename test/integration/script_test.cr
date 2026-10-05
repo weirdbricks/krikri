@@ -64,7 +64,7 @@ describe "script plugin" do
   end
 
   it "skips without running the script under _ansible_check_mode" do
-    # Real Ansible's script module does not support check mode: under
+    # Ansible's script module does not support check mode: under
     # --check the task reports `skipping:` and the script never runs
     # (found via the dirless-infra findings - krikri executed the
     # script for real under --check).
@@ -85,7 +85,7 @@ describe "script plugin" do
     File.delete(path) if path && File.exists?(path)
   end
 
-  # Real Ansible's script action plugin supports check mode PARTIALLY,
+  # Ansible's script action plugin supports check mode PARTIALLY,
   # via creates:/removes: gates (live-verified against ansible-core
   # 2.19.4): a holding gate reports `skipping:` with the "matching
   # creates/removes option" msg, a passing gate reports an ordinary

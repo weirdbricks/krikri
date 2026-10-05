@@ -3,14 +3,14 @@ require "file_utils"
 require "../../src/krikri/inventory_parser"
 require "../../src/krikri/action_plugin_manager"
 
-# SynchronizeActionPlugin's delegate_to: localhost munging: real Ansible
+# SynchronizeActionPlugin's delegate_to: localhost munging: Ansible
 # runs rsync on the controller (the delegate's connection is local) and
 # qualifies the mode-dependent other end from the TASK host's own
 # inventory address - rsync then dials that host over its own ssh. These
 # specs use a task host whose name cannot resolve, so the real rsync run
 # fails fast on hostname resolution; what is asserted is the munging
 # itself (the qualified dest/src in the returned cmd) plus the
-# failed/changed shape real Ansible produces for the same unresolvable
+# failed/changed shape Ansible produces for the same unresolvable
 # task host (verified live, ansible-core 2.19 + ansible.posix: the task
 # host's own ansible_connection=local does NOT suppress the
 # qualification).

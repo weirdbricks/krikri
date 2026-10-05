@@ -4,7 +4,7 @@ require "json"
 # Plugin-boundary regression for the podman-diff ec2_*/iam_user_info
 # round: each amazon.aws plugin wires AwsModuleArgs.validate + the
 # boto3_gate ahead of its native Query-API helpers, so an invalid
-# invocation fails at the plugin with real Ansible's wording before any
+# invocation fails at the plugin with Ansible's wording before any
 # AWS work (and before a boto3-less host ever matters).
 
 private def run_aws_plugin(plugin : String, params : Hash(String, String)) : JSON::Any

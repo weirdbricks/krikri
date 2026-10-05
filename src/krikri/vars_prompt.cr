@@ -5,7 +5,7 @@ module Krikri
   # `vars_prompt:` - questions asked once, before the play runs, whose
   # answers become play variables.
   #
-  # Real Ansible only actually PROMPTS on a terminal. With stdin piped or
+  # Ansible only actually PROMPTS on a terminal. With stdin piped or
   # closed it does not read the input at all: it falls back to the
   # entry's `default:`, or to None when there is none (verified against
   # ansible-core 2.19.4 - piping "bob" to a prompt with
@@ -32,7 +32,7 @@ module Krikri
             default
           end
 
-        # With no answer and no default, real Ansible leaves the variable
+        # With no answer and no default, Ansible leaves the variable
         # as the literal STRING "None" - not a null. Verified against
         # ansible-core 2.19.4: `{{ x | type_debug }}` reports `str` and
         # `x is none` is False, i.e. Python's str(None) has leaked into
@@ -49,7 +49,7 @@ module Krikri
       suffix = default ? " [#{default}]" : ""
       print "#{label}#{suffix}: "
 
-      # private: defaults to TRUE in real Ansible - a vars_prompt is
+      # private: defaults to TRUE in Ansible - a vars_prompt is
       # assumed to be a secret unless it says otherwise.
       hidden = (entry["private"]? || "true").downcase
       typed =
@@ -63,7 +63,7 @@ module Krikri
     end
 
     # Reads without echoing, restoring the terminal afterwards. When echo
-    # can't be disabled (stty missing or failing), real Ansible's private
+    # can't be disabled (stty missing or failing), Ansible's private
     # prompt goes through getpass, whose documented fallback is a warning
     # and then an ECHOED read - it does not fail closed (unlike this
     # codebase's own vault prompt, which deliberately does). Mirror the

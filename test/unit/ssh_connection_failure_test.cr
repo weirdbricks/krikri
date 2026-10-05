@@ -5,7 +5,7 @@ require "../../src/krikri/ssh_manager"
 # warm rerun): a host the cold run's reboot had killed came back as
 # "ssh: connect to host ... No route to host" on every dispatch, and
 # krikri booked each one as a generic "Plugin execution failed on
-# remote" FAILED task while real ansible-playbook booked UNREACHABLE
+# remote" FAILED task while ansible-playbook booked UNREACHABLE
 # and halted the host at Gathering Facts (recap `unreachable=1
 # failed=0` vs this engine's `failed=2 ok=3 skipped=5`). Distinguishing
 # the two is SSHManager.connection_level_failure?'s job: its pattern

@@ -69,14 +69,14 @@ at "root cause confirmed, here's the prompt for Crush" and do the actual
 
 Your prompt to Crush needs, self-contained:
 - The exact root cause you've confirmed (not a hypothesis - confirm it
-  yourself against real `ansible-playbook` first, per the repro workflow
+  yourself against `ansible-playbook` first, per the repro workflow
   below, before ever calling Crush).
 - The worktree path and file(s) to change.
 - **Explicit warning that Crush has previously dropped a `return` keyword**
   mid-fix, breaking control flow in a way that still happened to compile —
   you MUST read Crush's diff line by line yourself afterward, not just
   trust that it builds.
-- This repo's comment convention: explain WHY (real Ansible's observed
+- This repo's comment convention: explain WHY (Ansible's observed
   behavior, the round that found it), never WHAT the code does.
 - Explicit instruction: **do not touch `src/krikri/version.cr`**. Version
   bumps happen once, centrally, at merge time (step 5) - if you're working
@@ -89,7 +89,7 @@ Your prompt to Crush needs, self-contained:
 To fetch the real role source and build the minimal repro yourself before
 calling Crush: `ansible-galaxy role install <role> -p /tmp/galaxy-roles`,
 then a small `ansible_connection=local`/`localhost` playbook (no live VM
-needed) comparing real `ansible-playbook` against a freshly-built
+needed) comparing `ansible-playbook` against a freshly-built
 `bin/krikri-playbook`. The evidence directory for the original divergence
 is `~/scratch/krt-results/<round>_<backend>_<role>/` (`run.log`,
 `summary.txt`, `cold_py.out`/`cold_crystal.out`/`warm_py.out`/
@@ -129,8 +129,8 @@ skip the check.
    pre-existing line (check by running `ameba` on that same file on `main`)
    is not your problem.
 6. **Re-run the repro yourself**, and where practical, diff it directly
-   against real `ansible-playbook`'s own output/recap — not just "looks
-   plausible." Real `ansible-playbook` needs a pty to avoid this sandbox's
+   against `ansible-playbook`'s own output/recap — not just "looks
+   plausible." `ansible-playbook` needs a pty to avoid this sandbox's
    non-blocking-stdio error: `script -qec "ansible-playbook ..." /dev/null`.
 
 ## 4. Commit — the `--amend` trap

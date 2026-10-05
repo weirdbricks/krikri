@@ -14,7 +14,7 @@ describe "with_first_found: default search roots vs the task's action" do
     # Real divergence benchmarking ccdc.ntp_configuration: its "Set up
     # NTP time synchronisation" include_tasks: + with_first_found: has
     # bare OS candidates and, on Debian, tasks/Debian.yml does not exist
-    # but vars/Debian.yml (a vars MAPPING) does. Real ansible-playbook
+    # but vars/Debian.yml (a vars MAPPING) does. ansible-playbook
     # (core 2.19.x) skips straight past it and resolves to
     # tasks/Linux.yml; krikri searched vars/ before tasks/ and matched
     # vars/Debian.yml, failing with "Included tasks file must be a YAML
@@ -77,7 +77,7 @@ describe "with_first_found: default search roots vs the task's action" do
     # file_dir is only set for include_tasks: statements, so a task
     # declared directly in a role's top-level tasks/main.yml previously
     # had no tasks/ root at all - the lookup exhausted and failed with
-    # "No file was found when using first_found." where real Ansible
+    # "No file was found when using first_found." where Ansible
     # resolved to tasks/setup-Debian.yml and the role ran to completion.
     src_dir = File.tempname("first-found-include-vars-under-tasks")
     role = File.join(src_dir, "roles", "myrole")
@@ -130,7 +130,7 @@ describe "with_first_found: default search roots vs the task's action" do
     # "Load a variable file based on the OS type" include_vars: +
     # with_first_found: candidate '{{ ansible_system }}.yml' exists in the
     # role BOTH as tasks/Linux.yml (a task LIST) and vars/Linux.yml (a vars
-    # MAPPING defining a `default:` dict). Real ansible-playbook (core
+    # MAPPING defining a `default:` dict). ansible-playbook (core
     # 2.19.x, verified live) resolves the include_vars: to the vars/ copy;
     # krikri searched tasks/ before vars/ and loaded the tasks/ copy,
     # merging zero variables, so the role's own

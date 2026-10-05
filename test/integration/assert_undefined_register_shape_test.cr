@@ -15,7 +15,7 @@ ensure
 end
 
 # The registered var for a CONDITIONAL-EVALUATION failure carries
-# changed=false+failed=true+msg in real ansible-core 2.19.11 (live-
+# changed=false+failed=true+msg in ansible-core 2.19.11 (live-
 # verified: both `assert: that: undef == 1` and the equivalent
 # `when: undef == 1` read back .changed as False, and the fatal line
 # dumps {"changed": false, "msg": "Task failed: ..."}), while an

@@ -2,7 +2,7 @@ module Krikri
   module Lint
     # Resolves the files a playbook or task file pulls in, mirroring
     # upstream's HandleChildren traversal (ansiblelint/utils.py, reached
-    # from Runner#find_children). Real ansible-lint walks this graph
+    # from Runner#find_children). ansible-lint walks this graph
     # before linting, so imported task files, imported playbooks and role
     # content are linted *and* counted in the "on N files" summary;
     # without it krikri-lint silently skipped them and under-counted.

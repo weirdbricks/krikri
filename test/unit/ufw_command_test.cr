@@ -56,7 +56,7 @@ describe Krikri::PluginHelpers::UfwCommand do
       Krikri::PluginHelpers::UfwCommand.rule_command(params).must_equal("ufw allow on eth0 from any to any port 22")
     end
 
-    it "appends from_port/to_port independently of from_ip/to_ip - a port given without its matching ip is still appended alone (matches real Ansible's source, which checks each of the four keys independently, not as ip+port pairs), and from_ip/to_ip default to 'any' (real Ansible's own argument default) rather than being omitted" do
+    it "appends from_port/to_port independently of from_ip/to_ip - a port given without its matching ip is still appended alone (matches Ansible's source, which checks each of the four keys independently, not as ip+port pairs), and from_ip/to_ip default to 'any' (Ansible's own argument default) rather than being omitted" do
       params = {"rule" => "allow", "from_port" => "1000", "to_ip" => "10.0.0.1"}
       Krikri::PluginHelpers::UfwCommand.rule_command(params).must_equal("ufw allow from any port 1000 to 10.0.0.1")
     end
@@ -156,7 +156,7 @@ describe Krikri::PluginHelpers::UfwCommand do
       Krikri::PluginHelpers::UfwCommand.version_parses?("ufw 0.36\n").must_equal(true)
     end
 
-    it "rejects empty or non-ufw output (real's 'Failed to get ufw version.' failure)" do
+    it "rejects empty or non-ufw output (Ansible's 'Failed to get ufw version.' failure)" do
       Krikri::PluginHelpers::UfwCommand.version_parses?("").must_equal(false)
       Krikri::PluginHelpers::UfwCommand.version_parses?("not ufw\n").must_equal(false)
     end
@@ -227,7 +227,7 @@ describe Krikri::PluginHelpers::UfwCommand do
 end
 
 describe "Krikri::PluginHelpers::UfwCommand (clause emission and failure messages)" do
-  describe "truthiness-gated clauses (real Ansible's [value, template] filter)" do
+  describe "truthiness-gated clauses (Ansible's [value, template] filter)" do
     it "skips an interface clause given as an empty string" do
       # Oefenweb.ufw maps every optional key through `default('')`, so
       # `interface: ""` arrives present-but-empty. Emitting a bare `on `
@@ -264,7 +264,7 @@ describe "Krikri::PluginHelpers::UfwCommand (clause emission and failure message
     end
 
     it "skips the clause when the key is present but empty" do
-      # Different case from absent: real Ansible gates on truthiness, so
+      # Different case from absent: Ansible gates on truthiness, so
       # an explicit empty string drops the clause rather than defaulting.
       cmd = Krikri::PluginHelpers::UfwCommand.rule_command({
         "rule" => "allow", "from_ip" => "", "to_ip" => "10.0.0.1", "to_port" => "22",
@@ -279,10 +279,10 @@ describe "Krikri::PluginHelpers::UfwCommand (clause emission and failure message
   # `ufw status verbose` probes and ignore their exit codes, so in a
   # container without CAP_NET_ADMIN (where even `ufw status verbose`
   # exits non-zero with iptables' permission error) a rule task
-  # reported changed: true "Rules updated" where real Ansible failed.
+  # reported changed: true "Rules updated" where Ansible failed.
   # Real ufw.py's execute() fails with `msg=err or out` - stderr wins.
   describe ".exec_failure_msg" do
-    it "prefers stderr - real Ansible's msg=err or out" do
+    it "prefers stderr - Ansible's msg=err or out" do
       Krikri::PluginHelpers::UfwCommand.exec_failure_msg(
         "Rules updated\nRules updated (v6)\n",
         "ERROR: problem running iptables: iptables v1.8.11 (nf_tables): " \

@@ -21,7 +21,7 @@ ensure
 end
 
 describe "feature-level output shapes" do
-  it "prints when:-skipped loop items in iteration order with real's trailing space" do
+  it "prints when:-skipped loop items in iteration order with Ansible's trailing space" do
     text = run_playbook_text(<<-YAML)
       - hosts: localhost
         gather_facts: false

@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real ansible-core 2.19's native typing rule (live-verified against
+# ansible-core 2.19's native typing rule (live-verified against
 # ansible-playbook 2.19.11): a template whose whole AST is one output node
 # (`{{ expr }}`) returns the NATIVE type of the expression - a Jinja string
 # expression stays a str even when its text looks like a number ("{{ '8.9' }}"
@@ -32,8 +32,8 @@ ensure
 end
 
 describe "set_fact keeps a Jinja string expression a string (2.19 native typing)" do
-  it "matches real ansible's type_debug for the full string-vs-native matrix" do
-    # Every line below is live-verified against real ansible-playbook
+  it "matches Ansible's type_debug for the full string-vs-native matrix" do
+    # Every line below is live-verified against ansible-playbook
     # 2.19.11 with the identical playbook (str/str/str/str/str/float/int/
     # int/float/str/str/str/str, all comparisons True).
     status, output = run_playbook(<<-YAML)
@@ -164,7 +164,7 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
   it "evaluates a whole-span expression exactly once (side-effecting lookups)" do
     # The native-type recovery must REPLACE the string substitution, not
     # run in addition to it: evaluating twice ran a pipe lookup twice and
-    # stored the second run's output ("2"). Real ansible-playbook 2.19.11
+    # stored the second run's output ("2"). ansible-playbook 2.19.11
     # runs it once and stores the string "1" (live-verified).
     counter = File.tempname("set-fact-once", ".txt")
     status, output = run_playbook(<<-YAML)

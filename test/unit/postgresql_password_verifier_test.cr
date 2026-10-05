@@ -62,7 +62,7 @@ describe Krikri::PluginHelpers::PostgresqlPasswordVerifier do
 
     it "always reports changed for plaintext against a non-md5 verifier the recomputation cannot check" do
       # Stored value is a legacy non-SCRAM form while the server default
-      # is scram-sha-256 - real Ansible's own behavior (issue #688).
+      # is scram-sha-256 - Ansible's own behavior (issue #688).
       Verifier.needs_change?(MYPW_ALICE_MD5, "s3cretpw", "alice", "scram-sha-256").must_equal(true)
     end
 
@@ -82,7 +82,7 @@ describe Krikri::PluginHelpers::PostgresqlPasswordVerifier do
 
     it "falls back to 'different' on a malformed verifier" do
       # The salt is not valid base64 (wrong length for its char set) ->
-      # rescue -> false (treat as different), matching the real module's
+      # rescue -> false (treat as different), matching the Ansible module's
       # except-clause.
       malformed = "SCRAM-SHA-256$4096:abcde$abc:def"
       stored = malformed.match!(Krikri::PluginHelpers::PostgresqlPasswordVerifier::SCRAM_SHA256_REGEX)

@@ -6,8 +6,8 @@ require "file_utils"
 # entanet_devops.common / entanet_devops.upgrade (rounds 73358+), whose
 # single task is `apt: {upgrade: full, update_cache: yes, autoremove: yes}`:
 #
-# 1. The warm rerun always reported `changed: true` where real Ansible
-#    reported `ok`. Real Ansible's apt module never reaches its own
+# 1. The warm rerun always reported `changed: true` where Ansible
+#    reported `ok`. Ansible's apt module never reaches its own
 #    cleanup() when `upgrade:` is set - upgrade() exits the module - and
 #    folds the autoremove intent into the upgrade command itself
 #    (`dist-upgrade --auto-remove`). This plugin instead ran a standalone
@@ -17,7 +17,7 @@ require "file_utils"
 #    reporting `changed: true` on every rerun.
 #
 # 2. The no-op detection (`0 upgraded, 0 newly installed, 0 to remove`)
-#    omitted real Ansible's APT_GET_ZERO leading newline, so a genuine
+#    omitted Ansible's APT_GET_ZERO leading newline, so a genuine
 #    "10 upgraded, 0 newly installed, 0 to remove ..." run matched the
 #    zero-string at offset 1 and falsely reported a no-op.
 

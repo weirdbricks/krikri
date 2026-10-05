@@ -17,7 +17,7 @@ require "file_utils"
 # non-existent version ($KRIKRI_APT_BAD_PIN, "name=version") with real
 # apt-get's own version-not-found failure shape (exit 100, the E: line on
 # stderr); any other invocation exits 0. `apt-cache` (the candidate
-# pre-flight probe's resolution source, standing in for real's in-process
+# pre-flight probe's resolution source, standing in for Ansible's in-process
 # python-apt cache) reports a candidate version that is NOT the bad pin,
 # so the pin is what fails. `stat` reports a static mtime so the
 # cache-update probe never sees movement. Yields the `_environment` JSON
@@ -58,7 +58,7 @@ describe "apt plugin pinned-version validation" do
   # apt-get's "E: Version '...' was not found" is never reached (this
   # engine used to defer the failure to apt-get and wrap it in a
   # "Failed to install ...: <stderr>" msg instead).
-  it "fails the candidate pre-flight with real's wording for a pinned version that doesn't exist" do
+  it "fails the candidate pre-flight with Ansible's wording for a pinned version that doesn't exist" do
     with_bad_pin_shim("pkgname=badversion") do |env, log|
       result = PluginSpecHelper.run("apt", {
         "name"         => "pkgname=badversion",

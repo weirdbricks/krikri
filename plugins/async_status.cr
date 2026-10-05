@@ -13,13 +13,13 @@ module Krikri
   #
   # Reads the same ~/.ansible_async/<jid> status file TaskExecutor#
   # execute_async's spawned __async_run background process writes to on
-  # completion - see AsyncJobs. mode: cleanup is implemented too (real Ansible's own mode): deletes the
+  # completion - see AsyncJobs. mode: cleanup is implemented too (Ansible's own mode): deletes the
   # job's status/config files - or, with jid: ALL (or no jid at all), every
   # job file in the async dir, which previously grew without bound.
   # (deleting the job's status file) is not.
   #
   # Forwards the underlying job's own changed: verbatim once finished
-  # (verified against real ansible-playbook: an async_status: on a
+  # (verified against ansible-playbook: an async_status: on a
   # finished command: job shows changed: [host], matching the command
   # module's own changed status, not a hardcoded false) - false while
   # still running, since there's nothing changed to report yet.
@@ -46,7 +46,7 @@ module Krikri
 
       status = AsyncJobs.read_status(jid)
       unless status
-        # Real Ansible's own not-found shape (async_status.py's
+        # Ansible's own not-found shape (async_status.py's
         # fail_json call): msg without the jid interpolated, jid carried
         # separately as ansible_job_id, and started/finished as real
         # JSON booleans (ansible-core 2.19+ wording).
@@ -70,9 +70,9 @@ module Krikri
     end
 
     private def not_found_result(jid : String) : PluginResult
-      # Real's result also carries the results_file path (the job file
+      # Ansible's result also carries the results_file path (the job file
       # that doesn't exist) plus empty stdout/stderr pairs with their
-      # _lines companions - live-captured from real ansible-playbook
+      # _lines companions - live-captured from ansible-playbook
       # 2.19.11 against a never-started jid.
       PluginResult.new(changed: false, failed: true, msg: "could not find job",
         ansible_job_id: jid, started: true, finished: true,
@@ -87,23 +87,23 @@ module Krikri
         ansible_job_id: jid, erased: AsyncJobs.status_path(jid))
     end
 
-    # Real 2.19.11's async_status registered shapes (live-verified via
+    # Ansible 2.19.11's async_status registered shapes (live-verified via
     # `{{ r.keys() | list | to_json }}` on registered status-mode tasks
     # against a running and a finished command job):
     #  - still running: started, finished, stdout, stderr, stdout_lines,
     #    stderr_lines, ansible_job_id, results_file, failed, changed -
     #    and NO msg key (the old "job is still running" msg was
-    #    krikri-only; real's action plugin never carries one).
+    #    krikri-only; Ansible's action plugin never carries one).
     #  - finished: the same base dict merged with the job file's module
     #    result - duplicates keep their base position, the module's own
     #    keys follow in file order (command: changed, rc, cmd, start,
     #    end, delta, msg, failed). The base dict is what
-    #    the real module initializes (then
+    #    the Ansible module initializes (then
     #    coerces started/finished to booleans) before merge_hash with
     #    the module result; the key_order below mirrors that merge
     #    DYNAMICALLY from the file's own key order, so any module's
-    #    shape lands in real's order rather than a command-only pin.
-    # Real's msg key on a finished job is whatever the module's file
+    #    shape lands in Ansible's order rather than a command-only pin.
+    # Ansible's msg key on a finished job is whatever the module's file
     # carried (an empty string for command) - present iff the file has
     # the key, hence include_empty_msg on the empty-string case.
     private def status_result(status : JSON::Any, jid : String) : PluginResult # ameba:disable Metrics/CyclomaticComplexity
@@ -131,13 +131,13 @@ module Krikri
       # `poll_result.finished`; a finished poll that omits it would
       # retry until retries exhausted - found live: modules_systems.yml's
       # async probe polled a finished job 30 times, then reported a
-      # result with no finished key at all). Real ansible-core 2.19.11
+      # result with no finished key at all). ansible-core 2.19.11
       # carries BOTH as JSON booleans (live-verified: the registered var
       # of a finished async_status: poll renders finished=True,
       # started=true - the old 0/1 ints rendered as 1/0 instead).
       result.extra["started"] = JSON::Any.new(true)
       result.extra["finished"] = JSON::Any.new(finished)
-      # Real's action-plugin base dict: empty stdout/stderr pairs (and
+      # Ansible's action-plugin base dict: empty stdout/stderr pairs (and
       # their _lines companions) plus the jid echo and the job-file path
       # - present on the running shape, overwritten in place by the
       # module file's own values on the finished one (same insertion

@@ -3,12 +3,12 @@ require "../../src/krikri/variable_substitutor"
 
 # Round 191 regression cover (gantsign.helm): recursive re-templating of a
 # task argument must apply ONLY to leftover templates that originated in a
-# VARIABLE'S OWN VALUE. Real Ansible renders a task argument in a single
+# VARIABLE'S OWN VALUE. Ansible renders a task argument in a single
 # Jinja2 pass; brace text produced by an evaluated QUOTED LITERAL in the
 # task itself (helm's Go-template `{{ if .Version }}...{{ else }}...
 # {{ end }}` argument) passes through verbatim. The old whole-output re-pass
 # loop parsed `{{ else }}` as a Jinja tag and failed with "'else' is
-# undefined" while real ansible ran the command fine.
+# undefined" while Ansible ran the command fine.
 private def jvars(pairs : Hash(String, String)) : Hash(String, JSON::Any)
   result = Hash(String, JSON::Any).new
   pairs.each { |key, value| result[key] = JSON::Any.new(value) }
@@ -52,7 +52,7 @@ describe "Krikri::VarSubstitutor (var_substitutor_recursive_retemplating_test.cr
     # re-scanned the resolved value's `{{ inner_undefined }}` output as
     # another template level and died (strict) on the never-defined
     # inner name - exactly the 0.9.1267 crash the registry carve-out was
-    # built to prevent, reopened by the mixed string. Real Ansible
+    # built to prevent, reopened by the mixed string. Ansible
     # renders the whole arg in ONE Jinja2 pass: the YAML-template var
     # re-templates recursively (its own value is rendered as part of
     # resolving it), the resolved fact passes through verbatim.
@@ -72,8 +72,8 @@ describe "Krikri::VarSubstitutor (var_substitutor_recursive_retemplating_test.cr
   end
 
   # 0.9.1267 gap (perf benchmark's Jinja edge-case section, live-verified
-  # against real ansible-core 2.19.11): a set_fact:/register: value whose
-  # stored TEXT contains `{{ ... }}` is RESOLVED - real Ansible tags it
+  # against ansible-core 2.19.11): a set_fact:/register: value whose
+  # stored TEXT contains `{{ ... }}` is RESOLVED - Ansible tags it
   # and never re-scans it, while the content-based re-pass treated the
   # brace text as another template level and died on the inner
   # never-defined name as an unhandled controller crash.

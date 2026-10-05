@@ -32,17 +32,17 @@ module Krikri
   # - contains: a regex matched against a regular file's content -
   #   line-by-line, anchored at the start of each line (default), or
   #   anywhere in the whole file when read_whole_file: true. Only applies
-  #   when file_type: file (real Ansible's own restriction, not a scope
+  #   when file_type: file (Ansible's own restriction, not a scope
   #   cut here - verified against its actual source)
   # - read_whole_file: search the whole file for contains: instead of
   #   matching line-by-line (default: false)
   # - get_checksum / checksum_algorithm: as in the stat plugin (default:
-  #   get_checksum false, matching real Ansible's find default)
+  #   get_checksum false, matching Ansible's find default)
   #
   # - mode / exact_mode: filters matched files by permission bits -
   #   octal ("0644") or the `u=rw,g=r,o=r` symbolic assignment form -
   #   see `PluginHelpers::FindModeFilter`'s own doc comment for exact
-  #   semantics (verified against the real module's own
+  #   semantics (verified against the Ansible module's own
   #   `mode_filter` source, including its non-obvious non-exact "ANY
   #   requested bit present" semantics) and its documented scope cut
   #   (only `=` assignment, not the fuller chmod(1) `+`/`-`/`X`/`s`/`t`
@@ -61,31 +61,31 @@ module Krikri
   #   follow only changes which directories are walked into (os.walk's
   #   own followlinks flag).
   # - encoding: the text encoding used when `contains:` reads a file's
-  #   content for matching (e.g. latin-1; real Ansible 2.17+'s
+  #   content for matching (e.g. latin-1; Ansible 2.17+'s
   #   contentfilter opens the file with `open(..., encoding=encoding)`).
   #   When not given, content is read as raw bytes and matched
   #   latin-1-style, so any byte sequence is searchable without a decode
-  #   error. Encoding does NOT affect get_checksum - real Ansible's
+  #   error. Encoding does NOT affect get_checksum - Ansible's
   #   digest_from_file hashes raw bytes regardless of encoding.
   #
   # Directory walk via Dir.each_child + native lstat()/hashlib-equivalent
   # checksums (BasePlugin#native_stat/#native_checksum) rather than
   # shelling to `find`/`stat`/`md5sum`/`sha1sum`/`sha256sum`/`readlink`
-  # once per matched entry - matches real Ansible's own find module,
+  # once per matched entry - matches Ansible's own find module,
   # which walks via Python's os.walk() and hashes via hashlib rather than
   # shelling out too. Measured ~150x faster over a 320-file tree with
   # checksums enabled than the previous shell-per-entry implementation.
   #
   # Read-only, never-`changed`, like stat.
   class FindPlugin < BasePlugin
-    # Real's registered find result order (live-verified vs 2.19.11).
+    # Ansible's registered find result order (live-verified vs 2.19.11).
     private FIND_KEY_ORDER = %w[files changed msg matched examined skipped_paths]
 
     # contains: with an unknown encoding: name - not a per-file miss but a
     # path-level failure in real (see read_content)
     class UnknownEncoding < Exception; end
 
-    # A directory-listing error real's handle_walk_errors does NOT swallow
+    # A directory-listing error Ansible's handle_walk_errors does NOT swallow
     # (anything but EPERM/EACCES/ENOENT): real re-raises it out of
     # os.walk into the per-search-path handler, which records the TOP
     # search path (not the failing subdirectory) and warns about it.
@@ -128,11 +128,11 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real Ansible's find module declares `paths` with aliases `path`
+      # Ansible's find module declares `paths` with aliases `path`
       # and `name` (`ansible.plugins.modules.find`'s own argument_spec) -
       # a single-path invocation almost always uses the singular form
       # (`path: /var/spool/mail`, robertdebock.dovecot's own "Find users
-      # in /var/spool/mail" task), which real Ansible accepts
+      # in /var/spool/mail" task), which Ansible accepts
       # transparently. This plugin only ever recognized the plural
       # `paths:`, failing outright ("missing required argument: paths")
       # on the far more common singular spelling.
@@ -165,7 +165,7 @@ module Krikri
         encoding: @params["encoding"]?,
       )
 
-      # Real Ansible's find fails the whole module when `age:` or `size:`
+      # Ansible's find fails the whole module when `age:` or `size:`
       # doesn't parse ("banana" etc.); it does NOT silently drop the
       # filter and return unfiltered matches.
       if (age = options.age_filter) && parse_age(age).nil?
@@ -201,7 +201,7 @@ module Krikri
         )
       end
 
-      # Real's registered find result runs files, changed, msg, matched,
+      # Ansible's registered find result runs files, changed, msg, matched,
       # examined, skipped_paths, failed (live-verified vs 2.19.11 via
       # `{{ r | to_json }}`; check mode is the same shape). warnings is
       # unlisted - it trails (its real position was not confirmed live).
@@ -266,7 +266,7 @@ module Krikri
       examined
     end
 
-    # `paths:`/`patterns:`/`excludes:` accept real Ansible's comma-
+    # `paths:`/`patterns:`/`excludes:` accept Ansible's comma-
     # separated string idiom directly, but a `{{ some_list_var }}`
     # template resolving to a real array (robertdebock.unowned_files'
     # own `paths: "{{ unowned_files_directories }}"`) instead renders to
@@ -336,7 +336,7 @@ module Krikri
     # itself) up to the given depth - direct children are depth 1,
     # matching real `find <path> -mindepth 1 -maxdepth N`'s own
     # numbering, which this replaces. Symlinked directories are descended
-    # into only when follow: true, matching real Ansible's own
+    # into only when follow: true, matching Ansible's own
     # os.walk(followlinks=...) - with follow: false (the default) the
     # symlink itself is still listed/examined (os.walk puts it in `dirs`
     # either way), just not walked into. Unreadable directories are
@@ -373,7 +373,7 @@ module Krikri
         end
       end
     rescue ex : File::Error
-      # Real's os.walk(onerror=handle_walk_errors) - live-verified vs
+      # Ansible's os.walk(onerror=handle_walk_errors) - live-verified vs
       # 2.19.11: an unreadable directory is NOT a silent skip and NOT a
       # failure. EPERM/EACCES/ENOENT are recorded in skipped_paths under
       # the UNLISTABLE directory's own path with Python's OSError str()
@@ -398,7 +398,7 @@ module Krikri
     end
 
     # True if any path component between search_path and entry_path starts
-    # with "." - real Ansible (os.walk-based) never descends into a hidden
+    # with "." - Ansible (os.walk-based) never descends into a hidden
     # directory, so anything under one is hidden too, not just direct
     # dotfiles.
     private def hidden_path?(entry_path : String, search_path : String) : Bool
@@ -456,7 +456,7 @@ module Krikri
 
     # Same sign convention as size: positive age means "at least this old"
     # (now - timestamp >= age), negative means "at most this old"
-    # (now - timestamp <= abs(age)) - verified against real Ansible's own
+    # (now - timestamp <= abs(age)) - verified against Ansible's own
     # find.py agefilter() source, not guessed from the docs' prose.
     private def matches_age?(stat_hash : Hash(String, JSON::Any), age_filter : String?, age_stamp : String, now : Int64) : Bool
       return true unless age_filter
@@ -465,7 +465,7 @@ module Krikri
       return true unless age
 
       # atime/mtime/ctime are float seconds now (matching Python's
-      # st_atime etc. that real Ansible carries through) - elapsed is
+      # st_atime etc. that Ansible carries through) - elapsed is
       # compared as float, same result at whole-second age granularity.
       timestamp = stat_hash[age_stamp]?.try(&.as_f) || stat_hash["mtime"].as_f
       elapsed = now.to_f - timestamp
@@ -491,7 +491,7 @@ module Krikri
       value * multiplier
     end
 
-    # contains: only applies to regular files (real Ansible's own
+    # contains: only applies to regular files (Ansible's own
     # restriction: "Works only when file_type is file" - the caller
     # already gates this on file_type == "file"). read_whole_file: false
     # (the default) matches line-by-line, anchored at the start of each
@@ -499,7 +499,7 @@ module Krikri
     # replicates in Crystal's PCRE-based Regex; read_whole_file: true
     # searches anywhere in the whole file content (Python's re.search()).
     # A read failure (permission denied, a regex that can't compile, etc.)
-    # is treated as no match, same as real Ansible's own broad `except
+    # is treated as no match, same as Ansible's own broad `except
     # Exception: pass` around this.
     private def matches_contains?(path : String, contains : String?, read_whole_file : Bool, encoding : String?) : Bool
       return true unless contains
@@ -518,9 +518,9 @@ module Krikri
     end
 
     # `contains:`'s own file reading. An explicit encoding: selects the
-    # text decoding (real Ansible 2.17+ opens the file with
+    # text decoding (Ansible 2.17+ opens the file with
     # `open(..., encoding=encoding)`); undecodable byte sequences are
-    # skipped rather than failing the match - real Ansible raises on the
+    # skipped rather than failing the match - Ansible raises on the
     # decode error and abandons the whole path, but a single bad byte
     # shouldn't drop every other match here. With no encoding given,
     # content is read as raw bytes and matched latin-1-style (each byte
@@ -547,7 +547,7 @@ module Krikri
     end
 
     # Accepts Python's codec alias spellings ("latin-1", "utf8", "us-ascii")
-    # as real Ansible's `open(encoding=...)` does - Crystal's iconv-based
+    # as Ansible's `open(encoding=...)` does - Crystal's iconv-based
     # set_encoding only knows the canonical names ("ISO-8859-1", "UTF-8",
     # "ASCII"), so the common lowercase aliases are mapped across.
     private def normalize_encoding(name : String) : String

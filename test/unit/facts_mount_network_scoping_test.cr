@@ -6,21 +6,21 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 # setup_edge_cases_v2 harness (FS3/FS5 divergence) against real
 # ansible-core 2.14 inside a debian:bookworm-slim podman container:
 #
-# - FS3 mounts: real's hardware/linux.py get_mount_facts skips any
+# - FS3 mounts: Ansible's hardware/linux.py get_mount_facts skips any
 #   mount whose device is not a local device path (no "/" prefix, no
 #   ":/" NFS export) and any fstype of "none". In a container every
-#   mount device is overlay/proc/tmpfs/udev/etc, so real reports an
+#   mount device is overlay/proc/tmpfs/udev/etc, so Ansible reports an
 #   EMPTY ansible_mounts despite /proc/mounts listing 150+ entries -
 #   krikri used to report all of them.
-# - FS5 network: real's network/linux.py LinuxNetwork.populate returns
+# - FS5 network: Ansible's network/linux.py LinuxNetwork.populate returns
 #   an empty dict BEFORE any gathering when get_bin_path('ip') is None.
-#   bookworm-slim ships no iproute2, so real reports NO network facts
+#   bookworm-slim ships no iproute2, so Ansible reports NO network facts
 #   (no ansible_interfaces, no 'lo', no default_ipv4, no
 #   all_ipv4_addresses) even though /sys/class/net still lists lo -
 #   krikri used to populate ansible_interfaces from /sys/class/net
 #   unconditionally, so `when: 'lo' in ansible_interfaces` diverged.
 describe "Krikri::FactsGatherer (facts_mount_network_scoping_test.cr)" do
-  describe "real Ansible's mount device-path filter" do
+  describe "Ansible's mount device-path filter" do
     it "keeps local device paths" do
       Krikri::FactsGatherer.real_mount_device_kept?("/dev/vg0/lv0", "ext4").must_equal(true)
       Krikri::FactsGatherer.real_mount_device_kept?("/dev/mapper/vg0-lv0", "xfs").must_equal(true)
@@ -31,7 +31,7 @@ describe "Krikri::FactsGatherer (facts_mount_network_scoping_test.cr)" do
       Krikri::FactsGatherer.real_mount_device_kept?("192.168.1.10:/export", "nfs4").must_equal(true)
     end
 
-    it "drops pseudo-filesystem devices and fstype=none (FS3: real reports empty mounts in a container)" do
+    it "drops pseudo-filesystem devices and fstype=none (FS3: Ansible reports empty mounts in a container)" do
       Krikri::FactsGatherer.real_mount_device_kept?("overlay", "overlay").must_equal(false)
       Krikri::FactsGatherer.real_mount_device_kept?("proc", "proc").must_equal(false)
       Krikri::FactsGatherer.real_mount_device_kept?("tmpfs[/containers/overlay-containers/x/userdata]", "tmpfs").must_equal(false)
@@ -52,7 +52,7 @@ describe "Krikri::FactsGatherer (facts_mount_network_scoping_test.cr)" do
   end
 
   describe "the ip-binary gate on network facts" do
-    it "reports network facts only when real's get_bin_path('ip') would find one (FS5)" do
+    it "reports network facts only when Ansible's get_bin_path('ip') would find one (FS5)" do
       # Same lookup real get_bin_path does over PATH - the harness
       # containers (bookworm-slim, no iproute2) resolve nil and real
       # emits no network facts at all; krikri must match that there.

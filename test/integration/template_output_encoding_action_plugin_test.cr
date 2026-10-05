@@ -6,7 +6,7 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real's template ACTION plugin encodes the rendered result into its own
+# Ansible's template ACTION plugin encodes the rendered result into its own
 # temporary file with Python's to_bytes(resultant, encoding=output_encoding)
 # BEFORE it hands anything to the copy action plugin, so a non-string
 # output_encoding crashes there - "encode() argument 'encoding' must be str,
@@ -14,7 +14,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # That is what the task reports, not a typo'd key or a wrong-typed bool
 # sitting next to the literal, and not in check mode either (the encode
 # happens before copy's own --check short-circuit). A FALSY literal is
-# instead silently the default (real's `or 'utf-8'`) and deploys. All
+# instead silently the default (Ansible's `or 'utf-8'`) and deploys. All
 # live-verified vs 2.19.11. The playbooks live in the per-test scratch dir;
 # dests are under it too.
 private def template_probe(name : String, task_body : String, args : Array(String) = [] of String) : {String, String}
@@ -42,7 +42,7 @@ private def template_probe(name : String, task_body : String, args : Array(Strin
   {output.to_s, dest}
 ensure
   # The dest is deliberately left on disk: callers assert on the bytes
-  # real would have written, and it lives in the per-test scratch dir
+  # Ansible would have written, and it lives in the per-test scratch dir
   # (PluginSpecHelper.tmp_path), which the suite cleans up itself.
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
@@ -101,7 +101,7 @@ describe "template: output_encoding is encoded by the action plugin" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
-  it "names the Python type real reports for each non-string value" do
+  it "names the Python type Ansible reports for each non-string value" do
     {"float" => ["1.5", "_AnsibleTaggedFloat"],
      "bool"  => ["true", "bool"],
      "list"  => ["[7]", "_AnsibleTaggedList"],
@@ -126,7 +126,7 @@ describe "template: output_encoding is encoded by the action plugin" do
     File.read(dest).must_equal("hello\n")
   end
 
-  it "reports an unknown codec from the action plugin, with real's Task failed wrapper" do
+  it "reports an unknown codec from the action plugin, with Ansible's Task failed wrapper" do
     out, _ = template_probe("enc-unknown", "output_encoding: nosuchcodec\n")
 
     out.must_include("[ERROR]: Task failed: unknown encoding: nosuchcodec")

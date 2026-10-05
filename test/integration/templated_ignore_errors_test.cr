@@ -7,7 +7,7 @@ require "../minitest_helper"
 # wrong parse-time guess (PlaybookParser.parse_ignore_errors defaults
 # any templated value to TRUE), so on a normal (non-check) run a real
 # task failure was silently swallowed and the play kept running past a
-# point real Ansible halts at. TaskExecutor#resolve_task_ignore_errors
+# point Ansible halts at. TaskExecutor#resolve_task_ignore_errors
 # re-renders the raw expression against the live vars context (which
 # has ansible_check_mode bound) at every actual ignore-errors decision
 # point, overriding the wrong guess.

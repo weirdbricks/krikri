@@ -4,7 +4,7 @@ module Krikri
   module VariableSubstitutor
     # The select/reject/selectattr/rejectattr family's implementation helpers
     class FilterEngine
-      # select(test, *args) / reject(test, *args) - real Jinja2's own
+      # select(test, *args) / reject(test, *args) - Jinja2's own
       # filters, testing each bare LIST ELEMENT directly against a named
       # test (as opposed to selectattr/rejectattr, which test a dict
       # element's given attribute). Entirely unimplemented - neither
@@ -38,7 +38,7 @@ module Krikri
           compare_value.try(&.raw.as?(Array)).try(&.includes?(item)) || false
         when "truthy"
           # select()/reject() with no test name given at all defaults to
-          # real Jinja2's own bare truthiness check on the item itself
+          # Jinja2's own bare truthiness check on the item itself
           # (`select()` alone = "keep every truthy item") - distinct
           # from selectattr's own default ("defined"), since select
           # operates on the item's actual value, not an attribute
@@ -62,7 +62,7 @@ module Krikri
       end
 
       # `selectattr`/`rejectattr`'s attr argument accepts a dotted path
-      # into a nested dict, real Jinja2's own behavior for exactly this
+      # into a nested dict, Jinja2's own behavior for exactly this
       # idiom (`stat_results.results | selectattr('stat.exists', '==',
       # true)`, picking whichever stat: loop result actually exists).
       # A single `item[attr]?` lookup treats "stat.exists" as one
@@ -73,7 +73,7 @@ module Krikri
       # True) | map(attribute='path') | first`): stat.exists was
       # correctly true for 2 of 3 candidates, but selectattr excluded
       # all three, so `first` then raised on the resulting empty list -
-      # real Jinja2's own genuine error text for that case, but reached
+      # Jinja2's own genuine error text for that case, but reached
       # here for the wrong reason (a selectattr bug, not a real empty
       # candidate set).
       private def dotted_attr_value(item : JSON::Any, attr : String) : JSON::Any?
@@ -90,7 +90,7 @@ module Krikri
         # template string - openstack.ansible-hardening's own
         # `stig_packages_rhel7` list gives every entry's `state:` as
         # `"{{ security_package_state }}"` rather than a literal
-        # "present"/"absent", relying on real Ansible's usual recursive
+        # "present"/"absent", relying on Ansible's usual recursive
         # value re-templating. Comparing that raw, still-`{{ }}`-bearing
         # text against a real "present"/"absent" compare_value never
         # matched, so `selectattr('state', 'equalto', item)` (picking
@@ -106,7 +106,7 @@ module Krikri
         # With the chain head's lazy-leaf deferral (see
         # #strict_render_deferred_leaves), an attribute can now reach this
         # point still in its raw, unresolved-template form. Tests that need
-        # the VALUE (equalto/ne/...) must render it strictly - real Ansible
+        # the VALUE (equalto/ne/...) must render it strictly - Ansible
         # renders on access and fails on an undefined-bottoming template,
         # and so did this engine before laziness - while the defined/undef
         # presence tests only ask whether the attribute EXISTS, and real
@@ -135,7 +135,7 @@ module Krikri
         when "undefined"
           attr_value.nil?
         when "truthy"
-          # rejectattr with no test name at all defaults to real Jinja2
+          # rejectattr with no test name at all defaults to Jinja2
           # 3.x's own truthiness check on the attribute value (not the
           # defined-presence check selectattr's no-test fallback here
           # uses) - `results | rejectattr('stat.exists')` must pick out
@@ -143,7 +143,7 @@ module Krikri
           # which are still perfectly well-defined values.
           truthy?(attr_value || JSON::Any.new(nil))
         when "sameas"
-          # Real Jinja2's `sameas` is Python `is` - object identity, which
+          # Jinja2's `sameas` is Python `is` - object identity, which
           # for a JSON value means "same type AND same value" (unlike
           # `equalto`'s looser Ansible-style cross-type comparison
           # elsewhere in this file - `30000 == true` is meaningfully

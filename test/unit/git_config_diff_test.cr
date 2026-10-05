@@ -4,13 +4,13 @@ require "../minitest_helper"
 # community.general git_config (live-verified vs ansible-core 2.19.11):
 # every exit that reports changed: true carries
 # diff={before_header, before, after_header, after}, where both headers
-# are " ".join(set_args) and before/after run through real's
+# are " ".join(set_args) and before/after run through Ansible's
 # build_diff_value - empty -> "\n", single -> "value\n", several -> the
-# list itself. The check-mode path carries the same diff (real only
+# list itself. The check-mode path carries the same diff (Ansible only
 # skips the run_command).
 
 describe "git_config diff" do
-  it "carries real's diff dict on a setting change" do
+  it "carries Ansible's diff dict on a setting change" do
     file = PluginSpecHelper.tmp_path("gitcfg-diff-set.gitconfig")
 
     result = PluginSpecHelper.run("git_config", {

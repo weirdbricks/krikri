@@ -3,7 +3,7 @@
 # tempfile module (ansible.builtin.tempfile) - creates a temporary file or
 # directory on the target and returns its path. Always reports changed:
 # true (there is no idempotency concept - a fresh, uniquely-named path is
-# created on every run, matching real Ansible's own tempfile.mkstemp/
+# created on every run, matching Ansible's own tempfile.mkstemp/
 # mkdtemp-backed module).
 #
 # Parameters:
@@ -20,7 +20,7 @@ module Krikri
   class TempfilePlugin < BasePlugin
     def execute : PluginResult
       # Real tempfile passes no supports_check_mode=True to its
-      # AnsibleModule, so real Ansible's action plugin never runs the
+      # AnsibleModule, so Ansible's action plugin never runs the
       # module under check mode at all - the task skips with "check mode
       # not supported for this module" (podman-diff tempfile_edge_cases
       # T6). This plugin used to run the real mktemp remotely AND report
@@ -77,7 +77,7 @@ module Krikri
     # Where the tempfile is actually created: a relative path resolves
     # against the module's own working directory and `.`, `..` and
     # duplicate/trailing slashes collapse, matching Python's
-    # os.path.abspath (which real's mkstemp applies to `dir`, and which
+    # os.path.abspath (which Ansible's mkstemp applies to `dir`, and which
     # both mkstemp and mkdtemp apply to the path they return - so the
     # absolute form is also what the mktemp template must use to get an
     # absolute path back). Only mkdtemp's failure message still shows
@@ -90,7 +90,7 @@ module Krikri
       normpath(path.starts_with?('/') ? path : "#{base_dir}/#{path}")
     end
 
-    # The working directory a real Ansible module resolves a relative
+    # The working directory a Ansible module resolves a relative
     # path against. Under a local connection that is the playbook's own
     # directory (ansible's local connection plugin runs every module with
     # cwd = the playbook's basedir) - NOT the shell the playbook happened
@@ -150,7 +150,7 @@ module Krikri
       Errno::ENOENT
     end
 
-    # Real's failure text is str(OSError) from the failed open/mkdir, i.e.
+    # Ansible's failure text is str(OSError) from the failed open/mkdir, i.e.
     # "[Errno 2] No such file or directory: '<path>/<prefix><8 random
     # chars><suffix>'" - and the two states legitimately quote DIFFERENT
     # directory forms. Python's tempfile does
@@ -161,7 +161,7 @@ module Krikri
     # written. The 8 characters are mkstemp's own random name (lowercase
     # letters, digits and underscore, exactly Python's
     # tempfile._RandomNameSequence), which is why this reproduces the
-    # shape and not the same bytes real would have picked.
+    # shape and not the same bytes Ansible would have picked.
     private def failure_msg(dir : String, errno : Errno, state : String) : String
       name = "#{name_prefix}#{random_name}#{name_suffix}"
       quoted = state == "directory" ? os_path_join(raw_dir || dir, name) : "#{dir}/#{name}"

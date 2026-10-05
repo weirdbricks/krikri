@@ -11,7 +11,7 @@ module Krikri
   # this tree makes; there is no Python cryptography library to lean on
   # on the target host).
   #
-  # Field vocabularies were matched against the real module
+  # Field vocabularies were matched against the Ansible module
   # (community.crypto 3.1.1, ansible-core 2.19.4), whose own output comes
   # from Python's `cryptography` library mapped through OpenSSL's
   # objects.txt long names - which is exactly the vocabulary `openssl
@@ -26,7 +26,7 @@ module Krikri
   # result carries the full real key set.
   module X509CertInfo
     # hashlib.algorithms_guaranteed - ALL of it, including the two SHAKE
-    # XOFs: the real module emits them too (its bare hexdigest() call
+    # XOFs: the Ansible module emits them too (its bare hexdigest() call
     # raises TypeError on the XOFs and falls back to hexdigest(32), i.e.
     # 32 BYTES for both shake_128 and shake_256). Crystal's
     # OpenSSL::Digest cannot finalize an XOF (EVP_DigestFinal_ex has no
@@ -35,7 +35,7 @@ module Krikri
     # instead (OpenSSL 3.0+, jammy's 3.0.2 included). On an older
     # openssl the CLI call fails and the two entries are omitted - the
     # same graceful degradation the hash loop's rescue already applies.
-    # Everything else is emitted under the real module's Python
+    # Everything else is emitted under the Ansible module's Python
     # algorithm names.
     FINGERPRINT_ALGORITHMS = {
       "md5"      => "md5",
@@ -53,7 +53,7 @@ module Krikri
     }
 
     # The two SHAKE XOFs under their real-module (hashlib) names. The
-    # digest length is fixed at 32 bytes - the real module's
+    # digest length is fixed at 32 bytes - the Ansible module's
     # `hexdigest(32)` fallback, not the XOF's nominal block size.
     SHAKE_ALGORITHMS = {
       "shake_128" => "shake128",
@@ -173,7 +173,7 @@ module Krikri
     end
 
     # The openssl_csr_info half of the family: parses a PKCS#10
-    # certificate request and returns the fields the real module
+    # certificate request and returns the fields the Ansible module
     # (community.crypto 3.1.1, csr_info.py's get_info) returns that this
     # openssl-CLI backend can produce: subject, subject_ordered,
     # key_usage/extended_key_usage/basic_constraints/ocsp_must_staple/
@@ -181,7 +181,7 @@ module Krikri
     # when the extension is absent - matching the real backend's None),
     # public_key, public_key_type, public_key_data,
     # public_key_fingerprints, and signature_valid (openssl's own
-    # `req -verify` - the real module asks cryptography's
+    # `req -verify` - the Ansible module asks cryptography's
     # is_signature_valid).
     #
     # Same deliberate divergence as the certificate half above:
@@ -279,7 +279,7 @@ module Krikri
       ordered
     end
 
-    # The real module's extensions_by_oid:
+    # The Ansible module's extensions_by_oid:
     # cryptography_get_extensions_from_csr - {dotted_oid: {"critical":
     # bool, "value": base64(DER of the extension value)}}. The extension
     # value DER is exactly the content of each extension entry's
@@ -435,7 +435,7 @@ module Krikri
     end
 
     # -nameopt lname prints long names ("commonName = www.example.com"),
-    # the same OpenSSL LN vocabulary the real module emits through
+    # the same OpenSSL LN vocabulary the Ansible module emits through
     # cryptography's OID table.
     private def self.parse_names(names : String?, result : Hash(String, JSON::Any))
       return unless names
@@ -493,7 +493,7 @@ module Krikri
     end
 
     # "Apr 13 20:24:28 2019 GMT" -> "20190413202428Z", the ASN.1 TIME
-    # spelling the real module returns.
+    # spelling the Ansible module returns.
     private def self.parse_openssl_date(raw : String) : String
       cleaned = raw.strip
       begin
@@ -579,7 +579,7 @@ module Krikri
       end
     end
 
-    # The real module renders SAN entries through cryptography's name
+    # The Ansible module renders SAN entries through cryptography's name
     # map - "IP:1.2.3.4", not openssl's "IP Address:1.2.3.4", "RID:" not
     # "Registered ID:". Everything else (DNS/email/URI) already matches.
     private def self.decode_san_entry(entry : String) : String
@@ -649,7 +649,7 @@ module Krikri
       result["public_key_data"] = JSON::Any.new(key_data.to_h { |k, v| {k, v} })
     end
 
-    # Reads the same openssl -text shapes the real module's Python
+    # Reads the same openssl -text shapes the Ansible module's Python
     # backend reads from cryptography objects: RSA gives size/modulus/
     # exponent, ECC gives curve/x/y/exponent_size, Ed25519/X25519 etc.
     # give an empty public_data dict.

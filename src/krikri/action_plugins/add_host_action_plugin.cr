@@ -3,7 +3,7 @@ require "../base_action_plugin"
 
 module Krikri
   # add_host: (ansible.builtin.addhost) as a controller-side action plugin -
-  # real Ansible's own add_host is action-plugin-only (no target-side
+  # Ansible's own add_host is action-plugin-only (no target-side
   # module exists), and its entire effect is a controller-side inventory
   # mutation, so a remote round trip would be meaningless. The plugin
   # mutates the ONE shared Inventory instance every play's host-pattern
@@ -12,7 +12,7 @@ module Krikri
   # feature: a host added in play 1 only shows up when play 2's `hosts:`
   # pattern is resolved because play 2 re-calls Inventory#get_hosts on the
   # same object. It is deliberately NOT added to the current play's own
-  # host list (already fixed before the task ran) - real Ansible behaves
+  # host list (already fixed before the task ran) - Ansible behaves
   # the same way, verified.
   #
   # Out of scope on purpose: exact host-var precedence layering for the
@@ -23,12 +23,12 @@ module Krikri
     # Real precedence (add_host.py's args.get chains): the host name is
     # the FIRST PRESENT of name/hostname/host; the group source the first
     # present of groupname/groups/group. `host` and `group` are NOT in
-    # real's special_args set, so they additionally land in the new
+    # Ansible's special_args set, so they additionally land in the new
     # host's vars.
     NAME_PARAMS  = {"name", "hostname", "host"}
     GROUP_PARAMS = {"groupname", "groups", "group"}
 
-    # Real's own special_args - the only params NOT copied into the new
+    # Ansible's own special_args - the only params NOT copied into the new
     # host's vars (add_host.py's host_vars loop).
     SPECIAL_PARAMS = {"name", "hostname", "groupname", "groups"}
 
@@ -38,7 +38,7 @@ module Krikri
         return ActionResult.failure("add_host: no inventory available in this context")
       end
 
-      # Real's action raises AnsibleActionFail BEFORE anything else when
+      # Ansible's action raises AnsibleActionFail BEFORE anything else when
       # the name chain resolves to None (add_host.py: "name, host or
       # hostname needs to be provided") - an ACTION-level failure, so no
       # "Module failed." segment anywhere. The executor's
@@ -55,7 +55,7 @@ module Krikri
       @params.each do |key, value|
         next if SPECIAL_PARAMS.includes?(key)
         # The executor injects control params (_verbosity, _ansible_*) into
-        # every action's params; real's host_vars loop only sees the task's
+        # every action's params; Ansible's host_vars loop only sees the task's
         # own args, so these must not become host variables.
         next if key == "_verbosity" || key.starts_with?("_ansible_")
         host.vars[key] = JSON::Any.new(value)
@@ -118,7 +118,7 @@ module Krikri
       # `{{ some_list }}` container arg arrives as the double-quoted
       # JSON the wire serialized it to (see substitute_task_params's
       # whole-single-span comment); a value that merely LOOKS like a
-      # container is a plain STRING in real ansible-core (live-verified
+      # container is a plain STRING in ansible-core (live-verified
       # vs ansible-playbook 2.19.11, see apt.cr's parse_package_names).
       JSON.parse(value)
     rescue JSON::ParseException

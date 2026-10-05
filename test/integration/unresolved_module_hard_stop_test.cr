@@ -2,17 +2,17 @@ require "../minitest_helper"
 require "file_utils"
 
 # The UnresolvedModuleError hard-stop, end to end. A tombstoned-removed
-# module name like `ec2_remote_facts` - one real Ansible ITSELF refuses
+# module name like `ec2_remote_facts` - one Ansible ITSELF refuses
 # to resolve anywhere, at its own playbook-load time - must refuse to
 # run the playbook AT ALL, rc=4, no PLAY RECAP, nothing executes,
-# matching real Ansible's own playbook-load module-resolution check
+# matching Ansible's own playbook-load module-resolution check
 # (verified live against ansible-core 2.19.4, including the when:-gated
 # variant: the resolution check is a playbook-LOAD check there, not a
 # per-task one).
 #
 # A plain "krikri simply hasn't implemented this" module is DIFFERENT
 # (0.9.1050, reversing 0.9.903's unconditional hard-stop, round 811000):
-# real Ansible resolves a task's module lazily, per task, only once the
+# Ansible resolves a task's module lazily, per task, only once the
 # task is actually about to run - after its own `when:` evaluated true -
 # so krikri must not abort the whole load at parse time for a task that
 # would never run. The task parses through with unavailable_module set
@@ -24,7 +24,7 @@ require "file_utils"
 # Round 811000 found the old parse-time hard-stop aborting 25 real
 # roles outright for when:-gated modules: robertdebock.podman
 # (containers.podman.podman_container behind `when: podman_containers is
-# defined`, false on the role's own defaults - real Ansible ok=7
+# defined`, false on the role's own defaults - Ansible ok=7
 # changed=2, krikri rc=4 with zero tasks run), mashimom.oh-my-zsh (apk:
 # behind `when: ansible_pkg_mgr == 'apk'` on a Debian host - real
 # Ansible's only failure was a later, unrelated one), and ~23 more of
@@ -52,7 +52,7 @@ end
 describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" do
   it "fails a fired HANDLER fatally when its unimplemented module's own when: raises (undefined var), instead of silently skipping" do
     # Handler-path twin of the task-path regression examples below
-    # (fixed in the same spirit as the 0.9.1175 task-path fix): real Ansible evaluates a
+    # (fixed in the same spirit as the 0.9.1175 task-path fix): Ansible evaluates a
     # fired handler's `when:` BEFORE it ever resolves the handler's
     # module, so a when: referencing a genuinely undefined variable is
     # a fatal conditional error (rc=2, failed=1, "Error while
@@ -86,7 +86,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
 
   it "still cleanly skips a fired unimplemented-module handler behind a literal `when: false`" do
     # The inverse guard on the same handler code path (handler-path
-    # twin of the task-path `when: false` example below): real Ansible
+    # twin of the task-path `when: false` example below): Ansible
     # checks the handler's when: FIRST, and a false condition means
     # module resolution is never even attempted - so an
     # unavailable-module handler + when:-false remains a plain rc=0
@@ -135,7 +135,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # kubernetes.core is a real, commonly-installed collection real
     # ansible-playbook would resolve and run fine here - krikri simply
     # hasn't ported this specific module. Round 811000: the module name
-    # must be resolved lazily like real Ansible does (only once the
+    # must be resolved lazily like Ansible does (only once the
     # task is about to run, after its when: evaluates), so a gate that
     # is false on this host (`ansible_os_family == "Windows"` on a
     # Linux-family run) means the task is cleanly skipped and the rest
@@ -166,7 +166,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # the runtime reachable_unavailable_modules machinery (exit 4 after
     # the recap, from krikri-playbook.cr's end-of-run check) rather
     # than a parse-time abort, so the other tasks in the play actually
-    # ran and show in the PLAY RECAP - matching real Ansible's own
+    # ran and show in the PLAY RECAP - matching Ansible's own
     # per-task resolution timing.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
@@ -188,11 +188,11 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
   it "exit-4s for a FIRED handler backed by an unimplemented module, but never fires one behind an unchanged notify" do
     # juju4.falco's own shape: kubernetes.core.helm_repository as a
     # notified handler. A handler only runs when a task that reported
-    # CHANGED notifies it (real Ansible: an ok/skipped task notifies
+    # CHANGED notifies it (Ansible: an ok/skipped task notifies
     # nothing), so the fired case is genuinely reached and exit-4s at
     # the end of the run via reachable_unavailable_modules - while an
     # unchanged notify (the debug task below) leaves the handler
-    # unfired and the run green, exactly like real Ansible.
+    # unfired and the run green, exactly like Ansible.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -234,7 +234,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # earlier task, then a when:-gated task using an unimplemented
     # module whose gate is false (podman_containers left undefined -
     # robertdebock.podman's own defaults), then a later unrelated task.
-    # Real ansible-playbook: all three run/skip cleanly, green recap.
+    # ansible-playbook: all three run/skip cleanly, green recap.
     # The old parse-time hard-stop killed the whole play before the
     # first task; the fixed engine must run the earlier task, skip the
     # gated one, and still execute the later one.
@@ -264,7 +264,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
     # Same shape with the gate TRUE: the module really would run, so
     # the run must still fail - exit 4 from the end-of-run
     # unavailable-modules check, with the play's tasks and recap
-    # showing first (real Ansible would fail the task itself mid-run).
+    # showing first (Ansible would fail the task itself mid-run).
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -318,7 +318,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
   end
 
   it "fails the task fatally when the unimplemented module's own when: raises (undefined var), instead of silently skipping" do
-    # Real Ansible evaluates a non-looped task's `when:` BEFORE it ever
+    # Ansible evaluates a non-looped task's `when:` BEFORE it ever
     # attempts module resolution - so a when: referencing a genuinely
     # undefined variable is a fatal conditional error (rc=2, failed=1,
     # "Error while evaluating conditional: '...' is undefined") even
@@ -345,7 +345,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
   end
 
   it "still cleanly skips an unimplemented module behind a literal `when: false`" do
-    # The inverse guard on the same code path: real Ansible checks when:
+    # The inverse guard on the same code path: Ansible checks when:
     # FIRST, and a false condition means module resolution is never even
     # attempted - so unavailable-module + when:-false remains a plain
     # rc=0 skip (verified live against ansible-core 2.19.11), never a

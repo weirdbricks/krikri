@@ -54,7 +54,7 @@ module Krikri
   # devsec.hardening.mysql_hardening (round 25 live-reverify): the role's
   # `Ensure that root can only login from localhost` task runs `DELETE
   # FROM mysql.user WHERE ... HOST NOT IN (...)` on every run; on a fresh
-  # install this matches 0 rows, and real Ansible correctly reports `ok`
+  # install this matches 0 rows, and Ansible correctly reports `ok`
   # (idempotent), but this plugin reported `changed` unconditionally.
   #
   # changed: matches real community.mysql.mysql_query's own keyword
@@ -66,7 +66,7 @@ module Krikri
   # RENAME/TRUNCATE), which marks changed unconditionally. Any other
   # statement (SELECT/SHOW/FLUSH/...) leaves changed at its default
   # false. A DDL statement whose "already exists" server warning fired
-  # (IF NOT EXISTS on PyMySQL < 0.10) is the real module's only
+  # (IF NOT EXISTS on PyMySQL < 0.10) is the Ansible module's only
   # changed=False carve-out; PyMySQL 1.x never raises it.
   #
   # query_result row values keep native numbers (real round-trips rows
@@ -75,11 +75,11 @@ module Krikri
   # on every SELECT.
   #
   # Result also carries executed_queries (the statements as executed,
-  # one per statement - real's cursor._last_executed, identical text
+  # one per statement - Ansible's cursor._last_executed, identical text
   # when there are no bound placeholders).
   #
-  # Check mode: the real module declares no supports_check_mode, so
-  # real Ansible skips the task with "remote module (...) does not
+  # Check mode: the Ansible module declares no supports_check_mode, so
+  # Ansible skips the task with "remote module (...) does not
   # support check mode" after argument validation - reproduced.
   #
   # Not implemented: positional_args:/named_args: (parameterized
@@ -96,7 +96,7 @@ module Krikri
     # len("TRUNCATE") - real slices q.lstrip()[0:max_keyword_len].upper()
     KEYWORD_SCAN_LEN = 8
 
-    # The real module's merged argument_spec (mysql_common_argument_spec
+    # The Ansible module's merged argument_spec (mysql_common_argument_spec
     # + mysql_query's own update) in declaration order.
     SPEC = {
       "login_user"         => [] of String,
@@ -178,7 +178,7 @@ module Krikri
         end
       end
 
-      # Real's exit_json passes no `msg` at all on success, and leads
+      # Ansible's exit_json passes no `msg` at all on success, and leads
       # with `changed` - live-verified 2.19.11 + community.mysql 5.0.2.
       PluginResult.new(
         changed: changed,

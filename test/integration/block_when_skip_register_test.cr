@@ -17,7 +17,7 @@ describe "register: on a task skipped via its enclosing block's when:" do
     # path, which never called register_skip_result - so a later task's
     # when: kept referencing whatever a PRIOR sibling block's task had
     # registered under the same name, instead of the (skipped) current
-    # value. Real ansible-playbook always re-registers, even on skip.
+    # value. ansible-playbook always re-registers, even on skip.
     playbook = File.tempname("block-when-skip-register", ".yml")
     File.write(playbook, <<-YAML)
       - name: repro

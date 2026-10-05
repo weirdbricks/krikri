@@ -21,23 +21,23 @@ module Krikri
   #
   # Supported parameters:
   # - filter: comma-separated list (or a YAML list) of the subset names
-  #   real's own module accepts - version, databases, settings,
+  #   Ansible's own module accepts - version, databases, settings,
   #   global_status, engines, users, users_info, master_status,
-  #   slave_hosts, slave_status - with real's `!name` exclusion form and
+  #   slave_hosts, slave_status - with Ansible's `!name` exclusion form and
   #   its "an include wins over an exclude" rule. Only the keys the
-  #   filter keeps are emitted, exactly as real's get_info does.
+  #   filter keeps are emitted, exactly as Ansible's get_info does.
   # - exclude_fields: a list (or comma-separated string) of per-database
   #   fields to skip - db_size, db_table_count. Anything else is
-  #   silently ignored, exactly as real's own docs promise; an excluded
+  #   silently ignored, exactly as Ansible's own docs promise; an excluded
   #   field is dropped from the `databases` dict AND from the query that
   #   would have produced it.
   # - return_empty_dbs: include databases that hold no tables at all
-  #   (real reports them with size/tables 0).
+  #   (Ansible reports them with size/tables 0).
   # - login_host/login_port/login_user/login_password/login_unix_socket
   #
   # Result:
   # - version: {major, minor, release, full, suffix} - parsed exactly the
-  #   way real Ansible's mysql_info does it (its __get_global_variables):
+  #   way Ansible's mysql_info does it (its __get_global_variables):
   #   `full` is the ENTIRE `SELECT VERSION()` string unmodified;
   #   major/minor are the first two dot components, `release` is the third
   #   dot component up to its first `-`, and `suffix` is that same third
@@ -58,11 +58,11 @@ module Krikri
   # (a LONGTEXT) is read too, via a server-side CAST to a type the driver
   # does decode.
   #
-  # Never reports changed (a pure read), matches real Ansible.
+  # Never reports changed (a pure read), matches Ansible.
   class MysqlInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Real's exit_json kwargs in its own order (mysql_info.py's
+    # Ansible's exit_json kwargs in its own order (mysql_info.py's
     # module.exit_json), live-verified against ansible-playbook 2.19.11
     # with community.mysql 5.0.2 on a MySQL 8.4 server.
     private SUCCESS_KEY_ORDER = %w[
@@ -71,7 +71,7 @@ module Krikri
       users users_info master_status slave_hosts slave_status failed
     ]
 
-    # Every subset name real's `filter:` accepts, in the order real's own
+    # Every subset name Ansible's `filter:` accepts, in the order Ansible's own
     # self.info dict declares (and therefore emits) them.
     private SUBSETS = %w[
       version databases settings global_status engines
@@ -86,7 +86,7 @@ module Krikri
     # (VarString) on both engines. (8192, not 65535: MySQL reports a
     # string-function result longer than a TEXT field's byte capacity as
     # LONGTEXT on the wire again, which is exactly the type the wrap is
-    # escaping.) Every wrapped type is part of real's
+    # escaping.) Every wrapped type is part of Ansible's
     # SELECT * FROM mysql.user output, so wrapping - not dropping - is
     # what matches real; the wrapped values (password hashes, enum Y/N
     # flags, user attributes JSON) are far under the bound in practice,
@@ -98,7 +98,7 @@ module Krikri
       "enum", "set",
     }
 
-    # The real module's merged argument_spec (community.mysql's
+    # The Ansible module's merged argument_spec (community.mysql's
     # mysql_common_argument_spec + mysql_info's own update) in
     # declaration order - values are the spec's aliases.
     SPEC = {
@@ -148,14 +148,14 @@ module Krikri
         # get_connector_* helpers): pymysql and pymysql.__version__. This
         # engine talks to the server with its own MySQL wire implementation,
         # but the registered result's connector identity is what callers
-        # see, so it mirrors real's driver identity instead of "Unknown" -
+        # see, so it mirrors Ansible's driver identity instead of "Unknown" -
         # connector_version carries a pymysql 1.1.x version string.
         server_engine: engine_name,
         connector_name: "pymysql",
         connector_version: "1.1.1",
         key_order: SUCCESS_KEY_ORDER)
 
-      # Real's module.warn for every filter element that isn't a known
+      # Ansible's module.warn for every filter element that isn't a known
       # subset name (mysql_info.py's get_info): the element is ignored and
       # the warning rides on the result, after `failed`.
       unless unknown.empty?
@@ -176,7 +176,7 @@ module Krikri
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
     end
 
-    # Real's get_server_implementation: a server that identifies itself
+    # Ansible's get_server_implementation: a server that identifies itself
     # as MariaDB is the only thing it ever calls MariaDB.
     private def implementation_of(db : DB::Database) : String
       rows = rows_as_hashes(db, "SELECT VERSION() AS version")
@@ -186,7 +186,7 @@ module Krikri
     end
 
     # Every row of *sql* as a {column => value-as-text} Hash - the shape
-    # real's DictCursor gives its own collectors, which then convert each
+    # Ansible's DictCursor gives its own collectors, which then convert each
     # value (see #convert).
     private def rows_as_hashes(db : DB::Database, sql : String) : Array(Hash(String, String))
       rows = [] of Hash(String, String)
@@ -201,9 +201,9 @@ module Krikri
       rows
     end
 
-    # The `filter:` value as real's own list argument spec sees it: a YAML
+    # The `filter:` value as Ansible's own list argument spec sees it: a YAML
     # list or a comma-separated string, either way a list of subset names
-    # (real's argspec coerces a plain string into one too).
+    # (Ansible's argspec coerces a plain string into one too).
     private def parse_filter(raw : String?) : Array(String)
       text = (raw || "").strip
       # A list that reaches the plugin through a variable or templated
@@ -218,7 +218,7 @@ module Krikri
       text.split(',').map(&.strip).reject(&.empty?)
     end
 
-    # Real's own filter handling (mysql_info.py's get_info): `!name`
+    # Ansible's own filter handling (mysql_info.py's get_info): `!name`
     # entries are exclusions, plain names are inclusions, and any
     # inclusion at all makes the exclusions irrelevant. With no filter
     # every subset is collected, in self.info declaration order.
@@ -270,13 +270,13 @@ module Krikri
       JSON::Any.new(rows)
     end
 
-    # Real's `exclude_fields:` (mysql_info.py's __get_databases): it drops
+    # Ansible's `exclude_fields:` (mysql_info.py's __get_databases): it drops
     # the named per-database fields from the emitted dict AND from the
     # query itself, so an excluded field costs nothing to collect. Only
     # `db_size` and `db_table_count` are supported; anything else is
     # silently ignored (live-verified: `exclude_fields: bogus_field`
     # emits no warning and returns the full dict). `size` is emitted
-    # first, then `tables`, exactly as real's create_db_info builds it -
+    # first, then `tables`, exactly as Ansible's create_db_info builds it -
     # and a database whose every field is excluded gets an empty dict.
     private def collect_databases(db : DB::Database, excluded_fields : Array(String)) : JSON::Any
       databases = {} of String => JSON::Any
@@ -307,7 +307,7 @@ module Krikri
       # converts through float before its int() pass - so the size lands
       # as a plain int, not a float or a string. A database the
       # grouped query never returned (return_empty_dbs only) has no
-      # aggregate at all, which real reads as 0.
+      # aggregate at all, which Ansible reads as 0.
       entry["size"] = JSON::Any.new(size.empty? ? 0_i64 : size.to_f.to_i64) if want_size
       entry["tables"] = JSON::Any.new(tables.empty? ? 0_i64 : tables.to_i64) if want_tables
       JSON::Any.new(entry)
@@ -323,7 +323,7 @@ module Krikri
           # The engine name itself is the dict key, not a field (real
           # skips the `Engine` column explicitly), and SHOW ENGINES
           # reports NULL for the columns an engine does not support -
-          # real passes those NULLs straight through.
+          # Ansible passes those NULLs straight through.
           next if column == "Engine"
           entry[column] = value.empty? ? JSON::Any.new(nil) : JSON::Any.new(value)
         end
@@ -332,7 +332,7 @@ module Krikri
       JSON::Any.new(engines)
     end
 
-    # mysql.user's own columns, every one of them real's
+    # mysql.user's own columns, every one of them Ansible's
     # SELECT * FROM mysql.user reports (see UNREADABLE_COLUMN_TYPES for
     # the LEFT() wrapping).
     private def user_rows(db : DB::Database) : Array(Hash(String, String))
@@ -345,7 +345,7 @@ module Krikri
         as: {String, String}
       )
 
-      # Real's users collector runs SELECT * FROM mysql.user, whose first
+      # Ansible's users collector runs SELECT * FROM mysql.user, whose first
       # two columns are Host and User; keep that leading order and
       # information_schema's own order for the rest.
       select_columns = ["`Host`", "`User`"]
@@ -473,7 +473,7 @@ module Krikri
       JSON::Any.new(status)
     end
 
-    # Real's own CommandResolver picks the statement a given server
+    # Ansible's own CommandResolver picks the statement a given server
     # actually understands (MySQL 8.2+ dropped SHOW MASTER STATUS for SHOW
     # BINARY LOG STATUS, 8.0.22+ the REPLICA spellings, MariaDB its own).
     private def replication_command(db : DB::Database, command : String) : String
@@ -506,7 +506,7 @@ module Krikri
       wanted <= actual[0, wanted.size]
     end
 
-    # Real's __convert: every value arrives from the driver as text and
+    # Ansible's __convert: every value arrives from the driver as text and
     # is turned into an int when it looks like one, left a string
     # otherwise (a NULL stays null, which the collector sees as "").
     private def convert(value : String) : JSON::Any
@@ -540,7 +540,7 @@ module Krikri
       fetch_version(db)
     end
 
-    # Real AnsibleModule setup order for this spec (no required /
+    # AnsibleModule setup order for this spec (no required /
     # mutually-exclusive / choices constraints): type conversion per
     # param in spec declaration order, then unsupported params last
     # (arg_spec.py's ArgumentSpecValidator appends UnsupportedError
@@ -569,7 +569,7 @@ module Krikri
       JSON::Any.new(PluginHelpers::MysqlInfoVersion.parse(db.query_one("SELECT VERSION()", as: String)))
     end
 
-    # Real parses the version out of the `version` SETTING, not a
+    # Ansible parses the version out of the `version` SETTING, not a
     # SELECT VERSION() round trip - same string, one fewer query.
     private def fetch_version(variables : Hash(String, JSON::Any)) : JSON::Any
       JSON::Any.new(PluginHelpers::MysqlInfoVersion.parse(variables["version"]?.try(&.as_s) || ""))

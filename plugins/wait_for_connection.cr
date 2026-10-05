@@ -12,24 +12,24 @@ module Krikri
   # it exists to wait for. Instead it runs here, on the controller, and
   # retries the actual connection attempt itself via #remote_exec
   # (SSHManager for a real remote host, LocalExecutor for
-  # ansible_connection=local) - the same thing real Ansible's own module
+  # ansible_connection=local) - the same thing Ansible's own module
   # does by retrying its connection plugin.
   #
-  # delay: seconds to wait before the FIRST attempt (real Ansible: give
+  # delay: seconds to wait before the FIRST attempt (Ansible: give
   # a just-triggered reboot/service-restart a head start before even
   # trying). sleep: seconds between retries. timeout: overall deadline
-  # for the retry loop ONLY - real Ansible's action plugin sleeps the
+  # for the retry loop ONLY - Ansible's action plugin sleeps the
   # full delay first and starts the deadline clock afterwards, so a
   # delay: larger than timeout: is applied in full and only then times
   # out (the deadline never absorbs the delay).
   # connect_timeout: bounds each individual attempt's own connection
   # wait, reusing SSHManager#exec's own process-timeout parameter -
-  # the real module has this as a distinct, smaller-than-timeout knob
+  # the Ansible module has this as a distinct, smaller-than-timeout knob
   # specifically so one hung attempt can't eat the whole budget.
   # Check mode short-circuits to skipped before any probe (real
   # Ansible's own action plugin does the same), and every result
   # carries elapsed: whole seconds since task start, success or
-  # timeout alike - real Ansible always sets it too.
+  # timeout alike - Ansible always sets it too.
   class WaitForConnectionPlugin < BasePlugin
     def execute : PluginResult
       # Real module converts each arg with int() before anything else,
@@ -50,28 +50,28 @@ module Krikri
       start_monotonic = Time.instant
 
       if true?(@params["_ansible_check_mode"]?)
-        # Real 2.19.11's check-mode registered wait_for_connection shape
+        # Ansible 2.19.11's check-mode registered wait_for_connection shape
         # (live-verified via {{ r.keys() | list | to_json }}): skipped,
         # failed, changed - no msg key. The wire omits changed
         # (omit_changed) so normalize_module_result backfills failed THEN
-        # changed onto the registered result, producing real's tail
+        # changed onto the registered result, producing Ansible's tail
         # (same pattern as ping/getent/wait_for).
         return PluginResult.new(changed: false, failed: false,
           msg: "", omit_changed: true,
           skipped: true)
       end
 
-      # One unconditional sleep before the loop, matching real Ansible.
+      # One unconditional sleep before the loop, matching Ansible.
       sleep delay.seconds if delay > 0
 
       deadline = Time.instant + timeout.seconds
 
       loop do
         if probe_connection(connect_timeout)
-          # Real 2.19.11's registered wait_for_connection shape
+          # Ansible 2.19.11's registered wait_for_connection shape
           # (live-verified via {{ r.keys() | list | to_json }} on a local
           # connection): elapsed, failed, changed. The wire carries only
-          # elapsed (real's exit_json passes none of the others);
+          # elapsed (Ansible's exit_json passes none of the others);
           # normalize_module_result backfills failed THEN changed onto
           # the registered result - same pattern as ping/getent/wait_for.
           return PluginResult.new(changed: false, failed: false, msg: "",
@@ -97,7 +97,7 @@ module Krikri
         msg: "invalid integer value for #{name}")
     end
 
-    # Real Ansible's action plugin raises
+    # Ansible's action plugin raises
     # TimedOutException("timed out waiting for ping module test: ping
     # test failed") and turns that into the failed result's msg (plus
     # elapsed, whole seconds since task start).
@@ -110,14 +110,14 @@ module Krikri
       )
     end
 
-    # Whole seconds, matching real Ansible's own `elapsed.seconds`
+    # Whole seconds, matching Ansible's own `elapsed.seconds`
     # timedelta read (not total_seconds - values wrap past hours there
     # too).
     private def elapsed_since(start_monotonic : Time::Instant) : Int32
       (Time.instant - start_monotonic).seconds
     end
 
-    # A trivial no-op command, same purpose as real Ansible's own
+    # A trivial no-op command, same purpose as Ansible's own
     # connection-plugin ping: succeeds iff the connection itself works,
     # regardless of what's actually on the target. Any exception (SSH
     # process spawn failure, refused connection, DNS not yet up after a

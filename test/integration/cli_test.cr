@@ -855,7 +855,7 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook("test-debug-quick.yml")
 
     status.success?.must_equal(true)
-    # Real ansible-playbook 2.19.11 prints no check-mode banner at all;
+    # ansible-playbook 2.19.11 prints no check-mode banner at all;
     # its check mode is visible only through the command: task's own
     # "skipping: [localhost]" line (command: never runs under --check).
     output.must_include("skipping: [localhost]")
@@ -966,7 +966,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "counts a looped task once in the recap (not once per item), matching Ansible" do
-    # Real ansible-playbook aggregates a looped task into a single recap
+    # ansible-playbook aggregates a looped task into a single recap
     # line: a 3-item create loop reports ok=1 changed=1, never ok=3.
     # This guards the loop-aggregation parity fix in finish_looped_task.
     status, output = run_playbook(write_loop_counting_playbook, [] of String)
@@ -975,14 +975,14 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include(%(localhost                  : ok=1    changed=1    unreachable=0    failed=0))
   end
 
-  it "always prints all 7 PLAY RECAP counters, even when 0, matching real ansible-playbook" do
-    # Real ansible-playbook's recap always prints ok=/changed=/
+  it "always prints all 7 PLAY RECAP counters, even when 0, matching ansible-playbook" do
+    # ansible-playbook's recap always prints ok=/changed=/
     # unreachable=/failed=/skipped=/rescued=/ignored= in that exact
     # order, never conditionally omitting a 0-valued counter - verified
-    # directly against a real ansible-playbook run. This used to omit
+    # directly against a ansible-playbook run. This used to omit
     # skipped=/rescued=/ignored= whenever they were 0, and never printed
     # unreachable= at all - a purely cosmetic recap-line divergence from
-    # real Ansible found repeatedly across benchmark rounds.
+    # Ansible found repeatedly across benchmark rounds.
     status, output = run_playbook(write_loop_counting_playbook, [] of String)
 
     status.success?.must_equal(true)
@@ -990,7 +990,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "runs a role: meta dependency first, applies defaults/vars/invocation-var precedence, resolves src: relative to the role's files/ dir, fires role handlers, then runs the play's own tasks" do
-    # Real ansible-playbook 2.19.11 never echoes the copy src path or any
+    # ansible-playbook 2.19.11 never echoes the copy src path or any
     # "Would copy" text - its --check copy of a MISSING dest reports plain
     # `changed: [localhost]` and notifies the handler. The dest is removed
     # first so the src-resolution assertion has a real, deterministic
@@ -1154,12 +1154,12 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include("hello krikri-playbook, item=x")
     output.must_include("hello krikri-playbook, item=y")
     # Role-prefixed ("include_role_target : ...") now that HANDLER
-    # banners carry the owning role's name, matching real Ansible.
+    # banners carry the owning role's name, matching Ansible.
     output.scan("HANDLER [include_role_target : dynamically included handler]").size.must_equal(1)
     output.must_include("include_role smoke test complete!")
   end
 
-  it "counts a non-looped include_role: task itself as one `ok` in the PLAY RECAP, matching real Ansible" do
+  it "counts a non-looped include_role: task itself as one `ok` in the PLAY RECAP, matching Ansible" do
     # Real bug found benchmarking andrewrothstein.terraform (round 154
     # v3): execute_include_tasks's run_include_tasks_once already
     # credited a non-looped include_tasks: with its own `ok`, but the
@@ -1177,7 +1177,7 @@ describe "krikri-playbook CLI (--check mode)" do
 
   it "propagates ansible_parent_role_names through a role's own include_tasks: -> include_role: chain" do
     # Real bug found benchmarking prometheus.prometheus.node_exporter (a
-    # real Ansible Collection): its own tasks/main.yml reaches a nested
+    # Ansible Collection): its own tasks/main.yml reaches a nested
     # include_role: (with tasks_from:) via an intermediate include_tasks:
     # call, not directly. ansible_parent_role_names previously only got
     # set on tasks loaded straight from RoleLoader - propagate_role_context
@@ -1251,7 +1251,7 @@ describe "krikri-playbook CLI (--check mode)" do
       inventory: File.join(__DIR__, "..", "fixtures", "inventory-three-local-hosts.ini")
     )
 
-    # Real ansible-playbook 2.19.11 behavior: the failed run_once result
+    # ansible-playbook 2.19.11 behavior: the failed run_once result
     # marks every host in the play failed (no host proceeds into later
     # tasks), but only the executing host's failures stat is incremented.
     status.success?.must_equal(false)
@@ -1260,7 +1260,7 @@ describe "krikri-playbook CLI (--check mode)" do
     output.wont_include("TASK [never reached by any host]")
     # Only the executing host shows a failure line; the other two get
     # nothing of their own for this task. A non-loop failed task displays
-    # as real ansible-core does: `fatal: [host]: FAILED! => {json}`.
+    # as ansible-core does: `fatal: [host]: FAILED! => {json}`.
     output.scan(/fatal: \[node/).size.must_equal(1)
     # Recap: exactly one failure, spread over the three hosts.
     output.must_include("failed=1")
@@ -1292,7 +1292,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # Found live testing itigoag.packages (round 301's json_query fix):
     # a play-level `vars: packages: {...}` was being silently clobbered
     # by `package_facts:`'s own `ansible_facts.packages` (registered
-    # under the bare name "packages" too) - real ansible-playbook's
+    # under the bare name "packages" too) - ansible-playbook's
     # "host facts" precedence tier sits BELOW play vars, so the play
     # var must win; only set_fact's own much higher tier is allowed to
     # override it unconditionally.
@@ -1324,7 +1324,7 @@ describe "krikri-playbook CLI (--check mode)" do
       )
 
       status.success?.must_equal(true)
-      # include_vars sits below set_fact in real Ansible's precedence
+      # include_vars sits below set_fact in Ansible's precedence
       # ladder, and @included_vars is applied before facts for that reason.
       output.must_include("precedence=from-set-fact")
     end
@@ -1356,7 +1356,7 @@ describe "krikri-playbook CLI (--check mode)" do
 
     it "fails (not skips) when no with_first_found candidate exists and skip: true is NOT given" do
       # Real bug found benchmarking robertdebock.release on Rocky 9.6:
-      # real Ansible's first_found lookup plugin defaults `skip:` to
+      # Ansible's first_found lookup plugin defaults `skip:` to
       # false - with no candidate found it raises and the include_vars:
       # task FAILS, it does not silently skip. Only explicit `skip: true`
       # (already covered by the specs above) tolerates a miss.
@@ -1371,7 +1371,7 @@ describe "krikri-playbook CLI (--check mode)" do
     it "resolves query('first_found', ...) as a real include_vars: loop source, with a custom loop_var and a tasks/-relative paths: entry" do
       # Real bug found benchmarking buluma.confluence (round 165) -
       # three independent gaps in one common modern idiom:
-      #  1. query(...) (real Ansible's lookup(..., wantlist=True)
+      #  1. query(...) (Ansible's lookup(..., wantlist=True)
       #     shorthand) was entirely unrecognized as a function call.
       #  2. parse_include_vars_task (a dedicated parser, not the
       #     general task-parsing path) never called #find_loop_template
@@ -1421,7 +1421,7 @@ describe "krikri-playbook CLI (--check mode)" do
       # hardcoded files/templates/vars/role-root search roots regardless
       # of what paths: actually named, so a custom directory ("distribution"
       # here) was never searched and the loop always silently skipped,
-      # matching neither real Ansible's success nor a real failure.
+      # matching neither Ansible's success nor a real failure.
       status, output = run_playbook(
         "test-with-first-found-custom-paths.yml", [] of String, inventory: testservers_inventory
       )
@@ -1454,7 +1454,7 @@ describe "krikri-playbook CLI (--check mode)" do
   describe "strict-undefined module-arg templating" do
     it "fails (not silently continues) when a bare module-arg reference is genuinely undefined" do
       # Real bug found benchmarking robertdebock.bios_update on Rocky 9.6
-      # (round 161): real Ansible's module-arg templating is
+      # (round 161): Ansible's module-arg templating is
       # strict-undefined by default - a debug: msg: inside a rescue:
       # block referencing a variable that's genuinely never set anywhere
       # fails the task ("Finalization of task args ... failed") rather
@@ -1474,7 +1474,7 @@ describe "krikri-playbook CLI (--check mode)" do
     it "resolves src: against the role ROOT, not role_templates_dir again, when src: already bakes in the subdir prefix" do
       # Real bug found benchmarking buluma.confluence (round 165):
       # `src: "./templates/nested/dir/file.j2"` (the "templates/" subdir
-      # prefix already baked into src: itself - real Ansible resolves
+      # prefix already baked into src: itself - Ansible resolves
       # this against the role ROOT) previously always joined against
       # role_templates_dir directly, doubling the subdir
       # (".../templates/templates/nested/...", never existing) - "Template
@@ -1500,7 +1500,7 @@ describe "krikri-playbook CLI (--check mode)" do
       # bailed out on the nil role_templates_dir guard (role_loader only
       # sets role_templates_dir when that dir exists), so src: was never
       # resolved and the task failed with "Template file not found on
-      # controller" where real ansible-playbook changed the file (its
+      # controller" where ansible-playbook changed the file (its
       # search list goes <role>/templates/<src> then <role>/<src>).
       status, output = run_playbook(
         "test-template-src-no-templates-dir.yml", [] of String, inventory: testservers_inventory
@@ -1562,7 +1562,7 @@ describe "krikri-playbook CLI (--check mode)" do
 
   describe "--gathering" do
     it "defaults to implicit: every play re-gathers facts" do
-      # ANSIBLE_GATHERING (a real Ansible config var this engine also
+      # ANSIBLE_GATHERING (a Ansible config var this engine also
       # reads, see krikri-playbook.cr) is explicitly cleared here - this
       # assertion is specifically about the DEFAULT when nothing
       # overrides it, which would otherwise leak in from a developer's
@@ -1691,16 +1691,16 @@ describe "krikri-playbook CLI (--check mode)" do
 
       # The handler fired exactly once - the mid-play flush picked it up,
       # and the implicit end-of-play flush must not re-run it a second
-      # time (real ansible-playbook's own flush_handlers semantics: only
+      # time (ansible-playbook's own flush_handlers semantics: only
       # handlers notified SINCE the last flush are pending).
       output.scan("HANDLER [my flush handler]").size.must_equal(1)
     end
 
     it "meta: end_host stops only the current host, not others" do
-      # Real Ansible's own doc: "per-host variation of end_play... causes
+      # Ansible's own doc: "per-host variation of end_play... causes
       # the play to end for the current host without failing it." Was
       # rejected at parse time entirely before this - see git log.
-      # Verified live against real ansible-playbook for both assertions
+      # Verified live against ansible-playbook for both assertions
       # below (a 2nd host whose own when: skips this exact task keeps
       # running afterward; the ended host's own pending notified handler
       # is suppressed, matching a real failure's handler-skip behavior
@@ -1716,9 +1716,9 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "meta: end_play stops every currently-active host, not just the one that triggers it" do
-      # Real Ansible's own doc: "causes the play to end without failing
+      # Ansible's own doc: "causes the play to end without failing
       # the host(s). Note that this affects all hosts." Verified live
-      # against real ansible-playbook: genuinely global - hosttwo's own
+      # against ansible-playbook: genuinely global - hosttwo's own
       # when: skips this exact task entirely (never itself executes it)
       # but still gets blocked from the task after it, the moment
       # hostone's when: makes IT execute end_play.
@@ -1731,9 +1731,9 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "meta: clear_host_errors excludes a failed host from the rest of this play but not the next one" do
-      # Real Ansible's own doc: "clears the failed state... available
+      # Ansible's own doc: "clears the failed state... available
       # for targeting in subsequent plays, but not continue execution in
-      # the current play." Verified live against real ansible-playbook,
+      # the current play." Verified live against ansible-playbook,
       # including the non-obvious part: clearing is global (acts on
       # every failed host in the play), not scoped to whichever host(s)
       # happen to still be active enough to individually execute this
@@ -1780,8 +1780,8 @@ describe "krikri-playbook CLI (--check mode)" do
       output.must_include("ok=2")
     end
 
-    it "meta: end_role outside a role aborts the run with real Ansible's parse error" do
-      # Real Ansible rejects end_role at parse time wherever the role
+    it "meta: end_role outside a role aborts the run with Ansible's parse error" do
+      # Ansible rejects end_role at parse time wherever the role
       # context is absent (helpers.py's load_list_of_tasks), rc=4 -
       # verified live against ansible-core 2.19.4, including that a
       # when: false guard does NOT save it.
@@ -1805,7 +1805,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "meta: reset_connection lets execution continue and counts in no recap bucket" do
-      # Real Ansible's result is a META: vv line only (msg "reset
+      # Ansible's result is a META: vv line only (msg "reset
       # connection", changed: False) - no recap bucket, execution
       # continues. Connection dropping itself is exercised live (it needs
       # real daemons); the task-flow contract is what a spec can pin.
@@ -1835,7 +1835,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "reports an unsupported meta action instead of treating it as a no-op" do
-      # A meta action real Ansible does not recognize fails the RUN at
+      # A meta action Ansible does not recognize fails the RUN at
       # strategy time - not at parse, and not as a silent no-op that
       # would change what the playbook means. Live-verified against
       # ansible-core 2.19.11: the PLAY/TASK banners print, then the
@@ -1870,7 +1870,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "reports a null/mapping meta value as the literal None at strategy time" do
-      # Real Ansible reads the meta action from the task args' _raw_params
+      # Ansible reads the meta action from the task args' _raw_params
       # (task.py's _get_meta): a null value, an empty string, or a
       # mapping (`meta: {free_form: noop}` - the generator's happy shape)
       # leaves _raw_params unset, and the strategy reports the action as
@@ -1902,7 +1902,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "warns on stderr when pause would prompt with a non-interactive stdin" do
-      # Real 2.19.11, live-verified with stdin from /dev/null: `pause: {}`
+      # Ansible 2.19.11, live-verified with stdin from /dev/null: `pause: {}`
       # (no duration - the action always prompts for Enter) raises
       # AnsiblePromptNoninteractive, the action warns ONCE globally
       # (Display deduplicates warnings) and continues immediately - the
@@ -1930,7 +1930,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "refuses a non-string free-form meta value at playbook-load time" do
-      # Real's mod_args refuses a non-string, non-mapping free-form value
+      # Ansible's mod_args refuses a non-string, non-mapping free-form value
       # when loading the playbook - "[ERROR]: unexpected parameter type
       # in action: <class 'ansible.module_utils._internal._datatag.
       # _AnsibleTaggedInt'>", rc 4, no banners (live-verified vs 2.19.11).
@@ -1957,7 +1957,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
 
     it "meta: refresh_inventory re-reads a dynamic inventory script without adding hosts to the current play" do
-      # Real Ansible's own doc, verified live: "neither refresh_inventory
+      # Ansible's own doc, verified live: "neither refresh_inventory
       # nor add_host add hosts to the hosts the current play iterates
       # over" - only a LATER play's own hosts: pattern match sees newly-
       # appeared hosts. The dynamic inventory script here reports 1 host
@@ -2043,7 +2043,7 @@ describe "krikri-playbook CLI (--check mode)" do
 
     # Compared as a multiset of lines, not byte-for-byte: since 0.9.579
     # the parallel path prints each host's block as that host FINISHES
-    # (real ansible-playbook's completion order), so the two runs can
+    # (ansible-playbook's completion order), so the two runs can
     # legitimately order two adjacent host lines differently. What must
     # not change with --forks is WHAT happened - every line, once.
     forks1_output.lines.sort!.must_equal(default_output.lines.sort!)
@@ -2069,7 +2069,7 @@ describe "krikri-playbook CLI (--check mode)" do
     output.scan("cmd_result changed=True").size.must_equal(2)
     # Each host's own lines stay together, never interleaved mid-task by
     # the concurrent fan-out. The ORDER of the two is completion order
-    # since 0.9.579 (matching real ansible-playbook, which reports the
+    # since 0.9.579 (matching ansible-playbook, which reports the
     # host that finished first), so either arrangement is correct - what
     # must hold is that the two lines are adjacent, not split apart.
     adjacent = output.includes?("changed: [web1]\nchanged: [web2]") ||
@@ -2108,13 +2108,13 @@ describe "krikri-playbook CLI (--check mode)" do
 
     status.success?.must_equal(true)
     # poll: > 0 blocks and returns the real (finished) module result -
-    # real ansible-core 2.19.11 renders its registered .finished as the
+    # ansible-core 2.19.11 renders its registered .finished as the
     # JSON boolean True (live-verified), not the integer 1.
     output.must_include("polled_result finished=True changed=True")
     # poll: 0 returns immediately with a job id, not the real result yet:
-    # real ansible prints no "Job started" console line at all (the old
+    # Ansible prints no "Job started" console line at all (the old
     # krikri-only msg key is gone), so the registered fire-and-forget
-    # shape itself is the assertion - real 2.19.11's bg_result is
+    # shape itself is the assertion - Ansible 2.19.11's bg_result is
     # {ansible_job_id, changed: true, failed: false, finished: false,
     # results_file, started: true}.
     output.must_include("\"finished\": false")
@@ -2256,7 +2256,7 @@ describe "krikri-playbook CLI (--check mode)" do
     end
   end
 
-  it "skips a same-user become entirely, matching real Ansible, and rejects an invalid become_user without shelling out" do
+  it "skips a same-user become entirely, matching Ansible, and rejects an invalid become_user without shelling out" do
     inventory = File.join(__DIR__, "..", "fixtures", "inventory-testservers-local.ini")
     status, output = run_playbook("test-become-quick.yml", [] of String, inventory: inventory)
 
@@ -2264,20 +2264,20 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include("bad_user_failed=True")
 
     # become_user: "{{ current_user.stdout }}" is an escalation to the
-    # user already running this process - real Ansible does NOT wrap that
+    # user already running this process - Ansible does NOT wrap that
     # in sudo at all (`_low_level_execute_command`'s BECOME_ALLOW_SAME_
     # USER gate), so SUDO_USER is never set in the child. This engine
     # used to wrap it unconditionally, which meant every `become: true`
     # task failed outright on a host with no sudo installed - a minimal
-    # container or slimmed cloud image - where real Ansible succeeds.
-    # Real ansible-core 2.19.11's debug callback JSON-escapes the msg
+    # container or slimmed cloud image - where Ansible succeeds.
+    # ansible-core 2.19.11's debug callback JSON-escapes the msg
     # value, so the empty trailing var ends at the closing quote of the
     # "msg": "..." line (the old $-anchored regex predates the escaped
     # display and can never match real output).
     output.must_match(/current_user=\S+ became_sudo_user="/m)
     output.must_include("become smoke test complete!")
 
-    # ANSIBLE_BECOME_ALLOW_SAME_USER is real Ansible's own opt-out from
+    # ANSIBLE_BECOME_ALLOW_SAME_USER is Ansible's own opt-out from
     # that gate, and forcing it back on is what still exercises the sudo
     # wrapping itself: sudo always sets SUDO_USER in the child when it
     # actually wraps a command, so this only passes if become: really
@@ -2352,7 +2352,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # cluster: hostvars wasn't populated in the vars_context at all, so
     # `gluster peer probe {{ hostvars['node2'].ansible_host }}` ran as
     # `gluster peer probe undefined` - silently probing a bogus hostname
-    # instead of the real peer's IP. hostvars is also real Ansible's
+    # instead of the real peer's IP. hostvars is also Ansible's
     # standard way to reference ANY inventory host's own vars from a
     # play that doesn't even target it, not just the current one - a
     # naive fix that only populated hostvars from the current play's
@@ -2393,7 +2393,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "keeps an explicitly inventory-defined localhost's real vars over the implicit entry" do
-    # The other half of real Ansible's implicit-localhost contract: when the
+    # The other half of Ansible's implicit-localhost contract: when the
     # inventory DOES define localhost, its real entry wins and the
     # synthesized one must not clobber it (verified live against
     # ansible-core 2.19.11 with an identical inventory).
@@ -2506,7 +2506,7 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook("test-command.yml")
 
     status.success?.must_equal(true)
-    # Real ansible-playbook 2.19.11's own no-match wording (live-verified
+    # ansible-playbook 2.19.11's own no-match wording (live-verified
     # against the same empty fixture inventory): a bare "skipping: no
     # hosts matched" line under the PLAY banner, not the old krikri-only
     # "Skipping play - no hosts match pattern: ..." sentence.
@@ -2573,7 +2573,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # checked, so a vars: expression that legitimately raises (`| first`
     # on a genuinely empty sequence, even with `| default(None)` right
     # after it) crashed the whole task even though when: would have
-    # skipped it before real Ansible's own lazy per-key Jinja templating
+    # skipped it before Ansible's own lazy per-key Jinja templating
     # ever touched that expression.
     status, output = run_playbook("test-task-vars-lazy-quick.yml", [] of String)
 
@@ -2582,11 +2582,11 @@ describe "krikri-playbook CLI (--check mode)" do
     output.wont_include("should never print")
   end
 
-  # Real Ansible aborts the run at the notifying task, prints one
+  # Ansible aborts the run at the notifying task, prints one
   # "[ERROR]: The requested handler ... was not found in either the main
   # handlers list nor in the listening handlers list" line and exits 1
   # with no PLAY RECAP - but ONLY when the notification actually fires.
-  # Every expectation here was verified against real ansible-core 2.19.4
+  # Every expectation here was verified against ansible-core 2.19.4
   # running the equivalent playbook, including the exit codes.
   describe "notify: naming a nonexistent handler" do
     it "aborts the run with rc=1 when a CHANGED task notifies it" do
@@ -2619,7 +2619,7 @@ describe "krikri-playbook CLI (--check mode)" do
       output.wont_include("PLAY RECAP")
     end
 
-    it "does not abort when the notifying task is unchanged - real Ansible notifies nothing" do
+    it "does not abort when the notifying task is unchanged - Ansible notifies nothing" do
       write_notify_playbook("notify_missing_unchanged.yml", <<-YAML)
         - hosts: localhost
           connection: local
@@ -2684,7 +2684,7 @@ describe "krikri-playbook CLI (--check mode)" do
       # pulled in via include_tasks: and notifies `restart apache`, a
       # handler nothing in the role's dependency chain defines. Must not
       # be swallowed into a per-task "Failed to load included tasks"
-      # failure either - real Ansible aborts the whole run.
+      # failure either - Ansible aborts the whole run.
       write_notify_playbook("notify_missing_inner.yml", <<-YAML)
         - name: inner changes and notifies a missing handler
           ansible.builtin.command: echo hi
@@ -2818,14 +2818,14 @@ describe "krikri-playbook CLI (--check mode)" do
 end
 
 # Found via a real-host geerlingguy.raspberry-pi round: once a host fails a
-# task and gets halted, real ansible-playbook ends the play right there -
+# task and gets halted, ansible-playbook ends the play right there -
 # it does not keep printing "TASK [...]" banners for the tasks that follow,
 # since there is no host left to run them against.
 describe "a notified handler with an empty loop: source" do
-  it "is counted as skipped, not ok, matching real ansible-playbook" do
+  it "is counted as skipped, not ok, matching ansible-playbook" do
     # Real bug found benchmarking cloudalchemy.cortex's own "reload
     # cortex services" handler (`loop: "{{ cortex_services | dict2items
-    # }}"`, empty when cortex_all_in_one: is set): real Ansible skips
+    # }}"`, empty when cortex_all_in_one: is set): Ansible skips
     # the whole handler ("All items skipped") and counts it in the
     # recap's skipped= tally. execute_handler_loop previously fell
     # through its own empty loop silently - no "skipping:" line, and
@@ -2862,11 +2862,11 @@ describe "a notified handler with an empty loop: source" do
 end
 
 describe "a task combining a module with a pre-2.0 legacy directive" do
-  it "aborts the whole run with 'conflicting action statements', matching real ansible-playbook" do
+  it "aborts the whole run with 'conflicting action statements', matching ansible-playbook" do
     # Real bug found benchmarking nickjj.mariadb/.postgres/.phpfpm, all
     # three independently: an old task carrying both a real module key
     # and a pre-2.0 Ansible top-level attribute (always_run:, sudo_user:,
-    # etc.) that was removed a long time ago. Real ansible-core's
+    # etc.) that was removed a long time ago. ansible-core's
     # ModuleArgsParser refuses to even START the run for this
     # ("[ERROR]: conflicting action statements: shell, always_run") -
     # this engine previously just silently ignored the legacy key (or,
@@ -2878,7 +2878,7 @@ describe "a task combining a module with a pre-2.0 legacy directive" do
     # assertion was wrong (never itself verified live) until then, since
     # this engine's ConflictingActionStatementsError was misclassified
     # as RemovedActionError's rc=1 (the removed-action-PLUGIN case,
-    # `include:`, a different real Ansible error class entirely).
+    # `include:`, a different Ansible error class entirely).
     write_notify_playbook("conflicting_action_statements.yml", <<-YAML)
       - hosts: localhost
         connection: local
@@ -2945,7 +2945,7 @@ describe "a loop_control: loop_var: name in a registered result's own results li
 end
 
 describe "a halted host after a task failure" do
-  it "stops printing TASK banners for tasks after the failure, matching real ansible-playbook" do
+  it "stops printing TASK banners for tasks after the failure, matching ansible-playbook" do
     write_notify_playbook("halted_host_no_more_banners.yml", <<-YAML)
       - hosts: localhost
         connection: local
@@ -2976,7 +2976,7 @@ describe "a halted host after a task failure" do
   # used to lose their "role : " banner prefix (the skip path printed
   # before role context reached the block's children), and a skipped
   # NAMED meta: task was counted into the PLAY RECAP's skipped where
-  # real ansible-core ignores meta tasks in stats entirely.
+  # ansible-core ignores meta tasks in stats entirely.
   it "keeps the role prefix on skipped block children and keeps skipped meta out of the recap" do
     status, output = run_playbook("test-block-skip-prefix.yml")
 
@@ -2991,7 +2991,7 @@ describe "a halted host after a task failure" do
   # atlantic round 979000): the multi-host block path printed a
   # when:-false block's children skipping banners before role context
   # reached those children, so banners printed as
-  # "TASK [Modify selinux settings]" where real ansible-playbook shows
+  # "TASK [Modify selinux settings]" where ansible-playbook shows
   # "TASK [buluma.httpd : Modify selinux settings]". The earlier
   # block_skip_prefix fixture only covered the include_tasks: route
   # (which propagates before its own skip printing), never the
@@ -3010,7 +3010,7 @@ end
 describe "an unarchive with a bare relative src" do
   # Regression (wezhai.minio, 120-author kata round): a bare relative
   # `unarchive: src:` (no remote_src, no files/ prefix) must resolve
-  # against the role's own files/ dir - real Ansible's unarchive action
+  # against the role's own files/ dir - Ansible's unarchive action
   # plugin searches there via _find_needle - and be transferred to the
   # target. Only an ABSOLUTE controller path was staged before, so the
   # plugin got the bare name and failed "Source 'minio.tar.gz' failed
@@ -3029,7 +3029,7 @@ end
 
 describe "command: with argv: instead of cmd:/free-form" do
   # Regression (kyl191.openvpn, 120-author kata round): `argv:` (command's
-  # list form, real Ansible's own way to avoid shell quoting) fell all
+  # list form, Ansible's own way to avoid shell quoting) fell all
   # the way through to "Missing required parameter: cmd" - the plugin
   # never recognized it as an alternative to cmd:/_raw_params at all, and
   # even once it did, playbook_parser.cr's generic Array param handling
@@ -3055,7 +3055,7 @@ describe "a loop: source referencing an unimplemented filter" do
   # unrescued and crashed the ENTIRE krikri-playbook process -
   # "Unhandled exception: No filter named '...'." - losing every other
   # host/task the run would otherwise have completed, not just failing
-  # this one task the way real Ansible's own AnsibleFilterError would.
+  # this one task the way Ansible's own AnsibleFilterError would.
   it "fails only the task, not the whole process" do
     status, output = run_playbook("test-loop-unknown-filter.yml", [] of String)
 
@@ -3079,7 +3079,7 @@ describe "include_vars: with register:" do
   # `vars_result` stayed entirely unbound and any later reference
   # raised "'vars_result.results' is undefined". Fixed for both the
   # looped (`.results` array, matching the generic looped-task register
-  # shape) and non-looped (`ansible_facts:`, matching real Ansible's own
+  # shape) and non-looped (`ansible_facts:`, matching Ansible's own
   # include_vars module result) cases.
   it "populates register: for both a looped and a non-looped include_vars:" do
     status, output = run_playbook("test-include-vars-register.yml", [] of String)

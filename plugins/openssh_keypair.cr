@@ -8,12 +8,12 @@ require "../src/krikri/plugin_helpers/python_lib_gate"
 module Krikri
   # openssh_keypair plugin (community.crypto.openssh_keypair) - (re)
   # generates an OpenSSH private/public keypair via `ssh-keygen`. Ported
-  # from the real module's `opensshbin` backend (the module's own
+  # from the Ansible module's `opensshbin` backend (the module's own
   # default backend whenever no `passphrase` is given) - the module's
   # `cryptography`-library backend is skipped since this codebase has
   # no Python runtime to lean on.
   #
-  # Unlike the real module (which switches to a cryptography-only
+  # Unlike the Ansible module (which switches to a cryptography-only
   # backend the moment `passphrase` is set), this plugin always shells
   # to `ssh-keygen`, which itself supports `-N <passphrase>` directly -
   # same end result (an encrypted private key file), just via the CLI
@@ -26,14 +26,14 @@ module Krikri
   class OpensshKeypairPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec plus the file-common args its
+    # The Ansible module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (ansible-core 2.14's
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
     # unchanged, check-mode and state=absent runs (the backend's _result
     # dict always carries all six keys, then the controller adds
     # changed). krikri's msg stays unlisted and trails, per the get_url
-    # convention for keys real doesn't emit.
+    # convention for keys Ansible doesn't emit.
     SUCCESS_KEY_ORDER = %w[
       size type filename fingerprint public_key comment changed ansible_facts
       failed warnings
@@ -98,7 +98,7 @@ module Krikri
       ensure_present(path, pub_path, type, size, check_mode)
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices ->
     # mutually_exclusive -> unsupported (deferred last). No
     # required_together/required_if on this module.
@@ -205,7 +205,7 @@ module Krikri
 
     # The cryptography library's availability, probed through the
     # target's python3 (the same way real imports it). Only consulted
-    # when the opensshbin path is unavailable - matches real's
+    # when the opensshbin path is unavailable - matches Ansible's
     # can_use_cryptography short-circuit in select_backend.
     private def cryptography_available? : Bool
       ["python3", "python"].each do |interpreter|
@@ -347,7 +347,7 @@ module Krikri
     end
 
     # Both files carry the file-common attributes - a change to either
-    # one counts as changed (the real module's
+    # one counts as changed (the Ansible module's
     # set_fs_attributes_if_different is applied to the pair).
     private def apply_attrs(path : String, pub_path : String) : Bool
       changed = false

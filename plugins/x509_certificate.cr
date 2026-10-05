@@ -17,7 +17,7 @@ module Krikri
   # message rather than silently doing something else.
   #
   # Built on `openssl x509 -req -copy_extensions copyall`, which
-  # reproduces the real module's output exactly: the CSR's extensions
+  # reproduces the Ansible module's output exactly: the CSR's extensions
   # are carried over, a SubjectKeyIdentifier is added, and for `ownca`
   # an AuthorityKeyIdentifier derived from the CA key - verified
   # extension-for-extension against real module output for both
@@ -40,7 +40,7 @@ module Krikri
   class X509CertificatePlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's fully-resolved argument_spec (the
+    # The Ansible module's fully-resolved argument_spec (the
     # get_certificate_argument_spec base plus the acme/ownca/selfsigned
     # provider keys and the module's own state/path/backup/return_content,
     # in resolution order) plus the file-common args its
@@ -91,7 +91,7 @@ module Krikri
       "unsafe_writes"                            => [] of String,
     }
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps. Present and absent build their
     # results differently, so they get separate orders: present is
     # dump()-first (privatekey/csr, then the certificate details diff/
@@ -153,7 +153,7 @@ module Krikri
             return failure(error)
           end
           # A certificate is public: the umask decides unless the user
-          # asked for something specific (matches the real module, which
+          # asked for something specific (matches the Ansible module, which
           # writes 0644-by-umask here rather than the 0600 a private key
           # gets).
           File.chmod(path, 0o666 & ~current_umask) unless @params["mode"]?
@@ -173,7 +173,7 @@ module Krikri
     # Content variants of the path parameters (csr_content,
     # privatekey_content, ownca_content, ownca_privatekey_content) are
     # materialized to temp files and used in place of the path variant
-    # whenever the path itself is not given - the real module reads the
+    # whenever the path itself is not given - the Ansible module reads the
     # bytes straight from params.
     private def resolve_content_param(temp_files : Array(String), path_param : String, content_param : String) : String?
       if path_param_value = @params[path_param]?
@@ -192,7 +192,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices -> required_if
     # -> mutually_exclusive -> unsupported (deferred last).
     private def validate_arguments : PluginResult?
@@ -284,7 +284,7 @@ module Krikri
         # provide one - create_if_not_provided is the default and
         # ownca_create_authority_key_identifier defaults to true. Bookworm's
         # OpenSSL 3.0 does not auto-add any SKI, so without this the
-        # generated cert never matches the real module's output and
+        # generated cert never matches the Ansible module's output and
         # every re-run regenerates.
         ext_lines = [] of String
         ski_param = provider == "ownca" ? "ownca_create_subject_key_identifier" : "selfsigned_create_subject_key_identifier"
@@ -337,7 +337,7 @@ module Krikri
       nil
     end
 
-    # The real module's serial is a 20-byte random integer. This one is
+    # The Ansible module's serial is a 20-byte random integer. This one is
     # 63 bits so it survives the JSON round trip as a real integer (the
     # `serial_number` return value is an int there, and Crystal's JSON
     # has no bignum) - still random per certificate, which is all the

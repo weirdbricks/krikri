@@ -5,8 +5,8 @@ module Krikri
     # actually exist.
     module ArchivePaths
       # dirname(commonprefix([dirname(p) + "/" for p in paths])) + "/" -
-      # matches real Ansible's (community.general) archive module's
-      # common_path() exactly, verified against real ansible-playbook's
+      # matches Ansible's (community.general) archive module's
+      # common_path() exactly, verified against ansible-playbook's
       # actual `arcroot` output for single-file, single-directory, and
       # multi-path cases.
       def self.common_path(paths : Array(String)) : String
@@ -33,7 +33,7 @@ module Krikri
       # unlike Crystal's File.dirname, which treats a trailing slash as
       # insignificant and returns the level ABOVE it - a real, verified
       # divergence that broke arcroot calculation until caught by
-      # comparing actual output against real ansible-playbook.
+      # comparing actual output against ansible-playbook.
       def self.python_dirname(path : String) : String
         idx = path.rindex('/')
         return "" unless idx

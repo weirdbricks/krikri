@@ -2,12 +2,12 @@ require "../minitest_helper"
 require "../../src/krikri/base_plugin"
 require "file_utils"
 
-# BasePlugin#atomic_move - the EXDEV fallback real Ansible's
+# BasePlugin#atomic_move - the EXDEV fallback Ansible's
 # AnsibleModule.atomic_move provides. Found live on
 # konstruktoid.hardening: the openssh_keypair task generates into a
 # File.tempname (under /tmp, a separate tmpfs there) and renamed it
 # into /etc/ssh, which rename(2) refuses with "Invalid cross-device
-# link" - a hard task failure real Ansible survives by falling back to
+# link" - a hard task failure Ansible survives by falling back to
 # copy-then-delete when rename fails with EXDEV specifically.
 #
 # The helper-spec cases below run the shared helper directly; the

@@ -40,7 +40,7 @@ module Krikri
     # then basic.py add_path_info's stat block). Keys krikri's result
     # doesn't carry on a given path (e.g. backup_file when no backup: was
     # requested) are simply skipped by the reorder; keys krikri emits that
-    # real doesn't would keep their current relative order at the end.
+    # Ansible doesn't would keep their current relative order at the end.
     private SUCCESS_KEY_ORDER = %w[msg status_code changed checksum_dest checksum_src dest elapsed url src md5sum backup_file uid gid owner group mode state size]
 
     def execute : PluginResult
@@ -52,7 +52,7 @@ module Krikri
 
       dest = expand_tilde(dest)
       # Real get_url's own `dest` param, verbatim. Every failure result
-      # real reports names THIS path, including a directory dest (whose
+      # Ansible reports names THIS path, including a directory dest (whose
       # filename is only derived once the request came back, so a failed
       # download of a directory dest reports the directory itself).
       dest_param = dest
@@ -65,12 +65,12 @@ module Krikri
       # 979121, mrlesmithjr.guacamole: its apache.org/dyn/closer.cgi?...
       # URL has path /dyn/closer.cgi, so the download landed at
       # <dir>/closer.cgi and the next task's unarchive failed with
-      # "Source ... failed to transfer" while real Ansible had the file
+      # "Source ... failed to transfer" while Ansible had the file
       # under the redirect target's own name).
       dest_is_dir = File.directory?(dest)
       # Pre-request filename guess, check-mode messaging only: in check
       # mode no request is made, so there's no final response to derive
-      # from (real Ansible HEADs the URL for this; we keep the guess).
+      # from (Ansible HEADs the URL for this; we keep the guess).
       dest = File.join(dest, url_filename(url)) if dest_is_dir
 
       checksum = resolved_checksum(url, dest_param)
@@ -82,7 +82,7 @@ module Krikri
       # block): `last_mod_time` is dest's mtime and goes out as
       # If-Modified-Since when no checksum forced a full re-download, and a
       # checksum MISMATCH (which only reaches this block when it didn't match)
-      # sets force=True for the re-download instead - real's own reasoning:
+      # sets force=True for the re-download instead - Ansible's own reasoning:
       # "the checksum does not match ... last_mod_time may be newer than on
       # remote", so the fresh request carries cache-control: no-cache rather
       # than a stale If-Modified-Since.
@@ -94,9 +94,9 @@ module Krikri
         if checksum
           force = true
         else
-          # Seconds precision, like real's
+          # Seconds precision, like Ansible's
           # datetime.fromtimestamp(mtime, timezone.utc).timetuple() feeding
-          # rfc2822_date_string. A 304 answer short-circuits OK in real's
+          # rfc2822_date_string. A 304 answer short-circuits OK in Ansible's
           # url_get (msg = fetch_url's info['msg'], i.e. urllib's own
           # "HTTP Error 304: Not Modified"); a 200 falls through to the full
           # download + SHA1 compare below.
@@ -105,7 +105,7 @@ module Krikri
         # Checksum given but doesn't match (or no checksum at all - see
         # check_existing_dest): fall through and re-download, regardless
         # of force - the checksum is its own freshness check, matching
-        # real Ansible's get_url behavior.
+        # Ansible's get_url behavior.
       end
 
       # Real get_url only reaches its request (get_url.py's url_get ->
@@ -148,7 +148,7 @@ module Krikri
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
     # tuple, or a failed PluginResult on resolution failure. An empty
-    # checksum: string is real Ansible's own signal for "no checksum
+    # checksum: string is Ansible's own signal for "no checksum
     # given" (its get_url module explicitly treats a falsy checksum the
     # same as an absent one), NOT a value to actually verify against -
     # found via juju4.openobserve's own `checksum: "{{ openobserve_hash |
@@ -158,7 +158,7 @@ module Krikri
     # checksum: "" identically. Without this, krikri tried to verify the
     # real download against an empty expected hash and failed every
     # single time ("checksum mismatch: expected , got <real hash>")
-    # where real Ansible correctly skips verification.
+    # where Ansible correctly skips verification.
     private def resolved_checksum(url : String, dest : String) : {String, String}? | PluginResult
       checksum_param = @params["checksum"]?
       return nil if checksum_param.nil? || checksum_param.strip.empty?
@@ -199,11 +199,11 @@ module Krikri
     # Ansible re-requested and - since a dynamic endpoint's response can
     # differ run to run - sometimes reported changed: true. Falling
     # through to download_to_dest's fetch + SHA1 compare reproduces the
-    # same changed flag (and the conditional GET now reproduces real's
+    # same changed flag (and the conditional GET now reproduces Ansible's
     # 304 short-circuit too).
     #
     # File-common attribute reconciliation on the checksum-match skip
-    # path mirrors real Ansible's get_url exactly (live-read against
+    # path mirrors Ansible's get_url exactly (live-read against
     # ansible-core 2.19.4's module source): set_fs_attributes_if_different
     # runs even when the download is skipped, and a stale attribute flips
     # the result to changed: true with msg "file already exists but file
@@ -345,7 +345,7 @@ module Krikri
       changed = true if attrs_changed
 
       # status_code = info['status'] = 200 - except for a file:// source,
-      # where urllib's file handler sets no status at all and real's
+      # where urllib's file handler sets no status at all and Ansible's
       # final info.get('status', '') serializes as null (live-verified:
       # msg="OK (1670 bytes)", status_code: null).
       status_code = info.final_url.starts_with?("file:") ? nil : 200
@@ -368,7 +368,7 @@ module Krikri
     # Not Modified", reason phrase from the server). NO checksum_src/
     # checksum_dest/md5sum/src: no content came back to hash, and this
     # exit does not spread the module-level result dict. The usual
-    # uid/gid/owner/group/mode/state/size keys still attach (real's
+    # uid/gid/owner/group/mode/state/size keys still attach (Ansible's
     # exit_json runs add_path_info on every exit). Live-verified against
     # ansible-core 2.19.11 over a local http.server.
     private def not_modified_result(msg : String, url : String, dest : String) : PluginResult
@@ -379,7 +379,7 @@ module Krikri
     end
 
     # Real url_get's own branches for a request that never produced a
-    # usable body (the real module's fetch_url folds every failure
+    # usable body (the Ansible module's fetch_url folds every failure
     # into `info`, and get_url.py branches on info['status'] alone):
     #
     #   * status != 200 and != 304 -> fail_json(msg="Request failed",
@@ -389,7 +389,7 @@ module Krikri
     #   * status == -1 -> fail_json(msg=info['msg'], url, dest, elapsed),
     #     with no status_code at all.
     #
-    # `dest` is real's own dest param, i.e. a directory dest stays the
+    # `dest` is Ansible's own dest param, i.e. a directory dest stays the
     # directory here (the filename is only derived after a request that
     # came back).
     private def fetch_failure_result(ex : Exception, url : String, dest : String) : PluginResult
@@ -450,7 +450,7 @@ module Krikri
     # then): changed, checksum_dest (still unset - real computes it only
     # after these checks pass), checksum_src of the staged file, dest,
     # elapsed, url and the staged file's own `src` path, plus the dest
-    # stat metadata. The staged file is removed, exactly as real's own
+    # stat metadata. The staged file is removed, exactly as Ansible's own
     # os.remove(tmpsrc) does on each of these branches.
     private def post_download_failure_result(
       msg : String,
@@ -471,7 +471,7 @@ module Krikri
     # Verifies the freshly staged download against a provided
     # checksum: tuple; returns a failed PluginResult (staging file
     # cleaned up) on mismatch, nil when it matches or no checksum was
-    # given. changed: false like real Ansible: by the time the checksum
+    # given. changed: false like Ansible: by the time the checksum
     # is evaluated the download is still only staged, so nothing has
     # changed yet (and the module-level result dict carries its initial
     # changed=False).
@@ -499,14 +499,14 @@ module Krikri
 
     # The final atomic move of the staged download onto dest:.
     #
-    # unsafe_writes: true is real Ansible's escape hatch for targets
+    # unsafe_writes: true is Ansible's escape hatch for targets
     # where the atomic move itself fails (EPERM/EXDEV on docker-mounted
     # single files etc.): fall back to writing dest directly, in place,
     # non-atomically - the same fallback shape copy.cr/lineinfile.cr
     # use. Without the flag the exception propagates (task fails), as
     # before this pass.
     #
-    # No parent directory is created here: real Ansible never makes one
+    # No parent directory is created here: Ansible never makes one
     # either (get_url.py fails with "Destination <dir> does not exist"
     # in destination_failure_result, above), so a dest under a missing
     # directory is an error, not a mkdir.
@@ -524,11 +524,11 @@ module Krikri
     # checked in #execute). Normally the staging file goes NEXT TO dest
     # rather than in the system tmp dir: same-filesystem staging is
     # what makes the final File.rename unconditionally atomic, where
-    # real Ansible (which starts from the system tmp dir) needs its own
+    # Ansible (which starts from the system tmp dir) needs its own
     # EXDEV fallback inside atomic_move to reach the same place.
     #
     # The exception is a destination directory that cannot be written:
-    # real Ansible stages in its own remote tmp dir (module.tmpdir) and
+    # Ansible stages in its own remote tmp dir (module.tmpdir) and
     # only discovers the unwritable destination afterwards, in
     # destination_failure_result - staging there too is what makes the
     # download SUCCEED and the task fail with the destination message,
@@ -547,7 +547,7 @@ module Krikri
     end
 
     # tmp_dest: directory the download is staged in before the final move
-    # to dest:. Real Ansible requires it to ALREADY exist and be a
+    # to dest:. Ansible requires it to ALREADY exist and be a
     # directory - a file fails with "%s is a file but should be a
     # directory.", a missing path with "%s directory does not exist."
     # (both carrying the same elapsed: 0 shape as the other download
@@ -569,7 +569,7 @@ module Krikri
     private def unsafe_move_fallback(tmp_path : String, dest : String) : Nil
       File.open(tmp_path, "r") do |src|
         # perm 0666 mirrors #move_into_place's atomic path: a new dest
-        # gets 0666 & ~umask like real Ansible's atomic_move; an existing
+        # gets 0666 & ~umask like Ansible's atomic_move; an existing
         # dest's mode is left alone (open(2) ignores perm on overwrite).
         File.open(dest, "w", 0o666) do |dst|
           IO.copy(src, dst)
@@ -579,18 +579,18 @@ module Krikri
     end
 
     # checksum: "<algo>:<value>" where value is either a literal hex hash or,
-    # per real Ansible's documented get_url behavior, a URL pointing to a
+    # per Ansible's documented get_url behavior, a URL pointing to a
     # sha*sums-format file (one "<hash>  <filename>" line per file) - in
     # which case the hash for `url`'s own basename is looked up within it.
     # Returns a failed PluginResult when the checksum URL itself cannot be
-    # fetched or holds no entry for the target - both of real Ansible's own
+    # fetched or holds no entry for the target - both of Ansible's own
     # fail_json points (get_url.py, before the main download is attempted).
     private def parse_checksum(checksum_param : String, url : String, dest : String) : {String, String} | PluginResult
       algorithm, _, value = checksum_param.partition(":")
       algorithm = algorithm.downcase
 
       if value.starts_with?("http://") || value.starts_with?("https://") || value.starts_with?("file:")
-        # Real Ansible's own is_url() gate is scheme-based too (http,
+        # Ansible's own is_url() gate is scheme-based too (http,
         # https, ftp, file), so a "gopher://"-style value is just a
         # (nonsense) literal hash here rather than a second fetch.
         resolved = resolve_checksum_url(value, url, dest)
@@ -606,7 +606,7 @@ module Krikri
       begin
         # Route through #download (not the HTTP helper directly) so a
         # file:// checksum file - also a valid fetch_url source for real
-        # Ansible - resolves the same way as an http(s) one. Real runs
+        # Ansible - resolves the same way as an http(s) one. Ansible runs
         # the same url_get call for this file, so a failure here carries
         # the same shape as the main download's, naming the CHECKSUM url
         # (that is the request that failed) against the task's dest.
@@ -620,7 +620,7 @@ module Krikri
         lines = File.read_lines(tmp_path).map(&.strip).reject(&.empty?)
 
         # A checksum-url file holding exactly ONE line that is itself
-        # just a bare hex hash (no filename at all) - real Ansible's own
+        # just a bare hex hash (no filename at all) - Ansible's own
         # get_url module accepts this shape directly, most commonly seen
         # on Kubernetes release artifacts (dl.k8s.io publishes one
         # "<binary>.sha512" file per binary containing nothing but the
@@ -655,10 +655,10 @@ module Krikri
     end
 
     private def download(url : String, tmp_path : String, force = false, last_mod_time : Time? = nil) : PluginHelpers::HTTPDownload::Result
-      # file:// is a legitimate source for real Ansible's get_url too
+      # file:// is a legitimate source for Ansible's get_url too
       # (urllib's FileHandler): a local mirror, a previously-fetched
       # artifact, an offline install. Found via an ad-hoc CLI comparison
-      # sweep against real ansible (2026-09-13) - krikri previously
+      # sweep against Ansible (2026-09-13) - krikri previously
       # failed every file:// URL with "Unsupported scheme: file" because
       # HTTP::Client.new rejects anything non-http(s). Copy the local
       # file into the same staging path the HTTP flow uses, so the rest
@@ -687,7 +687,7 @@ module Krikri
           )
         end
         # Stage through a fresh 0666 open so the staging file carries the
-        # HTTP path's perms (0666 & ~umask, which is what real Ansible's
+        # HTTP path's perms (0666 & ~umask, which is what Ansible's
         # atomic_move gives a NEW dest) rather than the source's mode.
         File.open(tmp_path, "w", 0o666) do |staged|
           File.open(path) { |src| IO.copy(src, staged) }
@@ -793,7 +793,7 @@ module Krikri
       # Real fetch_url's cache-control branch:
       # a forced request carries "cache-control: no-cache"; an unforced
       # one whose dest already exists carries If-Modified-Since (dest's
-      # mtime, RFC 1123 with seconds precision, like real's
+      # mtime, RFC 1123 with seconds precision, like Ansible's
       # rfc2822_date_string(timetuple(), 'GMT')). User-supplied headers:
       # still come after and may override, same order as real.
       if force
@@ -805,7 +805,7 @@ module Krikri
       # decompress: false (real get_url's decompress param, default true)
       # suppresses gzip at the REQUEST level, same approach uri.cr uses:
       # Crystal's HTTP::Client otherwise always offers gzip/deflate and
-      # transparently inflates the response, while real Ansible instead
+      # transparently inflates the response, while Ansible instead
       # decides per-response. Asking the server for identity achieves the
       # same observable result: the file gets exactly the bytes the
       # server meant to send, undecoded. A user-supplied Accept-Encoding
@@ -815,7 +815,7 @@ module Krikri
       end
 
       if headers_param = @params["headers"]?
-        # headers: real Ansible documents (and accepts) this as a real
+        # headers: Ansible documents (and accepts) this as a real
         # DICT, not just the comma-separated "key:value,key2:value2"
         # string this plugin originally only supported. A dict param
         # value arrives here as its JSON text (module-arg finalization
@@ -828,7 +828,7 @@ module Krikri
         # (key="{}", value=""), setting an HTTP header literally NAMED
         # "{}" with an empty value - GitHub's API rejected the request
         # outright with 400 Bad Request instead of the header-less
-        # request real Ansible actually sends for an empty dict.
+        # request Ansible actually sends for an empty dict.
         parsed_dict = (JSON.parse(headers_param).as_h? rescue nil)
         if parsed_dict
           parsed_dict.each do |key, value|
@@ -872,7 +872,7 @@ module Krikri
 
       # A present owner:/group: value (explicit empty string included)
       # is always resolved - and an unresolvable name fails the task
-      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # like Ansible's basic.py (round900811 kilip.chezmoi) -
       # instead of the old `&&`-short-circuit that silently skipped the
       # chown whenever the lookup came back empty.
       if owner = @params["owner"]?
@@ -897,7 +897,7 @@ module Krikri
     end
 
     # attributes:/attr: - chattr-style flags (e.g. "+i" for immutable),
-    # real Ansible's `attributes` param and its `attr` alias. Mirrors
+    # Ansible's `attributes` param and its `attr` alias. Mirrors
     # copy.cr's proven implementation exactly (same helper names, same
     # semantics - see copy.cr's attr_args for the full rationale).
     private def attr_args : {Char, String}?
@@ -923,7 +923,7 @@ module Krikri
       fields[0].delete('-').strip
     end
 
-    # Changed-check mirroring real Ansible's set_attributes_if_different:
+    # Changed-check mirroring Ansible's set_attributes_if_different:
     # changed when the current flag string differs from the requested
     # letters OR the request is '-'-prefixed (ansible/ansible#33745).
     private def attr_changed?(path : String) : Bool
@@ -935,7 +935,7 @@ module Krikri
     end
 
     # Applies the attributes: param via the real chattr binary and fails
-    # the task (like real Ansible's fail_json(msg='chattr failed')) when
+    # the task (like Ansible's fail_json(msg='chattr failed')) when
     # chattr exits nonzero or writes to stderr. Returns {changed,
     # failure} - mirrors copy.cr's apply_attr.
     private def apply_attr(path : String) : {Bool, PluginResult?}
@@ -977,10 +977,10 @@ module Krikri
 
     # Combined attribute reconciliation for dest: mode/owner/group first
     # (#apply_file_attributes), then chattr flags, then the SELinux
-    # context - the same order real Ansible's
+    # context - the same order Ansible's
     # set_fs_attributes_if_different applies them. Returns {changed,
     # failure}: failure a failed PluginResult when the chattr/chcon call
-    # itself errored (both fail the task like real Ansible - neither is
+    # itself errored (both fail the task like Ansible - neither is
     # silently swallowed the way a chmod/chown EPERM is).
     private def apply_extended_attributes(path : String) : {Bool, PluginResult?}
       changed = apply_file_attributes(path)

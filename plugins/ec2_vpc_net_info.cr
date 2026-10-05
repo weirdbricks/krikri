@@ -10,7 +10,7 @@ require "../src/krikri/plugin_helpers/ec2_info"
 module Krikri
   # ec2_vpc_net_info plugin (amazon.aws.ec2_vpc_net_info) - read-only
   # DescribeVpcs lookup (plus the per-VPC DescribeVpcAttribute DNS
-  # attribute calls real Ansible makes) via the EC2 Query API, through
+  # attribute calls Ansible makes) via the EC2 Query API, through
   # the shared signed-request helper PluginHelpers::Ec2Api. See that
   # helper's comment for the credential/region resolution contract
   # (AWS_* env vars, region param fallback).

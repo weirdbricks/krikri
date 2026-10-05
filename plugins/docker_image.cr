@@ -26,9 +26,9 @@ module Krikri
   # - tag: tag to use instead of a tag embedded in name: (default "latest"
   #   when name: has none)
   # - state: present (default) / absent (remove if present)
-  # - source: required when state: present, same as real Ansible
+  # - source: required when state: present, same as Ansible
   #   (required_if, verified - it has no default there either). "pull"
-  #   and "local" are implemented; "build"/"load" (real Ansible's other
+  #   and "local" are implemented; "build"/"load" (Ansible's other
   #   source: values) are not - they need a build context / archive tar
   #   the daemon reads, which is a separate feature
   # - check_mode
@@ -40,10 +40,10 @@ module Krikri
   #   (including tls_hostname:/DOCKER_TLS*/DOCKER_CERT_PATH support).
   #
   # - force_source: with state: present, re-pulls even when the image
-  #   already exists locally - verified against real Ansible's own
+  #   already exists locally - verified against Ansible's own
   #   `present()` source (`if not image or self.force_source:`). A
   #   forced re-pull that resolves to the exact same image digest it
-  #   already had reports `changed: false` (real Ansible's observed behavior
+  #   already had reports `changed: false` (Ansible's observed behavior
   #   re-checks the image ID before/after and resets `changed` back to
   #   false on a match - NOT an unconditional `changed: true` the way a
   #   naive reading of the trigger condition alone would suggest) -
@@ -52,7 +52,7 @@ module Krikri
   #   ansible-playbook's own observed `changed: false` for this exact
   #   scenario before this was fixed.
   #
-  # Not implemented: force_tag (only meaningful for real Ansible's own
+  # Not implemented: force_tag (only meaningful for Ansible's own
   # `repo_tags:`-based re-tag-to-a-different-repository feature, which
   # isn't implemented here at all - a param modifying an unimplemented
   # feature, not a standalone gap), `api_version:` (see
@@ -60,12 +60,12 @@ module Krikri
   class DockerImagePlugin < BasePlugin
     # Real seeds its result dict as `{"changed": False, "actions": [],
     # "image": {}}` (docker_image.py's main) and the module protocol
-    # appends `failed` last - live-verified against real ansible-core
-    # 2.19.11 + community.docker 5.2.1. Real never passes msg on
+    # appends `failed` last - live-verified against ansible-core
+    # 2.19.11 + community.docker 5.2.1. Ansible never passes msg on
     # success, so a successful result carries no `msg` key at all.
     KEY_ORDER = %w[changed actions image failed]
 
-    # Real's own wrapper for a DockerException escaping the module body.
+    # Ansible's own wrapper for a DockerException escaping the module body.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     def execute : PluginResult
@@ -166,7 +166,7 @@ module Krikri
         # force_source: re-pulling an image that resolves to the
         # exact same digest it already had is a real no-op - see
         # #image_id's own doc comment for why this matters and what
-        # real Ansible's source does.
+        # Ansible's source does.
         unchanged = exists && image_id(client, full_ref) == pre_pull_id
         image_result(client, full_ref,
           changed: !unchanged,
@@ -231,7 +231,7 @@ module Krikri
     # field). nil if the image doesn't exist.
     #
     # Used for force_source:'s own idempotency re-check - verified
-    # against real Ansible's own `present()` source: after a forced
+    # against Ansible's own `present()` source: after a forced
     # re-pull, if the image existed BEFORE and its ID is UNCHANGED
     # after, `changed` is reset back to false (`if image and image["Id"]
     # == self.results["image"]["Id"]: self.results["changed"] = False`)

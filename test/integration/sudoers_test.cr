@@ -130,7 +130,7 @@ describe "sudoers plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  # Real AnsibleModule setup surface (podman-diff sudoers_edge_cases):
+  # AnsibleModule setup surface (podman-diff sudoers_edge_cases):
   # mutually exclusive -> required -> types -> choices -> required_if
   # -> unsupported, all before any plugin logic runs.
 
@@ -207,7 +207,7 @@ describe "sudoers plugin" do
     File.read(File.join(dir, "rule")).must_equal("testu ALL=NOPASSWD: cmd1,  cmd2\n")
   end
 
-  it "writes Defaults directives scoped to the owner before the rule (real 13.1.0 defaults param)" do
+  it "writes Defaults directives scoped to the owner before the rule (Ansible 13.1.0 defaults param)" do
     dir = tmp_path("sudoers-defaults")
     `rm -rf #{dir}`
     Dir.mkdir_p(dir)

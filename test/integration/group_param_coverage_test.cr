@@ -5,8 +5,8 @@ require "file_utils"
 # real-Ansible options: force, local, non_unique, gid_min, gid_max.
 #
 # Every command shape and every failure message asserted below was
-# live-verified against real ansible-core 2.19.4 (the distro's own
-# the real module run with
+# live-verified against ansible-core 2.19.4 (the distro's own
+# the Ansible module run with
 # PATH-shimmed group tools and the host's real /etc/group), e.g.:
 #   groupadd -g 1234 -o -r -K GID_MIN=500 -K GID_MAX=1000 g1
 #   groupmod -g 4711 -o root
@@ -19,7 +19,7 @@ require "file_utils"
 #    mutually exclusive"
 #   "'gid_min' can not be used with 'local'" (and the gid_max twin)
 #   "GID '4' already exists with group 'adm'"
-# plus the real module's gid-0 quirk (its Python `if self.gid:` skips the
+# plus the Ansible module's gid-0 quirk (its Python `if self.gid:` skips the
 # local gid-in-use check for gid 0).
 #
 # The plugin talks to the host only through #remote_exec, so every
@@ -103,7 +103,7 @@ private NO_GROUPS      = "root:x:0:\n"
 
 describe "group plugin - parameter coverage" do
   describe "non_unique" do
-    it "fails with real Ansible's required_if message when no gid was given (live-verified text)" do
+    it "fails with Ansible's required_if message when no gid was given (live-verified text)" do
       with_group_shims(NO_GROUPS) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "non_unique" => "true", "_environment" => env,
@@ -162,7 +162,7 @@ describe "group plugin - parameter coverage" do
       end
     end
 
-    it "fails with real Ansible's message when combined with local (live-verified text)" do
+    it "fails with Ansible's message when combined with local (live-verified text)" do
       with_group_shims(EXISTING_GROUP) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "adm", "force" => "true", "local" => "true", "_environment" => env,
@@ -175,7 +175,7 @@ describe "group plugin - parameter coverage" do
   end
 
   describe "gid_min / gid_max" do
-    it "passes them as -K GID_MIN/GID_MAX pairs at creation, in real Ansible's order (live-verified shape)" do
+    it "passes them as -K GID_MIN/GID_MAX pairs at creation, in Ansible's order (live-verified shape)" do
       with_group_shims(NO_GROUPS) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "gid" => "1234", "system" => "true", "non_unique" => "true",
@@ -196,7 +196,7 @@ describe "group plugin - parameter coverage" do
       end
     end
 
-    it "fails with real Ansible's messages when combined with local (live-verified texts)" do
+    it "fails with Ansible's messages when combined with local (live-verified texts)" do
       with_group_shims(EXISTING_GROUP) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "gid_min" => "500", "local" => "true", "_environment" => env,
@@ -226,7 +226,7 @@ describe "group plugin - parameter coverage" do
       end
     end
 
-    it "keeps -r on the local create path (real Ansible passes it to lgroupadd too, live-verified)" do
+    it "keeps -r on the local create path (Ansible passes it to lgroupadd too, live-verified)" do
       with_group_shims(NO_GROUPS) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "system" => "true", "local" => "true", "_environment" => env,
@@ -236,7 +236,7 @@ describe "group plugin - parameter coverage" do
       end
     end
 
-    it "fails with real Ansible's gid-in-use message before any mutation (live-verified text)" do
+    it "fails with Ansible's gid-in-use message before any mutation (live-verified text)" do
       with_group_shims(EXISTING_GROUP) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "gid" => "4", "local" => "true", "_environment" => env,
@@ -285,7 +285,7 @@ describe "group plugin - parameter coverage" do
     end
   end
 
-  it "returns gid/system/name/state like real Ansible whenever the group exists after the task" do
+  it "returns gid/system/name/state like Ansible whenever the group exists after the task" do
     with_group_shims("root:x:0:\ng1:x:1001:\n") do |env, _log|
       result = PluginSpecHelper.run("group", {
         "name" => "g1", "gid" => "1001", "_environment" => env,

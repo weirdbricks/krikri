@@ -6,7 +6,7 @@ require "../src/krikri/base_plugin"
 module Krikri
   # Seport plugin - manages an SELinux port type mapping via `semanage
   # port`. Compatible with Ansible's community.general.seport (verified
-  # shape against real ansible-playbook's own module docs; found missing
+  # shape against ansible-playbook's own module docs; found missing
   # entirely - round171's robertdebock.haproxy - which silently dropped
   # the whole gated task instead of resolving it, since a task whose
   # module has no plugin never even reaches its own when: evaluation
@@ -19,8 +19,8 @@ module Krikri
   # Supported parameters:
   # - ports: required. A single port/range or a comma-separated list
   #   (e.g. "80", "80-81", "80,443").
-  # - proto: required. tcp/udp/dccp/sctp (real's choices; case-sensitive,
-  #   like real's argument_spec check).
+  # - proto: required. tcp/udp/dccp/sctp (Ansible's choices; case-sensitive,
+  #   like Ansible's argument_spec check).
   # - setype: required. The SELinux port type to assign.
   # - state: default "present". present adds/reassigns the mapping;
   #   absent removes it (only if it currently belongs to setype).
@@ -40,9 +40,9 @@ module Krikri
       setype = @params["setype"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: setype") unless setype
 
-      # Real's argument_spec rejects these at module init - before the
+      # Ansible's argument_spec rejects these at module init - before the
       # python-lib import check, the SELinux-enabled gate, anything
-      # (podman-diff harness R4/R5/R11: real reports the proto/state
+      # (podman-diff harness R4/R5/R11: Ansible reports the proto/state
       # choices failure and the bool-conversion failure against a host
       # with no SELinux at all, while this plugin reached the
       # "SELinux is disabled" gate first, so an invalid value against a
@@ -53,7 +53,7 @@ module Krikri
           msg: "value of proto must be one of: tcp, udp, dccp, sctp, got: #{proto}")
       end
 
-      # Case-sensitive like real's choices check (state: Present is a
+      # Case-sensitive like Ansible's choices check (state: Present is a
       # real-args failure, not a silently-accepted alias).
       state = @params["state"]? || "present"
       unless ["absent", "present"].includes?(state)

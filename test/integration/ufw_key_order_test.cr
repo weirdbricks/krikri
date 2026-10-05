@@ -109,7 +109,7 @@ end
 # tail's pre/post diff decides `changed` - and `msg` is the final
 # `ufw status verbose` snapshot. The ufw/grep shims below are stateful
 # (the allow/delete shims mutate a tuple file the grep shim serves back)
-# so the changed values fall out of the same pre/post diffing real does.
+# so the changed values fall out of the same pre/post diffing Ansible does.
 private def with_ufw_state_shims(&)
   dir = File.join(Dir.tempdir, "krikri-ufw-cmds-#{Random.rand(1_000_000)}")
   FileUtils.mkdir_p(dir)
@@ -292,7 +292,7 @@ describe "ufw plugin registered commands list (real round-995002 values)" do
     end
   end
 
-  it "an invalid rule value fails with real's validation shape and no commands" do
+  it "an invalid rule value fails with Ansible's validation shape and no commands" do
     with_ufw_state_shims do |env, _, _|
       result = PluginSpecHelper.run("ufw", {"rule" => "kop_bogus_rule", "_environment" => env})
 

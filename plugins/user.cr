@@ -17,16 +17,16 @@ module Krikri
   #   create_home (optional, default yes)
   #   remove (optional, default no): pass -r to userdel (also remove home dir)
   #   password: an *already-hashed* password (this codebase never hashes
-  #     a cleartext value itself, matching real Ansible's own requirement
+  #     a cleartext value itself, matching Ansible's own requirement
   #     - `mkpasswd --method=sha-512`/`openssl passwd` are the usual way
   #     to produce one). Applied via `useradd -p`/`usermod -p`, matching
-  #     real Ansible's own command shape exactly (verified against its
+  #     Ansible's own command shape exactly (verified against its
   #     actual `create_user_useradd`/`modify_user_usermod` source, not
   #     assumed) - `password_lock: true` prefixes the hash with `!`,
   #     `usermod`'s own lock-account convention.
   #     SECURITY NOTE (deliberate, compatibility-preserving): the hash
   #     rides argv, so it is briefly visible in the target's process
-  #     list - real Ansible's own module execs useradd/usermod the same
+  #     list - Ansible's own module execs useradd/usermod the same
   #     way (argv list, hash included), so this parity is kept rather
   #     than switching to a chpasswd/stdin form that would change the
   #     command shape and result semantics.
@@ -34,25 +34,25 @@ module Krikri
   #     `-p` whenever the given hash doesn't match what's already in
   #     `/etc/shadow` for an *existing* account; "on_create" only ever
   #     applies `password:` at creation time, never touching an existing
-  #     account's password - matches real Ansible's own two allowed
+  #     account's password - matches Ansible's own two allowed
   #     values and default exactly. Like this codebase's own
   #     `mysql_user.cr`, this can't compare a *candidate cleartext*
   #     password to a stored hash - the caller is always expected to
-  #     already have a hash, same as real Ansible itself requires, so
+  #     already have a hash, same as Ansible itself requires, so
   #     "unchanged" means "the given hash already matches what's stored,"
   #     not "the account's password is already this."
   #   password_lock (optional, bool): locks/unlocks the account via
   #     `usermod -L`/`-U` (or folded into `-p '!hash'` instead when
   #     combined with a real password change in the same run, matching
-  #     real Ansible's own mutual-exclusion between `-p` and `-L`/`-U`)
+  #     Ansible's own mutual-exclusion between `-p` and `-L`/`-U`)
   #
   #   expires (optional): account expiration, a Unix TIMESTAMP (seconds,
-  #     NOT days) - verified against the real module's own
+  #     NOT days) - verified against the Ansible module's own
   #     source: converted to a `YYYY-MM-DD` UTC date via `-e` on
-  #     useradd/usermod; a negative value (real Ansible's own documented
+  #     useradd/usermod; a negative value (Ansible's own documented
   #     "-1 to remove" convention) clears the expiration (`-e ''`).
   #     Idempotency compares whole days-since-epoch against `/etc/
-  #     shadow`'s own expire field (field 8), matching real Ansible's
+  #     shadow`'s own expire field (field 8), matching Ansible's
   #     own day-level (not full-timestamp) comparison exactly - a value
   #     that maps to the same calendar day as what's already set is a
   #     no-op.
@@ -61,7 +61,7 @@ module Krikri
   #     not exist yet - ssh_key_type (default rsa), ssh_key_file (default
   #     `.ssh/id_<type>`, relative paths resolved against the account's
   #     home), ssh_key_bits, ssh_key_comment, ssh_key_passphrase, force
-  #     (overwrite an existing key). Mirrors real ansible-core user.py's
+  #     (overwrite an existing key). Mirrors ansible-core user.py's
   #     own ssh_key_gen: the .ssh dir is created 0700 and chowned to the
   #     account, an already-existing private OR public key file is a
   #     no-op unless force:, and a relative ssh_key_file against a home
@@ -72,11 +72,11 @@ module Krikri
   #
   #   password_expire_account_disable (optional, int): days after a
   #     password expires before the account is permanently disabled -
-  #     NOT a chage param despite looking like one: real Ansible's own
+  #     NOT a chage param despite looking like one: Ansible's own
   #     create_user_useradd/modify_user_usermod pass it as useradd/
   #     usermod's `-f <days>` (live-verified against ansible-core
   #     2.19.4: `useradd -f 30 ...` / `usermod ... -f 30 <name>`),
-  #     independent of `expires:`'s `-e`. Real Ansible has no
+  #     independent of `expires:`'s `-e`. Ansible has no
   #     idempotency comparison for it, so giving it re-issues `-f` (and
   #     reports changed) on every run - replicated.
   #   skeleton (optional): custom skeleton directory passed as useradd
@@ -87,7 +87,7 @@ module Krikri
   #     /etc/skel).
   #   move_home (optional, default no): with `home:` changing on an
   #     existing account, pass usermod's `-m` too (move the old home's
-  #     contents to the new location) - real Ansible only ever emits
+  #     contents to the new location) - Ansible only ever emits
   #     `-m` alongside an actual `-d` change, never on its own.
   #   non_unique (optional, default no): allow a duplicate uid -
   #     useradd/usermod `-o`, only ever emitted together with a uid
@@ -98,23 +98,23 @@ module Krikri
   #     /etc/passwd directly (never `getent`, which would find a
   #     directory/SSSD/LDAP account), and all work goes through the
   #     libuser tools (luseradd/lusermod/luserdel/lgroupmod/lchage)
-  #     instead of shadow-utils, with real Ansible's own per-tool
+  #     instead of shadow-utils, with Ansible's own per-tool
   #     differences (no -m, no -G, `-n` instead of `-N`, expiry via
-  #     `lchage -E <days>`). Fails with real Ansible's own message when
+  #     `lchage -E <days>`). Fails with Ansible's own message when
   #     combined with `umask:` ('umask' can not be used with 'local').
   #   umask (optional): controls the new home directory's permission
   #     mode at creation - passed as useradd `-K UMASK=<umask>` (only
-  #     when create_home is on). NOTE: real Ansible only threads it
+  #     when create_home is on). NOTE: Ansible only threads it
   #     through useradd this way; its own modify-path home creation
   #     derives the mode from /etc/login.defs, not this param.
   #
   # Out of scope (deliberately, this is a Linux-only engine - these are
-  # BSD/macOS/SELinux-only options of the real module and are rejected
+  # BSD/macOS/SELinux-only options of the Ansible module and are rejected
   # by the platforms krikri targets): login_class, seuser, hidden,
   # authorization, role, profile.
   #
   # Not implemented: any password-strength/format validation or warning
-  # (real Ansible's own `check_password_encrypted` only ever warns, never
+  # (Ansible's own `check_password_encrypted` only ever warns, never
   # fails, on a value that doesn't look hashed - this plugin passes
   # `password:` straight through either way).
   class UserPlugin < BasePlugin
@@ -163,7 +163,7 @@ module Krikri
       }
     end
 
-    # These default to None in real's argspec, so an explicit null
+    # These default to None in Ansible's argspec, so an explicit null
     # skips type validation there (see BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
       %w[hidden password_lock]
@@ -180,14 +180,14 @@ module Krikri
     end
 
     def execute_inner : PluginResult
-      # Real ansible.builtin.user's argument_spec declares `name` with
+      # Ansible.builtin.user's argument_spec declares `name` with
       # alias `user` (`name=dict(type='str', required=True,
       # aliases=['user'])`) - RedHatOfficial.rhel9_pci_dss (round 812000)
       # writes `user: '{{ item }}'` throughout its whole STIG role, which
-      # real Ansible resolves fine via that alias; this plugin only ever
+      # Ansible resolves fine via that alias; this plugin only ever
       # read `name`, failing "Missing required parameter: name" on every
       # such task despite the alias spelling being given. Present alias
-      # overwrites canonical, matching real Ansible's own _handle_aliases
+      # overwrites canonical, matching Ansible's own _handle_aliases
       # order (same convention plugins/cron.cr's `value`->`job` alias and
       # yum_repository.cr already follow).
       if user_alias = @params["user"]?
@@ -197,13 +197,13 @@ module Krikri
       name = @params["name"]?
       return missing_param("name") unless name
 
-      # Bool-typed params: real AnsibleModule type-converts them at module
+      # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args/alias-resolution gates above - now
       # via the shared BasePlugin#validate_bool_params! (see its block
       # comment).
       validate_bool_params!
 
-      # Real Ansible's own __init__ check, exact message (live-verified:
+      # Ansible's own __init__ check, exact message (live-verified:
       # `ansible localhost -m user -a 'name=x umask=027 local=true'`
       # fails with this before anything else runs).
       if local? && @params["umask"]?.presence
@@ -222,7 +222,7 @@ module Krikri
       end
     end
 
-    # `local: true` bypasses NSS for the existence check: real Ansible's
+    # `local: true` bypasses NSS for the existence check: Ansible's
     # own user_exists() reads /etc/passwd directly there (its own comment:
     # "pwd ... cannot be used to determine whether or not an account
     # exists locally"), because `getent` would happily report a
@@ -247,7 +247,7 @@ module Krikri
 
     private def ensure_absent(name : String, current : PluginHelpers::UserState::User?, check_mode : Bool) : PluginResult
       unless current
-        # Real Ansible echoes name/state (with changed: false) even for
+        # Ansible echoes name/state (with changed: false) even for
         # an account that doesn't exist - its main() sets both
         # unconditionally before the state branches run.
         absent = PluginResult.new(changed: false, failed: false, key_order: USER_ABSENT_ORDER)
@@ -255,7 +255,7 @@ module Krikri
         return absent
       end
 
-      # Real exits with bare exit_json(changed=True) in check mode - before
+      # Ansible exits with bare exit_json(changed=True) in check mode - before
       # force/remove and any echo: the registered shape is just [changed,
       # failed] (main()'s name/state never make it into the early exit).
       return PluginResult.new(changed: true, failed: false, key_order: USER_CHECK_ONLY_ORDER) if check_mode
@@ -265,7 +265,7 @@ module Krikri
       return command_failure("remove user", result) unless result[:exit_code] == 0
       invalidate_shadow_cache
 
-      # Real ansible-core user.py's own state=absent result: name/state
+      # ansible-core user.py's own state=absent result: name/state
       # echoed always, plus force/remove only when an existing account
       # was actually removed (live-verified result shape: no uid/home/
       # shell after a userdel - the account no longer exists to look up).
@@ -297,13 +297,13 @@ module Krikri
       ageing = apply_password_ageing(name, check_mode)
       return ageing if ageing && ageing.failed?
 
-      # Real Ansible's user module ALWAYS returns the resolved user
+      # Ansible's user module ALWAYS returns the resolved user
       # facts (home/uid/group/shell/name) in its register result -
       # whether the user was just created, just modified, or already
       # matched. Re-reads the FINAL state (post create/modify - one
       # cheap extra `getent passwd`, check_mode has no real state to
       # read so it's skipped) rather than reusing the pre-task
-      # `current`, which real Ansible also does (a create/modify may
+      # `current`, which Ansible also does (a create/modify may
       # have changed exactly the field a later task wants to read).
       # Missing entirely before - found via konstruktoid.docker_rootless's
       # own `register: docker_user_info` followed by `{{
@@ -311,7 +311,7 @@ module Krikri
       # user already existed.
       facts = check_mode ? current : lookup(name)
 
-      # Real Ansible's main() runs ssh_key_gen after create/modify alike
+      # Ansible's main() runs ssh_key_gen after create/modify alike
       # (its own common tail, not inside either branch).
       ssh_key = apply_ssh_key(name, facts, check_mode)
       return ssh_key if ssh_key && ssh_key.failed?
@@ -324,7 +324,7 @@ module Krikri
       attach_user_facts(result, facts) if facts
       attach_command_output(result, base.extra["stdout"]?.try(&.as_s) || "", base.extra["stderr"]?.try(&.as_s) || "")
 
-      # Real ansible-core user.py's own result keys beyond the resolved
+      # ansible-core user.py's own result keys beyond the resolved
       # identity (verified against its main() result assembly and live
       # `ansible localhost -c local -m user` runs):
       # - name/state are ALWAYS echoed (even state=absent)
@@ -347,7 +347,7 @@ module Krikri
         result.extra["password"] = JSON::Any.new("NOT_LOGGING_PASSWORD")
       end
       # apply_ssh_key's own ssh_key_file/ssh_public_key/ssh_fingerprint
-      # fields (real Ansible's own returned keys for generate_ssh_key:)
+      # fields (Ansible's own returned keys for generate_ssh_key:)
       # live on ITS PluginResult, not the merged one built above - never
       # copied over, so a task registering the result and reading `{{
       # user_result.ssh_public_key }}` always saw it undefined even
@@ -364,7 +364,7 @@ module Krikri
     # = err` - the raw useradd/usermod/userdel output rides the result only
     # when non-empty, with the paired *_lines key alongside (the executor's
     # central command-lines augmentation overwrites the value in place,
-    # keeping the position real's action plugin gives it: after every
+    # keeping the position Ansible's action plugin gives it: after every
     # module key, before the executor's failed backfill).
     private def attach_command_output(result : PluginResult, stdout : String, stderr : String) : Nil
       if !stdout.empty?
@@ -377,25 +377,25 @@ module Krikri
       end
     end
 
-    # generate_ssh_key: + friends - real ansible-core user.py's own
+    # generate_ssh_key: + friends - ansible-core user.py's own
     # ssh_key_gen (Linux useradd path), called from main()'s common tail
     # AFTER create/modify alike. Generates the account's private/public
     # keypair via ssh-keygen when it does not exist yet:
     #
     # - ssh_key_file (default `.ssh/id_<ssh_key_type>`) is resolved
     #   against the account's home directory when relative; a home that
-    #   does not exist is a task failure (real Ansible's own
+    #   does not exist is a task failure (Ansible's own
     #   get_ssh_key_path raise, non-check mode only).
     # - The key's parent dir is created 0700 and chowned to the account
-    #   when missing (real Ansible's own os.mkdir/os.chown).
+    #   when missing (Ansible's own os.mkdir/os.chown).
     # - An existing private OR public key file is a no-op unless force:
     #   overwrites it; in check mode any would-be generation reports
     #   changed without touching anything.
     # - On success the pair is chowned to the account and the register
     #   result carries ssh_key_file/ssh_public_key/ssh_fingerprint,
-    #   matching real Ansible's own returned fields.
+    #   matching Ansible's own returned fields.
     # Resolves ssh_key_file: against the account's home when relative -
-    # real Ansible's own get_ssh_key_path, including its home-must-exist
+    # Ansible's own get_ssh_key_path, including its home-must-exist
     # failure (non-check-mode only). Returns {key_path, nil} on success,
     # {nil, failure_result} when the home doesn't exist.
     private def resolve_ssh_key_path(name : String, facts : PluginHelpers::UserState::User?, check_mode : Bool) : {String, Nil} | {Nil, PluginResult}
@@ -498,7 +498,7 @@ module Krikri
       result.extra["comment"] = JSON::Any.new(facts.comment)
     end
 
-    # Real Ansible's user module echoes `name` and `state` in its result
+    # Ansible's user module echoes `name` and `state` in its result
     # on every path (its main() sets both unconditionally before any
     # branch runs). The per-account resolved facts (uid/group/home/
     # shell/comment) are attached separately by #attach_user_facts.
@@ -507,7 +507,7 @@ module Krikri
       result.extra["state"] = JSON::Any.new(state)
     end
 
-    # password_expire_min:/_max:/_warn: - real Ansible's user module sets
+    # password_expire_min:/_max:/_warn: - Ansible's user module sets
     # these via a separate `chage` call (neither useradd nor usermod has
     # an equivalent flag), always run after create/modify regardless of
     # whether the account was just created or already existed - dev-sec
@@ -542,7 +542,7 @@ module Krikri
       # (live-verified: round 992000's user_fail registers [failed, msg,
       # changed, exception] with msg "Group kop_nosuchgroup does not
       # exist"). The check-mode bare-exit for a missing account already
-      # happened in #ensure_present, matching real's main() ordering.
+      # happened in #ensure_present, matching Ansible's main() ordering.
       if group = @params["group"]?.presence
         unless group_exists?(group)
           return PluginResult.new(changed: false, failed: true,
@@ -570,7 +570,7 @@ module Krikri
         local: local
       ) + quote_password_flag(PluginHelpers::UserState.useradd_password_args(@params["password"]?, locked))
 
-      # Real ansible.builtin.user's own create_user_useradd (see its
+      # Ansible.builtin.user's own create_user_useradd (see its
       # source): when group: isn't given AND a group already exists with
       # the SAME NAME as the user being created (e.g. a role's own prior
       # `group: {name: zeppelin}` task before `user: {name: zeppelin,
@@ -582,7 +582,7 @@ module Krikri
       # Without this, useradd fails outright: "group X exists - if you
       # want to add this user to that group, use -g." - found
       # benchmarking round167's buluma.zeppelin on Ubuntu 22.04.
-      # libuser's luseradd spells the same flag `-n` (real Ansible's own
+      # libuser's luseradd spells the same flag `-n` (Ansible's own
       # local-path branch).
       if @params["group"]?.nil? && group_exists?(name)
         args.unshift(local ? "-n" : "-N")
@@ -600,7 +600,7 @@ module Krikri
       created = PluginResult.new(changed: true, failed: false)
       attach_raw_command_output(created, result[:stdout], result[:stderr])
 
-      # Real Ansible's local-path tail (create_user_useradd's post-
+      # Ansible's local-path tail (create_user_useradd's post-
       # luseradd block): expiry via a separate lchage (luseradd has no
       # -e), supplementary groups via one lgroupmod -M per group
       # (luseradd has no -G) - order per its observed behavior: lchage first.
@@ -661,7 +661,7 @@ module Krikri
       # own default caddy_user: www-data, modified with `home: /home/
       # caddy` - www-data's actual home is /var/www, which exists, so
       # `-m` would move the WRONG directory's contents rather than
-      # create a fresh one at the new path). Real Ansible's own
+      # create a fresh one at the new path). Ansible's own
       # modify_user_usermod() does this as an independent, explicit step
       # (create the target dir + chown it) rather than relying on
       # usermod -m at all - found via that role's own subsequent
@@ -684,7 +684,7 @@ module Krikri
         attach_raw_command_output(modified, result[:stdout], result[:stderr])
       end
 
-      # Real Ansible's modify_user_usermod local-path tail: expiry via
+      # Ansible's modify_user_usermod local-path tail: expiry via
       # lchage (after lusermod), then one lgroupmod add/del per group.
       if days = local_expiry_days
         lchage = remote_exec("lchage -E '#{days}' #{shell_single_quote(name)}")
@@ -714,20 +714,20 @@ module Krikri
     # were read in #create (useradd -G) but never even looked at here,
     # so adding an existing user to a supplementary group silently did
     # nothing and always reported "already up to date" instead of
-    # `usermod -G`/`-a -G`, unlike real Ansible's own module.
+    # `usermod -G`/`-a -G`, unlike Ansible's own module.
     #
     # Current membership is read via `getent group` and each line's own
-    # 4th (member-list) field - mirroring real Ansible's own
+    # 4th (member-list) field - mirroring Ansible's own
     # `grp.getgrall()` + `name in g.gr_mem` check - rather than `id -Gn`,
     # which would also fold in the user's PRIMARY group (via passwd's
     # own gid field) and wrongly count that as a "current supplementary
     # group" even when the user isn't listed as an explicit member.
     private def group_membership_flags(name : String) : Array(String)
       # `groups: ""` (or an explicit null, demoted to "" on the params
-      # wire) is real Ansible's "clear every supplementary group"
+      # wire) is Ansible's "clear every supplementary group"
       # spelling - user.py treats a PRESENT-but-empty groups as an empty
       # target list, so with append: false the set-difference removes
-      # every current membership (live-verified: real reports changed
+      # every current membership (live-verified: Ansible reports changed
       # and the user leaves the groups; getent group shows no members).
       # A `.presence` guard here folded "" into "param absent" and made
       # the whole modification a no-op ("User already up to date") -
@@ -758,7 +758,7 @@ module Krikri
     # full commands, not usermod flags (libuser has no -G): one
     # `lgroupmod -M <name> <group>` per added group, plus one
     # `lgroupmod -m <name> <group>` per removed group when not appending
-    # (real Ansible's own modify_user_usermod local branch, adds before
+    # (Ansible's own modify_user_usermod local branch, adds before
     # dels). Create path only ever needs the add half.
     private def local_group_commands(name : String) : Array(String)
       # Same present-but-empty clearing semantics as
@@ -776,7 +776,7 @@ module Krikri
     end
 
     # `local: true` create path: groups can't ride on luseradd (no -G),
-    # so real Ansible's create_user_useradd tail issues one
+    # so Ansible's create_user_useradd tail issues one
     # `lgroupmod -M <name> <group>` per group after it.
     private def local_group_add_commands(name : String) : Array(String)
       groups_val = @params["groups"]?.presence
@@ -800,7 +800,7 @@ module Krikri
       end.to_a
     end
 
-    # `create_home:` is real Ansible's canonical param name; `createhome:`
+    # `create_home:` is Ansible's canonical param name; `createhome:`
     # (no underscore) is its documented alias - the more commonly seen
     # spelling in real playbooks (caddy_ansible.caddy_ansible's own
     # `createhome: true`). Neither this codebase's params hash nor the
@@ -826,7 +826,7 @@ module Krikri
       end
 
       # `local: true` never puts -e on lusermod (libuser's lusermod has
-      # no expiry flag; real Ansible's own local branch routes expires:
+      # no expiry flag; Ansible's own local branch routes expires:
       # through a separate `lchage -E <days>` instead).
       unless local
         if expires = @params["expires"]?.try(&.to_i64?)
@@ -841,7 +841,7 @@ module Krikri
 
     # `local: true` modify-path expiry: nil when expires: isn't given or
     # the shadow field already matches; the lchage -E day-count otherwise
-    # (lusermod has no expiry flag, mirroring real Ansible's own local
+    # (lusermod has no expiry flag, mirroring Ansible's own local
     # branch). lchage takes whole DAYS since epoch, not a date.
     private def pending_local_expiry(name : String) : Int64?
       expires = @params["expires"]?.try(&.to_i64?)
@@ -866,7 +866,7 @@ module Krikri
       remote_exec("test -d #{shell_single_quote(path)}")[:exit_code] == 0
     end
 
-    # Mirrors what real ansible-core's user module does for a MODIFY-path
+    # Mirrors what ansible-core's user module does for a MODIFY-path
     # home directory creation (a plain mkdir + skeleton copy + chown, not
     # useradd's own -m machinery, which only applies at account-creation
     # time) - close enough for the common case (a role writing its own
@@ -878,7 +878,7 @@ module Krikri
       mkdir = remote_exec("mkdir -p #{q_home}")
       return command_failure("create home directory", mkdir) unless mkdir[:exit_code] == 0
 
-      # Real Ansible's own create_homedir: skeleton: if given, else
+      # Ansible's own create_homedir: skeleton: if given, else
       # /etc/skel (modify-path home creation; useradd's own -k only
       # applies at account-creation time).
       skel = @params["skeleton"]?.presence || "/etc/skel"

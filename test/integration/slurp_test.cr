@@ -9,7 +9,7 @@ private def tmp_path(name : String) : String
 end
 
 describe "slurp plugin" do
-  it "returns a file's content base64-encoded (real Ansible always does)" do
+  it "returns a file's content base64-encoded (Ansible always does)" do
     path = tmp_path("slurp_armored.txt")
     File.write(path, "hello slurp")
 
@@ -21,7 +21,7 @@ describe "slurp plugin" do
     result["source"].as_s.must_equal(path)
   end
 
-  it "rejects the fabricated armor param like real Ansible's argument-spec validation" do
+  it "rejects the fabricated armor param like Ansible's argument-spec validation" do
     path = tmp_path("slurp_armor_reject.txt")
     File.write(path, "plain text")
 
@@ -41,7 +41,7 @@ describe "slurp plugin" do
     Base64.decode_string(result["content"].as_s).must_equal("aliased")
   end
 
-  it "fails with real Ansible's missing-argument message when src is absent" do
+  it "fails with Ansible's missing-argument message when src is absent" do
     result = PluginSpecHelper.run("slurp", {} of String => String)
 
     result["failed"].as_bool.must_equal(true)

@@ -3,7 +3,7 @@ require "../../src/krikri/variable_substitutor"
 require "../../src/krikri/conditional_evaluator"
 
 # An unknown/unimplemented filter name must hard-fail at the point of the
-# filter call with real Jinja2/Ansible's own wording ("No filter named
+# filter call with Jinja2/Ansible's own wording ("No filter named
 # 'X'.", a real TemplateAssertionError - Jinja validates filter names
 # against its registered filter set and refuses to even attempt the call),
 # never silently fall through to a placeholder. Found via nephelaiio.pip /

@@ -7,7 +7,7 @@ module Krikri
   # configured condition (always / never / on_failed / on_skipped /
   # on_unreachable).
   #
-  # Real Ansible's debugger reads from stdin even when it is NOT a
+  # Ansible's debugger reads from stdin even when it is NOT a
   # terminal, unlike vars_prompt (verified against ansible-core 2.19.4:
   # piping "c" continues the run; closing stdin yields "User interrupted
   # execution" and exit 99). Both are reproduced.
@@ -15,7 +15,7 @@ module Krikri
   # Commands: p/print, r/redo, c/continue, q/quit, u/update_task, EOF,
   # and ASSIGNMENT to `task.args[...]` / `task_vars[...]`.
   #
-  # Real Ansible implements assignment by `exec`-ing the typed line as
+  # Ansible implements assignment by `exec`-ing the typed line as
   # Python against a live scope dict, which this engine has no equivalent
   # of. What it does instead is parse the two assignment SHAPES that make
   # the debugger useful - `task.args['x'] = <literal>` and
@@ -24,19 +24,19 @@ module Krikri
   # works. Arbitrary Python beyond that shape is still refused rather
   # than silently ignored: an unparseable assignment says so.
   #
-  # The interaction between the two, verified against real ansible-core
+  # The interaction between the two, verified against ansible-core
   # 2.19.4 rather than assumed, is subtle and reproduced exactly:
   #
   #   * `task.args[...] = v` takes effect on the very next `r`.
   #   * `task_vars[...] = v` does NOT, on its own, change the task's
   #     arguments - a redo right after it re-runs the ORIGINAL command
-  #     (real Ansible's task object is already templated by then). Only
+  #     (Ansible's task object is already templated by then). Only
   #     `u`/`update_task` re-templates the task from the updated vars,
-  #     which is exactly what real Ansible's own `do_update_task`
+  #     which is exactly what Ansible's own `do_update_task`
   #     ("Recreate the task from task._ds, and template with updated
   #     task_vars") does.
   module TaskDebugger
-    # Exit code real Ansible uses when the debugger is left by EOF or
+    # Exit code Ansible uses when the debugger is left by EOF or
     # quit - its generic "user interrupted execution" code.
     INTERRUPTED_EXIT = 99
 
@@ -67,14 +67,14 @@ module Krikri
     end
 
     # Runs the prompt loop. Returns whether the caller should re-run the
-    # task; quitting or EOF exits the process, as real Ansible does.
+    # task; quitting or EOF exits the process, as Ansible does.
     #
     # *task* is mutated in place for `task.args[...] =` assignments (its
     # `params` are this engine's equivalent - the raw, pre-substitution
     # module arguments). *var_overrides* is the caller's own hash for
     # `task_vars[...] =` assignments: entries land in it only once
     # `u`/`update_task` promotes them, so the caller can merge it into
-    # the vars context it builds for a redo and get real Ansible's
+    # the vars context it builds for a redo and get Ansible's
     # semantics for free.
     def self.run(task_name : String, host_name : String,
                  result : JSON::Any, vars : Hash(String, JSON::Any),
@@ -87,7 +87,7 @@ module Krikri
 
         line = STDIN.gets
         unless line
-          # EOF - real Ansible prints exactly this and exits 99.
+          # EOF - Ansible prints exactly this and exits 99.
           puts "User interrupted execution"
           exit INTERRUPTED_EXIT
         end
@@ -102,7 +102,7 @@ module Krikri
           puts "User interrupted execution"
           exit INTERRUPTED_EXIT
         when "u", "update_task"
-          # Real Ansible's do_update_task: re-template the task with the
+          # Ansible's do_update_task: re-template the task with the
           # updated task_vars. This engine keeps a task's params RAW
           # (substitution happens per execution), so "re-templating" is
           # simply making the pending task_vars edits visible to the next
@@ -145,7 +145,7 @@ module Krikri
 
       value = parse_literal(raw_value)
       unless value
-        # Real Ansible would raise a Python exception here; this reports
+        # Ansible would raise a Python exception here; this reports
         # the same refusal in this engine's own terms rather than
         # pretending the assignment took.
         puts "***ValueError: cannot parse #{raw_value} (expected a quoted string, number, boolean, None, or JSON)"
@@ -169,7 +169,7 @@ module Krikri
       true
     end
 
-    # Real Ansible calls a command:/shell: task's free-form argument
+    # Ansible calls a command:/shell: task's free-form argument
     # `_raw_params`, which is what someone at this prompt will type from
     # muscle memory (and what its own `p task.args` shows). This engine
     # stores that same argument under `cmd` for the RAW_COMMAND_MODULES
@@ -222,13 +222,13 @@ module Krikri
 
       if name == "task.args" || name == "task.params"
         params = task.try(&.params) || Hash(String, String).new
-        # Real Ansible's `p task.args` shows the TEMPLATED arguments (its
+        # Ansible's `p task.args` shows the TEMPLATED arguments (its
         # task object is already post-validated by the time the debugger
         # opens). This engine keeps params raw and substitutes per
         # execution, so they are rendered here against the same vars the
         # next redo would use - otherwise `p task.args` after a
         # `task_vars[...] =` + `u` would still show `{{ msg_text }}`
-        # where real Ansible shows the value it just picked up, making
+        # where Ansible shows the value it just picked up, making
         # the one command whose whole purpose is to confirm the edit
         # unable to confirm it.
         substitutor = VarSubstitutor.new(vars: vars)

@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real's pause action plugin writes "Pausing for N seconds" (and, when a
+# Ansible's pause action plugin writes "Pausing for N seconds" (and, when a
 # prompt was given too, the ctrl+C hint) to the console ITSELF while the
 # task is running - Display.display(), before the sleep, and therefore
 # always between the task banner and that item's own status line. This
@@ -39,7 +39,7 @@ describe "pause console output" do
     hint = lines.index { |line| line == "(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)" }
     ok = lines.index { |line| line == "ok: [localhost]" }
 
-    # Real writes the hint as display(msg + "\r"), so the CR is part of
+    # Ansible writes the hint as display(msg + "\r"), so the CR is part of
     # the line it emits (and chomp above strips it off for comparison).
     output.must_include("(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)\r\n")
     (banner.not_nil! < pausing.not_nil!).must_equal(true)

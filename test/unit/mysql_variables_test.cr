@@ -14,7 +14,7 @@ describe Krikri::PluginHelpers::MysqlVariables do
       end
     end
 
-    it "rejects injection-shaped names like the real module" do
+    it "rejects injection-shaped names like the Ansible module" do
       ["a; DROP TABLE x", "var name", "var'"].each do |name|
         Krikri::PluginHelpers::MysqlVariables.valid_name?(name).must_equal(false)
       end

@@ -32,7 +32,7 @@ module Krikri
       end
 
       def self.policy_required?(state : String, policy : String?) : Bool
-        # Python's falsy-empty-string: real's `if not policy:` treats ""
+        # Python's falsy-empty-string: Ansible's `if not policy:` treats ""
         # the same as None.
         state != "disabled" && (policy.nil? || policy.empty?)
       end

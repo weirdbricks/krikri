@@ -15,7 +15,7 @@ module Krikri
   # Ansible's `omit` magic variable (`{{ item.proto | default(omit) }}` -
   # konstruktoid-hardening's "Allow outgoing specified ports" task uses
   # exactly this to drop `proto:` for loop items that don't specify one).
-  # Real Ansible's `omit` causes the *parameter itself* to be dropped from
+  # Ansible's `omit` causes the *parameter itself* to be dropped from
   # the module call entirely, not set to some placeholder value - can't be
   # represented as a plain rendered string, so FilterEngine's `default`
   # resolves a bare `omit` argument to this unique marker instead, and
@@ -27,7 +27,7 @@ module Krikri
   # finalization - see #substitute_task_params) when a `{{ }}` span whose
   # ENTIRE content is a plain variable reference (`foo`, `foo.bar`,
   # `foo['bar'][0]` - no filters/operators/function calls) resolves to
-  # nothing. Real Ansible's Jinja2 templating is strict-undefined by
+  # nothing. Ansible's Jinja2 templating is strict-undefined by
   # default for module-arg rendering and raises in exactly this shape of
   # case ("'foo' is undefined"); this engine otherwise renders a missing
   # lookup as the literal string "undefined" and continues (a deliberate,
@@ -48,7 +48,7 @@ module Krikri
   # `-` combining (combine_plus/combine_minus) and their operand resolver
   # (resolve_plus_operand, strict mode) when an operand is genuinely
   # undefined, a defined-null (None), the `omit` sentinel, or a container
-  # on the wrong side of a concatenation - every class real Ansible's
+  # on the wrong side of a concatenation - every class Ansible's
   # own templating hard-fails the task on (live-verified against 2.19.11:
   # `unsupported operand type(s) for +: 'NoneType' and 'str'`,
   # `can only concatenate list (not "int") to list`, `'missing_var' is
@@ -63,7 +63,7 @@ module Krikri
 
   # Raised by the first_found lookup (ExpressionEvaluator's
   # #evaluate_first_found) when no candidate file exists and the lookup's
-  # own `skip:` param is not true - real Ansible's own failure for that
+  # own `skip:` param is not true - Ansible's own failure for that
   # shape ("The lookup plugin 'first_found' failed: No file was found when
   # using first_found.", verified live against 2.19.4), NOT the "undefined"
   # sentinel string the code path used to return (which became "include_
@@ -72,13 +72,13 @@ module Krikri
   end
 
   # Raised by the pipe lookup (ExpressionEvaluator's #lookup_pipe) when
-  # the command exits non-zero - real Ansible's own failure for that
+  # the command exits non-zero - Ansible's own failure for that
   # shape ("The lookup plugin 'pipe' failed: lookup_plugin.pipe(<cmd>)
   # returned <rc>.", verified live against 2.19.4), NOT the "undefined"
   # sentinel string the code path used to return (which ajeleznov.
   # manage-known-hosts's `lookup('pipe', 'ssh-keyscan ...')` then fed to
   # the known_hosts module as a literal "undefined" key, letting the
-  # play run seven tasks past real Ansible's hard stop). Real Ansible
+  # play run seven tasks past Ansible's hard stop). Ansible
   # raises regardless of how much stdout the command already produced.
   class PipeLookupError < Exception
   end
@@ -90,7 +90,7 @@ module Krikri
   # lenient path.
   REGEX_BARE_VAR_REF = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[(?:-?\d+|'[^']*'|"[^"]*")\])*\z/
 
-  # The only filters real Ansible lets a genuinely UNDEFINED value reach
+  # The only filters Ansible lets a genuinely UNDEFINED value reach
   # without failing the task. Everything else in Jinja2/Ansible raises on
   # `AnsibleUndefined` - differentialed against the local ansible-core
   # 2.19.4 with `msg: "{{ nope | <filter> }}"` over 24 filters
@@ -124,7 +124,7 @@ module Krikri
   # own `{{ ansible_lsb.codename | default(omit) }}` candidate, where
   # the scan of the task's raw `vars:` params recursed into
   # `default(omit)`'s ARGUMENT and raised "'omit' is undefined" there)
-  # fails a task real Ansible runs.
+  # fails a task Ansible runs.
   SCAN_STRICT_BLOCK_TAG_KEYWORDS = Set{
     "if", "elif", "else", "endif", "for", "endfor",
     "set", "endset", "include", "extends", "block",
@@ -183,7 +183,7 @@ module Krikri
   # Returns the offending variable name when *expr* is a filter chain
   # whose SOURCE is a genuinely undefined bare variable reference and
   # whose FIRST filter is not one of UNDEFINED_TOLERANT_FILTERS - i.e.
-  # exactly the shape real Ansible hard-fails - and nil otherwise.
+  # exactly the shape Ansible hard-fails - and nil otherwise.
   #
   # Why this exists (round185, buluma.environment's `loop: "{{
   # environment_list | dict2items }}"`, with no default anywhere in the
@@ -192,10 +192,10 @@ module Krikri
   # through any filter it stopped being strict - and FilterEngine's own
   # `as_hash`/`as_array` helpers independently coerced the missing value
   # to `{}`/`[]` before anything upstream could notice. The task then
-  # produced zero loop items and silently no-op'd where real Ansible
+  # produced zero loop items and silently no-op'd where Ansible
   # fails ("dict2items requires a dictionary, got ...AnsibleUndefined").
   #
-  # Only the FIRST filter is consulted, which is what real Ansible does
+  # Only the FIRST filter is consulted, which is what Ansible does
   # too: `x | default([]) | dict2items` is fine (default consumes the
   # undefined - the legitimate, extremely common idiom), while
   # `x | dict2items | default([])` still fails, because dict2items has
@@ -219,7 +219,7 @@ module Krikri
     filter_name == name
   end
 
-  # mandatory's failure text: real's filter plugin uses its msg argument
+  # mandatory's failure text: Ansible's filter plugin uses its msg argument
   # when given ("custom message here"), else "Mandatory variable 'X' not
   # defined." quoting the UNDEFINED variable's name (live-verified).
   def self.mandatory_message(chain : String, undefined_name : String) : String
@@ -244,7 +244,7 @@ module Krikri
     # bareword, not a variable anyone ever set.
     return nil if source == "omit"
     # Same for the Jinja2 boolean/null literals - `true | bool` is a
-    # no-op passthrough of the literal in real Ansible, never a variable
+    # no-op passthrough of the literal in Ansible, never a variable
     # lookup (round 952063, see JINJA_LITERAL_BAREWORDS).
     return nil if JINJA_LITERAL_BAREWORDS.includes?(source)
     return nil unless source.matches?(REGEX_BARE_VAR_REF)
@@ -284,7 +284,7 @@ module Krikri
   # whose stored VALUE is itself unrendered Jinja that bottoms out at a
   # name set nowhere (`php_fpm_site_errorlog: "/home/{{ system_user }}/
   # logs/x.log"` with `system_user` never defined - inmotionhosting.php_fpm,
-  # round 82024). Real Ansible's recursive re-templating renders the head's
+  # round 82024). Ansible's recursive re-templating renders the head's
   # own value strictly BEFORE the first filter ever applies, so a `when:`
   # using the chain fails with the innermost missing name; this engine's
   # lenient re-render baked the "undefined" sentinel into the string and the
@@ -318,7 +318,7 @@ module Krikri
     # Unsafe gate (VarSubstitutor.unsafe_root?): the strict probe here
     # RENDERS the chain source's raw value - on an execution-resolved
     # root (registered result / set_fact / fact) that render is exactly
-    # the hostile-text execution real ansible-core prevents by marking
+    # the hostile-text execution ansible-core prevents by marking
     # such values AnsibleUnsafe. Skipped for unsafe roots: the value is
     # verbatim content, definitionally "defined".
     return if VarSubstitutor.unsafe_root?(vars, source)
@@ -338,7 +338,7 @@ module Krikri
   # missing one SHOULD raise, like any other undefined root.
   #
   # Bare Jinja2/Python boolean/null literal spellings, in both
-  # capitalizations real Jinja2 accepts (the vendored Crinja lexer's own
+  # capitalizations Jinja2 accepts (the vendored Crinja lexer's own
   # SPECIAL_CONSTANTS maps the camelcase forms too). The strict-undefined
   # probes below match these against REGEX_BARE_VAR_REF as if they were
   # variable NAMES - `{{ true }}` and, one shape over, `{{ true | bool }}`
@@ -365,12 +365,12 @@ module Krikri
   # *expr* starts with a plain identifier that is genuinely absent from
   # *vars* and immediately accesses something off it - `root.split(':')`,
   # `root.attr`, `root['key']`, `root(...)`, optionally piped onward
-  # (`root.split(':') | map(...) | list`). Real Ansible's strict
+  # (`root.split(':') | map(...) | list`). Ansible's strict
   # finalization raises the moment the undefined root is ACCESSED
   # (Jinja2's StrictUndefined raises on attribute/subscript/call), BEFORE
   # any later tolerant filter in the chain could see it - so unlike the
   # bare-ref chain case, no first-filter tolerance carve-out applies
-  # here: `x.split(':') | default([])` fails in real Ansible too.
+  # here: `x.split(':') | default([])` fails in Ansible too.
   #
   # Why this exists (round 0.9.879, wcm_io_devops.conga_host_facts' very
   # first task): `_host_pattern_variants: "{{ conga_host_facts_pattern
@@ -379,7 +379,7 @@ module Krikri
   # (`conga_host_facts_pattern.split(':')`) because it contains parens,
   # and the chained-subscript branch rejects `(` and `|`, so the
   # expression silently rendered to `[]` and the task succeeded where
-  # real Ansible fatally fails ("'conga_host_facts_pattern' is
+  # Ansible fatally fails ("'conga_host_facts_pattern' is
   # undefined").
   #
   # Deliberately narrow, same spirit as the other strict probes: the root
@@ -457,7 +457,7 @@ module Krikri
   # tell a genuine miss from a REAL value that happens to be the text
   # "undefined" (`printf 'undefined'` + `register: s2`, then
   # `{{ s2.stdout_lines.0 }}` - juju4.pocketid round 60151 - failed the
-  # task where real Ansible renders the string; the bracket form,
+  # task where Ansible renders the string; the bracket form,
   # decided structurally, was never affected). Doesn't apply to the
   # bare-ref or filter-chain shapes the OTHER raise_if_strict_undefined
   # branches already cover.
@@ -468,7 +468,7 @@ module Krikri
   # For a chained lookup expression (`d['missing']`, `d.missing`,
   # `groups[rke2_servers_group_name]`, `pkg[ver]["update"]`) that rendered to
   # the "undefined" sentinel: if some step of the chain subscripts a
-  # RESOLVABLE dict with a key it doesn't have, real Ansible's error names
+  # RESOLVABLE dict with a key it doesn't have, Ansible's error names
   # the dict and the key - "object of type 'dict' has no attribute 'missing'"
   # - not "'<whole expr>' is undefined" (both live-verified against
   # ansible-core 2.19.4, for bracket access, dot access, and a dynamic-key
@@ -572,7 +572,7 @@ module Krikri
   end
 
   # The full strict-undefined error message for a failed lookup: a
-  # dict-subscript miss on a resolvable chain gets real Ansible's
+  # dict-subscript miss on a resolvable chain gets Ansible's
   # attribute-error wording, everything else the classic "'x' is undefined".
   def self.strict_undefined_message(expr : String, vars : Hash(String, JSON::Any)) : String
     if missing_key = dict_attribute_miss_name(expr, vars)
@@ -591,16 +591,16 @@ module Krikri
   # above (its shape regex only accepts plain bare-var chains), so a base
   # that resolves to Python None (regex_search with no match at all) or an
   # index past the end of a real-but-too-short list silently rendered the
-  # "undefined" sentinel and the play ran green where real Ansible
+  # "undefined" sentinel and the play ran green where Ansible
   # hard-fails the task. Live-verified against ansible-core 2.19.11 - both
   # at task-arg finalization and in `when:` evaluation, which are DISTINCT
   # Python error shapes, deliberately not collapsed into one message:
   #   None/JSON-null base  -> "None has no element 0"
   #   list index past end  -> "object of type 'list' has no attribute 5"
   # Walks the TRAILING top-level integer-index brackets off *expr*
-  # (so a `| default(...)` guard after the index, which real Ansible
+  # (so a `| default(...)` guard after the index, which Ansible
   # answers leniently, never reaches the check), structurally evaluates
-  # the remaining base via Crinja, and returns real Ansible's own message
+  # the remaining base via Crinja, and returns Ansible's own message
   # for the first failing index. nil for every shape this can't pin down
   # (undefined base - the generic "'x' is undefined" probe already owns
   # that; non-integer index; dict-key miss, lenient by long-standing
@@ -715,7 +715,7 @@ module Krikri
     # Raised when re-templating a value's own `{{ }}` text exceeds
     # MAX_RETEMPLATING_DEPTH - the shape of a mutually-templated variable
     # pair (`a: "{{ b }}"` / `b: "{{ a }}"`), where resolving a re-renders
-    # b, whose value re-resolves a, forever. Real ansible-core fails the
+    # b, whose value re-resolves a, forever. ansible-core fails the
     # task with "Recursive loop detected in template"; this engine
     # previously blew the C stack and crashed the whole process.
     class TemplateRecursionError < Exception
@@ -724,7 +724,7 @@ module Krikri
     # Raised when a `{{` span in a plain task param/var value has no
     # closing `}}` at all (`{{ var`) or has a stray single `}` before it
     # (`{{ var }`) - the kostiantyn-nemchenko.patroni round-72000 open
-    # gap. Real ansible-core's Jinja2 hard-errors on both shapes
+    # gap. ansible-core's Jinja2 hard-errors on both shapes
     # (live-verified 2.19.4: "Syntax error in template: unexpected '}'"
     # and "Syntax error in template: unexpected end of template, expected
     # 'end of print statement'."), where this engine's scanner used to
@@ -788,7 +788,7 @@ module Krikri
         @@retemplating_depth -= 1
       end
 
-      # Real ansible-core 2.19 native typing for a WHOLE-single-span
+      # ansible-core 2.19 native typing for a WHOLE-single-span
       # `{{ expr }}` value (the template's whole AST is one output node
       # wrapping one expression): the expression's own result TYPE is the
       # value's type, so `{{ 42 }}` is the int 42, `{{ '42' }}` the str
@@ -796,7 +796,7 @@ module Krikri
       # rendered TEXT. The string detour every re-render path used
       # (render to text, then re-type by shape) cannot tell a string
       # expression's output from a number's ("42" either way), so vars
-      # like `b: "{{ 42 }}"` stayed strings here while real Ansible keeps
+      # like `b: "{{ 42 }}"` stayed strings here while Ansible keeps
       # them ints (live-verified vs ansible-playbook 2.19.11, with the
       # same matrix for list/dict/bool/None). Evaluating the span
       # STRUCTURALLY once (the engine's real typed evaluation) recovers
@@ -804,7 +804,7 @@ module Krikri
       #
       # Returns nil whenever this path does NOT apply or does not
       # succeed - not a whole single span (multi-span/mixed text, or
-      # block tags, which real Ansible renders to plain text), the
+      # block tags, which Ansible renders to plain text), the
       # expression genuinely resolves to nothing (Undefined), or the
       # engine cannot evaluate it. A None result comes back as a JSON
       # null JSON::Any, not Crystal nil. Every caller falls back to its
@@ -870,7 +870,7 @@ module Krikri
             # ansible-playbook via HanXHX.debian_bootstrap's
             # `dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{%
             # endif %}`: the output text `['dummy']` stayed the literal
-            # STRING real Ansible produces (`is string` -> True), and a
+            # STRING Ansible produces (`is string` -> True), and a
             # later `loop: "{{ dbs_repo_old }}"` then correctly hard-
             # failed with "The `loop` value must resolve to a 'list',
             # not 'str'." instead of silently iterating the bogus list.
@@ -959,16 +959,16 @@ module Krikri
     # Per-host registry of UNSAFE variable names - names whose current
     # value was produced by EXECUTION (a `register:`ed module result, a
     # `set_fact:` write, or a gathered fact) rather than read out of a
-    # YAML defaults/vars file. Real ansible-core marks every module
+    # YAML defaults/vars file. ansible-core marks every module
     # result / fact / registered var AnsibleUnsafe and NEVER re-renders
     # their text on any evaluation path; krikri must match, or a hostile
     # target gets controller code execution by returning stdout that
     # looks like a template (`{{ lookup('pipe', ...) }}`).
     # The recursive re-templating decision (`re_template_from_variable?`)
     # is content-based - "raw value contains `{{`" - and that alone cannot
-    # distinguish a YAML-defined template (real Ansible DOES render it
+    # distinguish a YAML-defined template (Ansible DOES render it
     # recursively, round 82024) from a resolved result that merely LOOKS
-    # like one: real ansible-core 2.19 tags facts/module results resolved
+    # like one: ansible-core 2.19 tags facts/module results resolved
     # and never re-scans their text (live-verified 2.19.11 with
     # `set_fact: x: "{{ '{{ inner_undefined_name }}' }}"` then
     # `msg: value=[{{ x }}]` - literal brace text out, rc=0). The content
@@ -1059,7 +1059,7 @@ module Krikri
     # (a quoted literal, a `(`-headed parenthesized expression, a
     # dict/list literal, `&...`). The registry is keyed on these roots:
     # an unsafe root makes EVERY value reachable through it unsafe, at
-    # any nesting depth, exactly like real Ansible's own taint model
+    # any nesting depth, exactly like Ansible's own taint model
     # (AnsibleUnsafe wraps whole structures).
     def self.expression_root(expr : String) : String?
       expr.strip.match(/\A\s*([A-Za-z_][A-Za-z0-9_]*)/).try(&.[1])
@@ -1262,7 +1262,7 @@ module Krikri
     #   PluginManager#get_connection_host to the wrong machine.
     # - `ansible_hostname` is NOT set here at all - it is a fact,
     #   undefined until real fact-gathering populates it (below), exactly
-    #   like real Ansible; fabricating it from the inventory name made
+    #   like Ansible; fabricating it from the inventory name made
     #   `ansible_hostname | default(...)` guards silently wrong.
     #
     # Lazy: only fires when first needed (evaluator/renderer build).
@@ -1288,7 +1288,7 @@ module Krikri
     # Raised when a template renders a vault blob none of the supplied
     # secrets could open. Vault.maybe_decrypt_json leaves such a value
     # encrypted rather than failing the parse, so the failure lands here,
-    # at the point of USE - matching real Ansible, which runs a playbook
+    # at the point of USE - matching Ansible, which runs a playbook
     # carrying a prod-only vault var quite happily on a dev box until
     # something actually references it.
     class UndecryptableVaultError < Exception
@@ -1297,7 +1297,7 @@ module Krikri
     # `output:` marks the FINAL, user-facing rendering of a value - a
     # module argument, a debug message, anything whose text a human or a
     # target host actually sees. Only there is a container rendered in
-    # Python's `repr` form (`['a', 'b']`, matching real Ansible);
+    # Python's `repr` form (`['a', 'b']`, matching Ansible);
     # every INTERNAL caller leaves it false and keeps the JSON-compact
     # form, because this engine renders sub-expressions to text and
     # `JSON.parse`es them back all over the place (loop sources,
@@ -1315,7 +1315,7 @@ module Krikri
       # twice in one msg ran the pipe lookup once); without the memo, the
       # same var value was re-rendered by the strict-definedness probe, the
       # span evaluation and the re-template gate - three runs of a
-      # side-effecting lookup where real Ansible ran one, with the LAST
+      # side-effecting lookup where Ansible ran one, with the LAST
       # run's output stored. Nested substitute calls (a re-rendered value
       # re-entering substitute) share the outer operation's memo instead of
       # starting a new one.
@@ -1332,7 +1332,7 @@ module Krikri
     private def substitute_measured(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       rendered = substitute_impl(text, strict, output, native)
       if rendered.includes?("$ANSIBLE_VAULT")
-        # Real Ansible distinguishes the two cases in its message:
+        # Ansible distinguishes the two cases in its message:
         # nothing supplied at all, versus supplied secrets none of which
         # fit. Verified against ansible-core 2.19.4.
         detail =
@@ -1349,7 +1349,7 @@ module Krikri
     # native (set_fact native_containers) helper: a BARE variable/dotted
     # reference whose value is a JSON scalar (int/float/bool) keeps its
     # native JSON text instead of the evaluator's stringification -
-    # real Ansible's `{{ int_var }}` inside a native container preserves
+    # Ansible's `{{ int_var }}` inside a native container preserves
     # the int, and buluma.ara_api's own reconciled configuration then
     # wrote `DATABASE_CONN_MAX_AGE: 0` / `DEBUG: false` where this engine
     # wrote strings `"0"` / `"False"` (Django then crashed on
@@ -1388,7 +1388,7 @@ module Krikri
       # renders to the false branch instead of raising - which is
       # the round-194 andrewrothstein.openjdk divergence (the
       # stat task's `path: "{{ openjdk_install_subdir }}"` arg
-      # finalization succeeds on crystal where real ansible
+      # finalization succeeds on crystal where Ansible
       # raises "Finalization of task args for 'ansible.builtin.
       # stat' failed: 'openjdk_app' is undefined"). The scan
       # itself is narrow (bare-identifier-class references only,
@@ -1430,7 +1430,7 @@ module Krikri
       # and blew the C stack, crashing the whole process. The shared
       # depth guard (same counter Rerender.if_templated and
       # VariableLookup#rerender_if_templated use) turns that into a
-      # clean task failure, matching real ansible-core's own "Recursive
+      # clean task failure, matching ansible-core's own "Recursive
       # loop detected in template".
       VariableSubstitutor::Rerender.enter_retemplating
       substitute_impl_guarded(text, strict, output, native)
@@ -1454,7 +1454,7 @@ module Krikri
       # ExpressionEvaluator#evaluate internally strips what it needs
       # (split_ternary/split_ternary_no_else/.looks_like_condition? all call
       # `.strip` themselves before use), so passing the un-stripped inner
-      # through here is safe. Real Ansible evaluates `{{ var }}` and
+      # through here is safe. Ansible evaluates `{{ var }}` and
       # `{{var}}` identically, so this is behavior-preserving by
       # construction.
       # Ansible re-templates a rendered result that still contains "{{" -
@@ -1466,7 +1466,7 @@ module Krikri
       #
       # That second pass is PER-SPAN, decided here at each span's own
       # expansion - never a second whole-text scan of the finished output.
-      # Real Ansible renders a task argument in a single Jinja2 pass and
+      # Ansible renders a task argument in a single Jinja2 pass and
       # never re-scans its rendered OUTPUT; its documented recursion
       # happens only when a *variable lookup* resolves to a string that
       # is itself a template (the variable's value gets templated as part
@@ -1481,7 +1481,7 @@ module Krikri
       # moment it shared a task arg with a qualifying span, and a quoted
       # literal's Go-template text (the original round-191 shape) breaks
       # the same way in that mixed position. Re-expanding only the
-      # qualifying span's own render gives real Jinja2's provenance
+      # qualifying span's own render gives Jinja2's provenance
       # exactly: recursion re-enters #substitute_impl (bounded by the
       # shared Rerender depth guard) so a chain `a: "{{ b }}"` / `b:
       # "{{ c }}"` resolves to full depth; a `{%`/`{#`-bearing value
@@ -1507,7 +1507,7 @@ module Krikri
         #   `, `v: "{{ r.stdout }}-suffix"`, a list of such entries):
         #   rendering that value pulls hostile data in, so whatever
         #   braces survive in the output are hostile, not author,
-        #   template text. Real Ansible's taint follows the data; this
+        #   template text. Ansible's taint follows the data; this
         #   scan is its static approximation at the one site where the
         #   second-level render would otherwise execute it.
         # - the span reads a hostvars entry key that is execution-resolved
@@ -1525,7 +1525,7 @@ module Krikri
           else
             # non-re-rendering spans still PULL host data in (`{{ r.stdout
             # | trim }}`, a nested call or ternary over a resolved root);
-            # their output is a derived string real ansible-core would tag
+            # their output is a derived string ansible-core would tag
             # AnsibleUnsafe.
             (rendered.includes?("{{") || rendered.includes?("{%") || rendered.includes?("{#")) &&
               (expression_uses_unsafe_root?(stripped) || UnsafeValues.contains_unsafe?(rendered))
@@ -1535,7 +1535,7 @@ module Krikri
         end
         if re_templates && !unsafe_derived
           # A span rooted at `hostvars[<other host>]` re-renders its own
-          # output with THAT host's scope - real Ansible's HostVarsVars
+          # output with THAT host's scope - Ansible's HostVarsVars
           # templar, not the reading host's. The per-host substitutor's
           # own re-passes re-enter here for nested hostvars references
           # inside the other host's values, each level rendering in its
@@ -1552,7 +1552,7 @@ module Krikri
             # Crinja-first bare-reference conversion, prepare_var's
             # rerender_nested_templates) recursed to full depth by
             # construction, and a second pass would re-scan FINISHED
-            # output: real Ansible renders `{{ esc }}` where esc's own
+            # output: Ansible renders `{{ esc }}` where esc's own
             # value is `{{ '{{' }} x {{ '}}' }}` to the literal text
             # "{{ x }}" and never re-scans it, while a blind re-pass
             # templated the brace text a second time ("{{ literal }}" ->
@@ -1574,7 +1574,7 @@ module Krikri
     # vars/main.yml define openjdk_install_subdir as
     # `{{ openjdk_install_dir }}/{% if openjdk_app == "jre" %}-jre{%
     # endif %}suffix` and the stat task's `path: "{{ openjdk_install_
-    # subdir }}"` finalize-args render. Real ansible-core 2.19's
+    # subdir }}"` finalize-args render. ansible-core 2.19's
     # strict Jinja2 environment raises on the `openjdk_app` undefined
     # in the if-condition and the whole task aborts with rc=2 at
     # "Finalization of task args for 'ansible.builtin.stat' failed:
@@ -1634,7 +1634,7 @@ module Krikri
         # per-tag scan (the previous shape of this method) had no way
         # to know that tag's condition is only ever reached once the
         # outer is-defined guard already passed - it raised "is
-        # undefined" where real Ansible short-circuits the entire
+        # undefined" where Ansible short-circuits the entire
         # true-branch away and never evaluates it at all.
         next if active_guarantee.includes?(root)
         # Bound by an ENCLOSING `{% for %}` still on the stack: Jinja
@@ -1652,14 +1652,14 @@ module Krikri
         # `block: "{% if proxy_settings_http_proxy is defined %}..."`
         # with the var commented out of the role's own defaults
         # failed here with "'proxy_settings_http_proxy' is undefined"
-        # where real Ansible takes the false branch and skips).
+        # where Ansible takes the false branch and skips).
         next if scan_inner_ref_skippable?(cond_no_strings, ident, mat.end)
         raise UndefinedVariableError.new("'#{root}' is undefined")
       end
     end
 
     # A dotted/bracketed chain (`traefik_ver.major`, `pkg_list[0].name`) is
-    # rooted at a real variable: real Ansible resolves the attribute access
+    # rooted at a real variable: Ansible resolves the attribute access
     # against that variable's VALUE, so the chain is only undefined when its
     # ROOT is. Checking the whole chain as a flat @vars key
     # (`@vars.has_key?("traefik_ver.major")`) never matches anything, so every
@@ -1695,7 +1695,7 @@ module Krikri
     end
 
     # An identifier immediately followed by `| default(...)` is never
-    # fatal regardless of its own definedness - real Jinja2's `default`
+    # fatal regardless of its own definedness - Jinja2's `default`
     # filter exists specifically to suppress Undefined (`x | default(y)`
     # never raises even under a strict environment, only a genuinely
     # missing filter/attribute lookup elsewhere in the chain would).
@@ -1710,7 +1710,7 @@ module Krikri
     # remote host (see facts_gatherer.cr's own connection-aware fix),
     # this scan raised "'ansible_python_interpreter' is undefined"
     # outright instead of letting `| default('')` do its job, even
-    # though real Ansible/Jinja2 never raises here at all.
+    # though Ansible/Jinja2 never raises here at all.
     private def block_tag_ref_is_defaulted(cond_no_strings : String, match_end : Int32) : Bool
       rest = cond_no_strings[match_end..].lstrip
       return false unless rest.starts_with?('|')
@@ -1787,7 +1787,7 @@ module Krikri
     end
 
     # Strict scan of a bare Jinja expression (a `{{ }}` span's inner text,
-    # no surrounding braces) for variable references that real Ansible
+    # no surrounding braces) for variable references that Ansible
     # fails on when templating it strictly: a chain-shaped reference
     # (`d['k']`, `d.attr`, `groups[name].x`) whose ROOT is undefined, or
     # whose resolution bottoms out in a dict-subscript miss on a
@@ -1831,7 +1831,7 @@ module Krikri
     # the path expression itself is substituted strictly, a candidate like
     # `'{{ ansible_facts.os_family }}.yml'` has already collapsed to the
     # literal "undefined.yml" and the strict check has nothing left to catch.
-    # Real Ansible templates the lookup's dict args strictly as part of
+    # Ansible templates the lookup's dict args strictly as part of
     # finalizing include_vars's own `_raw_params` (verified live against
     # 2.19.4: gantsign.oh-my-zsh's `include_vars: "{{ lookup('first_found',
     # params) }}"` with `files: ['{{ ansible_facts.os_family }}.yml',
@@ -1885,7 +1885,7 @@ module Krikri
     end
 
     # One scanned reference that survived every tolerance guard: raise the
-    # strict-undefined error real Ansible would - the root-missing shape
+    # strict-undefined error Ansible would - the root-missing shape
     # ("'x' is undefined"), or the dict-subscript-miss shape ("object of
     # type 'dict' has no attribute 'k'") when the root resolves and a
     # bracket/dot step misses. A fully-resolving chain raises nothing.
@@ -1922,7 +1922,7 @@ module Krikri
       # frame has to carry it forward the same way `guaranteed_defined`
       # does for is-defined guards - otherwise the scanner raises
       # "'ext' is undefined" on a nested `{% set y = ext.name %}` where
-      # real Ansible/Jinja2 renders it fine (round 813222,
+      # Ansible/Jinja2 renders it fine (round 813222,
       # pluggero.burpsuite).
       property loop_vars : Set(String)
 
@@ -1997,13 +1997,13 @@ module Krikri
         # pluggero.burpsuite, "'ext' is undefined").
         active_loop_vars = stack.reduce(Set(String).new) { |acc, frame| acc | frame.loop_vars }
         # A condition's OWN leading `X is defined` and-clause guards its own
-        # later and-clauses: real Jinja/Python `and` evaluates left-to-right
+        # later and-clauses: Jinja/Python `and` evaluates left-to-right
         # with short-circuit, so by the time any later and-clause runs, the
         # earlier `X is defined` clause has already proven truthy and X is
         # guaranteed. Without unioning this condition's own guard set in,
         # `github_token is defined and github_token | length` (round 900944,
         # noobient.github_release's headers:) raised "'github_token' is
-        # undefined" where real ansible-playbook renders the else branch -
+        # undefined" where ansible-playbook renders the else branch -
         # Crinja's own `and` operator already short-circuits correctly, so
         # only this pre-scan's inherited-from-outer-frames-only guarantee
         # was missing the same-clause case.
@@ -2065,7 +2065,7 @@ module Krikri
     # Splits *text* on every top-level occurrence of *separator*
     # (depth-0 with respect to parens - a separator inside `(...)` is
     # part of that sub-expression, not a real split point). Good enough
-    # for the and/or splitting above without a real Jinja parser: this
+    # for the and/or splitting above without a Jinja parser: this
     # scan only ever needs to tell "is the whole condition ONE thing, or
     # several ` and `/` or `-joined things" apart, never to evaluate the
     # sub-expressions themselves.
@@ -2100,7 +2100,7 @@ module Krikri
     # part consumes a backslash-and-anything as one character
     # (right for "the next character is escaped"). Sufficient for
     # the real-ansible-playbook shapes the openjdk regression
-    # covered, and the alternative (writing a real Jinja2 lexer)
+    # covered, and the alternative (writing a Jinja2 lexer)
     # is far heavier than this fix needs.
     private def strip_string_literals(text : String) : String
       result = text.dup
@@ -2136,7 +2136,7 @@ module Krikri
         if undefined_name = Krikri.undefined_filter_chain_source(inner, @vars)
           # `undefined | mandatory(...)` never reaches the filter in real
           # Ansible either - but there the UNDEFINED value flows into the
-          # mandatory FILTER PLUGIN, which fails the task with real's own
+          # mandatory FILTER PLUGIN, which fails the task with Ansible's own
           # wrapper ("The filter plugin 'ansible.builtin.mandatory'
           # failed: <message>"), not the plain undefined-variable error
           # (live-verified vs 2.19.11).
@@ -2154,7 +2154,7 @@ module Krikri
         # andrewrothstein.pkg-upgrade on Rocky 9.6: the role's vars/RedHat.
         # yml only has keys for ansible_distribution_major_version 7
         # and 8, so the second subscript misses, the whole expression
-        # resolves to nil, and on real ansible the `when: ... is defined`
+        # resolves to nil, and on Ansible the `when: ... is defined`
         # check evaluates False - so the task is SKIPPED, never run).
         # REGEX_BARE_VAR_REF deliberately rejects unquoted identifiers
         # inside the brackets (only `-?\d+` and `'...'`/`"..."` literal
@@ -2229,10 +2229,10 @@ module Krikri
         # comment for why that's deliberate, not a gap in this check.
         return
       end
-      # `omit` is real Ansible's magic bareword for "drop this parameter
+      # `omit` is Ansible's magic bareword for "drop this parameter
       # entirely", not a variable anyone ever sets - so a bare
       # `{{ omit }}` looked undefined to this check and FAILED the task,
-      # where real Ansible renders it (to empty text mid-string, or to a
+      # where Ansible renders it (to empty text mid-string, or to a
       # dropped parameter when it is the whole value). Verified against
       # ansible-core 2.19.4: `msg: "[{{ omit }}]"` prints "[]".
       return if inner == "omit"
@@ -2245,7 +2245,7 @@ module Krikri
       unless resolved
         # Round 812045 (pluggero.bibata_cursor): a bracket index that
         # landed on Python None or ran past the end of a real list has
-        # real Ansible's own distinct failure wording (live-verified
+        # Ansible's own distinct failure wording (live-verified
         # against ansible-core 2.19.11) - prefer it over the generic
         # "'x' is undefined" whenever the miss is one this probe can pin
         # down. nil (undefined base, non-integer index, dict miss) falls
@@ -2269,7 +2269,7 @@ module Krikri
     # default computed from another variable - `phpmyadmin_mysql_
     # password: "{{ mysql_root_password }}"`, buluma.phpmyadmin's own
     # defaults/main.yml) is only as defined as whatever it bottoms out
-    # at. Real Ansible templates recursively and reports the INNERMOST
+    # at. Ansible templates recursively and reports the INNERMOST
     # missing name ("'mysql_root_password' is undefined", pointing at
     # the defaults file, not at the task's own `{{ phpmyadmin_mysql_
     # password }}`), because its Jinja2 rendering is one strict pass
@@ -2339,7 +2339,7 @@ module Krikri
       # anything else keeps the original strict render probe below so no
       # failure mode changes shape. Without this, preparing a var for the
       # engine's scope rendered the whole value once here and again in the
-      # re-render - two runs of a side-effecting lookup where real Ansible
+      # re-render - two runs of a side-effecting lookup where Ansible
       # runs one.
       return false if (memo = self.class.span_memo) && memo.has_key?(self.class.span_memo_key(@vars, raw))
       if (structured = VariableSubstitutor::Rerender.whole_span_structured(@vars, raw)) && structured_scalar?(structured)
@@ -2376,7 +2376,7 @@ module Krikri
     # Round 191 (gantsign.helm) - does THIS mustache span (already
     # stripped of its `{{ }}`) resolve, via a variable lookup, to a raw
     # value that is itself a template (contains `{{`/`{%`/`{#`)? Only
-    # such spans make real Ansible's recursive re-templating apply to a
+    # such spans make Ansible's recursive re-templating apply to a
     # task argument's rendered output; brace text produced by an
     # evaluated LITERAL (a quoted string in the task itself, e.g. helm's
     # Go-template arg) stays verbatim. Narrow on purpose: bare/dotted/
@@ -2432,7 +2432,7 @@ module Krikri
     # (`default`, `map`) don't match a same-named variable by accident.
     # This is the provenance signal that lets the UNSAFE-text registry be
     # closed under derivation: any string an unsafe root flowed into gets
-    # registered, exactly like real ansible-core tagging the resulting
+    # registered, exactly like ansible-core tagging the resulting
     # AnsibleUnsafeText, so later re-render decisions refuse it by the
     # (transformed) text itself rather than by name.
     private def expression_uses_unsafe_root?(expr : String) : Bool
@@ -2480,7 +2480,7 @@ module Krikri
       # Resolved-value carve-out (0.9.1267 gap): a name published by
       # build_vars_context as execution-resolved (register:/set_fact:)
       # never counts as "raw value is itself a template" no matter
-      # what its stored text looks like - real ansible-core tags
+      # what its stored text looks like - ansible-core tags
       # such values resolved and passes them through verbatim,
       # while the content check below re-scanned the stored brace
       # text as another template level and died on the inner
@@ -2490,7 +2490,7 @@ module Krikri
         # Oefenweb.apt (round 195): `name: "{{ apt_dependencies }}"`
         # where the var is a LIST of template strings (each element
         # like `{{ cond | ternary('python-apt', 'python3-apt') }}`).
-        # Real Ansible templates the list elements when the
+        # Ansible templates the list elements when the
         # variable itself resolves; the old String-only check
         # never entered the re-pass, the list rendered with its
         # inner templates still literal, and apt tried to install
@@ -2564,7 +2564,7 @@ module Krikri
             inner, lstrip_marker, rstrip_marker = apply_trim_markers(inner)
 
             # `{{- expr }}`: strip trailing whitespace already written to
-            # the builder (real Jinja2 strips back to, and including, the
+            # the builder (Jinja2 strips back to, and including, the
             # preceding newline). Found via andrewrothstein.temurin's own
             # multi-line `|-` YAML block scalar building a download
             # filename out of `{{ part -}}` / `_{{ part -}}` spans, one
@@ -2592,14 +2592,14 @@ module Krikri
             # would-be body hits a stray single `}` first (`{{ var }`,
             # kostiantyn-nemchenko.patroni's own round-72000 default
             # `postgresql_apt_filename: "{{ __postgresql_apt_filename }"`
-            # with a missing brace). Real ansible-core's Jinja2 hard-errors
+            # with a missing brace). ansible-core's Jinja2 hard-errors
             # on both shapes and stops the play right there; this scanner
             # used to copy the malformed text through verbatim and keep
             # going, masking the divergence point the way the doc's open
             # gap describes. Same scan state (quotes + nested-brace
             # depth) as the successful path, so a dict-literal body like
             # `{{ {"a": 1} }}` still parses as a valid span, and the two
-            # real Jinja2 messages are distinguished the way Jinja2
+            # Jinja2 messages are distinguished the way Jinja2
             # itself does (a stray `}` vs. end of template with no
             # closer at all).
             raise VariableSubstitutor::TemplateSyntaxError.new(malformed_mustache_message(text, i + 2))
@@ -2627,7 +2627,7 @@ module Krikri
       nil
     end
 
-    # The real Jinja2 error message for a span that #find_mustache_close
+    # The Jinja2 error message for a span that #find_mustache_close
     # could not close, distinguishing the two shapes the way Jinja2's own
     # lexer does: a stray single `}` at sub-expression depth 0 outside a
     # quote (`{{ var }`) is "unexpected '}'", while running off the end of

@@ -18,7 +18,7 @@ end
 # evaluation, loop-source resolution) registers changed=false in real
 # ansible-core 2.19.11: the fatal line dumps {"changed": false, "msg":
 # "Task failed: ..."} and the registered var reads back .changed as
-# False (live-verified against real ansible-playbook 2.19.11 for all
+# False (live-verified against ansible-playbook 2.19.11 for all
 # three shapes below). An older 2.19 build showed a changed-less shape;
 # 2.19.11 is the parity target.
 describe "pre-module failure registered result shape" do

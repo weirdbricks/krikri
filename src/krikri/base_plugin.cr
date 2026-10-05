@@ -98,7 +98,7 @@ module Krikri
     # re-renders a non-string msg through Python repr for its error
     # blocks).
     property msg_native : JSON::Any?
-    # Optional wire-key order for the serialized result. Real Ansible's
+    # Optional wire-key order for the serialized result. Ansible's
     # registered result is the module's own dict in ITS insertion order
     # (exit_json's msg/status_code kwargs first, then the module's result
     # dict, then add_path_info's stat block) - every module has its own,
@@ -107,7 +107,7 @@ module Krikri
     # listed keys first, in the listed order (absent ones skipped), then
     # every remaining key in its current order; nil keeps the historical
     # order on SUCCESS results, while a FAILED result without a key_order
-    # takes real's plain fail_json order (failed, msg, then extras, then
+    # takes Ansible's plain fail_json order (failed, msg, then extras, then
     # changed, then exception - see #to_json). Observed programmatically
     # (e.g. `{{ r | to_json }}`,
     # `{{ r }}` in a debug msg) rather than in the -v dump, which real
@@ -145,7 +145,7 @@ module Krikri
 
     def to_json(io : IO) : Nil
       result = Hash(String, JSON::Any::Type).new
-      # omit_changed reproduces real Ansible's CONTROLLER-SIDE failure
+      # omit_changed reproduces Ansible's CONTROLLER-SIDE failure
       # shape (an uncaught AnsibleError from an action plugin, e.g.
       # fetch's makedirs_safe blowing up on a file-parent dest): the
       # executor's exception handling produces {failed, msg} with no
@@ -153,7 +153,7 @@ module Krikri
       # _return_formatted always backfills with changed: false. A
       # registered variable from such a failure has `changed`
       # UNDEFINED, and `when: r.changed` on it raises the same
-      # "has no attribute" error real Ansible raises.
+      # "has no attribute" error Ansible raises.
       result["changed"] = @changed unless @omit_changed
       # fail_json adds exception: "(traceback unavailable)" in 2.19 (seen only
       # through a registered result - the display drops it). Every failed
@@ -162,7 +162,7 @@ module Krikri
       # _ansible_key_order marker TaskExecutor#register_result applies)
       # covers, not its presence.
       result["exception"] = "(traceback unavailable)" if @failed
-      # Real Ansible's module protocol only adds
+      # Ansible's module protocol only adds
       # `failed`/`msg` to the result dict on a fail_json exit - a
       # successful module's wire result never carries either key at all
       # (not a display-layer strip; callbacks pass the dict through).
@@ -194,7 +194,7 @@ module Krikri
       end
     end
 
-    # Default FAILED order - real's fail_json shape, live-verified across
+    # Default FAILED order - Ansible's fail_json shape, live-verified across
     # seven plugins' plain failures (slurp missing file, stat unsupported
     # parameter, file bad state, fail:, service missing service, getent
     # unknown database, mount unmkdirable path - all register exactly
@@ -210,14 +210,14 @@ module Krikri
       end
       order << "changed"
       order << "exception"
-      # real's AnsibleModule collects self.warn() texts into the
+      # Ansible's AnsibleModule collects self.warn() texts into the
       # result's `warnings` list, and the controller appends that list
       # to the module's own dict LAST - after `exception`, before the
       # `deprecations` it appends after it (live-verified vs 2.19.11
       # with community.postgresql's no-database warning on a failing
       # task).
       order << "warnings" if result.has_key?("warnings")
-      # real's controller appends the deprecations it collected to the
+      # Ansible's controller appends the deprecations it collected to the
       # module's result dict LAST, whatever the module itself exited
       # with (live-verified vs 2.19.11 with community.postgresql's
       # deprecated-alias warnings on both a failing and a passing task).
@@ -227,7 +227,7 @@ module Krikri
 
     # Serializes *result* with the keys named in *order* first (absent ones
     # skipped), then every unlisted key in its existing insertion order -
-    # real Ansible's module-dict wire shape (see @key_order's comment).
+    # Ansible's module-dict wire shape (see @key_order's comment).
     private def emit_reordered(result : Hash(String, JSON::Any::Type), order : Array(String), io : IO) : Nil
       ordered = Hash(String, JSON::Any::Type).new
       order.each do |key|
@@ -285,7 +285,7 @@ module Krikri
     # marked non-string scalars (NON_STRING_MEMBER_PREFIX): key -> the
     # decoded members in wire order. @params holds the demoted comma
     # join, which is indistinguishable from a plain string, so a plugin
-    # mirroring real's str()/repr() of a list-valued arg needs this.
+    # mirroring Ansible's str()/repr() of a list-valued arg needs this.
     @non_string_member_lists = Hash(String, Array(JSON::Any)).new
 
     def explicit_null_param?(key : String) : Bool
@@ -339,7 +339,7 @@ module Krikri
       %(Failed to find required executable "#{name}" in paths: #{paths.join(':')})
     end
 
-    # Directories searched beyond $PATH by real Ansible's get_bin_path
+    # Directories searched beyond $PATH by Ansible's get_bin_path
     # Observed behavior: PATH first, then /sbin,
     # /usr/sbin, /usr/local/sbin.
     private BIN_EXTRA_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
@@ -386,7 +386,7 @@ module Krikri
       "#{hours}:#{mins.to_s.rjust(2, '0')}:#{secs.to_s.rjust(2, '0')}.#{micros.to_s.rjust(6, '0')}"
     end
 
-    # command/shell's failed os.chdir(): real's fatal msg is the generic
+    # command/shell's failed os.chdir(): Ansible's fatal msg is the generic
     # "Unable to change directory before execution." while the [ERROR] block
     # shows the OSError text too (Python bytes repr of the path).
     protected def chdir_error_detail(path : String) : String
@@ -405,7 +405,7 @@ module Krikri
           # NONE_SENTINEL for a template that natively resolved to
           # Python None) records as a null param and demotes to "" -
           # NOT value.to_s, which would erase the null-vs-empty-string
-          # distinction real Ansible's argspec coercion cares about.
+          # distinction Ansible's argspec coercion cares about.
           if value.raw.nil? || value.as_s? == NONE_SENTINEL
             @null_params << key
             @params[key] = ""
@@ -446,12 +446,12 @@ module Krikri
     # Abstract method - must be implemented by subclasses
     abstract def execute : PluginResult
 
-    # Last chance for a plugin to add the result keys real's controller
+    # Last chance for a plugin to add the result keys Ansible's controller
     # appends after the module's own dict - today only
     # community.postgresql's deprecated-alias warnings
     # (PluginHelpers::PostgresqlDeprecations). Wraps #execute rather
     # than living inside it so EVERY exit path gets them, the early
-    # argument-validation failures included, exactly as real's
+    # argument-validation failures included, exactly as Ansible's
     # AnsibleModule does (its collected deprecations ride along with the
     # fail_json exit too). Default: no change.
     def finalize_result(result : PluginResult) : PluginResult
@@ -476,7 +476,7 @@ module Krikri
     def run_and_capture : String
       finalize_result(execute).to_json
     rescue ex : BoolParamError
-      # The message is already the exact user-facing failure real Ansible
+      # The message is already the exact user-facing failure Ansible
       # produces at module setup (parameters.py's check_type_bool wrapper,
       # live-verified against ansible-core 2.19.11) - surface it verbatim
       # instead of the generic "Plugin execution failed: " wrapper real
@@ -488,10 +488,10 @@ module Krikri
       # Ansible produces ("chown failed: failed to look up user <name>"
       # / "chgrp failed: failed to look up group <name>") - surface it
       # verbatim instead of under the generic "Plugin execution failed: "
-      # wrapper real never produces (same reasoning as file.cr's own
+      # wrapper Ansible never produces (same reasoning as file.cr's own
       # dispatch_state_rescued). The shared resolvers deliberately raise
       # rather than return PluginResult so every plugin applying
-      # file-common owner:/group: args gets real Ansible's failure shape
+      # file-common owner:/group: args gets Ansible's failure shape
       # without each one hand-rolling it.
       PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed").to_json
     rescue ex : Exception
@@ -523,7 +523,7 @@ module Krikri
       # spawn but the plugin's internals still misread the connection.
       # (An explicit inventory localhost with ansible_connection=ssh is
       # not distinguishable here - config["host"] carries only name/user/
-      # port - and stays unsupported; real Ansible's IMPLICIT localhost
+      # port - and stays unsupported; Ansible's IMPLICIT localhost
       # is always local, which is the case this models.)
       return true if @host.name == "localhost" || @host.name == "127.0.0.1"
 
@@ -597,7 +597,7 @@ module Krikri
       end
     end
 
-    # The task's `environment:` (real Ansible's per-task env-var keyword,
+    # The task's `environment:` (Ansible's per-task env-var keyword,
     # forwarded here as a JSON blob under the `_environment` param key by
     # TaskExecutor#build_plugin_config, already {{ }}-substituted) as a
     # plain Hash, or nil when the task sets none. Applied through the
@@ -605,7 +605,7 @@ module Krikri
     # stdin-fed export script on the SSH path) rather than a command-string
     # prefix: an `export K='V';` prefix lives in the shell's argv, where
     # any local user on the machine can read secret values with `ps` while
-    # the task runs - real Ansible passes the dict to the module process's
+    # the task runs - Ansible passes the dict to the module process's
     # env and it never touches an argv.
     # One shared implementation so every plugin that shells out via
     # #remote_exec gets `environment:` support automatically rather than
@@ -622,7 +622,7 @@ module Krikri
       # `export` line (executed by a real bash reading the script from
       # stdin), so a task-controlled key like `X; touch /tmp/pwned; #`
       # would execute there. The VALUE side is safe (Shell.single_quote
-      # below); real Ansible hands the dict to subprocess's env and cannot
+      # below); Ansible hands the dict to subprocess's env and cannot
       # execute through a key, so any key it would have honored as a real
       # env name passes this check too.
       env.each_key do |key|
@@ -677,7 +677,7 @@ module Krikri
     # mode - re-applying it post-write is a no-op, so final-state
     # behavior is unchanged), or when no numeric mode is given, the
     # existing dest's own mode when one is being overwritten (the
-    # rename carries the temp's mode across, and real Ansible's
+    # rename carries the temp's mode across, and Ansible's
     # atomic_move preserves an existing dest's mode), or *new_file_base*
     # & ~umask for a not-yet-existing dest (copy's atomic_move gives a
     # new dest 0666 & ~umask; the File.write-defaulted staging paths
@@ -688,7 +688,7 @@ module Krikri
     # mode today (the /tmp validate: staging that is mv'd in as a new
     # inode, and temps that are deleted after use). *apply_task_mode*
     # is false for the module whose real counterpart does NOT pre-apply
-    # the task's numeric mode: at creation time - real's
+    # the task's numeric mode: at creation time - Ansible's
     # set_fs_attributes_if_different must see the 0666 & ~umask (or
     # preserved) creation mode and report the drift itself
     # (lineinfile's "line added and ownership, perms or SE linux
@@ -715,7 +715,7 @@ module Krikri
 
     # Reads the process umask. POSIX has no read-only umask call, so
     # this does the classic set-read-restore dance around a maximally
-    # restrictive value - the same dance real Ansible's atomic_move does
+    # restrictive value - the same dance Ansible's atomic_move does
     # and this repo's own spec helpers use; the window where a
     # concurrent creator would inherit the temporary mask is two
     # adjacent syscalls, and plugin module code is single-threaded.
@@ -725,14 +725,14 @@ module Krikri
       umask.to_i32
     end
 
-    # Atomic move with the cross-device fallback real Ansible's
+    # Atomic move with the cross-device fallback Ansible's
     # AnsibleModule.atomic_move provides: try rename(2) first, and on
     # EXDEV specifically (temp under /tmp or ~, dest on a different
     # mount - found on konstruktoid.hardening's openssh_keypair task,
     # where /tmp is a separate tmpfs from /etc), fall back to a
     # copy-then-delete that carries the source's mode/owner/group onto
     # the destination. Other OSError kinds still propagate. Non-atomic
-    # on the fallback path, exactly as in real Ansible.
+    # on the fallback path, exactly as in Ansible.
     protected def atomic_move(src : String, dest : String) : Nil
       begin
         File.rename(src, dest)
@@ -821,12 +821,12 @@ module Krikri
       stat_or_errno.is_a?(Hash(String, JSON::Any)) ? stat_or_errno : nil
     end
 
-    # The errno-bearing variant: real Ansible's stat module only treats
+    # The errno-bearing variant: Ansible's stat module only treats
     # ENOENT as "exists: false" and hard-fails on every other OSError
     # with strerror as the message (stat.py, all active branches) - a
     # stat whose parent is a file (ENOTDIR) or an unreadable ancestor
     # (EACCES) is a failed task, not a silent exists: false. Callers
-    # that reproduce the real module's error surface use this and map
+    # that reproduce the Ansible module's error surface use this and map
     # non-ENOENT errnos to failure themselves.
     protected def native_stat_ex(path : String, follow : Bool) : Hash(String, JSON::Any)? | Errno
       stat = uninitialized LibC::Stat
@@ -834,7 +834,7 @@ module Krikri
       return Errno.value if result != 0
 
       # An orphaned uid/gid with no matching /etc/passwd or /etc/group
-      # entry resolves to an EMPTY string in real Ansible's own stat
+      # entry resolves to an EMPTY string in Ansible's own stat
       # (and find's per-file) result, not the stringified numeric id -
       # robertdebock.unowned_files' own `item.pw_name | length == 0`
       # check (and community.general's wider "unowned files" idiom)
@@ -893,7 +893,7 @@ module Krikri
       digest.final.hexstring
     end
 
-    # Real Ansible's AnsibleModule.add_path_info,
+    # Ansible's AnsibleModule.add_path_info,
     # which its _return_formatted runs over EVERY module result (both
     # exit_json and fail_json): any result whose `path` (or `dest`) key
     # points at a path that STILL EXISTS at module-exit time gets the
@@ -909,14 +909,14 @@ module Krikri
     # DANGLING symlink - unstatable through the link - gets no fields
     # at all, matching basic.py exactly.
     #
-    # This is the shared protocol layer real Ansible's add_file_common_args
+    # This is the shared protocol layer Ansible's add_file_common_args
     # machinery provides to every file-touching module (file/copy/
     # get_url/...), so a state=absent --check on an existing file reports
     # the file's PRE-removal stats with state "file" (the file still
     # exists when the module exits), while the same task for real
     # reports only state "absent" (the path is gone by exit time, so
     # this no-ops). A result for a path that doesn't exist is left
-    # untouched - no fields added - also matching real Ansible.
+    # untouched - no fields added - also matching Ansible.
     protected def add_path_info(result : PluginResult, path : String) : Nil
       return if path.empty?
       return unless File.exists?(path)
@@ -945,7 +945,7 @@ module Krikri
     end
 
     # Expands a leading `~` or `~username` the same way Python's own
-    # os.path.expanduser does - real Ansible's path-type params go
+    # os.path.expanduser does - Ansible's path-type params go
     # through this before any existence check. geerlingguy.composer's
     # own `composer_home_path: '~/.composer'` default feeds straight
     # into command:'s `creates={{ composer_home_path }}/vendor/{{
@@ -953,7 +953,7 @@ module Krikri
     # string against the filesystem can never match (`~` is not a real
     # path component), so the task reported changed: true on every
     # single run, never converging - a real idempotency bug, not the
-    # role's fault (real Ansible's own AnsibleModule expands `~` for
+    # role's fault (Ansible's own AnsibleModule expands `~` for
     # every path-type arg, creates/removes/chdir included).
     protected def expand_tilde(path : String) : String
       return path unless path.starts_with?('~')
@@ -975,7 +975,7 @@ module Krikri
     end
 
     # command:/shell:'s own `creates:`/`removes:` idempotency check -
-    # real Ansible's own module (Python's `glob.glob(path)`, then "any
+    # Ansible's own module (Python's `glob.glob(path)`, then "any
     # match") treats the path as a GLOB PATTERN, not a literal path -
     # `File.exists?` alone never matches a path containing `*`/`?`/`[`
     # (those are never literal filenames), always reporting "does not
@@ -992,7 +992,7 @@ module Krikri
       !Dir.glob(path).empty?
     end
 
-    # Helper to check if a parameter is truthy - real Ansible's own
+    # Helper to check if a parameter is truthy - Ansible's own
     # BOOLEANS_TRUE: y/yes/on/1/
     # true/t.
     protected def true?(value : String?, default : Bool = false) : Bool
@@ -1002,7 +1002,7 @@ module Krikri
 
     # Helper to check if a parameter is explicitly falsy - the mirror of
     # #true? for plugins that need to distinguish "not given" from "given
-    # as false" (a nil param is neither). Real Ansible's own
+    # as false" (a nil param is neither). Ansible's own
     # BOOLEANS_FALSE: n/no/off/0/false/f. Kept next to #true? so the two
     # lists can never drift apart (they used to live only in yum/dnf's
     # private copies).
@@ -1017,8 +1017,8 @@ module Krikri
     # PluginHelpers::StrictBoolValidation (see that module's block comment
     # for the real-Ansible semantics, wording provenance and opt-in
     # contract). A plugin opts in by overriding #bool_params (plus
-    # #bool_param_aliases / #bool_params_none_default where real's argspec
-    # has them) and calling #validate_bool_params! where real's
+    # #bool_param_aliases / #bool_params_none_default where Ansible's argspec
+    # has them) and calling #validate_bool_params! where Ansible's
     # module-setup validation would sit in its own arg-check ordering.
     include PluginHelpers::StrictBoolValidation
 
@@ -1030,11 +1030,11 @@ module Krikri
     end
 
     # Owner/group name -> uid/gid for the file-common owner:/group: args,
-    # shared by every plugin that applies them. Real Ansible's basic.py
+    # shared by every plugin that applies them. Ansible's basic.py
     # treats only a None owner/group as "no change requested" - a present
     # value, INCLUDING an explicit empty string, is always looked up and
     # an unresolvable name fails the task (see OwnerLookupFailure). All-
-    # digit strings are raw uid/gids, matching real Ansible's int(owner)
+    # digit strings are raw uid/gids, matching Ansible's int(owner)
     # fast path (and file.cr's own resolve_uid/resolve_gid).
     protected def resolve_owner_uid(owner : String) : Int32
       if user = System::User.find_by?(name: owner)
@@ -1067,7 +1067,7 @@ module Krikri
     # EPERM and friends are swallowed (as in every prior shell-based
     # version of this logic, which never checked chown/chgrp/chmod's exit
     # code), but an unresolvable owner/group NAME fails the task like
-    # real Ansible's basic.py - an empty string included (see
+    # Ansible's basic.py - an empty string included (see
     # OwnerLookupFailure).
     protected def apply_owner_group_mode(path : String, owner : String?, group : String?, mode : String?) : Nil
       uid = owner ? resolve_owner_uid(owner) : -1

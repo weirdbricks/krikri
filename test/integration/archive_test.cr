@@ -35,7 +35,7 @@ describe "archive plugin" do
     `gzip -dc #{dest}`.must_equal("hello")
   end
 
-  it "builds a real tar.gz for a directory, with correct arcroot, no duplicated members, and no entry for the requested directory itself (only its descendants - matches real Ansible's os.walk-based add_targets, verified against its actual source)" do
+  it "builds a real tar.gz for a directory, with correct arcroot, no duplicated members, and no entry for the requested directory itself (only its descendants - matches Ansible's os.walk-based add_targets, verified against its actual source)" do
     dest = dest_path("dir.tar.gz")
     result = PluginSpecHelper.run("archive", {"path" => File.join(fixture_base, "src"), "dest" => dest})
 
@@ -122,7 +122,7 @@ describe "archive plugin" do
     listing.must_include("keep.txt")
   end
 
-  it "does NOT exclude a nested file via exclude_path (real Ansible's own narrow behavior: only top-level path: entries are exact-matched)" do
+  it "does NOT exclude a nested file via exclude_path (Ansible's own narrow behavior: only top-level path: entries are exact-matched)" do
     exc_dir = PluginSpecHelper.tmp_path("exclude_path_nested")
     FileUtils.mkdir_p(exc_dir)
     File.write(File.join(exc_dir, "keep.txt"), "a")
@@ -190,14 +190,14 @@ describe "archive plugin" do
     File.exists?(dest).must_equal(false)
   end
 
-  # Real fails with `if not self.paths: module.fail_json(...)` when
-  # NOTHING survives the exclude_path subtraction - and real's self.paths
+  # Ansible fails with `if not self.paths: module.fail_json(...)` when
+  # NOTHING survives the exclude_path subtraction - and Ansible's self.paths
   # still contains missing literal paths at that point, so a merely
   # absent source does NOT trigger this (that is the dest_state: absent
   # case above). Captured live against community.general 12.5.0 /
   # ansible-core 2.19.11: the fatal dump carries the original path list
   # joined with ", " plus both expanded lists (exclude duplicates kept).
-  it "fails with real's exact 'no source paths were found' message when exclude_path removes every source" do
+  it "fails with Ansible's exact 'no source paths were found' message when exclude_path removes every source" do
     missing = PluginSpecHelper.tmp_path("all-excluded-out2.txt")
     sub = PluginSpecHelper.tmp_path("all-excluded-sub")
 
@@ -238,7 +238,7 @@ describe "archive plugin" do
 
   describe "attributes: (chattr)" do
     # Real bug found via a proactive scope-cut audit: attributes: was
-    # entirely unimplemented. Verified against real AnsibleModule's own
+    # entirely unimplemented. Verified against AnsibleModule's own
     # set_attributes_if_different source: unconditional (no filesystem-
     # support gate), fails the task with a clear message on a real
     # chattr error. This spec sandbox has no CAP_LINUX_IMMUTABLE (not
@@ -259,14 +259,14 @@ describe "archive plugin" do
 
   describe "seuser:/serole:/setype:/selevel: (SELinux context)" do
     # Real bug found via the same audit: these were entirely
-    # unimplemented. Verified against real AnsibleModule's own
-    # selinux_enabled()/set_context_if_different source: real Ansible
+    # unimplemented. Verified against AnsibleModule's own
+    # selinux_enabled()/set_context_if_different source: Ansible
     # skips this ENTIRELY (no chcon attempt at all) when SELinux isn't
     # enabled on the target - this dev sandbox has no /sys/fs/selinux at
     # all, so this confirms the archive itself still succeeds cleanly
-    # (a true no-op, matching real Ansible's own verified behavior)
+    # (a true no-op, matching Ansible's own verified behavior)
     # rather than attempting (and failing) a chcon call regardless.
-    it "does not fail the archive when SELinux isn't enabled on the target (a true no-op, matching real Ansible)" do
+    it "does not fail the archive when SELinux isn't enabled on the target (a true no-op, matching Ansible)" do
       dest = dest_path("selinux-noop.gz")
       result = PluginSpecHelper.run("archive", {
         "path" => File.join(fixture_base, "src", "a.txt"), "dest" => dest,

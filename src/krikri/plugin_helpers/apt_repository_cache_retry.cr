@@ -1,10 +1,10 @@
 module Krikri
   # Cache-update retry behavior for the `apt_repository` plugin, mirroring
-  # real Ansible's own `apt_repository.py` `update_cache_retries` /
+  # Ansible's own `apt_repository.py` `update_cache_retries` /
   # `update_cache_retry_max_delay` parameters (defaults 5 / 12, both
   # verified against the locally installed module's argument_spec).
   #
-  # Real Ansible's loop (apt_repository.py, `if update_cache:` block):
+  # Ansible's loop (apt_repository.py, `if update_cache:` block):
   # `for retry in range(update_cache_retries)` around python-apt's
   # `Cache().update()`, with `delay = 2 ** retry + randomize` between
   # attempts (`randomize = secrets.randbelow(1000) / 1000.0`), the delay
@@ -25,7 +25,7 @@ module Krikri
     # Ansible's `delay = 2 ** retry + randomize` capped at
     # `update_cache_retry_max_delay + randomize`. *jitter* is injectable
     # so the regression spec can pin the value; defaults to the same
-    # 0..1 random fraction real Ansible uses.
+    # 0..1 random fraction Ansible uses.
     def apt_repository_retry_delay(retry : Int32, max_delay : Int32, jitter : Float64 = Random.rand(1000) / 1000.0) : Float64
       delay = 2.0 ** retry + jitter
       delay = max_delay + jitter if delay > max_delay
@@ -33,15 +33,15 @@ module Krikri
     end
 
     # Runs `apt-get update`, retrying on non-zero exit up to *retries*
-    # total attempts (real Ansible's `range(update_cache_retries)` bound)
+    # total attempts (Ansible's `range(update_cache_retries)` bound)
     # with the exponential-backoff-with-jitter delay between attempts.
     #
     # Only a non-zero exit code retries: that maps to apt's own fetch
     # failure, the case python-apt reports as FetchFailedException (the
-    # only exception real Ansible's loop catches). A GPG signature
+    # only exception Ansible's loop catches). A GPG signature
     # warning leaves `apt-get update` exiting 0 - that path is handled
     # separately by the plugin's gpg_signature_failure? scan and, like
-    # real Ansible's non-FetchFailedException exceptions, fails without
+    # Ansible's non-FetchFailedException exceptions, fails without
     # retrying.
     def apt_repository_cache_update_with_retry(retries : Int32, max_delay : Int32,
                                                exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))

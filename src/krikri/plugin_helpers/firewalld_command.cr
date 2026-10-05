@@ -29,7 +29,7 @@ module Krikri
     # fine with `--zone=`.
     #
     # The ZoneXml section below is the direct zone-config-file backend
-    # for offline mode: real ansible.posix.firewalld's offline mode does
+    # for offline mode: Ansible.posix.firewalld's offline mode does
     # NOT shell out to firewall-offline-cmd at all - it uses firewalld's
     # own Python Firewall(offline=True), which loads the /usr/lib/
     # firewalld + /etc/firewalld zone XML into memory and writes changes
@@ -37,7 +37,7 @@ module Krikri
     # contrast, dies entirely in environments where its protocol
     # validation can't resolve entries like 'esp' (getprotobyname('esp')
     # fails in a slim container), so a CLI-based offline backend
-    # diverges from real Ansible in exactly the containerized hosts this
+    # diverges from Ansible in exactly the containerized hosts this
     # project targets. These helpers operate on the XML file CONTENT
     # only - the plugin owns the reads/writes/paths.
     module FirewalldCommand
@@ -51,7 +51,7 @@ module Krikri
       NO_VALUE_THINGS = %w[masquerade icmp_block_inversion forward]
 
       # Returns nil if none or more than one "thing" param is present -
-      # matches real Ansible's own mutually_exclusive constraint (exactly
+      # matches Ansible's own mutually_exclusive constraint (exactly
       # one of service/port/rich_rule/source/masquerade/etc per task).
       def self.thing(params : Hash(String, String)) : {String, String}?
         present = SUPPORTED_THINGS.select { |key| params[key]? }
@@ -73,13 +73,13 @@ module Krikri
         "#{binary} --zone=#{Shell.quote_if_needed(zone)} --query-#{flag_name(thing)}#{value_suffix(thing, value)}"
       end
 
-      # Real's ServiceTransaction asks the daemon for the ZONE'S WHOLE
+      # Ansible's ServiceTransaction asks the daemon for the ZONE'S WHOLE
       # service list and tests membership (`service in
       # self.fw.getServices(self.zone)`) - it never asks "is this one
       # service enabled". That is observable: `--query-service=<name>`
       # rejects a name that is not a defined service outright ("Error:
       # INVALID_SERVICE: <name>", with no zone context), so using it as
-      # the idempotency probe made krikri fail EARLY - before real's
+      # the idempotency probe made krikri fail EARLY - before Ansible's
       # transaction appends its context msg and before the permanent leg
       # reports the daemon's own zone-context error (round996006
       # firewalld_fail). `--zone=<zone> --list-services` is what
@@ -121,14 +121,14 @@ module Krikri
       end
 
       # Builds the compound `port=X:proto=Y:toport=Z[:toaddr=W]` value
-      # real Ansible's own `ForwardPortTransaction` builds from a
+      # Ansible's own `ForwardPortTransaction` builds from a
       # `port_forward:` entry (a dict with `port`/`proto`/`toport`
       # required, `toaddr` optional and simply omitted from the value
       # when absent - verified against observed behavior and
       # live against a real `firewall-offline-cmd`, firewalld 1.3.3).
       # Returns {value: nil, error: "..."} with the exact error message
-      # real Ansible raises (checked in the same port/proto/toport order
-      # the real module checks them) when a required key is missing, or
+      # Ansible raises (checked in the same port/proto/toport order
+      # the Ansible module checks them) when a required key is missing, or
       # {value: "port=...", error: nil} on success.
       def self.port_forward_value(entry : JSON::Any) : {value: String?, error: String?}
         port = entry["port"]?

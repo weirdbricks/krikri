@@ -4,14 +4,14 @@ describe "facts plugin" do
   describe "ansible_python fact" do
     # Round 133 (robertdebock.mitogen): ansible_facts['python'] was a
     # flat string (the interpreter path) under an invented key
-    # (ansible_python) that didn't match real Ansible's shape at all -
-    # real Ansible's own PythonFactCollector exposes a single nested
+    # (ansible_python) that didn't match Ansible's shape at all -
+    # Ansible's own PythonFactCollector exposes a single nested
     # dict under `ansible_python` with version.major/minor/micro,
     # version_info, executable, has_sslcontext, and type. The role's
     # own `python{{ ansible_facts['python'].version.major }}` command
     # construction resolved to the literal string "pythonundefined"
     # instead of "python3" against the old flat-string shape.
-    it "is a nested dict matching real Ansible's PythonFactCollector shape" do
+    it "is a nested dict matching Ansible's PythonFactCollector shape" do
       result = PluginSpecHelper.run("facts", {} of String => String)
 
       python = result["ansible_facts"]["ansible_python"]
@@ -56,7 +56,7 @@ describe "facts plugin" do
   end
 
   describe "ansible_python_version fact" do
-    # Round 134 (prometheus.prometheus.alertmanager): real Ansible ALSO
+    # Round 134 (prometheus.prometheus.alertmanager): Ansible ALSO
     # exposes a separate flat `ansible_python_version` ("major.minor.micro",
     # e.g. "3.10.12") alongside the nested `ansible_python` dict above -
     # both co-exist in real `setup` output. This was missing entirely
@@ -78,7 +78,7 @@ describe "facts plugin" do
   describe "ansible_python_interpreter fact" do
     # Found via a real-host round on azavea.pip (a dependency of several
     # azavea.* roles: celery, curator, aws-cli, beaver): this flat magic
-    # var - real Ansible's own auto-discovered interpreter path
+    # var - Ansible's own auto-discovered interpreter path
     # (INTERPRETER_PYTHON=auto, the default since 2.8) - was never set at
     # all, even though gather_python_facts already resolves the exact
     # same executable path into the nested `ansible_python.executable`
@@ -88,7 +88,7 @@ describe "facts plugin" do
     # took the false branch and fell back to the bare literal "python",
     # which doesn't exist as a command on any modern Debian/Ubuntu target
     # (python3-only), failing with "python: No such file or directory"
-    # where real Ansible succeeds via its own discovered /usr/bin/python3.
+    # where Ansible succeeds via its own discovered /usr/bin/python3.
     it "is set to the same executable path as ansible_python.executable for a local (non-remote) target" do
       result = PluginSpecHelper.run("facts", {} of String => String)
 
@@ -103,13 +103,13 @@ describe "facts plugin" do
       # SSH connection: `ansible_python_interpreter is defined` is
       # False there - interpreter discovery still happens (its own
       # warning still prints) but the discovered path is never exposed
-      # as this flat magic var, only for a real ansible_connection:
+      # as this flat magic var, only for a Ansible_connection:
       # local target (where it's simply sys.executable). The original
       # 0.9.652 fix set this fact UNCONDITIONALLY, reasoning from
       # azavea.pip's own `{{ ansible_python_interpreter if
       # ansible_python_interpreter is defined else 'python' }}` idiom -
       # but that reasoning was never checked against a genuine remote
-      # SSH target (real ansible-core fails azavea.pip's task the exact
+      # SSH target (ansible-core fails azavea.pip's task the exact
       # same way krikri did before 0.9.652 there - both engines
       # identically broken, not a real divergence at all). Always
       # defining it instead created a NEW, real divergence:
@@ -148,7 +148,7 @@ describe "facts plugin" do
       default_ipv4["gateway"].as_s.must_match(/^\d+\.\d+\.\d+\.\d+$/)
     end
 
-    # round 825388 batch (crazikpl.blackbox_exporter): real Ansible's
+    # round 825388 batch (crazikpl.blackbox_exporter): Ansible's
     # default_ipv4 always carries `network` (subnet address) and
     # `netmask` (dotted); krikri's dict never had either, so a template
     # reading `"{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"`

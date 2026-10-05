@@ -9,9 +9,9 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "in <string> with an undefined left operand in a real .j2 template" do
-  it "raises the real Jinja2/ansible-core TypeError instead of silently coercing to true" do
+  it "raises the Jinja2/ansible-core TypeError instead of silently coercing to true" do
     # Round71000's asg1612.gluster: `{% if node_1 in "..." %}` with
-    # node_1 never defined. Real Jinja2 evaluates `x in y` as
+    # node_1 never defined. Jinja2 evaluates `x in y` as
     # `y.__contains__(x)`; a Python str.__contains__ requires its
     # argument to itself be a str, so the Undefined marker (Jinja2
     # defers the undefined raise to force time) hits Python's own

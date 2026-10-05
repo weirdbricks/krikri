@@ -17,11 +17,11 @@ require "file_utils"
 # first-match-wins with an early return per key, so it ran `ufw -f enable`
 # and silently dropped the rule/default/logging - the firewall was never
 # actually configured while the task reported success, and `changed`,
-# `commands` and `msg` all diverged from real's.
+# `commands` and `msg` all diverged from Ansible's.
 #
 # The expected command lists below are the real-side `commands` arrays
 # captured from those hosts, with only the binary paths swapped for the
-# shims' (real's list carries the get_bin_path-resolved absolute paths;
+# shims' (Ansible's list carries the get_bin_path-resolved absolute paths;
 # the plugin resolves the same way through the shims).
 #
 # Nothing here runs a real ufw/iptables/systemctl: `ufw` and `grep` are
@@ -163,7 +163,7 @@ describe "ufw plugin runs every requested command, like real ufw.py's command lo
       result["changed"].as_bool.must_equal(true)
       # msg is the FINAL `ufw status verbose` snapshot, never a command's
       # own output - the logging/default edits it shows are the shim's
-      # own config, exactly what real would report.
+      # own config, exactly what Ansible would report.
       result["msg"].as_s.must_equal("Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), disabled (routed)")
       result["commands"].as_a.map(&.as_s).must_equal(ufw_trace(ufw_bin, grep_bin, [
         "#{ufw_bin} -f enable",
@@ -264,7 +264,7 @@ describe "ufw plugin runs every requested command, like real ufw.py's command lo
       })
 
       result["failed"]?.must_be_nil
-      # Real's check-mode exit_json carries no msg key at all.
+      # Ansible's check-mode exit_json carries no msg key at all.
       result["msg"]?.must_be_nil
       result.as_h.keys.must_equal(["changed", "commands"])
       result["changed"].as_bool.must_equal(true)

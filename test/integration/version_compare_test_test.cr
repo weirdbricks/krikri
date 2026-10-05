@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# `x is version_compare(min, '>=')` - real Ansible's older alias for the
+# `x is version_compare(min, '>=')` - Ansible's older alias for the
 # `version` test, still accepted by ansible-core 2.19.12 (verified live,
 # round173, Rocky 9.6: the same playbook recaps ok=1 failed=0 there).
 #

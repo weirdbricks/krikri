@@ -30,20 +30,20 @@ module Krikri
   #   - healthy: the started flow plus a wait for the container's
   #     healthcheck to report healthy (see
   #     PluginHelpers::DockerHealthWait's doc comment for the exact
-  #     wait/poll/failure semantics mirrored from real's
+  #     wait/poll/failure semantics mirrored from Ansible's
   #     wait_for_state). A container with no healthcheck is
   #     immediately healthy. On wait success the result carries the
   #     final inspect output as `container:` (real replaces its
   #     module facts with the last inspect result); on wait failure
   #     (timeout / vanished container) the same `container:` key
   #     carries the last inspect result and the task fails with
-  #     real's wording.
+  #     Ansible's wording.
   # - healthy_wait_timeout: float, default 300 - seconds to wait for
-  #   the healthcheck to report healthy under state: healthy (real's
+  #   the healthcheck to report healthy under state: healthy (Ansible's
   #   own param; <= 0 means wait forever). Type-validated on every
-  #   state like real's argspec (a non-numeric value fails the task
+  #   state like Ansible's argspec (a non-numeric value fails the task
   #   even with state: started/stopped).
-  # - command: container command. Real's option is `type: raw` (see
+  # - command: container command. Ansible's option is `type: raw` (see
   #   community.docker's `OPTION_COMMAND`, ansible_type="raw") with
   #   `command_handling: correct` as the default: a YAML LIST is passed
   #   to the daemon as the argv list verbatim (spaces inside one element
@@ -52,12 +52,12 @@ module Krikri
   #   playbook_parser's docker_container list branch), so a leading `[`
   #   here means a real list; anything else is split the way real splits
   #   a string.
-  # - entrypoint: same, except real's option is a plain
+  # - entrypoint: same, except Ansible's option is a plain
   #   `type: list, elements: str` - a STRING is turned into a list by
   #   Ansible's own comma-separated conversion (NOT shell-split), which
   #   is why `entrypoint: /bin/sh -c` stays one argv element (verified
   #   live against 2.19.11 + community.docker 5.2.1).
-  # - env: dict of environment variables (real Ansible also accepts the
+  # - env: dict of environment variables (Ansible also accepts the
   #   list-of-`KEY=VALUE` form its own dict conversion handles, which
   #   travels on the same JSON wire as the other list options below)
   # - labels: dict of labels (same list form as env:, below)
@@ -70,13 +70,13 @@ module Krikri
   # - privileged / auto_remove: bool
   # - memory / memory_reservation / memory_swap: human-readable byte-size
   #   strings ("512M", "1G", ...) - see PluginHelpers::DockerResources's
-  #   own doc comment, behavior matched to real Ansible's own `human_to_bytes`
+  #   own doc comment, behavior matched to Ansible's own `human_to_bytes`
   #   (binary/1024-based units despite the non-"i" K/M/G/T/P spelling).
   #   `memory_swap: "unlimited"` (or the literal string `"-1"`) is real
   #   Ansible's own documented unlimited-swap convention.
   # - memory_swappiness / cpu_shares / oom_score_adj / pids_limit: int
   # - cpus: float number of CPUs, converted to Docker's own `NanoCpus`
-  #   (`cpus * 1e9`, rounded) - matches real Ansible's own
+  #   (`cpus * 1e9`, rounded) - matches Ansible's own
   #   `_preprocess_cpus` exactly.
   # - cpuset_cpus / cpuset_mems: string (e.g. "0-3", "0,2")
   # - oom_kill_disable: bool
@@ -100,7 +100,7 @@ module Krikri
   # --oom-kill-disable` on the same host prints `WARNING: Your kernel
   # does not support OomKillDisable. OomKillDisable discarded.` and
   # `docker inspect` shows the field as unset), so this is not an engine
-  # divergence real Ansible would avoid either - both would see the
+  # divergence Ansible would avoid either - both would see the
   # exact same discarded value on this kernel.
   # - pull: bool, default true - pull image: if not already present locally
   # - recreate: bool, default false - force recreate even if image/command
@@ -123,10 +123,10 @@ module Krikri
   # - healthcheck: a dict ({test:, interval:, timeout:, retries:,
   #   start_period:}) - see PluginHelpers::DockerHealthcheck's own doc
   #   comment for the duration-string-parsing/test-normalization rules,
-  #   behavior matched to real Ansible's own `parse_healthcheck`/
+  #   behavior matched to Ansible's own `parse_healthcheck`/
   #   `normalize_healthcheck`. `test: ["NONE"]` is the real, documented
   #   way to explicitly disable an inherited healthcheck. `start_interval:`
-  #   (real Ansible's own newer addition) is NOT implemented - the
+  #   (Ansible's own newer addition) is NOT implemented - the
   #   underlying `docr` library's own `HealthConfig` type has no field
   #   for it, a real scope cut one layer below this plugin.
   # - check_mode
@@ -138,10 +138,10 @@ module Krikri
   # memory_swappiness/cpus/cpu_shares/cpuset_cpus/cpuset_mems/
   # oom_kill_disable/oom_score_adj/pids_limit) against the existing
   # container - each only for whichever of those params was actually
-  # given, matching real Ansible's own "only compare what you told me
+  # given, matching Ansible's own "only compare what you told me
   # about" behavior for any option not mentioned at all. The per-field
   # default comparison mode is NOT uniformly strict - verified against
-  # real Ansible's own module_utils source (`Option.__init__`): scalar
+  # Ansible's own module_utils source (`Option.__init__`): scalar
   # options (restart_policy, network_mode, privileged, auto_remove, and
   # every resource-limit param above - all `int`/`str`/`bool`-typed, real
   # Ansible's own "value" comparison_type) and the plain ordered
@@ -161,7 +161,7 @@ module Krikri
   # "0.0.0.0" the same way real Docker/Ansible do when a request left it
   # nil) and exposed_ports (folding in the image's own declared
   # ExposedPorts, same image-merge pattern as env: below) - see
-  # ports_match?'s own doc comment. Every other field of real Ansible's
+  # ports_match?'s own doc comment. Every other field of Ansible's
   # own ~40-field comparison system (device_requests:, healthcheck's own
   # start_interval:, etc) remains NOT detected and won't trigger a
   # recreate on its own unless recreate: true is passed - a documented,
@@ -178,12 +178,12 @@ module Krikri
   #   every field this plugin actually tracks/syncs (the list above,
   #   including ports/healthcheck/resource limits, plus networks). `comparisons:
   #   {networks: strict}` disconnects the container from any network NOT
-  #   in networks: - verified against real Ansible's own documented
+  #   in networks: - verified against Ansible's own documented
   #   behavior ("To remove a container from one or more networks, use
   #   `networks: strict` in the `comparisons` option") - live-verified
   #   against a real Docker daemon.
   #
-  # Not implemented: `networks_cli_compatible:` (real Ansible's "don't
+  # Not implemented: `networks_cli_compatible:` (Ansible's "don't
   # attach the default
   # network when networks: is given" toggle - this plugin always leaves
   # whatever network_mode:/Docker's own default produced alone and only
@@ -222,7 +222,7 @@ module Krikri
     # ansible-core 2.19.11 + community.docker 5.2.1.
     KEY_ORDER = %w[changed actions container failed]
 
-    # Real's own wrapper for a DockerException escaping the module body.
+    # Ansible's own wrapper for a DockerException escaping the module body.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     def execute : PluginResult
@@ -234,7 +234,7 @@ module Krikri
       state = @params["state"]? || "started"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      # healthy_wait_timeout is type-validated for EVERY state (real's
+      # healthy_wait_timeout is type-validated for EVERY state (Ansible's
       # argspec validation runs before any module logic - live-verified:
       # state: stopped + healthy_wait_timeout: bogus fails in real too).
       healthy_timeout = parse_healthy_wait_timeout
@@ -288,7 +288,7 @@ module Krikri
           api, name, check_mode, existing)
       when "healthy"
         # Real state=healthy: the started flow, then (outside check
-        # mode) a wait for the container's health status - real's
+        # mode) a wait for the container's health status - Ansible's
         # wait_for_state with wait_states=['starting', 'unhealthy'],
         # complete_states=['healthy', None], max_wait=
         # healthy_wait_timeout (a container with NO healthcheck is
@@ -314,10 +314,10 @@ module Krikri
     end
 
     # Turns an internal result (which carries a prose msg) into the
-    # registered shape real's docker_container produces: the structured
+    # registered shape Ansible's docker_container produces: the structured
     # `actions` list in check_mode/debug only, and `container` (the
     # daemon's raw inspect payload) whenever a container is present
-    # afterwards. A failed result is passed through untouched - real's
+    # afterwards. A failed result is passed through untouched - Ansible's
     # fail_json shape is already PluginResult's default.
     private def real_shape(
       result : PluginResult, api : Docr::API, name : String, check_mode : Bool,
@@ -328,7 +328,7 @@ module Krikri
       debug_mode = true?(@params["debug"]?)
       previous_id = existing.try(&.id)
 
-      # Real's state=absent path never records container facts, even in
+      # Ansible's state=absent path never records container facts, even in
       # check_mode where the container is still there afterwards.
       facts = removed ? nil : container_inspect_json(api, name)
       final = PluginResult.new(changed: result.changed?, failed: false, failed_flag: false)
@@ -339,7 +339,7 @@ module Krikri
       final
     end
 
-    # Real's action dicts, per operation. They carry the parameters real
+    # Ansible's action dicts, per operation. They carry the parameters real
     # would have sent to the daemon; the create action's payload is the
     # set of options the task actually gave, each under its own
     # Docker-API key, plus the stdio flags real itself always sends (its
@@ -386,7 +386,7 @@ module Krikri
       JSON::Any.new({"started" => JSON::Any.new(container_id || "")})
     end
 
-    # Real's own `timeout` is the stop_timeout: option, which has no
+    # Ansible's own `timeout` is the stop_timeout: option, which has no
     # default - a task that never set it records an explicit null.
     private def stopped_action(container_id : String?) : JSON::Any
       JSON::Any.new({
@@ -404,13 +404,13 @@ module Krikri
     end
 
     # The create payload real records in check mode: its own argv list,
-    # the stdio flags real always sends itself, and then - for every
+    # the stdio flags Ansible always sends itself, and then - for every
     # option the task actually gave - that option's Docker-API key with
-    # the very value the non-check create path sends. Key order is real's
+    # the very value the non-check create path sends. Key order is Ansible's
     # own option order (its OptionGroup list in module_utils), not this
     # plugin's internal one, and an option the task never gave is simply
     # absent - so a plain create records only Cmd..OpenStdin, Image and
-    # the always-present ExposedPorts (real's port preprocess seeds that
+    # the always-present ExposedPorts (Ansible's port preprocess seeds that
     # one even with no ports at all, hence `{}` rather than a missing key).
     private def create_parameters(name : String) : JSON::Any
       params = {
@@ -430,7 +430,7 @@ module Krikri
         params["Labels"] = json_string_map(labels)
       end
       params["HostConfig"] = create_host_config if create_host_config_given?
-      # Bind mounts land in HostConfig.Binds; real still records the
+      # Bind mounts land in HostConfig.Binds; Ansible still records the
       # (empty) Volumes mapping for them.
       params["Volumes"] = JSON.parse("{}") if @params["volumes"]?
       params["ExposedPorts"] = json_exposed_ports
@@ -450,8 +450,8 @@ module Krikri
       JSON::Any.new(exposed.map { |key, _| {key, JSON.parse("{}")} }.to_h)
     end
 
-    # True when the task gave at least one option real would place in
-    # the create payload's HostConfig - real only emits that key at all
+    # True when the task gave at least one option Ansible would place in
+    # the create payload's HostConfig - Ansible only emits that key at all
     # once something lands in it.
     private def create_host_config_given? : Bool
       %w[auto_remove cpuset_cpus cpuset_mems cpu_shares cpus memory memory_reservation
@@ -459,7 +459,7 @@ module Krikri
         privileged restart_policy volumes ports].any? { |field| @params[field]? }
     end
 
-    # Real's HostConfig for the create payload, in real's own option
+    # Ansible's HostConfig for the create payload, in Ansible's own option
     # order (its OptionGroup list). Same rule as the outer dict: an
     # option the task never mentioned contributes no key.
     private def create_host_config : JSON::Any
@@ -542,7 +542,7 @@ module Krikri
 
     # Parses healthy_wait_timeout (float, default 300; <= 0 means wait
     # forever - real module.py's own convention). Non-numeric values
-    # fail with real's argspec conversion wording (live-verified).
+    # fail with Ansible's argspec conversion wording (live-verified).
     # Returns Float64? on success or a failed PluginResult on invalid input.
     private def parse_healthy_wait_timeout : Float64? | PluginResult
       raw = @params["healthy_wait_timeout"]? || return 300.0
@@ -633,12 +633,12 @@ module Krikri
       start ? " and started" : ""
     end
 
-    # state=healthy's wait phase. Real passes the container id it
+    # state=healthy's wait phase. Ansible passes the container id it
     # already holds from its present() flow into wait_for_state; here
     # the id is re-derived from a name lookup (the ensure_present
     # result doesn't carry it). If the container vanished in that
     # window (real cannot hit this - it never re-looks-up by name),
-    # the lookup falls back to real's own vanished-container failure
+    # the lookup falls back to Ansible's own vanished-container failure
     # wording, with the name standing in for the id it would have
     # used. Skipped in check mode and when the started flow already
     # failed, matching real (`state == 'healthy' and not check_mode`).
@@ -657,15 +657,15 @@ module Krikri
 
       client = api.client
       inspect_fn = PluginHelpers::DockerHealthWait::InspectFn.new do
-        # Raw GET rather than api.containers.inspect: real's wait loop
+        # Raw GET rather than api.containers.inspect: Ansible's wait loop
         # carries the FULL raw inspect dict into the result's
         # `container:` key, and docr's typed ContainerInspectResponse
-        # drops fields real keeps (same reason as the
+        # drops fields Ansible keeps (same reason as the
         # network-connect/image-exists raw-HTTP escape hatches above).
         body = client.call("GET", "/containers/#{container_id}/json") { |response| response.body_io.gets_to_end }
         JSON.parse(body)
       rescue ex : Docr::Errors::DockerAPIError
-        # Real's get_container_by_id: NotFound => None (the vanished
+        # Ansible's get_container_by_id: NotFound => None (the vanished
         # container failure), any other inspect error =>
         # "Error inspecting container: <error>".
         next nil if ex.status_code == 404
@@ -739,7 +739,7 @@ module Krikri
         # Ansible's docker_container treats a 304 on start as a no-op
         # success, not an error (grycap.chronos' warm rerun: "Docker API
         # error: Code: 304 Message: No response body" failed the task
-        # where real ansible-playbook's warm run reported ok).
+        # where ansible-playbook's warm run reported ok).
         raise ex unless ex.message.try(&.includes?("Code: 304"))
         connected, disconnected = sync_networks!(api, existing.id, requested_networks)
         return PluginResult.new(changed: false, failed: false, msg: "Container #{name} already started#{network_suffix(connected, disconnected)}")
@@ -814,7 +814,7 @@ module Krikri
       EXTRA_COMPARISON_FIELDS.any? { |field| @params[field]? }
     end
 
-    # Real Ansible's own per-field comparison default is NOT uniformly
+    # Ansible's own per-field comparison default is NOT uniformly
     # `strict` - verified against the real module_utils source
     # (`Option.__init__` in `_module_container/base.py`): scalar
     # ("value") options and plain ordered `list`s (entrypoint) default to
@@ -832,7 +832,7 @@ module Krikri
     # container on every single rerun despite zero actual drift.
     # `comparisons: {<field>: strict}` explicitly overrides an
     # allow_more_present-by-default field to exact-equality instead
-    # (real Ansible's own supported override direction); `ignore` always
+    # (Ansible's own supported override direction); `ignore` always
     # wins regardless of the field's default.
     private def comparison_mode(field : String, default : String) : String
       raw = @params["comparisons"]?
@@ -1021,7 +1021,7 @@ module Krikri
     end
 
     # `healthcheck:` given but with no `test:` (parse returns nil) means
-    # real Ansible's own "no override at all" - this plugin never set a
+    # Ansible's own "no override at all" - this plugin never set a
     # `Healthcheck` at container-create time either (see
     # `built_healthcheck`), so there's nothing to compare and it always
     # matches, same as `healthcheck:` not being given at all. Default
@@ -1058,21 +1058,21 @@ module Krikri
         (expected.start_period.nil? || actual.start_period == expected.start_period)
     end
 
-    # Matches real Ansible's own `_get_expected_values_ports`: each
+    # Matches Ansible's own `_get_expected_values_ports`: each
     # `published_ports:` entry normalizes to a `{HostIp, HostPort}` pair
     # with `HostIp` defaulted to `"0.0.0.0"` when the task left it
     # unspecified. This is genuinely daemon-version-dependent, found live
     # comparing two different real hosts: Podman and an older-API-pinned
-    # client (real Ansible's own `community.docker`, capped well below
+    # client (Ansible's own `community.docker`, capped well below
     # the daemon's latest) both report back the literal string
     # `HostIp: "0.0.0.0"`, but a real Docker Engine 29.1.3 queried via
     # the *unversioned/latest* API (what this plugin's own `docr` client
     # uses, same as the `docker` CLI's own default) reports back
     # `HostIp: ""` instead - an empty string, not nil/missing either.
     # Both nil and "" normalize to "0.0.0.0" here so the comparison
-    # matches real Ansible's own idempotent behavior regardless of which
+    # matches Ansible's own idempotent behavior regardless of which
     # literal spelling the daemon happens to use. `exposed_ports` is
-    # compared separately from `published_ports` (matching real Ansible's
+    # compared separately from `published_ports` (matching Ansible's
     # own two-part model) and additionally folds in the image's own
     # declared `ExposedPorts` (Dockerfile `EXPOSE`), the same
     # image-merge pattern `expected_env` uses for `Env`, so an image that
@@ -1107,7 +1107,7 @@ module Krikri
       expected.all? { |k, v| actual[k]? == v }
     end
 
-    # Matches real Ansible's own `_get_expected_env_value`: the image's
+    # Matches Ansible's own `_get_expected_env_value`: the image's
     # own baked-in `Env` (from its Dockerfile `ENV` directives) is folded
     # into the "expected" set before comparing against the running
     # container's actual `Env`, so a base image that sets env vars beyond
@@ -1141,7 +1141,7 @@ module Krikri
     # Connects the container to whichever requested networks it isn't
     # already a member of. Also disconnects it from any network NOT in
     # *requested* when `comparisons: {networks: strict}` is given -
-    # verified against real Ansible's own documented behavior ("To
+    # verified against Ansible's own documented behavior ("To
     # remove a container from one or more networks, use `networks:
     # strict` in the `comparisons` option" - the default leaves extra
     # networks alone entirely, matching this plugin's own prior
@@ -1231,14 +1231,14 @@ module Krikri
       pull_image!(api.client, image_ref, ref_name, ref_tag)
     end
 
-    # Real's client POSTs the pull itself and wraps any failure in its
+    # Ansible's client POSTs the pull itself and wraps any failure in its
     # own prefix, so the wrapped text is the SDK's APIError rendering -
     # "<code> {Client|Server} Error for <url>: <reason>" plus the
     # daemon's own message in quotes (its errors.py). That URL is the
     # versioned pull URL the SDK builds, while `docr` calls every
     # endpoint unversioned and its own DockerAPIError keeps neither the
     # status reason phrase nor the URL - so the pull goes out here
-    # directly, to keep the exact text real reports.
+    # directly, to keep the exact text Ansible reports.
     private def pull_image!(client : Docr::Client, image_ref : String, repository : String, tag : String) : Nil
       query = "tag=#{form_url_encode(tag)}&fromImage=#{form_url_encode(repository)}"
 
@@ -1272,7 +1272,7 @@ module Krikri
     # The status line's reason phrase, which Crystal's HTTP::Client
     # doesn't keep - its own HTTP::Status enum name is the closest
     # stand-in, and for the codes a Docker daemon actually answers with
-    # ("Internal Server Error" on a 500) it is the very same text real's
+    # ("Internal Server Error" on a 500) it is the very same text Ansible's
     # message quotes.
     private def status_reason(status : Int32) : String
       HTTP::Status.new(status).to_s.split('_').map(&.capitalize).join(' ')
@@ -1290,7 +1290,7 @@ module Krikri
       body.strip
     end
 
-    # real's SDK derives the API version it puts in every endpoint URL
+    # Ansible's SDK derives the API version it puts in every endpoint URL
     # from the daemon's own /version reply (its _retrieve_server_version),
     # which `docr` never asks for since it calls every endpoint
     # unversioned.
@@ -1302,7 +1302,7 @@ module Krikri
       api_version
     end
 
-    # real's SDK base_url, the literal host part of every URL it quotes
+    # Ansible's SDK base_url, the literal host part of every URL it quotes
     # in an error message: the http+docker:// placeholder it mounts its
     # UNIX-socket adapter under, or scheme://host:port for a TCP(+TLS)
     # daemon.
@@ -1316,7 +1316,7 @@ module Krikri
 
     # How Python's requests form-encodes a query value (its urlencode):
     # everything outside the unreserved set percent-encoded, so a `/` in
-    # a repository name becomes %2F exactly like real's own pull URL.
+    # a repository name becomes %2F exactly like Ansible's own pull URL.
     private def form_url_encode(value : String) : String
       String.build do |io|
         value.each_byte do |byte|
@@ -1333,7 +1333,7 @@ module Krikri
     end
 
     # Raised for a pull the daemon rejected, so the failure message can
-    # keep real's own wording instead of the generic API-error one.
+    # keep Ansible's own wording instead of the generic API-error one.
     class ImagePullError < Exception
     end
 
@@ -1393,11 +1393,11 @@ module Krikri
         exposed_ports: exposed_ports.empty? ? nil : exposed_ports,
         host_config: host_config,
         healthcheck: healthcheck,
-        # Real only sets StopSignal/StopTimeout when the task gave the
+        # Ansible only sets StopSignal/StopTimeout when the task gave the
         # stop_signal:/stop_timeout: options, so a container it created
         # has neither. `docr`'s own config type defaults them to
         # SIGTERM/10, which would show up in the created container's
-        # registered Config and make it differ from real's - sent as
+        # registered Config and make it differ from Ansible's - sent as
         # nulls (which the daemon reads as "unset", same as the absent
         # keys real sends).
         stop_signal: nil,
@@ -1408,7 +1408,7 @@ module Krikri
     # See `PluginHelpers::DockerHealthcheck`'s own doc comment for the
     # duration-parsing/test-normalization rules this mirrors from real
     # Ansible's own `parse_healthcheck`/`normalize_healthcheck`.
-    # `start_interval:` (real Ansible's own newer addition) is NOT
+    # `start_interval:` (Ansible's own newer addition) is NOT
     # implemented - the underlying `docr` library's `HealthConfig` type
     # has no field for it, a real scope cut one layer below this plugin.
     private def built_healthcheck(json : String) : Docr::Types::HealthConfig?
@@ -1447,7 +1447,7 @@ module Krikri
     # daemon verbatim (an element containing a comma or a space is ONE
     # element, where the comma-joined wire every other module's list
     # param travels on would have split it). Anything else is the
-    # comma-separated form real's own Ansible-side list conversion
+    # comma-separated form Ansible's own Ansible-side list conversion
     # produces for a string param.
     private def literal_list_param(raw : String) : Array(String)?
       return nil unless raw.starts_with?('[')
@@ -1456,7 +1456,7 @@ module Krikri
       items.map { |item| item.as_s? || item.raw.to_s }
     end
 
-    # real's `env:`/`labels:` are dict-typed options, which real
+    # Ansible's `env:`/`labels:` are dict-typed options, which real
     # Ansible also accepts written as a list of `KEY=VALUE` strings (its
     # own dict type conversion) - and a `KEY=VALUE` element may contain a
     # comma, so that list form travels on the same JSON wire the other
@@ -1473,13 +1473,13 @@ module Krikri
       end
     end
 
-    # The `Env` list the daemon gets: real's own "KEY=VALUE" strings.
+    # The `Env` list the daemon gets: Ansible's own "KEY=VALUE" strings.
     private def container_env : Array(String)?
       env = parsed_key_value_param("env")
       env.try { |parsed| parsed.map { |key, value| "#{key}=#{value}" } }
     end
 
-    # real's `command`: a list verbatim, a string shell-split
+    # Ansible's `command`: a list verbatim, a string shell-split
     # (community.docker's `_preprocess_command` under its default
     # `command_handling: correct`).
     private def parse_command : Array(String)?
@@ -1488,7 +1488,7 @@ module Krikri
       literal_list_param(raw) || Krikri::Shell.shlex_split(raw)
     end
 
-    # real's `entrypoint`: a list verbatim; a string is turned into a
+    # Ansible's `entrypoint`: a list verbatim; a string is turned into a
     # one-element list by Ansible's own comma-separated list conversion -
     # deliberately NOT shell-split, which is why `entrypoint: /bin/sh -c`
     # stays a single (failing) argv element in real too
@@ -1503,7 +1503,7 @@ module Krikri
       raw.split(',').map(&.strip).reject(&.empty?)
     end
 
-    # real's `volumes`: a list verbatim, a string comma-split.
+    # Ansible's `volumes`: a list verbatim, a string comma-split.
     private def parse_volumes(raw : String?) : Array(String)?
       return nil unless raw
       literal_list_param(raw) || raw.split(',').map(&.strip).reject(&.empty?)

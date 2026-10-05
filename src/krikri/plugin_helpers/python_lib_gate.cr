@@ -1,7 +1,7 @@
 require "json"
 
 module Krikri
-  # Real's missing_required_lib(<library>) message, verbatim, for a target that cannot import <library>.
+  # Ansible's missing_required_lib(<library>) message, verbatim, for a target that cannot import <library>.
   #
   # The shape of the parity problem this covers: several real modules
   # import a Python library at MODULE level, so a target without it
@@ -9,7 +9,7 @@ module Krikri
   # single one of its own arguments. krikri implements those modules
   # natively (its own pty layer for expect, its own XML parser for
   # xml) and therefore does NOT need the library - which is why it used
-  # to carry on past the point where real stops, reporting its own
+  # to carry on past the point where Ansible stops, reporting its own
   # downstream failure (or, worse, success) instead. The dependency
   # still decides the outcome, so it is reproduced here: same message,
   # same ordering, same point in the flow. Same precedent as the
@@ -26,8 +26,8 @@ module Krikri
     "please consult the documentation on ansible_python_interpreter"
   end
 
-  # Real's INTERPRETER_PYTHON_FALLBACK default (ansible-core 2.19.11's
-  # config/base.yml), in its own order. Real's discovery runs
+  # Ansible's INTERPRETER_PYTHON_FALLBACK default (ansible-core 2.19.11's
+  # config/base.yml), in its own order. Ansible's discovery runs
   # `command -v <name>` over this list on the target and hands the module
   # the FIRST hit, so the sys.executable basic.py reports is that
   # interpreter's - `python3.13` before `/usr/bin/python3`, which on a
@@ -38,13 +38,13 @@ module Krikri
     "python3.9", "python3.8", "/usr/bin/python3", "python3",
   ]
 
-  # The target's Python interpreter, the way real's interpreter
+  # The target's Python interpreter, the way Ansible's interpreter
   # discovery picks it: the first INTERPRETER_FALLBACK entry `command -v`
   # resolves on the target. nil when the target has none.
   #
   # This runs on the TARGET (each plugin binary is uploaded there), so
   # both the probe and the hostname it reports are the target's own -
-  # the same two values real's import failure reports.
+  # the same two values Ansible's import failure reports.
   def self.discovered_target_python : String?
     INTERPRETER_FALLBACK.each do |name|
       if resolved = Process.find_executable(name)
@@ -54,10 +54,10 @@ module Krikri
     nil
   end
 
-  # The interpreter's own sys.executable, which is what real's
-  # missing_required_lib names (never the bare command name). Real's
+  # The interpreter's own sys.executable, which is what Ansible's
+  # missing_required_lib names (never the bare command name). Ansible's
   # module runs UNDER that interpreter, so the two are the same path;
-  # asking the interpreter is just how real's own message gets built.
+  # asking the interpreter is just how Ansible's own message gets built.
   def self.target_python_executable : String?
     return nil unless python = discovered_target_python
 
@@ -68,7 +68,7 @@ module Krikri
   end
 
   # nil when <import_stmt> imports cleanly under the target's Python -
-  # the module carries on, exactly as real's does. Otherwise real's
+  # the module carries on, exactly as Ansible's does. Otherwise Ansible's
   # exact failure text.
   #
   # `detail` is the ImportError's own text for the modules that pass

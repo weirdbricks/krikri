@@ -38,7 +38,7 @@ describe "yum_versionlock plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  # Check mode runs `yum versionlock list` (the real module only skips
+  # Check mode runs `yum versionlock list` (the Ansible module only skips
   # the mutating add/delete) but must claim the change without mutating
   # anything - a spec no installed package could ever satisfy keeps this
   # independent of the host's current locklist state.

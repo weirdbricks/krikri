@@ -6,7 +6,7 @@ require "../src/krikri/base_plugin"
 
 module Krikri
   # Git plugin - clones/updates a git repository
-  # Compatible with real Ansible's ansible.builtin.git module
+  # Compatible with Ansible's ansible.builtin.git module
   #
   # Parameters:
   #   repo (required): repository URL (or local path / file:// URL)
@@ -37,7 +37,7 @@ module Krikri
   #   archive: create a tar/zip archive of the checked-out tree
   #   archive_prefix: path prefix inside the archive (requires archive)
   #
-  # Validation mirrors real AnsibleModule: separate_git_dir/bare and
+  # Validation mirrors AnsibleModule: separate_git_dir/bare and
   # accept_hostkey/accept_newhostkey are mutually exclusive; archive_prefix
   # requires archive.
   class GitPlugin < BasePlugin
@@ -118,7 +118,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # The `<git> <args>` string real reports in `cmd`: git resolved to its
+    # The `<git> <args>` string Ansible reports in `cmd`: git resolved to its
     # absolute path (module.get_bin_path('git', True) / the executable:
     # value) plus the argv exactly as git.py built it. krikri's own
     # execution goes through `-C <dest>`, which real instead expresses as
@@ -128,11 +128,11 @@ module Krikri
       "#{git} #{args}"
     end
 
-    # The `cmd` string real reports, for a command krikri assembled as
+    # The `cmd` string Ansible reports, for a command krikri assembled as
     # shell-quoted text (do_clone). basic.py's _clean_args re-renders each
     # argv token through shlex.quote, which leaves an already-safe token
     # bare - so krikri's execution quoting ('origin') must be stripped
-    # here or the reported cmd would differ from real's for every clone.
+    # here or the reported cmd would differ from Ansible's for every clone.
     # git.py builds every command it reports as an argv LIST, which
     # basic.py's _clean_args renders through shlex.quote per token - safe
     # tokens stay bare, anything else is quoted. krikri needs both
@@ -145,7 +145,7 @@ module Krikri
       }
     end
 
-    # Real Ansible resolves the git binary up front
+    # Ansible resolves the git binary up front
     # (`module.params['executable'] or module.get_bin_path('git', True)`)
     # at the very top of main(), BEFORE the dest/separate_git_dir
     # checks. With no `executable:` given and no git anywhere on PATH
@@ -240,7 +240,7 @@ module Krikri
       repo = @params["repo"]?
       return missing_param("repo") unless repo
       repo = expand_tilde(repo)
-      # Real Ansible force-converts path-based repos to file:// so depth:
+      # Ansible force-converts path-based repos to file:// so depth:
       # (which requires a protocol) works on local clones.
       repo = "file://#{repo}" if repo.starts_with?("/")
       @repo = repo
@@ -285,7 +285,7 @@ module Krikri
       end
 
       # Relocate the git dir when separate_git_dir points somewhere else
-      # (real Ansible's relocate_repo path in main()).
+      # (Ansible's relocate_repo path in main()).
       relocated = false
       if dest && (sep = @separate_git_dir) && !@bare && (rp = repo_path_of(dest))
         if File.expand_path(rp) != File.expand_path(sep)
@@ -311,7 +311,7 @@ module Krikri
 
       if !existing
         if check_mode || !allow_clone
-          # Real Ansible does an ls-remote here instead of touching dest.
+          # Ansible does an ls-remote here instead of touching dest.
           # The cloning context (dest is nil) makes get_remote_head use the
           # repo URL directly instead of trying to read a local HEAD.
           head = get_remote_head(nil, @repo, @version)
@@ -414,7 +414,7 @@ module Krikri
             else
               "Already up to date"
             end
-      # Real 2.19.11 registered git orders (live-verified): fresh clone -
+      # Ansible 2.19.11 registered git orders (live-verified): fresh clone -
       # changed, before, after, failed; idempotent update - changed,
       # before, remote_url_changed, after, failed (the update path always
       # carries remote_url_changed, even when false; krikri doesn't emit
@@ -424,7 +424,7 @@ module Krikri
         key_order: ["changed", "before", "remote_url_changed", "after"])
     end
 
-    # Real AnsibleModule argument validation: mutually_exclusive pairs and
+    # AnsibleModule argument validation: mutually_exclusive pairs and
     # required_by (both presence-based, not truthiness-based).
     private def validate_param_rules : PluginResult?
       if @params["separate_git_dir"]? && @params["bare"]?
@@ -442,7 +442,7 @@ module Krikri
       if params_any = @config["params"]?
         if raw_umask = params_any["umask"]?
           # A parser-marked non-string YAML literal (NON_STRING_PARAM_PREFIX)
-          # rides the raw wire as a prefixed STRING - real's
+          # rides the raw wire as a prefixed STRING - Ansible's
           # isinstance(umask, string_types) sees the native int/float and
           # fails "umask must be defined as a quoted octal integer", so the
           # marker must decode to its native value before the str check,
@@ -466,7 +466,7 @@ module Krikri
 
     # Builds the shell prefix applied to every git command: the umask for
     # operations that create files, plus the GIT_SSH_COMMAND export used by
-    # git for ssh:// repos (real Ansible's set_git_ssh_env).
+    # git for ssh:// repos (Ansible's set_git_ssh_env).
     private def build_command_prefix : String
       prefix = ""
       if u = @params["umask"]?
@@ -497,7 +497,7 @@ module Krikri
       "#{prefix}export GIT_SSH_COMMAND=#{sq("ssh #{opts}".strip)}; "
     end
 
-    # Real Ansible probes `ssh -o StrictHostKeyChecking=accept-new -V` before
+    # Ansible probes `ssh -o StrictHostKeyChecking=accept-new -V` before
     # using accept_newhostkey (warns and skips it on old ssh clients).
     private def ssh_supports_acceptnew? : Bool
       r = remote_exec("ssh -o StrictHostKeyChecking=accept-new -V")
@@ -521,7 +521,7 @@ module Krikri
           argv += ["--depth", dep, "--branch", @version]
           branch_added = true
         else
-          # Real Ansible warns and ignores depth for refs that cannot be
+          # Ansible warns and ignores depth for refs that cannot be
           # fetched directly (commit shas) - a full clone follows instead.
         end
       end
@@ -559,7 +559,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's fetch(): a minimal targeted refspec set under depth:,
+    # Ansible's fetch(): a minimal targeted refspec set under depth:,
     # a full --tags fetch otherwise.
     private def fetch_repo(d : String) : PluginResult?
       refspecs = [] of String
@@ -593,7 +593,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's arg order: git fetch [flags] <remote> [refspecs...]
+      # Ansible's arg order: git fetch [flags] <remote> [refspecs...]
       force_flag = @force ? "--force " : ""
       args = "fetch #{depth_flag}#{tags_flag}#{force_flag}#{sq(@remote)}"
       refspecs.each { |refspec| args += " #{sq(refspec)}" }
@@ -616,13 +616,13 @@ module Krikri
       result
     end
 
-    # Real Ansible's git_path as it appears in a reported cmd: the
+    # Ansible's git_path as it appears in a reported cmd: the
     # executable: value, or the resolved absolute git.
     private def git_bin : String
       Process.find_executable(@git_path) || @git_path
     end
 
-    # Real Ansible's switch_version(): branch-aware checkout + hard reset
+    # Ansible's switch_version(): branch-aware checkout + hard reset
     # against the remote-tracking ref.
     private def switch_version(d : String, verify_commit : Bool) : PluginResult?
       if @version == "HEAD"
@@ -692,7 +692,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's verify_commit_sign: verify-tag for annotated tags,
+    # Ansible's verify_commit_sign: verify-tag for annotated tags,
     # verify-commit otherwise; --raw + fingerprint comparison when a
     # gpg_allowlist is given.
     private def verify_commit_sign(d : String) : PluginResult?
@@ -722,7 +722,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's get_gpg_fingerprint: the primary key fingerprint from
+    # Ansible's get_gpg_fingerprint: the primary key fingerprint from
     # gpg's VALIDSIG line (index 11 for subkey-signed commits, else 2).
     private def gpg_fingerprint(output : String) : String?
       output.each_line do |line|
@@ -733,7 +733,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's submodules_fetch change detection: a new submodule
+    # Ansible's submodules_fetch change detection: a new submodule
     # without a checked-out .git, or submodule state that moved after a
     # submodule-level fetch.
     private def submodules_probe(d : String, track_submodules : Bool) : {Bool, PluginResult?}
@@ -771,7 +771,7 @@ module Krikri
       r[:exit_code] == 0 ? r[:stdout] : ""
     end
 
-    # Real Ansible's submodule_update: sync, then update --init --recursive
+    # Ansible's submodule_update: sync, then update --init --recursive
     # (with --remote for track_submodules and --force with force).
     private def submodule_update(d : String, track_submodules : Bool) : PluginResult?
       # The sync is check_rc=True in git.py; the update is NOT, and gets
@@ -790,7 +790,7 @@ module Krikri
         msg: "Failed to init/update submodules: #{r[:stdout]}#{r[:stderr]}")
     end
 
-    # Real Ansible's create_archive: idempotent via byte comparison against
+    # Ansible's create_archive: idempotent via byte comparison against
     # the existing archive when one is already present.
     private def create_archive(d : String, archive : String, archive_prefix : String?) : PluginResult
       fmt = {".zip" => "zip", ".gz" => "tar.gz", ".tar" => "tar", ".tgz" => "tgz"}[File.extname(archive)]?
@@ -829,7 +829,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's has_local_mods: any non-untracked entry in
+    # Ansible's has_local_mods: any non-untracked entry in
     # `git status --porcelain`.
     private def has_local_mods(d : String) : Bool
       return false if @bare
@@ -838,13 +838,13 @@ module Krikri
       r[:stdout].each_line.any? { |line| !line.strip.empty? && !line.starts_with?("??") }
     end
 
-    # Real Ansible's get_remote_url: nil when git cannot answer (old git).
+    # Ansible's get_remote_url: nil when git cannot answer (old git).
     private def get_remote_url(d : String) : String?
       r = run_git("ls-remote --get-url #{sq(@remote)}", d)
       r[:exit_code] == 0 ? r[:stdout].strip : nil
     end
 
-    # Real Ansible's set_remote_url: only rewrites when the URL actually
+    # Ansible's set_remote_url: only rewrites when the URL actually
     # changed; reports changed only when the old URL was readable.
     private def set_remote_url(d : String) : NamedTuple(changed: Bool, fail: PluginResult?)
       url = get_remote_url(d)
@@ -861,7 +861,7 @@ module Krikri
       {changed: false, fail: nil}
     end
 
-    # Real Ansible's get_remote_head: resolves the remote SHA for version
+    # Ansible's get_remote_head: resolves the remote SHA for version
     # without any local clone. target is the repo URL when cloning, the
     # remote name otherwise; dest is nil in the cloning case.
     private def get_remote_head(dest : String?, target : String, version : String) : String?
@@ -878,7 +878,7 @@ module Krikri
       elsif remote_tag?(dest, target, version)
         r = run_git("ls-remote #{sq(target)} -t refs/tags/#{sq(version)}*", dest)
         return nil unless r[:exit_code] == 0
-        # Prefer the dereferenced line for annotated tags (real Ansible).
+        # Prefer the dereferenced line for annotated tags (Ansible).
         chosen : String? = nil
         r[:stdout].each_line do |line|
           if line.strip.ends_with?("#{version}^{}")
@@ -890,7 +890,7 @@ module Krikri
         end
         return chosen.try { |line| line.split[0]? }
       else
-        # Appears to be a sha1 - return as-is (real Ansible).
+        # Appears to be a sha1 - return as-is (Ansible).
         return version
       end
 
@@ -927,7 +927,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's get_head_branch: HEAD's branch, falling back to
+    # Ansible's get_head_branch: HEAD's branch, falling back to
     # refs/remotes/<remote>/HEAD while in a detached-HEAD state.
     private def get_head_branch(d : String) : String?
       rp = repo_path_of(d) || return nil
@@ -941,7 +941,7 @@ module Krikri
       newref.split("/").last?
     end
 
-    # Real Ansible's get_repo_path: dest itself for bare repos, dest/.git
+    # Ansible's get_repo_path: dest itself for bare repos, dest/.git
     # otherwise, following a "gitdir:" pointer file (separate_git_dir).
     private def repo_path_of(dest : String) : String?
       return dest if @bare
@@ -957,7 +957,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's unfrackgitpath comparison: exact match, or equal
+    # Ansible's unfrackgitpath comparison: exact match, or equal
     # expanded local paths.
     private def same_repo_location?(a : String, b : String) : Bool
       return true if a == b

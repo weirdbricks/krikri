@@ -21,7 +21,7 @@ module Krikri
     # module performs. Pre-hashed inputs (a SCRAM verifier string or an
     # "md5" + 32-hex digest) are compared verbatim; a plaintext password
     # against a server whose default is md5 computes PostgreSQL's own
-    # 'md5' + md5(password + username) form. Like the real module, an
+    # 'md5' + md5(password + username) form. Like the Ansible module, an
     # unreadable-but-existing current value that is neither SCRAM nor
     # md5 against a scram-sha-256-default server always counts as
     # changed (the verifier cannot be recomputed without the salt).
@@ -64,7 +64,7 @@ module Krikri
       # when the verifier was created (no saslprep, matching CREATE
       # USER/ALTER ROLE's own verifier generation; saslprep only applies
       # during SASL authentication itself). A malformed verifier falls
-      # back to "different" - the real module's same except-clause.
+      # back to "different" - the Ansible module's same except-clause.
       def self.scram_verifier_matches?(stored : Regex::MatchData, plaintext : String) : Bool
         iterations = stored[1].to_i
         salt = Base64.decode(stored[2])

@@ -12,7 +12,7 @@ require "./timing_profile"
 module Krikri
   class SSHManager
     # Default per-command execution timeout for #exec/#exec_script/
-    # #daemon_send. Real Ansible has NO default command-duration limit
+    # #daemon_send. Ansible has NO default command-duration limit
     # at all - a foreground task runs until it completes, however long
     # that takes (only `async:` tasks get an explicit max duration);
     # what actually detects a genuinely dead/unreachable host is the SSH
@@ -48,7 +48,7 @@ module Krikri
     # is the ONLY thing that kept f500.ufw's warm rerun reachable (the
     # role leaves `ufw default deny incoming` + `ufw --force enable`
     # with no allow rules; any NEW incoming connection - krikri's warm
-    # run included - times out, and real Ansible's own warm rerun fails
+    # run included - times out, and Ansible's own warm rerun fails
     # identically once its master socket is moved away, verified live on
     # fresh Atlantic.net hosts). The per-process (pid-suffixed) layout
     # this replaced (0.9.770) traded that reuse away to fix a concurrent-
@@ -57,7 +57,7 @@ module Krikri
     # every krikri invocation dialed fresh. Socket names here are already
     # per-target (get_control_path), so concurrent processes on DIFFERENT
     # hosts never share a socket; concurrent clients on the SAME host's
-    # mux socket are exactly what real Ansible does and what the ssh mux
+    # mux socket are exactly what Ansible does and what the ssh mux
     # protocol itself is designed for.
     @@control_path_dir = "/tmp/.krikri-playbook-ssh"
 
@@ -251,7 +251,7 @@ module Krikri
     # ssh failure surfaces as a raised "Failed to upload/download ..."
     # whose detail embeds ssh's own stderr, so the same pattern list
     # decides whether the exception means "the transport never got
-    # there" (UNREACHABLE in real Ansible) or something else that must
+    # there" (UNREACHABLE in Ansible) or something else that must
     # keep propagating (a missing local file, a staging-dir safety
     # refusal, an engine bug). Message-only, no exit code to gate on.
     def self.connection_level_exception?(ex : Exception) : Bool
@@ -1097,7 +1097,7 @@ module Krikri
 
     # `-i <path>` args for ssh/scp when the inventory specifies
     # ansible_ssh_private_key_file - omitted entirely so ssh falls back to
-    # its own default identities/agent, matching real Ansible/OpenSSH
+    # its own default identities/agent, matching Ansible/OpenSSH
     # behavior when no key is given.
     # Also carries --ssh-common-args/--ssh-extra-args, because every ssh
     # (and scp) invocation in this file already routes through here -
@@ -1106,7 +1106,7 @@ module Krikri
     # StrictHostKeyChecking value for every ssh/rsync invocation in this
     # file. Defaults to "accept-new" (auto-trust a NEW host key, but
     # still refuse a CHANGED one) - safe for non-interactive use without
-    # silently masking a real MITM/key-rotation surprise. Real Ansible's
+    # silently masking a real MITM/key-rotation surprise. Ansible's
     # `host_key_checking = False` (ansible.cfg `[defaults]`, or the
     # ANSIBLE_HOST_KEY_CHECKING/ANSIBLE_SSH_HOST_KEY_CHECKING env vars -
     # verified in ansible-core's own ssh.py connection plugin:

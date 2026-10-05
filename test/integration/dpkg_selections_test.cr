@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Message texts live-verified against real ansible-core's
+# Message texts live-verified against ansible-core's
 # dpkg_selections.py argument_spec:
 #   "value of selection must be one of: install, hold, deinstall, purge,
 #    got: bogus" (choices in the argument_spec's declaration order)

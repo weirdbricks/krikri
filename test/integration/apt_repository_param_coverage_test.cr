@@ -4,7 +4,7 @@ require "file_utils"
 # Parameter-coverage pass for `apt_repository:`'s remaining real-Ansible
 # options: update_cache_retries / update_cache_retry_max_delay (wired
 # for real - see PluginHelpers::AptRepositoryCacheRetry, whose unit
-# spec pins the backoff formula against real ansible-core's own
+# spec pins the backoff formula against ansible-core's own
 # apt_repository.py) and the two documented no-ops install_python_apt /
 # validate_certs (krikri never imports python-apt and always verifies
 # TLS on its one HTTPS fetch, so both are accepted-and-ignored - but
@@ -68,7 +68,7 @@ describe "apt_repository plugin - parameter coverage (update_cache_retries/insta
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("Failed to update apt cache")
     File.read_lines(log).size.must_equal(3)
-    # Real Ansible reverts the just-written line when the cache update
+    # Ansible reverts the just-written line when the cache update
     # exhausts its retries - the scratch sources dir must be back to
     # how it started (empty).
     Dir.glob(File.join(list_d, "*.list")).must_be_empty

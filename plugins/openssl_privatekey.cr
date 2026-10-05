@@ -10,7 +10,7 @@ module Krikri
   # generates TLS/SSL private keys.
   #
   # Backed by libcrypto's own EVP keygen/serialization (see
-  # `plugin_helpers/openssl_pkey.cr`): the real module dropped its own
+  # `plugin_helpers/openssl_pkey.cr`): the Ansible module dropped its own
   # openssl-CLI backend in favour of Python's `cryptography` library, and
   # this plugin does the equivalent natively - there is no Python runtime
   # on the target, and the `openssl` CLI binary is absent from minimal
@@ -18,7 +18,7 @@ module Krikri
   # process: 'openssl': No such file or directory". The file formats it
   # produces (PKCS#1/PKCS#8/raw, optionally encrypted) are standard.
   # Every behavior below was
-  # differentialed against the real module (community.crypto 3.1.1,
+  # differentialed against the Ansible module (community.crypto 3.1.1,
   # ansible-core 2.19.4) rather than read off the docs alone, including
   # the idempotency matrix, which is the part roles actually depend on:
   #
@@ -50,7 +50,7 @@ module Krikri
     # (`secp256r1` is `prime256v1` there, and `genpkey` rejects the IANA
     # spelling outright rather than aliasing it). Every other curve
     # below is spelled identically by both, and is listed anyway so an
-    # unsupported name fails with the real module's own error text
+    # unsupported name fails with the Ansible module's own error text
     # rather than a raw openssl one.
     CURVE_ALIASES = {
       "secp256r1" => "prime256v1",
@@ -69,12 +69,12 @@ module Krikri
 
     EDWARDS_TYPES = %w[Ed25519 Ed448 X25519 X448]
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
     # unchanged, check-mode and state=absent runs. Variant positions
     # confirmed live too: curve sits after fingerprint (before diff),
     # privatekey after curve, backup_file after changed, warnings last.
-    # `diff` is present in real's every success result; krikri emits no
+    # `diff` is present in Ansible's every success result; krikri emits no
     # diff here, so the key is simply skipped by the reorder.
     SUCCESS_KEY_ORDER = %w[
       type size fingerprint curve privatekey diff filename changed
@@ -138,7 +138,7 @@ module Krikri
       return write_key(regen, convert, path, type, size, curve, passphrase, cipher, format) if regen || convert
 
       # No regeneration needed - owner/group/mode drift is still a real
-      # change, exactly as the real module reports it (it runs the file
+      # change, exactly as the Ansible module reports it (it runs the file
       # attribute step unconditionally).
       changed = apply_attrs(path, default_mode: true)
       result(changed, path, type, size, curve, nil)
@@ -191,7 +191,7 @@ module Krikri
       return result(true, path, type, size, curve, nil) if true?(@params["_ansible_check_mode"]?)
 
       if regen
-        # The cryptography library's own generate-time ValueErrors - real's
+        # The cryptography library's own generate-time ValueErrors - Ansible's
         # module body doesn't catch them, so the msg carries the full
         # unhandled-exception chain (live-verified vs 2.19.11 with
         # size: 96).
@@ -209,7 +209,7 @@ module Krikri
       backup_file = backup(path)
       error = regen ? generate(path, type, size, curve, passphrase, format) : convert_format(path, type, passphrase, format)
       # module.warn rides in the result, so the deprecated-curve warning
-      # real emits at generate_private_key time shows on the failure
+      # Ansible emits at generate_private_key time shows on the failure
       # result too (fail_json includes the collected warnings).
       if warning = curve_warning(regen ? curve : nil, type)
         return attach_warning(failure(error), warning) if error
@@ -221,7 +221,7 @@ module Krikri
       result(true, path, type, size, curve, backup_file)
     end
 
-    # The real module's curve table marks these deprecated and warns at
+    # The Ansible module's curve table marks these deprecated and warns at
     # generation time (PrivateKeyBackend.generate_private_key): "Elliptic
     # curves of type X should not be used for new keys!" - only when a
     # key is actually generated, never on an idempotent no-change run or
@@ -242,7 +242,7 @@ module Krikri
       res
     end
 
-    # The "unhandled module exception" result shape real 2.19 produces:
+    # The "unhandled module exception" result shape Ansible 2.19 produces:
     # the fatal msg carries the full "Task failed: Module failed: <exc>"
     # chain while the error block shows the bare exception text.
     private def unhandled_error(detail : String) : PluginResult
@@ -312,7 +312,7 @@ module Krikri
 
     # True when the key can be read with exactly the passphrase given -
     # which includes the negative direction: a passphrase supplied for
-    # an unencrypted key is a mismatch to the real module too (Python's
+    # an unencrypted key is a mismatch to the Ansible module too (Python's
     # `cryptography` raises "Password was given but private key is not
     # encrypted"), not a harmless extra.
     private def passphrase_ok?(path : String, passphrase : String?) : Bool
@@ -338,7 +338,7 @@ module Krikri
       # A `format: raw` key on disk is bare key material - no PEM, no
       # DER, nothing that can be parsed back and nothing that records its
       # own type. All that can be checked is that its length is the one
-      # this type produces, which is what the real module effectively
+      # this type produces, which is what the Ansible module effectively
       # does too (it loads the bytes AS the configured type).
       if raw_file?(path)
         return false unless EDWARDS_TYPES.includes?(type)
@@ -429,7 +429,7 @@ module Krikri
 
     # --- generation ---------------------------------------------------
 
-    # The "auto" cipher - the only one the real module's cryptography
+    # The "auto" cipher - the only one the Ansible module's cryptography
     # backend accepts, and the only one this native path ever applies -
     # is AES-256-CBC, already handled inside the libcrypto helper.
 
@@ -492,7 +492,7 @@ module Krikri
     # bytes, no PEM, no DER wrapper. They are the tail of the PKCS#8
     # DER encoding (a fixed-size header followed by the key itself), so
     # slicing that off reproduces `private_bytes(Encoding.Raw)` exactly
-    # - verified byte-for-byte against the real module's output.
+    # - verified byte-for-byte against the Ansible module's output.
     private def write_raw(pkey : Pointer(Void), dest : String, type : String) : String?
       return "format: raw is only supported for Ed25519, Ed448, X25519 and X448 keys" unless EDWARDS_TYPES.includes?(type)
 
@@ -523,14 +523,14 @@ module Krikri
 
     # --- reporting ----------------------------------------------------
 
-    # The real module fingerprints the PUBLIC key's DER
+    # The Ansible module fingerprints the PUBLIC key's DER
     # (SubjectPublicKeyInfo), colon-separated lowercase hex, over every
     # hashlib algorithm it can - verified: sha256 here equals the
     # module's own `fingerprint.sha256` for the same key.
     private def fingerprints(path : String) : Hash(String, JSON::Any)?
       return nil unless File.exists?(path)
       # No public key can be derived from bare raw bytes without knowing
-      # the algorithm; the real module returns no fingerprint here either.
+      # the algorithm; the Ansible module returns no fingerprint here either.
       return nil if raw_file?(path)
 
       loaded = read_key(path, @params["passphrase"]?)
@@ -562,7 +562,7 @@ module Krikri
       # The two XOFs have no fixed digest size, so `OpenSSL::Digest`
       # cannot produce them; Python's hashlib is asked for 32 bytes of
       # output, which `openssl dgst -xoflen 32` reproduces byte for byte
-      # (verified against the real module's own shake_128/shake_256).
+      # (verified against the Ansible module's own shake_128/shake_256).
       # Silently skipped where the CLI is absent or too old to know
       # -xoflen rather than failing the task over a reporting field.
       {"shake_128" => "shake128", "shake_256" => "shake256"}.each do |name, algorithm|
@@ -606,7 +606,7 @@ module Krikri
       false
     end
 
-    # Real Ansible's backup_local: "<path>.<pid>.<YYYY-MM-DD@HH:MM:SS>~"
+    # Ansible's backup_local: "<path>.<pid>.<YYYY-MM-DD@HH:MM:SS>~"
     private def backup(path : String) : String?
       return nil unless true?(@params["backup"]?)
       return nil unless File.exists?(path)

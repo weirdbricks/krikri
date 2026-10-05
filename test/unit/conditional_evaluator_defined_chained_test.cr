@@ -6,7 +6,7 @@ require "../../src/krikri/conditional_evaluator"
 # ansible_distribution_major_version 7 and 8, so on a freshly
 # provisioned Rocky 9.6 host the chained-subscript expression
 # `pkg_upgrade_update_cmds[ansible_distribution_major_version]["update"]`
-# resolves to nothing. Real ansible's `when: pkg_upgrade_update_cmd is
+# resolves to nothing. Ansible's `when: pkg_upgrade_update_cmd is
 # defined` evaluates False and SKIPS the task; crystal previously
 # evaluated True and ran the task with the literal text "undefined" as
 # the command - then crashed with "Error executing process: 'undefined'".

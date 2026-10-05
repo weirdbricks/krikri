@@ -1,18 +1,18 @@
 require "../minitest_helper"
 
 # community.docker.docker_container's list-valued options, live-verified
-# against real ansible-core 2.19.11 + community.docker 5.2.1 driving a
+# against ansible-core 2.19.11 + community.docker 5.2.1 driving a
 # Docker-API socket (podman `system service`):
 #
 # - `command:` is an ansible-type `raw` option. A YAML LIST reaches the
 #   daemon as the argv list verbatim (an element containing a space or a
-#   comma stays ONE element); a STRING is POSIX-shell-split by real's own
+#   comma stays ONE element); a STRING is POSIX-shell-split by Ansible's own
 #   `_preprocess_command` (`shlex.split`) under its default
 #   `command_handling: correct`.
 # - `entrypoint:` is a plain `type: list, elements: str`. A LIST is used
 #   as-is; a STRING is turned into a list by Ansible's own
 #   comma-separated conversion - deliberately NOT shell-split, which is
-#   why real's `entrypoint: /bin/sh -c` stays a single argv element
+#   why Ansible's `entrypoint: /bin/sh -c` stays a single argv element
 #   (verified live: the daemon then looks for a file literally named
 #   "/bin/sh -c" and the start fails).
 # - `volumes:` is list-typed too: a list verbatim, a string comma-split.
@@ -74,7 +74,7 @@ describe "docker_container list-valued command params" do
               docker_host: #{DOCKER_CMD_LIST_SOCKET}
       YAML
       output.includes?("failed=0").must_equal(true)
-      # real's own Config.Cmd for `command: [sleep, "30"]`
+      # Ansible's own Config.Cmd for `command: [sleep, "30"]`
       docker_cmd_list_json(name, "Cmd").must_equal(%(["sleep","30"]))
     ensure
       docker_cmd_list_remove(name)
@@ -105,7 +105,7 @@ describe "docker_container list-valued command params" do
     end
   end
 
-  it "shell-splits a string command exactly like real's shlex.split" do
+  it "shell-splits a string command exactly like Ansible's shlex.split" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
     name = "krikri-kp-dk2-cl-str"
     docker_cmd_list_remove(name)
@@ -155,7 +155,7 @@ describe "docker_container list-valued command params" do
     end
   end
 
-  it "keeps a string entrypoint as one argv element like real's list conversion" do
+  it "keeps a string entrypoint as one argv element like Ansible's list conversion" do
     skip("no Docker-API socket at #{DOCKER_CMD_LIST_SOCKET_PATH}") unless docker_cmd_list_socket?
     name = "krikri-kp-dk2-cl-ep-str"
     docker_cmd_list_remove(name)

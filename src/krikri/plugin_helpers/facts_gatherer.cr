@@ -131,7 +131,7 @@ module Krikri
       ""
     end
 
-    # Real Ansible's ServiceMgrFactCollector's filesystem-dependent
+    # Ansible's ServiceMgrFactCollector's filesystem-dependent
     # fallback chain lives here natively; its PID 1 comm handling (the
     # proc_1_map and the "init"/shell-suffix discard) is in
     # PluginHelpers::ServiceMgrFact, shared with this file's callers.
@@ -141,7 +141,7 @@ module Krikri
     # PATH, and that is where systemctl/initctl live on some distros.
     FACT_BINARY_EXTRA_DIRS = ["/sbin", "/usr/sbin", "/bin", "/usr/bin"]
 
-    # Real Ansible's own SMBIOS chassis-type table
+    # Ansible's own SMBIOS chassis-type table
     # behind ansible_form_factor.
     CHASSIS_TYPES = {
       1 => "Other", 2 => "Unknown", 3 => "Desktop", 4 => "Low Profile Desktop",
@@ -157,7 +157,7 @@ module Krikri
       35 => "Mini PC", 36 => "Stick PC",
     }
 
-    # Real Ansible's get_bin_path for the service_mgr collector's
+    # Ansible's get_bin_path for the service_mgr collector's
     # systemctl/initctl lookups. Returns the first executable match, nil
     # when nothing is found.
     private def find_fact_binary(name : String) : String?
@@ -176,7 +176,7 @@ module Krikri
     alias FactValue = String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String))
     alias FactSet = Hash(String, FactValue)
 
-    # Raised for a positive gather_subset token real Ansible rejects -
+    # Raised for a positive gather_subset token Ansible rejects -
     # get_collector_names raises TypeError("Bad subset '%s' given to
     # Ansible. ...") and setup's fail_json surfaces it as a module
     # failure (live-verified against 2.19.4: `gather_subset=bogus` and
@@ -185,7 +185,7 @@ module Krikri
     class BadSubsetError < Exception
     end
 
-    # Every subset name real ansible-core 2.19.4 accepts - the exact list
+    # Every subset name ansible-core 2.19.4 accepts - the exact list
     # its own Bad-subset failure message enumerates (captured live from
     # `setup` on this machine). krikri implements only the network/
     # hardware/mounts families plus the min bundle; names that real
@@ -213,7 +213,7 @@ module Krikri
     # Which subset tokens map to which krikri gatherer family - real
     # Ansible's aliases_map (each collector's _fact_ids): asking for a
     # single fact id like `all_ipv4_addresses` turns on that collector's
-    # whole family, exactly as real Ansible's fact_id -> collector map
+    # whole family, exactly as Ansible's fact_id -> collector map
     # does. The min-bundle subset names (distribution, python, user, ...)
     # are absent: they resolve to the min bundle itself, which real
     # Ansible always gathers first anyway.
@@ -221,7 +221,7 @@ module Krikri
       "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
       "hardware" => %w[hardware devices dmi processor processor_cores processor_count nvme],
       "mounts"   => %w[mounts],
-      # real Ansible gathers virtualization/dmi-adjacent singleton
+      # Ansible gathers virtualization/dmi-adjacent singleton
       # collectors OUTSIDE the min bundle - `!all` (min only) on a real
       # host never reports ansible_virtualization_type/ansible_is_chroot/
       # ansible_loadavg/ansible_fibre_channel_wwn (live-verified against
@@ -236,7 +236,7 @@ module Krikri
       "hostnqn"           => %w[hostnqn],
     }
 
-    # The families "min" covers in this engine. Real Ansible's
+    # The families "min" covers in this engine. Ansible's
     # minimal_gather_subset also includes 'local' (the ansible_local
     # fact_path collector), which this tracks as its own family entry so
     # `!local` can drop just the custom-facts scan without touching the
@@ -248,7 +248,7 @@ module Krikri
     DEFAULT_GATHER_TIMEOUT = 10
     DEFAULT_FACT_PATH      = "/etc/ansible/facts.d"
 
-    # Real Ansible's get_collector_names,
+    # Ansible's get_collector_names,
     # narrowed to the families this engine implements: 'min' is prepended
     # unconditionally, "min"/"all" (and their negations) are special, a
     # positive unknown token FAILS (BadSubsetError, mirroring real
@@ -307,10 +307,10 @@ module Krikri
 
     # Gather all system facts
     # `gather_subset:` - which families of facts to collect. Tokens are
-    # real Ansible's: all, min, hardware, network, mounts, the per-fact
+    # Ansible's: all, min, hardware, network, mounts, the per-fact
     # aliases under FAMILY_SUBSETS, plus a leading "!" to subtract.
     # Later tokens win, unknown positive tokens fail (BadSubsetError),
-    # and "min" is the floor exactly as in real Ansible - which means
+    # and "min" is the floor exactly as in Ansible - which means
     # `!all` still yields the min set, while `!all,!min` (or a bare
     # `!min`) yields nothing but the gather_subset/module_setup meta
     # keys, live-verified against 2.19.4.
@@ -318,7 +318,7 @@ module Krikri
     # Subsetting exists to skip the EXPENSIVE families: `!hardware` avoids
     # reading every block device, `!mounts` avoids statting every mount.
     def gather_facts(subset : Array(String) = [] of String, remote_connection : Bool = false, gather_timeout : Int64? = nil, fact_path : String? = DEFAULT_FACT_PATH) : FactSet
-      # No tokens at all means real Ansible's argument-spec default
+      # No tokens at all means Ansible's argument-spec default
       # gather_subset=["all"], not a bare "min" resolution.
       subset = ["all"] if subset.empty?
       families = resolve_enabled_families(subset)
@@ -348,13 +348,13 @@ module Krikri
         facts["ansible_local"] = gather_local_facts(fact_path)
       end
 
-      # network is NOT timeout-guarded in real Ansible either - its
+      # network is NOT timeout-guarded in Ansible either - its
       # collector takes no gather_timeout (only hardware/mounts do, via
-      # the real module's GATHER_TIMEOUT reads and
+      # the Ansible module's GATHER_TIMEOUT reads and
       # timeout decorator), so neither does this.
       gather_network_facts(facts) if families.includes?("network")
       gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
-      # mounts rides along with hardware: real Ansible's LinuxHardware
+      # mounts rides along with hardware: Ansible's LinuxHardware
       # collector gathers mount facts itself, so `gather_subset:
       # hardware,!mount` on a real host STILL reports ansible_mounts
       # (podman-diff setup case W3) - only dropping hardware (or min-only
@@ -372,10 +372,10 @@ module Krikri
       facts
     end
 
-    # gather_timeout for the families real Ansible guards: the family
+    # gather_timeout for the families Ansible guards: the family
     # collects into a scratch hash inside its own fiber, and a result
     # that doesn't land within *gather_timeout* seconds (real default:
-    # 10, the real module's DEFAULT_GATHER_TIMEOUT) is
+    # 10, the Ansible module's DEFAULT_GATHER_TIMEOUT) is
     # dropped with a warning instead of failing the module - exactly
     # real LinuxHardware's "No mount facts were gathered due to
     # timeout." warning path. An overrun fiber cannot be killed in
@@ -416,7 +416,7 @@ module Krikri
       facts["ansible_hostname"] = hostname
       facts["ansible_nodename"] = hostname
 
-      # Real Ansible computes `ansible_fqdn` via Python's
+      # Ansible computes `ansible_fqdn` via Python's
       # `socket.getfqdn()`, which is NOT `hostname -f`: it forward-resolves
       # the hostname to an address, then REVERSE-resolves that address, and
       # returns the first of the reverse lookup's canonical name + aliases
@@ -425,7 +425,7 @@ module Krikri
       # (oasis_roles.hostname's own pattern, found live): reverse-resolving
       # 127.0.0.1 there yields "localhost localhost.localdomain", and the
       # dotless "localhost" is skipped in favor of "localhost.localdomain",
-      # so real ansible-playbook reports ansible_fqdn as
+      # so ansible-playbook reports ansible_fqdn as
       # "localhost.localdomain" - and keeps re-reporting changed on the
       # role's hostname:/blockinfile: tasks every run - while `hostname -f`
       # (a FORWARD lookup of the queried name) echoed the short name back,
@@ -436,7 +436,7 @@ module Krikri
       # minimal container image with no DNS setup), where getent gives us
       # nothing to reverse-resolve and `hostname -f` fails outright to
       # empty stdout - there it still lands on the plain hostname, the
-      # same fallback real Ansible's getfqdn itself documents.
+      # same fallback Ansible's getfqdn itself documents.
       fqdn = ""
       ip = capture("getent", ["ahosts", hostname]).split("\n").first?.try(&.split.first?)
       unless ip.nil? || ip.empty?
@@ -453,7 +453,7 @@ module Krikri
       fqdn = hostname if fqdn.empty?
       facts["ansible_fqdn"] = fqdn unless fqdn.empty?
 
-      # Real Ansible's own domain computation - Python's
+      # Ansible's own domain computation - Python's
       # `'.'.join(fqdn.split('.')[1:])` - ALWAYS sets a value, defaulting
       # to the empty string when the fqdn has no dot at all (exactly the
       # dotless-fallback case just above); it never leaves ansible_domain
@@ -462,7 +462,7 @@ module Krikri
       # referencing `{{ ansible_domain }}` (imntreal.smallstep_ca's own
       # `Initialize CA` task, one line past the ansible_fqdn fix above)
       # still failed "'ansible_domain' is undefined" instead of getting
-      # real Ansible's own empty-string default.
+      # Ansible's own empty-string default.
       domain = fqdn.includes?(".") ? fqdn.sub(/^#{Regex.escape(hostname)}\./, "") : ""
       facts["ansible_domain"] = domain
     end
@@ -498,14 +498,14 @@ module Krikri
       lsb_facts["release"] = lsb_info["DISTRIB_RELEASE"] if lsb_info["DISTRIB_RELEASE"]?
       lsb_facts["codename"] = lsb_info["DISTRIB_CODENAME"] if lsb_info["DISTRIB_CODENAME"]?
       if release = lsb_facts["release"]?
-        # Real Ansible's LSBFactCollector derives major_release from release
+        # Ansible's LSBFactCollector derives major_release from release
         # whenever the lsb dict has a release at all (lsb.py:
         # `lsb_facts['major_release'] = lsb_facts['release'].split('.')[0]`),
         # so a dotless release string passes through verbatim - live check
         # `ansible localhost -m setup -a filter=ansible_lsb` on LMDE 7
         # reports release "7" alongside major_release "7". Without the key a
         # role's `when: ansible_lsb.major_release|int >= 16` raised
-        # "'ansible_lsb.major_release' is undefined" where real Ansible's
+        # "'ansible_lsb.major_release' is undefined" where Ansible's
         # when: passed cleanly (round900297 avnes.plank).
         lsb_facts["major_release"] = release.partition('.').first
       end
@@ -532,9 +532,9 @@ module Krikri
 
           # OS family. A DERIVATIVE distro (Linux Mint, Pop!_OS, Amazon
           # Linux, ...) is not in the list above, and falling through to
-          # "Linux" is wrong: real Ansible reports the family of the distro
+          # "Linux" is wrong: Ansible reports the family of the distro
           # it derives from, which /etc/os-release states in ID_LIKE.
-          # Verified on LMDE 7 (ID=linuxmint, ID_LIKE=debian): real Ansible
+          # Verified on LMDE 7 (ID=linuxmint, ID_LIKE=debian): Ansible
           # says Debian, this said "Linux" - so every
           # `when: ansible_os_family == "Debian"` gate in every role
           # silently skipped, and an OS-keyed `vars-{{ ansible_os_family
@@ -556,14 +556,14 @@ module Krikri
           facts["ansible_distribution_version"] = version
           version_parts = version.split(".")
           facts["ansible_distribution_major_version"] = version_parts.first
-          # Real Ansible's distribution collector always reports the minor
+          # Ansible's distribution collector always reports the minor
           # segment too, as "" when VERSION_ID carries no dot at all (Debian's
           # "12") - never omits the key (real W2 min output carries it on
           # every host, podman-diff setup case). Previously missing entirely.
           facts["ansible_distribution_minor_version"] = version_parts[1]? || ""
         end
 
-        # Real Ansible's DistributionFactCollector always sets this fact,
+        # Ansible's DistributionFactCollector always sets this fact,
         # falling back to "" when the OS has no release codename at all
         # (RHEL-family /etc/os-release ships no VERSION_CODENAME, unlike
         # Ubuntu/Debian) - never leaves it genuinely undefined. Previously
@@ -577,14 +577,14 @@ module Krikri
         # 179) on Rocky 9.6.
         facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? || ""
 
-        # Real Ansible computes the generic distro/version/release facts
+        # Ansible computes the generic distro/version/release facts
         # first and then lets the matching distribution-FILE parser override
         # them - the order matters, since several of those branches set a
         # release/version of their own that must win over the os-release
         # values just written above. Only the Debian-family parser is ported
         # (see PluginHelpers::DistributionFacts): it is where every
         # derivative display name lives, and the RedHat/SUSE names this
-        # engine already emits from ID were verified to match real Ansible
+        # engine already emits from ID were verified to match Ansible
         # as-is.
         if raw = os_release_content
           if overrides = Krikri::PluginHelpers::DistributionFacts.refine_debian(raw)
@@ -595,19 +595,19 @@ module Krikri
           end
         end
 
-        # Real Ansible's distribution-FILE facts (see
+        # Ansible's distribution-FILE facts (see
         # DistributionFacts.distribution_file_facts for the ported walk). Found
         # missing via cloudalchemy.process_exporter (round 195): its
         # with_first_found vars list keys off
         # `{{ ansible_distribution_file_variety | lower }}.yml` → redhat.yml on
         # Rocky; with the keys never set here the template raised
         # "'ansible_distribution_file_variety' is undefined" and the task
-        # failed where real Ansible rc=0'd. The parse's own distribution
+        # failed where Ansible rc=0'd. The parse's own distribution
         # override is the real-Ansible quirk where ansible_distribution on
         # Rocky comes from /etc/redhat-release's first token ("Rocky"), not
         # the os-release ID - os_family re-derivation follows it, falling back
         # to ID_LIKE for names family_for doesn't know (e.g. "Rocky Linux"
-        # from an NA-entry parse) exactly like real Ansible's own order.
+        # from an NA-entry parse) exactly like Ansible's own order.
         if file_facts = Krikri::PluginHelpers::DistributionFacts.distribution_file_facts(os_info["ID"]? || "")
           file_facts.each { |key, value| facts[key] = value }
           if refined = file_facts["distribution"]?
@@ -625,7 +625,7 @@ module Krikri
         end
       end
 
-      # ansible_lsb - real Ansible's LSBFactCollector (via `lsb_release`, or a
+      # ansible_lsb - Ansible's LSBFactCollector (via `lsb_release`, or a
       # parse of /etc/lsb-release when the command is absent). Only Ubuntu
       # ships /etc/lsb-release by default among the distros this project
       # targets - entirely unimplemented before, so `ansible_facts['lsb']`
@@ -634,9 +634,9 @@ module Krikri
       # buluma.fish's own Ubuntu apt-repo task (`{{ ansible_facts['lsb'].
       # codename | lower }}` in the PPA's `deb` line): the empty codename
       # left a malformed sources.list entry ("Malformed entry ... (Component)"),
-      # crashing `apt-get update` outright on a role real Ansible installs
+      # crashing `apt-get update` outright on a role Ansible installs
       # cleanly.
-      # Real Ansible's LSBFactCollector unconditionally sets
+      # Ansible's LSBFactCollector unconditionally sets
       # `facts_dict['lsb'] = lsb_facts` at the end of `collect()`
       # (facts/system/lsb.py) even when lsb_facts stayed `{}` (no
       # `lsb_release` binary AND no /etc/lsb-release) - `ansible_facts
@@ -644,11 +644,11 @@ module Krikri
       # absent key. This previously only set the fact when /etc/lsb-
       # release existed, so `ansible_facts['lsb'] is defined` was False
       # on distros without it (Debian without lsb-release installed) -
-      # real Ansible evaluates the same `is defined` as True there and
+      # Ansible evaluates the same `is defined` as True there and
       # moves on to the next `when:` clause. Found benchmarking
       # githubixx.ansible_role_wireguard's own "Setup for Raspbian" task
       # (`when: ansible_facts['lsb'] is defined and ansible_facts['lsb']
-      # ['id'] == "Raspbian"`) - real ansible-playbook actually hard-
+      # ['id'] == "Raspbian"`) - ansible-playbook actually hard-
       # fails evaluating the second clause ('dict' object has no
       # attribute 'id', since lsb_facts has no 'id' key at all on
       # Debian), krikri silently skipped instead.
@@ -659,7 +659,7 @@ module Krikri
 
       facts["ansible_system"] = "Linux"
 
-      # ansible_machine_id - real Ansible reads /etc/machine-id (falling back to
+      # ansible_machine_id - Ansible reads /etc/machine-id (falling back to
       # /var/lib/dbus/machine-id) and strips the trailing newline. Roles gate
       # re-gather guards on its presence (linux-system-roles/journald's `when:
       # __journald_required_facts | difference(ansible_facts.keys() | list) |
@@ -676,7 +676,7 @@ module Krikri
       # Ansible's ServiceMgrFactCollector chain, in its own order:
       # PID 1's comm first ("init" and anything ending in "sh" - a
       # container's shell - is untrusted and falls through to the
-      # Linux fallbacks, per real Ansible's own comment), then its
+      # Linux fallbacks, per Ansible's own comment), then its
       # proc_1_map for custom inits, then systemctl presence + the
       # sd_booted canaries, upstart's initctl+/etc/init, /sbin/openrc,
       # the OFFLINE systemd check (systemctl present + /sbin/init
@@ -686,9 +686,9 @@ module Krikri
       # /etc/init.d for sysvinit, /etc/dinit.d for dinit, and finally
       # the generic "service" fallback. Previously this only checked
       # the canary dir and reported "sysvinit" for every container,
-      # diverging from real Ansible in exactly the environments where
+      # diverging from Ansible in exactly the environments where
       # roles gate systemd-only tasks on the fact. Found via an ad-hoc
-      # CLI comparison sweep against real ansible, 2026-09-13.
+      # CLI comparison sweep against Ansible, 2026-09-13.
       proc_1 = begin
         File.read("/proc/1/comm").strip
       rescue
@@ -721,7 +721,7 @@ module Krikri
       end
       facts["ansible_service_mgr"] = service_mgr
 
-      # ansible_systemd.version / .features - real Ansible parses these from
+      # ansible_systemd.version / .features - Ansible parses these from
       # `systemctl --version`'s two lines (version number on line 1, feature
       # flags on line 2+). Roles gate systemd-feature-specific config on the
       # version (dev-sec's ssh_hardening and konstruktoid's resolved.conf.j2
@@ -741,13 +741,13 @@ module Krikri
         end
       end
 
-      # apparmor.status - real Ansible's own ApparmorFactCollector just
+      # apparmor.status - Ansible's own ApparmorFactCollector just
       # checks for /sys/kernel/security/apparmor's existence (not whether any
       # profile is actually enforcing) - "enabled" if present, "disabled"
-      # otherwise, matched exactly (the real module
+      # otherwise, matched exactly (the Ansible module
       # apparmor.py). Entirely missing before: found via robertdebock.vault's
       # own `when: ansible_apparmor.status == "enabled"` guard on its
-      # `aa-enforce` hardening task, which real Ansible ran (real host has
+      # `aa-enforce` hardening task, which Ansible ran (real host has
       # AppArmor active) and this engine always silently skipped instead,
       # since the undefined fact made the `when:` false regardless of the
       # host's real AppArmor state.
@@ -755,7 +755,7 @@ module Krikri
       apparmor_facts["status"] = Dir.exists?("/sys/kernel/security/apparmor") ? "enabled" : "disabled"
       facts["ansible_apparmor"] = apparmor_facts
 
-      # ansible_fips - real Ansible ALWAYS populates this, as a genuine
+      # ansible_fips - Ansible ALWAYS populates this, as a genuine
       # boolean: true only when /proc/sys/crypto/fips_enabled reads
       # exactly "1", false otherwise (file missing, unreadable, any
       # other content). Entirely missing before - found via
@@ -766,14 +766,14 @@ module Krikri
       # undefined the ternary rendered the literal text "undefined"
       # into every host line - postgresql.service then refused to start
       # ('invalid authentication method "undefined"') after a perfectly
-      # successful initdb, while real Ansible's run of the identical
+      # successful initdb, while Ansible's run of the identical
       # role succeeded end to end. A JSON bool, not the "False"-string
       # shape some other facts use here: a string "False" is truthy
       # under Jinja2 semantics and ternary would then pick the FIPS
       # branch on every host.
       facts["ansible_fips"] = read_file_stripped("/proc/sys/crypto/fips_enabled") == "1"
 
-      # ansible_selinux.status - real Ansible's SelinuxFactCollector
+      # ansible_selinux.status - Ansible's SelinuxFactCollector
       # decides this by loading
       # libselinux.so.1 via ctypes and calling is_selinux_enabled():
       # library absent -> 'Missing selinux Python library'; library
@@ -781,10 +781,10 @@ module Krikri
       # active -> 'enabled' (+ mode/config_mode/type/policyvers). The gate
       # here used to be the `getenforce` BINARY instead - that ships in
       # policycoreutils, which stock Ubuntu does NOT install, while
-      # Ubuntu's libselinux1 (the shared library real Ansible actually
+      # Ubuntu's libselinux1 (the shared library Ansible actually
       # loads) IS a base dependency even on hosts that never use SELinux -
       # so on any stock Ubuntu target krikri reported 'Missing selinux
-      # Python library' where real Ansible correctly reports 'disabled',
+      # Python library' where Ansible correctly reports 'disabled',
       # breaking linux-system-roles.selinux's own `when:
       # ansible_facts['selinux']['status'] == "disabled"` warn task
       # (main.yml ~105, round 952352). Kernel-side enablement is probed
@@ -846,17 +846,17 @@ module Krikri
       userspace = arch if userspace.empty?
       facts["ansible_userspace_architecture"] = userspace unless userspace.empty?
 
-      # ansible_userspace_bits ("64" / "32") - real Ansible derives this from
+      # ansible_userspace_bits ("64" / "32") - Ansible derives this from
       # getconf LONG_BIT (found via gantsign.ansible-role-golang's
       # vars/architecture/{{ ansible_facts.architecture }}-{{ userspace_bits }}.yml
-      # include chain, which real Ansible resolves and krikri-playbook didn't).
+      # include chain, which Ansible resolves and krikri-playbook didn't).
       long_bits = capture("getconf", ["LONG_BIT"])
       long_bits = "64" if long_bits.empty? && arch =~ /64/
       long_bits = "32" if long_bits.empty? && !arch.empty?
       facts["ansible_userspace_bits"] = long_bits unless long_bits.empty?
     end
 
-    # Whether libselinux.so.1 - the shared library real Ansible's
+    # Whether libselinux.so.1 - the shared library Ansible's
     # SelinuxFactCollector loads via ctypes - is present on this host.
     # ldconfig's cache is the same lookup the dynamic loader performs for
     # CDLL; the multiarch globs cover minimal targets where the ldconfig
@@ -872,20 +872,20 @@ module Krikri
     end
 
     # Detect whether we're running inside a container/VM, following the same
-    # heuristics real Ansible's fact gathering uses. Returns the virtualization
+    # heuristics Ansible's fact gathering uses. Returns the virtualization
     # type name (e.g. "docker", "lxc", "kvm", "xen"), or "None" (the exact
-    # string real Ansible uses) when running on bare metal / a plain host.
+    # string Ansible uses) when running on bare metal / a plain host.
     # ansible_pkg_mgr / ansible_facts.pkg_mgr - which package manager real
     # Ansible's own pkg_mgr.py fact module reports, entirely unset before this
     # (found via openstack.ansible-hardening's own `include_tasks: "{{
     # ansible_facts['pkg_mgr'] }}.yml"` - the role's main OS-dispatch point,
     # resolving to the literal "undefined.yml" and failing the include
     # outright, taking the rest of that STIG control file's tasks down with
-    # it). Real Ansible's own detection checks a longer, more exhaustive list
+    # it). Ansible's own detection checks a longer, more exhaustive list
     # of package-manager binary paths and has extra dnf-vs-yum-symlink
     # disambiguation; this covers the package managers real roles actually
     # gate on (apt/dnf/yum/zypper/pacman/apk/pkgng), checked in the same
-    # dnf-before-yum priority real Ansible uses so a modern RHEL system
+    # dnf-before-yum priority Ansible uses so a modern RHEL system
     # (where /usr/bin/yum is often just a symlink to dnf) reports "dnf".
     def detect_pkg_mgr : String
       candidates = {
@@ -920,8 +920,8 @@ module Krikri
         # Ignore read failures; fall through to the sysfs/command probes.
       end
 
-      # PID 1's own `container=` environment variable - real Ansible's
-      # `LinuxVirtual#get_virtual_facts` checks this (the real module
+      # PID 1's own `container=` environment variable - Ansible's
+      # `LinuxVirtual#get_virtual_facts` checks this (the Ansible module
       # virtual/linux.py) BEFORE falling back to `systemd-detect-virt`,
       # and it is what actually makes podman detection reliable: podman
       # (and systemd-nspawn, and older LXC) sets this unconditionally,
@@ -930,11 +930,11 @@ module Krikri
       # iteration fix via `jtyr.motd`: a minimal podman container with
       # no systemd package installed has neither `systemd-detect-virt`
       # nor `/run/systemd/container`, so the two checks below this one
-      # both fell through to "None" while real ansible-playbook (whose
+      # both fell through to "None" while ansible-playbook (whose
       # primary signal is this env var, not the external binary)
       # correctly reported "podman"/"guest". `/proc/1/environ` is
       # NUL-separated, not newline-separated, and reading it needs root
-      # (same requirement real Ansible's own comment notes).
+      # (same requirement Ansible's own comment notes).
       begin
         if File.exists?("/proc/1/environ")
           if virt = parse_container_env(File.read("/proc/1/environ"))
@@ -971,7 +971,7 @@ module Krikri
     end
 
     # Parses PID 1's `/proc/1/environ` content (NUL-separated key=value
-    # entries) for a `container=` marker, matching real Ansible's own
+    # entries) for a `container=` marker, matching Ansible's own
     # `container=lxc`/`container=podman`/generic-`container=.` priority
     # order. Only `lxc` and
     # `podman` get their own specific virtualization_type - EVERY other
@@ -985,7 +985,7 @@ module Krikri
     # having been built via `podman build`/Containerfile, even though
     # Kata boots a real guest kernel with no actual container runtime
     # inside it) reported "docker" - matching a role's `virtualization_
-    # type == "docker"` when: check that real Ansible (which reports
+    # type == "docker"` when: check that Ansible (which reports
     # the generic "container") correctly left false. Found benchmarking
     # juju4.auditd's own "Not in container" block guard. Pulled out of
     # #detect_virtualization as a pure function so it's testable without
@@ -1038,7 +1038,7 @@ module Krikri
     end
 
     def gather_network_facts(facts)
-      # Real Ansible's LinuxNetwork.populate bails out to an empty dict
+      # Ansible's LinuxNetwork.populate bails out to an empty dict
       # BEFORE any gathering when `get_bin_path('ip')` is None - no
       # interfaces, no default_ipv4, no addresses, nothing (network/
       # linux.py: "if ip_path is None: return network_facts"). A
@@ -1054,7 +1054,7 @@ module Krikri
       # "1.0.0.0 via 192.168.1.1 dev eth0 src 192.168.1.50 uid 0" - $3 is the
       # gateway (only present when the route actually has a "via" hop), $7
       # the source address (this host's own IP on the default route), $5 the
-      # outbound interface name. Real Ansible's `ansible_default_ipv4` fact
+      # outbound interface name. Ansible's `ansible_default_ipv4` fact
       # includes all three (plus more fields this doesn't bother gathering) -
       # `interface` specifically is what konstruktoid-hardening's
       # sysctl.ipv6.conf.j2 template reads (`ansible_facts.default_ipv4.
@@ -1078,7 +1078,7 @@ module Krikri
         default_ipv4["interface"] = interface unless interface.empty?
         default_ipv4["gateway"] = gateway unless gateway.empty?
 
-        # `network` and `netmask` - real Ansible's default_ipv4 always
+        # `network` and `netmask` - Ansible's default_ipv4 always
         # carries the subnet address ("192.168.1.0") and dotted netmask
         # ("255.255.255.0") of the default route's interface; both come
         # from the same per-interface inet line (`address/prefix`) real
@@ -1107,7 +1107,7 @@ module Krikri
         facts["ansible_all_ipv4_addresses"] = addresses
       end
 
-      # ansible_all_ipv6_addresses - real Ansible's LinuxNetwork collector
+      # ansible_all_ipv6_addresses - Ansible's LinuxNetwork collector
       # ALWAYS emits this fact (an empty list on a host with no IPv6
       # addresses, never simply absent) and appends every inet6 address it
       # parses EXCEPT ::1 (network/linux.py's own `if not address == '::1'`
@@ -1118,13 +1118,13 @@ module Krikri
       # difference(ansible_facts.keys()|list) | length > 0` with
       # all_ipv6_addresses among the required facts, so the key's permanent
       # absence made that difference non-empty on every run and re-ran a
-      # setup task real Ansible skips.
+      # setup task Ansible skips.
       addresses6 = `ip -6 addr show 2>/dev/null | grep 'inet6 ' | awk '{print $2}' | cut -d/ -f1`.split("\n").map(&.strip).reject(&.empty?)
       addresses6.reject! { |address| address == "::1" }
       facts["ansible_all_ipv6_addresses"] = addresses6
 
       # ansible_interfaces - a flat list of every network interface NAME
-      # (not addresses) real Ansible's own LinuxNetwork fact module
+      # (not addresses) Ansible's own LinuxNetwork fact module
       # always sets. Entirely missing before this, found benchmarking
       # brianshumate.consul: its own "Check specified ethernet
       # interface" task does `when: consul_iface in ansible_interfaces`
@@ -1132,15 +1132,15 @@ module Krikri
       # evaluating conditional: 'ansible_interfaces' is undefined" and
       # crashed the whole run outright instead of just evaluating the
       # membership test. `/sys/class/net` lists exactly the interface
-      # names real Ansible's own netifaces-based collection reports.
+      # names Ansible's own netifaces-based collection reports.
       if Dir.exists?("/sys/class/net")
         interfaces = Dir.children("/sys/class/net").sort
         facts["ansible_interfaces"] = interfaces
 
-        # Per-interface facts - real Ansible's own LinuxNetwork collector
+        # Per-interface facts - Ansible's own LinuxNetwork collector
         # reports every interface BOTH as `ansible_interfaces` entries and
         # as a top-level `ansible_<iface>` dict (ansible_eth0, ansible_ens3,
-        # ...) carrying device/type/mtu/macaddress/ipv4/ipv6. Real Ansible
+        # ...) carrying device/type/mtu/macaddress/ipv4/ipv6. Ansible
         # then flattens those into the variable namespace
         # (inject_facts_as_vars), which is what makes the dynamic
         # per-interface idiom work: ricsanfre.dnsmasq's own
@@ -1157,11 +1157,11 @@ module Krikri
       end
     end
 
-    # One interface's `ansible_<iface>` dict - a subset of real Ansible's
+    # One interface's `ansible_<iface>` dict - a subset of Ansible's
     # LinuxNetwork collector's shape (device/type/mtu/macaddress/ipv4/
     # ipv4_secondaries/ipv6), built from sysfs plus `ip -o addr show`.
     # ipv4 carries gateway only on the interface holding the default
-    # route, matching real Ansible's output there.
+    # route, matching Ansible's output there.
     private def gather_interface_facts(iface : String, default_interface : String, default_gateway : String) : Hash(String, JSON::Any)
       iface_facts = {} of String => JSON::Any
       iface_facts["device"] = JSON::Any.new(iface)
@@ -1274,7 +1274,7 @@ module Krikri
         end
 
         # The namespaced `ansible_memory_mb` fact (surfaces as
-        # `ansible_facts.memory_mb`), mirroring real ansible-core's Linux
+        # `ansible_facts.memory_mb`), mirroring ansible-core's Linux
         # hardware collector: real{total,used,free}, nocache{free,used},
         # swap{total,free,used,cached}, all MB (kB // 1024), computed
         # values omitted when their inputs are absent. Found via
@@ -1332,12 +1332,12 @@ module Krikri
           facts["ansible_processor_cores"] = match[1].to_i64
         end
 
-        # ansible_processor_threads_per_core - real ansible-core's Linux
+        # ansible_processor_threads_per_core - ansible-core's Linux
         # hardware collector ALWAYS sets this (siblings / cpu cores, its
         # get_cpu_facts logic), so roles like marvel-nccr.slurm render it
         # straight into their configs (templates/slurm.conf); with the
         # fact never set, that template died with "is undefined" and
-        # real Ansible completes. Only set when both values parse and
+        # Ansible completes. Only set when both values parse and
         # cpu cores is non-zero - same independently-conditional style
         # as ansible_processor_cores above.
         siblings_match = cpuinfo.match(/siblings\s+:\s+(\d+)/)
@@ -1350,14 +1350,14 @@ module Krikri
         end
       end
 
-      # ansible_processor_nproc - real Ansible's processor collector
+      # ansible_processor_nproc - Ansible's processor collector
       # reports the total logical CPU count (its os.cpu_count()) alongside
       # the per-socket facts: a `filter: ansible_processor*` on a real
       # host returns it (podman-diff setup case W6 - real 6 keys, this
       # engine 5). Missing entirely before.
       facts["ansible_processor_nproc"] = System.cpu_count.to_i64
 
-      # ansible_uptime_seconds - real Ansible's uptime collector floors
+      # ansible_uptime_seconds - Ansible's uptime collector floors
       # /proc/uptime's first field to an int; hardware family (real W3
       # carries it, min does not - podman-diff setup case). Missing
       # entirely before.
@@ -1368,12 +1368,12 @@ module Krikri
       end
       facts["ansible_uptime_seconds"] = uptime.to_i64 if uptime
 
-      # DMI facts - real Ansible's DmiFactCollector (hardware family:
+      # DMI facts - Ansible's DmiFactCollector (hardware family:
       # real W3 carries the full set, W2 min none - podman-diff setup
       # case). The two this engine already had (ansible_system_vendor /
       # ansible_product_version) previously sat in the MIN gatherer,
       # making `!all` diverge from real by two keys. Every id file falls
-      # back to "NA" when missing/unreadable, exactly like real's
+      # back to "NA" when missing/unreadable, exactly like Ansible's
       # collector (sbaerlocher.qemu-guest-agent's `when:
       # ansible_system_vendor == 'QEMU'` and robertdebock.bios_update's
       # rescue-block reference are the original consumers - see
@@ -1405,9 +1405,9 @@ module Krikri
         facts["ansible_#{fact}"] = value.empty? ? "NA" : value
       end
 
-      # ansible_form_factor - real Ansible maps /sys/class/dmi/id/
+      # ansible_form_factor - Ansible maps /sys/class/dmi/id/
       # chassis_type's number through its SMBIOS chassis table; "NA" when
-      # unreadable/unmapped, matching real's fallback. Missing entirely
+      # unreadable/unmapped, matching Ansible's fallback. Missing entirely
       # before - podman-diff setup case (real W3).
       chassis_type = begin
         File.read("/sys/class/dmi/id/chassis_type").strip
@@ -1417,7 +1417,7 @@ module Krikri
       form_factor = chassis_type.to_i?.try { |type_id| CHASSIS_TYPES[type_id]? } || "NA"
       facts["ansible_form_factor"] = form_factor
 
-      # ansible_lvm - real Ansible's LvmFactCollector always reports the
+      # ansible_lvm - Ansible's LvmFactCollector always reports the
       # lvs/vgs dicts (empty when the binaries are absent or find nothing
       # - real W3 carries the key even inside a container with no LVM
       # installed). Missing entirely before - podman-diff setup case.
@@ -1442,7 +1442,7 @@ module Krikri
         "vgs" => JSON::Any.new(vgs),
       } of String => JSON::Any
 
-      # ansible_device_links - real Ansible's device-links collector scans
+      # ansible_device_links - Ansible's device-links collector scans
       # /dev/disk/by-{id,label,uuid}: each subdict maps a link name to the
       # device it points at, and "disks" inverts that to device -> [link
       # names]. Missing entirely before - podman-diff setup case (real
@@ -1487,12 +1487,12 @@ module Krikri
     end
 
     # Block-device facts - the `ansible_devices` dict (keyed by device name)
-    # real ansible-core's Linux hardware collector ALWAYS populates by
+    # ansible-core's Linux hardware collector ALWAYS populates by
     # scanning /sys/block/*. Found via Tecnativa.hetzner_rescue_installimage's
     # templates/autosetup.j2 (`{% for device in ansible_devices if
     # device.startswith("sd") ... %}`): with the fact never set, the loop died
     # with "can't iterate over undefined" and killed the role's "configure
-    # installation" task, which real Ansible completes (iterating a missing
+    # installation" task, which Ansible completes (iterating a missing
     # fact is never the case there - its setup module defines the key even as
     # an empty dict). Deliberately NOT conditioned on non-empty, unlike
     # ansible_mounts above: templates need the key to exist and be iterable
@@ -1503,7 +1503,7 @@ module Krikri
 
       begin
         Dir.each_child("/sys/block") do |name|
-          # Real Ansible's DEVICE_EXCLUDE_PATTERNS skips loopback and ram
+          # Ansible's DEVICE_EXCLUDE_PATTERNS skips loopback and ram
           # devices entirely.
           next if name.starts_with?("loop") || name.starts_with?("ram")
 
@@ -1564,7 +1564,7 @@ module Krikri
       facts["ansible_devices"] = devices
     end
 
-    # Real Ansible renders device/partition sizes as human strings
+    # Ansible renders device/partition sizes as human strings
     # ("111.79 GB") via its human_size() helper - 1024-based units, two
     # decimals, starting from bytes (sysfs size is in 512-byte sectors).
     private def human_block_size(sectors : Int64) : String
@@ -1602,7 +1602,7 @@ module Krikri
           source = fields[sep + 2]?
           next if fstype.nil? || source.nil?
 
-          # Real Ansible's own device-path filter (hardware/linux.py
+          # Ansible's own device-path filter (hardware/linux.py
           # get_mount_facts): a mount only counts when its device looks
           # like a local device path ("/", "\\" prefix) or an NFS
           # export (":/" in device), and never when fstype is "none".
@@ -1646,9 +1646,9 @@ module Krikri
         end
       end
 
-      # Real Ansible ALWAYS carries the ansible_mounts key once the
+      # Ansible ALWAYS carries the ansible_mounts key once the
       # hardware/mounts family ran - even when the keep-filter leaves the
-      # list empty (in a container real's own device-path filter drops
+      # list empty (in a container Ansible's own device-path filter drops
       # every entry but the key stays, as an empty list; podman-diff
       # setup_edge_cases W3/W5 diff on the missing KEY, facts_len off by
       # one, not on the entries). Omitting it instead made any
@@ -1658,13 +1658,13 @@ module Krikri
       facts["ansible_mounts"] = mounts
     end
 
-    # Real Ansible's own keep-or-skip rule for a mount's device field
+    # Ansible's own keep-or-skip rule for a mount's device field
     # (hardware/linux.py get_mount_facts, live-verified): local device
     # paths ("/dev/...", "/...") and NFS-style exports ("host:/path")
     # are kept; pseudo-filesystem devices (overlay, proc, tmpfs, udev,
     # cgroup, ...) are dropped, as is any fstype of exactly "none".
     # Deliberately NOT private: the podman-diff setup_edge_cases_v2 FS3
-    # divergence (real reports an empty ansible_mounts inside a
+    # divergence (Ansible reports an empty ansible_mounts inside a
     # container, krikri reported every /proc/mountinfo entry) is pinned
     # per-rule in facts_mount_network_scoping_spec.cr against this.
     def real_mount_device_kept?(device : String, fstype : String) : Bool
@@ -1672,7 +1672,7 @@ module Krikri
       device.starts_with?('/') || device.starts_with?('\\') || device.includes?(":/")
     end
 
-    # Real Ansible's own `ansible_facts['mounts']` entries always include
+    # Ansible's own `ansible_facts['mounts']` entries always include
     # space/inode statistics (`size_total`/`size_available`/`block_size`/
     # `block_total`/`block_available`/`block_used`/`inode_total`/
     # `inode_available`/`inode_used`, from `os.statvfs()` on each mountpoint)
@@ -1696,7 +1696,7 @@ module Krikri
       return {} of String => Int64 | String unless LibC.statvfs(mountpoint, pointerof(buf)) == 0
 
       # `stat -f %S` reports the fundamental block size, f_frsize - which is
-      # also what real Ansible's os.statvfs() multiplication uses - not
+      # also what Ansible's os.statvfs() multiplication uses - not
       # f_bsize (the preferred I/O size, which may differ, e.g. on some
       # network filesystems).
       block_size = buf.f_frsize.to_i64
@@ -1706,7 +1706,7 @@ module Krikri
       inode_total = buf.f_files.to_i64
       inode_free = buf.f_favail.to_i64
 
-      # Real Ansible's own ansible_mounts entries carry the space/inode
+      # Ansible's own ansible_mounts entries carry the space/inode
       # stats as INTEGERS, not strings - roles do real arithmetic on them
       # (`{{ (mnt.size_total / 1024 / 1024 / 1024) | round(1) }}`,
       # mullholland.motd's motd.j2, round 300197), which failed with
@@ -1727,11 +1727,11 @@ module Krikri
     end
 
     def gather_python_facts(facts, remote_connection : Bool = false)
-      # Real Ansible's PythonFactCollector exposes ansible_facts['python'] as
+      # Ansible's PythonFactCollector exposes ansible_facts['python'] as
       # a single nested dict (version/version_info/executable/
       # has_sslcontext/type) - not the flat ansible_python (path string) /
       # ansible_python_version (bare version string) this used to invent,
-      # which don't exist under those names in real Ansible at all. Asking
+      # which don't exist under those names in Ansible at all. Asking
       # the interpreter to introspect itself (like Ansible's own collector
       # does, running inside Python) is more robust than re-deriving each
       # field by shelling out separately.
@@ -1769,7 +1769,7 @@ module Krikri
         "type"           => parsed["type"],
       } of String => JSON::Any
 
-      # Real Ansible also exposes a separate flat `ansible_python_version`
+      # Ansible also exposes a separate flat `ansible_python_version`
       # ("major.minor.micro", e.g. "3.10.12") alongside the nested `ansible_python`
       # dict above - both co-exist in real `setup` output. Found benchmarking
       # robertdebock/prometheus.prometheus.alertmanager round 134:
@@ -1781,7 +1781,7 @@ module Krikri
       # modern Ubuntu) `python-apt` package name.
       facts["ansible_python_version"] = "#{parsed["major"]}.#{parsed["minor"]}.#{parsed["micro"]}"
 
-      # ansible_python_interpreter - real Ansible's own flat magic var,
+      # ansible_python_interpreter - Ansible's own flat magic var,
       # but ONLY when the module is running on the CONTROLLER itself
       # (a genuine ansible_connection: local target, where it's simply
       # sys.executable) - live-verified against ansible-core 2.19.4 over
@@ -1797,7 +1797,7 @@ module Krikri
       # azavea.pip's own idiom `{{ ansible_python_interpreter if
       # ansible_python_interpreter is defined else 'python' }}` - but
       # that reasoning was never verified against a genuine remote SSH
-      # target (real ansible-core FAILS azavea.pip's task the exact same
+      # target (ansible-core FAILS azavea.pip's task the exact same
       # way krikri did before 0.9.652, both engines identically broken -
       # not a divergence at all). Always-defining it instead created a
       # NEW, real divergence: geerlingguy.mysql's own `{% if 'python3' in
@@ -1810,7 +1810,7 @@ module Krikri
     end
 
     def gather_user_facts(facts)
-      # Real Ansible's setup derives these from getpwuid(getuid()), NOT from
+      # Ansible's setup derives these from getpwuid(getuid()), NOT from
       # the environment - and the difference is observable: the facts plugin
       # runs remotely inside a non-login SSH shell where USER/HOME/SHELL are
       # frequently unset, so the ENV lookups silently skipped ansible_user_id/
@@ -1836,14 +1836,14 @@ module Krikri
       facts["ansible_user_uid"] = LibC.getuid.to_i64
       facts["ansible_user_gid"] = LibC.getgid.to_i64
 
-      # Real Ansible's UserFactCollector reports the real AND effective ids
+      # Ansible's UserFactCollector reports the real AND effective ids
       # alongside these (ansible_real_user_id/ansible_real_group_id from
       # getuid(2)/getgid(2), ansible_effective_user_id/ansible_effective_
       # group_id from geteuid(2)/getegid(2)) - all four live in real min
       # output (podman-diff setup case, real W2), and the effective ids are
       # the standard root check (`when: ansible_effective_user_id == 0`);
       # with them never set that gate died with "'ansible_effective_user_id'
-      # is undefined" while real Ansible just skipped the task.
+      # is undefined" while Ansible just skipped the task.
       facts["ansible_real_user_id"] = LibC.getuid.to_i64
       facts["ansible_effective_user_id"] = LibC.geteuid.to_i64
       facts["ansible_real_group_id"] = LibC.getgid.to_i64
@@ -1871,12 +1871,12 @@ module Krikri
       facts["ansible_env"] = env unless env.empty?
     end
 
-    # /proc/cmdline facts - real Ansible's CmdLineFactCollector
+    # /proc/cmdline facts - Ansible's CmdLineFactCollector
     # part of real min output
     # (podman-diff setup case, real W2): ansible_cmdline collapses
     # duplicate keys (later token wins), ansible_proc_cmdline turns them
     # into lists, and a flag without "=" is True. Empty/missing
-    # /proc/cmdline sets NEITHER key (real's collector returns {} and
+    # /proc/cmdline sets NEITHER key (Ansible's collector returns {} and
     # skips both facts).
     def gather_cmdline_facts(facts)
       data = begin
@@ -1907,7 +1907,7 @@ module Krikri
       parsed
     end
 
-    # ansible_dns - real Ansible's DnsFactCollector
+    # ansible_dns - Ansible's DnsFactCollector
     # over /etc/resolv.conf: nameserver
     # lines append to "nameservers", domain/search/sortlist as
     # scalar/list, options as key:value or bare-True flags. The KEY is
@@ -1953,12 +1953,12 @@ module Krikri
       dns
     end
 
-    # ansible_system_capabilities / _enforced - real Ansible's
+    # ansible_system_capabilities / _enforced - Ansible's
     # SystemCapabilitiesFactCollector
     # via `capsh --print`: its "Current:" line decides both - the bare
     # "=ep" bounding set means unenforced, anything else means enforced
     # with that capability list; no capsh binary (or a failing run)
-    # leaves both keys at real's literal "N/A" defaults. Missing
+    # leaves both keys at Ansible's literal "N/A" defaults. Missing
     # entirely before - podman-diff setup case (real W2 min carries
     # both keys).
     def gather_system_capabilities_facts(facts)
@@ -1984,7 +1984,7 @@ module Krikri
     end
 
     # virtualization facts - moved out of the min gatherers into their
-    # own family: real Ansible's VirtualFactCollector runs under the
+    # own family: Ansible's VirtualFactCollector runs under the
     # 'virtual' subset, which `!all` (min only) never selects (real W2
     # min output has NO virtualization facts, W5 all does - podman-diff
     # setup case), so reporting them under min made this engine's `!all`
@@ -1997,13 +1997,13 @@ module Krikri
     # rhel7-role-hipaa (round823): its own audit-rule tasks gate on
     # `ansible_virtualization_role != "guest" or ansible_virtualization_
     # type != "docker"` (skip certain host-only audit rules on a
-    # container/VM guest) - real Ansible resolves this fine on a real
+    # container/VM guest) - Ansible resolves this fine on a real
     # cloud VM (role: "guest"), this engine raised "Error while
     # evaluating conditional: 'ansible_virtualization_role' is
     # undefined" and crashed the whole run outright instead of just
     # this one task's when:. This engine's own #detect_virtualization
     # never distinguishes hypervisor-host detection from guest
-    # detection (real Ansible's own host-side checks - a populated
+    # detection (Ansible's own host-side checks - a populated
     # /etc/xen/, a running libvirtd, etc - are rare in practice and not
     # implemented here), so "host" is never reported; every detected
     # type maps to "guest", matching the overwhelming common case (a
@@ -2016,7 +2016,7 @@ module Krikri
       facts["ansible_virtualization_tech_host"] = [] of String
     end
 
-    # ansible_is_chroot - real Ansible's IsChrootFactCollector compares
+    # ansible_is_chroot - Ansible's IsChrootFactCollector compares
     # /proc/1/root's resolved inode/device against /: same (the usual
     # case, PID 1 lives in this root) is False, different is True.
     # Missing entirely before - podman-diff setup case (real W5, all).
@@ -2028,7 +2028,7 @@ module Krikri
       facts["ansible_is_chroot"] = is_chroot
     end
 
-    # ansible_loadavg - real Ansible's LoadAvgFactCollector over
+    # ansible_loadavg - Ansible's LoadAvgFactCollector over
     # /proc/loadavg's first three fields. Missing entirely before -
     # podman-diff setup case (real W5, all).
     def gather_loadavg_facts(facts)
@@ -2042,7 +2042,7 @@ module Krikri
       } of String => JSON::Any
     end
 
-    # ansible_fibre_channel_wwn - real Ansible scans
+    # ansible_fibre_channel_wwn - Ansible scans
     # /sys/class/fc_host/*/node_name + port_name ("0x..." strings); no FC
     # adapters (containers, most VMs) yields []. The KEY is still set
     # under the subset that selects it (real W5 carries it with [] on
@@ -2064,7 +2064,7 @@ module Krikri
       facts["ansible_fibre_channel_wwn"] = wwns
     end
 
-    # ansible_iscsi_iqn - real Ansible reads the InitiatorName= line out
+    # ansible_iscsi_iqn - Ansible reads the InitiatorName= line out
     # of /etc/iscsi/initiatorname.iscsi, defaulting to "" when the file
     # (or the entry) is absent. Missing entirely before - podman-diff
     # setup case (real W5).
@@ -2081,7 +2081,7 @@ module Krikri
       facts["ansible_iscsi_iqn"] = iqn
     end
 
-    # ansible_hostnqn - real Ansible reads /etc/nvme/hostnqn ("" when
+    # ansible_hostnqn - Ansible reads /etc/nvme/hostnqn ("" when
     # missing). Missing entirely before - podman-diff setup case (real
     # W5).
     def gather_hostnqn_fact(facts)
@@ -2118,7 +2118,7 @@ module Krikri
       facts["ansible_date_time"] = date_time
     end
 
-    # fact_path - real Ansible's local facts mechanism
+    # fact_path - Ansible's local facts mechanism
     # Observed behavior: every *.fact file in
     # *fact_path* (real default /etc/ansible/facts.d) becomes a key under
     # ansible_local. Executable files are RUN and their stdout parsed;
@@ -2126,7 +2126,7 @@ module Krikri
     # ini (section-REQUIRED - a bare `key=value` with no [section] header
     # is configparser's MissingSectionHeaderError, live-verified, and
     # yields the same "error loading facts as JSON or ini - please check
-    # content:" error string real Ansible stores as the fact's value);
+    # content:" error string Ansible stores as the fact's value);
     # unparseable content is stored as that error string, never fatal.
     def gather_local_facts(fact_path : String?) : Hash(String, JSON::Any)
       local = {} of String => JSON::Any
@@ -2168,7 +2168,7 @@ module Krikri
 
     # One fact file's content: JSON first, then ini (sections become
     # nested dicts, values stay strings), else the exact error string
-    # real Ansible stores. INI parsing mirrors configparser closely
+    # Ansible stores. INI parsing mirrors configparser closely
     # enough for fact files: [section] headers are REQUIRED, `key=value`
     # (or `key: value`) pairs inside, `#`/`;` comments and blank lines
     # skipped, whitespace around keys/values stripped.
@@ -2216,7 +2216,7 @@ module Krikri
       JSON.parse(parsed.to_json)
     end
 
-    # filter - real Ansible's fnmatch (shell-style glob) filter over the
+    # filter - Ansible's fnmatch (shell-style glob) filter over the
     # TOP-LEVEL fact keys only, applied after gathering. Empty patterns
     # mean no filter (live-verified: filter="" returns everything).
     def apply_fact_filter(facts : FactSet, patterns : Array(String)) : FactSet
@@ -2274,7 +2274,7 @@ module Krikri
     # STDIN itself), and the JSON is RETURNED rather than printed, since
     # the daemon frames the response itself. `nil` means "no config at
     # all", which the standalone path can legitimately see and which
-    # means real Ansible's argument-spec defaults (gather_subset=all,
+    # means Ansible's argument-spec defaults (gather_subset=all,
     # gather_timeout=10, no filter, fact_path=/etc/ansible/facts.d).
     def run(config : JSON::Any?) : String
       params = Krikri.restore_native_param_values(config.try(&.["params"]?))
@@ -2282,14 +2282,14 @@ module Krikri
       # gather_subset: comma-separated in string form (type=list in real
       # Ansible's argument spec, whose check_type_list splits on ','
       # WITHOUT stripping - live-verified: "network, virtual" with a
-      # space FAILS the real module with "Bad subset ' virtual'"), an
+      # space FAILS the Ansible module with "Bad subset ' virtual'"), an
       # actual list when the playbook passed YAML list form, or the
       # JSON-rendered form of a native list: a `setup:
       # {gather_subset: "{{ list_var }}"}` task is a whole-single-span
       # param whose native list typing this engine's task-param wire
       # format loses (it re-serializes the list as JSON text in a
       # String field), so that JSON form has to be recovered here
-      # before falling back to the ordinary comma-split real Ansible's
+      # before falling back to the ordinary comma-split Ansible's
       # own argspec does for a genuinely scalar string. Only valid JSON
       # counts (same precedent as apt.cr/package.cr's name parsing): a
       # Python-repr-looking string keeps the comma-split, matching real
@@ -2317,13 +2317,13 @@ module Krikri
 
       facts = gather_facts(requested_subset, remote_connection, gather_timeout, fact_path)
 
-      # Real Ansible's own meta facts - every setup result carries the
+      # Ansible's own meta facts - every setup result carries the
       # requested subset list and module_setup under ansible_facts
       # (live-verified), filtered like every other top-level key.
       facts["gather_subset"] = requested_subset
       facts["module_setup"] = true
 
-      # Real Ansible stamps the interpreter its discovery resolved into
+      # Ansible stamps the interpreter its discovery resolved into
       # the result AFTER the filter applies - the FIRST setup invocation
       # per host per run carries it regardless of filter (podman-diff
       # setup case W1: `filter: krikri_no_such_fact*` on a real host
@@ -2348,7 +2348,7 @@ module Krikri
         end
       end
 
-      # Real 2.19.11's registered setup/gather_facts result key order -
+      # Ansible 2.19.11's registered setup/gather_facts result key order -
       # live-verified via `{{ r.keys() | list | to_json }}` on a
       # registered setup: task: ansible_facts, failed, changed (warnings,
       # when the module produced any, trails - krikri's gatherer emits
@@ -2375,12 +2375,12 @@ module Krikri
       }.to_json
     end
 
-    # gather_timeout - type=int in real Ansible's argument spec: arrives
+    # gather_timeout - type=int in Ansible's argument spec: arrives
     # as a JSON number or a numeric string; anything else fails the
     # module with the exact shape real check_type_int produces
     # (live-verified: `gather_timeout: "abc"` -> "argument
     # 'gather_timeout' is of type str and we were unable to convert to
-    # int: ..."). Absent means real's 10-second default.
+    # int: ..."). Absent means Ansible's 10-second default.
     private def parse_gather_timeout(params : JSON::Any?) : Int64?
       raw = params.try(&.["gather_timeout"]?) || return nil
       if n = raw.as_i64?
@@ -2395,7 +2395,7 @@ module Krikri
       nil
     end
 
-    # filter - type=list in real Ansible's argument spec: a plain string
+    # filter - type=list in Ansible's argument spec: a plain string
     # is comma-split (no strip, same as gather_subset), a YAML list
     # arrives as a JSON array. Empty/blank patterns are dropped, making
     # an empty spec "no filter" exactly as live-verified.

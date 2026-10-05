@@ -8,7 +8,7 @@ require "socket"
 # server listening there, the spec pendings instead of failing.
 #
 # Covers two real bugs found by an ad-hoc CLI comparison sweep against
-# real ansible (2026-09-13):
+# Ansible (2026-09-13):
 #
 # 1. postgresql_query flattened a multi-row SELECT's result set down to
 #    only its first row (and returned it as a bare object instead of an
@@ -17,7 +17,7 @@ require "socket"
 #
 # 2. postgresql_user unconditionally ran ALTER ROLE ... PASSWORD when a
 #    password: was given, so every repeat call reported changed: true;
-#    real Ansible diffs the desired password against the stored
+#    Ansible diffs the desired password against the stored
 #    pg_authid.rolpassword verifier and no-ops when they match.
 private def postgres_reachable? : Bool
   sock = TCPSocket.new("127.0.0.1", 15432, connect_timeout: 1)
@@ -74,7 +74,7 @@ describe "postgresql_query/postgresql_user against a real PostgreSQL server at 1
       all_rows = select_result["query_all_results"].as_a[0].as_a
       all_rows.size.must_equal(2)
       all_rows[1]["id"].as_i.must_equal(2)
-      # SELECTs never report changed (the real module's command-tag rule).
+      # SELECTs never report changed (the Ansible module's command-tag rule).
       select_result["changed"].as_bool.must_equal(false)
 
       PluginSpecHelper.run("postgresql_query", POSTGRES_LOGIN.merge({

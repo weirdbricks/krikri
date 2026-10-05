@@ -4,7 +4,7 @@ require "../minitest_helper"
 # now gets its own tmp_path subtree (concurrent make tests clobbered each
 # other's Makefile/output.txt under -p 4).
 describe "make plugin" do
-  it "runs the default target, then reports unchanged on a second identical run (real Ansible's own -q idempotency check)" do
+  it "runs the default target, then reports unchanged on a second identical run (Ansible's own -q idempotency check)" do
     Dir.mkdir_p(PluginSpecHelper.tmp_path("make"))
     File.write(File.join(PluginSpecHelper.tmp_path("make"), "Makefile"), <<-MAKEFILE)
       all: output.txt
@@ -46,7 +46,7 @@ describe "make plugin" do
     result["msg"].as_s.must_equal("missing required arguments: chdir")
   end
 
-  it "rejects target and targets together with real's mutually-exclusive wording" do
+  it "rejects target and targets together with Ansible's mutually-exclusive wording" do
     Dir.mkdir_p(PluginSpecHelper.tmp_path("make"))
     result = PluginSpecHelper.run("make", {"chdir" => PluginSpecHelper.tmp_path("make"), "target" => "all", "targets" => "all"})
 

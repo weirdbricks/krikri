@@ -4,8 +4,8 @@ require "../../src/krikri/plugin_helpers/service_mgr_fact"
 # Regression anchor for the 2026-09-13 ad-hoc CLI comparison sweep:
 # `service: name=cron state=started` in a container with no running
 # init returned changed: true "Service started" (the SysV path drove
-# the init script directly) where real Ansible failed with "Service is
-# in unknown state" - because real Ansible's service ACTION plugin
+# the init script directly) where Ansible failed with "Service is
+# in unknown state" - because Ansible's service ACTION plugin
 # dispatches on the ansible_service_mgr fact, whose collector reports
 # "systemd" for a container with the systemd package installed but not
 # running (offline check), and the systemd module then fails honestly
@@ -20,20 +20,20 @@ require "../../src/krikri/plugin_helpers/service_mgr_fact"
 # fall back to the generic service module's SysV path).
 describe Krikri::PluginHelpers::ServiceMgrFact do
   describe ".from_proc1" do
-    it "takes an identifiable PID 1 at face value, like real Ansible" do
+    it "takes an identifiable PID 1 at face value, like Ansible" do
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("systemd").must_equal("systemd")
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("sleep").must_equal("sleep")
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("supervisord").must_equal("supervisord")
     end
 
-    it "maps real Ansible's custom-init proc_1_map entries" do
+    it "maps Ansible's custom-init proc_1_map entries" do
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("procd").must_equal("openwrt_init")
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("runit-init").must_equal("runit")
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("svscan").must_equal("svc")
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("openrc-init").must_equal("openrc")
     end
 
-    it "discards 'init' - real Ansible's own comment: too many systems name it" do
+    it "discards 'init' - Ansible's own comment: too many systems name it" do
       Krikri::PluginHelpers::ServiceMgrFact.from_proc1("init").must_be_nil
     end
 
@@ -57,7 +57,7 @@ describe Krikri::PluginHelpers::ServiceMgrFact do
 
     it "runs the generic service module for every other fact value" do
       # Including values that name no module at all ("sleep") and the
-      # generic "service" fact real Ansible falls back to.
+      # generic "service" fact Ansible falls back to.
       ["sleep", "sysvinit", "service", "upstart", ""].each do |fact|
         Krikri::PluginHelpers::ServiceMgrFact.runs_systemd_module?(nil, fact).must_equal(false)
       end

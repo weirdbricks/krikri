@@ -15,7 +15,7 @@ module Krikri
       # string literal CONTAINING a `{{ }}` span (`lookup('file', "{{
       # tomcat_local_tmp_directory }}/apache-tomcat-{{ tomcat_version
       # }}.tar.gz.sha512")`) needs that inner span rendered before the
-      # lookup runs - real Ansible supports this "double templating"
+      # lookup runs - Ansible supports this "double templating"
       # (with a deprecation warning telling authors to switch to an
       # inline expression instead) rather than passing the literal
       # unrendered text to the lookup plugin. Every `evaluate_lookup_*`
@@ -57,13 +57,13 @@ module Krikri
       # Splits a lookup/query call's comma-split argument list into its
       # positional terms (including the leading lookup-type literal) and
       # its trailing `key=value`-shaped keyword arguments (`wantlist=True`,
-      # `errors='ignore'`). Real Ansible's lookup runner pulls those
+      # `errors='ignore'`). Ansible's lookup runner pulls those
       # kwargs out as lookup-plugin OPTIONS before the plugin ever sees
       # its terms - previously they stayed mixed into the positional
       # parts, so e.g. `lookup('nested', a, b, wantlist=True)` fed the
       # non-list kwarg into the Cartesian product and collapsed it to
       # zero rows (any list x empty = empty) - found live benchmarking
-      # weakcamel.loki. Only TRAILING kwargs are stripped (real Ansible's
+      # weakcamel.loki. Only TRAILING kwargs are stripped (Ansible's
       # own restriction); index 0 (the lookup type) is never stripped.
       private def split_lookup_keyword_args(parts : Array(String)) : Tuple(Array(String), Array(String))
         boundary = parts.size
@@ -79,7 +79,7 @@ module Krikri
         )
         lookup_type = parts[0]?.try { |part| quoted_string_literal(part.strip) }.try(&.as_s?)
 
-        # Real Ansible accepts a lookup plugin's name either bare
+        # Ansible accepts a lookup plugin's name either bare
         # ('first_found') or fully-qualified ('ansible.builtin.
         # first_found') - every `when "..."` case below only matches the
         # bare form. Without this, `lookup('ansible.builtin.first_found',
@@ -131,7 +131,7 @@ module Krikri
           options[key] = evaluate_lookup_term(raw_value)
         end
 
-        # Real Ansible's lookup variables dict always carries the omit
+        # Ansible's lookup variables dict always carries the omit
         # sentinel - a real-world plugin (manala.accounts's own
         # manala_accounts_users_authorized_keys.py) does
         # `variables['omit']` equality checks against it.
@@ -162,7 +162,7 @@ module Krikri
         list_form ? items.to_json : items.map { |item| item.raw.is_a?(String) ? item.as_s : item.to_json }.join(",")
       end
 
-      # `query(lookup_type, args)` - real Ansible's list-forcing sibling
+      # `query(lookup_type, args)` - Ansible's list-forcing sibling
       # of `lookup(...)` (see the call site's own comment for why this
       # exists as a separate entry point rather than just an alias).
       # `first_found` is the only lookup type real playbooks are known
@@ -188,7 +188,7 @@ module Krikri
           begin
             result = evaluate_first_found(params)
           rescue ex : FirstFoundLookupError | UndefinedVariableError
-            # Real Ansible's generic lookup `errors='ignore'` option
+            # Ansible's generic lookup `errors='ignore'` option
             # swallows lookup errors and returns an empty result - with
             # the LIST term form there is no `skip:` sub-key, so this is
             # the only way the calling role can tolerate a no-match host.
@@ -207,7 +207,7 @@ module Krikri
         # #evaluate_lookup now) - wrapping it as a single-element
         # ["undefined"] array below would make a `loop: "{{ query(...)
         # }}"` run ONCE with a bogus string item instead of the empty
-        # list real Ansible's own query() falls back to when nothing
+        # list Ansible's own query() falls back to when nothing
         # resolves. Same special case the first_found branch above
         # already has; this is its generic-fallback equivalent.
         return "[]" if raw == "undefined"

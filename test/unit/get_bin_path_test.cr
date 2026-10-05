@@ -5,15 +5,15 @@ require "../../src/krikri/plugin_helpers/get_bin_path"
 # modprobe (and ufw) reported false success on hosts missing their
 # underlying binary - krikri's `modprobe: name=x state=absent` returned
 # "already unloaded" success in a container with no modprobe binary at
-# all, where real Ansible fails at module start with
+# all, where Ansible fails at module start with
 # get_bin_path(required=True)'s exact message, before any state check.
 #
 # The message itself is shared by every plugin that resolves a required
 # binary (currently modprobe and ufw), so it is pinned here once, in
-# real Ansible's own wording.
+# Ansible's own wording.
 describe Krikri::PluginHelpers::GetBinPath do
   describe ".missing_executable_error" do
-    it "matches real Ansible's get_bin_path(required=True) failure, byte for byte" do
+    it "matches Ansible's get_bin_path(required=True) failure, byte for byte" do
       # Live-captured from `ansible localhost -c local -m
       # community.general.modprobe -a "name=nonexistentmod123
       # state=absent"` in a container with no modprobe binary

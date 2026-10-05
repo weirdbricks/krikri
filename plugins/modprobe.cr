@@ -26,7 +26,7 @@ module Krikri
   # "modprobe" in paths: ...` when the binary is missing (e.g. a
   # container without kmod). This plugin used to short-circuit on the
   # /sys/module check first and report "already unloaded" as success in
-  # exactly that situation - a false success real Ansible doesn't
+  # exactly that situation - a false success Ansible doesn't
   # produce. Found via an ad-hoc CLI comparison sweep against real
   # ansible, 2026-09-13.
   #
@@ -46,10 +46,10 @@ module Krikri
   # caller (loading nf_conntrack for ufw) doesn't use it.
   class ModprobePlugin < BasePlugin
     def execute : PluginResult
-      # Real AnsibleModule validates the argument spec BEFORE anything
+      # AnsibleModule validates the argument spec BEFORE anything
       # else runs (before get_bin_path, before any state check) - so a
       # bad state or missing name must win even when the modprobe binary
-      # is missing. Verified live: with the binary hidden, real Ansible
+      # is missing. Verified live: with the binary hidden, Ansible
       # still reports "value of state must be one of: ..." first.
       name = @params["name"]?
       return PluginResult.new(changed: false, failed: true, msg: "missing required arguments: name") unless name
@@ -70,7 +70,7 @@ module Krikri
       # Real modprobe.py resolves (and requires) the binary before
       # looking at module state at all - reproduce that ordering, or a
       # host without kmod gets "already unloaded" success instead of
-      # real Ansible's executable-not-found failure.
+      # Ansible's executable-not-found failure.
       modprobe_path = find_modprobe_binary
       unless modprobe_path
         return PluginResult.new(
@@ -116,7 +116,7 @@ module Krikri
     # /lib/modules/$(uname -r)/modules.builtin for lines ending in
     # "/<name>.ko" (builtin modules count as loaded). Any OSError in
     # that sequence - typically a container without modules.builtin -
-    # is an UNCAUGHT Python exception real Ansible surfaces as the
+    # is an UNCAUGHT Python exception Ansible surfaces as the
     # task failure "[Errno 2] No such file or directory: '...'", NOT
     # a clean yes/no. Returns the boolean, or the formatted OSError
     # text to fail the task with.
@@ -149,7 +149,7 @@ module Krikri
     end
 
     # Formats the Errno the way Python's str(OSError) does - that text
-    # is exactly what real Ansible surfaces when module_loaded()'s file
+    # is exactly what Ansible surfaces when module_loaded()'s file
     # access fails.
     private def os_error_text(e : File::Error, path : String) : String
       errno = e.os_error.try(&.value)
@@ -164,13 +164,13 @@ module Krikri
     # Ansible's get_bin_path searches the module process's PATH only,
     # but a non-login shell's PATH routinely lacks /sbin//usr/sbin
     # (where modprobe lives) - the same reason ServicePlugin searches
-    # these. Listed in the not-found message, mirroring real Ansible's
+    # these. Listed in the not-found message, mirroring Ansible's
     # "in paths: ...".
     EXTRA_BIN_DIRS = %w[/sbin /usr/sbin /bin /usr/bin]
 
     @modprobe_searched_paths = ""
 
-    # Resolves the modprobe binary the way real Ansible's
+    # Resolves the modprobe binary the way Ansible's
     # get_bin_path(modprobe, required=True) does - through the shell so
     # it works for both local and SSH connections - recording the
     # searched directories for the failure message. Returns nil when no

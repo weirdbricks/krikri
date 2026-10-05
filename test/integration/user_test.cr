@@ -17,10 +17,10 @@ describe "user plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
-  # Real ansible.builtin.user's argument_spec declares `name` with alias
+  # Ansible.builtin.user's argument_spec declares `name` with alias
   # `user` (`name=dict(type='str', required=True, aliases=['user'])`) -
   # RedHatOfficial.rhel9_pci_dss (round 812000) writes `user: '{{ item
-  # }}'` throughout its STIG role, which real Ansible resolves fine via
+  # }}'` throughout its STIG role, which Ansible resolves fine via
   # the alias; this plugin only ever read `name`, failing "Missing
   # required parameter: name" despite the alias spelling being given.
   it "resolves the user: alias of name:" do
@@ -33,14 +33,14 @@ describe "user plugin" do
   end
 
   # Real bug found benchmarking konstruktoid.docker_rootless (0.9.617):
-  # real Ansible's user module ALWAYS returns the resolved user facts
+  # Ansible's user module ALWAYS returns the resolved user facts
   # (home/uid/group/shell/name) in its register result, whether the
   # user was just created, modified, or already matched exactly. This
   # plugin's PluginResult never carried any of them at all - `register:
   # docker_user_info` followed by `{{ docker_user_info.home }}` was
   # undefined regardless of whether the user already existed, failing
   # any later task that reads it.
-  it "returns home/uid/group/shell/name facts in the register result, matching real Ansible" do
+  it "returns home/uid/group/shell/name facts in the register result, matching Ansible" do
     root_home = `getent passwd root`.split(":")[5].strip
     root_uid = `id -u root`.strip.to_i64
     root_shell = `getent passwd root`.split(":")[6].strip
@@ -108,7 +108,7 @@ describe "user plugin" do
     result = PluginSpecHelper.run("user", {"name" => "root", "state" => "absent", "_ansible_check_mode" => "true"})
 
     result["changed"].as_bool.must_equal(true)
-    # Real's check-mode absent branch exits with bare exit_json(changed=True).
+    # Ansible's check-mode absent branch exits with bare exit_json(changed=True).
     result.as_h.keys.must_equal(["changed"])
     `getent passwd root`.strip.wont_be_empty
   end
@@ -118,7 +118,7 @@ describe "user plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  # Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): verified
+  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): verified
   # live against ansible-core 2.19's user module - `state` is echoed on
   # every path, `append`/`move_home` ride along on the modify-existing-
   # account path, `groups` (the comma-joined param) only when given, and

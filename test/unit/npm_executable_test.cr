@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Pins plugins/npm.cr's executable handling against real
-# community.general.npm (live-diffed vs real ansible-playbook 2.19.11 in
+# community.general.npm (live-diffed vs ansible-playbook 2.19.11 in
 # the no-node container): an `executable:` override runs VERBATIM
 # (bypasses get_bin_path) - a missing path surfaces run_command's OSError
 # shape from the FIRST command (the list probe), with rc=errno and the

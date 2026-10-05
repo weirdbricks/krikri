@@ -20,7 +20,7 @@ module Krikri
   # wrapped by the module API, conditional-evaluation failures).
   #
   # The event tree is small (a message, its optional source context, and
-  # a linear cause chain); every shape real 2.19 produces for task
+  # a linear cause chain); every shape Ansible 2.19 produces for task
   # failures is one of:
   #
   # - collapsed: the whole cause chain collapses into one segment
@@ -62,8 +62,8 @@ module Krikri
 
     @@seen = Set(String).new
 
-    # Renders the event tree into real Ansible's `[ERROR]: ...` block and
-    # prints it, unless the exact text was already displayed (real's
+    # Renders the event tree into Ansible's `[ERROR]: ...` block and
+    # prints it, unless the exact text was already displayed (Ansible's
     # `Display._deduplicate` - one global set, so a loop's per-item
     # failures with identical text, or the same failure on several hosts,
     # display the block once). Returns true when printed.
@@ -74,7 +74,7 @@ module Krikri
       true
     end
 
-    # Same rendering and dedup as emit, but on STDERR. Real Ansible
+    # Same rendering and dedup as emit, but on STDERR. Ansible
     # routes an error block to stderr when the error is raised OUTSIDE
     # task result processing - a dynamic include_role:'s role resolution
     # failure ("the role 'x' was not found in ...") - while ordinary
@@ -145,7 +145,7 @@ module Krikri
         break if child.events
 
         if child.source_context || child.help_text
-          # Real's SourceContext carries no value equality, so two
+          # Ansible's SourceContext carries no value equality, so two
           # events never share one: a child with its OWN source
           # context always ends the collapsed segment, even when it
           # renders byte-identical text to its parent's (its parent's
@@ -245,7 +245,7 @@ module Krikri
 
     # Returns the annotated source lines, or nil when the context can't
     # be shown (unreadable file, encrypted content, truncated file) -
-    # in which case @@source_error holds real's reason text.
+    # in which case @@source_error holds Ansible's reason text.
     private def self.annotated_source_lines(path : String, line_num : Int, col_num : Int?) : Array(String)?
       context_line_count = 2
       max_annotated_line_width = 120

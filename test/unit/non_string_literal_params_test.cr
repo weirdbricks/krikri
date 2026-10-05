@@ -47,7 +47,7 @@ describe "non-string YAML literal param marker" do
     Krikri.python_param_truthy?(nil).must_equal(false)
   end
 
-  it "names the Python types real's crashes report for tagged literals" do
+  it "names the Python types Ansible's crashes report for tagged literals" do
     Krikri.python_scalar_type_name(JSON::Any.new(89_i64)).must_equal("_AnsibleTaggedInt")
     Krikri.python_scalar_type_name(JSON::Any.new(1.5)).must_equal("_AnsibleTaggedFloat")
     Krikri.python_scalar_type_name(JSON::Any.new(true)).must_equal("bool")
@@ -82,7 +82,7 @@ describe "non-string YAML literal param marker" do
     truthy.must_be_nil
   end
 
-  it "fetch fails a marked dest/src with real's action-level message at the plugin level" do
+  it "fetch fails a marked dest/src with Ansible's action-level message at the plugin level" do
     prefix = Krikri::NON_STRING_PARAM_PREFIX
     result = PluginSpecHelper.run("fetch", {"dest" => prefix + "89", "src" => "/etc/hostname"})
     result["failed"].as_bool.must_equal(true)
@@ -102,7 +102,7 @@ describe "non-string YAML literal param marker" do
     bool_ok["skipped"].as_bool.must_equal(true)
   end
 
-  it "fetch reports a missing src/dest as real's action-level presence failure (over types)" do
+  it "fetch reports a missing src/dest as Ansible's action-level presence failure (over types)" do
     # Real fetch's action plugin runs the presence check LAST, so it
     # overwrites the isinstance messages - a non-string src with a
     # missing dest reports "src and dest are required", and the old

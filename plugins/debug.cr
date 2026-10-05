@@ -32,7 +32,7 @@ module Krikri
       msg = @params["msg"]?
       var_name = @params["var"]?
 
-      # msg and var are mutually exclusive in real ansible.builtin.debug -
+      # msg and var are mutually exclusive in Ansible.builtin.debug -
       # the action plugin fails the task with exactly this message before
       # the verbosity gate or any output happens.
       if msg && var_name
@@ -47,7 +47,7 @@ module Krikri
       required_verbosity = @params["verbosity"]?.try(&.to_i?) || 0
       current_verbosity = @params["_verbosity"]?.try(&.to_i) || 0
 
-      # Skip if verbosity too low - real's registered result for a
+      # Skip if verbosity too low - Ansible's registered result for a
       # verbosity-skipped debug carries skipped but NO msg key at all
       # (podman-diff debug_edge_cases D3).
       if current_verbosity < required_verbosity
@@ -58,7 +58,7 @@ module Krikri
         )
       end
 
-      # Neither msg nor var is not an error: real ansible.builtin.debug
+      # Neither msg nor var is not an error: Ansible.builtin.debug
       # documents `msg` as defaulting to "Hello world!" and prints that
       # (verified against ansible-core 2.19.4 - a bare `debug:` task
       # succeeds and prints it). This engine failed the task outright
@@ -78,13 +78,13 @@ module Krikri
       )
       if var_name
         debug_var(var_name, result)
-        # Real's registered debug var: result runs the VARIABLE-NAME key,
+        # Ansible's registered debug var: result runs the VARIABLE-NAME key,
         # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`)
         # - mirrors DebugActionPlugin's key_order.
         result.key_order = [var_name]
       else
         result.msg = msg.to_s
-        # Real's registered debug msg result runs msg, failed, changed
+        # Ansible's registered debug msg result runs msg, failed, changed
         # (live-verified vs 2.19.11).
         result.key_order = ["msg"]
       end

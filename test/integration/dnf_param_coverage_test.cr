@@ -10,7 +10,7 @@ require "file_utils"
 # flag string for the params under test - "given these params, is the
 # constructed command line correct" rather than "does dnf behave this
 # way". Every expected flag was cross-checked against the locally
-# installed real ansible-core's own dnf.py module source
+# installed ansible-core's own dnf.py module source
 # not against
 # a live dnf run - see the per-example comments for which claims come
 # from that source vs. dnf's documented CLI surface (general dnf
@@ -62,7 +62,7 @@ end
 # The plugin's baseline option string with none of the new params set:
 # -y (non-interactive), the localpkg_gpgcheck forcing from the earlier
 # GPG-audit pass, and the historical unconditional `--best` (dnf's own
-# built-in default; real Ansible's best/nobest default is
+# built-in default; Ansible's best/nobest default is
 # OS-distribution-dependent, so nothing better can be pinned without
 # an OS-specific check).
 BASELINE_OPTIONS = "-y --setopt=localpkg_gpgcheck=1 --best"
@@ -98,8 +98,8 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
 
   # dnf.py _configure_base: `conf.best = not self.nobest` when nobest is
   # given, `conf.best = self.best` otherwise. There is no `best:` module
-  # parameter in real Ansible's yumdnf argument spec (only `nobest`) -
-  # a `best:` mapping existed here briefly and was removed (real Ansible
+  # parameter in Ansible's yumdnf argument spec (only `nobest`) -
+  # a `best:` mapping existed here briefly and was removed (Ansible
   # rejects it as an unsupported parameter); the nobest cases below cover
   # the mapping, and the argument-spec rejection spec covers the rest.
 
@@ -172,7 +172,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   # set(self.enable_plugin))` - dnf's --enableplugin/--disableplugin,
   # per-transaction only. List params can arrive as a JSON array string
   # (how the PluginManager serializes lists) or a comma-separated string
-  # (real Ansible's own listify_comma_sep_strings_in_list).
+  # (Ansible's own listify_comma_sep_strings_in_list).
   it "expands enable_plugin/disable_plugin (JSON array form) to one flag per name" do
     with_recording_pkg_managers do |log|
       result = PluginSpecHelper.run("dnf", {
@@ -298,7 +298,7 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
         "install #{BASELINE_OPTIONS} --downloadonly --downloaddir=/tmp/rpms fake-pkg")
 
       # download_dir without download_only has no effect - exactly as in
-      # real Ansible (conf.destdir is only set when download_only is set).
+      # Ansible (conf.destdir is only set when download_only is set).
       result2 = PluginSpecHelper.run("dnf", {
         "name"         => "fake-pkg",
         "state"        => "present",
@@ -310,10 +310,10 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   end
 
   # install_repoquery / validate_certs / lock_timeout are accepted
-  # no-ops for the dnf backend, matching real ansible-core's own dnf.py:
+  # no-ops for the dnf backend, matching ansible-core's own dnf.py:
   # - install_repoquery is documented as "effectively a no-op in DNF"
   #   (deprecated, removal slated for ansible-core 2.20);
-  # - validate_certs only applies controller-side when real Ansible
+  # - validate_certs only applies controller-side when Ansible
   #   fetches an https RPM URL itself (fetch_file in dnf.py's
   #   _parse_spec_group_file); krikri installs URL rpms on-target via
   #   dnf itself, so there is no controller fetch to validate;
@@ -336,11 +336,11 @@ describe "dnf plugin - parameter coverage (CLI-invocation shape)" do
   end
 
   # dnf.py's argument spec: use_backend choices are
-  # ['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5'] and real Ansible
+  # ['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5'] and Ansible
   # fails anything else with the standard choices-validation message
   # before module code runs. Valid choices are accepted, then no-op:
   # krikri has a single dnf implementation to route to.
-  it "validates use_backend against real Ansible's choice list" do
+  it "validates use_backend against Ansible's choice list" do
     with_recording_pkg_managers do |log|
       result = PluginSpecHelper.run("dnf", {
         "name"        => "fake-pkg",

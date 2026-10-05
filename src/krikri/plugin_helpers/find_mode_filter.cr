@@ -1,7 +1,7 @@
 module Krikri
   module PluginHelpers
     # FindModeFilter - pure logic for find:'s mode:/exact_mode: filter.
-    # Verified against the real module's own `mode_filter`
+    # Verified against the Ansible module's own `mode_filter`
     # source directly, not assumed from ansible-doc's prose:
     #
     #   try:
@@ -24,7 +24,7 @@ module Krikri
     #
     # Only the `=` (absolute assignment) operator and `ugo` targets with
     # `rwx` permission letters are implemented for the symbolic form -
-    # real Ansible's fuller grammar (`+`/`-` relative operators, `X`
+    # Ansible's fuller grammar (`+`/`-` relative operators, `X`
     # conditional-execute, `s`/`t` setuid/setgid/sticky, umask-relative
     # empty-target clauses) is NOT - octal is the overwhelmingly common
     # real-world form for a find: filter (ansible-doc's own only example

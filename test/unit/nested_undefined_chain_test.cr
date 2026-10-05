@@ -8,7 +8,7 @@ require "../../src/krikri/conditional_evaluator"
 # `mysql_root_password` supplied by neither the role nor the playbook)
 # silently rendered as the literal text "undefined" and the run
 # continued - writing the seven-character string "undefined" into
-# phpMyAdmin's config as the real MySQL password - where real Ansible
+# phpMyAdmin's config as the real MySQL password - where Ansible
 # fails the task ("'mysql_root_password' is undefined", reported
 # against the DEFAULTS file, not the task's own reference).
 #
@@ -19,7 +19,7 @@ require "../../src/krikri/conditional_evaluator"
 # this codebase's own "undefined" sentinel text - baked in as if it
 # were legitimate content.
 #
-# Every expectation below was verified against real ansible-core 2.19.4
+# Every expectation below was verified against ansible-core 2.19.4
 # running the equivalent playbook, not assumed.
 describe "nested undefined chains" do
   include RaisesAssertion
@@ -102,7 +102,7 @@ describe "nested undefined chains" do
       sub.substitute("[{{ pw | default('FALLBACK') }}]").must_equal("[FALLBACK]")
     end
 
-    it "answers `is defined` False, matching real Ansible" do
+    it "answers `is defined` False, matching Ansible" do
       vars = {"pw" => JSON::Any.new("{{ mysql_root_password }}")}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
       sub.substitute("{{ pw is defined }}").must_equal("False")

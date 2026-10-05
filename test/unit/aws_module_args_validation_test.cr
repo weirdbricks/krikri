@@ -149,7 +149,7 @@ describe "AwsModuleArgs: IN8 dict-with-sub-spec _list_no_log_values ordering" do
     msg.must_be_nil
   end
 
-  it "reports the Mapping-check wording (with real's 'must by a' typo) for a non-string non-dict list element" do
+  it "reports the Mapping-check wording (with Ansible's 'must by a' typo) for a non-string non-dict list element" do
     msg = aws_fail_msg(Krikri::PluginHelpers::AwsModuleSpecs::EC2_INSTANCE,
       {"image" => "[1]"})
     msg.wont_be_nil

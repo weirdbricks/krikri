@@ -25,7 +25,7 @@ module Krikri
   end
 
   # openssl_dhparam plugin (community.crypto.openssl_dhparam) - generates
-  # OpenSSL Diffie-Hellman parameters. Both of the real module's backends
+  # OpenSSL Diffie-Hellman parameters. Both of the Ansible module's backends
   # run natively through libcrypto (the library the `openssl` CLI itself
   # shells out to), so generation works on hosts without the CLI binary:
   #
@@ -42,7 +42,7 @@ module Krikri
   class OpensslDhparamPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec plus the file-common args its
+    # The Ansible module's argument_spec plus the file-common args its
     # add_file_common_args=True injects (the only alias is
     # attributes->attr).
     SPEC = {
@@ -64,11 +64,11 @@ module Krikri
       "unsafe_writes"         => [] of String,
     }
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps, identical on changed,
-    # unchanged, check-mode and state=absent runs (real emits no msg key
+    # unchanged, check-mode and state=absent runs (Ansible emits no msg key
     # at all here; krikri's msg stays unlisted and trails, per the
-    # get_url convention for keys real doesn't emit).
+    # get_url convention for keys Ansible doesn't emit).
     SUCCESS_KEY_ORDER = %w[size filename changed failed warnings]
 
     def execute : PluginResult
@@ -99,7 +99,7 @@ module Krikri
       # params - as an UNHANDLED module exception (the fatal msg carries
       # the full "Task failed: Module failed: " chain, live-verified vs
       # 2.19.11). The explicit `openssl` backend takes the CLI-emulating
-      # path below (real's DHParameterOpenSSL shells out to the binary;
+      # path below (Ansible's DHParameterOpenSSL shells out to the binary;
       # here the same libcrypto call runs natively so hosts without the
       # CLI behave identically).
       backend = @params["select_crypto_backend"]? || "auto"
@@ -123,7 +123,7 @@ module Krikri
 
       if backend == "cryptography"
         # cryptography's dh.generate_parameters raises ValueError for
-        # key_size < 512; real's module body doesn't catch it, so the
+        # key_size < 512; Ansible's module body doesn't catch it, so the
         # msg carries the full unhandled-exception chain.
         return unhandled_error("DH key_size must be at least 512 bits") if size < 512
         return generate_native(path, size)
@@ -134,7 +134,7 @@ module Krikri
 
     MIN_CRYPTOGRAPHY_VERSION = "3.3"
 
-    # The "unhandled module exception" result shape real 2.19 produces:
+    # The "unhandled module exception" result shape Ansible 2.19 produces:
     # the fatal msg carries the full "Task failed: Module failed: <exc>"
     # chain while the error block shows the bare exception text.
     private def unhandled_error(detail : String) : PluginResult
@@ -202,7 +202,7 @@ module Krikri
       !!Process.find_executable(name)
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices ->
     # unsupported (deferred last). No required_together/required_if/
     # mutually_exclusive on this module.
@@ -250,7 +250,7 @@ module Krikri
     # PEM DH params with libcrypto (what `openssl dhparam -check -text
     # -noout -in <path>` does), compare the parsed bit length with the
     # requested size, and reject on any DH_check warning - the CLI prints
-    # those as WARNING lines and the real module treats any WARNING in
+    # those as WARNING lines and the Ansible module treats any WARNING in
     # either stream as invalid.
     private def params_valid?(path : String, size : Int32) : Bool
       dh = read_dhparams(path)

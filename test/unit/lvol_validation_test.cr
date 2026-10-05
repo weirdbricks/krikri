@@ -11,7 +11,7 @@ require "../minitest_helper"
 # ("missing required argument: vg"), the argspec check didn't exist
 # (LV3), state also accepted non-real choices (LV5), bool params weren't
 # type-validated (LV4), and state=absent against a missing VG invented
-# a "Volume group ... does not exist." msg real never prints (LV7).
+# a "Volume group ... does not exist." msg Ansible never prints (LV7).
 describe "lvol plugin argument validation" do
   it "fails a missing vg with the sorted plural wording (LV1)" do
     result = PluginSpecHelper.run("lvol", {"lv" => "krikri-lv", "size" => "4"})
@@ -20,14 +20,14 @@ describe "lvol plugin argument validation" do
     result["msg"].as_s.must_equal("missing required arguments: vg")
   end
 
-  it "fails with real's one-of wording when neither lv nor thinpool is given (LV2)" do
+  it "fails with Ansible's one-of wording when neither lv nor thinpool is given (LV2)" do
     result = PluginSpecHelper.run("lvol", {"vg" => "krikri-vg", "size" => "4"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("one of the following is required: lv, thinpool")
   end
 
-  it "rejects out-of-spec parameters with real's supported-list wording (LV3)" do
+  it "rejects out-of-spec parameters with Ansible's supported-list wording (LV3)" do
     result = PluginSpecHelper.run("lvol", {"vg" => "krikri-vg", "lv" => "krikri-lv",
                                            "size" => "4", "krikri_not_an_lvol_param" => "true"})
 
@@ -46,7 +46,7 @@ describe "lvol plugin argument validation" do
                                     "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 
-  it "rejects a state outside real's [absent, present] choice list (LV5)" do
+  it "rejects a state outside Ansible's [absent, present] choice list (LV5)" do
     result = PluginSpecHelper.run("lvol", {"vg" => "krikri-vg", "lv" => "krikri-lv", "state" => "mounted"})
 
     result["failed"].as_bool.must_equal(true)
@@ -61,7 +61,7 @@ describe "lvol plugin argument validation" do
     result["msg"]?.must_be_nil
   end
 
-  it "still fails state=present against a missing VG with real's discovery wording (LV6)" do
+  it "still fails state=present against a missing VG with Ansible's discovery wording (LV6)" do
     result = PluginSpecHelper.run("lvol", {"vg" => "krikri-lvol-nosuch-vg", "lv" => "krikri-lv", "size" => "4"})
 
     result["failed"].as_bool.must_equal(true)

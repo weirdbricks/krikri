@@ -3,7 +3,7 @@ require "../../src/krikri/py_set"
 require "../../src/krikri/variable_substitutor"
 
 # Expected orders come from CPython 3.13: list(set(a) | set(b)), list(set(a) & set(b)),
-# list(set(a) - set(b)) - the exact lists real ansible's union/intersect/difference filters
+# list(set(a) - set(b)) - the exact lists Ansible's union/intersect/difference filters
 # return for integer inputs (string sets are hash-randomized per process and not covered).
 private def check(a : Array(Int64), b : Array(Int64), union : Array(Int64), inter : Array(Int64), diff : Array(Int64))
   Krikri::PySet.union(a, b).must_equal(union)
@@ -80,7 +80,7 @@ describe Krikri::PySet do
 end
 
 describe "query()/lookup() list results in mixed text" do
-  it "renders list-forcing lookups as Python repr, like real Ansible" do
+  it "renders list-forcing lookups as Python repr, like Ansible" do
     r = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h")
     r.substitute("{{ query('items', [1,2]) }} x", output: true).must_equal("[1, 2] x")
     r.substitute("{{ q('list', 'a', 1) }} y", output: true).must_equal("['a', 1] y")

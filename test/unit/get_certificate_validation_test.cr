@@ -3,11 +3,11 @@ require "../minitest_helper"
 # Pins plugins/get_certificate.cr's argument-validation surface against
 # real community.crypto.get_certificate's AnsibleModule setup
 # (source-verified against the collection's get_certificate.py; live-diffed
-# vs real ansible-playbook via the podman-diff get_certificate_edge_cases
+# vs ansible-playbook via the podman-diff get_certificate_edge_cases
 # harness):
 #
 # - host and port are the only required params; no required_if/together
-# - the real module has NO path/output-file params (a prior revision here
+# - the Ansible module has NO path/output-file params (a prior revision here
 #   invented them) - path et al. are unsupported params
 # - port/proxy_port/timeout are ints, asn1_base64/get_certificate_chain
 #   are bools (spec declaration order)

@@ -3,18 +3,18 @@ require "file_utils"
 
 # Registered-result key orders for the rpm_key/gem/yum_repository/iptables/
 # apt_repository/deb822_repository/yum/dnf/dnf5 plugins, pinned to the
-# orders live-verified against real ansible-core 2.19.11 (see
+# orders live-verified against ansible-core 2.19.11 (see
 # key_order_sweep_test.cr for the general method; the -v dump sorts
 # alphabetically, so the order is only observable programmatically).
 #
-# Verification channels used in this sweep (real ansible-playbook
+# Verification channels used in this sweep (ansible-playbook
 # 2.19.11, `{{ r | to_json }}` / `{{ r.keys() | list }}` on registered
 # tasks):
 # - rpm_key, gem, yum/dnf/dnf5, yum_repository, iptables: a throwaway
 #   root Fedora 41 podman container running pip-installed
 #   ansible-core 2.19.11 (host has no rpm/dnf/gem); iptables additionally
 #   through a stateful stub `iptables` binary (no kernel netfilter access
-#   in a rootless container) driving the real module's own code paths;
+#   in a rootless container) driving the Ansible module's own code paths;
 # - apt_repository, deb822_repository: host check mode (unprivileged;
 #   the real (mutating) /etc/apt write needs root and carries no
 #   separate order - both modules have a single exit_json whose kwarg
@@ -25,7 +25,7 @@ require "file_utils"
 #   no seobject), so no success shape is reachable to verify. No order
 #   pinned, no guess.
 #
-# The pins cover the keys krikri emits, in real's relative order: real's
+# The pins cover the keys krikri emits, in Ansible's relative order: Ansible's
 # registered result additionally carries controller-appended
 # ansible_facts (interpreter discovery) / backfilled failed / warnings
 # after the module dict, which krikri's module wire omits (the executor's
@@ -59,7 +59,7 @@ describe "rpm_key plugin result key order (sweep8)" do
   # other ENV-touching tests (see test/minitest_helper.cr).
   serial!
 
-  # Real 2.19.11 rpm_key.py has FOUR success exits, all bare
+  # Ansible 2.19.11 rpm_key.py has FOUR success exits, all bare
   # exit_json(changed=...) - key imported / already present (state
   # present), key removed / already absent (state absent) - so every
   # success shape registers exactly {changed, failed} (the trailing
@@ -324,7 +324,7 @@ describe "gem plugin result key order (sweep8)" do
   end
 end
 describe "apt_repository plugin result key order (sweep8)" do
-  # Real 2.19.11 apt_repository.py has a single success exit
+  # Ansible 2.19.11 apt_repository.py has a single success exit
   # exit_json(changed=changed, repo=repo, sources_added=...,
   # sources_removed=..., state=state, diff=diff) - no msg, and `diff`
   # is always present (its source builds diff = [] and only appends
@@ -364,7 +364,7 @@ describe "apt_repository plugin result key order (sweep8)" do
   end
 end
 describe "yum_repository plugin result key order (sweep8)" do
-  # Real 2.19.11 yum_repository.py exits with a single
+  # Ansible 2.19.11 yum_repository.py exits with a single
   # exit_json(changed=changed, repo=name, state=state, diff=diff), and
   # its diff is the {before_header, before, after_header, after} dict
   # built from the configparser dump UNCONDITIONALLY - not gated on diff
@@ -429,7 +429,7 @@ describe "yum_repository plugin result key order (sweep8)" do
   end
 end
 describe "deb822_repository plugin result key order (sweep8)" do
-  # Real 2.19.11 deb822_repository.py exits both success paths with
+  # Ansible 2.19.11 deb822_repository.py exits both success paths with
   # exit_json(repo=repo, changed=changed, dest=sources_filename,
   # key_filename=signed_by_filename) - repo FIRST (it is the file
   # content), no msg, and the SAME order on the present and absent
@@ -474,14 +474,14 @@ describe "deb822_repository plugin result key order (sweep8)" do
   end
 end
 describe "iptables plugin result key order (sweep8)" do
-  # Real 2.19.11 iptables.py builds one args dict at the top of main()
+  # Ansible 2.19.11 iptables.py builds one args dict at the top of main()
   # - changed, failed, ip_version, table, chain, flush, rule, state,
   # chain_management, wait - and every exit is exit_json(**args), so the
   # order is variant-independent. Note failed sits at position 2: the
   # MODULE puts it in the dict (hence krikri's failed_flag extra),
   # unlike modules whose failed is backfilled by the controller. No msg
   # key. Live-verified through a stateful stub `iptables` binary (no
-  # kernel netfilter access unprivileged) driving the real module's own
+  # kernel netfilter access unprivileged) driving the Ansible module's own
   # code paths, against the real /usr/sbin/iptables' argv shape.
 
   serial!

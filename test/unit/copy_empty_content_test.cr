@@ -3,7 +3,7 @@ require "file_utils"
 
 # `copy:` with an empty-string `content:` or `src:`.
 #
-# `src` and `content` have DIFFERENT presence rules in real Ansible -
+# `src` and `content` have DIFFERENT presence rules in Ansible -
 # live-verified against ansible-core 2.19.11, all four shapes below:
 # `src` is truthiness-checked (an empty string is never a valid file
 # path, so `src: ""` is "not provided" exactly like an absent `src:`),
@@ -47,7 +47,7 @@ describe "copy: empty-string content/src presence rules" do
   end
 
   it "truncates an existing destination to empty when content is empty" do
-    # Real Ansible's copy module actually writes the file - an empty
+    # Ansible's copy module actually writes the file - an empty
     # content: is a legitimate, present value, not a validation
     # failure that leaves dest untouched.
     with_temp_dir do |dir|
@@ -65,7 +65,7 @@ describe "copy: empty-string content/src presence rules" do
     end
   end
 
-  it "fails with the real Ansible message for an empty-string src and no content" do
+  it "fails with the Ansible message for an empty-string src and no content" do
     # src IS truthiness-checked (unlike content) - an empty string can
     # never be a real file path, so src: "" is "not provided" too.
     with_temp_dir do |dir|

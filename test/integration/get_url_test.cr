@@ -22,7 +22,7 @@ FILE_CHECKSUM_SHA384 = begin
 end
 
 # Fixed mtime the conditional-GET specs pin dest files to (seconds
-# precision, like real's timetuple()-based If-Modified-Since), plus its
+# precision, like Ansible's timetuple()-based If-Modified-Since), plus its
 # RFC 1123 rendering - exactly what the plugin must send.
 private COND_TIME      = Time.unix(1700000000)
 private COND_HTTP_DATE = Time::Format::HTTP_DATE.format(COND_TIME)
@@ -259,14 +259,14 @@ describe "get_url plugin" do
     # Real bug found benchmarking buluma.fish (round952314): its "Add
     # fish repository key" task (get_url, no checksum:, no force:) hits
     # the live keyserver.ubuntu.com lookup, whose response can differ
-    # between runs. Real ansible-core's get_url always performs the HTTP
+    # between runs. ansible-core's get_url always performs the HTTP
     # request when dest exists (a conditional GET keyed on dest's mtime,
     # or a HEAD in check mode), then decides changed by comparing the
     # freshly fetched content's SHA1 against the existing dest file's
     # SHA1 - even with no checksum: param at all. krikri used to
     # short-circuit to ok purely on dest existence, never making a
     # request, so a warm rerun could never report changed: true where
-    # real Ansible sometimes did.
+    # Ansible sometimes did.
     dest = File.tempname("get-url-spec")
     File.write(dest, "pre-existing, untouched")
 
@@ -281,7 +281,7 @@ describe "get_url plugin" do
 
   it "is idempotent on an existing dest without force and without checksum when the URL content already matches" do
     # Same root cause as the spec above, other half of the behavior:
-    # the fetch must happen (real Ansible always requests), but matching
+    # the fetch must happen (Ansible always requests), but matching
     # content still converges to changed: false, not a forced rewrite.
     dest = File.tempname("get-url-spec")
     File.write(dest, FILE_CONTENT)
@@ -295,7 +295,7 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "reports real's OK (<n> bytes) / status_code: 200 success shape on a fresh download" do
+  it "reports Ansible's OK (<n> bytes) / status_code: 200 success shape on a fresh download" do
     # Live-verified against ansible-core 2.19.11: the 200 exit is
     # module.exit_json(msg=info['msg'], status_code=info['status'], **result)
     # where urls.py built info['msg'] as "OK (%s bytes)" % the final
@@ -314,7 +314,7 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "short-circuits with real's 304 shape on a conditional GET answered not-modified" do
+  it "short-circuits with Ansible's 304 shape on a conditional GET answered not-modified" do
     # Real url_get's 304 branch: exit_json(url, dest, changed=False,
     # msg=info['msg'] ("HTTP Error 304: Not Modified"), status_code=304,
     # elapsed) - no checksum/md5/src keys, since no content came back.
@@ -338,7 +338,7 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "falls through to the full download and real's OK shape when the conditional GET is answered 200" do
+  it "falls through to the full download and Ansible's OK shape when the conditional GET is answered 200" do
     # A server that ignores If-Modified-Since (or a dest whose mtime is
     # older than the remote's) answers 200: real re-downloads and decides
     # by SHA1 compare - changed: false, but with the same
@@ -414,8 +414,8 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "reports status_code: null for a file:// source like real's status-less local result" do
-    # urllib's file handler sets no info['status'], so real's final
+  it "reports status_code: null for a file:// source like Ansible's status-less local result" do
+    # urllib's file handler sets no info['status'], so Ansible's final
     # info.get('status', '') serializes as null (live-verified 2.19.11),
     # while the msg still carries the local file's size as
     # "OK (<n> bytes)" from the handler's own Content-length.
@@ -487,8 +487,8 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  # Every failure shape below is real Ansible's own url_get branch
-  # (get_url.py) driven by the status the real module's fetch_url
+  # Every failure shape below is Ansible's own url_get branch
+  # (get_url.py) driven by the status the Ansible module's fetch_url
   # folds its exceptions into - `info['status'] == -1` fails with
   # msg=info['msg'] and NO status_code, anything else that is not 200
   # fails with msg="Request failed", status_code=info['status'] and
@@ -497,7 +497,7 @@ describe "get_url plugin" do
   # Live-verified against ansible-core 2.19.11 (localhost playbooks,
   # connection: local, the failed result registered and dumped).
   describe "generic download-failure shapes" do
-    it "reports a non-200 response as real's 'Request failed' branch (msg, status_code, response)" do
+    it "reports a non-200 response as Ansible's 'Request failed' branch (msg, status_code, response)" do
       dest = File.tempname("get-url-spec")
 
       result = PluginSpecHelper.run("get_url", {"url" => "#{GET_URL_TEST_BASE}/missing.txt", "dest" => dest})
@@ -660,7 +660,7 @@ describe "get_url plugin" do
       FileUtils.rm_rf(parent) if parent
     end
 
-    it "reports a checksum mismatch in real's own wording and result shape" do
+    it "reports a checksum mismatch in Ansible's own wording and result shape" do
       # get_url.py verifies the checksum AFTER url_get and AFTER its
       # destination checks, so the failure carries the full module
       # result dict (checksum_src/checksum_dest/src/...) with
@@ -684,7 +684,7 @@ describe "get_url plugin" do
       result["url"].as_s.must_equal("#{GET_URL_TEST_BASE}/file.txt")
       result["src"].as_s.wont_be_empty
       File.exists?(dest).must_equal(false)
-      # the staged copy is cleaned up, as real's os.remove(tmpsrc) does
+      # the staged copy is cleaned up, as Ansible's os.remove(tmpsrc) does
       File.exists?(result["src"].as_s).must_equal(false)
     ensure
       File.delete(dest) if dest && File.exists?(dest)
@@ -738,7 +738,7 @@ describe "get_url plugin" do
       FileUtils.rm_rf(root) if root
     end
 
-    it "reports an unwritable existing dest, and an unreadable one, in real's own wording" do
+    it "reports an unwritable existing dest, and an unreadable one, in Ansible's own wording" do
       # Same reason as the directory case above: 0444/0200 mean nothing
       # to uid 0.
       skip "permission-denial path: root bypasses the 0444/0200 file modes" if PluginSpecHelper.running_as_root?
@@ -755,7 +755,7 @@ describe "get_url plugin" do
       result["checksum_dest"].raw.nil?.must_equal(true)
       File.read(dest).must_equal("old content\n")
 
-      # writable but not readable is the second of real's two checks
+      # writable but not readable is the second of Ansible's two checks
       File.chmod(dest, 0o200)
       unreadable = PluginSpecHelper.run("get_url", {
         "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "force" => "true",
@@ -784,7 +784,7 @@ describe "get_url plugin" do
       FileUtils.rm_rf(root) if root
     end
 
-    it "reports a failed CHECKSUM url fetch against the checksum url, like real's own url_get call" do
+    it "reports a failed CHECKSUM url fetch against the checksum url, like Ansible's own url_get call" do
       dest = File.tempname("get-url-spec")
 
       result = PluginSpecHelper.run("get_url", {
@@ -802,7 +802,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "reports a checksum file with no entry for the target in real's wording, with no url/dest" do
+    it "reports a checksum file with no entry for the target in Ansible's wording, with no url/dest" do
       dest = File.tempname("get-url-spec")
 
       result = PluginSpecHelper.run("get_url", {
@@ -865,7 +865,7 @@ describe "get_url plugin" do
     # Content-Disposition, else the FINAL post-redirect URL's basename);
     # krikri derived it up front from the original URL, landing the file
     # at <dir>/closer.cgi so the role's next unarchive task failed with
-    # "Source ... failed to transfer" while real Ansible had already put
+    # "Source ... failed to transfer" while Ansible had already put
     # the tarball where unarchive expected it.
     dest_dir = File.join(File.tempname("get-url-spec"), "dl")
     Dir.mkdir_p(dest_dir)
@@ -918,7 +918,7 @@ describe "get_url plugin" do
 
   it "resolves a checksum URL by parsing the per-file hash from a sha256sums file" do
     # Real bug found benchmarking andrewrothstein.terraform (round 154 v3):
-    # real Ansible's get_url documents checksum: as accepting a URL
+    # Ansible's get_url documents checksum: as accepting a URL
     # pointing at a sha256sums-format file, not just a literal hash -
     # parse_checksum stored the URL string itself as the "expected" hash,
     # which could never match a real download.
@@ -938,7 +938,7 @@ describe "get_url plugin" do
     # Real bug found benchmarking githubixx.kubectl's own "Download
     # kubectl binary" task: dl.k8s.io publishes one "<binary>.sha512"
     # file per binary containing NOTHING but the hex hash (no filename,
-    # unlike the multi-file sha256sums format above) - real Ansible's
+    # unlike the multi-file sha256sums format above) - Ansible's
     # get_url accepts this shape directly. The sha*sums-style "<hash>
     # <filename>" parsing only ever matched a line with a filename
     # token to compare against, so a single bare-hash line never
@@ -1093,7 +1093,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "fails with real Ansible's message when tmp_dest is a file" do
+    it "fails with Ansible's message when tmp_dest is a file" do
       tmp_file = File.tempname("get-url-spec-tmpdest")
       File.write(tmp_file, "x")
       dest = File.tempname("get-url-spec")
@@ -1109,7 +1109,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "fails with real Ansible's message when tmp_dest does not exist" do
+    it "fails with Ansible's message when tmp_dest does not exist" do
       missing = File.join(Dir.tempdir, "get-url-spec-missing-#{Random.rand(1_000_000)}")
       dest = File.tempname("get-url-spec")
       result = PluginSpecHelper.run("get_url", {
@@ -1137,7 +1137,7 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "reconciles stale mode on the skip path and reports changed like real Ansible" do
+  it "reconciles stale mode on the skip path and reports changed like Ansible" do
     # Real get_url runs set_fs_attributes_if_different even when the
     # download is skipped (no force, checksum matches), and a stale
     # file-common attribute flips the result to changed: true with msg
@@ -1177,12 +1177,12 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "accepts '-'-prefixed attributes: (chattr flags) and reports changed like real Ansible's set_attributes_if_different" do
-    # Mirrors lineinfile_spec.cr's own attributes: spec (real Ansible
+  it "accepts '-'-prefixed attributes: (chattr flags) and reports changed like Ansible's set_attributes_if_different" do
+    # Mirrors lineinfile_spec.cr's own attributes: spec (Ansible
     # reports changed unconditionally for '-'-prefixed requests,
     # ansible/ansible#33745). The dest lands on the default tempdir,
     # which rootless fuse-overlayfs containers back with a filesystem
-    # that rejects every chattr flag op (real Ansible fails the task
+    # that rejects every chattr flag op (Ansible fails the task
     # there identically) - skip the success-path pin on such a fs.
     skip "filesystem rejects chattr flag operations" unless PluginSpecHelper.chattr_clear_supported?
     dest = File.tempname("get-url-spec")
@@ -1204,7 +1204,7 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "accepts the SELinux context params as a no-op on a non-SELinux host (real Ansible skips chcon entirely there)" do
+  it "accepts the SELinux context params as a no-op on a non-SELinux host (Ansible skips chcon entirely there)" do
     dest = File.tempname("get-url-spec")
     result = PluginSpecHelper.run("get_url", {
       "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest,
@@ -1218,8 +1218,8 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "copies a file:// URL like real Ansible's local-file handler, with full result metadata" do
-    # Found via an ad-hoc CLI comparison sweep against real ansible
+  it "copies a file:// URL like Ansible's local-file handler, with full result metadata" do
+    # Found via an ad-hoc CLI comparison sweep against Ansible
     # (2026-09-13): `ansible -m get_url -a "url=file:///etc/hostname
     # dest=/tmp/x"` succeeds and returns full stat metadata, while
     # krikri previously failed with "Unsupported scheme: file".
@@ -1233,7 +1233,7 @@ describe "get_url plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     File.read(dest).must_equal(FILE_CONTENT)
     %w(checksum_src dest gid group md5sum mode owner size state uid url).each do |key|
-      result[key]?.wont_be_nil("expected #{key} in result (real Ansible's file:// get_url returns full stat metadata)")
+      result[key]?.wont_be_nil("expected #{key} in result (Ansible's file:// get_url returns full stat metadata)")
     end
     result["size"].as_i.must_equal(FILE_CONTENT.size)
     result["state"].as_s.must_equal("file")
@@ -1243,7 +1243,7 @@ describe "get_url plugin" do
   end
 
   it "serializes the success result in real get_url's key order (changed: true)" do
-    # Real ansible-core 2.19.11's registered get_url result runs
+    # ansible-core 2.19.11's registered get_url result runs
     # msg, status_code, changed, checksum_dest, checksum_src, dest,
     # elapsed, url, src, md5sum, then add_path_info's stat block -
     # verified live via `{{ g | to_json }}` on a registered get_url
@@ -1335,8 +1335,8 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  # Real Ansible builds the request's SSL context BEFORE urllib parses the
-  # URL (the real module's Request.open: _configure_auth ->
+  # Ansible builds the request's SSL context BEFORE urllib parses the
+  # URL (the Ansible module's Request.open: _configure_auth ->
   # make_context -> urllib.request.Request), so these failures happen with
   # no request at all - over a plain http:// URL, not only a broken one.
   # Every expectation here live-verified against ansible-core 2.19.11.
@@ -1374,7 +1374,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "fails an unreadable client_cert with real's OSError wording" do
+    it "fails an unreadable client_cert with Ansible's OSError wording" do
       dest = File.tempname("get-url-spec")
       missing = PluginSpecHelper.tmp_path("no-such-client-cert-#{Random::Secure.hex(4)}.pem")
       result = PluginSpecHelper.run("get_url", {
@@ -1388,7 +1388,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "fails a client_cert that is a directory the way real's open() does" do
+    it "fails a client_cert that is a directory the way Ansible's open() does" do
       dest = File.tempname("get-url-spec")
       result = PluginSpecHelper.run("get_url", {
         "url" => "#{GET_URL_TEST_BASE}/file.txt", "dest" => dest, "client_cert" => PluginSpecHelper.tmp_path("."),
@@ -1399,7 +1399,7 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
-    it "ignores a client_key that has no client_cert (real never opens it)" do
+    it "ignores a client_key that has no client_cert (Ansible never opens it)" do
       # make_context only calls load_cert_chain - the one call that reads
       # the keyfile - when client_cert is set.
       dest = File.tempname("get-url-spec")

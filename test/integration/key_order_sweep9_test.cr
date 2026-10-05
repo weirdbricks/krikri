@@ -3,14 +3,14 @@ require "../minitest_helper"
 require "socket"
 
 # Registered-result key order for the mysql_variables plugin, pinned to the
-# order live-verified against real ansible-playbook 2.19.11 with
+# order live-verified against ansible-playbook 2.19.11 with
 # community.mysql 5.0.2 (which redirects the call to ansible.mysql 5.2.0)
 # against a real MySQL 8.4.11 server, observed through `{{ r | to_json }}`
 # on a registered task - the -v dump sorts alphabetically, so the order is
 # only observable programmatically (see key_order_sweep_test.cr for the
 # general method).
 #
-# The four shapes the real module has:
+# The four shapes the Ansible module has:
 # - a variable change (mode global/persist/persist_only): msg, changed,
 #   queries, failed - `queries` carries the executed SET GLOBAL statement
 #   and is absent on the "already set" no-op, which registers
@@ -29,7 +29,7 @@ require "socket"
 #   Every community.mysql.* result also ends with `deprecations` (the
 #   collection-redirect deprecation entry real attaches to executed tasks).
 #
-# `deprecations`, which real's registered result also carries after
+# `deprecations`, which Ansible's registered result also carries after
 # `failed`, is the collection-version redirect community.mysql ->
 # ansible.mysql emitted by the collection loader, not part of the
 # module's own result dict; krikri dispatches the module directly and
@@ -38,7 +38,7 @@ require "socket"
 # The other four mysql plugins of this sweep got no pin HERE because
 # their key sets diverged at the time - key_order cannot conjure a key
 # the plugin never emits. mysql_db, mysql_query and mysql_user have since
-# been brought onto real's key sets; their pins (and the values behind
+# been brought onto Ansible's key sets; their pins (and the values behind
 # them) live in mysql_result_shape_test.cr. mysql_info still emits only
 # version and settings where real registers a dozen more, so it is still
 # unpinned.

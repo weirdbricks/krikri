@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real Ansible's own failed_when: override applies to include_vars:'s OWN
+# Ansible's own failed_when: override applies to include_vars:'s OWN
 # file-not-found failure - the include_vars action's failure is an ordinary
 # task result dict run through the same failed_when: evaluation as any
 # module result. Verified live against ansible-core 2.19:
@@ -51,7 +51,7 @@ describe "failed_when: on include_vars:'s own file-not-found failure" do
     output.must_match(/ignored=0\b/)
   end
 
-  it "failed_when: false also defines the name: var as an empty hash, like real Ansible" do
+  it "failed_when: false also defines the name: var as an empty hash, like Ansible" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

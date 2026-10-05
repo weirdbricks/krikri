@@ -13,7 +13,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 # debug action plugin stopped at the raw VariableLookup#resolve and
 # printed the unrendered `{{ ... }}` string as the var's value - the
 # templating error never surfaced, the task succeeded, and a
-# bad-inventory playbook ran on (real ansible-playbook aborts the play,
+# bad-inventory playbook ran on (ansible-playbook aborts the play,
 # exit 2). Real debug templates the looked-up value through the
 # Templar, so the error must fail the task; a lazy var that renders
 # cleanly must still display its rendered value.

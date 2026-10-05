@@ -9,7 +9,7 @@ require "../minitest_helper"
 # CI): round 103's robertdebock.alternatives benchmark - installed a
 # fake alternative (`update-alternatives --install`) and selected it
 # (`--set`), byte-identical `update-alternatives --display` output to
-# real Ansible afterward, and a warm rerun correctly reported
+# Ansible afterward, and a warm rerun correctly reported
 # changed: false (fixed a real idempotency bug first - Crystal's `/m`
 # regex flag enables BOTH multiline anchors AND dot-matches-newline
 # together, unlike Python's `re.MULTILINE`, so the original `(.*)$`

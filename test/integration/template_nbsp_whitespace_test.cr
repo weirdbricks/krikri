@@ -8,7 +8,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a {{ }} expression whose leading whitespace is a non-ASCII Unicode space" do
-  it "renders correctly with a U+00A0 NO-BREAK SPACE right after {{, matching real Ansible" do
+  it "renders correctly with a U+00A0 NO-BREAK SPACE right after {{, matching Ansible" do
     # Real bug found benchmarking buluma.bind's own etc_named.conf.j2:
     # `dnssec-validation {{ bind_dnssec_validation }};` - a U+00A0
     # (NO-BREAK SPACE) right after `{{` instead of a regular space, a

@@ -117,7 +117,7 @@ describe "Krikri::PluginHelpers::Ec2Info (ec2_ami_info_test.cr)" do
   end
 
   describe ".run_images" do
-    it "shapes images with the real module's field names" do
+    it "shapes images with the Ansible module's field names" do
       result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_TWO })
 
       expect(falsey?(result["failed"]?)).must_equal(true)

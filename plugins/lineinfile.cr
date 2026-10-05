@@ -12,7 +12,7 @@ module Krikri
   # Compatible with Ansible's ansible.builtin.lineinfile module
   #
   # Parameters:
-  #   path (required, aliases: dest, name - matches real Ansible's own
+  #   path (required, aliases: dest, name - matches Ansible's own
   #     argument_spec, where `dest:` is the long-standing legacy alias
   #     most existing playbooks/roles still write): File to edit
   #   line: Line content (required for state: present, unless backrefs/regexp-only removal)
@@ -76,7 +76,7 @@ module Krikri
     end
 
     # Parameter validation shared by both states. Also enforces the
-    # mutually-exclusive pairs real Ansible's own argument_spec declares
+    # mutually-exclusive pairs Ansible's own argument_spec declares
     # (live-verified against ansible-core 2.19.4: giving both fails with
     # "parameters are mutually exclusive: regexp|search_string" etc.).
     private def validate(state : String, line : String?, regexp : String?, search_string : String?, backrefs : Bool) : PluginResult?
@@ -114,7 +114,7 @@ module Krikri
 
       unless create
         return {false, PluginResult.new(changed: false, failed: true, msg: "Destination #{path} does not exist !", rc: 257,
-          # real's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
+          # Ansible's fail_json(rc=257, msg=...) puts the kwarg first: rc, failed,
           # msg, changed, exception (live-verified against 2.19.11)
           key_order: %w[rc failed msg changed exception])}
       end
@@ -152,7 +152,7 @@ module Krikri
       diff = generate_unified_diff(original_content, new_content, "before: #{path} (content)", "after: #{path} (content)") if changed && @diff_mode
 
       # owner:/group:/mode: apply even when the line content itself was
-      # already correct - real Ansible's lineinfile module runs the
+      # already correct - Ansible's lineinfile module runs the
       # generic file-attribute check unconditionally via
       # set_fs_attributes_if_different, so a mode-only drift (task's
       # mode: differs from the file's current mode, no line insertion
@@ -171,21 +171,21 @@ module Krikri
       line_result(path, state, changed, line, backup_file, original_lines.size, new_lines.size, !!attrs_changed, diff)
     end
 
-    # Real Ansible's per-branch msg strings (live-verified against
+    # Ansible's per-branch msg strings (live-verified against
     # ansible-core 2.19.11 ad-hoc: 'line added' when the line is
     # newly inserted (including into a just-created file), 'line
     # replaced' when an existing line matched and was rewritten in
     # place, '%d line(s) removed' for state: absent, and an empty
     # msg when nothing changed - the previous single generic 'Line
     # modified' for every changed=true case came from an ad-hoc CLI
-    # comparison sweep against real ansible, 2026-09-13), plus real
+    # comparison sweep against Ansible, 2026-09-13), plus real
     # Ansible's own check_file_attrs suffix when the file's
     # owner/group/mode/SELinux attributes were what changed. Real
     # Ansible's state=absent exit also carries a `found` count of the
     # removed lines (its present-path exit does not); the backup path
     # goes out under the key `backup` ("" when none), not blockinfile's
     # `backup_file`.
-    # Real ansible.builtin.lineinfile's registered-result key order
+    # Ansible.builtin.lineinfile's registered-result key order
     # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
     # lineinfile: tasks): state=present runs changed, msg, backup, diff,
     # failed - backup: "" even when no backup was taken, msg: "" on an
@@ -212,7 +212,7 @@ module Krikri
         msg += "ownership, perms or SE linux context changed"
       end
 
-      # Real ansible.builtin.lineinfile's return value carries no `path`,
+      # Ansible.builtin.lineinfile's return value carries no `path`,
       # `line` or `state` keys in either state - only backup/changed/msg
       # (plus `found` for state=absent). It also passes msg='' explicitly,
       # so the empty-string `msg` key stays in the wire result.
@@ -263,7 +263,7 @@ module Krikri
       content
     end
 
-    # Backup first (real Ansible's backup_local also runs before its own
+    # Backup first (Ansible's backup_local also runs before its own
     # write_changes), then the actual write. Returns {backup_file,
     # failure}: failure a failed PluginResult when the write/validate
     # path itself failed.
@@ -278,7 +278,7 @@ module Krikri
       {backup_file, nil}
     end
 
-    # Real Ansible writes lineinfile's result through
+    # Ansible writes lineinfile's result through
     # AnsibleModule.atomic_move: a temp file whose content is validated
     # (validate:) and then RENAMED into place - same shape copy.cr's
     # merged implementation already uses here. unsafe_writes: swaps the
@@ -296,7 +296,7 @@ module Krikri
       temp_file = File.join(File.dirname(path), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY at 0600 and settled to its final mode
-        # (0666 & ~umask for a new dest - real's atomic_move gives a new
+        # (0666 & ~umask for a new dest - Ansible's atomic_move gives a new
         # file Python's default 0666 & ~umask and does NOT pre-apply the
         # task's mode:, which set_fs_attributes_if_different then
         # applies AFTER the move, reporting the drift as the "and
@@ -336,7 +336,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's atomic_move resolves a symlink dest to its TARGET
+      # Ansible's atomic_move resolves a symlink dest to its TARGET
       # (os.path.realpath) before renaming, so a lineinfile task pointing
       # at a symlink edits the file it points at rather than replacing
       # the symlink - and the previous in-place File.write here followed
@@ -451,7 +451,7 @@ module Krikri
       end
     end
 
-    # The file's current chattr flags as real Ansible reads them:
+    # The file's current chattr flags as Ansible reads them:
     # `lsattr -d <path>` output's first whitespace field with the
     # dash-padding stripped. An lsattr failure (missing binary,
     # unsupported filesystem like tmpfs) is empty flags, not an error -
@@ -473,7 +473,7 @@ module Krikri
     end
 
     # Applies the attributes: param via the real chattr binary and fails
-    # the task (like real Ansible's fail_json(msg='chattr failed')) when
+    # the task (like Ansible's fail_json(msg='chattr failed')) when
     # chattr exits nonzero or writes to stderr.
     private def apply_attr(path : String, check_mode : Bool) : {Bool, PluginResult?}
       return {false, nil} unless attr_changed?(path)
@@ -494,7 +494,7 @@ module Krikri
 
     # seuser:/serole:/setype:/selevel: - SELinux context parts, applied
     # to the file via `chcon`. Mirrors copy.cr's proven implementation
-    # exactly: real Ansible skips this ENTIRELY (a graceful no-op, its
+    # exactly: Ansible skips this ENTIRELY (a graceful no-op, its
     # set_context_if_different opens with `if not self.selinux_enabled():
     # return changed`) when SELinux isn't enabled on the target at all,
     # the overwhelming majority of real-world targets.

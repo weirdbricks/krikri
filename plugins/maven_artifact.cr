@@ -18,7 +18,7 @@ module Krikri
   # dest, resolving "latest" versions and SNAPSHOT timestamps through
   # the repository's maven-metadata.xml, with checksum verification.
   #
-  # Follows the real module's control flow:
+  # Follows the Ansible module's control flow:
   #   - repo path is group_id (dots->slashes) / artifact_id
   #     [/version], timestamped snapshot versions keep a SNAPSHOT
   #     directory; the artifact file is
@@ -45,7 +45,7 @@ module Krikri
   class MavenArtifactPlugin < BasePlugin
     DEFAULT_REPOSITORY_URL = "https://repo1.maven.org/maven2"
 
-    # The interpreter real's module would run under (the discovered one):
+    # The interpreter Ansible's module would run under (the discovered one):
     # the first existing python3/python, resolved to its realpath the way
     # interpreter discovery reports it (/usr/bin/python3.13-style).
     private def target_python : String?
@@ -71,7 +71,7 @@ module Krikri
 
     def execute : PluginResult
       # Real maven_artifact passes no supports_check_mode=True to its
-      # AnsibleModule, so real Ansible's action plugin never runs the
+      # AnsibleModule, so Ansible's action plugin never runs the
       # module under check mode at all - the task skips with "remote
       # module (...) does not support check mode" (round 994002
       # kop_misc2: registered skipped, msg, failed, changed; the recap
@@ -117,13 +117,13 @@ module Krikri
       return PluginResult.new(changed: false, failed: true,
         msg: "value of checksum_alg must be one of: md5, sha1, got: #{checksum_alg}") unless ["md5", "sha1"].includes?(checksum_alg)
 
-      # Real's import-time dependency checks run right after the
+      # Ansible's import-time dependency checks run right after the
       # argument_spec validation and before anything else in main()
       # (live-verified vs 2.19.11 in the no-network container: the lxml
       # import failure beats version_by_spec spec parsing, the
       # repository URL handling and every download attempt). The
       # missing_required_lib boilerplate carries the hostname and the
-      # interpreter real would run under (its sys.executable).
+      # interpreter Ansible would run under (its sys.executable).
       if python = target_python
         unless python_lib_available?(python, "lxml")
           return PluginResult.new(changed: false, failed: true, msg: missing_required_lib_msg("lxml", python))
@@ -139,7 +139,7 @@ module Krikri
       end
       local = repository_url.starts_with?("file://")
 
-      # Real's Artifact() constructor ValueError (version_by_spec specs it
+      # Ansible's Artifact() constructor ValueError (version_by_spec specs it
       # cannot parse) runs AFTER the import-time library checks and the
       # s3/boto gate.
       return PluginResult.new(changed: false, failed: true,
@@ -337,7 +337,7 @@ module Krikri
 
     # Real MavenDownloader._request's failure: ValueError(failmsg +
     # " because of " + info['msg'] + "for URL " + url_to_use) - note
-    # real's own missing space before "for URL" (round 994002
+    # Ansible's own missing space before "for URL" (round 994002
     # kop_misc2), and fetch_url's "HTTP Error <code>: <reason>" msg.
     private def get(url : String, failmsg : String, username : String?, password : String?,
                     required : Bool, validate_certs : Bool = true) : (String | PluginResult)
@@ -373,7 +373,7 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "Cannot retrieve the artifact to destination: Can not find local file: #{path}") unless File.exists?(path)
           FileUtils.cp(path, tmp)
-          # Real's local branch uses shutil.copy2 - the SOURCE file's
+          # Ansible's local branch uses shutil.copy2 - the SOURCE file's
           # mode travels to dest through the tempfile.
           File.chmod(tmp, File.info(path).permissions)
         else

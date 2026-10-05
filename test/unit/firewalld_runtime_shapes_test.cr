@@ -10,7 +10,7 @@ require "json"
 #   text goes to stderr, and because the result carried a `zone` key real
 #   never emits. Real wraps the error in
 #   "ERROR: Exception caught: <dbus exception> <joined context msgs>".
-# - success results need real's msg composition ("Permanent and
+# - success results need Ansible's msg composition ("Permanent and
 #   Non-Permanent(immediate) operation[, Changed <thing> <value> to
 #   <state>]") instead of an empty msg, and check-mode changes register
 #   as bare {changed, failed} with no msg key.
@@ -19,7 +19,7 @@ require "json"
 # `firewall-cmd` on PATH (via the `_environment` seam) and a fake python
 # interpreter that satisfies the plugin's firewall-library import gate -
 # the dev machine has no firewalld bindings, so without the shim every
-# probe would stop at real's missing_required_lib failure. The fake CLI
+# probe would stop at Ansible's missing_required_lib failure. The fake CLI
 # implements only the runtime context, so these specs run with
 # `permanent: false` (context msg "Non-permanent operation"); the full
 # permanent+immediate shapes captured on the real Rocky host are pinned
@@ -52,7 +52,7 @@ private def with_fake_firewall_cmd(&)
     done
     case "$action" in
       list)
-        # real's ServiceTransaction reads the zone's whole service list
+        # Ansible's ServiceTransaction reads the zone's whole service list
         # (`service in self.fw.getServices(zone)`), space-separated on one line (like firewall-cmd) -
         # NOT a --query-service probe, which rejects an undefined name.
         if [ -f "$KRIKRI_FW_STATE" ]; then
@@ -67,7 +67,7 @@ private def with_fake_firewall_cmd(&)
         # 0/1). Reproduced from firewalld 1.2.3's
         # firewall/command.py exception_handler - this is what made
         # krikri's old --query-service probe fail early on the round996006
-        # host instead of reporting real's zone-context error.
+        # host instead of reporting Ansible's zone-context error.
         for d in /usr/lib/firewalld/services /etc/firewalld/services; do
           [ -f "$d/$value.xml" ] && found=1
         done
@@ -139,7 +139,7 @@ private def run_fw(env : Hash(String, String), params : Hash(String, String)) : 
 end
 
 describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
-  it "registers a fresh enable with real's msg composition and key order" do
+  it "registers a fresh enable with Ansible's msg composition and key order" do
     with_fake_firewall_cmd do |env, _log, _state|
       result = run_fw(env, {"zone" => "public", "service" => "http", "state" => "enabled"})
 
@@ -149,7 +149,7 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
         "Non-permanent operation, Changed service http to enabled")
       # Plugin-level keys; the controller appends `failed: false` last,
       # so the registered shape is [changed, msg, failed] - exactly the
-      # round994003 firewalld_service_enable capture. Real never emits a
+      # round994003 firewalld_service_enable capture. Ansible never emits a
       # `zone` key.
       result.as_h.keys.must_equal(["changed", "msg"])
     end
@@ -172,13 +172,13 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
                             "_ansible_check_mode" => "true"})
 
       result["changed"].as_bool.must_equal(true)
-      # real's exit_json(changed=True) inside the transaction - no msg,
+      # Ansible's exit_json(changed=True) inside the transaction - no msg,
       # no zone (registered shape: [changed, failed]).
       result.as_h.keys.must_equal(["changed"])
     end
   end
 
-  it "reports an unknown service with real's ERROR: Exception caught msg and no zone key" do
+  it "reports an unknown service with Ansible's ERROR: Exception caught msg and no zone key" do
     with_fake_firewall_cmd do |env, _log, _state|
       result = run_fw(env, {"zone" => "public", "service" => "kop_nosuch_svc", "state" => "enabled"})
 
@@ -188,7 +188,7 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
         "INVALID_SERVICE: Zone 'public': 'kop_nosuch_svc' not among existing services " \
         "Non-permanent operation, " \
         "Services are defined by port/tcp relationship and named as they are in /etc/services (on most systems)")
-      # real's fail_json shape (registered: [failed, msg, changed,
+      # Ansible's fail_json shape (registered: [failed, msg, changed,
       # exception]) - and no `zone` key, which the plugin used to add.
       result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
       result["exception"].as_s.must_equal("(traceback unavailable)")
@@ -210,14 +210,14 @@ describe "firewalld plugin - round994003 runtime shapes (fake firewall-cmd)" do
     end
   end
 
-  it "reads the zone's service LIST to probe a service, like real's getServices membership test" do
-    # Real's ServiceTransaction.get_enabled_immediate is
+  it "reads the zone's service LIST to probe a service, like Ansible's getServices membership test" do
+    # Ansible's ServiceTransaction.get_enabled_immediate is
     # `service in self.fw.getServices(self.zone)` - the whole zone list,
     # never `--query-service=<name>`. That is observable in krikri too:
     # firewall-cmd's --query-service REJECTS a name that is not a
     # defined service ("Error: INVALID_SERVICE: <name>", no zone
     # context), so probing with it made an unknown service fail before
-    # real's transaction ever appends its context msg - the round996006
+    # Ansible's transaction ever appends its context msg - the round996006
     # firewalld_fail divergence, where real registered
     # INVALID_SERVICE: Zone 'public': 'kop_nosuch_svc' not among
     # existing services.

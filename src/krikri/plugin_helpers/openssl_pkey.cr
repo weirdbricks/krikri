@@ -65,7 +65,7 @@ module Krikri
     #                     (RSA/DSA/EC), or PKCS#8 for the Edwards types
     #                     that have no traditional encoding; optionally
     #                     encrypted with AES-256-CBC (the "auto" cipher,
-    #                     which is the only cipher the real module's
+    #                     which is the only cipher the Ansible module's
     #                     cryptography backend accepts)
     #   pkcs8_der       - unencrypted DER PrivateKeyInfo (the source of
     #                     `format: raw`'s bare key bytes)
@@ -175,7 +175,7 @@ module Krikri
         end
       end
 
-      # cipher "auto" - the only encryption the real module's cryptography
+      # cipher "auto" - the only encryption the Ansible module's cryptography
       # backend ever applies - is AES-256-CBC.
       private def encryption_args(passphrase : String?) : {Void*, UInt8*, Int32}
         if passphrase && !passphrase.empty?
@@ -214,12 +214,12 @@ module Krikri
         end
       end
 
-      # The failure message the real module's load_privatekey produces for
+      # The failure message the Ansible module's load_privatekey produces for
       # an unparsable key: Python's `cryptography` raises ValueError whose
       # str() is the "(message, [OpenSSLError...])" tuple repr, and the
       # module prefixes it. The message itself is `cryptography`'s fixed
       # text; the OpenSSLError entries come from libcrypto's error queue
-      # (same codes real reports, since both link the target's libcrypto).
+      # (same codes Ansible reports, since both link the target's libcrypto).
       #
       #   *passphrase_problem* is the module's TypeError branch instead -
       # "Wrong or empty passphrase provided for private key" - used when
@@ -229,7 +229,7 @@ module Krikri
       private COULD_NOT_DESERIALIZE = "Could not deserialize key data. The data may be in an incorrect format, the provided password may be incorrect, it may be encrypted with an unsupported algorithm, or it may be an unsupported key type (e.g. EC curves with explicit parameters)."
 
       # cryptography-semantics private-key load: on failure the returned
-      # LoadFailure.message is byte-for-byte what the real module puts in
+      # LoadFailure.message is byte-for-byte what the Ansible module puts in
       # fail_json (verified against community.crypto 3.1.1 + the libcrypto
       # the target ships). On success the caller owns the returned
       # EVP_PKEY (free_pkey).
@@ -244,7 +244,7 @@ module Krikri
           encrypted = encrypted_marker?(data)
           unless pkey.null?
             # Loaded WITH a password: an unencrypted key loads without one
-            # too, and that mismatch is the real module's TypeError branch
+            # too, and that mismatch is the Ansible module's TypeError branch
             # ("Password was given but private key is not encrypted.").
             return {pkey, nil} if encrypted
             LibCryptoPkey.err_clear_error
@@ -374,7 +374,7 @@ module Krikri
         Info.new(base_nid, bits, curve_sn)
       end
 
-      # SubjectPublicKeyInfo DER - the input the real module hashes for
+      # SubjectPublicKeyInfo DER - the input the Ansible module hashes for
       # its `fingerprint` result.
       def public_der(pkey : Void*) : Bytes?
         len = LibCryptoPkey.i2d_pubkey(pkey, nil)

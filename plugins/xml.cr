@@ -15,7 +15,7 @@ module Krikri
   # Real module runs on lxml (also libxml2 underneath), so XPath and
   # serialization behavior match.
   class XmlPlugin < BasePlugin
-    # Live-verified against real ansible-core 2.19.11 (community.general
+    # Live-verified against ansible-core 2.19.11 (community.general
     # collection) via `{{ r | to_json }}` dumps. One order covers every
     # success variant: set-attribute runs (changed and unchanged) are
     # actions/changed (msg omitted when empty); count: adds count then
@@ -143,7 +143,7 @@ module Krikri
       @namespaces = namespaces_from(raw)
       @doc = nil
 
-      # Real's main() opens with the lxml gate right after its
+      # Ansible's main() opens with the lxml gate right after its
       # AnsibleModule argument validation and before it touches the
       # target XML source at all: `if not HAS_LXML:
       # module.fail_json(msg=missing_required_lib("lxml"),
@@ -152,11 +152,11 @@ module Krikri
       # existence/readability checks or the parse below. krikri parses
       # with its own krikri-xml and so has no lxml dependency of its
       # own, which used to leave it reporting "The target XML source
-      # '...' does not exist." (or a parse error) where real reports
+      # '...' does not exist." (or a parse error) where Ansible reports
       # the missing library. Reproduced as-is, at the same point in the
       # flow. Verified against ansible-playbook 2.19.11 +
       # community.general on a target without lxml. No `exception:`
-      # detail rides along: real's LXML_IMP_ERR is a formatted
+      # detail rides along: Ansible's LXML_IMP_ERR is a formatted
       # traceback, which its display does not append to this message
       # (confirmed live - the [ERROR] block carries the bare text).
       if gate = Krikri.missing_python_library("lxml", "lxml.etree")
@@ -184,7 +184,7 @@ module Krikri
       doc = @doc.not_nil!
 
       # Serialization of the freshly-parsed document with the same options
-      # used for output - the "unchanged tree" baseline the real module
+      # used for output - the "unchanged tree" baseline the Ansible module
       # recomputes from a deepcopy (has_changed).
       orig_serial = serialize(doc, pretty_print)
 
@@ -192,7 +192,7 @@ module Krikri
       count_result = nil
       msg = ""
       # The count/print_match/content branches exit before any mutation or
-      # write in the real module (finish() with changed=has_changed(tree),
+      # write in the Ansible module (finish() with changed=has_changed(tree),
       # which is false for a tree that was only read) - byte differences
       # vs the on-disk file must never turn these into changed=true.
       read_only = false
@@ -377,7 +377,7 @@ module Krikri
           # the double-quoted JSON the wire serialized it to (see
           # substitute_task_params's whole-single-span comment); NEVER a
           # Python-repr repair pass - a value that merely LOOKS like a
-          # container is a plain STRING in real ansible-core
+          # container is a plain STRING in ansible-core
           # (live-verified vs ansible-playbook 2.19.11, see apt.cr's
           # parse_package_names).
           parsed = begin
@@ -728,7 +728,7 @@ module Krikri
       element.set_attribute(name, value)
     end
 
-    # split_xpath_last - the real module's regex cascade for turning an
+    # split_xpath_last - the Ansible module's regex cascade for turning an
     # XPath with a simple "last step" into (parent path, change spec),
     # used only by the node auto-creation path.
     IDENT               = "[a-zA-Z-][a-zA-Z0-9_\\-\\.]*"

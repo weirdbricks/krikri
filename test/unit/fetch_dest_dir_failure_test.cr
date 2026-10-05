@@ -12,9 +12,9 @@ require "file_utils"
 # executor's {failed, msg} shape with NO `changed` key at all. A
 # registered variable from that failure has `changed` UNDEFINED (not
 # false), and `when: r.changed` on it raises the same "has no attribute"
-# error real Ansible raises. fetch.cr previously let mkdir_p's exception
+# error Ansible raises. fetch.cr previously let mkdir_p's exception
 # bubble into the generic rescue (changed: false, msg
-# "Plugin execution failed: ..."), defining `changed` where real Ansible
+# "Plugin execution failed: ..."), defining `changed` where Ansible
 # leaves it undefined.
 private def with_temp_dir(&)
   dir = File.tempname("fetch-destdir-spec")

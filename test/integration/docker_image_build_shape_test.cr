@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Registered-result shape parity for community.docker.docker_image_build,
-# live-verified key-for-key against real ansible-core 2.19.11 +
+# live-verified key-for-key against ansible-core 2.19.11 +
 # community.docker 5.2.1 driving a REAL BuildKit builder.
 #
 # The module shells out to `docker buildx build` (it is CLI-only - it
@@ -14,7 +14,7 @@ require "file_utils"
 # docker-config, a buildkitd (started under rootlesskit) reachable as a
 # buildx `remote` driver at tcp://127.0.0.1:1234, and the module's
 # daemon-facing CLI probes talking to a rootless podman `system service`
-# socket. `{{ r | to_json }}` dumps from a real ansible-playbook run of
+# socket. `{{ r | to_json }}` dumps from a ansible-playbook run of
 # the same shapes pinned the order (see the per-spec comments); the
 # specs skip when that stack is not up.
 #
@@ -84,7 +84,7 @@ end
 describe "docker_image_build result shape" do
   serial!
 
-  it "matches real's successful-build key set and order" do
+  it "matches Ansible's successful-build key set and order" do
     skip("no BuildKit-capable docker CLI at #{BUILD_SHAPE_SOCKET_PATH}") unless build_shape_buildkit?
     ctx = PluginSpecHelper.tmp_path("docker-image-build-shape-ctx")
     write_build_context(ctx, "FROM scratch\nLABEL km=docker-build-shape\nCOPY hello.txt /hello.txt\n")
@@ -114,7 +114,7 @@ describe "docker_image_build result shape" do
     result.as_h.has_key?("msg").must_equal(false)
   end
 
-  it "matches real's check-mode key set and order" do
+  it "matches Ansible's check-mode key set and order" do
     skip("no BuildKit-capable docker CLI at #{BUILD_SHAPE_SOCKET_PATH}") unless build_shape_buildkit?
     ctx = PluginSpecHelper.tmp_path("docker-image-build-shape-ctx")
     write_build_context(ctx, "FROM scratch\nLABEL km=docker-build-shape\nCOPY hello.txt /hello.txt\n")
@@ -132,7 +132,7 @@ describe "docker_image_build result shape" do
     result.as_h.has_key?("msg").must_equal(false)
   end
 
-  it "matches real's already-present key set and order" do
+  it "matches Ansible's already-present key set and order" do
     skip("no BuildKit-capable docker CLI at #{BUILD_SHAPE_SOCKET_PATH}") unless build_shape_buildkit?
     ctx = PluginSpecHelper.tmp_path("docker-image-build-shape-ctx")
     write_build_context(ctx, "FROM scratch\nLABEL km=docker-build-shape\nCOPY hello.txt /hello.txt\n")
@@ -152,7 +152,7 @@ describe "docker_image_build result shape" do
     build_shape_unseed_image
   end
 
-  it "matches real's failed-build key set and order" do
+  it "matches Ansible's failed-build key set and order" do
     skip("no BuildKit-capable docker CLI at #{BUILD_SHAPE_SOCKET_PATH}") unless build_shape_buildkit?
     ctx = PluginSpecHelper.tmp_path("docker-image-build-shape-ctx")
     write_build_context(ctx, "THIS IS NOT A VALID DOCKERFILE\n")

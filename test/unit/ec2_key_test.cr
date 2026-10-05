@@ -144,7 +144,7 @@ describe Krikri::PluginHelpers::Ec2Key do
   end
 
   describe ".run" do
-    it "creates a key pair and returns the real module's key result shape" do
+    it "creates a key pair and returns the Ansible module's key result shape" do
       result = run_module({"name" => "deploy", "state" => "present", "region" => "us-east-1"}, ->(_region : String, body : String) do
         action = URI::Params.parse(body)["Action"]
         if action == "DescribeKeyPairs"
@@ -221,7 +221,7 @@ describe Krikri::PluginHelpers::Ec2Key do
       key["private_key"]?.must_be_nil
     end
 
-    it "returns key null and the real module's msg when deleting" do
+    it "returns key null and the Ansible module's msg when deleting" do
       result = run_module({"name" => "deploy", "state" => "absent", "region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
       result["changed"].must_equal(true)
       result["msg"].must_equal("key deleted")

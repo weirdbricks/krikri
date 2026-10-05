@@ -139,7 +139,7 @@ describe "maven_artifact plugin" do
   end
 
   # file:// repositories compare the destination file's checksum
-  # against the source artifact's own checksum (the real module's local
+  # against the source artifact's own checksum (the Ansible module's local
   # branch of is_invalid_checksum) - so the change-detection path is
   # exercised by corrupting dest and asking for verify_checksum: always.
   it "re-downloads when verify_checksum=always finds a corrupt destination" do

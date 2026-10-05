@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # A task param whose ENTIRE value is one bare `{{ }}` span is natively
-# typed the way real Ansible's own module args are (live-verified vs
+# typed the way Ansible's own module args are (live-verified vs
 # ansible-playbook 2.19.11: `apt: name: "{{ pkg_list }}"` with a real
 # list var looks up the clean ELEMENTS - "No package matching
 # 'probe-pkg-one'" - and `debug: msg: "{{ pkg_list }}"` prints a real
@@ -10,8 +10,8 @@ require "../minitest_helper"
 # list-param plugin to "repair" single-quoted repr back into a
 # container - a repair that also swallowed values that merely LOOK
 # like a repr (a literal `name: "['a']"` string, or a block tag's
-# rendered output - both plain strings in real Ansible) into
-# containers real Ansible never had. Mixed text keeps the repr form
+# rendered output - both plain strings in Ansible) into
+# containers Ansible never had. Mixed text keeps the repr form
 # (live-verified: `msg: "pre {{ list }} post"` prints
 # "pre ['a', 'b'] post").
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -43,7 +43,7 @@ describe "whole-span `{{ }}` module args carry the JSON container wire form" do
       YAML
 
     status.success?.must_equal(true)
-    # Real ansible-core 2.19.11 (live-captured, non-tty) pretty-prints the
+    # ansible-core 2.19.11 (live-captured, non-tty) pretty-prints the
     # native container msg across lines:
     #   "msg": [
     #       "probe-pkg-one",
@@ -56,7 +56,7 @@ describe "whole-span `{{ }}` module args carry the JSON container wire form" do
     output.wont_include("['probe-pkg-one', 'probe-pkg-two']")
   end
 
-  it "keeps mixed text in Python repr form (real Ansible's display rendering)" do
+  it "keeps mixed text in Python repr form (Ansible's display rendering)" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -109,7 +109,7 @@ describe "whole-span `{{ }}` module args carry the JSON container wire form" do
       YAML
 
     status.success?.must_equal(true)
-    # `is string` semantics: real Ansible keeps this a str (live-
+    # `is string` semantics: Ansible keeps this a str (live-
     # verified alongside the set_fact shapes) - the wire text is the
     # string itself, never re-parsed into a container.
     output.must_include("['a', 'b']")
@@ -137,7 +137,7 @@ describe "whole-span `{{ }}` module args carry the JSON container wire form" do
   end
 
   it "stringifies a literal empty list param to \"[]\" (distinguishable from an empty string)" do
-    # Real Ansible (live-verified vs ansible-playbook 2.19.11 in check
+    # Ansible (live-verified vs ansible-playbook 2.19.11 in check
     # mode): `apt: {name: []}` is "no packages" (cache update only),
     # while `apt: {name: ""}` hard-fails "No package matching '' is
     # available" - the empty-list-vs-empty-string distinction survives

@@ -16,7 +16,7 @@ end
 
 # assert:'s own that: is strict-undefined too, and reports it with the
 # SAME message as a when: does - not as an ordinary "Assertion failed".
-# Live-verified against real ansible-core 2.19.12 on Rocky 9.6
+# Live-verified against ansible-core 2.19.12 on Rocky 9.6
 # (round173, via buluma.mount).
 describe "assert: strict-undefined that:" do
   it "reports a bare undefined var as a conditional error, not 'Assertion failed'" do

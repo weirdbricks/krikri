@@ -4,7 +4,7 @@ require "../../src/krikri/task_executor"
 # Regression spec for the andrewrothstein.func_e divergence (round 810153,
 # confirmed live against ansible-core 2.19): the role's get_url: downloads
 # the tarball to the REMOTE host's /tmp, then its unarchive: task sets no
-# remote_src:, so real Ansible's unarchive action plugin requires src: to
+# remote_src:, so Ansible's unarchive action plugin requires src: to
 # exist on the CONTROLLER - unconditionally, never falling back to the
 # remote filesystem ("Could not find or access '/tmp/func-e_..._linux_
 # amd64.tar.gz' on the Ansible Controller", failed=1). krikri-playbook
@@ -36,7 +36,7 @@ private def unarchive_task
 end
 
 describe "unarchive: remote_src:false controller-side src: staging" do
-  it "fails the task with real Ansible's own message when src: is missing on the controller" do
+  it "fails the task with Ansible's own message when src: is missing on the controller" do
     # The get_url-then-unarchive shape: an absolute path that exists on
     # the remote target but NOT on the controller (deliberately pointing
     # at a path this spec never creates on the controller).
@@ -122,7 +122,7 @@ describe "unarchive: remote_src:false controller-side src: staging" do
     # task) regressed through this exact staging path once the
     # controller-miss hard-fail landed (0.9.1048): copy: no was read as
     # the DEFAULT remote_src: false, so staging looked for src: on the
-    # controller, found nothing, and failed where real Ansible succeeds.
+    # controller, found nothing, and failed where Ansible succeeds.
     host = Krikri::Host.new("unreachable-spec-host", "root", 1)
     params = {"src" => "/tmp/does-not-exist-#{Random::Secure.hex(4)}.tar.gz", "dest" => "/opt/spec", "copy" => "no"}
 

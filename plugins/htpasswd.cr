@@ -41,13 +41,13 @@ module Krikri
 
     # Schemes this engine can actually produce on a target: openssl
     # passwd's four algorithms plus plaintext and the unsalted
-    # ldap_sha1 (see #ldap_sha1_hash). Everything else real accepts is
+    # ldap_sha1 (see #ldap_sha1_hash). Everything else Ansible accepts is
     # a real passlib handler with no openssl equivalent.
     COMPUTABLE_SCHEMES = (SCHEME_FLAGS.keys + ["plaintext", "ldap_sha1"]).map(&.downcase)
 
     # The four apache_hashes passlib's own htpasswd_context always
     # carries (htpasswd.py's module-level list) plus every other passlib
-    # handler name real accepts. Verified against community.general
+    # handler name Ansible accepts. Verified against community.general
     # 13.2.0's htpasswd.py + passlib's own handler registry.
     APACHE_HASHES = ["apr_md5_crypt", "des_crypt", "ldap_sha1", "plaintext"]
 
@@ -74,7 +74,7 @@ module Krikri
     ]
 
     # every passlib name this plugin answers to, lowercase - the lookup
-    # real does is case-insensitive (passlib lowercases the scheme).
+    # Ansible does is case-insensitive (passlib lowercases the scheme).
     KNOWN_SCHEMES = (APACHE_HASHES + SCHEME_FLAGS.keys + PASSLIB_ONLY_SCHEMES).map(&.downcase)
 
     def execute : PluginResult
@@ -138,7 +138,7 @@ module Krikri
     end
 
     # The three failure checks real reaches before it ever reads or
-    # writes the destination, in real's own order.
+    # writes the destination, in Ansible's own order.
     private def preflight_failure(path : String, state : String, create : Bool, crypt_scheme : String) : PluginResult?
       return unknown_scheme_result(crypt_scheme) if state == "present" && !known_scheme?(crypt_scheme)
       missing_file_result(path, state, create) || read_error_result(path)
@@ -163,7 +163,7 @@ module Krikri
         msg: "secret must be unicode or bytes, not None")
     end
 
-    # A directory where the htpasswd file should be: real's HtpasswdFile
+    # A directory where the htpasswd file should be: Ansible's HtpasswdFile
     # opens it and Python's open() raises IsADirectoryError, which
     # htpasswd.py's outer `except Exception as e: fail_json(msg=f"{e}")`
     # renders with the errno prefix.
@@ -174,7 +174,7 @@ module Krikri
         msg: "[Errno 21] Is a directory: '#{path}'")
     end
 
-    # Real Ansible branches the present-path msg on whether this call
+    # Ansible branches the present-path msg on whether this call
     # actually created the file (its own present() says "Created {path}
     # and added {user}" for a brand-new file, "Add/update {user}" for a
     # change to an existing one) - a brand-new create is not an "update".
@@ -203,7 +203,7 @@ module Krikri
     # check_file_attrs() appends its own clause to the msg whenever the
     # owner/group/mode had to be fixed - including its missing-space
     # quirk on the not-changed branch ("u already presentownership,
-    # perms or SE linux context changed"), which is what real prints.
+    # perms or SE linux context changed"), which is what Ansible prints.
     private def finish(msg : String, path : String, content_changed : Bool, attrs_changed : Bool) : PluginResult
       msg += if content_changed
                " and ownership, perms or SE linux context changed"
@@ -211,7 +211,7 @@ module Krikri
                "ownership, perms or SE linux context changed"
              end if attrs_changed
 
-      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`
+      # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`
       # on create/rerun/update/remove): msg, changed - exit_json(msg=...,
       # changed=...), and NO path key in the result (the path only exists
       # as the task's input parameter).
@@ -296,7 +296,7 @@ module Krikri
     end
 
     # ldap_sha1 is one of the four apache_hashes passlib's htpasswd
-    # context always carries, so real accepts it everywhere - and it is
+    # context always carries, so Ansible accepts it everywhere - and it is
     # unsalted, which makes it the one non-plaintext scheme computable
     # here without shelling out at all.
     private def ldap_sha1_hash(password : String) : String

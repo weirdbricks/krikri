@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# A role's meta/argument_specs.yml is templated STRICTLY by real Ansible -
+# A role's meta/argument_specs.yml is templated STRICTLY by Ansible -
 # `default:` expressions included, before the option's own presence is ever
 # considered (live-verified against ansible-core 2.19.4, 2026-09-06,
 # lablabs.rke2 investigation: `default: "{{ groups[rke2_servers_group_name] }}"`

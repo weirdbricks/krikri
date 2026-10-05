@@ -11,7 +11,7 @@ private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-
 # Found benchmarking linux-system-roles.firewall (round 970345): its
 # "Show diffs" task guards with `when: ansible_check_mode or
 # ansible_diff_mode or ...`, which hard-failed ("'ansible_diff_mode' is
-# undefined") where real ansible-playbook just skips - ansible_check_mode
+# undefined") where ansible-playbook just skips - ansible_check_mode
 # was bound as a magic var, its --diff sibling was not.
 describe "ansible_diff_mode magic var" do
   it "defaults to false on a plain run instead of being undefined" do

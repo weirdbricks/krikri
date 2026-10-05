@@ -19,7 +19,7 @@ require "file_utils"
 # exercise (the same PluginResult constructions with the same
 # key_order lists).
 #
-# The single shared-fix pin: real's controller appends the collected
+# The single shared-fix pin: Ansible's controller appends the collected
 # `deprecations` AFTER the failed/changed backfill, so mount registers
 # ..., fstype, failed, deprecations (previously krikri's wire-side
 # deprecations landed before the backfilled failed key).
@@ -51,7 +51,7 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
   it "parted create registers [changed, disk, partitions, script, failed] on an unlabeled device" do
     # The loop-device state the round's probe starts from: a blank
     # device whose `parted -s -m ... print` exits non-zero with
-    # "unrecognised disk label". Real parses the BYT; header anyway
+    # "unrecognised disk label". Ansible parses the BYT; header anyway
     # (table "unknown"), builds the mklabel+mkpart script and succeeds -
     # krikri previously failed the task outright (the round's parted
     # recap divergence, py changed=17 vs cr changed=16).
@@ -154,14 +154,14 @@ describe "storage plugin registered key order (round 992003 kop_storage)" do
     keys["exception"].as_s.must_equal("(traceback unavailable)")
   end
 
-  it "rejects a number below 1 with real's exact message" do
+  it "rejects a number below 1 with Ansible's exact message" do
     result = PluginSpecHelper.run("parted", {"device" => "/dev/null", "number" => "0", "state" => "present"})
 
     result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
     result["msg"].as_s.must_equal("The partition number must be greater then 0.")
   end
 
-  it "lvg failure on a missing PV device registers [failed, msg, changed, exception] with real's Device not found. message" do
+  it "lvg failure on a missing PV device registers [failed, msg, changed, exception] with Ansible's Device not found. message" do
     # real lvg.py checks every requested PV for existence (after
     # realpath) before any LVM command runs - the round's lvg_fail
     # capture. Previously krikri marched into vgcreate and invented its

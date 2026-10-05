@@ -15,7 +15,7 @@ module Krikri
   #     (real main()'s three create_path calls - NOT the new release dir
   #     and NOT current: the release dir is the caller's build step's
   #     job and `current` only comes into existence at finalize), and
-  #     generates a release name YYYYmmddHHMMSS like real's own default
+  #     generates a release name YYYYmmddHHMMSS like Ansible's own default
   #     when none is given, stored in the result's
   #     `release`/`new_release` return values so follow-up tasks can
   #     reference it via the registered variable
@@ -47,7 +47,7 @@ module Krikri
   #   - check mode: discovery runs for real, mutations are not run
   #
   # `new_release_state` (deprecated upstream arg) is accepted and
-  # ignored, matching real's behavior of treating it as always
+  # ignored, matching Ansible's behavior of treating it as always
   # "create".
   class DeployHelperPlugin < BasePlugin
     # Real argument_spec order (live-verified: "value of state must be
@@ -116,7 +116,7 @@ module Krikri
       # Real main() publishes {"deploy_helper": []} for state=absent -
       # an empty list, its deliberate "destroy the facts" sentinel - on
       # every non-failed exit, including the nothing-to-remove no-op.
-      # Real's result dict is {state, ansible_facts} + changed - no msg
+      # Ansible's result dict is {state, ansible_facts} + changed - no msg
       # (round 994002 kop_misc2: registered state, ansible_facts,
       # changed, failed).
       return deploy_helper_result("absent", absent_facts, changed: false) unless exists[:exit_code] == 0
@@ -137,12 +137,12 @@ module Krikri
     # Creates the directory layout. Real main() runs create_path exactly
     # three times - project_path, releases_path, shared_path - so the new
     # release dir and `current` are NOT created here: the release dir is
-    # the caller's build step's job (real's docs clone/copy into
+    # the caller's build step's job (Ansible's docs clone/copy into
     # new_release_path themselves) and `current` only comes into
     # existence at state=finalize. mkdir'ing current_path here as a real
     # directory made finalize's `ln -sfn` land INSIDE it
     # (current/<release>) and left current a directory forever.
-    # changed mirrors real's create_path counting: true only when at
+    # changed mirrors Ansible's create_path counting: true only when at
     # least one of the three dirs was actually missing.
     private def present(path : String, releases_path : String, shared_path : String,
                         current_path : String, release : String?, check_mode : Bool) : PluginResult
@@ -198,7 +198,7 @@ module Krikri
     end
 
     # Real remove_unfinished_link(path): deletes the
-    # <path>/<release>.<unfinished_filename> file when it exists. Real's
+    # <path>/<release>.<unfinished_filename> file when it exists. Ansible's
     # own guard (`if not check_mode and os.path.exists`) skips the whole
     # step in check mode, so a check-mode clean/finalize never counts it.
     private def remove_unfinished_link(path : String, release : String?,
@@ -264,7 +264,7 @@ module Krikri
       return {changes: 0, failure: nil} if dirs.size <= keep_releases
       return {changes: dirs.size - keep_releases, failure: nil} if check_mode
 
-      # Newest first. Crystal's sort is not stable, but real's Python
+      # Newest first. Crystal's sort is not stable, but Ansible's Python
       # sort on equal ctimes is listdir-order-dependent anyway, so ties
       # are unmatchable by construction.
       newest_first = dirs.sort { |a, b| b[0] <=> a[0] }
@@ -361,7 +361,7 @@ module Krikri
     # inside the release dir; the lexists probe runs before the
     # check-mode branch, so it counts as a change even in check mode),
     # create_link (point `current` at the release - or at shared when
-    # release is empty, real's documented no-release behavior), then -
+    # release is empty, Ansible's documented no-release behavior), then -
     # when the `clean` param is set, its default - the full state=clean
     # branch. The listdir crash fires AFTER the symlink is created
     # (live-verified: a fresh-tree finalize leaves the dangling `current`
@@ -381,7 +381,7 @@ module Krikri
 
       # Real create_link(): a `current` that is a symlink is compared by
       # normalized realpath against the source's; anything else is
-      # created fresh with os.symlink. Real never pre-checks that the
+      # created fresh with os.symlink. Ansible never pre-checks that the
       # release exists - a missing release dir only surfaces when the
       # symlink itself can't be created, i.e. when the link's parent
       # directory is missing too, as the raw OSError text of that
@@ -433,7 +433,7 @@ module Krikri
     # `already` when current already points at the target (real counts
     # no change and CONTINUES into the clean branch - old releases can
     # still be removed, making the task changed=true), `failure` when
-    # real's own raises fire (a dangling source on the re-link path, or
+    # Ansible's own raises fire (a dangling source on the re-link path, or
     # the raw os.symlink OSError when the link's parent dir is missing).
     private def create_link(target : String, current_path : String,
                             check_mode : Bool) : {changed: Bool, already: Bool, failure: PluginResult?}
@@ -455,7 +455,7 @@ module Krikri
         return {changed: true, already: false, failure: nil}
       else
         unless remote_exec("test -d #{Shell.single_quote(File.dirname(current_path))}")[:exit_code] == 0
-          # Real's module never fail_json's here - the os.symlink raises
+          # Ansible's module never fail_json's here - the os.symlink raises
           # straight through to the module-crash wrapper: the wire msg
           # is the full "Task failed: Module failed: <OSError>" chain
           # (live-verified) while the [ERROR] block shows the bare
@@ -481,7 +481,7 @@ module Krikri
     # deploy_helper.new_release_path, which was undefined before this
     # dict existed). previous_release/previous_release_path come from
     # the `current` symlink's realpath (nil when there is no symlink
-    # yet); a falsy shared_path param publishes null, matching real's
+    # yet); a falsy shared_path param publishes null, matching Ansible's
     # `if self.shared_path` guard.
     private def gather_facts(path : String, releases_path : String, shared_path : String,
                              current_path : String, release : String?) : Hash(String, String?)

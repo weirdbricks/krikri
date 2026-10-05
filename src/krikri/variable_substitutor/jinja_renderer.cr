@@ -11,7 +11,7 @@ require "../krikri_jinja_filters"
 module Krikri
   module VariableSubstitutor
     # Raised for an unknown `is <test>` TEST name - the test-side sibling
-    # of FilterEngine::UnknownFilterError. Real Jinja2/ansible-core
+    # of FilterEngine::UnknownFilterError. Jinja2/ansible-core
     # validates test names against the registered test set at template
     # COMPILE time and refuses the task with "No test named 'x'." (a
     # TemplateAssertionError, verified against ansible-core 2.19 via
@@ -28,7 +28,7 @@ module Krikri
       # When true, string-literal escapes are decoded (vanilla Jinja
       # semantics) instead of passed through verbatim. Only the
       # conditional/assert path sets this; inline task-param `{{ }}`
-      # templating keeps it false, matching real ansible-core (its inline
+      # templating keeps it false, matching ansible-core (its inline
       # lexer doubles backslashes; `when:` expressions decode normally).
       @decode : Bool
 
@@ -93,7 +93,7 @@ module Krikri
         # each render gets its own context, so a template's `{% set %}`
         # never leaks into a later render off the same renderer.
         #
-        # Real Ansible's Templar always exposes `environment` as a Jinja
+        # Ansible's Templar always exposes `environment` as a Jinja
         # global mapped to the controller's OS environment (`os.environ`),
         # not the task/play `environment:` keyword. Set per render so it
         # reflects the live ENV (GROG.debug-variable's `{{ environment |
@@ -111,7 +111,7 @@ module Krikri
         render!(text)
       rescue e : KrikriJinja::TemplateError
         # An unknown FILTER or TEST name must never degrade to the
-        # original unrendered text here: real Jinja2/Ansible hard-fails
+        # original unrendered text here: Jinja2/Ansible hard-fails
         # the task at compile time ("No filter named 'X'." / "No test
         # named 'X'.", TemplateAssertionErrors), while the
         # swallow-to-original-text fallback below turned an unknown name
@@ -141,13 +141,13 @@ module Krikri
         text
       rescue e : Krikri::FirstFoundLookupError | Krikri::PipeLookupError | Krikri::PythonLookupRunner::LookupError
         # Same reasoning as the unknown-filter case above: first_found's own
-        # no-match failure is a hard task failure in real Ansible, never the
+        # no-match failure is a hard task failure in Ansible, never the
         # lenient give-back-the-text fallback (which turned it into the
         # "undefined" sentinel string at whatever consumer came next).
         # PipeLookupError likewise - a non-zero pipe-command exit is real
         # Ansible's hard task failure, never silent text passthrough.
         # PythonLookupRunner::LookupError likewise - a custom lookup plugin
-        # that RAN and raised is real Ansible's own task failure (only an
+        # that RAN and raised is Ansible's own task failure (only an
         # unavailable mechanism degrades, and it degrades inside the
         # dispatch, never as this exception).
         raise e
@@ -193,7 +193,7 @@ module Krikri
       # (vagrant_index.content | from_json).versions | list |
       # sort_versions | last }}` (role-local filter_plugins/
       # sort_versions.py) rendered the literal string "undefined" into a
-      # download URL while real ansible-playbook resolved 2.4.3.
+      # download URL while ansible-playbook resolved 2.4.3.
       def evaluate_value!(expr : String) : JSON::Any?
         evaluate_value_once!(expr)
       rescue e : KrikriJinja::TemplateError
@@ -234,7 +234,7 @@ module Krikri
         JinjaRenderer.elide_omitted(KrikriJinja.to_json_any(value))
       end
 
-      # Real Ansible's `omit` inside a CONTAINER removes that entry
+      # Ansible's `omit` inside a CONTAINER removes that entry
       # rather than leaving a placeholder in it - verified against
       # ansible-core 2.19.4: `{{ [1, v_omit, 3] }}` renders `[1, 3]` and
       # `{{ {'a': 1, 'b': v_omit} }}` renders `{"a": 1}`. The engine builds
@@ -326,8 +326,8 @@ module Krikri
         # renders any unresolved lookup as that literal sentinel text.
         # The engine then saw an ordinary non-empty string: `| default('x')`
         # returned "undefined" instead of "x", `is defined` was True
-        # where real Ansible says False, and `when: v | default('') !=
-        # ''` ran a task real Ansible skips.
+        # where Ansible says False, and `when: v | default('') !=
+        # ''` ran a task Ansible skips.
         #
         # Returning nil (an undefined value to the engine) instead lets
         # Jinja's OWN undefined semantics answer all three, which is exactly
@@ -355,7 +355,7 @@ module Krikri
       # reachable through `hostvars['other']` gets no re-render either),
       # while the host's author-defined template vars still render - and
       # each entry re-renders in THAT HOST'S OWN scope (HostvarsContext):
-      # real Ansible's HostVarsVars templar renders `hostvars['other'].x`
+      # Ansible's HostVarsVars templar renders `hostvars['other'].x`
       # with the other host's vars, never the reading host's.
       def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
         @@prepare_vars_depth += 1
@@ -422,7 +422,7 @@ module Krikri
       # all, and the literal unrendered `{{ postgresql_auth_method }}`
       # text landed straight into the rendered config file (PostgreSQL
       # then refused to start: "invalid authentication method '{{'").
-      # Real Ansible's own recursive re-templating applies at every
+      # Ansible's own recursive re-templating applies at every
       # level of a nested structure, not just the outermost value -
       # walks Array/Hash values recursively, re-rendering every String
       # leaf that still contains "{{".
@@ -433,7 +433,7 @@ module Krikri
       # `jtyr.nsswitch`/`jtyr.motd`): `some_var: "{{ some_dict.update(
       # other_dict) }}{{ some_dict }}"` - call `.update()` purely for its
       # mutating side effect, discard its `None` return, then render the
-      # now-merged dict. Real Ansible's templar preserves the result as
+      # now-merged dict. Ansible's templar preserves the result as
       # a genuine dict (`_AnsibleLazyTemplateDict`, private ansible-core
       # internals - see KNOWN_MISSING.md's own writeup); replicating
       # that faithfully (deferred evaluation + type preservation through
@@ -452,7 +452,7 @@ module Krikri
 
       # defer_unresolved: when set, a nested leaf whose template bottoms out
       # at a name set nowhere is left in its raw, unrendered form instead of
-      # raising - real Jinja2/Ansible templates a container's values LAZILY,
+      # raising - Jinja2/Ansible templates a container's values LAZILY,
       # on actual access, so a filter chain that never reads a leaf
       # (`mylist | selectattr('state', ...)` never touching a sibling `name:`
       # whose template references an intentionally-undefined caller var,
@@ -460,7 +460,7 @@ module Krikri
       # it. The default (false) keeps the pre-existing strict behavior for
       # every caller that renders a structure as a WHOLE (variable-scope
       # conversion, the to_json-family guards in FilterEngine) - those
-      # access every leaf by definition, where real Ansible fails just as
+      # access every leaf by definition, where Ansible fails just as
       # this strict path does. A deferred leaf that IS later accessed is
       # rendered strictly at its access point (FilterEngine's map/selectattr
       # attribute extraction), restoring fail-on-access semantics there.
@@ -502,7 +502,7 @@ module Krikri
         # not collapse to this engine's literal "undefined" sentinel text
         # and get serialized as ordinary content. Found via a role
         # `my_config: {foo: {bar: "{{ some_undefined_var }}"}}` fed through
-        # `{{ my_config | to_json }}`/`| to_nice_yaml`: real ansible-playbook
+        # `{{ my_config | to_json }}`/`| to_nice_yaml`: ansible-playbook
         # fails immediately (it templates every nested string value at every
         # level, strictly), while krikri quietly wrote
         # {"foo":{"bar":"undefined"}}. This one call site is shared by BOTH
@@ -511,18 +511,18 @@ module Krikri
         # retemplated_lookup_value -> rerender_nested_templates) - so a
         # filter like to_json on a dict with an undefined nested leaf fails
         # identically either way. substitute's own strictness already
-        # forgives exactly what real Ansible does: `default()`/`d()`-guarded
+        # forgives exactly what Ansible does: `default()`/`d()`-guarded
         # leaves, `omit`, literals, operators (raise_if_strict_undefined's
         # own bare-ref rule), so deliberately-lenient nested values keep
         # rendering.
         # Whole-single-span values keep the expression's NATIVE type
-        # (real ansible-core 2.19 native typing - see
+        # (ansible-core 2.19 native typing - see
         # Rerender.whole_span_structured): a vars entry `b: "{{ 42 }}"`
         # is the int 42, `"{{ '42' }}"` the str "42", `"{{ none }}"`
         # None. The old substitute-then-render_pure_mustache_value detour
         # re-typed by TEXT shape and only for containers/bools/None, so a
         # templated int/float var arrived at the engine's scope as a
-        # string (`v_int is integer` -> False where real Ansible says
+        # string (`v_int is integer` -> False where Ansible says
         # True, live-verified vs 2.19.11). nil (undefined, engine
         # failure, or not actually whole-span) falls back to the
         # pre-existing substitute path below, which owns the
@@ -538,7 +538,7 @@ module Krikri
         rescue e : Krikri::UndefinedVariableError
           # The defer_unresolved carve-out: see rerender_nested_templates.
           # Returns the leaf in its raw, still-templated form so a chain
-          # that never touches it (real Jinja2's laziness) succeeds; any
+          # that never touches it (Jinja2's laziness) succeeds; any
           # access point that actually reads the leaf renders it strictly
           # and fails exactly like the pre-laziness behavior did.
           return value if defer_unresolved
@@ -617,20 +617,20 @@ module Krikri
       # double-quote characters OUTSIDE the `{{ }}` span,
       # deliberately, so its rendered value stays the literal
       # 3-character string `"1"` in the .conf file - reparsing
-      # THAT as JSON would strip the quotes real Ansible keeps,
+      # THAT as JSON would strip the quotes Ansible keeps,
       # a regression this same restriction (`raw.strip` must be
       # entirely one `{{ }}` span) is what
       # VariableLookup#rerender_if_templated already uses to
       # draw the same line.
       #
       # Only attempt the parse-back when the rendered text is
-      # container-SHAPED (`[...]`/`{...}`) - real Ansible's
+      # container-SHAPED (`[...]`/`{...}`) - Ansible's
       # default (non-jinja2_native) templating renders a `{{ }}`
       # expression to plain text and does NOT re-infer a scalar
       # type from it: a role default like `bind_python_version:
       # "{{ bind_default_python_version }}"` where the referenced
       # var is the quoted YAML STRING "3" stays the string "3"
-      # through any number of indirections in real Ansible - it
+      # through any number of indirections in Ansible - it
       # never becomes the integer 3. Blindly JSON-parsing EVERY
       # rendered scalar here silently reinterpreted any purely
       # numeric-looking string ("3", "0700", a version string
@@ -638,14 +638,14 @@ module Krikri
       # `==`/`!=` string comparisons against a quoted literal
       # elsewhere (`bind_python_version == '3'` went from True to
       # False - the comparison operands ended up Int64(3) vs
-      # String("3"), which real Jinja/Python correctly refuses to
+      # String("3"), which Jinja/Python correctly refuses to
       # treat as equal). Found via buluma.bind's own vars/Debian.
       # yml: `(bind_python_version == '3') | ternary(...)` always
       # picked the FALSE branch, installing the removed python2-
       # era `python-netaddr`/`python-dnspython` package names
       # instead of `python3-*` on every real Debian/Ubuntu target.
       # Exactly "True"/"False"/"None" however IS safe to re-type natively:
-      # those are Python's own repr of a boolean/None, and real Ansible's
+      # those are Python's own repr of a boolean/None, and Ansible's
       # templar preserves a whole-single-template value's native TYPE
       # (`__postfix_debian: "{{ ansible_os_family == 'Debian' }}"` in
       # galaxyproject.postfix's defaults/main.yml is a genuine False on a
@@ -657,7 +657,7 @@ module Krikri
       # (`__postfix_packages: "{{ debian_pkgs if __postfix_debian else
       # (...) }}"`) picked the first (Debian) branch on every host -
       # krikri tried to `dnf install` `bsd-mailx`/`amavisd-new` on Rocky
-      # where real ansible-playbook cleanly installed the RedHat list.
+      # where ansible-playbook cleanly installed the RedHat list.
       # Exact-match only, so the quoted-string repro case above (and any
       # string that merely begins with those letters) is untouched.
       private def self.render_pure_mustache_value(rendered : String, stripped : String, substitutor : VarSubstitutor) : JSON::Any

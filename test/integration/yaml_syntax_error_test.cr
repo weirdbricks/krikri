@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
-# A YAML syntax error is reported in real ansible-playbook's own shape.
-# Each expected block below is the VERBATIM output of a real ansible-core
+# A YAML syntax error is reported in ansible-playbook's own shape.
+# Each expected block below is the VERBATIM output of a ansible-core
 # 2.19.4 run on the same input - byte-compared, because the point of the
 # change was matching it exactly.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -21,9 +21,9 @@ end
 
 describe "YAML syntax error reporting" do
   # An unquoted value containing ": " - the most common playbook YAML
-  # mistake. Real Ansible rewords libyaml's "mapping values are not
+  # mistake. Ansible rewords libyaml's "mapping values are not
   # allowed in this context" and appends a worked example.
-  it "matches real Ansible for a colons-in-unquoted-value error" do
+  it "matches Ansible for a colons-in-unquoted-value error" do
     status, output = syntax_check("this: is: bad: [\n")
     status.exit_code.must_equal(4)
     output.must_equal(<<-OUT + "\n\n")
@@ -45,8 +45,8 @@ describe "YAML syntax error reporting" do
   end
 
   # The reported position is past EOF for an unterminated flow sequence,
-  # where real Ansible prints a truncation note instead of a source echo.
-  it "matches real Ansible for an unterminated flow sequence" do
+  # where Ansible prints a truncation note instead of a source echo.
+  it "matches Ansible for an unterminated flow sequence" do
     status, output = syntax_check("- name: unclosed\n  hosts: [localhost\n")
     status.exit_code.must_equal(4)
     output.must_equal(<<-OUT + "\n\n")
@@ -57,10 +57,10 @@ describe "YAML syntax error reporting" do
       OUT
   end
 
-  # A tab indent: real Ansible substitutes its own hint for libyaml's
+  # A tab indent: Ansible substitutes its own hint for libyaml's
   # wording, echoes the PRECEDING line as context, and renders the tab as
   # a single space.
-  it "matches real Ansible for a tab-indented line" do
+  it "matches Ansible for a tab-indented line" do
     status, output = syntax_check("- name: tabbed\n\thosts: localhost\n")
     status.exit_code.must_equal(4)
     output.must_equal(<<-OUT + "\n\n")

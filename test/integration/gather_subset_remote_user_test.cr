@@ -3,7 +3,7 @@ require "../minitest_helper"
 
 # `gather_subset:` and `remote_user:`, both previously parsed to nothing.
 #
-# NOTE on verifying gather_subset against real Ansible: this machine's
+# NOTE on verifying gather_subset against Ansible: this machine's
 # shell exports ANSIBLE_GATHERING=smart with a pickle fact cache, which
 # makes a subsetted gather appear to have NO effect (the cached full set
 # is reused). The real behavior only shows with those unset - a trap
@@ -58,7 +58,7 @@ describe "gather_subset:" do
 end
 
 describe "remote_user:" do
-  # Real Ansible surfaces remote_user as ansible_user, and a task's own
+  # Ansible surfaces remote_user as ansible_user, and a task's own
   # value overrides the play's for that task.
   it "sets ansible_user at play scope and lets a task override it" do
     output = run_play(<<-YAML)

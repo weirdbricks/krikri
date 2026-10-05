@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/variable_substitutor"
 
-# `to_uuid`'s optional namespace: real Ansible's filter plugin takes a
+# `to_uuid`'s optional namespace: Ansible's filter plugin takes a
 # plain second parameter, positional or `namespace=` keyword; a UUID5
 # over the caller's namespace (live-verified vs 2.19.11: the standard
 # DNS namespace 6ba7b810-9dad-11d1-80b4-00c04fd430c8 over "config"

@@ -22,7 +22,7 @@ ensure
 end
 
 describe "vars_prompt:" do
-  # Real Ansible only PROMPTS on a terminal. With stdin piped or closed
+  # Ansible only PROMPTS on a terminal. With stdin piped or closed
   # it does not read the input at all - it uses the default. Verified:
   # piping "bob" to a prompt defaulting to "admin" still yields admin.
   it "uses defaults when not attached to a terminal" do
@@ -48,7 +48,7 @@ describe "vars_prompt:" do
 
   # With no default and no terminal, the variable ends up as the literal
   # STRING "None" - type str, `is none` false. That is Python's
-  # str(None) leaking through in real Ansible, quirk and all.
+  # str(None) leaking through in Ansible, quirk and all.
   it "yields the string None when there is no default" do
     _, output = run_play(<<-YAML)
       - hosts: all
@@ -117,7 +117,7 @@ describe "--vault-id" do
 
   # The functional payoff of deferring the failure to point-of-use: a
   # playbook carrying a var this run cannot decrypt still runs, as long
-  # as no task references it. Real Ansible exits 0 there, and 2 only
+  # as no task references it. Ansible exits 0 there, and 2 only
   # when the value IS used.
   it "runs when an undecryptable var is never referenced, and fails when it is" do
     dir = File.tempname("vault-id-unused")

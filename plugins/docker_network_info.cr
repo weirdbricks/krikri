@@ -26,12 +26,12 @@ module Krikri
   #   tls_hostname: / api_version: / timeout: / use_ssh_client: - the
   #   common connection surface real merges into every API module's
   #   argument_spec (see PluginHelpers::DockerClient.COMMON_SPEC), and
-  #   which real AnsibleModule therefore validates on every call - the
+  #   which AnsibleModule therefore validates on every call - the
   #   validation below mirrors that (required name, common-arg type
   #   conversion, client_cert/client_key required-together, unsupported
   #   params) BEFORE the daemon connection is attempted.
   #
-  # Result (matching real Ansible's own two return values, both always
+  # Result (matching Ansible's own two return values, both always
   # present, changed always false - this is an info module, never a
   # mutation, in check mode or not):
   # - exists: bool - whether a network with that name/ID was found.
@@ -43,7 +43,7 @@ module Krikri
   #   and roles legitimately read arbitrary inspection keys off this dict.
   #
   # An unreachable Docker daemon FAILS the task with a real connection
-  # error (message shape "Error connecting: ..."), matching real Ansible's
+  # error (message shape "Error connecting: ..."), matching Ansible's
   # own behavior - real docker modules never silently skip when they
   # cannot reach the daemon, and a skip here would leave a registered
   # result without `exists:`, corrupting a later `when: check.exists`.
@@ -54,14 +54,14 @@ module Krikri
     # aliases on this module).
     SPEC = PluginHelpers::DockerClient::COMMON_SPEC.merge({"name" => [] of String})
 
-    # Real's exit_json kwargs order (changed=, exists=, network=), with
+    # Ansible's exit_json kwargs order (changed=, exists=, network=), with
     # the module protocol appending `failed` last - live-verified
-    # against real ansible-core 2.19.11 + community.docker 5.2.1. Real
+    # against ansible-core 2.19.11 + community.docker 5.2.1. Real
     # passes no msg on either outcome, so a successful result carries no
     # `msg` key at all.
     KEY_ORDER = %w[changed exists network failed]
 
-    # Real's own wrapper for a DockerException escaping the module body.
+    # Ansible's own wrapper for a DockerException escaping the module body.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     def execute : PluginResult
@@ -76,7 +76,7 @@ module Krikri
 
       matched = api.networks.list.find { |net| net.name == name || net.id.starts_with?(name) }
 
-      # Real returns exists:false + a null network rather than failing
+      # Ansible returns exists:false + a null network rather than failing
       # when the name/ID matches nothing.
       unless matched
         return PluginResult.new(changed: false, failed: false, failed_flag: false,
@@ -97,7 +97,7 @@ module Krikri
       client.call("GET", path, headers, &.body_io.gets_to_end)
     end
 
-    # Real AnsibleModule validation over the merged spec, in
+    # AnsibleModule validation over the merged spec, in
     # arg_spec.ArgumentSpecValidator.validate order: required -> types
     # (merged-spec order: common args first) -> required_together ->
     # unsupported (deferred to last). No choices/required_if on this

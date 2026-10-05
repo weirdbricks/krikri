@@ -2,12 +2,12 @@ require "../minitest_helper"
 require "file_utils"
 
 # An unknown FILTER (or test) name inside a task arg is a template COMPILE
-# error: real ansible-core 2.19.11 routes it through the same "Finalization
+# error: ansible-core 2.19.11 routes it through the same "Finalization
 # of task args" chain as an undefined variable ("... failed: Error while
 # resolving value for 'msg': Syntax error in template: No filter named
 # 'ljust'."), and the inner Origin stanza points at the failing param KEY's
 # first character on the module line even for flow style (`- debug: msg=...`
-# -> column 14). Live-compared byte for byte with real ansible-playbook
+# -> column 14). Live-compared byte for byte with ansible-playbook
 # 2.19.11 via scripts/output_parity.sh.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

@@ -24,7 +24,7 @@ describe "mount plugin" do
   it "accepts name: as a documented alias for path:" do
     # Real bug found benchmarking geerlingguy.swap's own "Manage swap
     # file entry in fstab." task: `mount: {name: none, src: ..., fstype:
-    # swap, ...}` - `name:` is real Ansible's own original param name
+    # swap, ...}` - `name:` is Ansible's own original param name
     # for the mount module (predating `path:`, still a documented and
     # commonly-used alias). Only `path:` was ever read, so this always
     # failed outright with "missing required argument: path and state
@@ -106,12 +106,12 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("path")
   end
 
-  # Real ansible.posix.mount passes a `warnings` list to its single
+  # Ansible.posix.mount passes a `warnings` list to its single
   # exit_json success exit, and ansible-core 2.19's _return_formatted
   # deprecates that - every successful run carries the structured
   # `deprecations` entry into registered vars plus the display marker
   # ResultDisplay renders as the [DEPRECATION WARNING] stderr line
-  # (captured live against 2.19.11). Real's fail_json paths don't pass
+  # (captured live against 2.19.11). Ansible's fail_json paths don't pass
   # args, so failures carry neither.
   it "carries the exit_json warnings deprecation on every successful result" do
     fstab = fresh_fstab("deprecation.fstab")
@@ -134,7 +134,7 @@ describe "mount plugin" do
       "Use `AnsibleModule.warn` instead.")
   end
 
-  it "carries no deprecation on a failed result (real's fail_json passes no args)" do
+  it "carries no deprecation on a failed result (Ansible's fail_json passes no args)" do
     fstab = fresh_fstab("deprecation-fail.fstab")
 
     result = PluginSpecHelper.run("mount", {"path" => "/mnt/x", "state" => "present", "fstab" => fstab})
@@ -144,7 +144,7 @@ describe "mount plugin" do
     result["_ansible_core_deprecations"]?.must_be_nil
   end
 
-  it "omits src/fstype from the result when the task did not pass them (real only copies non-None params)" do
+  it "omits src/fstype from the result when the task did not pass them (Ansible only copies non-None params)" do
     fstab = fresh_fstab("no-fstype-param.fstab")
 
     result = PluginSpecHelper.run("mount", {
@@ -173,7 +173,7 @@ describe "mount plugin" do
     # mount (this spec sandbox has no CAP_SYS_ADMIN, so any real mount
     # attempt fails the same way an invalid fstype/src would on a
     # privileged host) still reported changed: true, failed: false as
-    # if it had succeeded. Real ansible.posix.mount fails the task with
+    # if it had succeeded. Ansible.posix.mount fails the task with
     # the mount command's own stderr - verified against its actual
     # source, not assumed.
     fstab = fresh_fstab("mount-fail.fstab")
@@ -209,7 +209,7 @@ describe "mount plugin" do
   end
 
   it "state: absent reports changed: false when the umount fails after an fstab edit" do
-    # The state: absent twin of the changed:false fix above: real's
+    # The state: absent twin of the changed:false fix above: Ansible's
     # fail_json never passes changed, so an unmount failure AFTER
     # remove_fstab_entry edited the file reports changed: false, not the
     # fstab edit's own changed: true (live-verified vs 2.19.11).
@@ -251,7 +251,7 @@ describe "mount plugin" do
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
   end
 
-  it "fails with real Ansible's exact message when opts: is given and the remount command fails" do
+  it "fails with Ansible's exact message when opts: is given and the remount command fails" do
     result = PluginSpecHelper.run("mount", {
       "path" => "/", "state" => "remounted", "opts" => "ro",
     })
@@ -260,7 +260,7 @@ describe "mount plugin" do
     result["msg"].as_s.must_include("Options were specified with remounted")
   end
 
-  it "falls back to a real umount+mount cycle when opts: is absent and the remount command fails, matching real Ansible's own fallback" do
+  it "falls back to a real umount+mount cycle when opts: is absent and the remount command fails, matching Ansible's own fallback" do
     # Real bug this closes: when opts: is absent/"defaults" and a bare
     # `mount -o remount` fails (the common case right after adding a
     # fstab entry in the same task/play, before the mount point is
@@ -274,7 +274,7 @@ describe "mount plugin" do
     # both the initial remount AND the umount+mount fallback genuinely
     # fail) - no real mount state is touched either way, and the plugin
     # should now report a REAL failure instead of silently reporting
-    # changed: true. Real's remounted-branch failure text is
+    # changed: true. Ansible's remounted-branch failure text is
     # "Error remounting %s: %s" with the FALLBACK command's output -
     # main()'s remounted branch wraps whatever remount() returned, it
     # never re-words it as "Error unmounting"/"Error mounting"
@@ -306,11 +306,11 @@ describe "mount plugin" do
   # Real mount.py creates a missing fstab file before any state handling
   # (except ephemeral), even in check mode. A bare relative fstab
   # filename has os.path.dirname() == '' and os.makedirs('') raises
-  # FileNotFoundError - an UNCAUGHT module exception real 2.19.11
+  # FileNotFoundError - an UNCAUGHT module exception Ansible 2.19.11
   # renders as "Task failed: Module failed: [Errno 2] No such file or
   # directory: ''" in both the [ERROR] block and the fatal msg
   # (live-verified). No fstab file may be left behind either.
-  it "reproduces real's uncaught os.makedirs('') crash for a bare relative fstab filename with state: remounted" do
+  it "reproduces Ansible's uncaught os.makedirs('') crash for a bare relative fstab filename with state: remounted" do
     dir = PluginSpecHelper.tmp_path("remount-bare-fstab")
     FileUtils.mkdir_p(dir)
 
@@ -326,7 +326,7 @@ describe "mount plugin" do
 
   # The same pre-state step's success side: a missing fstab under a
   # missing parent directory gets mkdir -p'd and touched before the
-  # state handling runs - even in check mode (real's creation block is
+  # state handling runs - even in check mode (Ansible's creation block is
   # outside any check_mode guard).
   it "creates a missing fstab file and its parent directories before state handling, even in check mode" do
     fstab = PluginSpecHelper.tmp_path("nested", "dir", "created.fstab")

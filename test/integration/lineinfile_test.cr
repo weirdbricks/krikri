@@ -16,7 +16,7 @@ describe "lineinfile plugin" do
     File.read(path).must_include("new line")
   end
 
-  it "returns only backup/changed/msg (plus found for absent) like real ansible 2.19.11 - no path/line/state keys" do
+  it "returns only backup/changed/msg (plus found for absent) like Ansible 2.19.11 - no path/line/state keys" do
     path = PluginSpecHelper.tmp_path("lineinfile-return-keys.txt")
     File.write(path, "keep\ndrop\n")
 
@@ -68,7 +68,7 @@ describe "lineinfile plugin" do
     first["changed"].as_bool.must_equal(true)
     after_cold = File.read(path)
     # One trailing newline from the line value itself plus lineinfile's
-    # own line terminator - byte-identical to real ansible's result.
+    # own line terminator - byte-identical to Ansible's result.
     after_cold.must_equal(line + "\n\n")
 
     second = PluginSpecHelper.run("lineinfile", {
@@ -248,7 +248,7 @@ describe "lineinfile plugin" do
     result["msg"].as_s.must_include("does not exist")
   end
 
-  it "reports msg 'line added' when the line is newly added (regression: used to say 'Line modified' for every changed case - found via an ad-hoc CLI comparison sweep against real ansible, 2026-09-13)" do
+  it "reports msg 'line added' when the line is newly added (regression: used to say 'Line modified' for every changed case - found via an ad-hoc CLI comparison sweep against Ansible, 2026-09-13)" do
     path = PluginSpecHelper.tmp_path("lineinfile-msg-added.txt")
     File.write(path, "alpha\nbeta\n")
 
@@ -279,7 +279,7 @@ describe "lineinfile plugin" do
     result["found"].as_i.must_equal(2)
   end
 
-  it "reports an explicit empty-string msg on the wire when nothing changed, like real ansible 2.19.11" do
+  it "reports an explicit empty-string msg on the wire when nothing changed, like Ansible 2.19.11" do
     path = PluginSpecHelper.tmp_path("lineinfile-msg-noop.txt")
     File.write(path, "alpha\n")
 
@@ -289,7 +289,7 @@ describe "lineinfile plugin" do
     result["msg"].as_s.must_equal("")
   end
 
-  it "reports the backup path under the 'backup' key with backup: yes (regression: used to emit 'backup_file', real ansible's lineinfile exits with 'backup' - blockinfile keeps 'backup_file')" do
+  it "reports the backup path under the 'backup' key with backup: yes (regression: used to emit 'backup_file', Ansible's lineinfile exits with 'backup' - blockinfile keeps 'backup_file')" do
     path = PluginSpecHelper.tmp_path("lineinfile-backup-key.txt")
     File.write(path, "old\n")
 
@@ -301,7 +301,7 @@ describe "lineinfile plugin" do
     File.read(backup).must_equal("old\n")
   end
 
-  it "carries the 'backup' key as an empty string when no backup was requested (real ansible always includes it)" do
+  it "carries the 'backup' key as an empty string when no backup was requested (Ansible always includes it)" do
     path = PluginSpecHelper.tmp_path("lineinfile-no-backup.txt")
     File.write(path, "alpha\n")
 
@@ -310,7 +310,7 @@ describe "lineinfile plugin" do
     result["backup"].as_s.must_be_empty
   end
 
-  it "always carries a diff list on the wire (content + file-attributes entries), like real ansible 2.19.11 at -vvv" do
+  it "always carries a diff list on the wire (content + file-attributes entries), like Ansible 2.19.11 at -vvv" do
     path = PluginSpecHelper.tmp_path("lineinfile-wire-diff.txt")
     File.write(path, "alpha\n")
 
@@ -335,7 +335,7 @@ end
 # Proactive parameter-coverage pass for `lineinfile:` - firstmatch:,
 # search_string:, validate:, attributes:/attr:, seuser:/serole:/
 # setype:/selevel:, unsafe_writes:. Every behavior below was
-# live-verified against the locally-installed real ansible-core 2.19.4
+# live-verified against the locally-installed ansible-core 2.19.4
 # (ansible-playbook on PATH) - including how the params INTERACT
 # (firstmatch flips both the regexp/search_string replacement target
 # and the insertafter/insertbefore anchor; state=absent ignores
@@ -490,10 +490,10 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.delete(path) if path && File.exists?(path)
     end
 
-    # Live-verified against ansible-core 2.19.4: real Ansible's own
+    # Live-verified against ansible-core 2.19.4: Ansible's own
     # argument_spec marks the pairs mutually exclusive and fails with
     # exactly these messages.
-    it "fails with real Ansible's exact message when regexp and search_string are both given" do
+    it "fails with Ansible's exact message when regexp and search_string are both given" do
       path = param_path("lineinfile-mutually-exclusive.txt")
       File.write(path, "x=1\n")
 
@@ -602,7 +602,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.delete(path) if path && File.exists?(path)
     end
 
-    it "fails with real Ansible's exact message when validate lacks %s" do
+    it "fails with Ansible's exact message when validate lacks %s" do
       path = param_path("lineinfile-validate-no-percent-s.txt")
       File.write(path, "before\n")
 
@@ -638,7 +638,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
       File.delete(path) if path && File.exists?(path)
     end
 
-    # Real Ansible's atomic_move resolves a symlink dest (os.path.realpath)
+    # Ansible's atomic_move resolves a symlink dest (os.path.realpath)
     # before renaming - a lineinfile task pointing at a symlink edits the
     # file it points at and the symlink survives (the previous in-place
     # File.write followed it too).
@@ -679,11 +679,11 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
 
   describe "seuser:/serole:/setype:/selevel: (SELinux context)" do
     # Same convention as copy_param_coverage_spec.cr's own SELinux
-    # spec: real Ansible skips the whole chcon step when SELinux isn't
+    # spec: Ansible skips the whole chcon step when SELinux isn't
     # enabled on the target (set_context_if_different opens with `if
     # not self.selinux_enabled(): return changed`) - all four parts are
     # silently accepted and the task succeeds as a true no-op.
-    it "does not fail the task when SELinux isn't enabled on the target (a true no-op, matching real Ansible)" do
+    it "does not fail the task when SELinux isn't enabled on the target (a true no-op, matching Ansible)" do
       path = param_path("lineinfile-selinux-noop.txt")
       File.write(path, "before\n")
 
@@ -711,7 +711,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
     # (ansible/ansible#33745).
     it "reports changed on every run for '-'-prefixed attributes, flag set or not" do
       # Skip on filesystems that reject chattr flag ops entirely
-      # (rootless fuse-overlayfs containers) - real Ansible fails the
+      # (rootless fuse-overlayfs containers) - Ansible fails the
       # task there identically, so this success-path pin can't hold.
       skip "filesystem rejects chattr flag operations" unless PluginSpecHelper.chattr_clear_supported?
       path = param_path("lineinfile-attr-clear.txt")
@@ -733,12 +733,12 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
   # BasePlugin#resolve_owner_uid/resolve_group_gid resolvers (a different
   # code shape from copy/get_url's apply_file_attributes), so it gets its
   # own regression for the round900811 kilip.chezmoi empty-string bug: a
-  # present-but-empty owner: must fail the task with real Ansible's exact
+  # present-but-empty owner: must fail the task with Ansible's exact
   # basic.py:789 message (trailing space included), not be silently
   # skipped the way the old `return false unless user = find_by?` guard
   # skipped it. Omitting owner: entirely is unchanged - the existing
   # owner-less specs above pin that.
-  it "fails with real Ansible's exact message when owner: is an explicit empty string" do
+  it "fails with Ansible's exact message when owner: is an explicit empty string" do
     path = PluginSpecHelper.tmp_path("lineinfile-empty-owner.txt")
     File.write(path, "x\n")
 
@@ -750,7 +750,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
     File.delete(path) if path && File.exists?(path)
   end
 
-  it "fails with real Ansible's exact message when group: is an explicit empty string" do
+  it "fails with Ansible's exact message when group: is an explicit empty string" do
     path = PluginSpecHelper.tmp_path("lineinfile-empty-group.txt")
     File.write(path, "x\n")
 

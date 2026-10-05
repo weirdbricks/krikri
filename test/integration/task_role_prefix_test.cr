@@ -10,7 +10,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 # Found while fixing the "Generic TASK [Task 1] label on a nameless
 # task" gap: TASK[]/HANDLER[] banners never carried the owning role's
-# name at all (named or nameless tasks alike), unlike real Ansible's
+# name at all (named or nameless tasks alike), unlike Ansible's
 # own `TASK [role : task name]` convention - verified live against
 # ansible-core 2.19.12. See KNOWN_MISSING.md's own (now-fixed) writeup.
 describe "role-name prefix on TASK[]/HANDLER[] banners" do

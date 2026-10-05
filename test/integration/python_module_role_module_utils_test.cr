@@ -5,9 +5,9 @@ require "file_utils"
 # ansible.module_utils package, end to end through the real binary.
 # linux-system-roles.storage's `blivet:` shape: its library/blivet.py
 # does `from ansible.module_utils.storage_lsr.argument_validator import
-# validate_parameters`, where `storage_lsr` is not a real ansible-core
+# validate_parameters`, where `storage_lsr` is not a ansible-core
 # package but the role's own code under `<role_root>/module_utils/
-# storage_lsr/`. Real Ansible's AnsiballZ wrapper bundles that tree into
+# storage_lsr/`. Ansible's AnsiballZ wrapper bundles that tree into
 # the zipapp alongside the module source; this engine used to upload
 # only the single module source file, so the import died with a plain
 # Python ModuleNotFoundError and the task hard-FAILED while real

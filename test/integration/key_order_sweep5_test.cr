@@ -5,12 +5,12 @@ require "file_utils"
 # pamd/seboolean/sefcontext/seport/iptables/apt_key/apt_repository/
 # deb822_repository/package/yum/dnf/dnf5/rpm_key/yum_repository/
 # htpasswd/make/script/expect/npm/gem plugins, pinned to the orders
-# live-verified against real ansible-core 2.19.11 by registering each
+# live-verified against ansible-core 2.19.11 by registering each
 # module's result and dumping `{{ r | to_json }}` (see
 # key_order_sweep_test.cr for the general method; the -v dump sorts
 # alphabetically, so the order is only observable programmatically).
 #
-# The pins cover the keys krikri emits, in real's relative order: real's
+# The pins cover the keys krikri emits, in Ansible's relative order: Ansible's
 # registered result additionally carries controller-appended
 # ansible_facts (interpreter discovery) and backfilled failed: false /
 # warnings after the module dict, which krikri's module wire omits.
@@ -212,5 +212,5 @@ end
 # apt_key's order pins live in test/integration/apt_key_test.cr (they
 # need that file's apt-key shim + gpg fixtures; this host has no
 # apt-key binary at all - Debian 13 dropped it - and the gpg-backed
-# shim run against real ansible 2.19.11 confirmed the r-dict order
+# shim run against Ansible 2.19.11 confirmed the r-dict order
 # [changed, id, short_id, fp, key_id, before(, after)]).

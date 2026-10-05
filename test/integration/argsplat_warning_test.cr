@@ -1,12 +1,12 @@
 require "../minitest_helper"
 
-# Real ansible-core 2.19.11's console warning for a task whose module args
+# ansible-core 2.19.11's console warning for a task whose module args
 # are a SINGLE all-template string (`copy: "{{ some_dict }}"`),
-# live-verified against 2.19.11 - every expectation below is real's own
+# live-verified against 2.19.11 - every expectation below is Ansible's own
 # output with tmp paths masked.
 #
-# Real's trigger (the real module post_validate +
-# the real module TaskArgsFinalizer) is NOT "renders to a dict":
+# Ansible's trigger (the Ansible module post_validate +
+# the Ansible module TaskArgsFinalizer) is NOT "renders to a dict":
 # it is "the module does not take free-form params AND the string args
 # STARTS AND ENDS with a Jinja delimiter". So:
 #   - `copy: "{{ d }}"`, a `vars:`-defined dict, a loop item, a block or
@@ -80,7 +80,7 @@ end
 # by the play's only task, and with stderr kept separate: the argsplat
 # warning is the one thing a handler path can print that no stdout line
 # would reveal, and the parity claim under test is specifically about
-# real's stderr.
+# Ansible's stderr.
 private def run_play_with_handler(tasks : Array(String), handler_lines : Array(String)) : {Bool, String, String}
   playbook = File.tempname("argsplat-warning-handler", ".yml")
   body = PLAY_HEADER.dup
@@ -217,7 +217,7 @@ describe "argsplat warning" do
     warning_origin(output).not_nil!.must_equal({"12", "33"})
   end
 
-  # Real's is_possibly_all_template also accepts the `{% ... %}` and
+  # Ansible's is_possibly_all_template also accepts the `{% ... %}` and
   # `{# ... #}` delimiter pairs (live-verified vs 2.19.11: `copy: "{% if
   # true %}{{ some_dict }}{% endif %}"` and `copy: "{# c #}{{ some_dict }}"`
   # both print the identical argsplat warning block at the same Origin and
@@ -225,7 +225,7 @@ describe "argsplat warning" do
   # succeeds). krikri warns identically (same once-per-task rule, same
   # text) but deliberately does NOT widen its whole-args resolution, which
   # only ever drove `{{ }}`, so such a value keeps resolving through the
-  # free-form k=v path and the copy fails with real's own "src (or
+  # free-form k=v path and the copy fails with Ansible's own "src (or
   # content) is required" - the warning is the parity surface here.
   it "warns for a {% block %}-delimited string args" do
     success, output = run_play([
@@ -281,7 +281,7 @@ describe "argsplat warning" do
     warning_count(output).must_equal(0)
   end
 
-  # A handler's args are finalized like a task's, so real warns there too -
+  # A handler's args are finalized like a task's, so Ansible warns there too -
   # the handler path built its params without the same wrapping the task
   # path does, so the warning never fired for a notified handler.
   it "warns once for a notified handler with templated args" do

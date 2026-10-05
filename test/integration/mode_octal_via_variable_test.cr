@@ -9,12 +9,12 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "mode: piped through a variable that's itself an unquoted-octal YAML literal" do
-  it "recovers the octal digits and stays idempotent, matching real ansible-playbook" do
+  it "recovers the octal digits and stays idempotent, matching ansible-playbook" do
     # Real bug found benchmarking geerlingguy.redis: its own "Ensure
     # Redis configuration dir exists." task writes
     # `mode: "{{ redis_conf_dir_mode }}"` where redis_conf_dir_mode:
     # 02770 is defined in vars/Debian.yml. Crystal's own YAML parser
-    # (like real Ansible's) resolves the unquoted leading-zero literal
+    # (like Ansible's) resolves the unquoted leading-zero literal
     # to the *decimal* Int64 1528 at vars-file parse time - a leading-
     # zero direct `mode: 0640` literal already gets its octal digits
     # recovered (see playbook_parser.cr's own comment on that fix), but
@@ -164,7 +164,7 @@ describe "mode: piped through a variable that's itself an unquoted-octal YAML li
     # 0640. Never converged either - redis-server's own postinst chmods
     # the config 640 on install, so every warm run saw 640 vs the
     # (wrongly-rendered) target 416 and re-chmod'd - changed: true on
-    # every warm run where real ansible-playbook (whose module receives
+    # every warm run where ansible-playbook (whose module receives
     # the native int and does `'%04o' % mode` itself) stays ok. The fix
     # (see substitute_task_params's key == "mode" comment) always
     # reformats via to_s(8), which round-trips ANY YAML-octal-derived

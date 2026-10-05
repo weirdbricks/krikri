@@ -25,7 +25,7 @@ module Krikri
       # per-role, not per-host, so folding it in via `||=` after the dup
       # (rather than `[]=` before it) is cheap however it's done and
       # correctly reproduces "role_defaults only fills what baseA doesn't
-      # already have" - real Ansible's own actual precedence, unchanged
+      # already have" - Ansible's own actual precedence, unchanged
       # from what `VariableContext.build`'s ordering used to guarantee
       # via unconditional overwrite-in-priority-order instead.
       vars_context = base_context_a_for(host).dup
@@ -43,7 +43,7 @@ module Krikri
         load_vars_files(host).each { |key, value| vars_context[key] = value }
       end
 
-      # Play-wide role layers. Real Ansible's precedence here was
+      # Play-wide role layers. Ansible's precedence here was
       # established against ansible-core 2.19.4 with a three-way matrix
       # (see role_scope_spec.cr, which encodes every case), and the
       # ladder it produced is, low to high:
@@ -68,7 +68,7 @@ module Krikri
       @all_role_defaults.each { |key, value| vars_context[key] ||= value } unless @all_role_defaults.empty?
 
       # Both role-vars layers sit above play/host vars but BELOW a
-      # REGISTERED variable: real Ansible ranks registered vars (19) well
+      # REGISTERED variable: Ansible ranks registered vars (19) well
       # above role vars (15), and baseA already holds them. Verified
       # against ansible-core 2.19.4 - a task that registers into a name
       # its own role's vars/main.yml also defines resolves to the
@@ -126,7 +126,7 @@ module Krikri
 
       if role_name = task.role_name
         vars_context["ansible_role_name"] = JSON::Any.new(role_name)
-        # role_name (unprefixed) is real Ansible's own magic var - the
+        # role_name (unprefixed) is Ansible's own magic var - the
         # sibling role_path below has always been set unprefixed, this
         # one was only ever set under its ansible_ alias, so `{{
         # role_name }}` inside a role's own templates/tasks raised
@@ -144,7 +144,7 @@ module Krikri
         vars_context["role_path"] = JSON::Any.new(role_path)
       end
 
-      # ansible_search_path - real Ansible's own job var
+      # ansible_search_path - Ansible's own job var
       # (task_executor.py sets it to Task#get_search_path() plus the
       # loader basedir when not already present): the role dependency
       # chain, current role first, then the directory of the file the
@@ -156,7 +156,7 @@ module Krikri
       vars_context["ansible_search_path"] = JSON::Any.new(search_path.map { |path| JSON::Any.new(path) })
 
       # `ansible_facts` - the same facts again, under their unprefixed
-      # names, as one dict. Real Ansible exposes every fact both ways
+      # names, as one dict. Ansible exposes every fact both ways
       # (`ansible_os_family` *and* `ansible_facts.os_family`), and the
       # dict form is what modern roles use: dev-sec's os_hardening
       # references `ansible_facts.os_family` 16 times and never uses the
@@ -174,7 +174,7 @@ module Krikri
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
       vars_context["groups"] = JSON::Any.new(build_groups)
 
-      # ansible_play_hosts_all/ansible_play_hosts - real Ansible magic
+      # ansible_play_hosts_all/ansible_play_hosts - Ansible magic
       # vars: the former is every host still active in the CURRENT play
       # (not the whole inventory - `groups['all']` is inventory-wide,
       # this is play-scoped), the latter is the subset not yet run in
@@ -190,21 +190,21 @@ module Krikri
       # inventory_hostname" (blockinfile: with a `{% for host in
       # ansible_play_hosts %}` block) writing an empty /tmp/inventory.txt,
       # which a LATER task's `grep ... /tmp/inventory.txt` then failed
-      # against (no match in an empty file) - while real ansible-
+      # against (no match in an empty file) - while Ansible-
       # playbook, which has always populated this var, succeeded.
       play_host_names = @hosts.map { |hval| JSON::Any.new(hval.name) }
       vars_context["ansible_play_hosts_all"] = JSON::Any.new(play_host_names)
       vars_context["ansible_play_hosts"] = JSON::Any.new(play_host_names)
-      # play_hosts - real Ansible's deprecated-but-still-supported alias
+      # play_hosts - Ansible's deprecated-but-still-supported alias
       # for ansible_play_hosts, still resolved today (deprecation warning
       # only, slated for removal in ansible-core 2.23). Same value, same
       # refresh - roles written against the old name (wezhai.minio's
       # minio_env.j2 does `{% for host in play_hosts %}` for cluster
       # mode) hard-fail with "'play_hosts' is undefined" without it,
-      # while real ansible-playbook renders the host list.
+      # while ansible-playbook renders the host list.
       vars_context["play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
-      # ansible_check_mode - real Ansible magic var (true under --check,
+      # ansible_check_mode - Ansible magic var (true under --check,
       # false on a real run), entirely unimplemented before. Real
       # ansible-role idioms reference it directly (`when: not ansible_
       # check_mode`, `changed_when: not ansible_check_mode` for a task
@@ -216,14 +216,14 @@ module Krikri
       # hard-failed ("'ansible_check_mode' is undefined") under 0.9.517's
       # strict module-arg templating.
       vars_context["ansible_check_mode"] = JSON::Any.new(@check_mode)
-      # ansible_diff_mode - real Ansible magic var (true under --diff),
+      # ansible_diff_mode - Ansible magic var (true under --diff),
       # the same gap class as ansible_check_mode right above (bound
       # there but not here, so an idiom pairing the two in one
       # conditional half-worked). Found benchmarking
       # linux-system-roles.firewall round 970345: its "Show diffs" task
       # guards with `when: ansible_check_mode or ansible_diff_mode or
       # ...`, which hard-failed ("'ansible_diff_mode' is undefined")
-      # where real ansible-playbook just skips.
+      # where ansible-playbook just skips.
       vars_context["ansible_diff_mode"] = JSON::Any.new(@diff_mode)
       vars_context["ansible_verbosity"] = JSON::Any.new(@verbosity.to_i64)
       vars_context["ansible_play_name"] = JSON::Any.new(Krikri::RunOptions.play_name)
@@ -234,10 +234,10 @@ module Krikri
       vars_context["ansible_forks"] = JSON::Any.new((Krikri::RunOptions.forks || 5).to_i64)
       apply_path_magic_vars(vars_context)
 
-      # ansible_connection - real Ansible always resolves this magic var
+      # ansible_connection - Ansible always resolves this magic var
       # (defaults "smart", which itself resolves to "ssh" for a remote
       # host, "local" for the controller) even when nothing sets it
-      # explicitly (verified against real ansible-playbook: `{{
+      # explicitly (verified against ansible-playbook: `{{
       # ansible_connection }}` renders "ssh" on a bare inventory entry
       # with no ansible_connection= at all). Previously left entirely
       # undefined unless inventory/task explicitly set it, so a role's
@@ -254,7 +254,7 @@ module Krikri
       )
 
       # loop_lenient_vars: a LOOPED task's vars: must not hard-fail on the
-      # pre-loop render. Real Ansible only ever evaluates a looped task's
+      # pre-loop render. Ansible only ever evaluates a looped task's
       # vars: per actual loop iteration (item bound) - a zero-iteration
       # loop (stackhpc.luks round 960004: `with_items: "{{ luks_devices }}"`
       # over the role's empty `luks_devices: []` default, vars: calling the
@@ -307,7 +307,7 @@ module Krikri
       end
 
       # remote_user: - the connection user, surfaced as ansible_user
-      # exactly as real Ansible does (verified: a play-level
+      # exactly as Ansible does (verified: a play-level
       # `remote_user: playuser` renders `{{ ansible_user }}` as
       # playuser, and a task's own remote_user: overrides it for that
       # task). Applied before extra-vars below, which still outrank it.
@@ -318,7 +318,7 @@ module Krikri
       # Last word, deliberately: -e/--extra-vars outranks every other
       # scope, including a `set_fact` executed earlier in the same play
       # (facts arrive via base_context_b above, so applying these after
-      # it is what reproduces real Ansible's "you cannot set_fact over an
+      # it is what reproduces Ansible's "you cannot set_fact over an
       # extra-var" behavior).
       @extra_vars.each { |key, value| vars_context[key] = value }
 
@@ -339,17 +339,17 @@ module Krikri
       # - the `ansible_facts` dict spelling of the same facts
       VarSubstitutor.set_resolved_var_names(host.name, resolved_var_names_for(host, registered, vars_context))
 
-      # Real Ansible's `vars` magic variable: a dict of every variable in
+      # Ansible's `vars` magic variable: a dict of every variable in
       # scope, most often used for a membership test rather than to read
       # a value - `prometheus.prometheus`'s own preflight does
       # `__common_parent_role_short_name ~ '_skip_install' not in vars`,
       # which is what surfaced its absence (round 198: crystal failed
-      # that task with "'vars' is undefined" while real ansible-playbook
+      # that task with "'vars' is undefined" while ansible-playbook
       # completed all 33 tasks, blocking the whole collection).
       #
       # Built LAST so it sees every other magic var, and deliberately
       # excludes itself - `vars["vars"]` would be an infinite structure,
-      # and real Ansible does not expose one either.
+      # and Ansible does not expose one either.
       #
       # Cheap despite appearances: JSON::Any wraps a reference, so this
       # is a hash of N pointer copies, not a deep copy of the context.
@@ -405,7 +405,7 @@ module Krikri
       inner
     end
 
-    # Real Ansible's variable manager treats `ansible_ssh_user`/
+    # Ansible's variable manager treats `ansible_ssh_user`/
     # `ansible_ssh_host`/`ansible_ssh_port` as deprecated-but-still-
     # honored aliases of `ansible_user`/`ansible_host`/`ansible_port` -
     # but only in the FINAL task-argument templating context. Loop-source
@@ -414,19 +414,19 @@ module Krikri
     # `loop: ["{{ ansible_ssh_user }}"]` - or a role default like
     # f500.bashrc's own `bashrc_users: ["{{ ansible_ssh_user }}"]`
     # (round900321) later fed to `with_items:` - hard-fails with
-    # "'ansible_ssh_user' is undefined" on real ansible-playbook, while
+    # "'ansible_ssh_user' is undefined" on ansible-playbook, while
     # the same reference in a plain task arg (or a `when:`, or a role
     # default reached through task-arg templating - round168's
     # geerlingguy.phergie `phergie_user: "{{ ansible_ssh_user }}"`
     # default feeding `file: {owner: "{{ phergie_user }}"}`) resolves
-    # fine. Live-verified all four shapes against real ansible-playbook
+    # fine. Live-verified all four shapes against ansible-playbook
     # this session. This engine used to synthesize the aliases inside the
     # cached baseA layer, making them visible to EVERYTHING - which
     # resolved f500.bashrc's defaults the way phergie's resolve, where
-    # real Ansible fails them. Synthesized with `||=` in both directions,
+    # Ansible fails them. Synthesized with `||=` in both directions,
     # so an inventory line that already sets the legacy spelling
     # explicitly still wins and stays a REAL variable - visible in loop
-    # sources too, exactly as real Ansible treats an explicitly-set var.
+    # sources too, exactly as Ansible treats an explicitly-set var.
     private def synthesize_legacy_ssh_aliases(vars_context : Hash(String, JSON::Any)) : Nil
       if user = vars_context["ansible_user"]?
         vars_context["ansible_ssh_user"] ||= user
@@ -447,7 +447,7 @@ module Krikri
 
     # The vars snapshot loop-SOURCE resolution must see: identical to the
     # task-arg context except that synthesized legacy ssh aliases are
-    # absent (real Ansible's own scoping - see #build_vars_context's
+    # absent (Ansible's own scoping - see #build_vars_context's
     # synthesis comment for the verified matrix). Cheap in the common
     # case: a full alias-free rebuild is only needed when a legacy
     # spelling is present at all - if none of the three keys is in the
@@ -455,7 +455,7 @@ module Krikri
     # lookup resolves identically either way and the caller's own context
     # is returned as-is. An EXPLICITLY-set legacy spelling (inventory/
     # play vars/task vars) survives the rebuild - it's a real variable,
-    # visible in loop sources exactly as real Ansible treats it.
+    # visible in loop sources exactly as Ansible treats it.
     #
     # The rebuild must stay loop-lenient (round962000, the confirm-phase
     # re-run of stackhpc.luks after the original loop_lenient_vars fix):
@@ -495,18 +495,18 @@ module Krikri
       # (round168's geerlingguy.phergie) sees the SAME value either way
       # in task-arg templating. The synthesis itself lives in
       # #build_vars_context now, not here: baseA is cached and shared by
-      # every consumer, but real Ansible's alias synthesis is visible
+      # every consumer, but Ansible's alias synthesis is visible
       # only in final task-arg templating - loop-source resolution (and
       # the loop items it recursively renders) sees a vars snapshot
       # without it (round900321 f500.bashrc's
       # `bashrc_users: ["{{ ansible_ssh_user }}"]` default fails
-      # `with_items: "{{ bashrc_users }}"` on real ansible-playbook).
+      # `with_items: "{{ bashrc_users }}"` on ansible-playbook).
       # See #build_vars_context's own synthesis comment for the full
       # verified matrix.
 
       # Ordinary gathered facts (setup:/package_facts:/service_facts:/
       # etc, i.e. everything in @facts that ISN'T also in @set_facts)
-      # fill in here LAST, via `||=` - real Ansible's "host facts" tier
+      # fill in here LAST, via `||=` - Ansible's "host facts" tier
       # sits below play vars/inventory vars/registered vars, so any of
       # those already present in `result` must win. A key present in
       # BOTH @facts and @set_facts (the set_fact case) is skipped here
@@ -593,7 +593,7 @@ module Krikri
       end
     end
 
-    # Real Ansible's `groups` magic variable - a dict of every inventory
+    # Ansible's `groups` magic variable - a dict of every inventory
     # group name to the list of host names it contains (`groups['all']`,
     # `groups['webservers']`, ...), the standard way a task broadcasts to
     # or loops over every host in a group without hardcoding names
@@ -606,7 +606,7 @@ module Krikri
     #
     # `groups['all']` is synthesized from the full inventory (not merely
     # `@inventory.groups["all"]?`, which may not even exist as an
-    # explicit group) - matches real Ansible, where 'all' always means
+    # explicit group) - matches Ansible, where 'all' always means
     # every host regardless of how the inventory file grouped things.
     private def build_groups : Hash(String, JSON::Any)
       if (cache = @groups_cache) && @groups_cache_generation == @hv_generation
@@ -622,7 +622,7 @@ module Krikri
           result[name] = JSON::Any.new(inventory.hosts_in_group(name).map { |host| JSON::Any.new(host.name) })
         end
         result["all"] = JSON::Any.new(inventory.hosts.keys.map { |hostname| JSON::Any.new(hostname) })
-        # ungrouped - real Ansible's own groups magic var always carries
+        # ungrouped - Ansible's own groups magic var always carries
         # it (every host not in any named group), and lookup('inventory_
         # hostnames', 'ungrouped') matches against it like any other
         # group. Previously missing, so groups['ungrouped'] rendered
@@ -641,7 +641,7 @@ module Krikri
       result
     end
 
-    # Real Ansible's `hostvars[<name>]` magic variable - a dict of every
+    # Ansible's `hostvars[<name>]` magic variable - a dict of every
     # host in the *whole inventory's* own vars (inventory-defined vars
     # like ansible_host, any facts already gathered for it, and any
     # vars it has registered so far), letting a task on one host look
@@ -669,14 +669,14 @@ module Krikri
     # at all.
     #
     # Rebuilt fresh on every #build_vars_context call (once per task per
-    # host) rather than cached - real Ansible's own hostvars reflects a
+    # host) rather than cached - Ansible's own hostvars reflects a
     # set_fact:/register: made by ANY host earlier in the same play, so
     # a stale snapshot would miss updates. Deliberately narrower than a
     # full recursive #build_vars_context call per other host (which
     # would also need its own "hostvars" key excluded to avoid infinite
     # recursion) - inventory vars + facts + registered vars + set_facts
     # covers every real-world hostvars[...] use seen so far.
-    # playbook_dir / inventory_dir / inventory_file - real Ansible's path
+    # playbook_dir / inventory_dir / inventory_file - Ansible's path
     # magic vars, all three ABSOLUTE regardless of how the paths were
     # spelled on the command line (verified against ansible-core 2.19.4
     # with a relative playbook and a relative inventory run from a third
@@ -687,7 +687,7 @@ module Krikri
     #
     # With no inventory, `inventory_dir`/`inventory_file` are left
     # UNDEFINED rather than set to empty strings - also verified against
-    # real Ansible - so a role's `inventory_file is defined` guard reads
+    # Ansible - so a role's `inventory_file is defined` guard reads
     # the same here. A DIRECTORY inventory sets `inventory_dir` to the
     # directory itself and `inventory_file` to its single source file,
     # leaving the latter undefined when several sources make "the"
@@ -695,15 +695,15 @@ module Krikri
     #
     # Both of those shapes are handled here but not reachable yet: this
     # engine's inventory loader defaults to `inventory.ini` instead of
-    # real Ansible's implicit localhost when `-i` is omitted, and cannot
+    # Ansible's implicit localhost when `-i` is omitted, and cannot
     # load a directory of inventory sources at all (it tries to execute
     # it as a dynamic inventory script). Those are separate, pre-existing
     # gaps in the loader, not in these magic vars.
-    # The directory of the file the task lives in - real's
+    # The directory of the file the task lives in - Ansible's
     # `dirname(task.get_path())`, the last entry of the search stack.
     # Role-file tasks have no source_file stamp (role_loader passes
     # none), so fall back to the including task file's directory and
-    # then the role's own tasks/ directory - real's task dir for a
+    # then the role's own tasks/ directory - Ansible's task dir for a
     # role's main.yml tasks.
     private def needle_task_file_dir(task : Task) : String?
       if file = task.source_file
@@ -746,7 +746,7 @@ module Krikri
         other_host.vars.each { |key, value| entry[key] = value }
         @facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         @registered_vars[other_host.name]?.try(&.each { |key, value| entry[key] = value })
-        # set_facts rank ABOVE both (real Ansible's "set_facts / registered
+        # set_facts rank ABOVE both (Ansible's "set_facts / registered
         # vars" tier sits near the very top of the precedence ladder), so
         # they merge last. They also land in @facts via
         # merge_ansible_facts, but the run-scoped store's re-gather merges
@@ -756,7 +756,7 @@ module Krikri
         # ansible-core 2.19.11).
         @set_facts[other_host.name]?.try(&.each { |key, value| entry[key] = value })
         entry["inventory_hostname"] = JSON::Any.new(other_host.name)
-        # Real Ansible's hostvars view carries the play magic variables on
+        # Ansible's hostvars view carries the play magic variables on
         # EVERY host's entry (verified live against ansible-core 2.19.11:
         # an add_host-created host's entry holds inventory_hostname_short,
         # group_names, groups, playbook_dir, inventory_dir, inventory_file,
@@ -773,7 +773,7 @@ module Krikri
         # invisible to every other host's hostvars read) and is the slice
         # enriched here; ordinary inventory hosts keep the fallback.
         enrich_add_host_entry(entry, other_host) if other_host.from_add_host?
-        # No synthesized ansible_host here: real Ansible's hostvars magic
+        # No synthesized ansible_host here: Ansible's hostvars magic
         # view carries ONLY actually-defined vars (inventory + facts +
         # registered), and `{{ ansible_host }}` falls back to the
         # inventory hostname through the CONNECTION-var path
@@ -790,7 +790,7 @@ module Krikri
         # of the IP list.
         result[other_host.name] = JSON::Any.new(entry)
       end
-      # Real ansible-core's InventoryManager ALWAYS synthesizes an implicit
+      # ansible-core's InventoryManager ALWAYS synthesizes an implicit
       # "localhost" pseudo-host when no inventory defines one, and exposes it
       # via hostvars['localhost'] from ANY play - even one targeting entirely
       # different machines (verified live against ansible-core 2.19.11: the
@@ -803,7 +803,7 @@ module Krikri
       # inventory-loader-level gap noted above apply_path_magic_vars (the
       # loader still defaults to inventory.ini instead of implicit localhost
       # when -i is omitted). An explicitly inventory-defined localhost keeps
-      # its real entry untouched, matching real Ansible's explicit-over-
+      # its real entry untouched, matching Ansible's explicit-over-
       # implicit precedence, and no facts are gathered for the implicit one -
       # nothing runs against it unless a task explicitly targets localhost.
       unless result.has_key?("localhost")
@@ -836,7 +836,7 @@ module Krikri
         entry["group_names"] = JSON::Any.new(inv.groups_for(host.name).map { |name| JSON::Any.new(name) })
       end
       entry["groups"] = JSON::Any.new(build_groups)
-      # Real's entry carries the ansible_facts dict form too - an empty
+      # Ansible's entry carries the ansible_facts dict form too - an empty
       # dict when no facts were ever gathered for the host (live-verified
       # vs 2.19.11), the gathered dict otherwise.
       entry["ansible_facts"] = JSON::Any.new(@facts[host.name]? ? facts_dict_for(host.name) : Hash(String, JSON::Any).new)
@@ -902,8 +902,8 @@ module Krikri
         rescue e : VariableSubstitutor::FilterEngine::UnknownFilterError
           unless loop_lenient
             # An unknown filter name is NOT a legitimate raise-to-absent
-            # case: real Ansible hard-fails the task that uses the var with
-            # "No filter named 'X'." (a real Jinja2 TemplateAssertionError -
+            # case: Ansible hard-fails the task that uses the var with
+            # "No filter named 'X'." (a Jinja2 TemplateAssertionError -
             # Jinja validates filter names against its registered filter set
             # before ever calling). Silently dropping the var here fed the
             # downstream `default(...)` chain the literal text "undefined"
@@ -991,7 +991,7 @@ module Krikri
     # ivar comment) additionally mirrors the write into @set_facts, the
     # subset build_vars_context applies at the very top of the ladder;
     # everything else in @facts is filled in at the low "host facts"
-    # tier instead, below play vars - matching real Ansible's own
+    # tier instead, below play vars - matching Ansible's own
     # precedence for the two cases instead of treating every
     # ansible_facts-returning module like set_fact.
     private def resolve_first_found(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
@@ -1003,7 +1003,7 @@ module Krikri
       candidates.each do |raw|
         # SCALAR string form (`with_first_found: "{{ undefined_var }}"`):
         # strict - round174 matrix scenario 5b: the keyword's own value is
-        # one bare template reference, real Ansible templates it strictly
+        # one bare template reference, Ansible templates it strictly
         # and fails the task ("'undefined_var' is undefined"), not silently
         # skip. Only a BARE/dotted `{{ }}` span raises (see
         # VarSubstitutor#raise_if_strict_undefined) - an ordinary literal
@@ -1011,7 +1011,7 @@ module Krikri
         # case) or one with a filter chain is unaffected.
         #
         # LIST/dict form: lenient (strict omitted). Verified live against
-        # ansible-core 2.19.4 (pluggero.upgrade round 601548): real Ansible
+        # ansible-core 2.19.4 (pluggero.upgrade round 601548): Ansible
         # hands a literal list's candidate strings to the first_found
         # lookup plugin, which templates each term itself with undefined
         # references rendering to nothing - so `{{ ansible_lsb.id }}` on a
@@ -1038,7 +1038,7 @@ module Krikri
       # No candidate matched. `skip: true` (parsed into
       # task.loop_first_found_skip) is the only thing that makes real
       # Ansible tolerate a miss - it returns [] so callers skip. Without
-      # skip:, real Ansible's first_found lookup RAISES and the task
+      # skip:, Ansible's first_found lookup RAISES and the task
       # FAILS ("The lookup plugin 'first_found' failed: No file was found
       # when using first_found.") - for ANY module the with_first_found:
       # keyword form is attached to, not just include_vars: (verified
@@ -1085,7 +1085,7 @@ module Krikri
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
 
       # An explicit paths: sub-key (the dict form's own `- files: [...]
-      # paths: [...]`) names the ONLY directories real Ansible searches -
+      # paths: [...]`) names the ONLY directories Ansible searches -
       # found via arillso.authorized_key's own `paths: ['distribution']`,
       # a custom, non-standard directory name outside the hardcoded roots
       # below. A relative entry resolves against the role root (real
@@ -1103,7 +1103,7 @@ module Krikri
       # benchmarking andrewrothstein.buildah (round 152 3-way benchmark),
       # whose "Resolve platform specific vars" task always skipped,
       # leaving kubic_pkg_mgr undefined and silently omitting the whole
-      # apt-key/apt-repo setup real Ansible attempts.
+      # apt-key/apt-repo setup Ansible attempts.
       if custom_paths = task.loop_first_found_paths
         # A relative custom path resolves against the directory of the
         # FILE the with_first_found: task is itself written in - real
@@ -1142,7 +1142,7 @@ module Krikri
       roots = [] of String
       if task.include_vars?
         # include_vars: + with_first_found: (round 812001, mircomasa.
-        # filebeat): real Ansible's include_vars action plugin searches the
+        # filebeat): Ansible's include_vars action plugin searches the
         # role's vars/ dir FIRST and its tasks/ dir only as a fallback, and
         # never files/ or templates/ (verified live against ansible-core
         # 2.19.11 with a probe role holding the same basename in every
@@ -1160,13 +1160,13 @@ module Krikri
         # auth and so5.pbspro (both verified live against ansible-core
         # 2.19.x) include_vars: with_first_found: a "setup-<OS>.yml" idiom
         # whose only matching file lives under tasks/ (never vars/ or
-        # files/) - real Ansible resolved to tasks/setup-Debian.yml there.
+        # files/) - Ansible resolved to tasks/setup-Debian.yml there.
         task.role_vars_dir.try { |dir| roots << dir }
         task.include_file_dir.try { |dir| roots << dir }
         task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
       else
         # The directory of the file the with_first_found: task itself is
-        # written in - real Ansible tries a bare candidate against the
+        # written in - Ansible tries a bare candidate against the
         # task's own file first. include_file_dir is only assigned for
         # include_tasks: statements, though, so a task declared directly
         # in a role's tasks/main.yml has it nil - fall back to the role's
@@ -1181,7 +1181,7 @@ module Krikri
       end
       # vars//files//templates/ are NOT searched for an include_tasks:'
       # with_first_found: at all - include_tasks: consumes task-list YAML
-      # only, and real Ansible (verified live against ansible-core 2.19.x
+      # only, and Ansible (verified live against ansible-core 2.19.x
       # with ccdc.ntp_configuration's "Set up NTP time synchronisation"
       # repro) skips straight past an "Debian.yml" candidate even when
       # vars/Debian.yml exists, resolving instead to tasks/Linux.yml.
@@ -1189,7 +1189,7 @@ module Krikri
       # and failed the task with "Included tasks file must be a YAML
       # list" - a vars file can never be a valid include target, so
       # including these subdirs for include_tasks: can only ever find a
-      # file real Ansible would never pick.
+      # file Ansible would never pick.
       task.role_path.try { |dir| roots << dir }
       roots << Dir.current
 
@@ -1213,7 +1213,7 @@ module Krikri
         substituted = substitutor.substitute(pattern, strict: true)
 
         # `with_fileglob: "{{ some_list_var }}"` (a single templated
-        # value that evaluates to a LIST of patterns, real Ansible's own
+        # value that evaluates to a LIST of patterns, Ansible's own
         # idiom for e.g. cloudalchemy.prometheus's own
         # `prometheus_alert_rules_files: [prometheus/rules/*.rules]`) -
         # #substitute has no notion of the underlying value being a real
@@ -1242,7 +1242,7 @@ module Krikri
       matches.map { |path| JSON::Any.new(path) }
     end
 
-    # Real Ansible's own fileglob lookup plugin dwims each pattern's
+    # Ansible's own fileglob lookup plugin dwims each pattern's
     # directory part relative to the role's files/ dir (path_dwim_relative
     # with 'files'), so a BARE pattern (`*.yml`, no "/" in it) inside a role
     # matches the role's own files/ contents - NOT whatever the process
@@ -1250,7 +1250,7 @@ module Krikri
     # bare pattern globbed cwd directly: a playbook `site.yml` sitting next
     # to the invocation matched itself instead of the role's
     # middleware.yml/redirect.yml (mismatch-traefik round repro, confirmed
-    # live against real ansible-playbook, which found only the role's own
+    # live against ansible-playbook, which found only the role's own
     # files). The returned paths stay the FULL resolved paths Dir.glob
     # yields - the same shape copy:'s src: already receives from
     # resolve_script_path, which leaves an absolute item path untouched
@@ -1267,7 +1267,7 @@ module Krikri
       role_files_dir ? File.join(role_files_dir, pattern) : pattern
     end
 
-    # Resolve with_file: entries (if any) - real Ansible's `file` lookup
+    # Resolve with_file: entries (if any) - Ansible's `file` lookup
     # plugin, reading each LISTED file's CONTENT (unlike with_fileglob,
     # which matches filenames by pattern) and binding it to `item`. A
     # relative entry is searched under the current role's own files/
@@ -1311,7 +1311,7 @@ module Krikri
       # LISTS (`percona_client_repositories: "{{ list_8 if version ==
       # '8.0' else list_5 }}"`, Oefenweb.percona_client's own vars/
       # main.yml) therefore always failed downstream with "The `loop`
-      # value must resolve to a 'list', not 'str'" - real Ansible
+      # value must resolve to a 'list', not 'str'" - Ansible
       # resolves the ternary to the actual list and iterates it fine.
       if current && (raw = current.raw).is_a?(String) && (raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")) &&
          !VarSubstitutor.unsafe_root?(vars_context, template) && !UnsafeValues.unsafe_text?(raw)
@@ -1368,7 +1368,7 @@ module Krikri
       # "undefined" for strictness purposes. An EXPLICITLY-set `null`
       # value (`vars_context[parts[0]]?` returning a JSON::Any wrapping
       # Nil, not Crystal nil) does NOT hit this branch - see bump-2's
-      # list-type check in resolve_loop_template for what real Ansible
+      # list-type check in resolve_loop_template for what Ansible
       # does with a defined-but-null loop source instead.
       raise UndefinedVariableError.new(Krikri.strict_undefined_message(match[1], vars_context)) if current.nil?
 
@@ -1381,7 +1381,7 @@ module Krikri
     # (execute_batch_group) so both interpret when: identically.
     #
     # `defer_stats`: when true (a loop item), the skipped counter is NOT
-    # bumped here. Real Ansible counts a looped task once in the recap, not
+    # bumped here. Ansible counts a looped task once in the recap, not
     # once per skipped item - loop-aggregation happens once in
     # finish_looped_task, so a loop that ends up with zero executed items is
     # recorded as a single "skipped". Deferring avoids per-item skipped
@@ -1393,7 +1393,7 @@ module Krikri
     # Jinja2's `do_first`). This used to crash the ENTIRE process with an
     # unhandled-exception stack trace - `when_passes?` has 7 call sites
     # across solo/looped/batched task execution and `meta:`, none of
-    # which caught it. Real Ansible degrades to one clean failed task
+    # which caught it. Ansible degrades to one clean failed task
     # ("Task failed: Error while evaluating conditional: ...") and
     # continues the run, not a crash.
     #
@@ -1417,7 +1417,7 @@ module Krikri
 
     # Shared substitute+evaluate+strict-undefined-rescue sequence for a
     # when: condition - the one place that owns `raise_undefined: true`
-    # (real Ansible's strict-undefined case for when:, see
+    # (Ansible's strict-undefined case for when:, see
     # ConditionalEvaluator::UndefinedVariableError) so that adding a new
     # strict call site is structurally impossible without also getting
     # this rescue: any raise here (the strict undefined case, or any
@@ -1457,7 +1457,7 @@ module Krikri
     # `ignore_errors: "{{ ansible_check_mode }}"` (= ignore only in check
     # mode) - on a normal run every failure on such a task was silently
     # ignored, the host never halted, and the play kept running where
-    # real Ansible had already stopped it (dj-wasabi.telegraf, round
+    # Ansible had already stopped it (dj-wasabi.telegraf, round
     # 76017: the correctly-failed telegraf=1.18.2-1 apt install got
     # "...ignoring"-ed and the divergence only surfaced two tasks later).
     #
@@ -1498,7 +1498,7 @@ module Krikri
     # newrelic.newrelic-infra's own `no_log: "{{
     # nrinfragent_hide_config_values }}"` (defaulting false) has its
     # failure message suppressed on EVERY run regardless of the actual
-    # value - masking real errors from anyone debugging a failure.
+    # value - masking Ansible errors from anyone debugging a failure.
     #
     # SECURITY-CRITICAL: an unresolvable reference must fall back to the
     # safe (hide-it) guess, not to whatever a stray evaluation of the
@@ -1520,7 +1520,7 @@ module Krikri
     end
 
     # Whole-single-span set_fact values carry their NATIVE type
-    # across the strings-only param wire: real ansible-core 2.19's
+    # across the strings-only param wire: ansible-core 2.19's
     # templar keeps the expression's own type for a template whose
     # whole AST is one output node (a Jinja string expression stays
     # a str even when the text looks numeric - "{{ '8.9' }}" is the
@@ -1547,7 +1547,7 @@ module Krikri
     # NONE_SENTINEL flow in substitute_task_params) and the omit sentinel
     # fall back to the plain substitution; multi-span/mixed text and
     # block-tag values never enter this branch (whole_single_span),
-    # matching real Ansible's one-output-node rule.
+    # matching Ansible's one-output-node rule.
     private def native_typed_value(substitutor : VarSubstitutor, stripped_value : String) : String?
       expr = stripped_value[2..-3].strip
       # evaluate_structured is lenient about undefined names
@@ -1563,7 +1563,7 @@ module Krikri
       return nil unless native_value
       raw = native_value.raw
       # A None result (`{{ none }}`, or a var holding YAML `~`) IS kept
-      # natively for set_fact: real ansible-core sets the fact to Python
+      # natively for set_fact: ansible-core sets the fact to Python
       # None (`is none` -> True), not to the empty string. Falling back to
       # the plain substitution here used to collapse the None into "" and
       # then into substitute_task_params's whole-span-None NONE_SENTINEL
@@ -1588,14 +1588,14 @@ module Krikri
 
       params.each do |key, value|
         # Dynamic variable names - `set_fact: "{{ item.key }}": "{{ item.value }}"`
-        # - carry a template in the *key*, not just the value. Real Ansible
+        # - carry a template in the *key*, not just the value. Ansible
         # (and dev-sec os_hardening's "Set OS dependent variables", which
         # builds os_* vars exactly this way) substitutes the key too, so a
         # role can name facts from a loop item's fields. Substituting only
         # the value used to register the fact under the literal key
         # `{{ item.key }}`, making `{{ auditd_package }}` resolve undefined
         # in the next task.
-        # strict: true - real Ansible's module-arg templating is
+        # strict: true - Ansible's module-arg templating is
         # strict-undefined by default and raises when a `{{ }}` span
         # references a genuinely undefined variable, failing the task
         # ("Finalization of task args ... failed"). See
@@ -1603,10 +1603,10 @@ module Krikri
         # reference-only scope of what actually raises here.
         # output: a module argument is final text (see
         # VarSubstitutor#substitute), so a container inside MIXED text
-        # renders the way real Ansible renders one (Python repr,
+        # renders the way Ansible renders one (Python repr,
         # live-verified: `msg: "pre {{ list }} post"` prints
         # "pre ['a', 'b'] post"). EXCEPT for a param whose ENTIRE value
-        # is one bare `{{ }}` span: real Ansible's native typing keeps
+        # is one bare `{{ }}` span: Ansible's native typing keeps
         # the referenced value's native type there (live-verified vs
         # ansible-playbook 2.19.11: `apt: name: "{{ pkg_list }}"` with a
         # real list var looks up the clean ELEMENTS - "No package
@@ -1619,11 +1619,11 @@ module Krikri
         # real list - a repair that also swallowed values that merely
         # LOOK like a repr (a literal `name: "['a', 'b']"` string, or a
         # `{% if %}...{% else %}['a']{% endif %}` block's output - both
-        # plain strings in real Ansible, live-verified - the latter via
-        # HanXHX.debian_bootstrap) into containers real Ansible never
+        # plain strings in Ansible, live-verified - the latter via
+        # HanXHX.debian_bootstrap) into containers Ansible never
         # had.
         # set_fact (native_containers) keeps output:false for ALL its
-        # params: real Ansible keeps a set_fact: value NATIVELY typed -
+        # params: Ansible keeps a set_fact: value NATIVELY typed -
         # a container expression stays a real dict/list, not display
         # text. Formatting it as output text here produced a
         # Python-repr STRING fact (buluma.ara_api's own
@@ -1638,7 +1638,7 @@ module Krikri
         # comment below). Evaluating first and skipping the string
         # substitution when it succeeds keeps side-effecting expressions
         # (`lookup('pipe', ...)`, now(), random) to exactly ONE run, like
-        # real Ansible - evaluating twice ran a pipe lookup twice and
+        # Ansible - evaluating twice ran a pipe lookup twice and
         # stored the second run's output. Undefined/None/omit results fall
         # back to the plain substitution, which owns the strict-undefined
         # error and the NONE/OMIT sentinel flows.
@@ -1649,7 +1649,7 @@ module Krikri
           native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
           substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
         rescue e : UndefinedVariableError
-          # Real ansible-core 2.19 wraps every undefined module-arg
+          # ansible-core 2.19 wraps every undefined module-arg
           # reference with the param it failed on: the task's fatal msg
           # reads "Task failed: Finalization of task args for 'MOD'
           # failed: Error while resolving value for 'KEY': 'var' is
@@ -1667,7 +1667,7 @@ module Krikri
           raise UndefinedVariableError.new("Error while resolving value for '#{key}': #{e.message}")
         rescue e : Krikri::PipeLookupError | Krikri::FirstFoundLookupError | Krikri::PythonLookupRunner::LookupError | FilterPluginError | TestPluginError
           # Lookup/filter/test-plugin failures ride the same finalization
-          # chain - real 2.19.11 fails the task with "Task failed:
+          # chain - Ansible 2.19.11 fails the task with "Task failed:
           # Finalization of task args for 'MOD' failed: Error while
           # resolving value for 'KEY': <plugin error>" (live-verified
           # for each shape), never the bare "Action failed" chain a
@@ -1707,7 +1707,7 @@ module Krikri
 
         # A whole-span template whose rendered result is empty text is
         # ambiguous at this string layer: a real empty string and a real
-        # Python None both render as "", yet real Ansible keeps the two
+        # Python None both render as "", yet Ansible keeps the two
         # natively apart and its own module argspecs treat them
         # differently - an explicit None fails every `type: list` param
         # with the generic NoneType-conversion message while an empty
@@ -1715,10 +1715,10 @@ module Krikri
         # (live-verified against ansible-core 2.19.11 for all four of
         # yum/dnf's `type: list` params). Found via round 900905
         # officel.httpd: every loop item's `enablerepo: ~` default made
-        # real ansible-playbook fail the task while this engine installed
+        # ansible-playbook fail the task while this engine installed
         # the packages anyway. The hand-rolled FilterEngine's
         # nil-as-undefined collapse hides the None behind
-        # `item.enablerepo | default('')` (real Jinja2's default filter
+        # `item.enablerepo | default('')` (Jinja2's default filter
         # never triggers on a DEFINED None - live-verified), but Crinja's
         # is Jinja2-faithful, so the structural re-resolution here sees
         # through it; evaluate_structured returns nil for a genuinely
@@ -1745,7 +1745,7 @@ module Krikri
         # - Crystal's YAML parser already decimal-converted the variable's
         # defining `redis_conf_mode: 0640` at vars-file parse time,
         # so #substitute above just stringifies that decimal (Int64 416)
-        # as "416" verbatim. Real Ansible's own file module hits the
+        # as "416" verbatim. Ansible's own file module hits the
         # exact same decimal-rendered string internally, but recovers the
         # original octal digits because its `mode:` argspec is `type:
         # raw` - a *bare* single `{{ }}` template preserves the
@@ -1772,7 +1772,7 @@ module Krikri
         # changed: true on every warm run. The escape is gone because its
         # other side is now fixed at the root: set_fact's coerce no
         # longer decimal-coerces octal-mode-shaped strings into ints at
-        # all (see plugins/set_fact.cr - real Ansible's native typing
+        # all (see plugins/set_fact.cr - Ansible's native typing
         # keeps a string-sourced fact a string), so every Int64 arriving
         # here is a genuine YAML-octal-derived int and to_s(8) always
         # round-trips the original octal digits.
@@ -1781,7 +1781,7 @@ module Krikri
           if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
             # The structured (memoized) whole-span evaluation first: with
             # native typing, a vars entry like `m_int: "{{ 420 }}"` now
-            # resolves to the INT 420 (real ansible-core keeps the
+            # resolves to the INT 420 (ansible-core keeps the
             # expression's type), and the int -> octal reformat below needs
             # that int - live-verified vs 2.19.11 that `mode: "{{ 420 }}"
             # applies 0644, while the pre-native-typing string "420" was
@@ -1796,14 +1796,14 @@ module Krikri
           end
         end
 
-        # `{{ ... | default(omit) }}` (real Ansible's magic variable for
+        # `{{ ... | default(omit) }}` (Ansible's magic variable for
         # dropping a parameter entirely rather than giving it any real
         # value - see OMIT_SENTINEL) - skip the key altogether instead of
         # sending the plugin a literal sentinel string as the param value.
         next if substituted_value == OMIT_SENTINEL
 
         # An omit that is only PART of a larger value cannot drop the
-        # parameter - real Ansible renders it as nothing and keeps the
+        # parameter - Ansible renders it as nothing and keeps the
         # rest (verified against ansible-core 2.19.4: with `v_omit: "{{
         # never_set | default(omit) }}"`, `msg: "[{{ v_omit }}]"` prints
         # "[]"). This engine used to emit its own raw sentinel text
@@ -1822,7 +1822,7 @@ module Krikri
         result[substitutor.substitute(key)] = substituted_value
       end
 
-      # Real Ansible parses a command:/shell:'s trailing `creates=`/
+      # Ansible parses a command:/shell:'s trailing `creates=`/
       # `removes=`/`chdir=`/`executable=` specials from the module args
       # AFTER templating, not before - this engine's parse-time pass
       # (PlaybookParser.extract_command_special_params) runs on the RAW
@@ -1832,7 +1832,7 @@ module Krikri
       # `{% endif %}` tag, the `creates=...` sits inside one branch, and
       # the strip never fired - so `creates=...` reached `fallocate` as
       # a literal positional argument ("unexpected number of arguments").
-      # Real Ansible renders the whole block FIRST (resolving to one
+      # Ansible renders the whole block FIRST (resolving to one
       # flat command line where `creates=` genuinely IS last) and only
       # then parses trailing specials - this post-render pass replicates
       # that ordering. Idempotent with the parse-time pass: for a plain
@@ -1856,15 +1856,15 @@ module Krikri
       result
     end
 
-    # The msg real Ansible produces when a task-arg templating failure
+    # The msg Ansible produces when a task-arg templating failure
     # (strict-undefined during module-arg finalization) fails the task -
     # NOT the bare inner error text. Real wraps every
     # AnsibleUndefinedVariable with "The task includes an option with an
     # undefined variable. The error was: <text>. <text>" (the doubled
-    # copy is real's own message+orig_exc concatenation), then appends
+    # copy is Ansible's own message+orig_exc concatenation), then appends
     # its AnsibleError-obj context: the offending task's source location
     # from the playbook YAML and the surrounding lines with a caret.
-    # Live-captured from real ansible-core 2.14 (podman-diff
+    # Live-captured from ansible-core 2.14 (podman-diff
     # set_fact_edge_cases S1):
     #
     #   "The task includes an option with an undefined variable. The
@@ -1881,7 +1881,7 @@ module Krikri
     # `apt: "{{ item }}"`): the value has already been substituted
     # (native whole-span rendering carries the double-quoted JSON form),
     # so a dict render becomes the module's real params and anything
-    # else falls back to free-form k=v parsing - real Ansible's own
+    # else falls back to free-form k=v parsing - Ansible's own
     # post-template dispatch for a string args value. The sentinel key
     # never reaches the plugin (every plugin's validation now ignores
     # `_`-prefixed keys anyway).
@@ -1891,12 +1891,12 @@ module Krikri
       # parse_module_params's marker comment) warns through the SAME
       # once-per-task-occurrence argsplat machinery as the `{{ }}`
       # sentinel, while leaving the value's own resolution untouched -
-      # real's TaskArgsFinalizer warns for both delimiter families
+      # Ansible's TaskArgsFinalizer warns for both delimiter families
       # (is_possibly_all_template) before anything about the rendered
       # value is known.
       block_marker = params.delete("_argsplat_block_marker")
-      # Real warns as soon as it starts resolving such a string args layer
-      # (the real module's TaskArgsFinalizer.finalize), BEFORE
+      # Ansible warns as soon as it starts resolving such a string args layer
+      # (the Ansible module's TaskArgsFinalizer.finalize), BEFORE
       # the value is known to resolve to a dict - so a `copy: "{# c #}"`
       # still gets the warning and only then fails to resolve. `task` is
       # nil only where no Task is at hand (never today); the warning's
@@ -1918,23 +1918,23 @@ module Krikri
       expanded
     end
 
-    # Real ansible-core 2.19.11's warning for a task whose module args are
+    # ansible-core 2.19.11's warning for a task whose module args are
     # a single all-template string (`copy: "{{ some_dict }}"`, live-
     # verified against 2.19.11):
     #
     #   [WARNING]: Using a template for task args is unsafe in some
-    #   situations (see https://docs.ansible.com/the real module
+    #   situations (see https://docs.ansible.com/the Ansible module
     #   reference_appendices/faq.html#argsplat-unsafe).
     #   Origin: <file>:<line>:<col>
     #
-    # Its trigger (the real module's post_validate +
-    # the real module's TaskArgsFinalizer) is NOT "the value
+    # Its trigger (the Ansible module's post_validate +
+    # the Ansible module's TaskArgsFinalizer) is NOT "the value
     # renders to a dict": it is "this module does not take free-form
     # params AND the string args STARTS AND ENDS with a Jinja delimiter"
     # (so `{% ... %}`, `{# ... #}` count too). Modules that DO take
     # free-form params (`command:`/`shell:`/`script:`/`raw:`, see
     # module_registry.cr's RAW_COMMAND_MODULES) never warn, and a
-    # non-template string fails earlier with real's own "does not
+    # non-template string fails earlier with Ansible's own "does not
     # support raw params" error - which is exactly the parser's
     # `_templated_args` sentinel condition, so keying off that sentinel
     # reproduces the same set of tasks. Gated on INJECT_FACTS_AS_VARS
@@ -1958,12 +1958,12 @@ module Krikri
     end
 
     # Best-effort Origin for the argsplat warning: the module KEY's line,
-    # column pointing at the first character OF the scalar (real's YAML
+    # column pointing at the first character OF the scalar (Ansible's YAML
     # node start_mark sits inside the quotes for a quoted scalar, so
     # `      ansible.builtin.copy: "{{ d }}"` gives column 29 - one past
     # the quote at 28 - for both double and single quotes). A value on a
     # following line (`module: >` folded) has no same-line token to point
-    # at, so nothing is emitted; real doesn't warn there anyway (the
+    # at, so nothing is emitted; Ansible doesn't warn there anyway (the
     # folded value keeps its trailing newline and so does not start AND
     # end with the delimiters).
     private def argsplat_warning_text(task : Task) : String
@@ -1984,7 +1984,7 @@ module Krikri
       end
     end
 
-    # Real ansible-core 2.19's task-arg undefined-variable failure
+    # ansible-core 2.19's task-arg undefined-variable failure
     # (live-captured from 2.19.11, replacing the 2.14-era "The task
     # includes an option with an undefined variable ..." wording): the
     # fatal msg is
@@ -1992,7 +1992,7 @@ module Krikri
     #   "Task failed: Finalization of task args for '<module>' failed:
     #    Error while resolving value for '<key>': '<var>' is undefined"
     #
-    # and BEFORE the fatal line real prints an `[ERROR]:` chain block
+    # and BEFORE the fatal line Ansible prints an `[ERROR]:` chain block
     # (see emit_finalization_error_block). Non-undefined errors (lookup
     # failures etc.) and already-wrapped environment:/name: keyword
     # errors keep their own real-verified wording.
@@ -2015,7 +2015,7 @@ module Krikri
       unless finalization_module_name(task) == "ansible.builtin.debug"
         h["changed"] = JSON::Any.new(false)
       else
-        # real's debug fatal DUMP carries msg alone, but the REGISTERED
+        # Ansible's debug fatal DUMP carries msg alone, but the REGISTERED
         # result does carry changed: false (live-verified vs 2.19.11:
         # `debug: msg: "{{ undefined }}" | ignore_errors | register` ->
         # {"failed": true, "exception": ..., "msg": ..., "changed":
@@ -2029,7 +2029,7 @@ module Krikri
     end
 
     # command/shell/script/raw written free-form (`command: echo {{ x }}`, also
-    # folded/literal blocks) name their argument `_raw_params` in real's error
+    # folded/literal blocks) name their argument `_raw_params` in Ansible's error
     # text, krikri's parser calls it `cmd`.
     private def free_form_raw_command?(task : Task) : Bool
       return false unless PlaybookParser::RAW_COMMAND_MODULES.includes?(task.module_name)
@@ -2061,7 +2061,7 @@ module Krikri
       name
     end
 
-    # The `[ERROR]:` chain block real ansible-core 2.19.11 prints on
+    # The `[ERROR]:` chain block ansible-core 2.19.11 prints on
     # stdout BEFORE the fatal: line for a task-arg undefined failure
     # (live-captured; three levels, each with its own Origin at the
     # playbook YAML and "<<< caused by >>>" between them):
@@ -2098,7 +2098,7 @@ module Krikri
       l2 = "Finalization of task args for '#{finalization_module_name(task)}' failed."
       l1 = "Task failed: Finalization of task args for '#{finalization_module_name(task)}' failed: #{msg}"
 
-      # A test-plugin failure carries one MORE cause level: real's chain
+      # A test-plugin failure carries one MORE cause level: Ansible's chain
       # ends "... : The test plugin 'FQCN' failed: <cause>" and the block
       # then shows "Error while resolving value for 'KEY': The test
       # plugin 'FQCN' failed." (Origin at the param), then the bare
@@ -2122,7 +2122,7 @@ module Krikri
         two_level = false
       else
         # A task without `name:` starts at its module key: the task-level
-        # and module-level origins are the same line, so real prints two
+        # and module-level origins are the same line, so Ansible prints two
         # levels - "Task failed: Finalization ... failed." then the cause.
         return unless task.source_line > 0
         module_idx = task.source_line - 1
@@ -2159,12 +2159,12 @@ module Krikri
       puts text
     end
 
-    # Real ansible-core 2.19.11 warns whenever a groupby result (a
+    # ansible-core 2.19.11 warns whenever a groupby result (a
     # GroupTuple namedtuple) lands in variable storage - task-arg
     # finalization and set_fact values both count (live-verified); the
     # warning is "[WARNING]: Type 'GroupTuple' is unsupported in variable
     # storage, converting to 'list'." with an Origin block at the param
-    # KEY's own position, deduplicated like real's Display dedup.
+    # KEY's own position, deduplicated like Ansible's Display dedup.
     @@groupby_storage_warnings = Set(String).new
 
     private def warn_groupby_storage(task : Task) : Nil
@@ -2190,9 +2190,9 @@ module Krikri
     # chain after `groupby(...)` must not transform the pairs away. A
     # `| map(...)` (attribute extraction or per-item filter) and the
     # scalar extractors (length/count/sum/join/first/last/min/max) turn
-    # every GroupTuple into something else, so real's warning fires only
+    # every GroupTuple into something else, so Ansible's warning fires only
     # for the shapes that keep the pairs (a bare result, select*/sort/
-    # reverse/list, indexing). Text-level approximation of real's
+    # reverse/list, indexing). Text-level approximation of Ansible's
     # value-type check - verified for the debug: bare, map('first'),
     # selectattr and set_fact shapes against 2.19.11.
     private def groupby_reaches_storage?(value : String) : Bool
@@ -2238,7 +2238,7 @@ module Krikri
     end
 
     # The value token's position for a free-form module call: on the module
-    # key's own line, just past `<module>:` (real's origin for `_raw_params`).
+    # key's own line, just past `<module>:` (Ansible's origin for `_raw_params`).
     private def free_form_value_position(lines : Array(String), module_idx : Int32, module_name : String) : {Int32, Int32}
       line = lines[module_idx]
       colon = line.index(':', line.index(module_name.split(".").last) || 0) || 0
@@ -2270,7 +2270,7 @@ module Krikri
     end
 
     # The `- name:` line whose raw name (quotes stripped) equals the
-    # task's own; column is the `name` KEY's start (real's task-level
+    # task's own; column is the `name` KEY's start (Ansible's task-level
     # origin points there, e.g. column 7 for `    - name:`).
     private def locate_name_line(lines : Array(String), task : Task) : {Int32, Int32}?
       lines.each_with_index do |line, idx|
@@ -2312,7 +2312,7 @@ module Krikri
 
     private def locate_param_key_position(lines : Array(String), from_idx : Int32, key : String) : {Int32, Int32}?
       # Flow style (`- debug: msg="..."`): the param sits on the module
-      # key's own line - real's inner Origin points at the param KEY's
+      # key's own line - Ansible's inner Origin points at the param KEY's
       # first character there (col 14 for `    - debug: msg=...`,
       # live-verified vs 2.19.11), the same key-start convention the
       # block-style scan below uses.
@@ -2338,7 +2338,7 @@ module Krikri
     # ansible-core 2.19's conditional-as-template deprecation (_engine.py
     # _normalize_and_evaluate_conditional): a conditional whose stripped
     # value starts AND ends with Jinja delimiters is first templated AS A
-    # WHOLE; when that whole-template result is a non-string, real emits
+    # WHOLE; when that whole-template result is a non-string, Ansible emits
     # one [DEPRECATION WARNING] ... Origin block naming the conditional's
     # own YAML origin (live-captured 2.19.11). A string result is instead
     # used as an expression with NO warning (the `{{ cexpr }}` indirection
@@ -2348,11 +2348,11 @@ module Krikri
     # single-span restriction here. Display-only: krikri's own conditional
     # evaluation is untouched, this side channel fires at the same sites
     # real evaluates a conditional. Deduped by full text (warning line +
-    # Origin) exactly like real's Display._deduplicate - the same
+    # Origin) exactly like Ansible's Display._deduplicate - the same
     # conditional evaluated per host / per loop item displays once, while
     # two different tasks with the same text but different origins each
     # display. The one-time "Deprecation warnings can be disabled" hint
-    # real prints before the first deprecation (Display._deprecated's
+    # Ansible prints before the first deprecation (Display._deprecated's
     # warning() call, itself deduped) is replicated below.
     @@conditional_deprecation_hint_seen = false
     @@conditional_deprecation_seen = Set(String).new
@@ -2437,7 +2437,7 @@ module Krikri
       nil
     end
 
-    # Real ansible-core 2.19 tracks each templated value's source origin
+    # ansible-core 2.19 tracks each templated value's source origin
     # ("data lineage") and labels a non-boolean conditional error with
     # where the tested value was DEFINED:
     #   "Conditional result (True) was derived from value of type 'str'
@@ -2486,7 +2486,7 @@ module Krikri
     end
 
     # Whether a WhenEvaluationError message is a conditional-EVALUATION
-    # failure (the only shape real ansible-core 2.19.11 decorates with
+    # failure (the only shape ansible-core 2.19.11 decorates with
     # the two-level [ERROR] chain block and the "Task failed: "-prefixed
     # {"msg": ...} fatal JSON). Var-render failures ("Failed to render
     # task vars") keep their pre-existing display shape.
@@ -2495,7 +2495,7 @@ module Krikri
       inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (")
     end
 
-    # The two-level [ERROR] chain real prints on stdout BEFORE the fatal
+    # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
     # line for a failing `when:` (live-captured 2.19.11):
     #
     #   [ERROR]: Task failed: <inner error>
@@ -2509,7 +2509,7 @@ module Krikri
     #   Origin: f.yml:7:13           <- the `when:` value token
     #
     # A non-boolean conditional result adds one help-text line after the
-    # block (real's ALLOW_BROKEN_CONDITIONALS hint). Best-effort origin:
+    # block (Ansible's ALLOW_BROKEN_CONDITIONALS hint). Best-effort origin:
     # the parser doesn't track per-task source positions, so the task is
     # located by its `- name:` line (same approach as
     # emit_finalization_error_block); when either origin can't be located
@@ -2526,7 +2526,7 @@ module Krikri
       if located
         name_idx, name_col = located
       else
-        # A nameless task's origin is the module key line itself (real's
+        # A nameless task's origin is the module key line itself (Ansible's
         # two-level shape: "Task failed." + Origin at the module key) -
         # the same fallback emit_finalization_error_block uses.
         return unless task.source_line > 0
@@ -2552,7 +2552,7 @@ module Krikri
           io << "\n"
         end
       end
-      # Real's Display dedups by full formatted message; the Origin's
+      # Ansible's Display dedups by full formatted message; the Origin's
       # file:line makes the text task-unique, so a looped task's failing
       # items display the chain once.
       return unless @@when_error_chain_seen.add?(text)
@@ -2562,11 +2562,11 @@ module Krikri
     # environment: - strict-undefined substitution for both accepted
     # forms, meant to run inside the same protected "finalization of task
     # args" block as substitute_task_params so a referenced-but-undefined
-    # variable FAILS the task (real Ansible: "Error processing keyword
+    # variable FAILS the task (Ansible: "Error processing keyword
     # 'environment': 'proxy_env' is undefined") instead of rendering the
     # lenient "undefined" sentinel into an env var, ryandaniels.
     # server_update_reboot round 300094. Dict form: keys and values are
-    # each templated strictly (real Ansible templates the keyword's whole
+    # each templated strictly (Ansible templates the keyword's whole
     # value). String form (`environment: "{{ proxy_env }}"`): a single
     # bare {{ }} span resolves natively so a variable holding a dict
     # stays a dict; anything else must render to a JSON object.
@@ -2591,14 +2591,14 @@ module Krikri
             rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
             parsed = JSON.parse(rendered)
             object = parsed.as_h?
-            # Real Ansible never fails a task over a non-dict environment
+            # Ansible never fails a task over a non-dict environment
             # value - it just warns "could not parse environment value,
             # skipping" and treats the environment as empty. The common
             # trigger is a role default like `proxy_env: []`, meant to be
             # overridden by the caller with a real dict but left as an
             # empty list otherwise (ryandaniels.connectivity_test round
             # 601446: the whole package: task failed here in krikri while
-            # real ansible-playbook just installed the packages with no
+            # ansible-playbook just installed the packages with no
             # extra env). Confirmed against ansible-core 2.19 for `[]`, a
             # non-empty list, and a plain string - none of those raise.
             return nil unless object
@@ -2617,7 +2617,7 @@ module Krikri
     # An enclosing block:'s `name:` keyword - strict-undefined templating
     # of the whole enclosing chain (outermost first) at child-execution
     # time, raising the same failure shape the `environment:` handler
-    # above produces: real ansible-core 2.19 fails the child task with
+    # above produces: ansible-core 2.19 fails the child task with
     # "Task failed: Error processing keyword 'name': 'container_name' is
     # undefined" when the block name's chain bottoms out at a variable
     # set nowhere (round 813203, ikke_t.podman_container_systemd run
@@ -2625,12 +2625,12 @@ module Krikri
     # rendered the block name leniently for display and kept executing
     # deep into the role, diverging on every counter after). The strict
     # substitute reports the INNERMOST missing name (see
-    # #raise_if_nested_value_undefined), matching real Ansible. Only
-    # fires when the child actually goes to run: real Ansible finalizes
+    # #raise_if_nested_value_undefined), matching Ansible. Only
+    # fires when the child actually goes to run: Ansible finalizes
     # the block name after the child's own `when:` passes, so a
     # when-skipped child sails through and the failure lands on the next
     # child that runs (live-verified against 2.19.11). A task's OWN name
-    # stays lenient - real Ansible banners it as "<< error 1 - 'nope' is
+    # stays lenient - Ansible banners it as "<< error 1 - 'nope' is
     # undefined >>" and still runs/skips it normally.
     private def substitute_block_name_chain(task : Task, substitutor : VarSubstitutor) : Nil
       return unless chain = task.block_name_chain
@@ -2655,7 +2655,7 @@ module Krikri
         candidate = File.join(role_dir, local_path)
         return File.expand_path(candidate) if File.exists?(candidate)
       end
-      # Real Ansible's script action plugin resolves the src against the
+      # Ansible's script action plugin resolves the src against the
       # playbook's own basedir too (`files/` next to the playbook being
       # the common layout) - not just a role's files/ dir and the
       # controller's cwd. Running krikri-playbook from anywhere other

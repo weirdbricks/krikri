@@ -86,7 +86,7 @@ describe Krikri::Shell do
     end
   end
 
-  # Python shlex.split posix mode: what real Ansible modules (e.g.
+  # Python shlex.split posix mode: what Ansible modules (e.g.
   # podman_image's pull_extra_args) apply to multi-argument string params
   # before handing tokens to run_command's argv.
   describe ".shlex_split" do

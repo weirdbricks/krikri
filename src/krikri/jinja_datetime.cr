@@ -5,7 +5,7 @@ module Krikri
   # Python's naive `datetime.datetime` and `datetime.timedelta` as
   # krikri-jinja host objects, for `to_datetime`/`now()` and the arithmetic
   # Ansible templates do on them. Output formats follow CPython, pinned
-  # against real ansible-core 2.19 (str, repr, ISO JSON, timedelta
+  # against ansible-core 2.19 (str, repr, ISO JSON, timedelta
   # normalization with negative days).
   module JinjaDateTime
     alias AnyValue = KrikriJinja::AnyValue
@@ -128,7 +128,7 @@ module Krikri
         "datetime.timedelta(#{parts.join(", ")})"
       end
 
-      # Real ansible-core refuses to store a timedelta as a variable value.
+      # ansible-core refuses to store a timedelta as a variable value.
       def to_json_any : JSON::Any
         raise KrikriJinja::TemplateError.new("Type 'timedelta' is unsupported for variable storage.", 0)
       end

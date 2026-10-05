@@ -5,10 +5,10 @@ require "../../src/krikri/task_executor/output_routing"
 require "../../src/krikri/run_options"
 
 # Regression tests for the -v/-vv/-vvv console-output parity work:
-# the inline result dumps real ansible-playbook appends to ok/changed/
+# the inline result dumps ansible-playbook appends to ok/changed/
 # skipping lines at verbosity >= 1, the -vvv pretty-dump switch, and the
 # play-level source stamping that feeds the Gathering Facts
-# `task path:` line. Expected strings captured from real ansible-core
+# `task path:` line. Expected strings captured from ansible-core
 # 2.19.11 runs (ANSIBLE_NOCOLOR=1).
 private def capture_output(&)
   io = IO::Memory.new

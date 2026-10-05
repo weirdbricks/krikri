@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/variable_substitutor"
 require "../../src/krikri/conditional_evaluator"
 
-# An unknown `is <test>` TEST name must hard-fail with real Jinja2/
+# An unknown `is <test>` TEST name must hard-fail with Jinja2/
 # ansible-core's own wording ("No test named 'X'.", a compile-time
 # TemplateAssertionError - the test set is validated before any call is
 # attempted), never silently evaluate as if it were a real test. There
@@ -15,7 +15,7 @@ require "../../src/krikri/conditional_evaluator"
 # tasks deep before failing elsewhere. Previously the error, when it
 # WAS reached, was also mislabeled - Crinja's unknown-TEST error was
 # mapped onto the filter wording as "No filter named 'unknown'."
-describe "unknown test names hard-fail like real Jinja2/Ansible" do
+describe "unknown test names hard-fail like Jinja2/Ansible" do
   private def vars
     {
       "lst"          => JSON.parse(%(["a", "b"])),
@@ -27,7 +27,7 @@ describe "unknown test names hard-fail like real Jinja2/Ansible" do
     Krikri::VarSubstitutor.new(vars: vars, host_name: "h")
   end
 
-  it "raises for `x is list` in a conditional, with real Ansible's exact wording" do
+  it "raises for `x is list` in a conditional, with Ansible's exact wording" do
     assert_raises_message(Krikri::VariableSubstitutor::UnknownTestError,
       "No test named 'list'.") do
       Krikri::ConditionalEvaluator.evaluate(%(lst is list), vars)
@@ -43,7 +43,7 @@ describe "unknown test names hard-fail like real Jinja2/Ansible" do
 
   it "raises at COMPILE time even when and/short-circuiting never reaches the invalid clause" do
     # The exact sunfoxcz.dkim shape: the first clause is already False,
-    # but real Jinja resolves every test name in the whole expression
+    # but Jinja resolves every test name in the whole expression
     # when it compiles the template - the task must fail, not skip.
     assert_raises_message(Krikri::VariableSubstitutor::UnknownTestError,
       "No test named 'list'.") do

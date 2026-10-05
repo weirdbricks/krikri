@@ -8,14 +8,14 @@ module Krikri
   # GatherFacts Plugin - task-level fact gathering, matching
   # ansible.builtin.gather_facts.
   #
-  # Real Ansible implements `gather_facts` as an ordinary task action
+  # Ansible implements `gather_facts` as an ordinary task action
   # (an action plugin that delegates to the setup module) alongside the
   # play-level `gather_facts:` keyword, so a play can re-gather facts
   # mid-play or gather with a different gather_subset/gather_timeout -
   # krikri previously only ever implemented the play-level keyword, so
   # a direct `ansible.builtin.gather_facts: {}` task was skipped and
   # the run exited rc=4 with "unavailable modules:
-  # ansible.builtin.gather_facts" where real ansible-playbook ran
+  # ansible.builtin.gather_facts" where ansible-playbook ran
   # ok=1.
   #
   # This is deliberately distinct from the play-level gathering path

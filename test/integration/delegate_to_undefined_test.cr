@@ -5,7 +5,7 @@ require "../minitest_helper"
 # used to render as the literal string "undefined", become a Host literally
 # named "undefined", and die as an UNHANDLED Crystal exception at plugin-
 # upload SSH time ("ssh: Could not resolve hostname undefined") - aborting
-# the whole run instead of failing just the task the way real Ansible does
+# the whole run instead of failing just the task the way Ansible does
 # ("'restic_backup_destination_server' is undefined").
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -68,7 +68,7 @@ describe "undefined delegate_to: variable" do
     output.must_include("failed=1")
   end
 
-  # Real Ansible evaluates when: BEFORE delegate_to:, so the common
+  # Ansible evaluates when: BEFORE delegate_to:, so the common
   # `when: var is defined` guard skips cleanly without ever templating
   # the delegate target.
   it "skips cleanly when a when: var is defined guard is False" do

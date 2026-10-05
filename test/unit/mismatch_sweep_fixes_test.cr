@@ -17,9 +17,9 @@ require "../../src/krikri/template_action_plugin"
 # - nsupdate: Python's own error wordings real wraps (binascii base64
 #   errors, AnsibleModule's missing_required_lib for gssapi, dnspython's
 #   OSError-shaped transport errors with UDP always reported as timeout)
-# - template: real's two-line "Could not find or access ... on the Ansible
+# - template: Ansible's two-line "Could not find or access ... on the Ansible
 #   Controller" wording for a missing source
-# - file: real's "Error, could not touch target: [Errno 2] ..." touch
+# - file: Ansible's "Error, could not touch target: [Errno 2] ..." touch
 #   wording, "src does not exist" hard-link setup check, and the chown
 #   user-lookup failure surfacing WITHOUT plugin_manager's generic
 #   "Plugin execution failed: " wrapper
@@ -59,7 +59,7 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    # Missing fstype is the real first failure for this shape; the point
+    # Missing fstype is the Ansible first failure for this shape; the point
     # is that the failure is NOT the unsupported-params validator.
     result["msg"].as_s.wont_include("Unsupported parameters")
   end
@@ -127,7 +127,7 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
     result["msg"].as_s.must_equal("DNS server error: (ConnectionRefusedError): [Errno 111] Connection refused")
   end
 
-  it "template reports a missing source with real's two-line wording" do
+  it "template reports a missing source with Ansible's two-line wording" do
     # The not-found check lives in the controller-side action plugin (the
     # bin/plugins/template binary is the remote half that only sees
     # already-rendered content).
@@ -145,14 +145,14 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
     )
   end
 
-  it "file reports the touch failure with real's plain msg and path echo" do
+  it "file reports the touch failure with Ansible's plain msg and path echo" do
     result = PluginSpecHelper.run("file", {
       "path"  => "/tmp/krikri-spec-nope/deep/file.txt",
       "state" => "touch",
     })
 
     result["failed"].as_bool.must_equal(true)
-    # Real's file module fails with fail_json(msg="Error, could not
+    # Ansible's file module fails with fail_json(msg="Error, could not
     # touch target.", path=path, exception=ex): the RESULT's msg stays
     # plain and the OSError text rides the display-only exception key
     # (real composes it into the "[ERROR]: ... could not touch target:
@@ -162,12 +162,12 @@ describe "mismatch-sweep fixes (cron/mount/nsupdate/replace/template/file)" do
     result["path"].as_s.must_equal("/tmp/krikri-spec-nope/deep/file.txt")
     result["exception"].as_s.must_include("[Errno 2] No such file or directory")
     # The path's parent does not exist, so no stat fields are merged
-    # in (real's add_path_info merges nothing for a missing path).
+    # in (Ansible's add_path_info merges nothing for a missing path).
     result["mode"]?.must_be_nil
     result["size"]?.must_be_nil
   end
 
-  it "file fails a hard link whose src does not exist with real's wording" do
+  it "file fails a hard link whose src does not exist with Ansible's wording" do
     result = PluginSpecHelper.run("file", {
       "src"   => "/tmp/krikri-spec-no-such-source",
       "dest"  => "/tmp/krikri-spec-hard-link",

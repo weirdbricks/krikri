@@ -1,11 +1,11 @@
 require "../minitest_helper"
 require "../../src/krikri/variable_substitutor"
 
-# password_hash's sha256/sha512 types go through passlib in real Ansible -
+# password_hash's sha256/sha512 types go through passlib in Ansible -
 # whose own DEFAULT rounds (535000/656000) show in the output's rounds=
 # prefix even when only a salt was given (openssl passwd's fixed
 # 5000-round hash diverged byte for byte). Known-answer vectors captured
-# from passlib (== real ansible-playbook 2.19.11 output, live-verified).
+# from passlib (== ansible-playbook 2.19.11 output, live-verified).
 describe "Krikri::VarSubstitutor::FilterCore.password_hash (passlib-compatible sha-crypt)" do
   it "hashes sha512 with passlib's default rounds" do
     Krikri::VariableSubstitutor::FilterCore.password_hash("hello", "sha512", "mysalt")

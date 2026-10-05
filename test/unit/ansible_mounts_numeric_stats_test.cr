@@ -3,16 +3,16 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 require "../../src/krikri/variable_substitutor/jinja_renderer"
 require "../../src/krikri/krikri_jinja_filters"
 
-# Real Ansible's ansible_mounts entries carry the space/inode stats
+# Ansible's ansible_mounts entries carry the space/inode stats
 # (size_total, size_available, block_*, inode_*) as INTEGERS. This
 # codebase's facts gatherer used to store them all as STRINGS, so any
 # role doing real arithmetic on them in a .j2 template failed with
 # Crinja's "Both operators need to be numeric" - mullholland.motd's
 # motd.j2 does exactly that (`{{ (mnt.size_total / 1024 / 1024 /
-# 1024) | round(1) }}`, round 300197): real ansible-playbook rendered
+# 1024) | round(1) }}`, round 300197): ansible-playbook rendered
 # the template fine, krikri failed the whole task.
 describe "ansible_mounts stat types" do
-  it "stores the space/inode stats as integers, like real Ansible" do
+  it "stores the space/inode stats as integers, like Ansible" do
     facts = Krikri::FactsGatherer.gather_facts(["mounts"])
 
     mounts = facts["ansible_mounts"]?

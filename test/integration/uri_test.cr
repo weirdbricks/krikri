@@ -180,7 +180,7 @@ describe "uri plugin" do
     result["msg"].as_s.must_equal("Status code was 404 and not [200]: HTTP Error 404: Not Found")
   end
 
-  it "carries an empty content on a connection failure, matching real Ansible" do
+  it "carries an empty content on a connection failure, matching Ansible" do
     # Live-verified against ansible-core 2.19: a uri request that dies
     # before any HTTP response (connection refused) still fails with
     # {"status": -1, "content": "", "msg": "Status code was -1 and not
@@ -190,7 +190,7 @@ describe "uri plugin" do
     # registered result's .content (geerlingguy.node_exporter's
     # "'Metrics' not in metrics_output.content", round 970310) blew up
     # with "object of type 'dict' has no attribute 'content'" instead of
-    # reporting the request failure the way real Ansible does.
+    # reporting the request failure the way Ansible does.
     closed_server = TCPServer.new("127.0.0.1", 0)
     closed_port = closed_server.local_address.port
     closed_server.close
@@ -248,12 +248,12 @@ describe "uri plugin" do
     result["content"].as_s.must_equal("plain text body")
   end
 
-  it "reports the FINAL (post-redirect) URL as result.url, matching real Ansible" do
+  it "reports the FINAL (post-redirect) URL as result.url, matching Ansible" do
     # Real bug found via a live 100-role confirm round:
     # tigattack.mergerfs's own idiom - `uri: {url: .../releases/
     # latest}`, then `mergerfs_github_release_page['url'].split('/')
     # [-1]` to extract the real version tag from the redirect target -
-    # relies on real Ansible's own uri: module behavior: result.url is
+    # relies on Ansible's own uri: module behavior: result.url is
     # the FINAL URL after following redirects, not the originally-
     # requested one (verified live against ansible-core 2.19.12: GitHub's
     # own /releases/latest redirects to /releases/tag/<version>, and
@@ -304,13 +304,13 @@ describe "uri plugin" do
     end
   end
 
-  it "reports changed: true on a dest: rerun even when the content hasn't changed, live-verified against real Ansible" do
+  it "reports changed: true on a dest: rerun even when the content hasn't changed, live-verified against Ansible" do
     # Live-verified against ansible-core 2.19.4 (the same identical-content
     # fetch run twice in a row): real uri.py sets resp['changed'] = True
     # unconditionally after write_file - the SHA1 check inside write_file
     # only gates the physical move, NOT the reported status. The old
     # changed-false-on-identical behavior here was a guessed fix that
-    # diverged from real Ansible.
+    # diverged from Ansible.
     path = File.tempname("uri_dest_spec")
     begin
       File.write(path, "plain text body")
@@ -392,7 +392,7 @@ describe "uri plugin" do
 
   it "requests identity encoding when decompress is false" do
     # Asserted on the wire (the spec server only gzips when the request
-    # offered gzip), matching real Ansible's decompress: false observable:
+    # offered gzip), matching Ansible's decompress: false observable:
     # undecoded response bytes.
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/echo-headers", "decompress" => "false"})
     result["json"]["accept_encoding"].as_s.must_equal("identity")
@@ -451,7 +451,7 @@ describe "uri plugin" do
     end
   end
 
-  it "posts a src: file body and fails the body/src mutual exclusion like real Ansible" do
+  it "posts a src: file body and fails the body/src mutual exclusion like Ansible" do
     body_file = File.tempname("uri_src_spec")
     File.write(body_file, "file payload")
     begin
@@ -468,7 +468,7 @@ describe "uri plugin" do
     end
   end
 
-  it "rejects a non-upper-single-word method like real Ansible" do
+  it "rejects a non-upper-single-word method like Ansible" do
     result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "method" => "GET POST"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Parameter 'method' needs to be a single word in uppercase, like GET or POST.")
@@ -479,13 +479,13 @@ describe "uri plugin" do
     result["elapsed"].as_i.must_be_close_to(0, 30)
   end
 
-  it "reports status: -1 when the request fails before any HTTP response, matching real Ansible" do
+  it "reports status: -1 when the request fails before any HTTP response, matching Ansible" do
     # Real bug found via levonet.ci_registry_rm_container's 400-role
     # differential round: the exception-rescue path returned its failure
     # result WITHOUT a status key, so a role's `when: r.status == 200`
     # after an `ignore_errors: yes` uri task died with "object of type
     # 'dict' has no attribute 'status'" instead of evaluating false the
-    # way real Ansible does (fetch_url initializes its info dict with
+    # way Ansible does (fetch_url initializes its info dict with
     # status=-1 and keeps it there on connection failures).
     # Bind-and-release a port to guarantee a fast, deterministic
     # ECONNREFUSED instead of probing a port some other process might own.
@@ -517,7 +517,7 @@ describe "uri plugin" do
     end
   end
 
-  it "cold/warm dest: rerun is changed/ok via 304, live-verified against real Ansible (round 981032 claranet.postgresql)" do
+  it "cold/warm dest: rerun is changed/ok via 304, live-verified against Ansible (round 981032 claranet.postgresql)" do
     # Live-verified against ansible-core 2.19: cold run 200/changed=true,
     # warm run 304/changed=false with msg "HTTP Error 304: Not Modified"
     # (urllib raises HTTPError for a 304 - no handler exists for it - so
@@ -658,7 +658,7 @@ describe "uri plugin" do
       result["content"]?.must_be_nil
     end
 
-    it "fails an unreadable ca_path with real's OSError wording" do
+    it "fails an unreadable ca_path with Ansible's OSError wording" do
       missing = PluginSpecHelper.tmp_path("no-such-ca-#{Random::Secure.hex(4)}.pem")
       result = PluginSpecHelper.run("uri", {"url" => "#{URI_BASE}/text", "ca_path" => missing})
 
@@ -674,7 +674,7 @@ describe "uri plugin" do
         "Status code was -1 and not [200]: Connection failure: [Errno 2] No such file or directory")
     end
 
-    it "fails a client_cert that is a directory the way real's open() does" do
+    it "fails a client_cert that is a directory the way Ansible's open() does" do
       result = PluginSpecHelper.run("uri", {
         "url" => "#{URI_BASE}/text", "client_cert" => PluginSpecHelper.tmp_path("."),
       })
@@ -699,7 +699,7 @@ describe "uri plugin" do
       result["status"].as_i.must_equal(-1)
     end
 
-    it "lets a creates: skip win over the preflight, like real does" do
+    it "lets a creates: skip win over the preflight, like Ansible does" do
       # uri.py short-circuits on creates:/removes: BEFORE fetch_url ever
       # builds the context - live-verified with a bogus ciphers list.
       existing = PluginSpecHelper.tmp_path("creates-exists-#{Random::Secure.hex(4)}.txt")
@@ -729,7 +729,7 @@ describe "uri plugin" do
   # only the tagged/untagged class names differ. Both live-verified vs
   # 2.19.11.
   describe "form-multipart body validation" do
-    it "fails a non-mapping body with real's module-side message and Python class names" do
+    it "fails a non-mapping body with Ansible's module-side message and Python class names" do
       {
         "asgaub"                              => "str",
         "5"                                   => "int",
@@ -800,7 +800,7 @@ describe "uri plugin" do
       result["msg"].as_s.must_equal("Unable to open source file #{PluginSpecHelper.tmp_path(".")}")
     end
 
-    it "lets a creates: skip win over a missing src:, like real does" do
+    it "lets a creates: skip win over a missing src:, like Ansible does" do
       existing = PluginSpecHelper.tmp_path("creates-exists-src-#{Random::Secure.hex(4)}.txt")
       File.write(existing, "x")
       result = PluginSpecHelper.run("uri", {

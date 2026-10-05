@@ -37,9 +37,9 @@ end
 
 describe "a bare {% if undefined_var %} condition in a real .j2 template" do
   it "fails the task instead of silently taking the false branch" do
-    # Real Ansible's Jinja2 environment (AnsibleUndefined, a
+    # Ansible's Jinja2 environment (AnsibleUndefined, a
     # StrictUndefined subclass) raises even for a bare boolean condition:
-    # verified live against real ansible-playbook via vcc_caeit.ntp's
+    # verified live against ansible-playbook via vcc_caeit.ntp's
     # templates/ntp.conf.j2 `{% if ntp_use_external %}` with no default
     # anywhere ("'some_undefined_var' is undefined"). The pytruthy
     # rewrite (TemplateActionPlugin::TAG_IF_ELIF) routes every `{% if %}`
@@ -75,7 +75,7 @@ describe "a bare {% if undefined_var %} condition in a real .j2 template" do
   it "keeps `| default(false)` lenient: takes the false branch, doesn't raise" do
     # The most common real-world guarded idiom - default() only ever
     # tests undefined? and never evaluates the StrictUndefined, exactly
-    # as real Jinja2's StrictUndefined permits.
+    # as Jinja2's StrictUndefined permits.
     status, _output, dest = run_template_task(
       "{% if some_undefined_var | default(false) %}yes{% else %}no{% endif %}\n",
     )

@@ -11,22 +11,22 @@ require "./variable_substitutor/expression_evaluator"
 
 module Krikri
   # YAML-defined inventory plugins (`plugin: <name>` at the top level of an
-  # inventory YAML file), the format real Ansible uses for both its built-in
+  # inventory YAML file), the format Ansible uses for both its built-in
   # sources (`host_list`, `constructed`, `ini`, `yaml`) and collection
   # plugins (`amazon.aws.aws_ec2`).
   #
-  # Detection is by the top-level `plugin` key, same as real Ansible. The
+  # Detection is by the top-level `plugin` key, same as Ansible. The
   # collection prefix is stripped ("amazon.aws.aws_ec2" dispatches on
   # "aws_ec2"), so a plugin from any collection whose final segment matches
   # a supported name is handled here.
   #
   # aws_ec2 talks to the real EC2 API with SigV4-signed HTTP (via
-  # awscr-signer) rather than shelling out to the `aws` CLI: real Ansible
+  # awscr-signer) rather than shelling out to the `aws` CLI: Ansible
   # only needs boto3 on the controller, and this needs nothing but the two
   # credential environment variables. The DescribeInstances response is
   # parsed from XML and mapped to hosts, then run through the same
   # constructed-style option machinery (compose/keyed_groups/groups/filters)
-  # that the aws_ec2 plugin is itself built on in real Ansible - which is
+  # that the aws_ec2 plugin is itself built on in Ansible - which is
   # also what the standalone `constructed` plugin uses.
   class InventoryPlugins
     SUPPORTED_PLUGINS = %w[host_list ini yaml constructed aws_ec2]
@@ -44,7 +44,7 @@ module Krikri
     # `constructed`. Used by directory parsing: constructed sources do not
     # contribute hosts themselves, they transform hosts contributed by the
     # OTHER sources in the same directory, so they must be applied after
-    # every other source is merged (real Ansible behaves the same way).
+    # every other source is merged (Ansible behaves the same way).
     def self.constructed_source?(path : String) : Bool
       return false unless path.ends_with?(".yml") || path.ends_with?(".yaml")
       doc = YAML.parse(File.read(path))

@@ -17,9 +17,9 @@ describe "a looped task whose own vars: reference item (batched loop path)" do
   # `state` from the base context, and the batched path (unlike the
   # one-at-a-time path, which already restored + re-rendered task.vars per
   # item) never re-applied it - every item failed with "'state' is
-  # undefined" where real ansible-core ran all six apt iterations
+  # undefined" where ansible-core ran all six apt iterations
   # successfully. loop_control.label also rendered "undefined <item>"
-  # against the stripped base context on BOTH paths; real Ansible shows the
+  # against the stripped base context on BOTH paths; Ansible shows the
   # resolved label ("uninstall auditbeat").
   it "resolves task vars per item instead of failing with '<var>' is undefined" do
     playbook = File.tempname("loop-task-vars-item", ".yml")
@@ -50,7 +50,7 @@ describe "a looped task whose own vars: reference item (batched loop path)" do
     out.must_include("state=absent item=c")
     out.must_include("failed=0")
     out.wont_include("'state' is undefined")
-    # loop_control.label sees the per-item task var too (real Ansible's
+    # loop_control.label sees the per-item task var too (Ansible's
     # display), not the literal "undefined" fallback.
     out.must_include("(item=absent a)")
     out.wont_include("item=undefined")

@@ -16,7 +16,7 @@ module Krikri
 
     # True while #run's handler flush is executing - suppresses the
     # "Notification for handler ... has been saved." -vv line for
-    # notifications raised by handlers themselves (real only prints it
+    # notifications raised by handlers themselves (Ansible only prints it
     # for regular-task results).
     @in_flush = false
 
@@ -32,7 +32,7 @@ module Krikri
     # Handlers can be notified multiple times but only run once
     def notify(host : Host, handler_name : String) : Nil
       @notified_handlers[host.name].add(handler_name)
-      # Real's strategy prints this (display.vv) per notification saved
+      # Ansible's strategy prints this (display.vv) per notification saved
       # from a REGULAR task's result - but not from within the handlers
       # phase itself, where the notification applies immediately instead.
       if !@in_flush && Krikri::RunOptions.verbosity >= 2
@@ -48,7 +48,7 @@ module Krikri
     # Clears every host's notified-handler set, so a subsequent #run
     # call (from a later `meta: flush_handlers`, or the final end-of-
     # play flush) only picks up handlers notified SINCE the last flush,
-    # not ones already run. Real Ansible's own flush_handlers has this
+    # not ones already run. Ansible's own flush_handlers has this
     # same "only runs what's still pending" semantics - a handler
     # already flushed once doesn't run a second time just because the
     # end-of-play flush also fires.
@@ -70,7 +70,7 @@ module Krikri
     # the raw, unrendered `handler.name` (as this used to) never equals
     # any real notify: string.
     # *halted_hosts* - hosts a prior task already failed on (unrescued,
-    # no ignore_errors:) for this run. Real Ansible never runs a
+    # no ignore_errors:) for this run. Ansible never runs a
     # halted host's own notified handlers at the end-of-play flush -
     # once a host is out, it's out entirely, handlers included.
     # Previously unfiltered: @hosts.each below ran unconditionally, so
@@ -79,7 +79,7 @@ module Krikri
     # the host) still ran its own previously-notified "Restart
     # keepalived" handler at the implicit end-of-play flush, since
     # that flush happens after halt_if_failed already halted the host
-    # but before this method had any way to know. Real Ansible shows
+    # but before this method had any way to know. Ansible shows
     # exactly one failure (the halting task); krikri-playbook showed
     # two (the halting task, then the handler that should never have
     # run).
@@ -105,7 +105,7 @@ module Krikri
 
       # Handlers run in definition order. A handler notified by another
       # handler that sits EARLIER in that order has already been passed
-      # by the time the notification lands, so real Ansible makes ONE
+      # by the time the notification lands, so Ansible makes ONE
       # further pass for those - and exactly one: notifications raised
       # during that second pass are dropped when the flush ends.
       # Verified against ansible-core 2.19.4: a handler notifying an
@@ -129,7 +129,7 @@ module Krikri
         end
 
         # Anything notified during the SECOND pass is discarded, matching
-        # real Ansible - so the loop is bounded at two passes regardless
+        # Ansible - so the loop is bounded at two passes regardless
         # of how handlers notify each other.
         break if pass == 1
       end
@@ -212,7 +212,7 @@ module Krikri
       true
     end
 
-    # The -vv/console display block for one handler run: real's default
+    # The -vv/console display block for one handler run: Ansible's default
     # callback prints one "NOTIFIED HANDLER <name> for <host>" line per
     # host the handler was newly notified on, then the RUNNING HANDLER
     # banner (once per handler), then the same `task path:` line a
@@ -285,14 +285,14 @@ module Krikri
       return true if notified.includes?(rendered_name) || notified.includes?(handler.name)
 
       # Check by listen topic - a handler's listen: may itself be a list
-      # of topics (real Ansible; CVi.thanos round 811339), and any of
+      # of topics (Ansible; CVi.thanos round 811339), and any of
       # them matching the notified set runs it.
       (handler.listen || [] of String).each do |listen_topic|
         return true if notified.includes?(listen_topic)
       end
 
       # Role-qualified notify: form ("<anything> : <handler name>") -
-      # real Ansible auto-namespaces a role-loaded handler with a
+      # Ansible auto-namespaces a role-loaded handler with a
       # qualifier (the FQCN of whichever role the handler's own
       # inclusion chain traces back to - not always the role that
       # literally defines handlers/main.yml, e.g. `prometheus.

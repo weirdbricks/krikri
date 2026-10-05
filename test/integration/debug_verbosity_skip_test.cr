@@ -18,7 +18,7 @@ describe "debug: verbosity: gate" do
     # printed "ok: [host]" followed by the plugin's own literal msg
     # text ("skipped") as if it were real debug output, and counted it
     # under `ok=`, never `skipped=` - a real, user-visible recap
-    # divergence from real ansible-playbook (which correctly prints
+    # divergence from ansible-playbook (which correctly prints
     # "skipping: [host]" and counts it under skipped=).
     playbook = File.tempname("debug-verbosity", ".yml")
     File.write(playbook, <<-YAML)

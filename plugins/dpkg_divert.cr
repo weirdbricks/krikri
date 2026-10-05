@@ -10,23 +10,23 @@ module Krikri
   # (read from a live collection install; Debian/Ubuntu is a supported
   # platform here).
   #
-  # Follows the real module's control flow:
+  # Follows the Ansible module's control flow:
   #   - `dpkg-divert --listpackage <path>` / `--truename <path>` read
   #     the current diversion (holder + diverted location); empty
   #     listpackage output == no diversion
   #   - state=present adds (or updates holder/divert), state=absent
   #     removes; updating an existing diversion's holder/divert is not
-  #     something dpkg-divert can do in place, so the real module
+  #     something dpkg-divert can do in place, so the Ansible module
   #     removes and re-adds - ported as-is, including its
   #     avoid-orphaned-files rename of the diverted file
-  #   - rename: true hands --rename to dpkg-divert; the real module's
+  #   - rename: true hands --rename to dpkg-divert; the Ansible module's
   #     own "forced renaming" fallback (unlinking the blocker, since
   #     dpkg-divert refuses to clobber) is matched too
-  #   - check mode and the real module's "just try and see" probe run
+  #   - check mode and the Ansible module's "just try and see" probe run
   #     the same command with --test inserted
   #
   # Portability note: --listpackage exists since dpkg 1.15.0 and
-  # --no-rename since 1.19.1 - the real module probes --version for
+  # --no-rename since 1.19.1 - the Ansible module probes --version for
   # both; the version probe is kept (same failure message) but the
   # --no-rename support flag is hardcoded true: every dpkg since 2019
   # has it, same reasoning as lvol's --yes shortcut.
@@ -137,7 +137,7 @@ module Krikri
         # module.exit_json(changed=changed, diversion=diversion,
         # commands=commands, messages=messages, diff=diff) - no msg on
         # the success path (diff is {} outside --diff mode; live-verified
-        # against real 2.19.11 in the podman container).
+        # against Ansible 2.19.11 in the podman container).
         PluginResult.new(changed: changed, failed: false,
           diversion: diversion_after, commands: [main_command], messages: messages,
           key_order: ["changed", "diversion", "commands", "messages", "diff"])

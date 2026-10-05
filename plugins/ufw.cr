@@ -25,11 +25,11 @@ module Krikri
   # `ufw` itself refuses to run at all without root - even a bare
   # `ufw status` fails with "ERROR: You need to be root to run this
   # script" - so, unlike every other plugin added in this phase, this one
-  # could not be verified end-to-end against real ansible-playbook via
+  # could not be verified end-to-end against ansible-playbook via
   # the compat harness: the harness's container lacks working netfilter
   # access even running as root (confirmed: `ufw status` fails inside it
   # with an iptables permission error unrelated to ufw itself). The
-  # command-construction logic is verified against real Ansible's actual
+  # command-construction logic is verified against Ansible's actual
   # source, and the "Skipping" idempotency signal is the literal
   # substring real ufw's own module checks for - but the actual firewall
   # behavior has not been confirmed against a real, working ufw
@@ -56,8 +56,8 @@ module Krikri
   # probe fails with "Permission denied (you must be root)" and even
   # `ufw status verbose` exits non-zero), the rule command still
   # "succeeded" with "Rules updated" and the task reported changed:
-  # true where real Ansible failed. Found via an ad-hoc CLI comparison
-  # sweep against real ansible, 2026-09-13.
+  # true where Ansible failed. Found via an ad-hoc CLI comparison
+  # sweep against Ansible, 2026-09-13.
   class UfwPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
     # real community.general.ufw's own argument_spec aliases. Only
@@ -68,7 +68,7 @@ module Krikri
     # instead of 22, installed silently with the task reporting changed.
     # Confirmed live against real community.general on a NET_ADMIN
     # container by diffing `### tuple` lines from /etc/ufw/user.rules:
-    # real Ansible writes `allow tcp 22 ...`, this engine wrote `allow
+    # Ansible writes `allow tcp 22 ...`, this engine wrote `allow
     # tcp any ...`.
     #
     # It also explains the warm-run `changed` delta this was filed under
@@ -162,7 +162,7 @@ module Krikri
     end
 
     # Real ufw.py's own `command_keys`, in ITS declaration order.
-    # Every one of these that a task sets is a command real runs, in
+    # Every one of these that a task sets is a command Ansible runs, in
     # this order, inside ONE invocation - this plugin used to dispatch
     # first-match-wins with an early return per key, so a task
     # combining `state:` with a `rule:`/`default:`/`logging:` (the
@@ -201,7 +201,7 @@ module Krikri
       @changed = false
       requested.each do |command, value|
         # A branch returning a PluginResult aborts the whole task, which
-        # is how real's in-loop fail_json() calls behave.
+        # is how Ansible's in-loop fail_json() calls behave.
         if failure = run_command(command, value, pre_state, pre_rules)
           return failure
         end
@@ -457,7 +457,7 @@ module Krikri
     # comment-support version gate, and it is recorded in commands like
     # every other invocation, inside whatever place the rule sits in the
     # command loop). A non-parsing `ufw --version` output fails the
-    # module with real's own wording. In CHECK MODE the dry-run output
+    # module with Ansible's own wording. In CHECK MODE the dry-run output
     # is compared against the pre rules to set `changed`; in NORMAL mode
     # the branch itself never sets `changed` at all - the tail's
     # pre/post state + tuple diff does, after the loop.
@@ -513,10 +513,10 @@ module Krikri
       nil
     end
 
-    # `grep -h '^### tuple' <every user.rules file>` - real Ansible's own
+    # `grep -h '^### tuple' <every user.rules file>` - Ansible's own
     # `get_current_rules()`, verbatim including the file list and the
     # `-h` (no filename prefixes, so the comparison is over rule text
-    # alone) - and WITHOUT a stderr redirect: real's captured commands
+    # alone) - and WITHOUT a stderr redirect: Ansible's captured commands
     # list shows the bare grep, and its failure tolerance comes from
     # ignore_error=True (a no-rules-yet grep exiting 1 is normal, not a
     # failure).
@@ -529,7 +529,7 @@ module Krikri
     # `zero` (by far the common case) needs no query at all. Returns a
     # copy of @params with `insert` replaced by the resolved absolute
     # position, or removed entirely if that position would fall past the
-    # last existing rule (real Ansible's own "just append, no insert
+    # last existing rule (Ansible's own "just append, no insert
     # flag" fallback for that case).
     private def resolved_insert_params : Hash(String, String)
       insert = @params["insert"]?.try(&.to_i?)

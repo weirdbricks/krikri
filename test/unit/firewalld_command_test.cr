@@ -16,7 +16,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
       Krikri::PluginHelpers::FirewalldCommand.thing({} of String => String).must_be_nil
     end
 
-    it "returns nil when more than one thing param is present (matches real Ansible's mutually_exclusive constraint)" do
+    it "returns nil when more than one thing param is present (matches Ansible's mutually_exclusive constraint)" do
       Krikri::PluginHelpers::FirewalldCommand.thing({"service" => "http", "port" => "8080/tcp"}).must_be_nil
     end
   end
@@ -154,13 +154,13 @@ describe Krikri::PluginHelpers::FirewalldCommand do
         .must_equal({value: "port=80:proto=tcp:toport=8080:toaddr=192.168.1.1", error: nil})
     end
 
-    it "omits toaddr from the value when absent (matches real Ansible's own default of '')" do
+    it "omits toaddr from the value when absent (matches Ansible's own default of '')" do
       entry = JSON.parse(%({"port": 80, "proto": "tcp", "toport": 8080}))
       Krikri::PluginHelpers::FirewalldCommand.port_forward_value(entry)
         .must_equal({value: "port=80:proto=tcp:toport=8080", error: nil})
     end
 
-    it "errors on a missing port (checked first, matching real Ansible's own check order)" do
+    it "errors on a missing port (checked first, matching Ansible's own check order)" do
       entry = JSON.parse(%({"proto": "tcp", "toport": 8080}))
       Krikri::PluginHelpers::FirewalldCommand.port_forward_value(entry)
         .must_equal({value: nil, error: "port must be specified for port forward"})
@@ -196,7 +196,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
   # offline=True) over the same zone XML files. Found by the
   # podman-diff firewalld round: firewall-offline-cmd dies entirely
   # where getprotobyname('esp') fails (slim containers), so every
-  # permanent operation failed under the CLI backend while real Ansible
+  # permanent operation failed under the CLI backend while Ansible
   # succeeded.
   private def zone_xml
     <<-XML

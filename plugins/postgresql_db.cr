@@ -17,7 +17,7 @@ module Krikri
   # Compatible with Ansible's community.postgresql.postgresql_db module.
   #
   # Talks to the server directly over PostgreSQL's own wire protocol
-  # (real Ansible's own community.postgresql collection does the same,
+  # (Ansible's own community.postgresql collection does the same,
   # via psycopg2) using will/crystal-pg - unlike the MySQL driver this
   # project also depends on, no fork was needed: verified against real
   # PostgreSQL 17 (SCRAM-SHA-256 auth, the modern default, and SSL both
@@ -31,15 +31,15 @@ module Krikri
   # - maintenance_db: database to connect to in order to run CREATE/DROP
   #   DATABASE against `name` (PostgreSQL can't drop/create the database
   #   a connection is currently using) - default "postgres", matching
-  #   real Ansible's own default
+  #   Ansible's own default
   # - login_host (default "localhost" - a simplification versus real
   #   Ansible, which defaults to "" and lets the driver fall back to a
   #   local unix socket; this codebase's other plugins default to a
   #   plain TCP localhost connection instead, so this matches that),
   #   login_port (default 5432), login_user (default "postgres",
-  #   matching real Ansible), login_password, login_unix_socket (takes
+  #   matching Ansible), login_password, login_unix_socket (takes
   #   precedence over login_host/login_port when given)
-  # - state: dump / restore (real Ansible's own keyword is `restore`,
+  # - state: dump / restore (Ansible's own keyword is `restore`,
   #   *not* `import` like `mysql_db`'s equivalent - verified via
   #   `ansible-doc`, not assumed to match its MySQL counterpart): shells
   #   out to `pg_dump`/`psql`, since dump/restore need the actual client
@@ -48,21 +48,21 @@ module Krikri
   #   format is natively compressed via
   #   `Compress::Gzip`/`Compress::XZ`/`Compress::BZ2` (`.gz`/`.xz`/`.bz2`)
   #   rather than shelling to `gzip`/`xz`/`bzip2` (matching `mysql_db.cr`'s
-  #   own reasoning; real Ansible's postgresql_db has no `.zst` support
+  #   own reasoning; Ansible's postgresql_db has no `.zst` support
   #   at all to begin with, unlike mysql_db - verified against its
   #   source, not assumed just because mysql_db has one). `.tar`/`.pgc`/
-  #   `.dir` (real Ansible's own `pg_dump --format=t/c/d`) are supported
+  #   `.dir` (Ansible's own `pg_dump --format=t/c/d`) are supported
   #   too: dump has `pg_dump` write straight to `target:` via a shell
   #   redirect/`-f` flag rather than going through this plugin's own
   #   String-based capture-then-write path (binary-unsafe for these three
   #   - see PG_RESTORE_FORMATS' own doc comment), and restore shells out
   #   to `pg_restore` instead of `psql` for exactly these three
   #   extensions, a genuinely different restore mechanism, not just
-  #   another compression codec (matches real Ansible's own
+  #   another compression codec (matches Ansible's own
   #   `db_restore()` doing the same). Password passed via a temporary
   #   `.pgpass` file (libpq's own credential-file mechanism, mode 0600,
   #   removed after the run) - psql/pg_dump don't take a password CLI
-  #   flag at all, and real Ansible's PGPASSWORD process-env approach
+  #   flag at all, and Ansible's PGPASSWORD process-env approach
   #   isn't available over a shell command string without leaking the
   #   cleartext into argv.
   #   Command shape (`pg_dump dbname --host=H --port=P --username=U` /
@@ -70,7 +70,7 @@ module Krikri
   #   --file=target`), `restore:`'s `msg:` being `psql`'s actual output
   #   (not empty, unlike `dump:`'s), and the always-`changed: true`-on-
   #   success behavior (not idempotency-checked at all, unlike
-  #   present/absent above) all verified against a real `ansible-playbook`
+  #   present/absent above) all verified against a `ansible-playbook`
   #   run with `community.postgresql.postgresql_db` against a real
   #   PostgreSQL 17 server, not assumed from the docs.
   # - check_mode
@@ -83,7 +83,7 @@ module Krikri
   # psql CLI args).
   class PostgresqlDbPlugin < BasePlugin
     # community.postgresql's shared connection spec still ACCEPTS its
-    # deprecated aliases, and real warns about each one the task uses
+    # deprecated aliases, and Ansible warns about each one the task uses
     # (both on stderr and in the registered result's trailing
     # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
     def finalize_result(result : PluginResult) : PluginResult
@@ -91,7 +91,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Real Ansible's `name:` param has `aliases: ['db']` - real bug
+      # Ansible's `name:` param has `aliases: ['db']` - real bug
       # found benchmarking robertdebock.postgres (round 43): its own
       # "Create postgres database" task writes `db: "{{ item.name }}"`
       # (the alias, arguably more common in real playbooks than the
@@ -105,9 +105,9 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      # Real's argument_spec rejects an invalid state at module init -
+      # Ansible's argument_spec rejects an invalid state at module init -
       # before the psycopg2 import, the connection attempt, anything
-      # (verified in the podman-diff harness: real reports "value of
+      # (verified in the podman-diff harness: Ansible reports "value of
       # state must be one of: ..." against a server that isn't even
       # reachable). This plugin used to connect first and only fail on
       # the unreachable server, so an invalid state against a REACHABLE
@@ -141,11 +141,11 @@ module Krikri
       )
     end
 
-    # Real Ansible's exit_json(changed=..., db=db, executed_commands=[...])
+    # Ansible's exit_json(changed=..., db=db, executed_commands=[...])
     # (postgresql_db.py:887) - the registered result carries the db name and
     # the SQL statements actually run, and `failed: false` is backfilled by
     # _return_formatted after the module's own kwargs, hence its position.
-    # Live-verified against real ansible-core 2.19.11 +
+    # Live-verified against ansible-core 2.19.11 +
     # community.postgresql 4.2.0 on a real PostgreSQL 17.
     SUCCESS_KEY_ORDER = %w[changed db executed_commands failed]
 
@@ -245,7 +245,7 @@ module Krikri
 
     # .dir needs `-f target` (pg_dump creates the directory itself);
     # .tar/.pgc are single files, written via a plain `>` shell redirect -
-    # same distinction real Ansible's own db_dump() makes.
+    # same distinction Ansible's own db_dump() makes.
     private def run_dump_via_pg_dump_format(name : String, target : String, ext : String, format_letter : String) : PluginResult
       cmd = "#{pgpassword_prefix}pg_dump #{quote(name)} #{login_flags} --format=#{format_letter}"
       # The redirect must bind to the pg_dump itself - appending it after

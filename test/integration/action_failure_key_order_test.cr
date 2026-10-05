@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Registered key ORDER of FAILED controller-side action results, live-verified
 # against ansible-core 2.19.11 per action with `{{ r | to_json }}` under
-# `ignore_errors: true` (real's registered dict keeps each action's own
+# `ignore_errors: true` (Ansible's registered dict keeps each action's own
 # insertion order, and every failure carries `exception:
 # "(traceback unavailable)"` - see Krikri::FAILED_KEY_ORDER_DEFAULT):
 #

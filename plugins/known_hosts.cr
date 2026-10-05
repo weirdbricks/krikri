@@ -2,13 +2,13 @@
 
 # known_hosts module (ansible.builtin.known_hosts) - adds/removes a host
 # key entry from an SSH known_hosts file, using the real `ssh-keygen`
-# binary for lookup/removal (same approach real Ansible's own module uses
+# binary for lookup/removal (same approach Ansible's own module uses
 # for the -F/-R side, though it also hand-parses the file itself - this
 # implementation leans on ssh-keygen throughout, including for the
 # present-with-matching-key idempotency check, since it already
 # understands hashed (`hash_host: true`) entries without needing to
 # replicate that hashing here). The hash_host itself is done the way
-# the real module does: hashing happens BEFORE the lookup/mutation (its
+# the Ansible module does: hashing happens BEFORE the lookup/mutation (its
 # hash_host_key replaces the hostname field with |1|<salt>|<HMAC-SHA1>
 # before sanity_check/search_for_host_key run), never on the rest of the
 # file; the echoed `key` in the result is the original param.
@@ -135,14 +135,14 @@ module Krikri
 
     # Whether the executed mutation (whole-host ssh-keygen -R for a
     # key-less absent, or the line rewrite) changed the file - the same
-    # conditions real's enforce_state sets `results['changed']` under.
+    # conditions Ansible's enforce_state sets `results['changed']` under.
     private def mutation_changed?(search : HostKeySearch, state : String, key_param : String?) : Bool
       whole_host_removal = search.found && key_param.nil? && state == "absent"
       rewrite = search.replace_or_add || search.found != (state == "present")
       whole_host_removal || rewrite
     end
 
-    # The executed mutation: real only ever runs ssh-keygen -R when
+    # The executed mutation: Ansible only ever runs ssh-keygen -R when
     # removing a whole host WITHOUT a key; with a key it rewrites the
     # file, dropping just the matched line (and appending the key for
     # state=present). Returns a failure result or nil on success.
@@ -198,7 +198,7 @@ module Krikri
     end
 
     # add_path_info's stat block: uid/gid as ints, owner/group as names,
-    # mode as real's '0%03o' octal string, size as int, and the path kind
+    # mode as Ansible's '0%03o' octal string, size as int, and the path kind
     # ('link' / 'directory' / 'hard' / 'file') that overwrites the echoed
     # state param. nil when the path doesn't exist (no stat keys at all,
     # state stays the original param).
@@ -292,7 +292,7 @@ module Krikri
     end
 
     # The raw ssh-keygen -F stdout for *name* in *path* ("" when the host
-    # is simply absent), or the failure real's module raises when
+    # is simply absent), or the failure Ansible's module raises when
     # ssh-keygen itself goes wrong.
     private def ssh_keygen_lookup(name : String, path : String) : String | PluginResult
       result = remote_exec("ssh-keygen -F #{shell_quote(name)} -f #{shell_quote(path)}")
@@ -306,7 +306,7 @@ module Krikri
       result[:stdout]
     end
 
-    # Real's per-entry comparison: @cert-authority/@revoked entries only
+    # Ansible's per-entry comparison: @cert-authority/@revoked entries only
     # ever match exactly; otherwise a hashed-vs-hashed host borrows the
     # found entry's host (the salts differ), an exact dict match is a
     # no-op, and a same-type mismatch means replace.
@@ -368,7 +368,7 @@ module Krikri
       }.to_json)
     end
 
-    # The line list real's compute_diff (and, identically, its mutation
+    # The line list Ansible's compute_diff (and, identically, its mutation
     # block) derives: drop the found_line-th line when removing/replacing,
     # append the (newline-terminated) key at the end for state=present.
     private def planned_lines(content : String, found_line : Int32?, replace_or_add : Bool, state : String, key : String?) : Array(String)
@@ -386,9 +386,9 @@ module Krikri
 
     # The mutation real performs for keyed add/replace/remove: rewrite the
     # file (drop the matched line, append the key for state=present) via a
-    # temp file in the same directory + rename. Attributes mirror real's
+    # temp file in the same directory + rename. Attributes mirror Ansible's
     # atomic_move: an existing dest keeps its mode/owner, a newly created
-    # file gets 0666 & ~umask. Returns a failure result (real raises out
+    # file gets 0666 & ~umask. Returns a failure result (Ansible raises out
     # of enforce_state with "Failed to write to file '<path>'.") or nil.
     private def rewrite(path : String, found_line : Int32?, replace_or_add : Bool, state : String, key : String?) : PluginResult?
       existed = File.exists?(path)

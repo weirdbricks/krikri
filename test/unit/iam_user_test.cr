@@ -100,7 +100,7 @@ describe Krikri::PluginHelpers::IamUser do
   serial! # mutates process-global state (ENV / engine settings)
 
   describe ".run" do
-    it "shapes a GetUser result with the real module's fields, tags and login_profile" do
+    it "shapes a GetUser result with the Ansible module's fields, tags and login_profile" do
       result = run_module({"name" => "lchaidas"}, ->(body : String) do
         case URI::Params.parse(body)["Action"]
         when "GetUser"         then GET_USER

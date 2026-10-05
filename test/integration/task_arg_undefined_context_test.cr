@@ -5,13 +5,13 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# Real Ansible's task-arg templating failure for a strict-undefined
-# module argument (live-captured from real ansible-core 2.19.11,
+# Ansible's task-arg templating failure for a strict-undefined
+# module argument (live-captured from ansible-core 2.19.11,
 # replacing the 2.14-era "The task includes an option with an undefined
 # variable ..." wording): the fatal msg is
 # "Task failed: Finalization of task args for '<module>' failed: Error
 # while resolving value for '<key>': '<var>' is undefined", and BEFORE
-# the fatal line real prints an [ERROR]: chain block - three levels,
+# the fatal line Ansible prints an [ERROR]: chain block - three levels,
 # each with its own Origin at the playbook YAML (file:line:column, two
 # context lines, caret under the value start) and "<<< caused by >>>"
 # between them. The registered var's msg carries the same wrapped text.

@@ -105,7 +105,7 @@ describe "Krikri::PluginHelpers::Ec2Info (ec2_vpc_subnet_info_test.cr)" do
   end
 
   describe ".run_subnets" do
-    it "shapes a subnet with the real module's field names" do
+    it "shapes a subnet with the Ansible module's field names" do
       result = run_module({"region" => "us-east-1"}, ->(_region : String, _body : String) { DESCRIBE_ONE })
 
       expect(falsey?(result["failed"]?)).must_equal(true)

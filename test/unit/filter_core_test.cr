@@ -126,7 +126,7 @@ describe Krikri::VariableSubstitutor::FilterCore do
       assert_raises_message(Exception, "invalid JSON") { core.from_json("{nope}") }
     end
 
-    it "from_yaml passes non-string values through unchanged (real Ansible behavior)" do
+    it "from_yaml passes non-string values through unchanged (Ansible behavior)" do
       list_value = JSON.parse("[1,2]")
       core.from_yaml(list_value).must_equal(list_value)
       str_value = JSON.parse("\"a: 1\\nb: 2\"")

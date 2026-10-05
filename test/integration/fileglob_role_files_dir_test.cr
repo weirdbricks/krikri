@@ -13,11 +13,11 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # `with_fileglob: "*.yml"` globbed the process's current working
 # directory (resolve_fileglob passed the bare pattern to Dir.glob with
 # NO base-directory resolution at all), so a playbook file sitting in
-# the invocation directory matched ITSELF - real ansible-playbook's own
+# the invocation directory matched ITSELF - ansible-playbook's own
 # fileglob lookup dwims a relative pattern against the role's files/
 # dir (path_dwim_relative with 'files') and found only the role's
 # middleware.yml/redirect.yml, never the playbook file. Confirmed live
-# against real ansible-playbook.
+# against ansible-playbook.
 describe "with_fileglob: relative pattern inside a role" do
   it "resolves a bare pattern against the role's files/ dir, yielding full resolved paths" do
     dir = File.tempname("fileglob-role-spec")
@@ -63,7 +63,7 @@ describe "with_fileglob: relative pattern inside a role" do
   end
 
   it "resolves each item of a JSON-array pattern list against the role's files/ dir too" do
-    # `with_fileglob: "{{ some_list_var }}"` (real Ansible's own idiom,
+    # `with_fileglob: "{{ some_list_var }}"` (Ansible's own idiom,
     # see fileglob_list_spec) goes through resolve_fileglob's
     # JSON-array branch, which shared the same cwd-relative globbing -
     # the fix has to cover both branches identically.

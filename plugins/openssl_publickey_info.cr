@@ -11,11 +11,11 @@ module Krikri
   # reports its facts. Read-only: no path is written, check_mode changes
   # nothing.
   #
-  # Result shape matched against the real module (community.crypto
+  # Result shape matched against the Ansible module (community.crypto
   # 3.1.1, publickey_info.py's get_info):
   #
   #   fingerprints - the DER SubjectPublicKeyInfo hashed with every
-  #     available algorithm, colon-hex formatted (the real module names
+  #     available algorithm, colon-hex formatted (the Ansible module names
   #     this field `fingerprints`, NOT `public_key_fingerprints` as the
   #     csr_info/certificate_info variants do)
   #   type - RSA / DSA / ECC / Ed25519 / X25519 / Ed448 / X448, or
@@ -23,7 +23,7 @@ module Krikri
   #   public_data - RSA: size/modulus/exponent; ECC:
   #     curve/x/y/exponent_size; Ed*/X*: empty dict; DSA: size only
   #
-  # On failure the real module carries can_load_key/can_parse_key/
+  # On failure the Ansible module carries can_load_key/can_parse_key/
   # key_is_consistent in the failure result (all three false/None for a
   # read or parse error - the module only ever reports consistency for
   # private keys, never for this one).
@@ -33,7 +33,7 @@ module Krikri
   class OpensslPublickeyInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec - no file-common args (no
+    # The Ansible module's argument_spec - no file-common args (no
     # add_file_common_args), no aliases.
     SPEC = {
       "path"                  => [] of String,
@@ -41,7 +41,7 @@ module Krikri
       "select_crypto_backend" => [] of String,
     }
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dump on a PEM public-key file; the
     # module is read-only so check mode changes nothing. The executor
     # backfills failed/changed after the plugin JSON; real puts both
@@ -88,7 +88,7 @@ module Krikri
         spki_der = openssl_der(["pkey", "-pubin", "-in", key_file, "-outform", "DER"])
 
         res = PluginResult.new(changed: false, failed: false, msg: "", key_order: SUCCESS_KEY_ORDER)
-        # the real module's result dict initializes these three BEFORE
+        # the Ansible module's result dict initializes these three BEFORE
         # get_info ever runs, so they appear (false/false/None) even on
         # SUCCESS - only a private key can ever be consistency-checked
         res.extra["can_load_key"] = JSON::Any.new(false)
@@ -105,7 +105,7 @@ module Krikri
       end
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). All types are str/path, nothing to
     # convert.

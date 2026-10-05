@@ -7,7 +7,7 @@ require "../minitest_helper"
 # at module-arg validation - notably `use:`, which the `package` ACTION
 # PLUGIN consumes to pick a backend and never forwards to the apt
 # module - while this engine silently ignored unknown keys and ran the
-# task anyway (failed=False where real ansible-playbook failed the
+# task anyway (failed=False where ansible-playbook failed the
 # task). Driven through the real plugin binary via PluginSpecHelper;
 # the validation fires before any apt-get access, so it is provable on
 # a non-Debian host.
@@ -37,7 +37,7 @@ describe "apt: unsupported parameter rejection" do
   end
 
   it "still accepts every documented apt parameter, including hyphenated aliases" do
-    # The validation must not reject the params real Ansible's own
+    # The validation must not reject the params Ansible's own
     # argspec allows (canonical + alias spellings). We can't cheaply
     # prove a full install, so drive a task whose param set is otherwise
     # inert: a package that doesn't exist fails the INSTALL, not the

@@ -9,7 +9,7 @@ describe "ansible_check_mode magic var" do
   it "is false on a real run and true under --check, not undefined" do
     # Real bug found benchmarking geerlingguy.apache-php-fpm (round 164,
     # right after ansible_version's own round163 fix - same bug class):
-    # ansible_check_mode (real Ansible magic var, true under --check,
+    # ansible_check_mode (Ansible magic var, true under --check,
     # false on a real run) was entirely unimplemented. Real-world role
     # idioms reference it directly (`when: not ansible_check_mode`,
     # `changed_when: not ansible_check_mode`) - a bare lookup that always

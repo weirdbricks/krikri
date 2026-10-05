@@ -50,7 +50,7 @@ module Krikri
       }
     end
 
-    # These default to None in real's argspec, so an explicit null
+    # These default to None in Ansible's argspec, so an explicit null
     # skips type validation there (see BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
       %w[enabled force masked]
@@ -65,8 +65,8 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real AnsibleModule argument-spec validation: any key outside real
-      # Ansible's argument_spec (the real module: name/
+      # AnsibleModule argument-spec validation: any key outside real
+      # Ansible's argument_spec (the Ansible module: name/
       # service/unit, state, enabled, force, masked, daemon_reload/
       # daemon-reload, daemon_reexec/daemon-reexec, scope, no_block) aborts
       # the task BEFORE the module runs. Round 813233 (role
@@ -79,7 +79,7 @@ module Krikri
       # argument_spec, so they must not be rejected. (_verbosity omission
       # found via podman-diff: every systemd task failed with
       # "Unsupported parameters ... _verbosity" before the module ever
-      # ran - real Ansible never passes _verbosity into module args.)
+      # ran - Ansible never passes _verbosity into module args.)
       supported_params = {"name", "service", "unit", "state", "enabled",
                           "masked", "daemon_reload", "daemon-reload",
                           "daemon_reexec", "daemon-reexec", "force",
@@ -97,7 +97,7 @@ module Krikri
         )
       end
 
-      # name/daemon_reload/daemon_reexec all have real Ansible-documented
+      # name/daemon_reload/daemon_reexec all have Ansible-documented
       # hyphenated aliases (`ansible-doc ansible.builtin.systemd`: name's
       # are service/unit; daemon_reload's is daemon-reload; daemon_
       # reexec's is daemon-reexec) - found via round171's buluma.gitea,
@@ -106,7 +106,7 @@ module Krikri
       # Previously only the canonical name was read, so this handler hit
       # the "no action" guard below and failed outright every time its
       # notifying task actually changed something, instead of running
-      # the reload real ansible-playbook performs.
+      # the reload ansible-playbook performs.
       name = @params["name"]? || @params["service"]? || @params["unit"]?
       state = @params["state"]?
       enabled = @params["enabled"]?
@@ -118,18 +118,18 @@ module Krikri
       # found via robertdebock.mysql's own "Systemctl daemon-reexec"
       # handler (`ansible.builtin.systemd: {daemon_reexec: true}`, no
       # other params at all - round 18), which failed outright instead
-      # of running the reexec real ansible-playbook performs.
+      # of running the reexec ansible-playbook performs.
       daemon_reexec = true?(@params["daemon_reexec"]? || @params["daemon-reexec"]?)
       force_flag = SystemdCliFlags.force_flag(@params["force"]?)
       no_block_flag = SystemdCliFlags.no_block_flag(@params["no_block"]?)
 
-      # Real AnsibleModule argument validation (the real module's
+      # AnsibleModule argument validation (the Ansible module's
       # own required_one_of/required_by), both presence-based - a given-but-
       # false daemon_reload still satisfies required_one_of, and a given
       # state/enabled/masked requires a name even when falsy:
       # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
       # 'daemon_reexec']], required_by={state/enabled/masked: name}. The
-      # daemon_reload/daemon_reexec aliases count because real Ansible
+      # daemon_reload/daemon_reexec aliases count because Ansible
       # resolves them onto the canonical params before the check. A name
       # (or its service/unit aliases) alone also satisfies it: real
       # Ansible's module takes a name-only call as a QUERY - it runs
@@ -157,7 +157,7 @@ module Krikri
       # systemctl only accepts units or unit paths; a bare name like
       # "nginx" is resolved by systemctl itself, so no normalization is
       # needed. But commands that need a unit require name present
-      # (name/service/unit aliases all satisfy real Ansible's required_by).
+      # (name/service/unit aliases all satisfy Ansible's required_by).
       {"state", "enabled", "masked"}.each do |key|
         if @params[key]? && name.nil?
           return PluginResult.new(
@@ -174,13 +174,13 @@ module Krikri
       # daemon_reload: no unit needed. Always actually runs the reload
       # (systemctl daemon-reload has no reliable "was anything stale"
       # signal to check first), but does NOT set changed - verified
-      # against a real ansible-playbook run of dev-sec os_hardening's own
+      # against a ansible-playbook run of dev-sec os_hardening's own
       # "Reload systemd" handler (`ansible.builtin.systemd: {daemon_reload:
       # true}`, no name:/state:), which reported `ok:` every time, never
       # `changed:`. Previously set changed: true unconditionally here,
       # so a handler notified only for its side effect (systemd picking
       # up a changed unit file) showed as "changed" on every run even
-      # when nothing else in the task changed - real Ansible's own
+      # when nothing else in the task changed - Ansible's own
       # module has no notion of daemon-reload "changedness" at all.
       if daemon_reload
         if @check_mode
@@ -218,7 +218,7 @@ module Krikri
         end
       end
 
-      # enabled:/masked: probe the unit first; with no systemd running real's
+      # enabled:/masked: probe the unit first; with no systemd running Ansible's
       # run_command result becomes the failure. Its cmd is the bare
       # `module.run_command(systemctl, check_rc=True)` call the module
       # reaches after show/is-enabled/list-unit-files all fail - the FULL
@@ -229,16 +229,16 @@ module Krikri
       # scope user+force → "/usr/bin/systemctl --user --force").
       # (a unit with a SysV init script counts as found and skips this)
       #
-      # real also computes its one-and-only `found` decision right here
+      # Ansible also computes its one-and-only `found` decision right here
       # (systemd_service.py: `found = is_systemd or is_initd`, BEFORE the
       # masked block), from this same `systemctl show` probe plus the
       # SysV init-script check. It used to be missing entirely from this
       # plugin: nothing here ever asked whether the unit existed, so a
       # `systemd_service: {name: <absent unit>, enabled: false, state:
       # stopped, masked: true}` task masked a unit that isn't installed
-      # (which real does too - `systemctl mask` happily creates the /etc/
+      # (which Ansible does too - `systemctl mask` happily creates the /etc/
       # systemd/system symlink for a never-installed unit) and then
-      # disable'd/stop'd it, reporting `changed`, where real fails the
+      # disable'd/stop'd it, reporting `changed`, where Ansible fails the
       # enabled:/state: steps through fail_if_missing and reports nothing
       # but the swallowed "Could not find the requested service" message.
       # Found via konstruktoid.hardening's kdump.service / kdump-tools.
@@ -247,7 +247,7 @@ module Krikri
       # (rounds 999001).
       found = true
       if name
-        # real's is_initd (its sysv_exists(), /etc/init.d/<name> minus a
+        # Ansible's is_initd (its sysv_exists(), /etc/init.d/<name> minus a
         # trailing .service) - a SysV script alone makes the unit "found"
         # even with no systemd unit file at all.
         is_initd = File.exists?("/etc/init.d/#{name.to_s.sub(/\.service\z/, "")}")
@@ -281,7 +281,7 @@ module Krikri
               messages << "Unit masked"
               changed = true
             else
-              # real's mask/unmask failure path: fail_if_missing runs
+              # Ansible's mask/unmask failure path: fail_if_missing runs
               # FIRST, so on a unit systemd doesn't know about the missing
               # -service message is what surfaces, and the action-specific
               # wording ("Failed to mask/unmask the service (...)") is
@@ -289,7 +289,7 @@ module Krikri
               # reason. `systemctl mask` normally succeeds even for a
               # never-installed unit (that is how a role can pre-mask
               # something a package might install later), so this branch is
-              # rarely taken - but when it is, the wording is real's.
+              # rarely taken - but when it is, the wording is Ansible's.
               if !found
                 return PluginResult.new(changed: false, failed: true,
                   msg: SystemdUnitFound.missing_service_message(name.to_s))
@@ -325,16 +325,16 @@ module Krikri
         end
       end
 
-      # real's fail_if_missing(module, found, unit, msg='host'), called at
+      # Ansible's fail_if_missing(module, found, unit, msg='host'), called at
       # the top of the `enabled:` block and again at the top of the
       # `state:` one - presence-based (a given-but-false `enabled:` counts),
-      # enabled's check first, and mode-independent (real runs it in check
+      # enabled's check first, and mode-independent (Ansible runs it in check
       # mode too). Deliberately placed AFTER the masked block: real masks a
       # unit before it ever checks whether that unit exists, and the mask
       # side effect must have happened by the time this failure is returned.
       # A masked-only task on an absent unit is therefore still a success
       # with changed=true, exactly as real leaves it. fail_json carries only
-      # the message (real's fail_if_missing passes no `changed`), so the
+      # the message (Ansible's fail_if_missing passes no `changed`), so the
       # swallowed failure renders `ok` - which is what konstruktoid.
       # hardening's failed_when expects.
       if enabled && !found
@@ -348,7 +348,7 @@ module Krikri
 
       name_for_active = name
 
-      # Top-level result fields real Ansible's module returns. Real
+      # Top-level result fields Ansible's module returns. Real
       # systemd_service.py builds `result = dict(name=unit, changed=False,
       # status=dict())` and then adds `enabled` (a bool: the unit's current
       # is-enabled state, or the post-change one when enable/disable ran -
@@ -359,7 +359,7 @@ module Krikri
       # own changed_when reads `timesyncd_start.enabled` /
       # `timesyncd_start.state` directly; with only the nested `status`
       # dict present those failed with "object of type 'dict' has no
-      # attribute 'enabled'" while real ansible-playbook ran the same
+      # attribute 'enabled'" while ansible-playbook ran the same
       # task fine (round 903000).
       result_enabled : Bool? = nil
       if enabled
@@ -462,14 +462,14 @@ module Krikri
             messages << "Would restart #{name}"
             changed = true
           else
-            # Real Ansible picks the state-change verb by the unit's CURRENT
+            # Ansible picks the state-change verb by the unit's CURRENT
             # state (systemd_service.py's state block: for restarted,
             # `if not is_running_service(...): action = 'start'` - so an
             # INACTIVE unit gets `systemctl start`, never `restart` - else
             # `action = state[:-2]`). Same selection the `reloaded` branch
             # below already implements. Found live (systemd-repro container,
             # Type=oneshot unit failing at start): an inactive unit's failed
-            # restart must report real Ansible's "Unable to start service
+            # restart must report Ansible's "Unable to start service
             # ..." wording, which also requires the `start` verb, not just
             # the message.
             action = is_running ? "restart" : "start"
@@ -487,7 +487,7 @@ module Krikri
           end
         when "reloaded"
           result_state = "started"
-          # real Ansible's systemd module: `state: reloaded` reloads a
+          # Ansible's systemd module: `state: reloaded` reloads a
           # RUNNING service but STARTS an inactive one (its own state
           # block: for restarted/reloaded, `if not is_running_service(
           # ...) action = 'start'` - ActiveState not in active/activating
@@ -544,7 +544,7 @@ module Krikri
         msg += " (check mode)"
       end
 
-      # `status:` - real Ansible's systemd module always populates this
+      # `status:` - Ansible's systemd module always populates this
       # (from `systemctl show <name>`, every KEY=VALUE property verbatim)
       # whenever a unit `name:` is given, independent of what state:/
       # enabled:/masked: management was also requested - a query-only
@@ -564,7 +564,7 @@ module Krikri
         msg: msg,
         status: status,
         name: name,
-        # Real 2.19.11 registered systemd result (live-verified, started
+        # Ansible 2.19.11 registered systemd result (live-verified, started
         # changed and unchanged identical): name, changed, status, state,
         # failed; with enabled: given, enabled lands between status and
         # state (name, changed, status, enabled, state, ansible_facts,
@@ -579,7 +579,7 @@ module Krikri
     # Runs `systemctl show <name>` and parses its `KEY=VALUE` lines
     # (one per real systemd unit property - ActiveState, FragmentPath,
     # UnitFileState, etc.) into a plain string-keyed hash, matching
-    # what real Ansible's systemd module exposes as `.status`.
+    # what Ansible's systemd module exposes as `.status`.
     private def systemctl_show(name : String) : Hash(String, String)
       result = remote_exec("#{scope_env_prefix}systemctl#{scope_flag} show #{shell_single_quote(name.to_s)}")
       status = Hash(String, String).new
@@ -596,7 +596,7 @@ module Krikri
     # that's `activating`/`auto-restart` (e.g. crash-looping under
     # Restart=on-failure, same class as plugins/service.cr's 0.9.648 fix -
     # a separate plugin, separate check, so the fix didn't carry over here
-    # automatically) exits non-zero even though real Ansible's systemd
+    # automatically) exits non-zero even though Ansible's systemd
     # module already considers it "running" and won't reissue `start` for
     # it. Read the raw ActiveState instead so a crash-looping unit doesn't
     # get restarted (and reported changed) on every single run. Found
@@ -625,7 +625,7 @@ module Krikri
       result[:stdout].strip == "masked"
     end
 
-    # `scope: user|global|system` (real Ansible's own `systemd_service`/
+    # `scope: user|global|system` (Ansible's own `systemd_service`/
     # `systemd` parameter) - selects which systemd MANAGER instance every
     # `systemctl` invocation targets (`--user` for the invoking user's own
     # session manager, `--global` for that user's not-yet-logged-in
@@ -638,7 +638,7 @@ module Krikri
     # `~/.config/systemd/user/`, either doing nothing or reporting "unit
     # file does not exist" for a unit that's actually there. Found live
     # via konstruktoid.docker_rootless's own "Enable and start Docker"
-    # (`scope: user`) - real Ansible enables/starts the user-session
+    # (`scope: user`) - Ansible enables/starts the user-session
     # docker.service; this engine failed outright ("Unit file docker.
     # service does not exist"), looking at the SYSTEM unit namespace.
     private def scope_flag : String
@@ -650,7 +650,7 @@ module Krikri
     end
 
     # The stderr shapes a `systemctl` probe produces when it cannot reach
-    # a service manager at all - the failure real's module re-raises
+    # a service manager at all - the failure Ansible's module re-raises
     # through its bare `run_command(systemctl, check_rc=True)` fallback:
     # - system scope without systemd: "System has not been booted with
     #   systemd as init system (PID 1). Can't operate." (+ the
@@ -658,7 +658,7 @@ module Krikri
     # - user scope without a user bus: "Failed to connect to user scope
     #   bus via local transport: No such file or directory";
     # - ANY scope:global verb systemctl does not support: "--global is
-    #   not supported for this operation." (real fails a scope: global
+    #   not supported for this operation." (Ansible fails a scope: global
     #   task on a healthy systemd host the same way - every command the
     #   module runs rejects the flag);
     # - the older "Failed to connect to bus:" wording some systemctl
@@ -672,7 +672,7 @@ module Krikri
 
     # `systemctl --user` needs a reachable per-user D-Bus session, which
     # it finds via `$XDG_RUNTIME_DIR` (conventionally `/run/user/<uid>`) -
-    # real Ansible's systemd module sets this itself whenever `scope:
+    # Ansible's systemd module sets this itself whenever `scope:
     # user` is given and the caller hasn't already set it (see its own
     # `home = expanduser("~")`/`XDG_RUNTIME_DIR` handling), precisely so
     # a `become_user:`'d task doesn't need its OWN separate `environment:

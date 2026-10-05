@@ -1,10 +1,10 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Lookup-plugin console shapes vs real ansible-playbook 2.19.11
+# Lookup-plugin console shapes vs ansible-playbook 2.19.11
 # (live-verified via scripts/output_parity.sh):
 # - a failing lookup('file', ...) rides the "Finalization of task args"
-#   chain, and the message carries real's "Use -vvvvv to see paths
+#   chain, and the message carries Ansible's "Use -vvvvv to see paths
 #   searched." suffix;
 # - lookup('vars', missing) says "No variable named 'X' was found.";
 # - lookup('first_found', ..., errors='ignore') renders empty;
@@ -12,7 +12,7 @@ require "file_utils"
 #   (file=, section=/field=/col=, default=) and default to a TAB
 #   delimiter (csvfile);
 # - relative copy: dest and lookups resolve against the PLAYBOOK's
-#   directory (real ansible-playbook chdirs there at startup), even when
+#   directory (ansible-playbook chdirs there at startup), even when
 #   invoked from a different cwd.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

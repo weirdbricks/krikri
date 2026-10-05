@@ -5,7 +5,7 @@ require "../minitest_helper"
 # process. With nothing rescuing it, `krikri-playbook ... | head -N`
 # dumped a full Crystal stack trace to stderr and exited 1.
 #
-# Real ansible-playbook is silent and exits 0 in the same situation
+# ansible-playbook is silent and exits 0 in the same situation
 # (verified directly against ansible-playbook/ansible: `--help | head -1`
 # and `--version | head -1` each produce no stderr and PIPESTATUS[0]=0).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

@@ -148,7 +148,7 @@ module Krikri
       end
 
       # ------------------------------------------------------------------
-      # RDATA encoding (the value grammar the real module feeds
+      # RDATA encoding (the value grammar the Ansible module feeds
       # dnspython's rdata constructors with).
       # ------------------------------------------------------------------
 
@@ -216,7 +216,7 @@ module Krikri
         Slice(UInt8).new(16) { |i| bytes[i] }
       end
 
-      # The value has already passed the real module's txt_helper (so it
+      # The value has already passed the Ansible module's txt_helper (so it
       # carries its own quotes when quoted): strip them, then emit
       # <=255-byte character-strings.
       private def self.encode_txt(value : String) : Bytes
@@ -234,7 +234,7 @@ module Krikri
         buf.to_slice
       end
 
-      # The real module's txt_helper: make sure a TXT value carries
+      # The Ansible module's txt_helper: make sure a TXT value carries
       # quotes so dnspython's character-string parser sees one string.
       def self.txt_helper(entry : String) : String
         entry = entry.strip
@@ -351,7 +351,7 @@ module Krikri
 
       def self.hmac(tsig : Tsig, data : Bytes) : Bytes
         algo = tsig.algorithm.downcase.chomp(".")
-        # the real module's (dnspython's) canonical hmac-md5 name
+        # the Ansible module's (dnspython's) canonical hmac-md5 name
         algo = "hmac-md5" if algo == "hmac-md5.sig-alg.reg.int"
         algorithm = case algo
                     when "hmac-md5"    then OpenSSL::Algorithm::MD5

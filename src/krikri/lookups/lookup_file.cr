@@ -10,9 +10,9 @@ module Krikri
         # SECURITY NOTE (deliberate, compatibility-preserving): file/pipe/
         # env lookups read controller files, EXECUTE controller commands,
         # and read controller env vars with no gating beyond playbook
-        # authorship - exactly real Ansible's trust boundary (playbooks
+        # authorship - exactly Ansible's trust boundary (playbooks
         # are trusted input; an untrusted-author playbook is a lost game
-        # in real Ansible too). Not a defect to gate here; doing so would
+        # in Ansible too). Not a defect to gate here; doing so would
         # break roles that legitimately use lookup('pipe', ...).
         case lookup_type
         when "file"
@@ -23,14 +23,14 @@ module Krikri
           lookup_template(parts, kwargs)
         when "password"
           # lookup('password', '/path/to/file [length=N chars=abc...]')
-          # - real Ansible's own password lookup plugin: generates a
+          # - Ansible's own password lookup plugin: generates a
           # random password ONCE and persists it to *path* (on the
           # CONTROLLER) so repeated runs/lookups return the SAME value;
           # any later run finds the file and just reads it back rather
           # than generating a new one. The whole argument is one
           # space-separated string (path first, then key=value options),
           # not comma-separated params like every other lookup type
-          # here - matches real Ansible's own free-form parsing for this
+          # here - matches Ansible's own free-form parsing for this
           # specific lookup.
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }
           return "undefined" unless raw_arg
@@ -55,7 +55,7 @@ module Krikri
         begin
           File.read(resolved_path).chomp
         rescue
-          # Real Ansible's `file` lookup plugin RAISES when the file
+          # Ansible's `file` lookup plugin RAISES when the file
           # can't be read ("Unable to access the file '<path>': File
           # not found"), failing the whole task's arg finalization
           # rather than continuing with a placeholder - unlike a
@@ -65,12 +65,12 @@ module Krikri
           # literal text "undefined" get written straight into real
           # task output - found via andrewrothstein.ssh-user-keygen's
           # own `lookup('file', ssh_user_pubkey)` on a host with no
-          # `~/.ssh/id_rsa.pub`: real Ansible fails the task, this
+          # `~/.ssh/id_rsa.pub`: Ansible fails the task, this
           # engine wrote the string "undefined" into `~/.ssh/
           # authorized_keys` as if it were a real public key. Mirrors
           # the url lookup's own HTTP-failure raise just above (same
           # `rescue ex` in the executor turns this into "Finalization
-          # of task args ... failed", matching real Ansible's message
+          # of task args ... failed", matching Ansible's message
           # shape).
           raise "The lookup plugin 'file' failed: Unable to access the file '#{path}': File not found. Use -vvvvv to see paths searched."
         end
@@ -78,14 +78,14 @@ module Krikri
 
       private def lookup_pipe(parts : Array(String), kwargs : Array(String) = [] of String) : String
         # lookup('pipe', command) - runs *command* via the shell ON
-        # THE CONTROLLER (not the target - matches real Ansible's own
+        # THE CONTROLLER (not the target - matches Ansible's own
         # pipe lookup plugin, which always executes locally) and
         # returns its stdout, stripped of a trailing newline.
         command = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless command
         output = IO::Memory.new
         status = Process.run("/bin/sh", ["-c", command], output: output, error: Process::Redirect::Close)
-        # Real Ansible's pipe lookup RAISES on a non-zero exit code
+        # Ansible's pipe lookup RAISES on a non-zero exit code
         # ("lookup_plugin.pipe(%s) returned %d", raised regardless of
         # how much stdout the command already flushed - its own
         # pipe.py discards the captured output on the failure branch),
@@ -94,8 +94,8 @@ module Krikri
         # 'ssh-keyscan ...')` (ajeleznov.manage-known-hosts, round
         # 90013: the scanned hostnames don't resolve) feed the literal
         # text "undefined" into known_hosts's `key:` as if it were a
-        # real key, so the play ran seven tasks past real Ansible's
-        # hard stop. errors='ignore' - real Ansible's generic lookup
+        # real key, so the play ran seven tasks past Ansible's
+        # hard stop. errors='ignore' - Ansible's generic lookup
         # error option, verified live against 2.19.4 (`lookup('pipe',
         # 'exit 7', errors='ignore')` renders empty rather than
         # failing) - keeps the old empty-result behavior.
@@ -114,21 +114,21 @@ module Krikri
         # a local (controller-side) `.j2` file through the same Crinja
         # pipeline `template:` tasks use, against this expression's own
         # vars, and returns the rendered text with one trailing newline
-        # stripped (matches real Ansible's own template lookup plugin,
+        # stripped (matches Ansible's own template lookup plugin,
         # which is explicitly documented to strip a single trailing
         # newline the way Jinja2's own template rendering leaves one).
         path = parts[1]?.try { |part| evaluate(part.strip) }
         return "undefined" unless path
         resolved_path = resolve_lookup_path(path)
 
-        # template_vars=dict(...) - real Ansible's own template lookup
+        # template_vars=dict(...) - Ansible's own template lookup
         # plugin merges this kwarg's dict into the vars available to
         # the rendered template, ON TOP of (never replacing) the
         # calling context's own vars - the whole point of the kwarg is
         # to hand the template a few extra values (bimdata.ferm's own
         # get_vars.j2, rendered 4 times with a different app_name:/
         # var_type: pair each time via this exact kwarg) without
-        # requiring a real Ansible variable of that name to exist.
+        # requiring a Ansible variable of that name to exist.
         # Entirely ignored before - the template rendered with
         # `app_name`/`var_type` undefined, so its own `lookup('varnames',
         # '^' ~ app_name ~ ...)` pattern matched nothing regardless of
@@ -148,9 +148,9 @@ module Krikri
         begin
           template_content = File.read(resolved_path)
           # A `#jinja2: key:value, ...` directive on the template's very
-          # first line (real Ansible's own per-template Jinja2 config
+          # first line (Ansible's own per-template Jinja2 config
           # override) is metadata for the renderer, not template
-          # content - real Ansible strips it before rendering.
+          # content - Ansible strips it before rendering.
           # TemplateActionPlugin already does this for the `template:`
           # module; this lookup plugin never did, so the directive
           # leaked into the returned text as a literal "#jinja2: ..."
@@ -172,11 +172,11 @@ module Krikri
       end
 
       private def lookup_dict(parts : Array(String)) : String
-        # lookup('dict', {'a': 1, 'b': 2}) - real Ansible's own dict
+        # lookup('dict', {'a': 1, 'b': 2}) - Ansible's own dict
         # lookup plugin: one dict term in, a list of {key:, value:}
         # dicts out (one per top-level key) - identical shape to the
         # dict2items filter. Always returns real JSON array text
-        # (not real Ansible's own default comma-joined-scalar
+        # (not Ansible's own default comma-joined-scalar
         # behavior) - these list-producing lookups are almost always
         # consumed as a loop: source or piped through | list/|
         # flatten, both of which need a real array, not joined text.
@@ -188,7 +188,7 @@ module Krikri
       end
 
       private def lookup_lines(parts : Array(String)) : String
-        # lookup('lines', command) - real Ansible's own lines lookup:
+        # lookup('lines', command) - Ansible's own lines lookup:
         # runs *command* on the CONTROLLER (same as pipe above) but
         # returns its output SPLIT into a list of lines, not one
         # joined string.
@@ -206,7 +206,7 @@ module Krikri
 
       # lookup('ansible.builtin.fileglob', pattern, wantlist=True) - the
       # FUNCTION-call form of the same lookup already handled as a
-      # FILTER in FilterEngine (`map('fileglob')`) - real Ansible
+      # FILTER in FilterEngine (`map('fileglob')`) - Ansible
       # returns the list of existing files matching the glob (empty
       # list, not an error, when none match). Entirely unimplemented
       # here before - fell through every case to the "undefined"
@@ -216,7 +216,7 @@ module Krikri
       # 0` guard meant to skip a nonexistent vars file (PowerDNS.pdns's
       # own "OS-specific variables, generic to specific" idiom) always
       # evaluated true instead, running `include_vars:` on a file that
-      # doesn't exist and failing the whole task where real Ansible just
+      # doesn't exist and failing the whole task where Ansible just
       # skips it. Pulled out of #evaluate_lookup_list's own case dispatch
       # to keep that method's cyclomatic complexity under the repo's
       # threshold - purely a split, no behavior change.
@@ -236,7 +236,7 @@ module Krikri
         # `lookup('ansible.builtin.fileglob', 'tasks/*.yml').split(',')
         # | reject(...) | sort` - globbed against the CWD the list came
         # back empty, so the whole loop collapsed to one skipped task
-        # where real Ansible expands it into the role's per-play task
+        # where Ansible expands it into the role's per-play task
         # files. Candidates are probed files-subdir-first per root
         # (real fileglob's own 'files' search-path preference), first
         # root yielding matches wins.
@@ -258,7 +258,7 @@ module Krikri
         case lookup_type
         when "csvfile"
           # lookup('csvfile', 'key file=data.csv delimiter=, col=1') -
-          # real Ansible's own csvfile lookup: finds the row whose first
+          # Ansible's own csvfile lookup: finds the row whose first
           # column matches *key*, returns the value at column `col=`
           # (default 1) from that row. No quoted-field support (a
           # narrower CSV parser than Python's own csv module) - real-
@@ -275,7 +275,7 @@ module Krikri
           return "undefined" unless raw_arg
           evaluate_ini_lookup(raw_arg, kwargs)
         when "unvault"
-          # lookup('unvault', 'path/to/vaultfile') - real Ansible's own
+          # lookup('unvault', 'path/to/vaultfile') - Ansible's own
           # unvault lookup: decrypts a vault-encrypted FILE (on the
           # controller) using the RUN's own configured vault secret
           # (Vault.password, set once from --vault-password-file/
@@ -303,7 +303,7 @@ module Krikri
       end
 
       # lookup('file'|'template'|'password', path) all name a CONTROLLER-side
-      # path that - inside a role - real Ansible resolves through
+      # path that - inside a role - Ansible resolves through
       # find_file_in_search_path's own two-probe search order: for each
       # search-path directory it probes `<dir>/files/<term>` first, then
       # `<dir>/<term>` directly. The `files/` prefix is a SEARCH HINT, not
@@ -312,7 +312,7 @@ module Krikri
       # (e.g. ansible-lockdown.windows_11_cis's vars/main.yml doing
       # `lookup('file', './templates/banner.txt')` against a file that lives
       # at the role root's templates/, round 900733) resolves under the role
-      # root itself in real ansible-playbook. Probing files/-prefixed first
+      # root itself in ansible-playbook. Probing files/-prefixed first
       # keeps the conventional bare-filename case (`lookup('file', 'foo.txt')`
       # -> `<role>/files/foo.txt`) identical to its previous behavior; the
       # role-root fallback only kicks in where the files/-prefixed candidate

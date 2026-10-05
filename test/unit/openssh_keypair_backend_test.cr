@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/openssh_keypair.cr's backend-selection and validation
 # order against real community.crypto.openssh_keypair (live-diffed vs
-# real ansible-playbook 2.19.11): the size validation runs for EVERY
+# ansible-playbook 2.19.11): the size validation runs for EVERY
 # state (before the absent branch), and the opensshbin backend rejects
 # any private_key_format other than auto.
 describe "openssh_keypair backend selection" do

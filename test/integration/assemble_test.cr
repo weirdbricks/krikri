@@ -101,7 +101,7 @@ describe "assemble plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "reports a SHA1 checksum (real Ansible's own checksum:, not MD5) plus an md5sum: for back-compat" do
+  it "reports a SHA1 checksum (Ansible's own checksum:, not MD5) plus an md5sum: for back-compat" do
     src = as_path("assemble_src_checksum")
     dest = as_path("assemble_dest_checksum.conf")
     FileUtils.rm_rf(src)
@@ -116,7 +116,7 @@ describe "assemble plugin" do
     result["md5sum"].as_s.size.must_equal(32)
   end
 
-  it "always reports msg: OK (real Ansible never varies this message)" do
+  it "always reports msg: OK (Ansible never varies this message)" do
     src = as_path("assemble_src_msg")
     dest = as_path("assemble_dest_msg.conf")
     FileUtils.rm_rf(src)

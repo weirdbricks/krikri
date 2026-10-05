@@ -4,7 +4,7 @@ module Krikri
   class TaskExecutor
     private def report_unreachable(task : Task, host : Host, ssh_error : String? = nil, no_log : Bool = false) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
-      # Real Ansible embeds the transport's own error text in the msg
+      # Ansible embeds the transport's own error text in the msg
       # ("Failed to connect to the host via ssh: ssh: connect to host
       # ...: No route to host"); the known-unreachable paths have no
       # fresh error to show and fall back to the connection host, which
@@ -21,7 +21,7 @@ module Krikri
 
       stats = @results[host.name]
       if task.ignore_unreachable?
-        # Counted as ok AND ignored, matching real Ansible's own recap
+        # Counted as ok AND ignored, matching Ansible's own recap
         # for an ignored unreachable task.
         stats["ok"] += 1
         stats["ignored"] += 1
@@ -37,8 +37,8 @@ module Krikri
 
     # Execute a task on a host - dispatches to the loop, retry, or plain
     # single-execution path depending on what the task declares.
-    # Real Ansible templates a task's `name:` leniently through
-    # ReplacingMarkerBehavior (the real module
+    # Ansible templates a task's `name:` leniently through
+    # ReplacingMarkerBehavior (the Ansible module
     # _post_validate_name): every undefined span becomes a numbered
     # `<< error N - 'x' is undefined >>` placeholder IN the displayed
     # name, and each name-templating context exits by emitting one
@@ -86,7 +86,7 @@ module Krikri
     end
 
     # The old lenient whole-name substitution - still used for names
-    # carrying `{%`/`{#` block tags, where real's marker behavior is not
+    # carrying `{%`/`{#` block tags, where Ansible's marker behavior is not
     # reproduced here.
     private def lenient_task_name(task : Task, host : Host) : String
       vars_context = build_vars_context(task, host)
@@ -131,7 +131,7 @@ module Krikri
       end
     end
 
-    # The "myrole : " prefix real Ansible puts on a role-sourced task's
+    # The "myrole : " prefix Ansible puts on a role-sourced task's
     # own TASK banner (verified live against ansible-core 2.19.12:
     # `TASK [myrole : Install packages]`, and a NAMELESS role task gets
     # it too, e.g. `TASK [myrole : debug]` - matching the already-fixed
@@ -146,7 +146,7 @@ module Krikri
     # safe prefix-at-print-time fix for the HANDLER banner).
     #
     # `include_role:`/`import_role:` tasks are the one documented
-    # exception - real Ansible never prefixes the include/import task
+    # exception - Ansible never prefixes the include/import task
     # itself with its OWN enclosing role's name (only what it expands
     # INTO inherits the new role's prefix): verified live, a NAMED
     # `include_role:` task inside "myrole" showed just its own name,
@@ -182,14 +182,14 @@ module Krikri
 
       poll = task.poll_seconds || 10
       if poll <= 0
-        # Real ansible-core 2.19.11's fire-and-forget registered shape
+        # ansible-core 2.19.11's fire-and-forget registered shape
         # (live-verified by dumping the registered var keys AND values):
         # failed, started, finished, ansible_job_id, results_file,
         # changed - booleans (failed: false, started: true,
-        # finished: false, changed: true), NO "msg" (real's own
+        # finished: false, changed: true), NO "msg" (Ansible's own
         # async_wrapper end() dict carries none; the old "Job started:
-        # <jid>" msg key is not something real's LOCAL shape produces).
-        # Real's registered result also carries ansible_facts + warnings
+        # <jid>" msg key is not something Ansible's LOCAL shape produces).
+        # Ansible's registered result also carries ansible_facts + warnings
         # from interpreter discovery on that first module contact - no
         # krikri equivalent, a known set gap.
         return JSON.parse({
@@ -221,11 +221,11 @@ module Krikri
       }.to_json)
     end
 
-    # Real's poll>0 final registered shape (live-verified via
+    # Ansible's poll>0 final registered shape (live-verified via
     # `{{ r.keys() | list | to_json }}` on a registered poll: 5 command
     # job): the async_status ACTION plugin's base dict - started,
     # finished, stdout, stderr, stdout_lines, stderr_lines,
-    # ansible_job_id, results_file (the real module
+    # ansible_job_id, results_file (the Ansible module
     # initializes it, then coerces started/finished to booleans) - merged
     # with the job file's module result the way its merge_hash does:
     # duplicate keys keep their base position with the file's value, the
@@ -299,7 +299,7 @@ module Krikri
       # partial stdout write would otherwise parse as garbage mid-read).
       #
       # The initial status stub is written SYNCHRONOUSLY in the launch
-      # script, before the worker detaches - real Ansible's own
+      # script, before the worker detaches - Ansible's own
       # async_wrapper does the same (the job file exists with
       # started: 1/finished: 0 the moment the module returns, so an
       # async_status: poll can never race it). Without the stub, the
@@ -309,7 +309,7 @@ module Krikri
       # "could not find job" (found live via modules_systems.yml's async
       # probe - flaky, older runs won the race). The stub also means a
       # worker killed mid-flight shows as started-but-not-finished
-      # instead of not-found, which is what real Ansible reports too.
+      # instead of not-found, which is what Ansible reports too.
       launch = <<-SCRIPT
         mkdir -p #{dir}
         echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
@@ -364,7 +364,7 @@ module Krikri
     # works: those get uploaded to and run ON the target host, but a
     # reboot module's own process would die the instant the machine it's
     # running on actually reboots, before it could ever report back.
-    # Real Ansible's own reboot module is a controller-side ACTION
+    # Ansible's own reboot module is a controller-side ACTION
     # plugin for exactly this reason - it issues the reboot command,
     # then polls the CONNECTION (not the remote process) until the host
     # goes away and comes back. Handled entirely here instead: issues
@@ -380,17 +380,17 @@ module Krikri
     # local connection is intentionally left alone (returns changed:
     # false, failed: true) - rebooting the controller process's own
     # machine out from under itself has no safe/sane implementation here
-    # and real Ansible's own module warns heavily against it too.
+    # and Ansible's own module warns heavily against it too.
     # group_by: - like reboot:, has no uploaded plugin binary at all
     # (listed in AVAILABLE_PLUGINS purely so the task isn't dropped at
-    # parse time as "Plugin not available"). Real Ansible implements it
+    # parse time as "Plugin not available"). Ansible implements it
     # as an action plugin that mutates the live inventory rather than
     # running anything on the target - mirrored here by mutating the
     # shared Inventory instance krikri-playbook.cr passes to every play's
     # TaskExecutor (the SAME object across the whole per-play loop, not
     # a copy - a later play's `hosts:` pattern lookup sees whatever
     # group membership an earlier play's group_by: task added). `key:`
-    # may itself be comma-separated (a rarely-used real Ansible feature:
+    # may itself be comma-separated (a rarely-used Ansible feature:
     # one task adding the host to several groups at once); `parents:` is
     # accepted and recorded via HostGroup#add_child for completeness,
     # though this codebase's own Inventory#get_hosts never actually
@@ -401,7 +401,7 @@ module Krikri
       data_json = params["data"]?
       # A None data (`data:` with no value - the parser wires literal
       # nulls as NONE_SENTINEL, same as a whole-span null template) is
-      # real's missing-required-argument shape, same as the empty string.
+      # Ansible's missing-required-argument shape, same as the empty string.
       data_json = "" if data_json == Krikri::NONE_SENTINEL
       if data_json.nil? || data_json.empty?
         return JSON.parse({"changed" => false, "failed" => true, "msg" => "missing required argument: data"}.to_json)
@@ -429,7 +429,7 @@ module Krikri
       current = result
       # `task_vars[...] = v` typed at the prompt lands here once
       # `u`/`update_task` promotes it, and is merged into the context
-      # every subsequent redo builds - real Ansible's own semantics,
+      # every subsequent redo builds - Ansible's own semantics,
       # where a task_vars edit changes nothing until `u` re-templates
       # the task (verified against ansible-core 2.19.4: assign + `r`
       # alone re-runs the ORIGINAL command).
@@ -464,7 +464,7 @@ module Krikri
     end
 
     private def item_display(item : JSON::Any) : String
-      # Real Ansible's loop-item label is Python's repr of the item, not
+      # Ansible's loop-item label is Python's repr of the item, not
       # JSON: booleans render True/False, dicts/lists use single-quoted
       # `{'k': 'v'}`/`['a']`, None for null. A bare string is shown without
       # quotes. `.to_json` gave lowercase true/false and double quotes, so
@@ -493,9 +493,9 @@ module Krikri
     # mode anyway, which would otherwise turn every retry loop into a slow,
     # guaranteed-to-fail wait for no reason.
     private def execute_meta(task : Task, host : Host) : Nil
-      # Real Ansible reads the meta action from the task args' _raw_params
+      # Ansible reads the meta action from the task args' _raw_params
       # at strategy time and raises for anything it doesn't recognize -
-      # INCLUDING the literal None real reports when _raw_params is unset
+      # INCLUDING the literal None Ansible reports when _raw_params is unset
       # (a null value, an empty string, or the generator's
       # `meta: {free_form: noop}` mapping shape). The raise happens after
       # the PLAY/TASK banners and is a run-level AnsibleError, not a task
@@ -521,7 +521,7 @@ module Krikri
         # re-printing anything.
         run_handlers
       when "end_host"
-        # Per-host - verified against real ansible-playbook: a 2nd host
+        # Per-host - verified against ansible-playbook: a 2nd host
         # whose own `when:` makes it skip this exact task entirely keeps
         # running normally afterward, unlike end_play below. Reuses
         # halted_hosts (already excludes this host from every remaining
@@ -534,7 +534,7 @@ module Krikri
         @halted_hosts.add(host.name)
         @ended_hosts.add(host.name)
       when "end_play"
-        # Global, NOT per-host - verified against real ansible-playbook:
+        # Global, NOT per-host - verified against ansible-playbook:
         # even a host whose own `when:` skips this exact task entirely
         # (never itself executes this branch) still gets halted for the
         # rest of the play the moment ANY other host does. So this halts
@@ -549,7 +549,7 @@ module Krikri
         end
       when "clear_host_errors"
         # Global, NOT scoped to `host` - same shape as end_play above,
-        # and for the same reason: real Ansible's own doc wording
+        # and for the same reason: Ansible's own doc wording
         # ("clears the failed state from hosts specified in the PLAY'S
         # LIST OF HOSTS") and live verification both show it acts on
         # every failed host in the play, not just whichever host(s)
@@ -570,7 +570,7 @@ module Krikri
           @cleared_error_hosts.add(other.name) if @halted_hosts.includes?(other.name)
         end
       when "end_batch"
-        # Real Ansible's end_batch ends the current `serial:` batch (all
+        # Ansible's end_batch ends the current `serial:` batch (all
         # its hosts, like end_play but without the end_play flag). This
         # engine doesn't model serial batching - one batch per play - so
         # end_batch IS end_play here (verified against ansible-core
@@ -597,7 +597,7 @@ module Krikri
           ended = (@role_ended_hosts[key] ||= Set(String).new)
           ended.add(host.name)
         else
-          # Real Ansible rejects end_role outside a role at PARSE time
+          # Ansible rejects end_role outside a role at PARSE time
           # ("Cannot execute 'end_role' from outside of a role") - a
           # play-level one is caught before any play runs
           # (krikri-playbook.cr's own flattened-list check); this branch
@@ -615,15 +615,15 @@ module Krikri
       when "reset_connection"
         # Drop the host's persistent connection state (resident plugin
         # daemons + ssh ControlMaster sockets); the next task reopens
-        # fresh connections. Real Ansible's result carries msg
+        # fresh connections. Ansible's result carries msg
         # "reset connection" (or "no connection, nothing to reset") and
         # counts in no recap bucket - a META: vv line only - so nothing
         # is printed or counted here either.
         SSHManager.reset_connection(host.name)
       when "noop"
-        # Real Ansible's own doc: "this literally does 'nothing'."
+        # Ansible's own doc: "this literally does 'nothing'."
       when "refresh_inventory"
-        # Real Ansible's own doc, verified live: refreshing does NOT add
+        # Ansible's own doc, verified live: refreshing does NOT add
         # hosts to (or remove them from) the CURRENT play's own host
         # loop - only a LATER play's own `hosts:` pattern match sees the
         # new data, since that's computed fresh from the shared
@@ -662,8 +662,8 @@ module Krikri
     # The strategy-time unknown-meta-action abort (see execute_meta's own
     # comment): the [ERROR] block goes to STDERR - banners already on
     # stdout - with the task's Origin (the task's own mapping position,
-    # the origin real's task-level errors carry), then the run stops with
-    # rc 1 and no recap. Real's block closes with one blank line.
+    # the origin Ansible's task-level errors carry), then the run stops with
+    # rc 1 and no recap. Ansible's block closes with one blank line.
     # Process.exit rather than `exit`: this runs inside the executor's
     # per-task exception paths (including the --forks worker fiber's
     # generic rescue), which would swallow the ExitException `exit`

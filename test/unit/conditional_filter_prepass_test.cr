@@ -13,11 +13,11 @@ end
 
 # Compile-time filter-name validation in ConditionalEvaluator - a `when:`
 # must hard-fail a filter name neither engine implements even when
-# short-circuit evaluation never reaches the clause using it (real Jinja
+# short-circuit evaluation never reaches the clause using it (Jinja
 # resolves every filter name in the whole expression at compile time).
 # Found via jriguera.configdrive (round 20014): `when: X is defined and
 # not X is none and Y|success and ...` with X undefined - `|success` is
-# an Ansible 1.x filter removed from modern ansible-core, real Ansible
+# an Ansible 1.x filter removed from modern ansible-core, Ansible
 # fails with "Syntax error in expression: No filter named 'success'.",
 # krikri silently skipped the task instead.
 describe "ConditionalEvaluator compile-time filter-name validation" do
@@ -63,7 +63,7 @@ describe "ConditionalEvaluator compile-time filter-name validation" do
     Krikri::ConditionalEvaluator.evaluate(%(flag and items|map('totally_bogus_inner')|list == []), v).must_equal(false)
   end
 
-  it "does not validate map()'s inner filter name (real Jinja resolves it at runtime)" do
+  it "does not validate map()'s inner filter name (Jinja resolves it at runtime)" do
     v = vars({"items" => [] of JSON::Any})
     Krikri::ConditionalEvaluator.evaluate("items|map('totally_bogus_inner')|list == []", v).must_equal(true)
   end

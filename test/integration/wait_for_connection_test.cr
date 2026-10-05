@@ -7,7 +7,7 @@ describe "wait_for_connection plugin" do
     result = PluginSpecHelper.run("wait_for_connection", {} of String => String)
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real's module wire carries no changed key (the controller backfills
+    # Ansible's module wire carries no changed key (the controller backfills
     # changed: false); never `true` is the contract.
     (result["changed"]?.try(&.as_bool) || false).must_equal(false)
   end

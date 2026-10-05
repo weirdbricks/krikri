@@ -5,13 +5,13 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-two-local-hosts.ini")
 
-# Real Ansible honors `check_mode:` at play, block AND task level (2.7+),
+# Ansible honors `check_mode:` at play, block AND task level (2.7+),
 # most specific wins; command/shell/raw/script do not support check mode,
 # so their execution hinges entirely on the resolved value. This engine
 # only ever read the TASK-level key: a play- or block-level
 # `check_mode: true` (simulate) let those tasks execute for real on an
 # ordinary run, and a play- or block-level `check_mode: false` (force
-# real execution under --check) was skipped where real Ansible really
+# real execution under --check) was skipped where Ansible really
 # ran them. Both live-verified against ansible-core 2.19.11.
 private def run_playbook(yaml : String, check : Bool) : {Process::Status, String}
   playbook = File.tempname("check-mode-scope", ".yml")
@@ -106,7 +106,7 @@ describe "check_mode scope inheritance (play/block/task)" do
   end
 
   it "lets a task's own check_mode: override the block's" do
-    # Real Ansible precedence task > block > play: the block says
+    # Ansible precedence task > block > play: the block says
     # simulate, the task opts back into real execution.
     marker = File.tempname("krikri-cm-task-over-block")
     File.delete(marker) if File.exists?(marker)

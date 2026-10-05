@@ -72,13 +72,13 @@ describe Krikri::PythonModuleRunner do
   end
 
   it "finds a library module with a non-.py extension and never its .yml doc stub" do
-    # Real Ansible's legacy module finder indexes every file in the
+    # Ansible's legacy module finder indexes every file in the
     # search dir by basename-minus-extension, excluding only its
     # MODULE_IGNORE_EXTS (.pyc/.pyo/... plus .yaml/.yml/.ini) - so
     # linux-system-roles.timesync's library/timesync_provider.sh IS its
     # timesync_provider module, with the timesync_provider.yml
     # DOCUMENTATION stub sitting beside it never shadowing the script.
-    # Round 970350: real ansible-playbook ran the .sh fine while this
+    # Round 970350: ansible-playbook ran the .sh fine while this
     # engine - matching only .py or extensionless - found no source and
     # SKIPPED the "Determine current NTP provider" task.
     role = File.join(Dir.tempdir, "krikri-pymod-spec-#{Random.rand(1_000_000)}")
@@ -116,7 +116,7 @@ describe Krikri::PythonModuleRunner do
   end
 
   it "builds the old-style key=value argv" do
-    # Real Ansible's old-style (non-AnsibleModule) protocol passes
+    # Ansible's old-style (non-AnsibleModule) protocol passes
     # _ansible_* special vars as ordinary key=value pairs in the argv
     # string - they are NOT stripped, unlike the plugin-config
     # bookkeeping keys (check_mode/diff_mode) checked above.
@@ -160,9 +160,9 @@ describe Krikri::PythonModuleRunner do
     result["custom_field"].as_i.must_equal(7)
   end
 
-  it "passes ANSIBLE_MODULE_ARGS to a new-style module via stdin, wrapped as real AnsibleModule expects" do
+  it "passes ANSIBLE_MODULE_ARGS to a new-style module via stdin, wrapped as AnsibleModule expects" do
     skip("python3 not available") unless File.exists?("/usr/bin/python3")
-    # Real ansible-core 2.19's basic.py (_debugging.load_params, the
+    # ansible-core 2.19's basic.py (_debugging.load_params, the
     # path any module run outside the real AnsiballZ wrapper falls back
     # to) reads a JSON blob from STDIN shaped {"ANSIBLE_MODULE_ARGS":
     # {...}} - NOT an ANSIBLE_MODULE_ARGS environment variable, which
@@ -188,7 +188,7 @@ describe Krikri::PythonModuleRunner do
     # linux-system-roles.timesync's library/timesync_provider.sh shape:
     # a #!/bin/bash WANT_JSON module used to be executed as
     # `python3 <module>.py` (dying on bash syntax) because the runner
-    # hardcoded python3. Real Ansible runs the module through its own
+    # hardcoded python3. Ansible runs the module through its own
     # shebang and hands a WANT_JSON module its whole argument dict as a
     # single serialized-JSON argv element.
     source = "#!/bin/bash\n" \
@@ -501,7 +501,7 @@ describe Krikri::PythonModuleRunner do
     # common/text/converters.py in the shim bundle the import dies with
     # ModuleNotFoundError: No module named 'ansible.module_utils.common',
     # before AnsibleModule is ever constructed, so the module printed no
-    # result JSON while real ansible-playbook succeeded (ok=8/failed=0
+    # result JSON while ansible-playbook succeeded (ok=8/failed=0
     # there vs ok=6/failed=1 here).
     work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
     Dir.mkdir_p(work_dir)

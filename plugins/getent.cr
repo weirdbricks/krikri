@@ -21,9 +21,9 @@ module Krikri
   # resolution order differs from file order - `getent hosts localhost`
   # returns the ::1 line (AF_INET6 preferred) while /etc/hosts lists
   # 127.0.0.1 first, so the fact was keyed "127.0.0.1" here and "::1" in
-  # real Ansible; keyed services lookups hit the same ordering gap. Found
+  # Ansible; keyed services lookups hit the same ordering gap. Found
   # via the podman-diff getent_edge_cases harness. Forking the binary the
-  # way real does makes NSS itself the source of truth (and resolves the
+  # way Ansible does makes NSS itself the source of truth (and resolves the
   # old `service:` deliberate limit for free - `-s` is passed through).
   #
   # The parse format is Ansible's: each output line maps to a list of the
@@ -46,7 +46,7 @@ module Krikri
 
     include PluginHelpers::AnsibleArgValidation
 
-    # Databases real Ansible colon-splits by default; everything else
+    # Databases Ansible colon-splits by default; everything else
     # (hosts, services, protocols, ...) splits on runs of whitespace.
     private COLON_DATABASES = ["passwd", "shadow", "group", "gshadow"]
 
@@ -101,10 +101,10 @@ module Krikri
       case rc
       when 0
         facts = parse_output(result[:stdout].to_s, split)
-        # Real's registered getent success runs ansible_facts, msg,
+        # Ansible's registered getent success runs ansible_facts, msg,
         # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`;
         # the rc==0 path carries no msg at all, the fail_key: false
-        # not-found path does). Real's module wire carries no changed -
+        # not-found path does). Ansible's module wire carries no changed -
         # exit_json passes none and the task executor backfills failed,
         # changed at the tail - so the wire omits it (omit_changed) and
         # normalize_module_result appends the same failed, changed tail
@@ -122,7 +122,7 @@ module Krikri
         fail_result(database, "Missing arguments, or database unknown.")
       when 2
         # rc 2 = the requested key isn't in the database: fail_key (the
-        # spec default) fails the task; with fail_key: false real exits
+        # spec default) fails the task; with fail_key: false Ansible exits
         # SUCCESSFULLY with the key mapped to a real JSON null and the
         # not-found message still on the result - `getent_passwd[key] ==
         # none` is exactly how a role decides "this user doesn't exist
@@ -163,7 +163,7 @@ module Krikri
       end
 
       if @params["fail_key"]?
-        # Real AnsibleModule type-converts fail_key at module setup -
+        # AnsibleModule type-converts fail_key at module setup -
         # now via the shared BasePlugin#validate_bool_params! (see its
         # block comment; the <class 'str'> double-space wording this
         # check used to pin came from ansible-core 2.14).
@@ -191,7 +191,7 @@ module Krikri
     # Real module's rc==0 parse: `record = line.split(split)` per line,
     # keyed by record[0] with the remaining fields as the value. A key
     # appearing more than once (e.g. a service listed for both tcp and
-    # udp in /etc/services) becomes a list of field-lists (real 2.11+
+    # udp in /etc/services) becomes a list of field-lists (Ansible 2.11+
     # enumeration handling).
     private def parse_output(output : String, split : String?) : Hash(String, JSON::Any)
       results = Hash(String, JSON::Any).new
@@ -218,7 +218,7 @@ module Krikri
       results
     end
 
-    # Real Ansible's module protocol (the real module's
+    # Ansible's module protocol (the Ansible module's
     # _return_formatted, called from both exit_json and fail_json) ALWAYS
     # attaches `invocation: {module_args: <the module's params>}` to a
     # module's raw JSON result - so it is present on a failing lookup

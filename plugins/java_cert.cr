@@ -12,7 +12,7 @@ module Krikri
   # (read from a live collection install), the keytool wrapper that
   # imports/removes certificates from a Java keystore.
   #
-  # Follows the real module's control flow:
+  # Follows the Ansible module's control flow:
   #   - exactly one of cert_url/cert_path/cert_content/pkcs12_path per
   #     the required_if/mutually_exclusive spec (absent needs one of
   #     cert_url/cert_alias); cert_alias defaults to cert_url
@@ -21,10 +21,10 @@ module Krikri
   #   - alias presence via keytool -list ... -rfc (password on stdin);
   #   - state=present compares the sha256 digest of the certificate
   #     already under the alias (extracted through openssl x509, with
-  #     the real module's DER fallback) against the requested
+  #     the Ansible module's DER fallback) against the requested
   #     certificate (from path, content, PKCS12 export, or
   #     keytool -printcert over TLS), and re-imports (delete first)
-  #     only on digest change - the real module's "always insert, even
+  #     only on digest change - the Ansible module's "always insert, even
   #     if the alias exists" is really "insert when the digest
   #     differs"
   #   - state=absent deletes the alias when present
@@ -32,12 +32,12 @@ module Krikri
   #
   # Deliberately left out (noted, not silently dropped): the
   # file-common-args permission management (mode/owner/group/se*)
-  # which the real module applies to the keystore file - keystore
+  # which the Ansible module applies to the keystore file - keystore
   # attributes stay untouched here.
   class JavaCertPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec plus the file-common args its
+    # The Ansible module's argument_spec plus the file-common args its
     # add_file_common_args=True injects - the only alias is
     # attributes->attr (ansible-core's FILE_COMMON_ARGUMENTS).
     SPEC = {
@@ -78,11 +78,11 @@ module Krikri
 
       pkcs12_path = @params["pkcs12_path"]?
       pkcs12_pass = @params["pkcs12_password"]? || ""
-      # The real module's `module.params.get("pkcs12_alias", "1")` is
+      # The Ansible module's `module.params.get("pkcs12_alias", "1")` is
       # dead code - module.params always contains the key (None unless
       # set), so pkcs12_alias is None unless explicitly passed. The
       # distinction is load-bearing: newer keytool rejects -destalias
-      # without -srcalias, so the real module's pkcs12 import FAILS
+      # without -srcalias, so the Ansible module's pkcs12 import FAILS
       # whenever cert_alias is set and pkcs12_alias is not.
       pkcs12_alias = @params["pkcs12_alias"]?
 
@@ -105,7 +105,7 @@ module Krikri
 
       # Real main() resolves openssl via get_bin_path('openssl', True)
       # here and then runs test_keytool. The openssl resolution is
-      # DEFERRED to first use (the digest computation below): real only
+      # DEFERRED to first use (the digest computation below): Ansible only
       # ever USES the binary after the keytool probe, so on a host
       # without keytool the keytool failure is what surfaces - in exact
       # real order, only when openssl itself is missing does the bin
@@ -145,7 +145,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: false)
       end
 
-      # No cert_alias with state=present is what real runs too (its own
+      # No cert_alias with state=present is what Ansible runs too (its own
       # command list would carry a None alias); the keystore commands
       # built here use an empty alias in that case - unreachable in
       # parity runs anyway, since keytool itself is missing in both
@@ -228,7 +228,7 @@ module Krikri
       end
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required -> types (spec declaration order) -> choices ->
     # required_together -> required_if -> mutually_exclusive -> unsupported
     # (deferred last).
@@ -281,7 +281,7 @@ module Krikri
       result[:exit_code] == 0 ? {true, result[:stdout]} : {false, ""}
     end
 
-    # delete_cert: real runs keytool with check_rc=True, so a non-zero
+    # delete_cert: Ansible runs keytool with check_rc=True, so a non-zero
     # exit surfaces through run_command's own failure shape (msg =
     # rstripped stderr, cmd/rc/stdout/stderr lead); success returns
     # dict(changed=True, msg=del_out, rc=, cmd=, stdout=, error=, diff=).
@@ -308,7 +308,7 @@ module Krikri
         key_order: ["changed", "msg", "rc", "cmd", "stdout", "error", "diff", "stdout_lines"])
     end
 
-    # import_cert_path: real runs keytool with check_rc=False and fails
+    # import_cert_path: Ansible runs keytool with check_rc=False and fails
     # through its own fail_json(msg=import_out, rc=, cmd=, error=) -
     # no stdout/stderr keys, so the controller adds no *_lines.
     private def import_cert(executable : String, cert_path : String, keystore_path : String, keystore_pass : String,
@@ -356,7 +356,7 @@ module Krikri
 
     # tempfile.mkstemp() with no arguments: $TMPDIR (python's gettempdir
     # order) + "tmp" + 8 random chars from its [a-z0-9_] charset - the
-    # name real reports inside failing `cmd` arrays (round 995004
+    # name Ansible reports inside failing `cmd` arrays (round 995004
     # java_cert_fail: real cmd[5] = /tmp/tmpbkn918i1, krikri's
     # File.tempname shape leaked a date-pid-prefixed name instead).
     private def mkstemp_name : String
@@ -409,7 +409,7 @@ module Krikri
     @searched_paths = ""
 
     # Deferred get_bin_path('openssl', True): the resolved binary path,
-    # or the failure result real's own bin lookup produces.
+    # or the failure result Ansible's own bin lookup produces.
     private def require_openssl : (String | PluginResult)
       script = <<-SH
         found=""

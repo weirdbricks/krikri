@@ -5,24 +5,24 @@ module Krikri
     # MysqlVariables - pure logic for the mysql_variables plugin: the
     # real module's typedvalue conversion, its ON/OFF boolean
     # normalization, the variable-name validation, and SET statement
-    # construction (backtick-quoted identifier like the real module's
+    # construction (backtick-quoted identifier like the Ansible module's
     # mysql_quote_identifier(..., 'vars')). Split out so this logic is
     # unit-spec-able (execution needs a real MySQL/MariaDB server).
     module MysqlVariables
-      # The real module's validation: ^[0-9A-Za-z_.]+$ on the variable
+      # The Ansible module's validation: ^[0-9A-Za-z_.]+$ on the variable
       # name, failing with "invalid variable name \"X\"".
       def self.valid_name?(variable : String) : Bool
         /^[0-9A-Za-z_.]+$/.matches?(variable)
       end
 
       # Convert value to number whenever possible, keep strings as-is
-      # (the real module's typedvalue).
+      # (the Ansible module's typedvalue).
       def self.typed_value(value : String) : String | Int64 | Float64
         value.to_i64? || value.to_f64? || value
       end
 
       # Converts 0/1/on/off wanted values to ON/OFF when the server's
-      # current representation is ON/OFF (the real module's
+      # current representation is ON/OFF (the Ansible module's
       # convert_bool_setting_value_wanted).
       def self.convert_bool(value : String | Int64 | Float64) : String | Int64 | Float64
         case value.to_s.downcase

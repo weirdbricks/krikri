@@ -192,7 +192,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
 
   it "password_hash honors an explicit salt for reproducible output" do
     result = engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s
-    # passlib's default rounds=656000 shows in the output (real 2.19.11)
+    # passlib's default rounds=656000 shows in the output (Ansible 2.19.11)
     result.must_equal("$6$rounds=656000$fixedsalt$" + result.split('$').last)
     engine.apply(s("secret"), %(password_hash('sha512', 'fixedsalt'))).as_s.must_equal(result)
   end
@@ -243,7 +243,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "raises for an unknown filter instead of passing the value through" do
-    # Real Jinja2/Ansible: "No filter named 'mystery'." fails the task.
+    # Jinja2/Ansible: "No filter named 'mystery'." fails the task.
     # Passing the operand through unchanged silently corrupted every
     # downstream `when:`/`set_fact:` built on it.
     assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
@@ -264,7 +264,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # `pip_packages_default | nephelaiio.plugins.sorted_get(overrides)`:
     # the name regex previously only matched \w+, so a dotted unknown
     # filter with arguments raised with the whole "name(args)" text as
-    # the "filter name" instead of the filter name real Ansible reports.
+    # the "filter name" instead of the filter name Ansible reports.
     assert_raises_message(Krikri::VariableSubstitutor::FilterEngine::UnknownFilterError,
       "No filter named 'nephelaiio.plugins.sorted_get'.") do
       engine.apply(s("hello"), "nephelaiio.plugins.sorted_get(overrides)")
@@ -315,7 +315,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   it "int filter truncates a native Float64 directly, matching Python's int()" do
     # Real bug found benchmarking geerlingguy.swap's own check-size.yml
     # (`(stat.size / 1024 / 1024) | int`) once division itself was
-    # fixed - a division result is always a float in real Jinja2. The
+    # fixed - a division result is always a float in Jinja2. The
     # old implementation always went through #as_string first, turning
     # a Float64 into its own decimal-point STRING repr ("256.0"), and
     # Crystal's strict String#to_i64? rejects any decimal point
@@ -340,7 +340,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # Real bug found via srsp.oracle-java (nested dep of
     # wcm_io_devops.aem_cms): `when: java_version > 8 and
     # java_subversion | length == 0` where java_subversion holds a
-    # native YAML float (0.1). Real ansible-core fails the task outright
+    # native YAML float (0.1). ansible-core fails the task outright
     # ("object of type '_AnsibleTaggedFloat' has no len()" on 2.19);
     # this engine's old `else` coercion took the decimal string repr's
     # length (3) instead, so the task silently skipped/ran and krikri
@@ -362,14 +362,14 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
-  it "bool filter only recognizes real Ansible's own keyword set, not general truthiness" do
+  it "bool filter only recognizes Ansible's own keyword set, not general truthiness" do
     # Real bug found benchmarking geerlingguy.gitlab's own "restart
     # gitlab" handler: `failed_when: gitlab_restart_handler_failed_when
     # | bool`, whose default value is the arbitrary expression STRING
     # 'gitlab_restart.rc != 0' (not a recognized true/false keyword).
     # Previously reused the generic (correct-for-`when:`) #truthy?
     # helper, so any non-empty, non-"0"/"false" string came out true
-    # here - verified directly against real ansible-playbook (`{{
+    # here - verified directly against ansible-playbook (`{{
     # 'gitlab_restart.rc != 0' | bool }}` renders "false") that an
     # unrecognized string must render false, not true.
     engine.apply(s("gitlab_restart.rc != 0"), "bool").as_bool.must_equal(false)
@@ -384,12 +384,12 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(value, "max").as_i.must_equal(3)
   end
 
-  it "raises a clean error for first/last on a genuinely empty sequence, matching real Jinja2's do_first/do_last" do
+  it "raises a clean error for first/last on a genuinely empty sequence, matching Jinja2's do_first/do_last" do
     # Real bug found benchmarking robertdebock.mount_options (round
     # 140): `ansible_mounts | selectattr(...) | first` on an empty match
     # used to silently return nil, letting a corrupted value flow
     # through undetected and fail much LATER in an unrelated task with a
-    # confusing message - real ansible-playbook hard-fails immediately
+    # confusing message - ansible-playbook hard-fails immediately
     # at the source with "No first item, sequence was empty."
     empty = JSON.parse("[]")
     assert_raises_message(Exception, "No first item, sequence was empty.") { engine.apply(empty, "first") }
@@ -418,7 +418,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # 'enabled') | selectattr('state', 'equalto', item) | sum(attribute
     # ='packages', start=[])`, where every entry's `state:` is given as
     # `"{{ security_package_state }}"` rather than a literal "present"/
-    # "absent" (real Ansible's usual recursive value re-templating).
+    # "absent" (Ansible's usual recursive value re-templating).
     # Comparing that raw, still-`{{ }}`-bearing text against a real
     # "present" value never matched, so `selectattr('state', 'equalto',
     # 'present')` always excluded every such entry - chrony (gated
@@ -432,7 +432,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.as_a.size.must_equal(1)
   end
 
-  it "selectattr() accepts a dotted path into a nested dict, real Jinja2's own behavior" do
+  it "selectattr() accepts a dotted path into a nested dict, Jinja2's own behavior" do
     # Real bug found benchmarking githubixx.containerd's own "Set
     # modprobe_location": `modprobe_locations.results | selectattr(
     # 'stat.exists', '==', True) | map(attribute='path') | first`, over
@@ -460,7 +460,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # rejectattr('stat.exists') | list | length == 0` gating a task to run
     # only when EVERY result of a preceding looped stat: says the file
     # exists. rejectattr was entirely unrecognized (UnknownFilterError),
-    # so the when: never ran the task at all - real ansible-playbook
+    # so the when: never ran the task at all - ansible-playbook
     # evaluates the length == 0 condition true when no stat result is
     # missing, and runs the task.
     engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
@@ -507,7 +507,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%(["0.0.0.0:9100"])), %(select('match', '.+:\\d+$'))).as_a.must_equal([JSON::Any.new("0.0.0.0:9100")])
   end
 
-  it "select()/reject() default to real Jinja2 truthiness when no test name is given" do
+  it "select()/reject() default to Jinja2 truthiness when no test name is given" do
     engine.apply(JSON.parse(%([true, false, 1, 0, "", "x"])), "select").as_a.must_equal(
       [JSON::Any.new(true), JSON::Any.new(1_i64), JSON::Any.new("x")]
     )
@@ -522,7 +522,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # ='packages', start=[])` was entirely unimplemented (fell through to
     # the unknown-filter passthrough, returning the selected items
     # themselves unchanged instead of concatenating their `packages`
-    # attribute). With a list-valued start:, real Jinja2's sum()
+    # attribute). With a list-valued start:, Jinja2's sum()
     # concatenates rather than numerically adds.
     engine_with_vars = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
     value = JSON.parse(%([{"packages": ["foo", "bar"]}, {"packages": ["baz"]}]))
@@ -625,7 +625,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "dict(iterable_of_pairs) builds a dict from a positional iterable, not just kwargs" do
-    # Real Ansible's Templar exposes actual Python's `dict` builtin
+    # Ansible's Templar exposes actual Python's `dict` builtin
     # (not Jinja2's own `**kwargs`-only `dict` global) - the full
     # real-world shape (splitlines/regex_findall/flatten/reverse
     # chained into dict()) is covered end-to-end by expression_
@@ -637,7 +637,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "dict2items converts a flat dict to a list of {key, value} dicts in insertion order, defaults to key_name='key' value_name='value'" do
-    # Real Ansible's own filter (NOT standard Jinja2; the Crinja corpus
+    # Ansible's own filter (NOT standard Jinja2; the Crinja corpus
     # confirms Python/Jinja2 reject it as "No filter named
     # 'dict2items'"). dev-sec os_hardening's own
     # os_hardening_set_os_variables.yml uses `with_dict` over an
@@ -657,7 +657,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "dict2items honors custom key_name and value_name kwargs" do
-    # Real Ansible accepts `dict2items(key_name='k', value_name='v')`
+    # Ansible accepts `dict2items(key_name='k', value_name='v')`
     # for callers that want the field names to be something other
     # than the defaults (prometheus's _common role uses a
     # 'label'/'value' pair elsewhere; the kwarg name itself is the
@@ -674,7 +674,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%({})), "dict2items").as_a.must_equal([] of JSON::Any)
   end
 
-  it "dict2items raises on non-dict input, like real Ansible" do
+  it "dict2items raises on non-dict input, like Ansible" do
     # Live-verified against ansible-core 2.19: `none | dict2items` fails
     # with "dict2items requires a dictionary, got <class 'NoneType'>
     # instead." (and likewise for a scalar); `| default({})` is the
@@ -707,7 +707,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "items2dict on later-list-wins semantics for key collisions (matches combine()'s precedence)" do
-    # Real Ansible's items2dict uses the same later-wins precedence
+    # Ansible's items2dict uses the same later-wins precedence
     # as combine() - if two list elements claim the same key_name, the
     # later one overwrites the earlier. Found this by reading the
     # ansible-core source; a role that depends on first-wins would be
@@ -717,7 +717,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result["a"].as_i.must_equal(2)
   end
 
-  it "items2dict raises on list elements that are not dicts or miss a field, like real Ansible" do
+  it "items2dict raises on list elements that are not dicts or miss a field, like Ansible" do
     # Live-verified against ansible-core 2.19: a malformed element fails
     # the filter ("items2dict requires each dictionary in the list to
     # contain the keys 'k' and 'v', got [...] instead.").
@@ -730,8 +730,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   it "items2dict stringifies a non-string key_name field (Phase-3 oracle arbitration)" do
     # Since the Phase-3 consolidation slice routed the {{ }} path onto
     # the native Crinja registration via #delegate_to_crinja_filter,
-    # arbitrated against real ansible-core 2.19.11: `{'key': 1}` must
-    # stringify to the JSON key "1" (real Ansible renders {"1": "x"}),
+    # arbitrated against ansible-core 2.19.11: `{'key': 1}` must
+    # stringify to the JSON key "1" (Ansible renders {"1": "x"}),
     # NOT be silently skipped as the deleted hand-rolled copy did.
     input = JSON.parse(%([{"key": 1, "value": "x"}]))
     result = engine.apply(input, "items2dict").as_h
@@ -739,7 +739,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "items2dict raises on a null input (Phase-3 oracle arbitration)" do
-    # Same slice: real ansible-core 2.19.11 fails `null | items2dict`
+    # Same slice: ansible-core 2.19.11 fails `null | items2dict`
     # ("items2dict requires a list, got <class 'NoneType'> instead");
     # the deleted hand-rolled copy silently returned {}. The delegated
     # path raises instead of inventing an empty dict.
@@ -761,7 +761,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON.parse(%(null)), "ternary('yes', 'no')").as_s.must_equal("no")
   end
 
-  it "ternary treats the string conditions \"0\"/\"false\"/\"False\" as truthy, like real Ansible's Python bool()" do
+  it "ternary treats the string conditions \"0\"/\"false\"/\"False\" as truthy, like Ansible's Python bool()" do
     engine.apply(s("0"), "ternary('yes', 'no')").as_s.must_equal("yes")
     engine.apply(s("false"), "ternary('yes', 'no')").as_s.must_equal("yes")
     engine.apply(s("False"), "ternary('yes', 'no')").as_s.must_equal("yes")
@@ -774,14 +774,14 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(JSON::Any.new(false), "ternary('x', 'omit')").as_s.must_equal("omit")
   end
 
-  it "ternary returns the third (none_val) argument for a null condition, like real Ansible" do
+  it "ternary returns the third (none_val) argument for a null condition, like Ansible" do
     engine.apply(JSON.parse(%(null)), "ternary('yes', 'no', 'n/a')").as_s.must_equal("n/a")
     engine.apply(JSON.parse(%(null)), "ternary('yes', 'no')").as_s.must_equal("no")
     engine.apply(JSON::Any.new(true), "ternary('yes', 'no', 'n/a')").as_s.must_equal("yes")
     engine.apply(JSON::Any.new(false), "ternary('yes', 'no', 'n/a')").as_s.must_equal("no")
   end
 
-  it "ternary raises on missing true_val/false_val arguments, like real Ansible's Python signature" do
+  it "ternary raises on missing true_val/false_val arguments, like Ansible's Python signature" do
     assert_raises_message(KrikriJinja::TemplateError,
       "ternary() missing 1 required positional argument") do
       engine.apply(JSON::Any.new(false), "ternary('yes')")
@@ -883,13 +883,13 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.map { |row| row.as_a.map(&.to_s) }.must_equal([["1", "x"], ["2", "-"]])
   end
 
-  it "zip is N-way (real ansible-core 2.19: every positional is another list)" do
+  it "zip is N-way (ansible-core 2.19: every positional is another list)" do
     result = engine.apply(JSON.parse(%([1])), "zip([2], [3], [4])").as_a
     result.map { |row| row.as_a.map(&.as_i) }.must_equal([[1, 2, 3, 4]])
   end
 
   it "zip_longest treats a positional third argument as a list, never the fill" do
-    # Live-verified against real ansible-core 2.19.11: only the
+    # Live-verified against ansible-core 2.19.11: only the
     # fillvalue= KWARG sets the pad; a positional '-' is a third list
     # and the padding stays null.
     result = engine.apply(JSON.parse(%([1, 2])), "zip_longest([3], '-')").as_a
@@ -1012,7 +1012,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "rekey_on_member stringifies a non-string member value into the key" do
-    # Live-verified against real ansible-core 2.19.11: a numeric member
+    # Live-verified against ansible-core 2.19.11: a numeric member
     # rekeys to the STRING key ("5"), it is not silently skipped (the
     # retired hand-rolled copy dropped such items on the floor).
     input = JSON.parse(%([{"id": 5, "v": 1}]))
@@ -1033,7 +1033,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     vars_engine.apply(JSON::Any.new(1_i64), "extract(container)").as_s.must_equal("one")
   end
 
-  it "extract raises on a missing hash key, like real Ansible" do
+  it "extract raises on a missing hash key, like Ansible" do
     # Found in dirless-infra: `groups['backend_nodes'] | map('extract',
     # hostvars, 'ansible_host')` with no host carrying `ansible_host`
     # must hard-fail (real: "object of type 'HostVarsVars' has no
@@ -1056,8 +1056,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
-  it "extract raises on an out-of-range list index, with real Ansible's wording" do
-    # Phase-3 slice 4: real ansible-core 2.19.11 words a list miss with
+  it "extract raises on an out-of-range list index, with Ansible's wording" do
+    # Phase-3 slice 4: ansible-core 2.19.11 words a list miss with
     # the uniform getitem message (live-verified: `{{ 5 | extract(clist) }}`
     # -> "object of type 'list' has no attribute 5", int keys unquoted),
     # not the old hand-rolled "extract: list index 5 out of range".
@@ -1071,7 +1071,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
 
   it "extract indexes negatively like a Python subscript" do
     # Live-verified against ansible-core 2.19.11: `{{ -1 | extract(clist) }}`
-    # -> the last element (real's getitem is a plain Python subscript);
+    # -> the last element (Ansible's getitem is a plain Python subscript);
     # the old copies rejected any negative index as out of range.
     v = Hash(String, JSON::Any).new
     v["container"] = JSON.parse(%(["zero", "one"]))
@@ -1079,7 +1079,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     vars_engine.apply(JSON::Any.new(-1_i64), "extract(container)").as_s.must_equal("one")
   end
 
-  it "extract words a plain dict's first-level miss like real Ansible" do
+  it "extract words a plain dict's first-level miss like Ansible" do
     # Live-verified: `{{ 'zzz' | extract(mapping) }}` -> "object of type
     # 'dict' has no attribute 'zzz'". The old hand-rolled copy said
     # "extract: key 'zzz' not found" while the Crinja copy already used
@@ -1095,7 +1095,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   it "extract words non-dict nodes with their Python type names" do
     # Live-verified shapes: string container -> 'str', defined-null
     # container -> 'NoneType'; the old hand-rolled copy labeled every
-    # non-dict node 'dict'. Int keys are unquoted (real's getattr
+    # non-dict node 'dict'. Int keys are unquoted (Ansible's getattr
     # message convention), string keys quoted.
     v = Hash(String, JSON::Any).new
     v["scalar_str"] = JSON.parse(%("hello"))
@@ -1124,7 +1124,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
-  it "extract treats a null morekeys as absent, like real Ansible's None" do
+  it "extract treats a null morekeys as absent, like Ansible's None" do
     # Live-verified: `{{ 'x' | extract(mapping, none) }}` -> mapping[x];
     # the old copies treated the null as a key and raised on the miss.
     v = Hash(String, JSON::Any).new
@@ -1140,15 +1140,15 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "from_yaml_all handles an empty string and a leading document marker" do
-    # Both live-verified against real ansible-core 2.19.11.
+    # Both live-verified against ansible-core 2.19.11.
     engine.apply(s(""), "from_yaml_all").as_a.must_equal([] of JSON::Any)
     result = engine.apply(s("---\na: 1"), "from_yaml_all").as_a
     result.size.must_equal(1)
     result[0].as_h["a"].as_i.must_equal(1)
   end
 
-  it "random with a seed is bit-exact with real ansible (PyRandom), unseeded stays nondeterministic" do
-    # Real ansible-core 2.19.11 renders both of these to the same values
+  it "random with a seed is bit-exact with Ansible (PyRandom), unseeded stays nondeterministic" do
+    # ansible-core 2.19.11 renders both of these to the same values
     # (65534|random(seed='host1') -> 31863; list form -> "b") - the
     # PyRandom port makes krikri agree byte-for-byte.
     engine.apply(JSON::Any.new(65534_i64), "random(seed='host1')").as_i.must_equal(31863)
@@ -1158,7 +1158,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     expect(picked < 100).must_equal(true)
   end
 
-  it "vault/unvault round-trip through real ansible-vault ciphertext" do
+  it "vault/unvault round-trip through Ansible-vault ciphertext" do
     encrypted = engine.apply(s("plaintext"), %(vault('secret123'))).as_s
     expect(str_starts_with?(encrypted, "$ANSIBLE_VAULT;")).must_equal(true)
     engine.apply(JSON::Any.new(encrypted), %(unvault('secret123'))).as_s.must_equal("plaintext")
@@ -1178,20 +1178,20 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(result, "first").as_s.must_equal("3.1.6")
   end
 
-  it "regex_search parses a group_ref like real Ansible: only the first \\d+ run counts, so '\\1\\2' resolves group 1" do
+  it "regex_search parses a group_ref like Ansible: only the first \\d+ run counts, so '\\1\\2' resolves group 1" do
     # Phase-3 slice 3 arbitration (live-verified against ansible-core
-    # 2.19.11): real Ansible's regex_search parses each group_ref arg
+    # 2.19.11): Ansible's regex_search parses each group_ref arg
     # with `re.match(r'\\(\\d+)', arg)` - anchored at the START - so a
     # single '\\1\\2' argument resolves group 1, NOT a backref
     # substitution of both groups (the old hand-rolled copy returned
-    # ["ab"] here while the Crinja copy returned null; real Ansible
+    # ["ab"] here while the Crinja copy returned null; Ansible
     # returns ["a"]).
     result = engine.apply(s("ab"), %(regex_search('(a)(b)', '\\1\\2')))
     result.as_a.map(&.as_s).must_equal(["a"])
   end
 
   it "regex_search returns [null] for a group_ref to a group that did not participate" do
-    # Real Ansible: match.group(2) is Python None for a non-participating
+    # Ansible: match.group(2) is Python None for a non-participating
     # group, so the wrapped list is [None] - the old hand-rolled copy
     # returned [""] and the old Crinja copy returned plain null (no list).
     result = engine.apply(s("a"), %(regex_search('(a)|(b)', '\\2')))
@@ -1200,14 +1200,14 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "regex_search resolves \\g<name> named group references" do
-    # Real Ansible supports named group refs; both old copies mangled
+    # Ansible supports named group refs; both old copies mangled
     # them (the hand-rolled one returned the literal "\g<foo>" text).
     result = engine.apply(s("a"), %(regex_search('(?<foo>a)', '\\g<foo>')))
     result.as_a.map(&.as_s).must_equal(["a"])
   end
 
   it "regex_search raises on a group_ref the pattern has no such group for" do
-    # Real Ansible: match.group(5) raises IndexError, surfacing as "no
+    # Ansible: match.group(5) raises IndexError, surfacing as "no
     # such group" - the old copies silently returned [""] (hand-rolled)
     # or null (Crinja).
     assert_raises_message(Exception, "no such group") do
@@ -1219,7 +1219,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "regex_search raises 'Unknown argument' for a non-backreference group_ref" do
-    # Real Ansible raises AnsibleFilterError('Unknown argument') for any
+    # Ansible raises AnsibleFilterError('Unknown argument') for any
     # group_ref arg not of \\1 / \\g<name> form; the old hand-rolled copy
     # silently returned the literal text as a one-element list.
     assert_raises_message(Exception, "Unknown argument") do
@@ -1227,8 +1227,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
-  it "regex_search honors the ignorecase/multiline kwargs real Ansible accepts" do
-    # Real Ansible (2.19.11): regex_search takes ignorecase=/multiline=
+  it "regex_search honors the ignorecase/multiline kwargs Ansible accepts" do
+    # Ansible (2.19.11): regex_search takes ignorecase=/multiline=
     # kwargs; neither old copy supported them (the kwarg text leaked
     # into the group_ref slot on the hand-rolled side).
     engine.apply(s("HELLO"), %(regex_search('hello', ignorecase=True))).as_s.must_equal("HELLO")
@@ -1237,7 +1237,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "regex_findall honors named multiline/ignorecase kwargs, not just positional" do
-    # Real Ansible's regex_findall(value, regex, multiline, ignorecase)
+    # Ansible's regex_findall(value, regex, multiline, ignorecase)
     # accepts named kwargs too. The old hand-rolled copy only read
     # positional args, so `regex_findall('[a-z][0-9]', ignorecase=True)`
     # misparsed "ignorecase=True" as the multiline slot and returned [].
@@ -1248,7 +1248,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
   end
 
   it "regex_* multiline=True maps to Python re.M only: ^/$ move, `.` must NOT cross newlines" do
-    # Real Ansible's regex filters build flags = re.I | re.M; Python's
+    # Ansible's regex filters build flags = re.I | re.M; Python's
     # re.M only moves ^/$ to line boundaries, it is NOT re.DOTALL.
     # Crystal's Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL
     # (Ruby semantics), so a `Version:\ .*:` pattern swallowed everything
@@ -1268,8 +1268,8 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s(text), %(regex_findall('^compat', multiline=True))).as_a.must_be_empty
   end
 
-  it "regex_replace honors the ignorecase/multiline kwargs real Ansible accepts" do
-    # Real Ansible's regex_replace(value, pattern, replacement,
+  it "regex_replace honors the ignorecase/multiline kwargs Ansible accepts" do
+    # Ansible's regex_replace(value, pattern, replacement,
     # ignorecase, multiline) - the flags were previously dropped entirely.
     result = engine.apply(s("a1\nb2"), %(regex_replace('^b(\\d)', 'X\\1', multiline=True)))
     result.as_s.must_equal("a1\nX2")

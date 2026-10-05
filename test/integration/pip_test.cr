@@ -9,14 +9,14 @@ require "file_utils"
 # haproxy-certbot-benchmark-round.md's documented rationale for why
 # cron.cr's user-crontab path has no spec either).
 describe "pip plugin" do
-  it "fails with real Ansible's required_one_of message when neither name nor requirements is given" do
+  it "fails with Ansible's required_one_of message when neither name nor requirements is given" do
     result = PluginSpecHelper.run("pip", {} of String => String)
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("one of the following is required: name, requirements")
   end
 
-  it "fails with real Ansible's mutually_exclusive message when both name and requirements are given" do
+  it "fails with Ansible's mutually_exclusive message when both name and requirements are given" do
     result = PluginSpecHelper.run("pip", {
       "name"         => "six",
       "requirements" => "/tmp/requirements.txt",
@@ -26,8 +26,8 @@ describe "pip plugin" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: name|requirements")
   end
 
-  it "fails with real Ansible's mutually_exclusive message when both executable and virtualenv are given" do
-    # Validation runs before anything else (real Ansible checks it in
+  it "fails with Ansible's mutually_exclusive message when both executable and virtualenv are given" do
+    # Validation runs before anything else (Ansible checks it in
     # AnsibleModule.__init__), so no venv is created and no pip is
     # discovered - safe to point virtualenv: anywhere.
     result = PluginSpecHelper.run("pip", {
@@ -44,7 +44,7 @@ describe "pip plugin" do
   it "no-ops cleanly when name: is present but resolves to an empty list" do
     # Round 131 (robertdebock.vagrant): name: "{{ vagrant_pip_packages }}"
     # resolving to an empty list rendered as the literal text "[]" -
-    # real Ansible's pip.py treats `if name:` as Python truthiness, so
+    # Ansible's pip.py treats `if name:` as Python truthiness, so
     # an empty list is not an error, it falls through to the same
     # "nothing to do" branch as name: omitted, exiting changed: false.
     result = PluginSpecHelper.run("pip", {"name" => "[]"})
@@ -55,7 +55,7 @@ describe "pip plugin" do
 
   it "unwraps a single-element name: list to the bare package name" do
     # state: absent on a not-installed package runs a real `pip
-    # uninstall` unconditionally (matching real Ansible), so the fake
+    # uninstall` unconditionally (matching Ansible), so the fake
     # pip shim keeps this hermetic - no real pip, no network.
     with_absent_pip_shim do |fake_pip|
       result = PluginSpecHelper.run("pip", {
@@ -80,7 +80,7 @@ describe "pip plugin" do
     # internal comma into a bogus "package" ("['psycopg2'"), and pip
     # errored "Invalid requirement" instead of ever seeing two real
     # package names. state: absent on two not-installed packages now
-    # runs the uninstall unconditionally (real Ansible semantics), so
+    # runs the uninstall unconditionally (Ansible semantics), so
     # the fake pip shim keeps this hermetic.
     with_absent_pip_shim do |fake_pip|
       result = PluginSpecHelper.run("pip", {
@@ -145,7 +145,7 @@ describe "pip plugin" do
     # packages. Naive comma-splitting produced a bogus second "package"
     # starting with `<`, which real pip rejects outright ("Invalid
     # requirement: '<3.5': Expected package name at the start of
-    # dependency specifier") - real Ansible's pip.py re-merges such
+    # dependency specifier") - Ansible's pip.py re-merges such
     # pieces onto the preceding requirement before invoking pip.
     # pieces onto the preceding requirement before invoking pip.
     # state: absent now runs the uninstall unconditionally (real
@@ -172,7 +172,7 @@ describe "pip plugin" do
     # rejected outright: "Expected matching RIGHT_BRACKET"), and real
     # Ansible's pip.py reassembles bracket-interior comma pieces
     # verbatim (`_recover_package_name`'s in-brackets state) - verified
-    # against real ansible-playbook -vvv: the whole bracketed string
+    # against ansible-playbook -vvv: the whole bracketed string
     # reaches pip as one argv word. Naive comma-splitting sent pip
     # three pieces and pip failed with its own "Invalid requirement:
     # 'horovod[keras'" before ever attempting the install. The shim
@@ -221,7 +221,7 @@ describe "pip plugin" do
   end
 
   it "splits a mixed bracketed-extras + pinned-spec string into two pip words, extras intact" do
-    # Mixed shape verified against real ansible-playbook -vvv before
+    # Mixed shape verified against ansible-playbook -vvv before
     # this fix: `name: "pkgA[extra1,extra2],pkgB==1.0"` reaches real
     # pip as exactly two argv words - `pkgA[extra1,extra2]` (extras
     # commas kept, matching pip.py's _recover_package_name) and
@@ -245,13 +245,13 @@ describe "pip plugin" do
     end
   end
 
-  # The plugin's default virtualenv_command is real Ansible's own
+  # The plugin's default virtualenv_command is Ansible's own
   # argument_spec default ("virtualenv", the classic tool - often NOT
-  # installed on minimal hosts, which is real Ansible's behavior too:
+  # installed on minimal hosts, which is Ansible's behavior too:
   # it would fail with "Failed to find required executable ... in
   # paths:"). These specs pass the space-separated `python3 -m venv`
   # form explicitly, which is itself one of the two virtualenv_command
-  # shapes real Ansible documents - and runs a REAL `python3 -m venv`
+  # shapes Ansible documents - and runs a REAL `python3 -m venv`
   # (no network, ensurepip is self-contained) under Dir.tempdir,
   # cleaned up after.
   describe "virtualenv:" do
@@ -272,7 +272,7 @@ describe "pip plugin" do
       end
     end
 
-    it "fails with real Ansible's message when virtualenv_python is used with a venv-style virtualenv_command" do
+    it "fails with Ansible's message when virtualenv_python is used with a venv-style virtualenv_command" do
       # _is_venv_command's own rule: -p is a virtualenv option, not a
       # venv one, so pairing virtualenv_python: with `... -m venv` is a
       # hard validation error - checked before any creation attempt.
@@ -330,7 +330,7 @@ describe "pip plugin" do
   describe "umask:" do
     # Real bug found via a proactive scope-cut audit: umask: was
     # entirely unimplemented. Verified against real
-    # the real module's observed behavior, including its exact "umask
+    # the Ansible module's observed behavior, including its exact "umask
     # must be an octal integer" validation message - matched verbatim.
     # Live-verified separately (not in this spec, to avoid real pip
     # mutation/network access, matching this file's own established
@@ -338,7 +338,7 @@ describe "pip plugin" do
     # umask: "0022" succeeds, and the same invalid value below fails
     # with this exact message before ever reaching resolve_pip_binary's
     # own venv-creation step.
-    it "fails with real Ansible's exact message for a non-octal umask:" do
+    it "fails with Ansible's exact message for a non-octal umask:" do
       result = PluginSpecHelper.run("pip", {"name" => "six", "umask" => "not_an_octal"})
 
       result["failed"].as_bool.must_equal(true)
@@ -360,14 +360,14 @@ describe "pip plugin" do
     # Real bug found benchmarking aloysius-lim.elasticsearch_api (round
     # 91020, Atlantic Rocky 9.6): the host ships only /usr/bin/python3.9 -
     # no unversioned `python3` command at all (common on minimal
-    # RHEL-family images) and no `pip3` script - yet real Ansible's pip
+    # RHEL-family images) and no `pip3` script - yet Ansible's pip
     # module installs cleanly there, because it runs pip as
     # `[sys.executable, '-m', 'pip']` with sys.executable being its
     # DISCOVERED interpreter (/usr/bin/python3.9), never a literal
     # `python3`. Krikri's discovery probed the literal name `python3`,
     # got 127, fell through to the pip3 PATH check, also 127, and failed
-    # the task with real Ansible's own "Unable to find any of pip3 to
-    # use." message on a host where real Ansible succeeded.
+    # the task with Ansible's own "Unable to find any of pip3 to
+    # use." message on a host where Ansible succeeded.
     #
     # Simulated with a shim dir REPLACING the whole PATH (apt_key_spec.cr's
     # established shim pattern, scoped to the plugin child via the
@@ -376,7 +376,7 @@ describe "pip plugin" do
     # shell-outs under --parallel): python3.9 present (a wrapper that execs
     # the real interpreter for discovery but answers the uninstall
     # invocation itself), python3 and pip3 absent. state: absent now
-    # runs `pip uninstall` unconditionally (real Ansible semantics), so
+    # runs `pip uninstall` unconditionally (Ansible semantics), so
     # the wrapper keeps that hermetic instead of invoking the spec
     # machine's real pip.
     it "falls back to a versioned interpreter (python3.9) when the host has no python3 or pip3 binary" do
@@ -420,7 +420,7 @@ describe "pip plugin" do
   # network): the shim records its argv to a marker file, fabricates a
   # minimal <venv>/bin/pip stub (exit 0, so the post-creation
   # already-installed check passes without touching any real pip), and
-  # mirrors the two --help shapes real Ansible's _get_cmd_options
+  # mirrors the two --help shapes Ansible's _get_cmd_options
   # distinguishes (a virtualenv-tool-like help listing --no-site-packages
   # vs. a venv-like one that doesn't). The PATH-replacement shim pattern
   # is pip_spec's own interpreter-discovery spec / apt_key_spec.cr's.
@@ -494,7 +494,7 @@ describe "pip plugin" do
     end
   end
 
-  # break_system_packages: real Ansible's pip.py sets
+  # break_system_packages: Ansible's pip.py sets
   # PIP_BREAK_SYSTEM_PACKAGES=1 in the module's own environment (an env
   # var, not the --break-system-packages flag, so pip < 23.0 works).
   # Verified with a fake pip shim on an absolute executable: path that
@@ -643,7 +643,7 @@ describe "pip plugin" do
     File.exists?(venv).must_equal(false)
   end
 
-  it "treats an empty version: at state: latest as present, like real's None check" do
+  it "treats an empty version: at state: latest as present, like Ansible's None check" do
     result = PluginSpecHelper.run("pip", {"name" => "somepkg", "state" => "latest", "version" => ""})
 
     result["failed"].as_bool.must_equal(true)
@@ -729,7 +729,7 @@ end
 
 # A fake pip whose `uninstall` branch succeeds with pip's own "not
 # installed" line (state=absent now runs that invocation
-# unconditionally, matching real Ansible) and whose other subcommands
+# unconditionally, matching Ansible) and whose other subcommands
 # fail - so an absent-on-never-installed spec needs no real pip, no
 # network, and mutates nothing. Yields the absolute path (trusted
 # as-is by the plugin's executable: resolution).

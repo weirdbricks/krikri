@@ -53,7 +53,7 @@ describe AuthorizedKeysFile do
       changed.must_equal(false)
     end
 
-    it "rewrites the line when only the comment differs (real Ansible compares the comment too)" do
+    it "rewrites the line when only the comment differs (Ansible compares the comment too)" do
       existing = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC someone-else@elsewhere\n"
       text, changed = AuthorizedKeysFile.ensure(existing, RSA_KEY, true)
 
@@ -61,7 +61,7 @@ describe AuthorizedKeysFile do
       text.must_equal("#{RSA_KEY}\n")
     end
 
-    it "treats a reordered key_options list as the same key (real Ansible compares the parsed option dict)" do
+    it "treats a reordered key_options list as the same key (Ansible compares the parsed option dict)" do
       existing = "no-agent-forwarding,command=\"/bin/true\" #{RSA_KEY}\n"
       text, changed = AuthorizedKeysFile.ensure(existing, "command=\"/bin/true\",no-agent-forwarding #{RSA_KEY}", true)
 

@@ -29,12 +29,12 @@ describe "a task whose argument resolution raises (lookup('url', ...) hitting a 
   it "fails that one task cleanly, with a normal recap and exit code, instead of crashing the whole process" do
     # Real bug found benchmarking buluma.victoriametrics (round 157):
     # once lookup('url', ...) was fixed to raise on an HTTP error
-    # (matching real Ansible - see url_lookup_spec.cr's own "raises on
+    # (matching Ansible - see url_lookup_spec.cr's own "raises on
     # a 404" spec), nothing in the call chain from execute_task_once up
     # through krikri-playbook.cr's own top-level `run` caught that
     # exception at all - it crashed the ENTIRE process with an
     # unhandled-exception Crystal stack trace instead of failing just
-    # the one task, unlike real Ansible (which fails the enclosing
+    # the one task, unlike Ansible (which fails the enclosing
     # set_fact: task cleanly and continues per normal when:/rescue:
     # semantics, or ends the play with the standard exit code 2).
     playbook = File.tempname("lookup-url-failure", ".yml")

@@ -4,7 +4,7 @@ require "../minitest_helper"
 # real community.general.maven_artifact: main()'s HAS_LXML_ETREE /
 # HAS_SEMANTIC_VERSION fail_json(missing_required_lib(...)) checks run
 # right after the argument_spec validation and before anything else
-# (live-diffed vs real ansible-playbook 2.19.11 in the no-network
+# (live-diffed vs ansible-playbook 2.19.11 in the no-network
 # container: the lxml failure beats version_by_spec spec parsing, the
 # repository URL handling and every download attempt). The message is
 # missing_required_lib's boilerplate: hostname's Python <sys.executable>.

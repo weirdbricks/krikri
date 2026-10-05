@@ -22,7 +22,7 @@ describe "copy plugin - directory src" do
   end
 
   it "copies src as a subdirectory of dest when src: has no trailing /" do
-    # Real Ansible's own rsync-style convention: no trailing slash means
+    # Ansible's own rsync-style convention: no trailing slash means
     # src itself becomes a new directory under dest, not just its
     # contents.
     src = File.tempname("copy-dir-spec-src2")

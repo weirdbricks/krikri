@@ -49,7 +49,7 @@ module Krikri
     # module setup by BasePlugin#validate_bool_params! - see its block
     # comment for the real-Ansible semantics and message wording.
     #
-    # remote_src is deliberately ABSENT: real's action plugin reads it
+    # remote_src is deliberately ABSENT: Ansible's action plugin reads it
     # through boolean(remote_src, strict=False) FIRST and only dispatches
     # the assemble module when that answers True - i.e. only for
     # BOOLEANS_TRUE spellings/natives, where the module's own strict
@@ -108,7 +108,7 @@ module Krikri
 
         unless check_mode
           result = write_assembled(dest, content, existing)
-          # Real's module crashes INSIDE atomic_move for a dest whose
+          # Ansible's module crashes INSIDE atomic_move for a dest whose
           # parent directory doesn't exist (or a bare relative name) -
           # the failure surfaces after the dest file itself was already
           # renamed into place, and no attributes are ever applied.
@@ -137,11 +137,11 @@ module Krikri
         md5sum: Digest::MD5.hexdigest(content),
         key_order: SUCCESS_KEY_ORDER
       )
-      # Real's result echoes the src: param and carries backup_file only
+      # Ansible's result echoes the src: param and carries backup_file only
       # when a backup was actually taken (live-verified vs 2.19.11 at -v).
       result.extra["src"] = JSON::Any.new(src)
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
-      # Real's add_path_info runs at module-exit regardless of check
+      # Ansible's add_path_info runs at module-exit regardless of check
       # mode - an existing dest's stat fields ride the check-mode
       # result too (live-verified vs 2.19.11 at -v); a not-yet-existing
       # dest gets no fields, which add_path_info handles itself.
@@ -149,7 +149,7 @@ module Krikri
       result
     end
 
-    # Real ansible.builtin.assemble's registered-result key order
+    # Ansible.builtin.assemble's registered-result key order
     # (live-verified vs 2.19.11 via `{{ r | to_json }}` on registered
     # assemble: tasks): src, dest, checksum, md5sum, then backup_file
     # only when a backup was taken, then changed, msg, the stat block
@@ -160,7 +160,7 @@ module Krikri
     # md5sum, changed, msg, failed.
     private SUCCESS_KEY_ORDER = %w[src dest checksum md5sum backup_file changed msg uid gid owner group mode state size failed]
 
-    # Whether real's action plugin takes its controller-side branch for
+    # Whether Ansible's action plugin takes its controller-side branch for
     # this task's remote_src: PRESENT and boolean(remote_src, strict=False)
     # not True. The plugin-side view of Krikri.lenient_boolean_true? - the
     # demoted @params text has already lost the parser's non-string marker,
@@ -253,8 +253,8 @@ module Krikri
 
     # Write the assembled content to dest, backing up the previous file
     # when requested; returns the backup file path ("" when none), or a
-    # failed PluginResult when real's atomic_move would crash the module
-    # (module_crash_result). Real's atomic_move:
+    # failed PluginResult when Ansible's atomic_move would crash the module
+    # (module_crash_result). Ansible's atomic_move:
     # os.rename(temp, dest) first, then - only when dest did not exist
     # ("creating") - os.stat(os.path.dirname(dest)). A dest whose parent
     # directory is missing fails the rename with ENOENT ("Could not
@@ -277,7 +277,7 @@ module Krikri
         # The rename fails ENOENT (not one of atomic_move's workaround
         # errnos) and the module dies with the chained errno text. The
         # temp source path is module-tmpdir-specific and differs between
-        # two real runs by construction, so byte parity is impossible
+        # two Ansible runs by construction, so byte parity is impossible
         # here - krikri mirrors the message shape with its own temp name.
         tmp_src = File.join(Dir.tempdir, "tmp#{Random::Secure.hex(5)}")
         return module_crash_result(
@@ -290,7 +290,7 @@ module Krikri
         # succeeds (creating the file in the cwd), then the creating-
         # branch os.stat(os.path.dirname(b_dest)) stats b'' and fails.
         # SECURITY: created EMPTY at 0600 and settled to its final mode
-        # (0666 & ~umask - real's atomic_move opens the source at
+        # (0666 & ~umask - Ansible's atomic_move opens the source at
         # Python's default 0666 and the umask trims it; live-verified
         # vs 2.19.11: umask 002 -> mode "0664" on the assembled dest -
         # narrowed by the task's numeric mode:) before

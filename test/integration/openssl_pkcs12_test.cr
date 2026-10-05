@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.crypto.openssl_pkcs12 (action: export), differentialed
-# against the real module (community.crypto 3.1.1 / ansible-core
+# against the Ansible module (community.crypto 3.1.1 / ansible-core
 # 2.19.4) - including its unusually tight 0400 default mode and the
 # fact that an unchanged export must not rewrite the (salted, never
 # byte-identical) archive.
@@ -113,7 +113,7 @@ describe "openssl_pkcs12 plugin" do
   end
 
   it "action: parse converts the archive to a PEM bundle (key first, then certs)" do
-    # The real module's parse is a converter: reads `src:`, writes the
+    # The Ansible module's parse is a converter: reads `src:`, writes the
     # private key followed by the certificates as PEM to `path:`.
     src = path_for("parse.p12")
     dest = path_for("parsed.pem")
@@ -154,7 +154,7 @@ describe "openssl_pkcs12 plugin" do
     seed_pkcs12_inputs
     # Regenerate the certificate (force: true) - the friendly name is
     # deliberately NOT used here, since it never reaches the PEM dump
-    # and the real module's idempotency comparison doesn't see it either.
+    # and the Ansible module's idempotency comparison doesn't see it either.
     PluginSpecHelper.run("x509_certificate",
       {"path" => path_for("a.crt"), "privatekey_path" => path_for("a.key"),
        "csr_path" => path_for("a.csr"), "provider" => "selfsigned", "force" => "true"})

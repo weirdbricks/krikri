@@ -5,7 +5,7 @@ require "../minitest_helper"
 # password, token or key out of the log. It was unparsed and unused, so
 # every such task printed its secret in full.
 #
-# Real ansible-playbook (2.19.4) shows the task banner and the status
+# ansible-playbook (2.19.4) shows the task banner and the status
 # line and NOTHING else for such a task, and leaks nothing even under
 # -v. These specs assert on the secret never appearing, which is the
 # property that actually matters.
@@ -42,7 +42,7 @@ describe "no_log:" do
 
     output.wont_include("SUPERSECRET123")
     output.wont_include("TOPSECRET456")
-    # The task still reports its status, as real Ansible does.
+    # The task still reports its status, as Ansible does.
     output.must_include("secret task")
     output.must_include("changed: [localhost]")
   end

@@ -12,10 +12,10 @@ module Krikri
   # nsupdate plugin - a native reimplementation of community.general.nsupdate:
   # create/update/remove DNS records via RFC2136 dynamic update,
   # speaking the DNS wire format directly (the pieces of dnspython the
-  # real module drives - see NsupdateMessage; the real module shells
+  # real module drives - see NsupdateMessage; the Ansible module shells
   # out to dnspython, this one doesn't).
   #
-  # Follows the real module's RecordManager control flow:
+  # Follows the Ansible module's RecordManager control flow:
   #   - record_exists() probes with a "prerequisite: RRSET exists"
   #     update, then "RRSET exists with this rdata" per value, then
   #     compares TTLs via a standard query (rc 0 + same values + same
@@ -33,7 +33,7 @@ module Krikri
   #     module's algorithm normalization (hmac-md5 ->
   #     HMAC-MD5.SIG-ALG.REG.INT)
   #   - check mode exits changed=true before any mutation
-  #   - the real module's TXT quoting (txt_helper) and its
+  #   - the Ansible module's TXT quoting (txt_helper) and its
   #     "value needed when state=present" / "Invalid/malformed value"
   #     failures
   #
@@ -41,10 +41,10 @@ module Krikri
   # authentication (needs a Kerberos ticket environment; fails with an
   # explicit message), version_by_spec-style response TSIG
   # verification (responses are trusted by message ID alone, a spoofed
-  # response could make a change look unnecessary - the real module
+  # response could make a change look unnecessary - the Ansible module
   # verifies the MAC), and the s3-style breadth of dnspython's rdata
   # grammars (A/AAAA/NS/CNAME/PTR/TXT/MX/SRV are wired; other types
-  # fail with the real module's "Invalid/malformed value" shape).
+  # fail with the Ansible module's "Invalid/malformed value" shape).
   class NsupdatePlugin < BasePlugin
     @tsig : PluginHelpers::NsupdateMessage::Tsig?
     @dns_rc = 0
@@ -113,7 +113,7 @@ module Krikri
 
       fqdn = record.ends_with?(".") ? record : "#{record}.#{zone}"
 
-      # the real module only parses the record type inside record_exists
+      # the Ansible module only parses the record type inside record_exists
       # (dnspython raises UnknownRdatatype at message-build time, after the
       # TSIG/zone setup, before any network traffic)
       unless PluginHelpers::NsupdateMessage::TYPES.has_key?(record_type.upcase)
@@ -146,7 +146,7 @@ module Krikri
 
     private def build_tsig(key_algorithm : String) : (PluginHelpers::NsupdateMessage::Tsig | PluginResult | Nil)
       if key_algorithm == "gss-tsig"
-        # the real module checks the key_name incompatibility before
+        # the Ansible module checks the key_name incompatibility before
         # importing gssapi, so this fires even without the library
         return PluginResult.new(changed: false, failed: true,
           msg: "key_name cannot be used with GSS-TSIG") if @params["key_name"]?
@@ -254,7 +254,7 @@ module Krikri
     # Python's binascii.a2b_base64 (what base64.b64decode and dnspython's
     # TSIG key setup end up in) validates the DATA-CHARACTER count after
     # discarding everything outside the base64 alphabet - its two error
-    # wordings are what real's "TSIG key error: ..." wraps.
+    # wordings are what Ansible's "TSIG key error: ..." wraps.
     private def python_base64_error(secret : String) : String?
       data_chars = secret.chars.count do |char|
         char.alphanumeric? || char == '+' || char == '/'
@@ -299,7 +299,7 @@ module Krikri
     end
 
     # ------------------------------------------------------------------
-    # Zone lookup (the real module's lookup_zone)
+    # Zone lookup (the Ansible module's lookup_zone)
     # ------------------------------------------------------------------
 
     private def lookup_zone(server : String, port : Int32, protocol : String, record : String) : (String | PluginResult)
@@ -342,7 +342,7 @@ module Krikri
     end
 
     # ------------------------------------------------------------------
-    # Record operations (the real module's methods, same rc bookkeeping)
+    # Record operations (the Ansible module's methods, same rc bookkeeping)
     # ------------------------------------------------------------------
 
     private def send_update(server : String, port : Int32, protocol : String, zone : String,
@@ -360,14 +360,14 @@ module Krikri
       failure = send_update(server, port, protocol, zone,
         [PluginHelpers::NsupdateMessage.prerequisite_present(record, type_code)], [] of PluginHelpers::NsupdateMessage::RR)
       # a transport-level error (unreachable/refusing server) fails the
-      # task, the way the real module's __do_update exceptions do - only
+      # task, the way the Ansible module's __do_update exceptions do - only
       # a DNS-level rc != 0 means "record missing"
       return failure if failure
       return 0 if @dns_rc != 0
 
       return 1 if @params["state"]? == "absent"
 
-      # the real module's value checks live at this same spot - after the
+      # the Ansible module's value checks live at this same spot - after the
       # first probe round trip - so with an unreachable server a missing or
       # malformed value fails with the connection error first
       unless values
@@ -501,7 +501,7 @@ module Krikri
       if type == "NS"
         # Bind9 silently refuses to delete all the NS entries for a
         # zone, so inserts happen first and stale entries are deleted
-        # afterwards (see the real module's modify_record).
+        # afterwards (see the Ansible module's modify_record).
         id = new_id
         message = PluginHelpers::NsupdateMessage.build_query(id, record, type_code, @tsig)
         if do_query(server, port, protocol, message)

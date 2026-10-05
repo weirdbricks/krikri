@@ -5,14 +5,14 @@ require "../minitest_helper"
 # literal crash/type-check behavior lives in executor-side hooks and the
 # plugin wire (parser marker -> BasePlugin demotion), which no unit spec
 # can reach without a live TaskExecutor run. Every expectation below was
-# probed against real ansible-playbook 2.19.11 (privileged container,
+# probed against ansible-playbook 2.19.11 (privileged container,
 # dest/src x int/bool/float matrix for copy/fetch/template) - see
 # NON_STRING_PARAM_PREFIX's comment in param_sentinels.cr.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-# The runner chdirs into a per-test scratch dir: real's bool/int dest
+# The runner chdirs into a per-test scratch dir: Ansible's bool/int dest
 # literals resolve as paths relative to the CWD, and the whole point of
 # the crash paths is that NOTHING gets written there.
 private def run_playbook(tasks : String) : {String, String}
@@ -26,7 +26,7 @@ private def run_playbook(tasks : String) : {String, String}
 end
 
 describe "non-string YAML literal module args (copy/fetch/template)" do
-  it "copy crashes on a truthy non-string dest like real's _remote_expand_user" do
+  it "copy crashes on a truthy non-string dest like Ansible's _remote_expand_user" do
     output, scratch = run_playbook(<<-YAML)
           - copy:
               dest: 89
@@ -49,7 +49,7 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     Dir.children(scratch).reject { |file| file == "play.yml" }.must_equal([] of String)
   end
 
-  # Real's copy.py hands the whole task to the copy MODULE the moment
+  # Ansible's copy.py hands the whole task to the copy MODULE the moment
   # remote_src is truthy (the `elif remote_src:` branch), so the
   # controller-side path is never walked: the module's own argspec
   # validation is the first thing to look at the non-string dest, and a
@@ -101,7 +101,7 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     output.to_s.wont_include("\u{E000}")
   end
 
-  it "copy crashes on a non-string src before the dest check, like real's find_needle path" do
+  it "copy crashes on a non-string src before the dest check, like Ansible's find_needle path" do
     output, _scratch = run_playbook(<<-YAML)
           - copy:
               dest: out-int
@@ -128,7 +128,7 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'endswith'"))
   end
 
-  it "copy treats falsy non-string literals as not provided, like real's truthiness checks" do
+  it "copy treats falsy non-string literals as not provided, like Ansible's truthiness checks" do
     output, scratch = run_playbook(<<-YAML)
           - copy:
               dest: false
@@ -155,7 +155,7 @@ describe "non-string YAML literal module args (copy/fetch/template)" do
     File.read(File.join(scratch, "out-falsy-src-content")).must_equal("from-zero-src")
   end
 
-  it "fetch fails a non-string dest/src with real's action-level message" do
+  it "fetch fails a non-string dest/src with Ansible's action-level message" do
     output, _scratch = run_playbook(<<-YAML)
           - fetch:
               dest: 89
@@ -268,7 +268,7 @@ describe "non-string YAML literal module args (script/unarchive/assemble)" do
     output.to_s.wont_include("\u{E000}")
   end
 
-  it "assemble crashes like real's atomic_move on a dest real cannot move onto" do
+  it "assemble crashes like Ansible's atomic_move on a dest real cannot move onto" do
     scratch = PluginSpecHelper.tmp_path("nonstring-assemble-cwd")
     FileUtils.mkdir_p(File.join(scratch, "frags"))
     File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
@@ -278,7 +278,7 @@ describe "non-string YAML literal module args (script/unarchive/assemble)" do
         connection: local
         gather_facts: false
         tasks:
-          # bare relative dest: real's rename creates the file, then the
+          # bare relative dest: Ansible's rename creates the file, then the
           # creating-branch os.stat(b'') crashes the module
           - assemble:
               dest: 75
@@ -306,7 +306,7 @@ describe "non-string YAML literal module args (script/unarchive/assemble)" do
     File.exists?(File.join(scratch, "nodir", "out.txt")).must_equal(false)
   end
 
-  it "assemble with remote_src false validates through copy's spec, like real's delegation" do
+  it "assemble with remote_src false validates through copy's spec, like Ansible's delegation" do
     scratch = PluginSpecHelper.tmp_path("nonstring-assemble-copy-cwd")
     FileUtils.mkdir_p(File.join(scratch, "frags"))
     File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
@@ -384,7 +384,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
   # which abort the WHOLE run with a bare stderr [ERROR] line, rc 1 and
   # no recap. Every expectation below was probed against real
   # ansible-playbook 2.19.11.
-  it "group_by crashes on int/bool/float key like real's group_name.replace" do
+  it "group_by crashes on int/bool/float key like Ansible's group_name.replace" do
     output, _scratch = run_playbook(<<-YAML)
           - group_by:
               key: 19
@@ -406,7 +406,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.must_include(%("msg": "Task failed: '_AnsibleTaggedInt' object has no attribute 'replace'"))
   end
 
-  it "group_by crashes on a non-list parents like real's comprehension iteration" do
+  it "group_by crashes on a non-list parents like Ansible's comprehension iteration" do
     output, _scratch = run_playbook(<<-YAML)
           - group_by:
               key: abc
@@ -422,7 +422,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.must_include(%("msg": "Task failed: 'bool' object is not iterable"))
   end
 
-  it "add_host fails a truthy non-string groups with real's AnsibleActionFail block" do
+  it "add_host fails a truthy non-string groups with Ansible's AnsibleActionFail block" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: h1
@@ -437,7 +437,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.must_include("Origin:")
   end
 
-  it "add_host aborts the run on a non-string name like real's inventory.add_host" do
+  it "add_host aborts the run on a non-string name like Ansible's inventory.add_host" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: 5
@@ -451,7 +451,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
     output.wont_include("PLAY RECAP")
   end
 
-  it "add_host aborts the run on a falsy non-string name like real's empty-host check" do
+  it "add_host aborts the run on a falsy non-string name like Ansible's empty-host check" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: 0
@@ -464,7 +464,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
 end
 
 describe "non-string YAML literal list MEMBERS (group_by/add_host)" do
-  it "group_by crashes on the first non-string parents member like real's replace comprehension" do
+  it "group_by crashes on the first non-string parents member like Ansible's replace comprehension" do
     output, _scratch = run_playbook(<<-YAML)
           - group_by:
               key: g1
@@ -506,7 +506,7 @@ describe "non-string YAML literal list MEMBERS (group_by/add_host)" do
     output.scan(/'_AnsibleTaggedInt' object has no attribute 'replace'/).size.must_equal(4)
   end
 
-  it "add_host crashes on the first non-string groups member like real's strip loop" do
+  it "add_host crashes on the first non-string groups member like Ansible's strip loop" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: h1
@@ -539,7 +539,7 @@ describe "non-string YAML literal list MEMBERS (group_by/add_host)" do
 end
 
 describe "add_host name-chain failure shapes (missing/null/empty name)" do
-  it "fails a missing name with real's action-level AnsibleActionFail" do
+  it "fails a missing name with Ansible's action-level AnsibleActionFail" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               naem: eigrxz
@@ -556,7 +556,7 @@ describe "add_host name-chain failure shapes (missing/null/empty name)" do
     output.must_match(/ignored=1/)
   end
 
-  it "fails a name present as null before the hostname fallback, like real's args.get chain" do
+  it "fails a name present as null before the hostname fallback, like Ansible's args.get chain" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: null
@@ -567,14 +567,14 @@ describe "add_host name-chain failure shapes (missing/null/empty name)" do
             ignore_errors: true
     YAML
 
-    # A PRESENT name key wins real's args.get('name', ...) even when its
+    # A PRESENT name key wins Ansible's args.get('name', ...) even when its
     # value is None - the hostname fallback is never consulted
     # (live-verified vs 2.19.11).
     output.scan(/name, host or hostname needs to be provided/).size.must_equal(4)
     output.must_match(/ignored=2/)
   end
 
-  it "aborts the run on an empty-string name like real's inventory empty-host check" do
+  it "aborts the run on an empty-string name like Ansible's inventory empty-host check" do
     output, _scratch = run_playbook(<<-YAML)
           - add_host:
               name: ""
@@ -593,7 +593,7 @@ describe "add_host name-chain failure shapes (missing/null/empty name)" do
   end
 end
 
-describe "fail msg keeps its native type (real's action puts the raw arg in result['msg'])" do
+describe "fail msg keeps its native type (Ansible's action puts the raw arg in result['msg'])" do
   it "fails with an int/float/bool msg natively, in the fatal dump, the block and the registered var" do
     output, _scratch = run_playbook(<<-YAML)
           - fail:
@@ -626,7 +626,7 @@ describe "fail msg keeps its native type (real's action puts the raw arg in resu
     output.must_include("[ERROR]: Task failed: Action failed: True")
     output.must_include("[ERROR]: Task failed: Action failed: False")
     output.must_include("[ERROR]: Task failed: Action failed: 0")
-    # the registered var carries the native int, exactly like real's debug
+    # the registered var carries the native int, exactly like Ansible's debug
     output.must_include(%("r_int.msg": 50))
   end
 
@@ -671,7 +671,7 @@ describe "fail msg keeps its native type (real's action puts the raw arg in resu
 end
 
 describe "assemble's action-branch remote_src semantics (boolean(strict=False), not a falsy-spelling list)" do
-  it "delegates an invalid/None/non-1 remote_src to copy's spec, like real's action plugin" do
+  it "delegates an invalid/None/non-1 remote_src to copy's spec, like Ansible's action plugin" do
     scratch = PluginSpecHelper.tmp_path("nonstring-assemble-delegate-cwd")
     FileUtils.mkdir_p(File.join(scratch, "frags"))
     File.write(File.join(scratch, "frags", "01-a.txt"), "frag one\n")
@@ -771,7 +771,7 @@ describe "assemble's action-branch remote_src semantics (boolean(strict=False), 
     output.to_s.wont_include("\u{E000}")
   end
 
-  it "fails a missing delegated src with real's _find_needle text, before the isdir check" do
+  it "fails a missing delegated src with Ansible's _find_needle text, before the isdir check" do
     output, _scratch = run_playbook(<<-YAML)
           - assemble:
               dest: /tmp/krikri-nonstring-assemble-missing.cfg
@@ -787,7 +787,7 @@ describe "assemble's action-branch remote_src semantics (boolean(strict=False), 
 end
 
 # debconf's `value:` is its module's only `type: raw` option, so an int
-# literal reaches real's `' '.join([pkg, question, vtype, value])`
+# literal reaches Ansible's `' '.join([pkg, question, vtype, value])`
 # (debconf.py:179) as itself and kills the module - probed against real
 # ansible-playbook 2.19.11, whose console rendering of that uncaught
 # exception is what the two must_include's below pin down. The debconf
@@ -795,7 +795,7 @@ end
 # nothing here touches the real debconf database (and the crash means
 # nothing is ever seeded).
 describe "non-string YAML literal module args (debconf value)" do
-  it "debconf fails with real's uncaught ' '.join TypeError for an int value" do
+  it "debconf fails with Ansible's uncaught ' '.join TypeError for an int value" do
     scratch = PluginSpecHelper.tmp_path("nonstring-debconf-cwd")
     shim = File.join(scratch, "shim")
     log = File.join(scratch, "set-selections.log")

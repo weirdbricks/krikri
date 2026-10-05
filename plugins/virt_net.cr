@@ -6,7 +6,7 @@ require "../src/krikri/plugin_helpers/virsh_net"
 
 module Krikri
   # virt_net plugin (community.libvirt.virt_net) - manages libvirt
-  # networks through the `virsh` CLI, mirroring the real module's
+  # networks through the `virsh` CLI, mirroring the Ansible module's
   # core() control flow exactly (real module source read, not assumed).
   #
   # Params: name (aliases network), state (active/inactive/present/
@@ -23,20 +23,20 @@ module Krikri
   # - `state:` RETURNS before the `command:` and `autostart:` sections
   #   run - `state: active, autostart: yes` (mattgeddes.libvirt_kvm's
   #   own "libvirt networks running state" task, round 410102) never
-  #   touches autostart in real Ansible either. `autostart:` alone (no
+  #   touches autostart in Ansible either. `autostart:` alone (no
   #   state/command) is the spelling that actually toggles it.
   # - `command: define` on an already-defined network is a silent
   #   no-op (only defines when the network is missing), and
   #   `command: modify` defines it too when missing.
-  # - every state branch that changed something registers real's own
+  # - every state branch that changed something registers Ansible's own
   #   `msg`: `res['msg'] = v.start/destroy/undefine(name)`, i.e. the
   #   libvirt error code 0 as a NATIVE int, positioned right after
   #   `changed` (round996005 virt_net_start/virt_net_stop registered
   #   {changed: true, msg: 0, failed: false}).
-  # - modify implements the real module's only supported section: a
+  # - modify implements the Ansible module's only supported section: a
   #   single `<host mac=... name=... ip=.../>` DHCP entry added last
   #   (virsh net-update), idempotent on mac; anything else fails with
-  #   the real module's "updating this is not supported yet" message.
+  #   the Ansible module's "updating this is not supported yet" message.
   #
   # Not implemented: the facts/info `dhcp_leases` entry (needs a
   # live-network handle the CLI does not expose in a stable form).
@@ -54,9 +54,9 @@ module Krikri
       autostart = @params["autostart"]? ? true?(@params["autostart"]?) : nil
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      # Real AnsibleModule construction - choices for state/command and
+      # AnsibleModule construction - choices for state/command and
       # the required_if name for the entry commands all fire here,
-      # before the HAS_VIRT probe below (real fails "value of state
+      # before the HAS_VIRT probe below (Ansible fails "value of state
       # must be one of: ..." on a libvirt-less host for an invalid
       # choice, with the import message reserved for valid arguments).
       if state && !STATE_CHOICES.includes?(state)
@@ -70,7 +70,7 @@ module Krikri
         return fail("command is #{command} but all of the following are missing: name")
       end
 
-      # Real Ansible's HAS_VIRT probe - on a host with no libvirt the
+      # Ansible's HAS_VIRT probe - on a host with no libvirt the
       # real module fails up front with this exact message (its python
       # binding isn't importable), after argument validation.
       # The CLI equivalent is the virsh binary itself being absent.
@@ -85,7 +85,7 @@ module Krikri
         return fail("state change requires a specified name") unless name
 
         changed = false
-        # Real's core() puts the libvirt return value itself into `msg`
+        # Ansible's core() puts the libvirt return value itself into `msg`
         # on every state branch that changed anything:
         # `res['msg'] = v.start(name)` / `v.destroy(name)` /
         # v.undefine(name) - each of those returns what
@@ -93,7 +93,7 @@ module Krikri
         # libvirt error code 0 as a NATIVE int (round996005
         # virt_net_start/virt_net_stop: registered
         # {changed: true, msg: 0, failed: false}). Never set in check
-        # mode: real's conn.create/destroy/undefine exit_json(changed=
+        # mode: Ansible's conn.create/destroy/undefine exit_json(changed=
         # True) from INSIDE the method there, so no msg key exists at
         # all (round994002 virt_net_check).
         libvirt_rc : JSON::Any? = nil
@@ -258,10 +258,10 @@ module Krikri
       end
     end
 
-    # msg_native carries real's NATIVE-typed `msg` (the libvirt error
+    # msg_native carries Ansible's NATIVE-typed `msg` (the libvirt error
     # code integer its state branches pass straight through); nil keeps
     # the string msg (which PluginResult then drops when empty, exactly
-    # like real's absent msg key).
+    # like Ansible's absent msg key).
     private def ok(changed : Bool, command : String? = nil, command_value : JSON::Any? = nil, facts_key : String? = nil, facts_value : JSON::Any? = nil, msg_native : JSON::Any? = nil) : PluginResult
       res = PluginResult.new(changed: changed, failed: false, msg: "", native_msg: msg_native)
       if command && command_value
@@ -272,7 +272,7 @@ module Krikri
       res
     end
 
-    # Real's ENTRY_COMMANDS command results are exit_json(**{command:
+    # Ansible's ENTRY_COMMANDS command results are exit_json(**{command:
     # value}) with NO `changed` key at all - core() only sets
     # res['changed'] on the state branch and the define/modify branches
     # (round 994002 kop_misc2 helper_undefine: registered undefine,
@@ -317,7 +317,7 @@ module Krikri
       end
     end
 
-    # The real module's modify(): finds the DHCP <host> entry with the
+    # The Ansible module's modify(): finds the DHCP <host> entry with the
     # same mac in the network's XML and adds (ADD_LAST) or rewrites it.
     # A same-mac host with matching name AND ip is a no-op.
     private def modify_network(uri : String, name : String, xml : String, check_mode : Bool) : Bool
@@ -377,7 +377,7 @@ module Krikri
     # for everything else). virsh instead wraps the same errors as
     # "error: " lines, with an extra "Failed to ... from <tmpfile>"
     # headline on the define path - strip those wrappers so the
-    # registered msg matches real's (round 995005 virt_net_define/
+    # registered msg matches Ansible's (round 995005 virt_net_define/
     # start/get_xml/fail).
     private def virsh_error_msg(err : String) : String
       lines = err.strip.split("\n").map(&.sub(/^error: /, "")).reject(&.empty?)

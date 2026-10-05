@@ -61,7 +61,7 @@ module Krikri
                         get_package_list
                       end
 
-      # Real's response dict is built as changed/msg/locklist_pre/
+      # Ansible's response dict is built as changed/msg/locklist_pre/
       # specs_toadd/specs_todelete, with locklist_post appended LAST
       # (only then does the module exit) - so the post-locklist belongs
       # after the specs lists, not next to the pre-locklist.

@@ -25,7 +25,7 @@ module Krikri
 
     # Any of these anywhere in the command string means it actually needs
     # shell semantics (pipes, redirection, substitution, globbing, home-dir
-    # expansion, escaping, sequencing) - real Ansible's own local/ssh
+    # expansion, escaping, sequencing) - Ansible's own local/ssh
     # connection plugins make the same call (`_low_level_execute_command`'s
     # `executable` handling). Absent all of these, splitting into argv and
     # exec'ing directly is behaviorally identical to `bash -c` but skips
@@ -61,7 +61,7 @@ module Krikri
     end
 
     # *env* carries the task's `environment:` (BasePlugin#remote_exec), applied
-    # through the child process's own environment the way real Ansible hands
+    # through the child process's own environment the way Ansible hands
     # the dict to subprocess - never through a string prefix in the command
     # itself, which would put the values in the shell's argv where any local
     # user's `ps` can read them. Crystal merges a non-nil env over this
@@ -85,9 +85,9 @@ module Krikri
       # contract is that the string is ALWAYS interpreted by /bin/sh, even
       # when it is metachar-free - a builtin invocation like
       # `command -v modprobe` has no metacharacters but still only exists
-      # as a shell builtin (real Ansible's shell module always runs
+      # as a shell builtin (Ansible's shell module always runs
       # `sh -c <string>`; live-verified 2026-09-15). The command module
-      # keeps the fast path - real Ansible's command module genuinely
+      # keeps the fast path - Ansible's command module genuinely
       # execs argv without a shell.
       #
       # The child gets OUR OWN pipe write ends (an IO::FileDescriptor

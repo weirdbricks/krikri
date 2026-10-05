@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/version"
 
 # `--version` now lists every runtime shard with its pinned version,
-# matching real `ansible --version`'s dependency stack (python/jinja/
+# matching `Ansible --version`'s dependency stack (python/jinja/
 # pyyaml lines). The list is baked in at compile time from shard.lock,
 # so these specs exercise the parsing/formatting logic plus the baked
 # constant itself.

@@ -6,15 +6,15 @@ require "./jinja_renderer"
 module Krikri
   module VariableSubstitutor
     # Raised when an ordering comparison (`<`, `<=`, `>`, `>=`) gets
-    # operands real Jinja2/Python cannot compare - a container against
+    # operands Jinja2/Python cannot compare - a container against
     # anything, nil/None against anything, a non-numeric string against a
-    # number, a boolean against a non-numeric string. Real Jinja2 raises
+    # number, a boolean against a non-numeric string. Jinja2 raises
     # TypeError ("'<=' not supported between instances of 'dict' and
-    # 'float'") and real ansible-playbook fails the task; this evaluator
+    # 'float'") and ansible-playbook fails the task; this evaluator
     # historically stringified both operands and compared the texts,
-    # silently answering where real Ansible fails (found by
+    # silently answering where Ansible fails (found by
     # bin/differential_fuzz against the krikri-jinja engine, which already
-    # raises exactly what real Jinja2 3.1.6 raises).
+    # raises exactly what Jinja2 3.1.6 raises).
     class ComparisonTypeError < Exception
     end
 
@@ -51,9 +51,9 @@ module Krikri
       # so the ordering comparisons below can see real operand classes:
       # the old String-typed operands collapsed a container operand to its
       # JSON text and then silently string-compared it (`dict <= 6.6`
-      # answered "False" where real Jinja2 raises TypeError), and a
+      # answered "False" where Jinja2 raises TypeError), and a
       # missing/None operand collapsed to a string too (`missing_var <
-      # '17'` answered "True" where real Jinja2 raises on the comparison
+      # '17'` answered "True" where Jinja2 raises on the comparison
       # against Undefined/None).
       def evaluate(expr : String) : String
         # Try operators in order (longest first to avoid false matches)
@@ -68,7 +68,7 @@ module Krikri
             left_text = parts[0].strip
             right_text = parts[1].strip
 
-            # Real Jinja2's grammar allows `not` only as a unary prefix
+            # Jinja2's grammar allows `not` only as a unary prefix
             # over a whole comparison (`not a == b`), never as the RIGHT
             # operand of one (`a == not b` is a syntax error). The
             # heuristic operand resolver below treated such an operand as
@@ -157,11 +157,11 @@ module Krikri
       # dotted-path walk, bare-name lookup with re-templating), but
       # PRESERVING the operand's real type instead of collapsing
       # containers to their JSON text and numbers to strings, so
-      # #compare_values can raise exactly where real Jinja2/Python raises
+      # #compare_values can raise exactly where Jinja2/Python raises
       # on incomparable operand classes.
       #
       # A missing dotted path or bare name resolves to JSON null - which
-      # for an ORDERING comparison then raises like real Jinja2 raises on
+      # for an ORDERING comparison then raises like Jinja2 raises on
       # both a None operand and an Undefined one (a defined-null `None <
       # 3` and a missing var are indistinguishable at this layer, and
       # real Python raises TypeError on both).
@@ -333,8 +333,8 @@ module Krikri
 
       # Compare two values for an ORDERING comparison (`<`/`>`/`<=`/`>=`).
       #
-      # Strict on operand class, matching real Jinja2/Python, which raises
-      # TypeError - and real ansible-playbook fails the task - for any
+      # Strict on operand class, matching Jinja2/Python, which raises
+      # TypeError - and ansible-playbook fails the task - for any
       # ordering comparison between incomparable classes (dict vs float,
       # str vs int, None vs anything, list vs anything). The historical
       # behavior here stringified both operands and compared the texts,

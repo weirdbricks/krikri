@@ -71,7 +71,7 @@ describe "include_vars: with with_fileglob: (not with_first_found:/loop:)" do
     # (which sets task.loop_fileglob for every other module). `item`
     # stayed completely unbound, rendering the literal text "undefined"
     # and failing with "include_vars: file not found: undefined"
-    # instead of globbing the vars/ directory the way real Ansible does.
+    # instead of globbing the vars/ directory the way Ansible does.
     src_dir = File.tempname("include-vars-fileglob-role")
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "vars"))
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))

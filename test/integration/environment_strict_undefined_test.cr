@@ -13,7 +13,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 describe "environment: keyword strict-undefined" do
   # ryandaniels.server_update_reboot (round 300094): its apt/yum tasks set
   # `environment: "{{ proxy_env }}"` with proxy_env defined NOWHERE in the
-  # role (it comes from the caller's inventory/vars). Real ansible-playbook
+  # role (it comes from the caller's inventory/vars). ansible-playbook
   # fails each such task with "Error processing keyword 'environment':
   # 'proxy_env' is undefined"; krikri's parser silently dropped the
   # non-hash form and the executor substituted the (never-parsed) values
@@ -92,7 +92,7 @@ describe "environment: keyword strict-undefined" do
   it "treats a non-dict environment value (e.g. an empty list) as no environment, not a task failure" do
     # ryandaniels.connectivity_test (round 601446): a role default like
     # `proxy_env: []`, meant to be overridden by the caller with a real
-    # dict but left as an empty list otherwise. Real Ansible warns
+    # dict but left as an empty list otherwise. Ansible warns
     # "could not parse environment value, skipping" and runs the task
     # with no extra env; krikri used to raise
     # "Error processing keyword 'environment': expected a dict, got []"

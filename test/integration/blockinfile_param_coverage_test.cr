@@ -28,7 +28,7 @@ end
 
 describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate/attributes/SELinux/newline padding)" do
   describe "path aliases" do
-    it "accepts destfile as a path alias (real Ansible's third alias)" do
+    it "accepts destfile as a path alias (Ansible's third alias)" do
       path = param_path("blockinfile-destfile-alias.txt")
       File.write(path, "line1\n")
 
@@ -68,7 +68,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
     # Live-verified against ansible-core 2.19.4: the argument_spec
     # declares the pair mutually exclusive and fails with exactly
     # "parameters are mutually exclusive: insertbefore|insertafter".
-    it "fails with real Ansible's exact message when insertafter and insertbefore are both given" do
+    it "fails with Ansible's exact message when insertafter and insertbefore are both given" do
       path = param_path("blockinfile-mutually-exclusive.txt")
       File.write(path, "line1\n")
 
@@ -88,10 +88,10 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
   end
 
   describe "a directory path" do
-    # Real Ansible: fail_json(rc=256, msg='Path %s is a directory !')
+    # Ansible: fail_json(rc=256, msg='Path %s is a directory !')
     # before any other logic - krikri previously crashed with a
     # File::ReadError from trying to File.read the directory.
-    it "fails with real Ansible's message instead of crashing" do
+    it "fails with Ansible's message instead of crashing" do
       dir = param_path("blockinfile-dir")
       FileUtils.mkdir_p(dir)
 
@@ -105,7 +105,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
   end
 
   describe "state=absent on a missing file" do
-    # Real Ansible: with create=true a missing file exits
+    # Ansible: with create=true a missing file exits
     # "File %s not present" (changed=false) WITHOUT creating it;
     # without create it fails rc=257 like any other missing path.
     it "is a no-op that creates nothing when create: true" do
@@ -172,7 +172,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
       File.delete(path) if path && File.exists?(path)
     end
 
-    it "fails with real Ansible's exact message when validate lacks %s" do
+    it "fails with Ansible's exact message when validate lacks %s" do
       path = param_path("blockinfile-validate-no-percent-s.txt")
       File.write(path, "before\n")
 
@@ -245,11 +245,11 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
 
   describe "seuser:/serole:/setype:/selevel: (SELinux context)" do
     # Same convention as copy_param_coverage_spec.cr's own SELinux
-    # spec: real Ansible skips the whole chcon step when SELinux isn't
+    # spec: Ansible skips the whole chcon step when SELinux isn't
     # enabled on the target (set_context_if_different opens with `if
     # not self.selinux_enabled(): return changed`) - all four parts are
     # silently accepted and the task succeeds as a true no-op.
-    it "does not fail the task when SELinux isn't enabled on the target (a true no-op, matching real Ansible)" do
+    it "does not fail the task when SELinux isn't enabled on the target (a true no-op, matching Ansible)" do
       path = param_path("blockinfile-selinux-noop.txt")
       File.write(path, "before\n")
 
@@ -277,7 +277,7 @@ describe "blockinfile plugin - parameter coverage (destfile/insertafter/validate
     # (ansible/ansible#33745).
     it "reports changed on every run for '-'-prefixed attributes, flag set or not" do
       # Skip on filesystems that reject chattr flag ops entirely
-      # (rootless fuse-overlayfs containers) - real Ansible fails the
+      # (rootless fuse-overlayfs containers) - Ansible fails the
       # task there identically, so this success-path pin can't hold.
       skip "filesystem rejects chattr flag operations" unless PluginSpecHelper.chattr_clear_supported?
       path = param_path("blockinfile-attr-clear.txt")

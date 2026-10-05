@@ -5,7 +5,7 @@ require "../minitest_helper"
 # jdauphant.intellij's `action: "{{ ansible_pkg_mgr }} state=present
 # name={{ item }}"`) previously made the literal directive key the module
 # name, so the task was skipped as an unimplemented plugin while real
-# Ansible resolved and ran the real module. This covers the end-to-end
+# Ansible resolved and ran the Ansible module. This covers the end-to-end
 # path: parse-time rewrite, delegate-to-controller routing, and run-time
 # module-name resolution all funneling into real module dispatch.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

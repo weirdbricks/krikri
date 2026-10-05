@@ -17,13 +17,13 @@ module Krikri
   # then failed with "Source file not found".
   #
   # Supported parameters: chdir (required), target, targets, params,
-  # file, jobs, make. Idempotency ported exactly from the real module:
+  # file, jobs, make. Idempotency ported exactly from the Ansible module:
   # run the built command with an extra trailing `-q` first (make's own
   # "question mode" - exit 0 if the target is already up to date, exit
   # non-zero if a rebuild is needed); only actually re-run (without
   # `-q`) when that check says a rebuild is needed.
   #
-  # Real-module surface (confirmed against real ansible-playbook via the
+  # Real-module surface (confirmed against ansible-playbook via the
   # make_edge_cases podman-diff case):
   # - parameters.py wording for the missing required chdir and the
   #   target/targets mutual exclusion
@@ -43,7 +43,7 @@ module Krikri
       target = @params["target"]?
       targets = @params["targets"]?.try { |value| value.split(',').map(&.strip).reject(&.empty?) }
 
-      # Real AnsibleModule's mutually_exclusive check counts non-empty
+      # AnsibleModule's mutually_exclusive check counts non-empty
       # values, in parameters.py's exact wording.
       exclusive_count = (target && !target.empty? ? 1 : 0) + (targets && !targets.empty? ? 1 : 0)
       if exclusive_count > 1
@@ -100,7 +100,7 @@ module Krikri
       # fail_json(rc=errno, stdout='', stderr='', msg="Error executing
       # command.", cmd=..., exception=ex) - the [ERROR] header composes
       # "<msg>: <exception>" while the dumped result keeps the bare msg
-      # (live-verified against real ansible-playbook 2.19.11:
+      # (live-verified against ansible-playbook 2.19.11:
       # `make: /tmp/kpg-work/out2.txt` with no such file).
       if @params["make"]?.presence && !File.exists?(make_bin)
         return PluginResult.new(changed: false, failed: true, msg: "Error executing command.",
@@ -119,15 +119,15 @@ module Krikri
       query_result = remote_exec("#{chdir_part}#{full_command} -q")
       needs_rebuild = query_result[:exit_code] != 0
 
-      # Real reports NO msg anywhere - just stdout/stderr (sanitized
+      # Ansible reports NO msg anywhere - just stdout/stderr (sanitized
       # rstrip) and the shlex-quoted base command the -q check built.
-      # Real 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
+      # Ansible 2.19.11 registered order (live-verified, `{{ r | to_json }}`):
       # changed, failed, stdout, stderr, target, targets, params, chdir,
       # file, jobs, command - exit_json(changed=..., failed=False, ...)
       # emits failed EXPLICITLY (second), and the module echoes its raw
       # params back (null when absent). stdout_lines/stderr_lines land
       # after command via the register-time lines augmentation, exactly
-      # where real's registered result shows them.
+      # where Ansible's registered result shows them.
       if check_mode
         return PluginResult.new(changed: needs_rebuild, failed: false, stdout: sanitize(query_result[:stdout]), stderr: sanitize(query_result[:stderr]), command: full_command,
           failed_flag: true, target: target, targets: targets, params: params_val, chdir: chdir, file: @params["file"]?, jobs: @params["jobs"]?,

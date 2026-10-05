@@ -22,12 +22,12 @@ module Krikri
       "template"                 => TemplateActionPlugin,
       # These 7 return an ActionResult.final (see base_action_plugin.cr)
       # instead of modified_params - the caller never invokes a module
-      # (local or remote) afterward at all. Real ansible-core's own
+      # (local or remote) afterward at all. ansible-core's own
       # debug/assert/fail/set_fact/pause/add_host have always been
       # action-plugin only (no target-side module) - this closes that
       # architectural gap while also removing an SSH round trip + upload
       # per task for remote hosts. synchronize (ansible.posix) joins them
-      # with the same shape: real Ansible's own synchronize runs rsync
+      # with the same shape: Ansible's own synchronize runs rsync
       # from the controller/delegate, never on the target. See each
       # action_plugins/*_action_plugin.cr for the per-module rationale.
       "ansible.builtin.debug"    => DebugActionPlugin,
@@ -42,7 +42,7 @@ module Krikri
       "pause"                    => PauseActionPlugin,
       "ansible.builtin.add_host" => AddHostActionPlugin,
       "add_host"                 => AddHostActionPlugin,
-      # synchronize: controller-side action plugin (real Ansible's own
+      # synchronize: controller-side action plugin (Ansible's own
       # synchronize runs its rsync subprocess from the controller/delegate
       # with rsync dialing out itself - see SynchronizeActionPlugin's own
       # comment) - ActionResult.final, no module dispatch afterward.
@@ -117,7 +117,7 @@ module Krikri
       # to land in the wire result/fatal dump/registered var (live-verified
       # vs 2.19.11: `fail: {msg: 50}` fails with {"msg": 50}).
       # pause: opts out for the same reason, on a different param: its
-      # minutes/seconds ride real's int CALLABLE, under which a Python
+      # minutes/seconds ride Ansible's int CALLABLE, under which a Python
       # bool IS an int (`seconds: true` waits 1s, `seconds: false`
       # clamps up to the same 1s minimum - both live-verified vs
       # 2.19.11) and a float truncates (int(1.9) == 1). The demoted text

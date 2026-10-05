@@ -5,7 +5,7 @@ require "../../src/krikri/plugin_manager"
 # The rabbitmq_plugin plugin binary has existed since round 196, but both
 # real-world roles that use it (SimpliField.rabbitmq round 300127,
 # rockandska.rabbitmq round 310088) write the bare short name
-# `rabbitmq_plugin:` with the real module's `names:` argument - the bare
+# `rabbitmq_plugin:` with the Ansible module's `names:` argument - the bare
 # name didn't resolve (community.rabbitmq was missing from the collection
 # search list) and the plugin only read a `name` param, so the task
 # hard-stopped as "unavailable module". Cross-checks the resolution and

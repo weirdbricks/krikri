@@ -6,12 +6,12 @@ require "../../src/krikri/plugin_helpers/deb822_repository_content"
 # allow_weak/pdiffs/by_hash/check_date/check_valid_until/languages/
 # targets/date_max_future) were entirely unimplemented, and the fields
 # that WERE implemented were written in a fixed order that didn't match
-# real Ansible's own field ordering at all.
+# Ansible's own field ordering at all.
 describe Krikri::PluginHelpers::Deb822RepositoryContent do
   describe ".render" do
-    it "sorts fields alphabetically by the underlying param name, matching real Ansible's own repo: output byte-for-byte" do
+    it "sorts fields alphabetically by the underlying param name, matching Ansible's own repo: output byte-for-byte" do
       # This exact fixture/expected-output pair was captured directly
-      # from a real `ansible-playbook -vvv --check` run's own `repo:`
+      # from a `ansible-playbook -vvv --check` run's own `repo:`
       # return value against the identical params - not derived from
       # source alone.
       fields = {

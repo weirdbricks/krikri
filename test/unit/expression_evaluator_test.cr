@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/variable_substitutor/expression_evaluator"
-# Pull in the real Ansible-specific Crinja filter registrations (to_datetime
+# Pull in the Ansible-specific Crinja filter registrations (to_datetime
 # etc.), as template_action_plugin.cr does for every real template-rendering
 # binary - without this the ExpressionEvaluator's Crinja env has none of them.
 require "../../src/krikri/krikri_jinja_filters"
@@ -28,7 +28,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("items[0]").must_equal("a")
   end
 
-  it "resolves integer character indexing on a STRING through the full evaluator, matching real Jinja2/Python str[0]" do
+  it "resolves integer character indexing on a STRING through the full evaluator, matching Jinja2/Python str[0]" do
     # Real bug (round 72000 triage, louim.bedrock-site-protect): the
     # ansible_python_version fact was already populated, but its consumer
     # idiom `passlib_package[ansible_python_version[0]]` (and the task
@@ -127,7 +127,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # vars/, files/, and templates/ are NOT searched at all (that
     # per-subdir behavior belongs to the with_first_found: KEYWORD form,
     # which picks its subdir from the task's action name). The role's
-    # own vars/Debian.yml here must NOT be found - probed: real Ansible
+    # own vars/Debian.yml here must NOT be found - probed: Ansible
     # returns [] (skip: true) in exactly this fixture. Previously this
     # engine's default roots included "vars" and returned the vars file,
     # which Frzk.chrony's include_tasks then tried to run as a task list.
@@ -149,7 +149,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # ipr-cnrs.glpi_agent's own idiom (`include_tasks: "{{ lookup('
     # first_found', params) }}"` with `params: {files: ['{{
     # ansible_distribution }}.yml']}` and NO `paths:`, from the role's
-    # own tasks/main.yml) relies on the tasks/ entry - real Ansible
+    # own tasks/main.yml) relies on the tasks/ entry - Ansible
     # resolves its own tasks/Debian.yml there.
     role_dir = PluginSpecHelper.tmp_path("first_found_tasks_default_spec")
     `rm -rf #{role_dir}`
@@ -185,9 +185,9 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "does NOT search files/ or templates/ in the no-paths: default (only the with_ keyword form does)" do
     # Probed live against ansible-core 2.19.4: a candidate existing ONLY
     # under role root/files/ (or templates/) is NOT found by the lookup
-    # form with no paths: (real Ansible returned [] with skip: true).
+    # form with no paths: (Ansible returned [] with skip: true).
     # The old "files has priority" default root found it here -
-    # contradicting real Ansible.
+    # contradicting Ansible.
     role_dir = PluginSpecHelper.tmp_path("first_found_files_priority_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "tasks"))
@@ -258,7 +258,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # bare `as_a?` in #lookup_array silently dropped it as an EMPTY
     # candidate list - first_found "found nothing" no matter what files
     # existed, and include_vars: failed "file not found: undefined" where
-    # real Ansible (verified live against 2.19.4) templates the whole term
+    # Ansible (verified live against 2.19.4) templates the whole term
     # and finds vars/ubuntu_22.yml.
     role_dir = PluginSpecHelper.tmp_path("first_found_templated_scalar_files_spec")
     `rm -rf #{role_dir}`
@@ -275,7 +275,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").must_equal(File.join(role_dir, "vars", "ubuntu_22.yml"))
   end
 
-  it "raises the real Ansible error when first_found finds nothing and skip is not set" do
+  it "raises the Ansible error when first_found finds nothing and skip is not set" do
     # Verified live against ansible-core 2.19.4: a no-match first_found
     # lookup FAILS the task ("The lookup plugin 'first_found' failed: No
     # file was found when using first_found."); the old "undefined"
@@ -311,7 +311,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "strictly fails a templated scalar files: whose own expression references an undefined variable" do
-    # Real Ansible templates the lookup's term before the plugin sees it,
+    # Ansible templates the lookup's term before the plugin sees it,
     # so an undefined variable inside a templated `files:` scalar fails
     # the calling task - the strict per-entry rendering the literal-list
     # form already had must apply to the scalar form too.
@@ -338,7 +338,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # entirely unimplemented, falling to the "undefined" string fallback
     # - `"undefined" | length > 0` is true (9 chars), so the guard always
     # ran `include_vars:` even for files that don't exist, failing with
-    # "file not found" where real Ansible just skips the loop iteration.
+    # "file not found" where Ansible just skips the loop iteration.
     role_dir = PluginSpecHelper.tmp_path("fileglob_lookup_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "vars"))
@@ -359,12 +359,12 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # looped include_tasks through
     # `lookup('ansible.builtin.fileglob', 'tasks/*.yml').split(',')
     # | reject('search', 'main.yml') | reject('search', 'noauto_*')
-    # | sort` - a RELATIVE glob pattern. Real Ansible's fileglob lookup
+    # | sort` - a RELATIVE glob pattern. Ansible's fileglob lookup
     # dwims relative patterns against the role search stack (probed
     # live against 2.19.4: 'tasks/*.yml' from a role task finds
     # <role>/tasks/*.yml), but krikri globbed against the process CWD
     # (the playbook's directory), found nothing, and the whole loop
-    # collapsed to a single skipped task where real Ansible expanded
+    # collapsed to a single skipped task where Ansible expanded
     # it into the role's per-play task files. Also probed live: an
     # unmatched relative name falls through to the play dir (here:
     # role first, then the playbook's own directory).
@@ -413,7 +413,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # whole lookup collapsed to the literal text "undefined" and
     # include_vars failed "file not found: undefined" - without even
     # trying the individual candidates, where vars/Debian.yml exists
-    # (real Ansible: Ubuntu.yml misses, Debian.yml is found).
+    # (Ansible: Ubuntu.yml misses, Debian.yml is found).
     role_dir = PluginSpecHelper.tmp_path("first_found_inline_dict_var_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "vars"))
@@ -481,7 +481,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # postgresql: `paths: ['vars']`, an explicit but RELATIVE entry -
     # previously joined straight against the process's cwd
     # ("vars/Debian.yml"), essentially never the role's own vars/ dir a
-    # real ansible-playbook run resolves it against.
+    # ansible-playbook run resolves it against.
     role_dir = PluginSpecHelper.tmp_path("first_found_relative_paths_spec")
     `rm -rf #{role_dir}`
     Dir.mkdir_p(File.join(role_dir, "vars"))
@@ -496,7 +496,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
   it "supports query('first_found', ...) as a real list, not just lookup()" do
     # Real bug found benchmarking buluma.confluence (round 165):
-    # `query(...)` (real Ansible's lookup(..., wantlist=True) shorthand,
+    # `query(...)` (Ansible's lookup(..., wantlist=True) shorthand,
     # the standard idiom for `loop: "{{ query('first_found', params)
     # }}"`) was entirely unrecognized - only `lookup(` was matched,
     # so `query(...)` fell through to a plain variable-name lookup on
@@ -515,7 +515,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
   it "query('first_found', ...) with no match returns an empty list, not a single undefined item" do
     # skip: true is what makes a no-match first_found tolerate the miss
-    # (real Ansible FAILS the task without it - see the no-match spec
+    # (Ansible FAILS the task without it - see the no-match spec
     # above); without that flag this used to return the "undefined"
     # sentinel string here instead.
     v = Hash(String, JSON::Any).new
@@ -534,7 +534,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # #evaluate_query then wrapped that AS DATA into a one-element
     # ["undefined"] array instead of treating it as "nothing resolved"
     # the way the first_found branch above already does - the loop ran
-    # ONCE with a bogus string `item` instead of skipping (real Ansible
+    # ONCE with a bogus string `item` instead of skipping (Ansible
     # skips: manala_cron_files is empty by default, so the role's own
     # lookup plugin - which krikri can't run - would itself return []).
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(Hash(String, JSON::Any).new)
@@ -578,7 +578,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "renders a nested {{ }} span inside a lookup() string argument before using it" do
-    # Real Ansible supports (with a deprecation warning) a lookup plugin
+    # Ansible supports (with a deprecation warning) a lookup plugin
     # argument that is itself a quoted string CONTAINING a `{{ }}` span,
     # e.g. `lookup('file', "{{ dir }}/{{ name }}.txt")` - the inner span
     # gets rendered first, then the lookup runs against the real path.
@@ -613,13 +613,13 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate(%(lookup('vars', 'env_' + target_env + '_port'))).must_equal("8080")
   end
 
-  # Real Ansible's own vars lookup plugin RAISES (AnsibleUndefinedVariable,
+  # Ansible's own vars lookup plugin RAISES (AnsibleUndefinedVariable,
   # "No variable named 'X' was found.") for a missing key with no
   # `default=` kwarg - it does not silently yield a placeholder. Found via
   # galaxyproject.galaxy's `set_fact: "{{ item }}": "{{ lookup('vars',
   # '__' ~ item) }}"`: krikri previously returned the literal string
   # "undefined", the set_fact "succeeded", and the play diverged 20+ tasks
-  # later instead of failing right at the lookup like real Ansible does.
+  # later instead of failing right at the lookup like Ansible does.
   it "raises (does not silently return 'undefined') for lookup('vars', ...) on a missing key with no default" do
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
@@ -649,13 +649,13 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   # Real bug found benchmarking ansible-lockdown.windows_11_cis (round
   # 900733): its vars/main.yml does `lookup('file', './templates/
   # banner.txt')` against a file living at the role root's templates/,
-  # NOT under files/. Real Ansible's `file` lookup resolves terms through
+  # NOT under files/. Ansible's `file` lookup resolves terms through
   # find_file_in_search_path's two-probe search order - `<dir>/files/<term>`
   # first, then `<dir>/<term>` directly - so the caller's own subdirectory
   # components reach the role root (live-verified against real
   # ansible-playbook: the lookup succeeds; `files/` is a search HINT, not a
   # forced prefix). This engine used to unconditionally prepend files/,
-  # failing with "File not found" on a path real Ansible resolves.
+  # failing with "File not found" on a path Ansible resolves.
   it "resolves a relative path with its own subdirectory component directly under the role root when no files/-prefixed match exists" do
     role_dir = PluginSpecHelper.tmp_path("lookup_relpath_role")
     Dir.mkdir_p(File.join(role_dir, "templates"))
@@ -679,7 +679,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   # Real bug found benchmarking andrewrothstein.ssh-user-keygen (0.9.616):
-  # real Ansible's `file` lookup RAISES for a missing file ("Unable to
+  # Ansible's `file` lookup RAISES for a missing file ("Unable to
   # access the file '<path>': File not found"), failing the task's arg
   # finalization - it does NOT fall back to a placeholder the way a
   # genuinely-undefined VARIABLE reference does elsewhere in this
@@ -704,7 +704,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
   it "renders a nested {{ }} span inside a lookup('pipe', ...) string argument (round 90013, ajeleznov.manage-known-hosts)" do
     # The role's own shape: `lookup('pipe', 'ssh-keyscan -t {{ ssh_key_type
-    # }} {{ item }}{{ net_domain }}')` - real ansible-core 2.19.4 renders
+    # }} {{ item }}{{ net_domain }}')` - ansible-core 2.19.4 renders
     # the inner spans before running the command (live-verified: the
     # lookup's failure message shows the fully-rendered command text) and
     # only WARNS about the embedded templates; this evaluator's
@@ -720,13 +720,13 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "raises (does not silently return 'undefined') for lookup('pipe', ...) on a non-zero exit" do
-    # Real Ansible's pipe lookup raises on ANY non-zero exit code
+    # Ansible's pipe lookup raises on ANY non-zero exit code
     # ("The lookup plugin 'pipe' failed: lookup_plugin.pipe(<cmd>)
     # returned <rc>", live-verified against 2.19.4, stdout discarded),
     # failing the task's arg finalization. The old lenient "undefined"
     # sentinel here let ajeleznov.manage-known-hosts's failing
     # ssh-keyscan flow a literal "undefined" key into known_hosts and
-    # the play run seven tasks past real Ansible's hard stop.
+    # the play run seven tasks past Ansible's hard stop.
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     assert_raises_message(Krikri::PipeLookupError, /lookup plugin 'pipe' failed: lookup_plugin\.pipe\(echo out; exit 3\) returned 3/) do
@@ -735,7 +735,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "returns an empty result instead of raising for lookup('pipe', ...) with errors='ignore'" do
-    # Real Ansible's generic lookup errors='ignore' option swallows the
+    # Ansible's generic lookup errors='ignore' option swallows the
     # failure (live-verified against 2.19.4: `lookup('pipe', 'exit 7',
     # errors='ignore')` renders empty rather than failing).
     v = Hash(String, JSON::Any).new
@@ -757,7 +757,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "strips a leading #jinja2: directive line from lookup('template', path)'s rendered output" do
     # Real bug found benchmarking bimdata.ferm: its own get_vars.j2
     # opens with `#jinja2: lstrip_blocks: True` (a per-template Jinja2
-    # config override, metadata for the renderer - real Ansible strips
+    # config override, metadata for the renderer - Ansible strips
     # it before rendering, same as TemplateActionPlugin already does
     # for the `template:` module). This lookup plugin never did,
     # leaking the literal "#jinja2: ..." line into the returned text -
@@ -808,7 +808,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     File.delete(path)
   end
 
-  # `/dev/null` is real Ansible's own "generate one, don't save it"
+  # `/dev/null` is Ansible's own "generate one, don't save it"
   # idiom. The generic "file exists -> read it back" branch used to win
   # (that path does exist and reads empty), so every such lookup
   # returned "" - imntreal.smallstep_ca then wrote empty password files
@@ -947,7 +947,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "first_found with a list term and errors='ignore' returns [] on no match instead of failing" do
-    # Real Ansible's generic lookup `errors='ignore'` option swallows the
+    # Ansible's generic lookup `errors='ignore'` option swallows the
     # no-match failure and returns an empty result - with the list term
     # form there is no `skip:` sub-key to set, so `errors='ignore'` is
     # the ONLY way the calling role (nephelaiio.devtools again) can
@@ -967,7 +967,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # `lookup('nested', __loki_checksums, loki_bins, wantlist=True)` fed
     # the `wantlist=True` kwarg into the Cartesian product as a third
     # "list" term - it resolved to nothing, and any list x empty = empty,
-    # collapsing the whole loop to zero iterations (real Ansible iterates
+    # collapsing the whole loop to zero iterations (Ansible iterates
     # the real product of the two lists).
     v = Hash(String, JSON::Any).new
     v["l1"] = JSON.parse(%(["a", "b"]))
@@ -1075,7 +1075,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     result.count(&.ascii_number?).must_equal(1)
   end
 
-  it "raises lookup('random_string', ...) on an empty character pool like real Ansible" do
+  it "raises lookup('random_string', ...) on an empty character pool like Ansible" do
     # The real plugin's get_random() is called unconditionally with the
     # built pool and raises even when the remaining count is zero, so
     # disabling every class flag fails the task there too - this mirrors
@@ -1092,7 +1092,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # sshd_configs: "{{ lookup('community.general.merge_variables',
     # '_sshd_configs__to_merge', pattern_type='suffix',
     # initial_value=[]) }}" with NO variable ending in the suffix -
-    # real Ansible returns the initial_value untouched (so
+    # Ansible returns the initial_value untouched (so
     # `when: sshd_configs | length > 0` skips cleanly), while the
     # missing lookup used to fall through to the "undefined" fallback
     # and hard-fail the loop as an UndefinedVariableError.
@@ -1180,7 +1180,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # chance to split it properly. An unset env var with no matching
     # default(..., true) call previously stayed the literal string
     # "undefined" (non-empty, so default()'s own falsy check never fired
-    # even once reached) instead of "" (real Ansible's own lookup('env',
+    # even once reached) instead of "" (Ansible's own lookup('env',
     # ...) return for an unset var).
     v = Hash(String, JSON::Any).new
     evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
@@ -1238,7 +1238,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates an else-less inline if as empty string when the condition is false" do
     # Real bug found benchmarking ansible-community.ansible-vault's own
     # `vault_version_release_site_suffix: "{{ '+ent' if vault_enterprise
-    # }}{{ '.hsm' if vault_enterprise_hsm }}"` - real Jinja2 renders the
+    # }}{{ '.hsm' if vault_enterprise_hsm }}"` - Jinja2 renders the
     # missing else branch as "" (Undefined's default __str__), but this
     # fell through to plain variable lookup on the literal text `'+ent' if
     # vault_enterprise`, always resolving to "undefined".
@@ -1258,7 +1258,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # Crinja-first path's render! of a top-level Undefined) but the
     # "undefined" sentinel through JinjaRenderer#evaluate_value! (the
     # delegation path) - two wrong answers disagreeing with each other
-    # (real Ansible's StrictUndefined fails the task in either shape).
+    # (Ansible's StrictUndefined fails the task in either shape).
     # A bare undefined reference already gives "undefined" on both sides,
     # so the sentinel is the codebase's established convention. The
     # else-less ternary keeps its "" render (the next spec): there the
@@ -1367,7 +1367,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("(5.7) | int").must_equal("5")
   end
 
-  it "evaluates *, /, and // arithmetic, matching real Jinja2/Python semantics exactly" do
+  it "evaluates *, /, and // arithmetic, matching Jinja2/Python semantics exactly" do
     # Real bug found benchmarking geerlingguy.swap's own check-size.yml:
     # `(swap_file_check.stat.size / 1024 / 1024) | int` (converting a
     # stat'd byte count to MB) - `*`/`/`/`//` were entirely unimplemented
@@ -1396,10 +1396,10 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "repeats strings/lists for Python-valid `*` pairs and raises on invalid ones" do
     # Differential-fuzz fix: combine_mult_div used to collapse every
     # non-numeric operand pair to JSON null (rendered as ""), so even the
-    # VALID Python repeat shapes (`'-' * 40`, a real Ansible idiom)
-    # rendered empty while real Ansible repeats them, and the invalid
+    # VALID Python repeat shapes (`'-' * 40`, a Ansible idiom)
+    # rendered empty while Ansible repeats them, and the invalid
     # ones (`str * list`, `str / float`) were silently answered where
-    # real Jinja2 raises TypeError and real ansible-playbook fails the
+    # Jinja2 raises TypeError and ansible-playbook fails the
     # task. Also fixed en route: split_top_level_mult_div discarded the
     # `//` operator step's own skip-ahead return value, splitting `//`
     # twice (parts ["10", "", "0"], ops ["//", "/"]) - the phantom empty
@@ -1434,7 +1434,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "raises on a unary minus over a missing or non-numeric operand" do
     # Differential-fuzz fix: `- missing_var` / `- 'abc'` / `- dict_var`
     # fell through to a plain variable lookup and silently rendered the
-    # "undefined" sentinel where real Jinja2/Ansible fails the task
+    # "undefined" sentinel where Jinja2/Ansible fails the task
     # (cannot negate / bad operand type for unary -). Numeric operands
     # keep negating; an operand shape the evaluator can't resolve
     # conservatively still falls back leniently instead of becoming a
@@ -1461,12 +1461,12 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
 
   it "raises on an out-of-range index in every operand position, not just a bare bracket" do
     # Differential-fuzz fix (krikri-jinja v0.4.22): the engine now raises
-    # real Jinja2's "list object has no element N" for an out-of-range
+    # Jinja2's "list object has no element N" for an out-of-range
     # subscript, and every hand-rolled path that delegates to it must
     # propagate that instead of degrading to the lenient "undefined"
     # sentinel - a `~` operand, a filter-chain result's index, a lazy
     # generator's index, and a literal-array index all used to answer
-    # leniently where real Ansible fails the task.
+    # leniently where Ansible fails the task.
     v = Hash(String, JSON::Any).new
     v["list_nested"] = JSON.parse(%([[1, 2], [3, 4]]))
     v["list_empty"] = JSON.parse(%([]))
@@ -1663,7 +1663,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # Real bug found benchmarking xolyu.mariadb (round 813338): its own
     # tasks/main.yml computes `mariadb_version.major`/`.minor`/`.build`
     # via `( item | regex_findall(_regex_ver_components) ).0.0` (and
-    # `.0.1`/`.0.2`) - real Ansible resolves "10"/"6"/"12" from a
+    # `.0.1`/`.0.2`) - Ansible resolves "10"/"6"/"12" from a
     # version string like "10.6.12-MariaDB". Crinja handles a SINGLE
     # dotted level on a paren-wrapped result natively, but raises on
     # `regex_findall` (a filter it doesn't implement), forcing the
@@ -1857,7 +1857,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     # around NOT breaking: buluma.bind's own `bind_python_version: "{{
     # bind_default_python_version }}"` where the referenced var is the
     # quoted YAML STRING "3" - `(bind_python_version == '3')` must stay
-    # True (real Ansible: string stays a string through the
+    # True (Ansible: string stays a string through the
     # indirection, same value on both sides of ==).
     it "still gets buluma.bind's quoted-string indirection idiom right (regression guard)" do
       v = Hash(String, JSON::Any).new
@@ -1949,14 +1949,14 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     end
   end
 
-  # Strict +/- operand classes - real Ansible hard-fails the task on
+  # Strict +/- operand classes - Ansible hard-fails the task on
   # every one of these (live-verified against ansible-core 2.19.11 with
   # a minimal `debug: msg: "{{ ... }}"` playbook; exact texts in
   # CRINJA_PHASE2_REPORT.md's strictness section). Before this change
   # both engines silently produced lenient text (the Crinja-first path
   # rendered `Undefined` as "" and None as its "None" repr; the
   # hand-rolled fallback string-concatenated or collapsed to "").
-  describe "strict +/- operand classes (raise like real Ansible)" do
+  describe "strict +/- operand classes (raise like Ansible)" do
     private def evaluator
       v = Hash(String, JSON::Any).new
       v["host"] = JSON::Any.new("web1")
@@ -1994,7 +1994,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       end
     end
 
-    it "raises on an `omit` operand of `+` (real Ansible's `_OmitType` concat wording, right-hand)" do
+    it "raises on an `omit` operand of `+` (Ansible's `_OmitType` concat wording, right-hand)" do
       assert_raises_message(Krikri::PlusMinusOperandError,
         %(can only concatenate str (not "_OmitType") to str)) do
         evaluator.evaluate("host + omit")
@@ -2060,7 +2060,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   # not the float the old stringify-then-JSON.parse round trip turned it
   # into). Found via mrlesmithjr.mongodb round 981080:
   # `{{ 'https://x/server-' + v|string + '.asc' }}` hard-failed "can only
-  # concatenate str (not \"float\") to str" where real ansible
+  # concatenate str (not \"float\") to str" where Ansible
   # concatenated. All values here live-verified against local
   # ansible-playbook.
   describe "filter precedence inside binary-operator operands" do
@@ -2111,7 +2111,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator.evaluate("x|default('a' + 'b')").must_equal("ab")
     end
 
-    it "fails on an undefined filter-chain operand exactly like real Ansible" do
+    it "fails on an undefined filter-chain operand exactly like Ansible" do
       assert_raises_message(Krikri::PlusMinusOperandError, "'undef_var' is undefined") do
         evaluator.evaluate("'a' + undef_var|string")
       end
@@ -2161,7 +2161,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
       evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
     end
 
-    it "adds int + float numerically through the fallback combine (real Jinja parity)" do
+    it "adds int + float numerically through the fallback combine (Jinja parity)" do
       evaluator.evaluate("8080 + 2.5").must_equal("8082.5")
     end
 

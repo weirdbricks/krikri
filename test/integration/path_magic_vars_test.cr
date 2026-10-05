@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# playbook_dir / inventory_dir / inventory_file - real Ansible's path
+# playbook_dir / inventory_dir / inventory_file - Ansible's path
 # magic vars. All three are absolute regardless of how the paths were
 # spelled on the command line, verified against ansible-core 2.19.4 with
 # a relative playbook and inventory invoked from a third directory.

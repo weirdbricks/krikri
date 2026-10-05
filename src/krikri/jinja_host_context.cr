@@ -14,7 +14,7 @@ module Krikri
     def initialize(@vars : Hash(String, JSON::Any))
     end
 
-    # Real Ansible hands a lookup plugin the whole variable scope plus the
+    # Ansible hands a lookup plugin the whole variable scope plus the
     # `omit` sentinel; a role-local `lookup_plugins/*.py` reads both.
     def lookup_variables : Hash(String, JSON::Any)
       result = @vars.dup

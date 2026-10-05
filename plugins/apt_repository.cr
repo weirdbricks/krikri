@@ -18,22 +18,22 @@ module Krikri
   #   e.g. `ppa:owner` alone) - required
   # - state: present (default) | absent
   # - filename: base filename (without .list) to use under
-  #   /etc/apt/sources.list.d/, or a full path (real Ansible honors
+  #   /etc/apt/sources.list.d/, or a full path (Ansible honors
   #   any `filename:` containing '/' as-is, verbatim + '.list' - see
   #   PluginHelpers::AptRepositoryLine.target_sources_path) -
   #   defaults to a name derived from the repo
   #   URL via PluginHelpers::AptRepositoryLine, replicating real
   #   Ansible's own `_suggest_filename` logic exactly (see that module
-  #   for details, verified against real Ansible's actual source)
+  #   for details, verified against Ansible's actual source)
   # - codename: overrides the distro codename `ppa:` lines resolve
-  #   against (real Ansible's own default: the local machine's own
+  #   against (Ansible's own default: the local machine's own
   #   codename - `/etc/os-release`'s `VERSION_CODENAME=`, not a shell
   #   out to `lsb_release`)
   # - update_cache: run `apt-get update` after a change (default true)
   # - update_cache_retries / update_cache_retry_max_delay: how many
   #   total `apt-get update` attempts (default 5) and the exponential
   #   backoff cap in seconds (default 12) when that update fails -
-  #   real Ansible's own retry semantics, see
+  #   Ansible's own retry semantics, see
   #   PluginHelpers::AptRepositoryCacheRetry
   # - install_python_apt / validate_certs: accepted, documented no-ops
   #   (see the class doc below for why)
@@ -42,12 +42,12 @@ module Krikri
   #
   # Idempotency: checks whether the normalized repo line already appears,
   # enabled, in /etc/apt/sources.list or any /etc/apt/sources.list.d/*.list
-  # file - not just the target file - matching real Ansible's own
+  # file - not just the target file - matching Ansible's own
   # SourcesList, which reads all of them before deciding whether an
   # add/remove is a no-op.
   #
   # `ppa:` shorthand (PluginHelpers::AptPpa has the full formula
-  # breakdown, all verified against real Ansible's own
+  # breakdown, all verified against Ansible's own
   # UbuntuSourcesList source, not assumed): expands to a real
   # `deb https://ppa.launchpadcontent.net/<owner>/<name>/ubuntu <codename>
   # main` line, fetches the PPA's signing-key fingerprint from the
@@ -55,10 +55,10 @@ module Krikri
   # native `HTTP::Client` - no `curl`/`wget` shellout, same rationale as
   # `get_url.cr`), then exports that key from `hkp://keyserver.ubuntu.com:80`
   # via `gpg --export` (shelled - GPG protocol/keyring handling has no
-  # native Crystal equivalent in this codebase, and real Ansible's own
+  # native Crystal equivalent in this codebase, and Ansible's own
   # module shells to `apt-key`/`gpg` for exactly the same reason) into
   # the first existing directory of `/etc/apt/keyrings`,
-  # `/etc/apt/trusted.gpg.d`, `/usr/share/keyrings` (real Ansible's own
+  # `/etc/apt/trusted.gpg.d`, `/usr/share/keyrings` (Ansible's own
   # search order). The key export is redirected straight to the keyfile
   # by the shell command itself (`gpg ... --export ... > keyfile`) rather
   # than captured through this plugin's own `remote_exec` - a GPG key
@@ -70,26 +70,26 @@ module Krikri
   # deprecated/removed on current Debian/Ubuntu (confirmed: this
   # environment has `gpg` but no `apt-key` binary at all), and real
   # Ansible already prefers `gpg` when both exist. The already-has-this-key
-  # check real Ansible does before exporting (`_key_already_exists`,
+  # check Ansible does before exporting (`_key_already_exists`,
   # itself shelling to `apt-key export`/scanning existing keyrings with
   # `gpg --list-packets`) isn't replicated either - `gpg --export` is
   # itself idempotent (re-importing/re-writing the same key is a no-op
   # in effect), so skipping the check trades a little wasted network
   # traffic on an already-added PPA for meaningfully less code, and
-  # real Ansible's own PPA idempotency check (a source-line match,
+  # Ansible's own PPA idempotency check (a source-line match,
   # implemented below) already means the whole key-fetch path is never
   # even reached on a rerun. `install_python_apt` and `validate_certs`
   # are accepted as documented no-ops: krikri never imports python-apt
   # (so there's nothing for `install_python_apt` to install - the param
-  # exists in real Ansible purely to gate that auto-install), and the
+  # exists in Ansible purely to gate that auto-install), and the
   # plugin's one HTTPS fetch (the Launchpad API call above) always
   # verifies certificates via native `HTTP::Client`, which has no
-  # disable-TLS-verification switch wired here - real Ansible's
+  # disable-TLS-verification switch wired here - Ansible's
   # `validate_certs: false` only relaxes its own fetches, which there's
   # no reason to replicate for a param real playbooks pass by default.
   # `update_cache_retries`/`update_cache_retry_max_delay` ARE wired for
   # real: the post-change `apt-get update` retries up to
-  # `update_cache_retries` total attempts with real Ansible's own
+  # `update_cache_retries` total attempts with Ansible's own
   # `2**retry + jitter` (capped at `update_cache_retry_max_delay +
   # jitter`) exponential backoff - see
   # PluginHelpers::AptRepositoryCacheRetry.
@@ -130,13 +130,13 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # Real ansible's apt_repository runs `apt-get update` (and its own
+      # Ansible's apt_repository runs `apt-get update` (and its own
       # add/remove paths shell out to apt-key/apt-get); on a host without
       # apt-get (any non-Debian family host) it fails with exactly
       # {"changed": false, "cmd": "update", "msg": "Error executing
       # command.", "rc": 2} - found live on Rocky 9.6 with Oefenweb.dns
       # (round 196), where this engine silently "succeeded" its way
-      # through the role (rc=0) while real ansible failed the
+      # through the role (rc=0) while Ansible failed the
       # repository task rc=2. The paths below were written for real
       # Debian-family hosts; on anything else they'd fabricate success.
       unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
@@ -195,7 +195,7 @@ module Krikri
     # locations - same spec-seam family as apt.cr's `_policy_rc_d_path`,
     # so the retry specs can drive a full add+failed-cache-update
     # end-to-end against a scratch directory instead of mutating
-    # /etc/apt. Playbooks never see these (real Ansible has no such
+    # /etc/apt. Playbooks never see these (Ansible has no such
     # params, and anything unknown it would reject; here they're only
     # read by the specs).
     private def sources_list : String
@@ -221,9 +221,9 @@ module Krikri
     # *before_write* runs (and can abort with a failed PluginResult) only
     # once every earlier check has confirmed a real write is actually
     # about to happen - not already present, not check_mode - so a PPA's
-    # key-fetch network calls only ever run when real Ansible's own
+    # key-fetch network calls only ever run when Ansible's own
     # equivalent would too.
-    # Real ansible-core 2.19.11 apt_repository exits with a single
+    # ansible-core 2.19.11 apt_repository exits with a single
     # `exit_json(changed=changed, repo=repo, sources_added=...,
     # sources_removed=..., state=state, diff=diff)` (live-verified in
     # check mode via register + to_json): no msg, and `diff` is ALWAYS
@@ -258,7 +258,7 @@ module Krikri
       if update_cache
         cache_result = run_update_cache
         if cache_result[:exit_code] != 0 || gpg_signature_failure?(cache_result[:stdout], cache_result[:stderr])
-          # Real ansible-playbook's own apt_repository module rolls back
+          # ansible-playbook's own apt_repository module rolls back
           # the line it just wrote when the post-add cache update fails,
           # rather than leaving a broken repo definition behind - found
           # via robertdebock.hashicorp's own block:/rescue: pattern
@@ -280,7 +280,7 @@ module Krikri
           # stderr, "GPG error ... NO_PUBKEY ...", and still exits
           # success using the previous cached index) - so the bare
           # exit_code check above never even detected the failure real
-          # Ansible's own module DOES treat as fatal. Real Ansible
+          # Ansible's own module DOES treat as fatal. Ansible
           # doesn't shell out to `apt-get` at all - it uses the
           # `python-apt` library's `Cache().update()`, which raises
           # `FetchFailedException` for exactly this case, a stricter
@@ -362,7 +362,7 @@ module Krikri
     # "a", ...) write, deleting the whole file if that leaves it empty
     # (mirrors #remove's own identical cleanup) - so a failed add: (the
     # post-write cache update failing) leaves the filesystem exactly as
-    # it was found, matching real Ansible's own rollback-on-failure
+    # it was found, matching Ansible's own rollback-on-failure
     # behavior for this case.
     private def rollback_line(target : String, normalized : String) : Nil
       return unless File.exists?(target)
@@ -379,7 +379,7 @@ module Krikri
       PluginHelpers::AptRepositoryLine.target_sources_path(@params["filename"]?, filename_source, sources_list_d)
     end
 
-    # Real ansible-playbook's own apt_repository module FAILS the task
+    # ansible-playbook's own apt_repository module FAILS the task
     # when the post-add `apt-get update` itself fails (e.g. a
     # newly-added repo's GPG key can't be verified) - this used to run
     # the update and silently discard the result, always returning
@@ -394,7 +394,7 @@ module Krikri
     # ("Unable to locate package nomad") - a real divergence from real
     # Ansible, which recovers via the rescue: at the point it's supposed
     # to. Found benchmarking robertdebock.nomad.
-    # Real ansible-playbook's own apt_repository module retries a failed
+    # ansible-playbook's own apt_repository module retries a failed
     # `apt-get update` (python-apt's FetchFailedException) up to
     # `update_cache_retries` total attempts with an exponential backoff
     # (`2**retry + jitter`, capped at `update_cache_retry_max_delay +
@@ -415,7 +415,7 @@ module Krikri
 
     # `apt-get update`'s own exit code stays 0 even when a repo's
     # signature can't be verified - apt only warns and falls back to the
-    # previously cached index for that one repo. Real Ansible's own
+    # previously cached index for that one repo. Ansible's own
     # module uses python-apt's `Cache().update()` instead, which raises
     # for exactly this case - matched here by scanning for apt's own
     # GPG-failure wording (checked on both streams; apt puts some lines
@@ -444,7 +444,7 @@ module Krikri
 
     # Fetches the PPA's signing-key fingerprint from the Launchpad API,
     # then imports it - via `apt-key adv --recv-keys` when that binary
-    # exists (real Ansible's own preferred path, and the one real Ubuntu
+    # exists (Ansible's own preferred path, and the one real Ubuntu
     # 24.04 still actually takes: `apt-key` is deprecated there but not
     # yet removed, unlike on current Debian, confirmed by checking both
     # directly rather than assuming either), or by exporting it from the
@@ -460,11 +460,11 @@ module Krikri
     # local keyring, `--keyserver` alongside it does nothing on modern
     # GnuPG (confirmed directly: gpg 2.4.4 exits 0 with "WARNING:
     # nothing exported" and empty output for a key never previously
-    # imported). Real Ansible's own fallback command hits this identical
+    # imported). Ansible's own fallback command hits this identical
     # empty-output failure on any system without `apt-key` and a
     # sufficiently modern `gpg` - a genuine, reproducible gap in real
     # Ansible's own module, not something introduced here, and not
-    # something to silently "fix" by deviating from what real Ansible
+    # something to silently "fix" by deviating from what Ansible
     # actually runs (parity means matching real behavior, bugs
     # included) - see the compat verification note in git log.
     private def ensure_ppa_key(ppa : PluginHelpers::AptPpa::Info, codename : String) : PluginResult?

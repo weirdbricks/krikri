@@ -19,10 +19,10 @@ end
 # Conditionals must have a boolean result."), prefixed "Task failed: "
 # rather than when:'s own "Error while evaluating conditional: " prefix -
 # both are ConditionalEvaluator::ConditionalBooleanError under the hood,
-# but real ansible-core 2.19.4 reports them through different wrappers.
+# but ansible-core 2.19.4 reports them through different wrappers.
 # Found via mrlesmithjr.postgresql's own preflight.yml: `that:
 # postgresql_version | default(false)` where postgresql_version defaults
-# to a real int (14) - real Ansible fails the whole play at this first
+# to a real int (14) - Ansible fails the whole play at this first
 # task; this plugin previously called ConditionalEvaluator.evaluate
 # without strict: true (only raise_undefined: true), so the nonzero int
 # was silently treated as truthy and the play continued for 5 more

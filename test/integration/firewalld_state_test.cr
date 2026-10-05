@@ -11,8 +11,8 @@ require "../minitest_helper"
 # missing_required_lib('firewall') + the version suffix - exactly what
 # the plugin's own gate (kpg34) emits here. The expectations therefore
 # branch on the library's availability: with it, the module-level
-# wording below is what real reports; without it, the import gate wins
-# (live-verified against real ansible-playbook 2.19.11 in both
+# wording below is what Ansible reports; without it, the import gate wins
+# (live-verified against ansible-playbook 2.19.11 in both
 # directions).
 private def firewall_lib_importable? : Bool
   python = Process.find_executable("python3") || Process.find_executable("python")
@@ -22,7 +22,7 @@ private def firewall_lib_importable? : Bool
 end
 
 describe "firewalld plugin" do
-  it "rejects state: present for a non-target thing (matches real Ansible's own validation)" do
+  it "rejects state: present for a non-target thing (matches Ansible's own validation)" do
     result = PluginSpecHelper.run("firewalld", {
       "zone" => "public", "state" => "present", "service" => "http",
       "offline" => "true", "permanent" => "true",
@@ -36,7 +36,7 @@ describe "firewalld plugin" do
     end
   end
 
-  it "rejects state: absent for port_forward (matches real Ansible's own validation)" do
+  it "rejects state: absent for port_forward (matches Ansible's own validation)" do
     result = PluginSpecHelper.run("firewalld", {
       "zone" => "public", "state" => "absent",
       "port_forward" => %([{"port": 80, "proto": "tcp", "toport": 8080}]),
@@ -61,7 +61,7 @@ describe "firewalld plugin" do
   end
 
   # round900593 Thulium-Drake.firewalld: a bare `zone:` + `state:` task
-  # (no target/service/port/anything) is real Ansible's own
+  # (no target/service/port/anything) is Ansible's own
   # ZoneTransaction - a zone create/delete - and must not hit the
   # "zone level operations" rejection. The create runs in check mode so
   # the spec never writes a real /etc/firewalld/zones file on the dev

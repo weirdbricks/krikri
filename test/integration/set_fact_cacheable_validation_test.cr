@@ -1,10 +1,10 @@
 require "../minitest_helper"
 
-# Real ansible-core 2.19.11's set_fact action plugin (live-verified in the
+# ansible-core 2.19.11's set_fact action plugin (live-verified in the
 # krikri repo's output-parity sweep, round sweep10/000016 + probe playbooks):
 #
 # - `cacheable:` is popped FIRST and run through convert_bool.boolean()
-#   with strict=True - any value outside real's BOOLEANS set fails the
+#   with strict=True - any value outside Ansible's BOOLEANS set fails the
 #   whole task with
 #   "The value '<x>' is not a valid boolean. Valid booleans include: ..."
 #   (a plain TypeError: the fatal msg carries the "Task failed: " brief
@@ -13,7 +13,7 @@ require "../minitest_helper"
 #   insertion order; the first invalid one fails with
 #   "Invalid variable name '<key>'." - an AnsibleError whose cause chain
 #   cannot collapse: the block's second segment points at the key's own
-#   Origin and carries real's variable-name help text.
+#   Origin and carries Ansible's variable-name help text.
 # - no key/value pairs at all fails with
 #   "No key/value pairs provided, at least one is required for this action
 #   to succeed" (an AnsibleActionFail: NO "Task failed: " prefix in the
@@ -32,8 +32,8 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
-describe "set_fact cacheable/keys match real 2.19.11 validation" do
-  it "fails a non-boolean cacheable string with real's strict message" do
+describe "set_fact cacheable/keys match Ansible 2.19.11 validation" do
+  it "fails a non-boolean cacheable string with Ansible's strict message" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -116,7 +116,7 @@ describe "set_fact cacheable/keys match real 2.19.11 validation" do
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Invalid variable name 'a.b'.\"}")
   end
 
-  it "fails an empty set_fact with real's no-pairs message (no Task-failed prefix)" do
+  it "fails an empty set_fact with Ansible's no-pairs message (no Task-failed prefix)" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

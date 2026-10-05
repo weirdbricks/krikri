@@ -10,7 +10,7 @@ require "../../src/krikri/conditional_evaluator"
 # containment check a left operand of "item is" - which failed every
 # looped item with "Error while evaluating conditional: 'item is' is
 # undefined" instead of skipping/running it. Behavior below verified
-# against real ansible-core 2.19.4 before being encoded here.
+# against ansible-core 2.19.4 before being encoded here.
 describe "Krikri::ConditionalEvaluator (conditional_is_in_test_test.cr)" do
   private def vars
     {

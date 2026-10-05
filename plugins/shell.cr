@@ -14,7 +14,7 @@ module Krikri
   #   chdir (optional): Change directory before executing
   #   executable (optional): Shell to use (default: /bin/sh)
   #   argv (optional): Exact argument list, run through the shell
-  #     element-wise-quoted and joined (real Ansible behavior)
+  #     element-wise-quoted and joined (Ansible behavior)
   #   stdin (optional): Data piped to the command's stdin
   #   stdin_add_newline (optional): Append a newline to stdin: (default true)
   #   strip_empty_ends (optional): Rstrip trailing newlines from
@@ -29,7 +29,7 @@ module Krikri
   #     creates: /tmp/search-done
   #
   # stdout:/stderr: are rstripped of a trailing \r\n before being returned,
-  # matching real Ansible's own AnsibleModule.run_command() - see
+  # matching Ansible's own AnsibleModule.run_command() - see
   # command.cr's own doc comment for how this was found (a real playbook
   # over real SSH comparing captured stdout against a constant).
   class ShellPlugin < BasePlugin
@@ -43,7 +43,7 @@ module Krikri
 
     include PluginHelpers::AnsibleArgValidation
 
-    # Real ansible-core 2.19.11's registered command/shell result key
+    # ansible-core 2.19.11's registered command/shell result key
     # order - live-verified via `{{ r | to_json }}` on a registered
     # shell: task (the -v dump sorts alphabetically, so the order is
     # only observable programmatically). Same module dict as command's
@@ -57,7 +57,7 @@ module Krikri
     private SUCCESS_KEY_ORDER = %w[changed stdout stderr rc cmd start end delta msg skipped stdout_lines stderr_lines failed warnings]
 
     # The FAILED (rc != 0) shape is NOT the success order with `failed`
-    # moved: real's registered failure runs the module dict
+    # moved: Ansible's registered failure runs the module dict
     # (changed/stdout/stderr/rc/cmd/start/end/delta), then fail_json's
     # failed/msg, then stdout_lines/stderr_lines, then the controller's
     # exception - live-verified against ansible-core 2.19.11 for shell
@@ -109,7 +109,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Real AnsibleModule setup validation (wording via the shared
+      # AnsibleModule setup validation (wording via the shared
       # helper, live-verified vs bookworm 2.14 via the podman-diff
       # shell_edge_cases SH14 case): any param outside the
       # shell/command argspec fails BEFORE anything runs - previously
@@ -122,7 +122,7 @@ module Krikri
         return unsupported_params_error("ansible.legacy.command", unsupported, SHELL_SPEC)
       end
 
-      # Same `warn:` rejection as command.cr - real ansible-core 2.19
+      # Same `warn:` rejection as command.cr - ansible-core 2.19
       # rejects the removed param identically (message adjusted for the
       # shell module's own supported-parameter list; the tail after
       # "warn." matches ansible-core 2.19's shell argspec).
@@ -141,7 +141,7 @@ module Krikri
         )
       end
 
-      # Bool-typed params: real AnsibleModule type-converts them at module
+      # Bool-typed params: AnsibleModule type-converts them at module
       # setup, after the required-args gate above - now via the shared
       # BasePlugin#validate_bool_params! (see its block comment).
       started_at = Time.utc
@@ -164,7 +164,7 @@ module Krikri
       # Check creates parameter (idempotency). `path_or_glob_exists?`
       # (not the old `remote_file_exists?`, which - literal-only and
       # via a shell `test -f` for a remote connection - neither
-      # understood a glob pattern nor matched real Ansible's own
+      # understood a glob pattern nor matched Ansible's own
       # `glob.glob(path)` check) - see that helper's own comment
       # (appsilon.mount_efs's `creates: ".../amazon-efs-utils*deb"`).
       # This plugin already runs ON the target (uploaded+executed
@@ -176,10 +176,10 @@ module Krikri
       # 2.19.4), not just the functional result.
       # The skip result also carries the FULL command-module shape (rc: 0,
       # cmd, stdout_lines, empty stderr/stderr_lines, null start/end/delta)
-      # - real 2.19.4 populates all of those keys on a creates:/removes:
+      # - Ansible 2.19.4 populates all of those keys on a creates:/removes:
       # skip (see command.cr's identical fix for the full breakdown). A
       # bare msg/stdout result made any `register:` + changed_when:
-      # reading of `.rc` on the skip hard-fail where real Ansible
+      # reading of `.rc` on the skip hard-fail where Ansible
       # evaluates cleanly (konstruktoid.docker_rootless's warm run).
       # Read chdir here (pure parameter read, no side effect - the shell's
       # own `cd` still happens further down) so the creates:/removes:
@@ -195,7 +195,7 @@ module Krikri
       if !chdir_invalid && (creates = @params["creates"]?)
         if path_or_glob_exists?(resolve_against_chdir(creates, chdir))
           skipped_stdout = "skipped, since #{creates} exists"
-          # Real ansible-core 2.19.11 words the check-mode variant of this
+          # ansible-core 2.19.11 words the check-mode variant of this
           # msg "Would not run command since ..." (the ordinary run says
           # "Did not run command since ..." - live-verified both).
           skip_msg = @check_mode ? "Would not run command since '#{creates}' exists" : "Did not run command since '#{creates}' exists"
@@ -251,7 +251,7 @@ module Krikri
       # tolerant pattern) needs `stdout` to genuinely be `""`, not
       # missing entirely, or strict module-arg templating (see
       # VarSubstitutor::UndefinedVariableError) now correctly fails the
-      # referencing task exactly like real Ansible would if the KEY were
+      # referencing task exactly like Ansible would if the KEY were
       # actually missing - it just isn't, here. Verified live against
       # ansible-core 2.19.4's own `--check` output for this exact case.
       # The `skipping:` verdict only applies when NO creates:/removes:
@@ -283,7 +283,7 @@ module Krikri
       # Build full command. argv: form is quoted element-wise and joined
       # (see the comment above); cmd:/free-form is passed through verbatim
       # - the shell does the splitting. `command_string` (the pre-chdir
-      # form) is what real Ansible's shell module reports as the result's
+      # form) is what Ansible's shell module reports as the result's
       # `cmd` key - the raw command string, not the argv list command uses
       # and not the `cd X && ...` prefixed form the shell actually runs.
       command_string = argv_parts ? argv_parts.map { |arg| shell_single_quote(arg) }.join(" ") : cmd.to_s
@@ -295,7 +295,7 @@ module Krikri
         full_cmd = "cd #{chdir} && #{full_cmd}"
       end
 
-      # Real Ansible's run_command tries os.chdir(chdir) BEFORE spawning
+      # Ansible's run_command tries os.chdir(chdir) BEFORE spawning
       # anything, so a nonexistent/non-directory chdir fails the MODULE
       # (changed: false, rc: null, full command-module shape) instead of
       # surfacing as a shell exit code with changed: true - the `cd X
@@ -321,7 +321,7 @@ module Krikri
         )
       end
 
-      # Real Ansible hands `executable:` to run_command as the SHELL
+      # Ansible hands `executable:` to run_command as the SHELL
       # BINARY itself (subprocess executable=), so a nonexistent one
       # raises OSError before any process starts: fail_json(rc=e.errno,
       # msg="Error executing command.", cmd=self._clean_args(args),
@@ -341,7 +341,7 @@ module Krikri
 
       # Give this process (and therefore the shell it is about to
       # spawn, and everything under it) a controlling terminal, the way
-      # real ansible-core's `ssh -tt` does for the whole remote process
+      # ansible-core's `ssh -tt` does for the whole remote process
       # tree - see ControllingTty's own comment for why the tty is
       # manufactured here rather than requested from ssh. No-op when one
       # already exists (local connection from a real terminal), and a
@@ -365,7 +365,7 @@ module Krikri
       # module's own shell does the interpreting, exactly like real.
       remote_command = "#{executable} -c #{shell_single_quote(full_cmd)}"
 
-      # stdin: (+ stdin_add_newline:) - real Ansible hands `data` directly
+      # stdin: (+ stdin_add_newline:) - Ansible hands `data` directly
       # to the spawned command's stdin, appending a newline unless
       # stdin_add_newline is explicitly false (basic.py run_command:
       # `if not binary_data: data += '\n'`, with binary_data wired to
@@ -389,7 +389,7 @@ module Krikri
       # the shell on the target, even when it has no metacharacters -
       # without this, a builtin-only command like `command -v foo`
       # would be argv-split and direct-exec'd (and fail: there is no
-      # `command` binary), where real Ansible's shell module always
+      # `command` binary), where Ansible's shell module always
       # runs it through /bin/sh.
       result = remote_exec(remote_command, force_shell: true)
 
@@ -405,7 +405,7 @@ module Krikri
       # Shell commands always report changed (Ansible behavior)
       # unless they were skipped by creates/removes
       #
-      # strip_empty_ends (bool, default true): when true, real Ansible
+      # strip_empty_ends (bool, default true): when true, Ansible
       # rstrips ALL trailing \r/\n characters from stdout/stderr (its
       # command.py: `if strip: r['stdout'] = to_text(r['stdout'])
       # .rstrip("\r\n")`); when false, the raw bytes are returned
@@ -413,10 +413,10 @@ module Krikri
       # with strip_empty_ends: false, collapses to "out" with the
       # default). The result carries the FULL real shell-module shape:
       # cmd is the raw command string, stdout_lines/stderr_lines are
-      # derived here (module-side, where real Ansible's command.py sets
+      # derived here (module-side, where Ansible's command.py sets
       # them) from the same splitlines() semantics the executor used to
       # derive them centrally from (Python's str.splitlines()), and msg
-      # is left empty on success - real Ansible's shell module NEVER sets
+      # is left empty on success - Ansible's shell module NEVER sets
       # msg on success (PluginResult omits an empty msg from the wire
       # JSON), and the previous "Command executed successfully" text
       # showed up as a nonstandard key in ad-hoc (`ansible -m shell`)
@@ -443,7 +443,7 @@ module Krikri
         failed_flag: false,
         diff: diff_data,
         # Success paths only - a non-zero rc is a failure result and takes
-        # FAILED_KEY_ORDER (real's separate failure shape).
+        # FAILED_KEY_ORDER (Ansible's separate failure shape).
         key_order: result[:exit_code] == 0 ? SUCCESS_KEY_ORDER : FAILED_KEY_ORDER
       )
     end
@@ -451,7 +451,7 @@ module Krikri
     # Parses `argv:`'s JSON-array text into its literal argument list -
     # command.cr's own copy, shared rationale: no shell splitting/quoting
     # at all at parse time (the elements are only shell-quoted when the
-    # full command string is assembled, mirroring real Ansible's
+    # full command string is assembled, mirroring Ansible's
     # shlex_quote + " ".join). A whole-value `{{ list_var }}` container
     # arg arrives as the double-quoted JSON the wire serialized it to
     # (see substitute_task_params's whole-single-span comment); ONLY that

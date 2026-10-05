@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Loop/until/failed-when console shapes vs real ansible-playbook 2.19.11
+# Loop/until/failed-when console shapes vs ansible-playbook 2.19.11
 # (live-verified via scripts/output_parity.sh):
 # - a loop_control.label referencing loop_control.index_var sees the index
 #   ("LBL-0", not "LBL-undefined");

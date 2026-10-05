@@ -39,7 +39,7 @@ module Krikri
       # output is never re-parsed (live-verified vs ansible-playbook
       # 2.19.11, see apt.cr's parse_package_names). The repr-looking
       # string passes through unchanged and `useradd -G` fails on it
-      # exactly like real Ansible's comma-split garbage does.
+      # exactly like Ansible's comma-split garbage does.
       def self.normalize_groups_value(raw : String) : String
         stripped = raw.strip
         return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
@@ -67,7 +67,7 @@ module Krikri
         local : Bool = false,
       ) : Array(String)
         # A blank (non-nil but empty) value - e.g. `groups: "{{
-        # some_var }}"` where some_var is YAML `null`, real Ansible's
+        # some_var }}"` where some_var is YAML `null`, Ansible's
         # own format_value renders that to "" - used to add a flag with
         # no value at all ("-G " with nothing after it). Joined into one
         # shell command string with the following flags, that shifted
@@ -84,7 +84,7 @@ module Krikri
         # gitlab-runner user to other groups" task, round 185) - renders
         # the empty list's own text form "[]" through this codebase's
         # non-native `{{ }}` substitution, same as Python's `str([])`
-        # would. Real Ansible's `groups:` argspec is `type: list`, and
+        # would. Ansible's `groups:` argspec is `type: list`, and
         # `check_type_list` recognizes a string shaped like `[...]` and
         # parses it back into a real (here, empty) list via
         # `ast.literal_eval` BEFORE ever reaching useradd - so real
@@ -103,8 +103,8 @@ module Krikri
         if u = uid.presence
           args << "-u #{Shell.single_quote(u)}"
           # non_unique: -o is only ever meaningful alongside -u (a duplicate
-          # uid is the only thing it permits) - real Ansible nests it inside
-          # its own uid branch, live-verified (the real module emits
+          # uid is the only thing it permits) - Ansible nests it inside
+          # its own uid branch, live-verified (the Ansible module emits
           # `useradd -u 60000 -o ...` and `usermod -u 60001 -o ...`, and
           # nothing when the uid isn't (re)set).
           args << "-o" if non_unique
@@ -143,9 +143,9 @@ module Krikri
       end
 
       # Home-directory flags for useradd (create_home's -m/-M plus the
-      # skeleton/umask pair that real Ansible only ever threads through
+      # skeleton/umask pair that Ansible only ever threads through
       # inside the create_home branch). `local: true` never passes -m
-      # (libuser's luseradd has no -m; real Ansible skips it, the
+      # (libuser's luseradd has no -m; Ansible skips it, the
       # caller's lgroupmod/lchage tail is what remains), but skeleton/
       # umask still go through as -k/-K.
       private def self.append_home_args(args : Array(String), create_home : Bool, skeleton : String?, umask : String?, local : Bool) : Nil
@@ -179,7 +179,7 @@ module Krikri
           changed_flag("-d", home, current.home),
         ].compact
         # -o only ever rides along with a uid that's actually changing,
-        # and -m only with an actual -d change - real Ansible nests both
+        # and -m only with an actual -d change - Ansible nests both
         # inside its own diff branches, never on their own.
         flags << "-o" if non_unique && uid.presence && uid != current.uid
         flags << "-m" if move_home && home.presence && home != current.home
@@ -188,10 +188,10 @@ module Krikri
           flags << "-c #{Shell.single_quote(com)}"
         end
         # password_expire_account_disable (usermod's -f INACTIVE) has NO
-        # idempotency comparison in real Ansible's modify_user_usermod -
+        # idempotency comparison in Ansible's modify_user_usermod -
         # whenever the param is given it's appended unconditionally, so a
         # run carrying it reports changed even when everything already
-        # matches (verified against the real module's source and live
+        # matches (verified against the Ansible module's source and live
         # run: `usermod -u 60001 -o -d <home> -m -f 30 nobody`).
         if inact = inactive.presence
           flags << "-f #{Shell.single_quote(inact)}"
@@ -205,7 +205,7 @@ module Krikri
 
       # `/etc/shadow`'s own password-ageing fields (min/max/warn - the 4th/
       # 5th/6th colon-separated fields), for `password_expire_min:`/`_max:`/
-      # `_warn:`'s idempotency check. Real Ansible's user module sets these
+      # `_warn:`'s idempotency check. Ansible's user module sets these
       # via `chage`, a separate call after useradd/usermod - neither
       # supports password-ageing flags directly (usermod's own `-m` means
       # "move home directory", not "min days"). nil for a field the account
@@ -239,10 +239,10 @@ module Krikri
       end
 
       # `expires:`'s own Unix-timestamp-to-useradd/usermod-`-e`-value
-      # conversion - verified against the real module's own
+      # conversion - verified against the Ansible module's own
       # source: `time.gmtime(timestamp)` then `strftime('%Y-%m-%d', ...)`
       # (UTC, matching `time.gmtime`'s own UTC-not-local semantics) for a
-      # non-negative timestamp; a NEGATIVE timestamp (real Ansible's own
+      # non-negative timestamp; a NEGATIVE timestamp (Ansible's own
       # documented "-1 to remove" convention) maps to the empty string,
       # `useradd`/`usermod -e ''` being how those commands themselves
       # clear an existing expiration date.
@@ -251,7 +251,7 @@ module Krikri
         Time.unix(timestamp).to_utc.to_s("%Y-%m-%d")
       end
 
-      # Real Ansible's own usermod-path idempotency check compares
+      # Ansible's own usermod-path idempotency check compares
       # `/etc/shadow`'s own expire field (whole days since epoch) against
       # the requested timestamp's own day-since-epoch, NOT a full-
       # precision timestamp comparison - a `expires:` value that maps to
@@ -266,9 +266,9 @@ module Krikri
 
       # `local: true`'s expires conversion - unlike the normal path's
       # useradd/usermod `-e YYYY-MM-DD`, libuser's lchage takes whole DAYS
-      # since epoch (`-E`), real Ansible's own `int(floor(expires)) //
+      # since epoch (`-E`), Ansible's own `int(floor(expires)) //
       # 86400` (or -1, lchage's clear-value, for a negative timestamp).
-      # Live-verified: the real module emits `lchage -E 21915` for
+      # Live-verified: the Ansible module emits `lchage -E 21915` for
       # `expires: 1893456000`.
       def self.local_expiry_days(timestamp : Int64) : Int64
         timestamp < 0 ? -1_i64 : timestamp // 86400
@@ -289,14 +289,14 @@ module Krikri
 
       # Extracts the `/etc/shadow` password-hash field (the 2nd
       # colon-separated field) for *name* from a real `/etc/shadow`'s
-      # full content - verified against real Ansible's own
+      # full content - verified against Ansible's own
       # `parse_shadow_file` (the fallback it uses when Python's `spwd`
       # module isn't available, which is the only shadow-reading strategy
       # this codebase replicates - no `getspnam`-equivalent libc binding
       # is needed just to read a field this codebase can already get by
       # shelling `cat /etc/shadow`, the same `remote_exec` local/remote
       # split every other plugin already uses). nil if the account has no
-      # shadow entry at all (matches real Ansible's own empty-string
+      # shadow entry at all (matches Ansible's own empty-string
       # default becoming an empty comparison target).
       def self.shadow_password(shadow_content : String, name : String) : String?
         shadow_content.each_line do |line|
@@ -307,7 +307,7 @@ module Krikri
         nil
       end
 
-      # Real Ansible compares password hashes with a leading `!` (its own
+      # Ansible compares password hashes with a leading `!` (its own
       # lock-marker prefix) stripped from both sides before comparing -
       # verified against its own `info[1].lstrip('!') != self.password.lstrip('!')`
       # - so locking/unlocking alone never looks like a password change.
@@ -316,7 +316,7 @@ module Krikri
       end
 
       # `useradd -p <hash>` (or `-p '!<hash>'` when password_lock: true -
-      # real Ansible's own convention for "set this password, but start
+      # Ansible's own convention for "set this password, but start
       # the account locked").
       def self.useradd_password_args(password : String?, locked : Bool?) : Array(String)
         return [] of String unless password
@@ -324,21 +324,21 @@ module Krikri
       end
 
       # usermod flags to reconcile an existing account's password/lock
-      # state - verified against real Ansible's own modify_user_usermod
+      # state - verified against Ansible's own modify_user_usermod
       # logic (including the real, easy-to-miss detail that a queued `-L`/
       # `-U` gets folded into `-p '!hash'`/`-p hash` instead, rather than
       # coexisting with it, whenever both a password update and a lock
       # state are requested together - `-p` and `-L`/`-U` are mutually
       # exclusive usermod flags).
       #
-      # - `update_password: "on_create"` (real Ansible's other allowed
+      # - `update_password: "on_create"` (Ansible's other allowed
       #   value, vs. the default `"always"`) means an existing account's
       #   password is never touched here at all, only at creation time -
       #   this codebase's own mysql_user.cr already documents the same
-      #   simplification for MySQL: unlike real Ansible, this can't
+      #   simplification for MySQL: unlike Ansible, this can't
       #   compare a *candidate cleartext* password to a stored hash (the
       #   caller is always expected to pass an already-hashed value, same
-      #   as real Ansible itself requires), so "unchanged" here means
+      #   as Ansible itself requires), so "unchanged" here means
       #   "the given hash already matches what's stored," not "the
       #   account's password is already this."
       def self.password_update_flags(current_hash : String?, desired_password : String?, update_password : String, locked : Bool?) : Array(String)

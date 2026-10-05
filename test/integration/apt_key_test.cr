@@ -101,7 +101,7 @@ end
 # The mirror image of with_apt_key_shim: a PATH with no apt-key
 # anywhere on it, which is the state of every current Debian/Ubuntu
 # host (apt-key was dropped in Debian 12 / Ubuntu 22.04+) and the state
-# real's find_needed_binaries() then fails the task on. PATH is
+# Ansible's find_needed_binaries() then fails the task on. PATH is
 # process-global, so the whole block holds ENV_MUTEX.
 private def without_apt_key_on_path(&)
   PluginSpecHelper::ENV_MUTEX.synchronize do
@@ -120,7 +120,7 @@ private def apt_key_spec_state_file : String
 end
 
 describe "apt_key plugin" do
-  it "fails when more than one of data:/file:/keyserver:/url: is given, matching real Ansible's exact message" do
+  it "fails when more than one of data:/file:/keyserver:/url: is given, matching Ansible's exact message" do
     # Real apt_key.py's argument_spec declares mutually_exclusive=
     # (('data', 'file', 'keyserver', 'url'),) and validates it BEFORE
     # main() runs anything. Live-verified against ansible-core 2.19.4
@@ -133,7 +133,7 @@ describe "apt_key plugin" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: data|file|keyserver|url")
   end
 
-  it "counts an explicitly empty param as given for the mutual-exclusion check (matches real Ansible's key-presence semantics)" do
+  it "counts an explicitly empty param as given for the mutual-exclusion check (matches Ansible's key-presence semantics)" do
     # Real check_mutually_exclusive -> count_terms counts param KEYS
     # (set(terms).intersection(parameters)), not truthy values, so
     # url: "" + data: still fails - live-verified against ansible-core
@@ -177,7 +177,7 @@ describe "apt_key plugin" do
     File.delete(state) rescue nil
   end
 
-  # Real's find_needed_binaries() resolves `apt-key` (then `gpg`)
+  # Ansible's find_needed_binaries() resolves `apt-key` (then `gpg`)
   # through module.get_bin_path(..., required=True) BEFORE any of the
   # key_id / key-material validation above - and in ansible-core 2.19
   # that helper fail_jsons itself rather than raising, so the bare
@@ -201,10 +201,10 @@ describe "apt_key plugin" do
     end
   end
 
-  it "requires id when keyserver: is given, matching real Ansible's exact message" do
+  it "requires id when keyserver: is given, matching Ansible's exact message" do
     # Real bug found via a proactive scope-cut audit: keyserver: was
     # entirely unimplemented. Verified against real
-    # the real module's observed behavior - `if not key_id: if
+    # the Ansible module's observed behavior - `if not key_id: if
     # keyserver: module.fail_json(msg="Missing key_id, required with
     # keyserver.")` - matched verbatim, not paraphrased. A real fetch
     # (`apt-key adv --keyserver ... --recv ...`) needs network access
@@ -242,7 +242,7 @@ describe "apt_key plugin" do
     # attempts the keyserver: command path (rather than skipping it or
     # crashing) - fails with a clear "Error fetching key" message
     # instead of an unhandled exception either way. The pre-add listing
-    # (real Ansible's all_keys, added with the round 83166 fix) runs
+    # (Ansible's all_keys, added with the round 83166 fix) runs
     # against the apt-key double; its --recv path is left failing.
     state = apt_key_spec_state_file
     with_apt_key_shim(state) do
@@ -257,7 +257,7 @@ describe "apt_key plugin" do
   it "requires no key material when keyserver: + id: are given (url/data/file are alternatives, not prerequisites)" do
     # Regression: the round 83166 rework of #add_key initially required
     # url:/data:/file: even on the keyserver: path, breaking
-    # keyserver+id (real Ansible's --recv needs neither). The double
+    # keyserver+id (Ansible's --recv needs neither). The double
     # fails --recv, so reaching "Error fetching key" proves the flow
     # got past the material check instead of failing earlier.
     state = apt_key_spec_state_file
@@ -292,10 +292,10 @@ describe "apt_key plugin" do
     File.delete(state) rescue nil
   end
 
-  it "fails with real Ansible's post-add verification message when the add exits 0 but the key never lands in the listing (round 83166, expired key)" do
+  it "fails with Ansible's post-add verification message when the add exits 0 but the key never lands in the listing (round 83166, expired key)" do
     # The actual acandid.jenkins failure mode: its key material is an
     # EXPIRED signing key. Derivation from the colon format still
-    # yields the id (real Ansible's word-based "expired" filter only
+    # yields the id (Ansible's word-based "expired" filter only
     # matches the human-format listing), the add prints OK and exits
     # 0, but the expired key never shows up in the listing - so the
     # task must FAIL here rather than report success. The double's add
@@ -320,7 +320,7 @@ describe "apt_key plugin" do
     # short id and always re-added (or failed post-add verification).
     # Found live via mrlesmithjr.docker's id: 0EBFCD88 (download.docker.com)
     # and alannix_lw.lacework_agent_ansible_role's id: EE0CC692
-    # (keyserver.ubuntu.com): real ansible-playbook succeeded on both,
+    # (keyserver.ubuntu.com): ansible-playbook succeeded on both,
     # krikri failed with the "did not return an error" message even
     # though apt-key add really had added the key.
     state = apt_key_spec_state_file

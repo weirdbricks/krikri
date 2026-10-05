@@ -6,7 +6,7 @@ require "../../src/krikri/task_executor/result_display"
 
 # Data-driven module argument validation (ArgspecValidator + the generated
 # data/argspecs.json table). Every expected message below was captured from
-# a real ansible-playbook 2.19.11 run of the same typo'd task on this
+# a ansible-playbook 2.19.11 run of the same typo'd task on this
 # machine (non-tty, ANSIBLE_NOCOLOR=1) - see scripts/gen_print_names.py for
 # the probing harness and the sample differential run in the round notes.
 describe Krikri::ArgspecValidator do
@@ -23,7 +23,7 @@ describe Krikri::ArgspecValidator do
     base
   end
 
-  it "rejects an unknown option with real's exact lineinfile wording (bare spelling)" do
+  it "rejects an unknown option with Ansible's exact lineinfile wording (bare spelling)" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "bakcrefs" => "true"}, vars)
@@ -49,7 +49,7 @@ describe Krikri::ArgspecValidator do
       "(attr, dest, destfile, name, regex, value).")
   end
 
-  it "validates template against copy's spec under real's ansible.legacy.copy name" do
+  it "validates template against copy's spec under Ansible's ansible.legacy.copy name" do
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
       {"src" => "t.j2", "dest" => "/tmp/x", "mdoe" => "0644"}, vars)
@@ -98,7 +98,7 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("missing required arguments: name, selection")
   end
 
-  it "emits real's exact bool-conversion failure wording" do
+  it "emits Ansible's exact bool-conversion failure wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "create" => "notabool"}, vars)
@@ -108,7 +108,7 @@ describe Krikri::ArgspecValidator do
       "'off', 1, 'true', 'y', 0, 'false', 'on', 'no', '1', 'yes', '0', 'n', 'f', 't'")
   end
 
-  it "emits real's exact int-conversion failure wording" do
+  it "emits Ansible's exact int-conversion failure wording" do
     failure = Krikri::ArgspecValidator.validate(
       "apt", "ansible.builtin.apt",
       {"name" => "x", "lock_timeout" => "abc"}, vars)
@@ -126,7 +126,7 @@ describe Krikri::ArgspecValidator do
     ).must_be_nil
   end
 
-  it "emits real's exact invalid-choices wording, in the spec's own order" do
+  it "emits Ansible's exact invalid-choices wording, in the spec's own order" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "state" => "bogus"}, vars)
@@ -138,20 +138,20 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.must_equal("value of mode must be one of: status, cleanup, got: bogus")
   end
 
-  it "enforces mutually exclusive options with real's pipe-joined wording" do
+  it "enforces mutually exclusive options with Ansible's pipe-joined wording" do
     failure = Krikri::ArgspecValidator.validate(
       "lineinfile", "ansible.builtin.lineinfile",
       {"path" => "/tmp/x", "insertbefore" => "a", "insertafter" => "b", "line" => "x"}, vars)
     failure.as(Failure).msg.must_equal("parameters are mutually exclusive: insertbefore|insertafter")
   end
 
-  it "enforces required_one_of with real's wording" do
+  it "enforces required_one_of with Ansible's wording" do
     failure = Krikri::ArgspecValidator.validate(
       "pip", "ansible.builtin.pip", {"zz" => "1"}, vars)
     failure.as(Failure).msg.must_equal("one of the following is required: name, requirements")
   end
 
-  it "enforces required_if against spec defaults with real's wording" do
+  it "enforces required_if against spec defaults with Ansible's wording" do
     failure = Krikri::ArgspecValidator.validate(
       "iptables", "ansible.builtin.iptables", {"zz" => "1"}, vars)
     failure.as(Failure).msg.must_equal(
@@ -173,7 +173,7 @@ describe Krikri::ArgspecValidator do
     failure.must_be_nil
   end
 
-  it "validates action-only directives with real's action-level wording" do
+  it "validates action-only directives with Ansible's action-level wording" do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug", {"zz" => "1"}, vars)
     failure.as(Failure).msg.must_equal(
@@ -183,7 +183,7 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).omit_changed?.must_equal(true)
   end
 
-  it "uses real's Invalid-options wording for fail/group_by/wait_for_connection" do
+  it "uses Ansible's Invalid-options wording for fail/group_by/wait_for_connection" do
     failure = Krikri::ArgspecValidator.validate(
       "fail", "ansible.builtin.fail", {"zz" => "1"}, vars)
     failure.as(Failure).msg.must_equal("Invalid options for fail: zz")
@@ -191,7 +191,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "accepts the options fail/group_by/wait_for_connection really take and lists only the unknown ones" do
-    # verified vs real ansible-core 2.19.11: valid names are never in the list
+    # verified vs ansible-core 2.19.11: valid names are never in the list
     Krikri::ArgspecValidator.validate(
       "fail", "ansible.builtin.fail", {"msg" => "x"}, vars).must_be_nil
     Krikri::ArgspecValidator.validate(
@@ -230,7 +230,7 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.starts_with?("Unsupported parameters for (ansible.legacy.service) module: zz.").must_equal(true)
   end
 
-  it "never validates the modules real does not validate" do
+  it "never validates the modules Ansible does not validate" do
     {"ansible.builtin.fetch"     => {"src" => "/etc/hostname", "dest" => "/tmp/x", "zz" => "1"},
      "ansible.builtin.set_fact"  => {"zz" => "1"},
      "ansible.builtin.reboot"    => {"zz" => "1"},
@@ -248,12 +248,12 @@ describe Krikri::ArgspecValidator do
     ).must_be_nil
   end
 
-  # Real's ArgumentSpecValidator runs its no_log value walk
+  # Ansible's ArgumentSpecValidator runs its no_log value walk
   # (_list_no_log_values) BEFORE every other check: a string element of
   # a dict-shaped option WITH suboptions that can't be parsed as a dict
   # raises check_type_dict's bare TypeError, and its text is the module
   # failure msg verbatim (no "argument 'x' is of type" wrapping).
-  # Captured live from real ansible-playbook 2.19.11 with
+  # Captured live from ansible-playbook 2.19.11 with
   # community.general.ini_file's section_has_values: ["fwtaiy"].
   it "fails a non-dict string element of a dict-elements option with check_type_dict's bare message" do
     failure = Krikri::ArgspecValidator.validate(
@@ -275,7 +275,7 @@ describe Krikri::ArgspecValidator do
     ).must_be_nil
   end
 
-  it "reports a non-string non-dict element with real's own (format-swapped) wording" do
+  it "reports a non-string non-dict element with Ansible's own (format-swapped) wording" do
     failure = Krikri::ArgspecValidator.validate(
       "community.general.ini_file", "community.general.ini_file",
       {"path" => "/tmp/x", "section_has_values" => %([5])}, vars)
@@ -325,7 +325,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "fails assemble's missing src/dest at the action level, not the module spec" do
-    # Real's assemble action plugin checks src/dest presence before the
+    # Ansible's assemble action plugin checks src/dest presence before the
     # remote_src staging and before the module validates anything
     # (live-verified vs 2.19.11: a typo'd src with remote_src: true
     # reports the action-level "src and dest are required", never the
@@ -346,7 +346,7 @@ describe Krikri::ArgspecValidator do
   it "keeps template's post-action params out of the src/dest presence check" do
     # Once the template action has run, src is consumed into the rendered
     # content - the post-action spec pass must fall through to the
-    # unsupported-params check (real's copy module rejects the leftover
+    # unsupported-params check (Ansible's copy module rejects the leftover
     # template-only params there, live-verified vs 2.19.11), while the
     # pre-action pass with the ORIGINAL params still enforces presence.
     failure = Krikri::ArgspecValidator.validate(
@@ -367,7 +367,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "rejects assert's natively-typed fail_msg before the unsupported-params error" do
-    # Real's assert action validates types (its own str_or_list_of_str
+    # Ansible's assert action validates types (its own str_or_list_of_str
     # callable) BEFORE the unsupported-params error is appended, so a
     # wrong-type fail_msg wins over a typo'd key (live-verified vs
     # 2.19.11 with fail_msg: 75 + that_bogus:). The wire carries the
@@ -398,7 +398,7 @@ describe Krikri::ArgspecValidator do
       "Unsupported parameters for (ansible_collections.ansible.builtin.plugins.action.assert) " \
       "module: that_bogus. Supported parameters include: fail_msg, quiet, success_msg, that (msg).")
 
-    # A JSON-encoded list of strings passes real's callable.
+    # A JSON-encoded list of strings passes Ansible's callable.
     Krikri::ArgspecValidator.validate(
       "assert", "ansible.builtin.assert",
       {"fail_msg" => %(["a", "b"]), "that" => "true"}, vars
@@ -411,7 +411,7 @@ describe Krikri::ArgspecValidator do
       "Unsupported parameters for (lineinfile) module: x. Supported parameters include: path."
     ).must_equal(:module)
     # template's usual file-not-found handling chain must NOT swallow a
-    # validation failure - real prints the collapsed Module-failed chain.
+    # validation failure - Ansible prints the collapsed Module-failed chain.
     Krikri::ArgspecValidator.failure_kind?(
       "ansible.builtin.template",
       "Unsupported parameters for (ansible.legacy.copy) module: mdoe. Supported parameters include: dest."
@@ -429,7 +429,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "reports type errors in the module's own argument_spec order, not alphabetically" do
-    # Real's _validate_argument_types walks argument_spec.items() in
+    # Ansible's _validate_argument_types walks argument_spec.items() in
     # DECLARATION order and the module fails on errors[0] - live-verified
     # vs 2.19.11 with apt (which declares update_cache_retry_max_delay
     # 4th, force 11th, allow_downgrade 22nd, lock_timeout 24th): a
@@ -454,7 +454,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "validates pause's int-callable seconds/minutes before unsupported params" do
-    # Real's pause action validates its own spec (validate_argument_spec):
+    # Ansible's pause action validates its own spec (validate_argument_spec):
     # mutually exclusive, then types in declaration order, unsupported
     # params LAST - so a wrong-typed seconds beats a typo'd param
     # (live-verified vs 2.19.11 with seconds: lraeca + miuntes: mngkxw).
@@ -483,7 +483,7 @@ describe Krikri::ArgspecValidator do
       {"seconds" => Krikri::NON_STRING_PARAM_PREFIX + "true"}, vars).must_be_nil
 
     # mutually exclusive still beats the type errors (real appends it
-    # first), in real's own "a|b" join.
+    # first), in Ansible's own "a|b" join.
     failure = Krikri::ArgspecValidator.validate(
       "pause", "ansible.builtin.pause",
       {"minutes" => "aa", "seconds" => "bb"}, vars)
@@ -500,7 +500,7 @@ describe Krikri::ArgspecValidator do
 
   # debug's own spec lives in its ACTION plugin (plugins/action/
   # debug.py:40), which runs the same shared ArgumentSpecValidator before
-  # the task does anything else - so real reports errors[0] out of
+  # the task does anything else - so Ansible reports errors[0] out of
   # mutually_exclusive -> types in declaration order (msg, var,
   # verbosity) -> unsupported LAST. All live-verified vs 2.19.11.
   it "validates debug's own spec before its unsupported-parameter error" do
@@ -527,7 +527,7 @@ describe Krikri::ArgspecValidator do
       {"msg" => Krikri::NONE_SENTINEL, "var" => "ansible_hostname"}, vars)
     failure.as(Failure).msg.must_equal("parameters are mutually exclusive: msg|var")
 
-    # The unsupported-params error is real's LAST, unchanged in wording
+    # The unsupported-params error is Ansible's LAST, unchanged in wording
     # (and real echoes the FQCN the task was spelled with - the resolved
     # action-plugin path only for the ansible.builtin.debug spelling).
     failure = Krikri::ArgspecValidator.validate(
@@ -544,7 +544,7 @@ describe Krikri::ArgspecValidator do
       "Supported parameters include: msg, var, verbosity.")
   end
 
-  it "reports debug's verbosity/var type errors in real's per-type wording" do
+  it "reports debug's verbosity/var type errors in Ansible's per-type wording" do
     # verbosity is an int: every natively-typed value fails with its own
     # Python repr, a numeric string converts fine, a bool IS an int.
     {
@@ -555,7 +555,7 @@ describe Krikri::ArgspecValidator do
       "[1, 2]"                                 => "argument 'verbosity' is of type list and we were unable to convert to int: \"[1, 2]\" cannot be converted to an int",
       # a comma-joined list wire whose members are non-string scalars
       # (what the parser produces for `verbosity: [1, 2]`) is re-encoded
-      # as the JSON array it is, so real's list error - and repr - come out
+      # as the JSON array it is, so Ansible's list error - and repr - come out
       "1," + Krikri::NON_STRING_MEMBER_PREFIX + "2" => "argument 'verbosity' is of type list and we were unable to convert to int: \"[1, 2]\" cannot be converted to an int",
       "{\"a\": 1}"                                  => "argument 'verbosity' is of type dict and we were unable to convert to int: \"{'a': 1}\" cannot be converted to an int",
       Krikri::NONE_SENTINEL                         => "argument 'verbosity' is of type NoneType and we were unable to convert to int: \"None\" cannot be converted to an int",
@@ -579,7 +579,7 @@ describe Krikri::ArgspecValidator do
       "{\"a\": 1}" => "argument 'var' is of type dict and we were unable to convert to _check_type_str_no_conversion: " \
                       "'{'a': 1}' is not a string and conversion is not allowed",
       # a None value is skipped by the validator itself (neither required
-      # nor defaulted) and real then prints "Hello world!".
+      # nor defaulted) and Ansible then prints "Hello world!".
       Krikri::NONE_SENTINEL => nil,
       "playbook_dir"        => nil,
     }.each do |value, expected|
@@ -601,7 +601,7 @@ describe Krikri::ArgspecValidator do
 
   # copy's and template's ACTION plugins read `follow` through
   # boolean(strict=False) and hand the copy MODULE the coerced boolean, so
-  # a spelling real would reject never reaches that module's spec - except
+  # a spelling Ansible would reject never reaches that module's spec - except
   # on copy's remote_src branch, which passes the raw args (live-verified
   # vs 2.19.11).
   it "never type-checks copy/template's follow the way their action plugin reads it" do
@@ -643,7 +643,7 @@ describe Krikri::ArgspecValidator do
   end
 
   it "keeps template's own action-level checks ahead of the copy spec" do
-    # `state` is a None check in real's action plugin, so a `state:` with no
+    # `state` is a None check in Ansible's action plugin, so a `state:` with no
     # value passes it and only the typo'd key is reported.
     failure = Krikri::ArgspecValidator.validate(
       "template", "ansible.builtin.template",
@@ -785,7 +785,7 @@ describe Krikri::ArgspecValidator do
     end
   end
 
-  it "reports uri's element type conversions with real's own classes and reprs" do
+  it "reports uri's element type conversions with Ansible's own classes and reprs" do
     {
       {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "1.5"} => "float and we were unable to convert to int: \"1.5\"",
       {"status_code" => Krikri::NON_STRING_MEMBER_PREFIX + "null"} => "NoneType and we were unable to convert to int: \"None\"",
@@ -806,9 +806,9 @@ describe Krikri::ArgspecValidator do
 end
 
 # End-to-end display shape: a validation failure flowing through
-# ResultDisplay produces real ansible-playbook's [ERROR] block (chain
+# ResultDisplay produces ansible-playbook's [ERROR] block (chain
 # shape included) and the single-line fatal dump. Expectations captured
-# from real ansible-playbook 2.19.11 runs of the same tasks.
+# from ansible-playbook 2.19.11 runs of the same tasks.
 describe "argspec validation display shapes" do
   private def capture_output(&)
     io = IO::Memory.new

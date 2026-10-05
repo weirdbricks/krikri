@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real Ansible's command module never runs anything through a shell, but
+# Ansible's command module never runs anything through a shell, but
 # its AnsibleModule.run_command (basic.py, expand_user_and_vars - driven by
 # the module's expand_argument_vars, default true) expands BOTH `~` and
 # `$VAR`/`${VAR}` on EVERY argv token, not just the executable: the command

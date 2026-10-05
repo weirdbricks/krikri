@@ -7,7 +7,7 @@ module Krikri
     # of "this reference has no value" is the literal text "undefined"
     # (120+ production sites), which any real stored value can collide
     # with: `command: printf 'undefined'` + `register: s2`, then
-    # `{{ s2.stdout_lines.0 }}` - real Ansible renders the string; a
+    # `{{ s2.stdout_lines.0 }}` - Ansible renders the string; a
     # strict-undefined check that re-reads the evaluator's own rendered
     # output cannot tell a genuine miss from that collision and failed
     # the task with "'s2.stdout_lines.0' is undefined" (juju4.pocketid,

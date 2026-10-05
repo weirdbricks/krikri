@@ -1,30 +1,30 @@
 require "../minitest_helper"
 
-# Regressions for KNOWN divergences from real ansible-core 2.19.11, each
+# Regressions for KNOWN divergences from ansible-core 2.19.11, each
 # live-verified by running REAL `ansible-playbook` and krikri-playbook
 # directly on a small local play and comparing the registered
 # `{{ r | to_json }}` dump (and, where noted, the console output):
 #
 #   pause    - registered shape is changed, rc, stderr, stdout, start,
 #              stop, delta, echo, user_input, failed - no
-#              stdout_lines/stderr_lines (real's pause module does not
+#              stdout_lines/stderr_lines (Ansible's pause module does not
 #              derive them; they are command-family additions).
 #   find     - an unreadable directory is recorded in skipped_paths with
 #              Python's OSError text, silently (no warning, msg
 #              unchanged); a not-a-directory path warns and flips msg.
 #   package_facts - registered keys are exactly ansible_facts, failed,
 #              changed - no msg.
-#   uri      - a file:// url crashes real's module at
+#   uri      - a file:// url crashes Ansible's module at
 #              `int(resp['status'])` (no HTTP status on the response):
 #              registered shape is failed, changed, exception, msg with
 #              that int() TypeError text and no url/status/elapsed/
 #              redirected; a request failure (connection refused) keeps
-#              the full shape but in real's fail_json key order.
+#              the full shape but in Ansible's fail_json key order.
 #   until    - the registered result of an until: task carries an
 #              attempts int (the successful 1-based attempt, or the
 #              retries value when the loop runs out) and an exhausted
 #              loop marks the result failed: true; each failed attempt
-#              prints real's "FAILED - RETRYING" line.
+#              prints Ansible's "FAILED - RETRYING" line.
 
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -59,7 +59,7 @@ ensure
 end
 
 describe "pause registered result shape" do
-  it "registers real's key order with no stdout_lines/stderr_lines" do
+  it "registers Ansible's key order with no stdout_lines/stderr_lines" do
     result, _output = run_registered_dump(<<-T)
       - ansible.builtin.pause:
           seconds: 1
@@ -93,7 +93,7 @@ describe "find unreadable path handling" do
     File.chmod(hidden, 0o755)
     result["skipped_paths"].as_h.keys.must_equal([hidden])
     result["skipped_paths"][hidden].as_s.must_equal("[Errno 13] Permission denied: '#{hidden}'")
-    # Real keeps msg "All paths examined" and carries no warnings key for
+    # Ansible keeps msg "All paths examined" and carries no warnings key for
     # the os.walk onerror path (live-verified vs 2.19.11).
     result["msg"].as_s.must_equal("All paths examined")
     result.as_h.has_key?("warnings").must_equal(false)
@@ -129,7 +129,7 @@ describe "package_facts registered shape" do
 end
 
 describe "uri failure shapes" do
-  it "registers real's module-crash shape for a file:// url" do
+  it "registers Ansible's module-crash shape for a file:// url" do
     result, _output = run_registered_dump(<<-T)
       - ansible.builtin.uri:
           url: file:///etc/hostname
@@ -143,7 +143,7 @@ describe "uri failure shapes" do
     result["msg"].as_s.must_equal("Task failed: Module failed: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'")
   end
 
-  it "keeps the full failure shape in real's fail_json key order for a refused connection" do
+  it "keeps the full failure shape in Ansible's fail_json key order for a refused connection" do
     result, _output = run_registered_dump(<<-T)
       - ansible.builtin.uri:
           url: http://127.0.0.1:1/
@@ -183,7 +183,7 @@ describe "until retries attempts key" do
       T
     result["attempts"].as_i.must_equal(2)
     result["failed"].as_bool.must_equal(true)
-    # Real also projects the error-event exception onto the exhausted
+    # Ansible also projects the error-event exception onto the exhausted
     # result, after attempts (live-verified vs 2.19.11, ignored or not).
     result.as_h.keys.last(3).must_equal(["failed", "attempts", "exception"])
     result["exception"].as_s.must_equal("(traceback unavailable)")

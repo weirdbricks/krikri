@@ -2,10 +2,10 @@ require "../minitest_helper"
 require "socket"
 
 # Regression specs for the KNOWN_MISSING "MySQL driver gaps" mysql_info
-# items: real reports the PYTHON connector it used (pymysql and its
+# items: Ansible reports the PYTHON connector it used (pymysql and its
 # version) as connector_name/connector_version, and its users output
 # carries each account's authentication_string read from mysql.user
-# (live-verified against real 2.19.11 + community.mysql 5.0.2 on MySQL
+# (live-verified against Ansible 2.19.11 + community.mysql 5.0.2 on MySQL
 # 8.4). krikri used to report "Unknown" for both connector facts and
 # omitted authentication_string entirely.
 #
@@ -47,7 +47,7 @@ private def failed?(result : JSON::Any) : Bool
 end
 
 describe "mysql_info connector identity" do
-  it "reports real's Python driver identity, not Unknown" do
+  it "reports Ansible's Python driver identity, not Unknown" do
     servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
     skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
 
@@ -88,7 +88,7 @@ describe "mysql_info users authentication_string" do
     end
   end
 
-  it "does not add authentication_string to users_info entries (real keeps it in users only)" do
+  it "does not add authentication_string to users_info entries (Ansible keeps it in users only)" do
     servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
     skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?
 

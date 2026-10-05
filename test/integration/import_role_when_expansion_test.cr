@@ -12,7 +12,7 @@ private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-
 describe "import_role: with when: expands and propagates onto every one of the role's own tasks" do
   it "shows each inner task individually skipped when the import's own when: is false, instead of one silent no-op" do
     # Real bug found benchmarking brunobenchimol.certbot_dns (round855):
-    # real Ansible resolves import_role: statically and combines its
+    # Ansible resolves import_role: statically and combines its
     # when: onto EVERY task the role expands to - the import line
     # itself produces no result of its own, only its expanded children
     # do. A false when: on the import must still show each inner task
@@ -54,7 +54,7 @@ describe "import_role: with when: expands and propagates onto every one of the r
 
     status.success?.must_equal(true)
     # Role-prefixed ("inner : ...") now that TASK banners carry the
-    # owning role's name, matching real Ansible - see executor.cr's
+    # owning role's name, matching Ansible - see executor.cr's
     # own task_role_prefix.
     output.to_s.must_include("TASK [inner : inner task one]")
     output.to_s.must_include("TASK [inner : inner task two]")

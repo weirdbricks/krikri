@@ -6,7 +6,7 @@ describe "copy plugin - __precomputed_match" do
     # Real bug/inefficiency found via round 25-27's benchmark rounds:
     # TaskExecutor#stage_large_copy_source unconditionally SCP'd a large
     # src file to the remote host on every single run, even when the
-    # destination already held identical content - real Ansible's own
+    # destination already held identical content - Ansible's own
     # copy: checksums the destination first and skips the transfer
     # entirely on a match. The fix lives mostly in TaskExecutor (a
     # remote md5sum check before ever staging anything, not testable

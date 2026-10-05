@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # A `when:` on a roles: entry, or on a meta/main.yml dependency entry
-# (real Ansible's own RoleRequirement field, same shape in both places),
+# (Ansible's own RoleRequirement field, same shape in both places),
 # is combined onto EVERY task the referenced role expands to - the role
 # reference itself produces no result of its own. RoleLoader previously
 # had no notion of `when:` on a role entry at all: `parse_role_entry`
@@ -141,7 +141,7 @@ end
 # Regression spec for brunobenchimol.certbot_dns's 0.9.828 regression: a
 # meta/main.yml dependency's own inline var override (`- role: dep,
 # some_var: false`) is scoped to that ONE dependency invocation only -
-# real Ansible does not let it leak into the declaring role's own later
+# Ansible does not let it leak into the declaring role's own later
 # tasks, even though a role's plain vars/main.yml AND defaults/main.yml
 # genuinely do stay visible play-wide once loaded (see RoleLoader's own
 # `play.all_role_vars`/`all_role_defaults` comment).

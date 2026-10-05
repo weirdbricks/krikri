@@ -35,9 +35,9 @@ module Krikri
   #   (default %Y%m%d%H%M.%S)
   # - access_time_format: strptime format for access_time (default %Y%m%d%H%M.%S)
   # - seuser/serole/setype/selevel: SELinux context parts - silently
-  #   accepted and no-op'd on non-SELinux hosts (real Ansible's own
+  #   accepted and no-op'd on non-SELinux hosts (Ansible's own
   #   graceful behavior), applied via chcon on SELinux-enabled hosts
-  # - unsafe_writes: accepted (real Ansible's file module takes it via
+  # - unsafe_writes: accepted (Ansible's file module takes it via
   #   the file-common args; it has no observable effect for this module,
   #   which never writes content atomically)
   # - check_mode: Dry-run mode
@@ -76,7 +76,7 @@ module Krikri
   # native. This matches the *existing* (pre-conversion) limitation
   # documented in `normalize_mode` below, not a new one introduced here.
   class FilePlugin < BasePlugin
-    # Real ansible-core 2.19.11's registered file result key order -
+    # ansible-core 2.19.11's registered file result key order -
     # live-verified via `{{ r | to_json }}` on registered file: tasks
     # (the -v dump sorts alphabetically, so the order is only observable
     # programmatically). The module's ensure_* helpers build their dict
@@ -89,7 +89,7 @@ module Krikri
     # absent paths, and state=file with a mode change under --diff.
     # `path` and `dest` are both listed because the lead key differs per
     # state (touch/link/hard report under dest, the rest under path) -
-    # exactly one of the two is ever present, and real never emits both.
+    # exactly one of the two is ever present, and Ansible never emits both.
     # `src` trails dest on the link/hard results (real: dest, src,
     # changed, ... - live-verified); no success result carries path and
     # src together.
@@ -125,7 +125,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Get path (required). Real Ansible's file module accepts `path`,
+      # Get path (required). Ansible's file module accepts `path`,
       # `dest`, and `name` interchangeably; dest is what many roles write
       # (dev-sec os_hardening's rhosts/netrc cleanup uses `dest:`).
       path = @params["path"]? || @params["dest"]? || @params["name"]?
@@ -152,7 +152,7 @@ module Krikri
         )
       end
 
-      # Real Ansible checks this UNCONDITIONALLY after state resolution,
+      # Ansible checks this UNCONDITIONALLY after state resolution,
       # whether state: was explicit or defaulted - `recurse: yes` against
       # anything that isn't (or wouldn't become) a directory is a hard
       # failure, not silently ignored (live-verified against ansible-core
@@ -186,24 +186,24 @@ module Krikri
       # ensure_file's "file () is absent, cannot continue" with the
       # result echoing state "absent"; state=touch fails "Error, could
       # not touch target.". state=absent with an empty path is a genuine
-      # no-op ok in real Ansible (changed: false), and state=link/hard
+      # no-op ok in Ansible (changed: false), and state=link/hard
       # fail later inside their own symlink/link syscall handling, so
       # those three fall through untouched here. Checked AFTER state
       # resolution for exactly that reason - a pre-state check would
-      # break the absent no-op that real Ansible still performs.
+      # break the absent no-op that Ansible still performs.
       if empty_path_failure = empty_path_result(path, state)
         return empty_path_failure
       end
 
       result = dispatch_state_rescued(state, path)
 
-      # Real Ansible's file module always echoes the resolved state:
+      # Ansible's file module always echoes the resolved state:
       # back in its result (dev-sec os_hardening's own molecule test
       # verifies a `register:`'d file: task's `.state` directly:
       # `result_test_netrc.state == 'file'`) - added centrally here
       # rather than in every handle_* branch above, since none of them
       # need to know their own state value to do their actual job.
-      # state=touch is excluded from the echo: real Ansible NEVER emits
+      # state=touch is excluded from the echo: Ansible NEVER emits
       # "state": "touch" (live-verified against ansible-core 2.19.4 for
       # all four touch shapes - existing/new x real/check). An existing
       # path's state arrives via add_path_info below ("file"/...), and a
@@ -212,18 +212,18 @@ module Krikri
       # into exactly that shape.
       result.extra["state"] = JSON::Any.new(state) unless state == "touch" || result.failed? || result.extra.has_key?("state")
 
-      # Real Ansible's AnsibleModule.add_path_info
+      # Ansible's AnsibleModule.add_path_info
       # merges the file-common stat fields (uid/gid/owner/group/mode/
       # state/size) into EVERY result whose path still exists at module
       # exit time - so a state=absent --check on an existing file reports
       # the file's PRE-removal stats with state "file" (this overwrites
-      # the resolved-state echo above, exactly like real Ansible's own
-      # exit-time overwrite does), while the same task for real reports
+      # the resolved-state echo above, exactly like Ansible's own
+      # exit-time overwrite does), while the same task for Ansible reports
       # only state "absent" (the path is gone by exit time). No checksum
-      # here ever - real Ansible's file module result has no checksum
+      # here ever - Ansible's file module result has no checksum
       # field for any state, file or otherwise.
       #
-      # Gated for FAILURES: real's add_path_info keys on the RESULT
+      # Gated for FAILURES: Ansible's add_path_info keys on the RESULT
       # carrying a path/dest key (basic.py: `if 'path' in kwargs or
       # 'dest' in kwargs`), and a fail_json(msg=...) without a path=
       # kwarg - e.g. the touch timestamp parse error - merges nothing
@@ -254,7 +254,7 @@ module Krikri
     # ensure_file's "file () is absent, cannot continue" with the
     # result echoing state "absent"; state=touch fails "Error, could
     # not touch target.". state=absent with an empty path is a genuine
-    # no-op ok in real Ansible (changed: false), and state=link/hard
+    # no-op ok in Ansible (changed: false), and state=link/hard
     # fail later inside their own symlink/link syscall handling, so
     # those three fall through untouched here (return nil).
     private def empty_path_result(path : String, state : String) : PluginResult?
@@ -289,7 +289,7 @@ module Krikri
       end
     end
 
-    # Real Ansible does NOT default to "file" unconditionally
+    # Ansible does NOT default to "file" unconditionally
     # (additional_parameter_handling in its file module): with no state:
     # given, the default is the path's CURRENT type (file/directory/
     # link) when it exists at all, or - only when the path is genuinely
@@ -322,13 +322,13 @@ module Krikri
     end
 
     # dispatch_state with the failure-mode rescues: the InvalidModeError
-    # branch is real Ansible's own mode-validation wording; the generic
+    # branch is Ansible's own mode-validation wording; the generic
     # branch exists because helper raises like resolve_uid's "chown
     # failed: failed to look up user <name>" are meant to surface as the
-    # task's own msg (real Ansible's basic.py set_owner_if_different
+    # task's own msg (Ansible's basic.py set_owner_if_different
     # fails with exactly that string) - left unrescued they fell through
     # to plugin_manager.cr's generic top-level handler, which prepends
-    # its own "Plugin execution failed: " wrapper real never produces
+    # its own "Plugin execution failed: " wrapper Ansible never produces
     # (found via the podman-diff file_edge_cases F2 case). Every
     # deliberate raise inside this plugin's call chain is already a
     # user-facing failure message, so surface it verbatim.
@@ -391,11 +391,11 @@ module Krikri
           apply_file_attributes(path, recursive: true?(@params["recurse"]?))
         end
 
-        # Real Ansible's file module result carries NO msg at all on an
+        # Ansible's file module result carries NO msg at all on an
         # unchanged directory - just the stat fields (round900902
         # juju4.adduser: this engine reported "Directory attributes
         # updated" alongside changed: false on every converged re-run,
-        # where real Ansible's result has no msg key). msg: ""
+        # where Ansible's result has no msg key). msg: ""
         # serializes as no msg key - PluginResult omits empty msgs
         # unless include_empty_msg.
         return PluginResult.new(
@@ -422,7 +422,7 @@ module Krikri
     private def create_directory(path : String) : PluginResult
       # Create directory (like mkdir -p), applying owner/group/mode to
       # each newly-created path COMPONENT along the way, not just the
-      # leaf. Real Ansible's own file module (ensure_directory) walks
+      # leaf. Ansible's own file module (ensure_directory) walks
       # the path component-by-component with a bare os.mkdir per
       # missing dir, explicitly applying attributes to each one it
       # creates; a single Dir.mkdir_p call has no such per-component
@@ -494,7 +494,7 @@ module Krikri
 
       # Check if it's actually a regular file (not directory or link). A
       # directory at a path where the task did not set state: directory is
-      # still valid - real Ansible's file module updates a directory's
+      # still valid - Ansible's file module updates a directory's
       # attributes under its default state: file (dev-sec os_hardening
       # loops a mode:/owner:/group: task over a list that mixes /etc/crontab
       # and /etc/cron.* directories), so treat that as a directory
@@ -535,7 +535,7 @@ module Krikri
       # non-symlink path to "file" for exactly this reason (its own comment:
       # "could be many other things, but defaulting to file"), which is why
       # `file: path=/var/run/docker.sock group=docker` on a Unix socket
-      # works against real ansible-playbook.
+      # works against ansible-playbook.
 
       # File exists, update attributes if needed
       changed = update_attributes_if_needed(path, is_directory: false)
@@ -561,7 +561,7 @@ module Krikri
       PluginResult.new(
         changed: changed,
         failed: false,
-        # Real's file module result carries NO msg on any success path -
+        # Ansible's file module result carries NO msg on any success path -
         # attribute updates included (live-verified vs 2.19.11: a mode
         # change on an existing file serializes as path, changed, the
         # stat block, failed - no msg key). msg: "" serializes as no msg
@@ -646,7 +646,7 @@ module Krikri
       # Apply attributes (note: for links, this affects the link itself, not target)
       apply_file_attributes(path)
 
-      # Real's link results carry NO msg on any success path - created,
+      # Ansible's link results carry NO msg on any success path - created,
       # re-pointed or already-correct alike (live-verified vs 2.19.11 at
       # -v: {changed, dest, src} + the add_path_info stat fields only).
       PluginResult.new(
@@ -660,7 +660,7 @@ module Krikri
     end
 
     # Resolves state=link's src:, returning either the tilde-expanded
-    # source path or a failure PluginResult. Real Ansible
+    # source path or a failure PluginResult. Ansible
     # (ensure_symlink in its file module) checks that src exists
     # unconditionally - before any existing-dest handling, so even a
     # re-run against an already-correct link to a since-deleted src
@@ -692,7 +692,7 @@ module Krikri
     # creating the link without force; nil means it's safe to proceed
     # (nothing existed, or an existing symlink was removed to be replaced).
     #
-    # Real Ansible only requires force when the existing path is NOT itself
+    # Ansible only requires force when the existing path is NOT itself
     # a symlink (regular file, dir, etc. -> "refusing to convert from file
     # to symlink for <path>"); re-pointing an existing symlink to a new src
     # happens unconditionally (round 813093,
@@ -718,7 +718,7 @@ module Krikri
       nil
     end
 
-    # state=hard's src setup checks: required-param, then real Ansible's
+    # state=hard's src setup checks: required-param, then Ansible's
     # own "src does not exist" hard failure (file.py, before anything
     # else touches the filesystem, check mode included). Returns the
     # failure result, or nil when src is present and exists.
@@ -743,7 +743,7 @@ module Krikri
       nil
     end
 
-    # The already-linked verdict: real's result echoes dest/src in check
+    # The already-linked verdict: Ansible's result echoes dest/src in check
     # mode too (same result dict as the run path, live-verified vs
     # 2.19.11 via a registered `debug: msg="{{ h.dest }}"`).
     private def hard_link_existing_result(path : String, src : String) : PluginResult
@@ -839,7 +839,7 @@ module Krikri
       exists = File.exists?(path)
 
       if exists
-        # File exists - real Ansible's own idempotency here: touching
+        # File exists - Ansible's own idempotency here: touching
         # only actually changes mtime/atime to "now" when
         # modification_time:/access_time: isn't `preserve` (its default,
         # with no param at all, IS "now" - always changed then), so
@@ -880,7 +880,7 @@ module Krikri
 
       # File doesn't exist, create it
       if @check_mode
-        # Real Ansible's check-mode touch on an absent path reports
+        # Ansible's check-mode touch on an absent path reports
         # changed + dest only - no stat fields (nothing exists to stat),
         # no msg, no state echo (live-verified against ansible-core
         # 2.19.4).
@@ -896,10 +896,10 @@ module Krikri
       # Create file. Python's open() defaults to 0666 (the process umask
       # then trims it); Crystal's File.open defaults its perm to 0644, so
       # the explicit 0666 here is what makes a fresh touch follow the
-      # umask like real Ansible (umask 002 -> 0664, umask 022 -> 0644).
+      # umask like Ansible (umask 002 -> 0664, umask 022 -> 0644).
       # On an EXISTING path the perm arg is ignored by open(2), so a
       # touch never rewrites an existing file's mode.
-      # On failure real Ansible's file module fails with the plain
+      # On failure Ansible's file module fails with the plain
       # "Error, could not touch target." plus the path echo
       # (fail_json(msg=..., path=path)) - no errno suffix on any
       # open() failure, ENOENT parent or ENOTDIR component alike
@@ -909,9 +909,9 @@ module Krikri
         File.open(path, "w", 0o666) { }
         true
       rescue ex : File::Error
-        # Real's fail_json(path=path, exception=ex): the RESULT's msg
+        # Ansible's fail_json(path=path, exception=ex): the RESULT's msg
         # stays plain, but the OSError str rides the (display-only)
-        # `exception` key - real 2.19's error block composes the header
+        # `exception` key - Ansible 2.19's error block composes the header
         # as "<msg>: <exception>" while the dumped result keeps the
         # bare msg (live-verified vs 2.19.11).
         @last_error = oserror_repr(path, ex)
@@ -946,7 +946,7 @@ module Krikri
     # (update_attributes_if_needed/touch_times_would_change? are both
     # read-only, so safe to run in check mode).
     private def touch_existing_result(path : String, attrs_changed : Bool, times_changed : Bool) : PluginResult
-      # No msg - real Ansible's file module never carries msg on a touch
+      # No msg - Ansible's file module never carries msg on a touch
       # success path, check mode included (live-verified against
       # ansible-core 2.19.4: the check-mode result is changed/dest/stat
       # fields only).
@@ -963,7 +963,7 @@ module Krikri
     private def handle_absent(path : String) : PluginResult
       # lexists semantics: a DANGLING symlink (target gone) reports
       # File.exists? == false (it follows links) but still needs removing
-      # - real Ansible's state=absent removes broken symlinks too.
+      # - Ansible's state=absent removes broken symlinks too.
       unless File.exists?(path) || File.symlink?(path)
         # Path doesn't exist, nothing to do
         if @check_mode
@@ -995,7 +995,7 @@ module Krikri
           key_order: ABSENT_KEY_ORDER
         )
         # Check mode does NOT remove - the file still exists at module
-        # exit, so real Ansible's add_path_info merges its PRE-removal
+        # exit, so Ansible's add_path_info merges its PRE-removal
         # stats in with state "file" (live-verified against ansible-core
         # 2.19.4), NOT the requested state=absent. #execute's central
         # add_path_info call handles that; nothing else needed here.
@@ -1033,7 +1033,7 @@ module Krikri
     # correctly - matches what `stat -c '%U'`/`'%G'`/`'%a'` (no `-L`,
     # i.e. not following symlinks) did before.
     #
-    # The follow: parameter (default false, matching real Ansible's
+    # The follow: parameter (default false, matching Ansible's
     # file module) flips the read path between lstat and stat
     # (see the stat_follow helper). When true, a `state: file` task
     # with a symlink path compares the TARGET's metadata (owner,
@@ -1077,7 +1077,7 @@ module Krikri
       return false unless info
 
       # Check owner - owner: accepts a numeric uid string directly
-      # (real Ansible tolerates this, e.g. buluma.maven's own `group:
+      # (Ansible tolerates this, e.g. buluma.maven's own `group:
       # "0"` - see apply_single_file_attributes's identical numeric
       # fallback), which must compare against the raw numeric uid, not
       # a resolved name - otherwise an already-correct numeric owner/
@@ -1096,7 +1096,7 @@ module Krikri
       # Check mode - skipped for a symlink (handle_link's skip_mode: true).
       # Linux has no real lchmod: a symlink's own permission bits are
       # meaningless (`lrwxrwxrwx` always) and can't actually be changed,
-      # so real Ansible's file module doesn't attempt to compare/apply
+      # so Ansible's file module doesn't attempt to compare/apply
       # `mode:` against the link itself for `state: link`. Previously
       # compared the target mode against the symlink's always-0777 lstat
       # bits, which never matched, so `state: link` + `mode:` reported
@@ -1109,7 +1109,7 @@ module Krikri
       end
 
       # attr:/attributes: - see attr_changed? below for why this mirrors
-      # real Ansible's string-comparison semantics (including its own
+      # Ansible's string-comparison semantics (including its own
       # non-idempotent `-`-prefixed quirk) rather than "smarter" per-flag
       # checks.
       changed = true if attr_changed?(path)
@@ -1153,13 +1153,13 @@ module Krikri
     # comma-separated clauses applied left to right - not every POSIX
     # corner case, but every shape real playbooks (and this project's own
     # fixtures) actually write.
-    # Real Ansible (AnsibleModule._symbolic_mode_to_octal in
-    # the real module) validates each comma clause against
+    # Ansible (AnsibleModule._symbolic_mode_to_octal in
+    # the Ansible module) validates each comma clause against
     # USERS_RE ^[ugo]+$ and PERMS_RE ^[rwxXstugo]*$ - note the perms
     # class includes u/g/o (copy syntax like `g+u`) - and fails the
     # task with "mode must be in octal or symbolic form" on any
     # violation. This mirrors that check exactly, so modes chmod(1)
-    # and real Ansible both accept (copy syntax) keep working while
+    # and Ansible both accept (copy syntax) keep working while
     # anything else is rejected rather than silently no-op'd by the
     # narrower compute regex in apply_symbolic_clause.
     private def validate_symbolic_mode(mode : String) : Nil
@@ -1253,7 +1253,7 @@ module Krikri
     end
 
     private def apply_single_file_attributes(path : String) : Nil
-      # SELinux context runs FIRST, matching the order of real Ansible's
+      # SELinux context runs FIRST, matching the order of Ansible's
       # set_fs_attributes_if_different (set_context_if_different ->
       # owner -> group -> mode -> attributes).
       apply_secontext(path)
@@ -1268,7 +1268,7 @@ module Krikri
         gid = resolve_gid(group)
       end
       # A requested owner:/group: that doesn't resolve to a real system
-      # user/group must FAIL the task - real Ansible's own file module
+      # user/group must FAIL the task - Ansible's own file module
       # raises "chown failed: failed to look up user/group <name>"
       # immediately (before ever attempting the chown syscall). Real bug
       # found benchmarking robertdebock.openbao_agent on Rocky 9.6 (round
@@ -1279,9 +1279,9 @@ module Krikri
       # never called File.chown for the owner at all, silently leaving
       # the directory root:root and reporting success.
       # owner:/group: accept EITHER a name (the common case, looked up
-      # above) OR a real Ansible-tolerated raw numeric uid/gid string
+      # above) OR a Ansible-tolerated raw numeric uid/gid string
       # (`group: "0"` - buluma.maven's own "Create Maven installation
-      # directory" task, real Ansible resolves this directly to gid 0
+      # directory" task, Ansible resolves this directly to gid 0
       # rather than treating it as a name lookup at all). Only falls
       # back to the numeric form when the name lookup genuinely finds
       # nothing AND the string is purely digits - a role using a real
@@ -1316,7 +1316,7 @@ module Krikri
       # passed through here, the chown now reaches the target.
       # Only the actual syscalls are swallowed below (e.g. a chown/chmod
       # failing because this process isn't running as root/owner) - the
-      # owner:/group: LOOKUP failures above are real ansible-equivalent
+      # owner:/group: LOOKUP failures above are Ansible-equivalent
       # task failures and must propagate past this method, not be
       # silently absorbed by the same blanket rescue.
       begin
@@ -1335,11 +1335,11 @@ module Krikri
       apply_attr(path)
     end
 
-    # attr:/attributes: (chattr flags, real Ansible's `attributes` param
+    # attr:/attributes: (chattr flags, Ansible's `attributes` param
     # and its `attr` alias). Parsed into the leading operator ('+'/'-',
     # defaulting to '=' when bare) plus the flag letters themselves -
-    # real Ansible's set_attributes_if_different in
-    # the real module does exactly this split before comparing.
+    # Ansible's set_attributes_if_different in
+    # the Ansible module does exactly this split before comparing.
     private def attr_args : {Char, String}?
       raw = @params["attr"]? || @params["attributes"]?
       return nil unless raw
@@ -1352,10 +1352,10 @@ module Krikri
       end
     end
 
-    # The file's current chattr flags as real Ansible reads them:
+    # The file's current chattr flags as Ansible reads them:
     # `lsattr -d <path>` output's first whitespace field with the
     # dash-padding stripped (e.g. "--------------e-------" -> "e").
-    # Real Ansible (get_file_attributes) treats an lsattr failure
+    # Ansible (get_file_attributes) treats an lsattr failure
     # (missing binary, unsupported filesystem like tmpfs) as empty flags
     # rather than an error - the chattr call itself is what surfaces
     # those as task failures later, not the read.
@@ -1372,13 +1372,13 @@ module Krikri
     # current lsattr flag string differs from the requested flag letters
     # OR the request is '-'-prefixed - in which case chattr is re-run and
     # changed reported UNCONDITIONALLY, even when the flag being removed
-    # isn't actually set. That makes real Ansible's `attr: -i` never
+    # isn't actually set. That makes Ansible's `attr: -i` never
     # converge (ansible/ansible#33745), and its `+i`/`i` form report
     # changed whenever OTHER flags coexist (ext4's always-on extents `e`
     # makes "ie" != "i"; ansible/ansible#48839). Krikri previously
     # ignored the param entirely (reporting changed=0 forever), which is
-    # UNDER-reporting changed vs real Ansible - found on the
-    # l3d.resolvconf warm-idempotency round: real Ansible's
+    # UNDER-reporting changed vs Ansible - found on the
+    # l3d.resolvconf warm-idempotency round: Ansible's
     # "Resolv.conf is ino longer immutable." task (file: attr: '-i')
     # reports changed on every run; krikri reported ok.
     private def attr_changed?(path : String) : Bool
@@ -1390,7 +1390,7 @@ module Krikri
     end
 
     # Applies the attr:/attributes: param via the real chattr binary and
-    # fails the task (like real Ansible's fail_json(msg='chattr failed'))
+    # fails the task (like Ansible's fail_json(msg='chattr failed'))
     # when chattr exits nonzero or writes to stderr - the cold-run form
     # of the same l3d.resolvconf scenario, where chattr on a
     # systemd-resolved-managed /etc/resolv.conf symlink target on tmpfs
@@ -1409,7 +1409,7 @@ module Krikri
     end
 
     # SELinux context params (seuser:/serole:/setype:/selevel:, real
-    # Ansible's file-common args). Real Ansible accepts these on every
+    # Ansible's file-common args). Ansible accepts these on every
     # host but only ACTS on them when SELinux is actually enabled - its
     # set_context_if_different opens with
     # `if not self.selinux_enabled(): return changed`, a graceful no-op.
@@ -1424,7 +1424,7 @@ module Krikri
     end
 
     # is_selinux_mls_enabled() - only an MLS-enabled policy's context has
-    # the 4th (level) part that selevel: addresses; real Ansible appends
+    # the 4th (level) part that selevel: addresses; Ansible appends
     # selevel to the context list only when this is true.
     private def mls_enabled? : Bool
       @mls_enabled ||= begin
@@ -1440,7 +1440,7 @@ module Krikri
 
     # The file's current context via `ls -Zd` (read-only stand-in for
     # libselinux's lgetfilecon_raw; l-prefix semantics: does NOT follow
-    # symlinks). Split limited to 4 parts exactly like real Ansible's
+    # symlinks). Split limited to 4 parts exactly like Ansible's
     # own `context.split(':', 3)` - the MLS level may itself contain
     # ':' characters (e.g. "s0:c0.c255").
     private def current_selinux_context(path : String) : Array(String)?
@@ -1501,12 +1501,12 @@ module Krikri
       desired_selinux_context(path, current) != current
     end
 
-    # The apply half: real Ansible sets the full context with
+    # The apply half: Ansible sets the full context with
     # selinux.lsetfilecon('<user>:<role>:<type>[:<level>]') - the
     # l-prefix meaning it operates on the symlink itself - so this
     # shells to `chcon -h` with the whole context string (chcon accepts
     # a full context as its first argument) and fails the task on a
-    # nonzero exit, mirroring the real module's
+    # nonzero exit, mirroring the Ansible module's
     # fail_json(msg='set selinux context failed').
     private def apply_secontext(path : String) : Nil
       return unless secontext_requested?
@@ -1523,7 +1523,7 @@ module Krikri
 
     # Python's str(OSError) shape for a failed file syscall on *path*:
     # "[Errno 2] No such file or directory: b'<path>'" - errno text from
-    # strerror(3), path in Python bytes repr (real Ansible hands the file
+    # strerror(3), path in Python bytes repr (Ansible hands the file
     # module's paths around as bytes, so every OSError it surfaces carries
     # the b'' prefix). Used by the touch failure path.
     private def oserror_repr(path : String, ex : File::Error) : String
@@ -1556,7 +1556,7 @@ module Krikri
       elsif group.matches?(/\A\d+\z/)
         group.to_i
       else
-        # "chgrp failed", not "chown failed" - real Ansible's basic.py
+        # "chgrp failed", not "chown failed" - Ansible's basic.py
         # set_group_if_different (basic.py:830) fails with exactly this
         # string, verified live against ansible-core 2.19.11 (a
         # nonexistent name AND an explicit empty group: "" both produce
@@ -1624,7 +1624,7 @@ module Krikri
     # timestamp handling for modification_time:/access_time:. Unlike
     # update_times (used by state=file/link, where no modification_time:/
     # access_time: means "leave timestamps alone entirely"), state=touch's
-    # own default with neither given is "now" - matching real Ansible's
+    # own default with neither given is "now" - matching Ansible's
     # file module docs ("The default when the mtime and/or atime are not
     # explicitly set is to change these to the current time").
     private def touch_times_would_change?(path : String) : Bool
@@ -1690,7 +1690,7 @@ module Krikri
       result == 0 ? s : nil
     end
 
-    # Real Ansible's access_time_format:/modification_time_format: defaults
+    # Ansible's access_time_format:/modification_time_format: defaults
     # (the same `touch -t`-shaped format this plugin hard-coded before
     # those params existed).
     private def default_touch_time_format : String
@@ -1705,9 +1705,9 @@ module Krikri
       @params["access_time_format"]?.try { |v| v.empty? ? default_touch_time_format : v } || default_touch_time_format
     end
 
-    # Parses a timestamp using real Ansible's access_time_format:/
+    # Parses a timestamp using Ansible's access_time_format:/
     # modification_time_format: strftime/strptime grammar (Python's
-    # time.strptime is what the real module feeds both to - live-verified
+    # time.strptime is what the Ansible module feeds both to - live-verified
     # against ansible-core 2.19.4, including a custom
     # `%Y-%m-%d %H:%M` format). Supports the directives real playbooks
     # actually use (%Y %y %m %d %H %I %M %S %p %j %b %B %a %A %%), with

@@ -1,8 +1,8 @@
 module Krikri
-  # Real Ansible's own systemd module decides ONCE, before it acts on the
+  # Ansible's own systemd module decides ONCE, before it acts on the
   # unit, whether that unit exists at all (`found`), and then refuses to
   # enable/disable or start/stop something it could not find - see
-  # the real module's fail_if_missing, called as
+  # the Ansible module's fail_if_missing, called as
   # fail_if_missing(module, found, unit, msg='host') at the top of both the
   # `enabled:` and `state:` blocks of systemd_service.py.
   #
@@ -12,16 +12,16 @@ module Krikri
   # "masked" and therefore counts as FOUND - masking is a real operation
   # real performs on a not-yet-installed unit, so "not installed" must not
   # be confused with "installed but hidden". is_initd is a separate,
-  # equally sufficient signal: real's sysv_exists() just checks for the
+  # equally sufficient signal: Ansible's sysv_exists() just checks for the
   # init script under /etc/init.d.
   #
   # Factored into its own file (like SystemdEnabledState next door) so a
   # spec can require the decision logic directly without triggering
   # plugins/systemd.cr's bottom-of-file STDIN entry point.
   module SystemdUnitFound
-    # `systemctl show <unit>` (the same probe real runs, reused here rather
-    # than a second round trip) plus the SysV init-script presence real's
-    # sysv_exists() checks. Real's remaining fallbacks for a `show` that
+    # `systemctl show <unit>` (the same probe Ansible runs, reused here rather
+    # than a second round trip) plus the SysV init-script presence Ansible's
+    # sysv_exists() checks. Ansible's remaining fallbacks for a `show` that
     # exits non-zero (the "Failed to parse bus message" workaround, then
     # is-enabled/list-unit-files) are not replicated: nothing on this path
     # has ever consulted them, so a `show` that fails for anything other
@@ -47,8 +47,8 @@ module Krikri
       nil
     end
 
-    # fail_if_missing's exact wording (the real module:117-118) -
-    # note the trailing ": host" (real passes msg='host' from systemd's
+    # fail_if_missing's exact wording (the Ansible module:117-118) -
+    # note the trailing ": host" (Ansible passes msg='host' from systemd's
     # enabled:/state: blocks) and no trailing period.
     def self.missing_service_message(unit : String) : String
       "Could not find the requested service #{unit}: host"

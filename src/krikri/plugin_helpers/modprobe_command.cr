@@ -7,7 +7,7 @@ module Krikri
       # `params:` (real community.general modprobe.py's own extra
       # modprobe arguments, e.g. "numdummies=2") is appended verbatim
       # after the module name, matching `modprobe <name> <params>` -
-      # verified against the real module's source: `command.extend([
+      # verified against the Ansible module's source: `command.extend([
       # self.name] + shlex.split(self.params))`, only ever called when
       # the module isn't already loaded. Real modprobe.py also resolves
       # the binary once via get_bin_path and invokes THAT path
@@ -24,7 +24,7 @@ module Krikri
       # Parses the ModprobePlugin binary-resolution probe's output
       # (`searched=`/`found=` lines): the resolved modprobe path (nil
       # when the binary is missing - the caller must then fail with
-      # real Ansible's get_bin_path(required=True) message BEFORE any
+      # Ansible's get_bin_path(required=True) message BEFORE any
       # state check, not report "already unloaded" success) and the
       # colon-joined list of directories actually searched, for that
       # message's "in paths: ..." tail.

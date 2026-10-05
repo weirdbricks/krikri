@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# Real Ansible reserves exit code 4 for PARSER errors, distinct from 1
+# Ansible reserves exit code 4 for PARSER errors, distinct from 1
 # (generic error), 2 (failed hosts) and 3 (unreachable). This engine
 # exited 1 for both cases below. Verified against a real local
 # ansible-core 2.19.4 install.
@@ -59,7 +59,7 @@ describe "parser-error exit code" do
     end
   end
 
-  # Guard: a MISSING playbook is not a parser error - real Ansible exits
+  # Guard: a MISSING playbook is not a parser error - Ansible exits
   # 1 there, and so must this engine (that check runs earlier, before
   # the parse block whose rc changed).
   it "still exits 1 for a missing playbook file" do

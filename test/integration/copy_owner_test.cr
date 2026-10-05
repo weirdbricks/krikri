@@ -28,11 +28,11 @@ describe "copy plugin - owner/group" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "fails with real Ansible's exact message when owner: is an explicit empty string" do
+  it "fails with Ansible's exact message when owner: is an explicit empty string" do
     # Found benchmarking kilip.chezmoi (round900811): an explicit
     # `owner: ""` was silently treated as "no ownership change
     # requested" (the copy succeeded, changed: true) instead of being
-    # attempted and failing like real Ansible, whose basic.py only
+    # attempted and failing like Ansible, whose basic.py only
     # skips the chown when the param is None and fails the lookup of an
     # empty name with exactly "chown failed: failed to look up user "
     # (trailing space - the empty name interpolated into basic.py:789's
@@ -48,7 +48,7 @@ describe "copy plugin - owner/group" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
-  it "fails with real Ansible's exact message when group: is an explicit empty string" do
+  it "fails with Ansible's exact message when group: is an explicit empty string" do
     # Same round900811 bug class as the empty owner: above - real
     # Ansible's group analogue is "chgrp failed: failed to look up
     # group " (basic.py:830, chgrp not chown), trailing space included.

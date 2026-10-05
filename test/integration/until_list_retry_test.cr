@@ -14,7 +14,7 @@ ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
 end
 
-# Real Ansible accepts a LIST of until: clauses (ANDed together, each
+# Ansible accepts a LIST of until: clauses (ANDed together, each
 # evaluated against the registered result). The parser used to stringify
 # such a list as its literal to_s ("[moodle_download is succeeded]"), which
 # the conditional evaluator read as var name "[moodle_download]" - never

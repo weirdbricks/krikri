@@ -11,7 +11,7 @@ module Krikri
   # strings-only, so a module call whose param natively resolved to
   # Python None (`enablerepo: "{{ item.enablerepo | default('') }}"` with
   # a null item field - round 900905 officel.httpd) would collapse to the
-  # same "" as a real empty string, which real Ansible's argument specs
+  # same "" as a real empty string, which Ansible's argument specs
   # treat completely differently (an explicit None fails every `type:
   # list` param; an empty string coerces to an empty list just fine -
   # live-verified against ansible-core 2.19.11). The executor marks such
@@ -24,7 +24,7 @@ module Krikri
   # Prefix marking a set_fact param value as the JSON encoding of the
   # expression's NATIVELY-TYPED result, not substituted display text.
   # The executor's param wire is strings-only, so a whole-single-span
-  # `{{ expr }}` set_fact value (the only shape real ansible-core 2.19
+  # `{{ expr }}` set_fact value (the only shape ansible-core 2.19
   # native-typing keeps unstringified) would otherwise arrive at the
   # set_fact plugin as bare text and get re-coerced by string shape -
   # which is pre-2.19 `ANSIBLE_JINJA2_NATIVE=off` literal_eval behavior,
@@ -43,9 +43,9 @@ module Krikri
   # `fetch: src: true`, `debug: msg: 1.5`-style). Task#params is a
   # strings-only wire (Hash(String, String)), so stringify_value erases the
   # YAML type at parse time - and with it every behavior that hinges on the
-  # value's Python type rather than its text: real ansible-core 2.19 passes
+  # value's Python type rather than its text: ansible-core 2.19 passes
   # the literal AS ITS NATIVE TYPE into the action plugin, so a non-string
-  # dest/src crashes real's copy with "'_AnsibleTaggedInt' object has no
+  # dest/src crashes Ansible's copy with "'_AnsibleTaggedInt' object has no
   # attribute 'startswith'" (bools print as plain 'bool' - they are not
   # tagged), fails fetch's action with "Invalid type supplied for dest
   # option, it must be a string", renders through template as Python
@@ -56,7 +56,7 @@ module Krikri
   # plus the JSON encoding of the parsed YAML value; BasePlugin strips it
   # back to the exact same plain string every plugin saw before (so no
   # plugin that never asks changes behavior) and records the native value
-  # for the plugins that mirror real's type-checking - query it with
+  # for the plugins that mirror Ansible's type-checking - query it with
   # BasePlugin#non_string_param. Like NATIVE_TYPED_PREFIX, the leading
   # private-use control character makes a false positive on real user data
   # effectively impossible, and templated values (any `{{`/`{%`/`{#`)
@@ -68,11 +68,11 @@ module Krikri
   # non-string scalar list member with THIS prefix instead, so a
   # single-element list whose only member is a non-string (`parents: [7]`)
   # stays distinguishable from the whole-value scalar literal (`parents:
-  # 7`) that real Ansible crashes on DIFFERENTLY ("object is not iterable"
+  # 7`) that Ansible crashes on DIFFERENTLY ("object is not iterable"
   # vs "object has no attribute 'replace'"). The demotion sites treat both
   # prefixes identically - decode the JSON payload, emit the exact
   # stringify_value text - so no plugin that never asks changes behavior;
-  # only the executor-side hooks mirroring real's member-iterating action
+  # only the executor-side hooks mirroring Ansible's member-iterating action
   # plugins (group_by/add_host) tell them apart.
   NON_STRING_MEMBER_PREFIX = "\u{E000}nonmember:"
 
@@ -135,7 +135,7 @@ module Krikri
   # "nonstring:75" (the parser's marker rides the strings-only
   # wire), so a type-specific read failed the module with "argument
   # 'gather_timeout' is of type str and we were unable to convert to
-  # int" where real Ansible - which converts the native int - happily
+  # int" where Ansible - which converts the native int - happily
   # gathers. Restores each marked literal to the JSON value it stood
   # for, exactly as the demotion sites above do, so a reader sees the
   # same numbers/lists/strings the playbook actually wrote.
@@ -227,7 +227,7 @@ module Krikri
     end
   end
 
-  # real's boolean(value, strict=False) (the real module
+  # Ansible's boolean(value, strict=False) (the Ansible module
   # convert_bool.py) answering TRUE - the exact predicate the assemble
   # action plugin applies to remote_src to pick between its module branch
   # (truthy: the assemble module itself runs and re-converts remote_src
@@ -253,7 +253,7 @@ module Krikri
     end
   end
 
-  # Python str() of a marked non-string scalar - the coercion real's action
+  # Python str() of a marked non-string scalar - the coercion Ansible's action
   # plugins effectively put dest/src through when they use a non-string
   # literal as text (template's `dest: true` writes a file named "True",
   # not "true" - live-verified vs 2.19.11; int/float spellings are
@@ -267,7 +267,7 @@ module Krikri
   end
 
   # The Python type name CPython's str.join puts in its own "sequence item
-  # N: expected str instance, X found" TypeError - the message real's
+  # N: expected str instance, X found" TypeError - the message Ansible's
   # debconf module dies with when a non-string `value:` literal reaches its
   # `' '.join([pkg, question, vtype, value])` (debconf.py:179, live-verified
   # vs 2.19.11). These values are PLAIN Python objects by then - the same
@@ -286,7 +286,7 @@ module Krikri
     end
   end
 
-  # The Python type name real ansible-core 2.19 reports for ANY non-string
+  # The Python type name ansible-core 2.19 reports for ANY non-string
   # value in an "'X' object has no attribute ..." crash - scalars (see
   # #python_scalar_type_name) plus the container/None shapes a YAML list
   # member or `name:` value can carry (live-verified vs 2.19.11: dict and
@@ -304,7 +304,7 @@ module Krikri
     end
   end
 
-  # The Python type name real ansible-core 2.19 reports for a non-string
+  # The Python type name ansible-core 2.19 reports for a non-string
   # scalar literal in an "'X' object has no attribute ..." crash: YAML
   # ints/floats arrive natively tagged (_AnsibleTaggedInt/_AnsibleTaggedFloat),
   # bools are plain Python bools (live-verified vs 2.19.11).
@@ -318,7 +318,7 @@ module Krikri
     end
   end
 
-  # The FULL Python class path real's inventory layer reports for a
+  # The FULL Python class path Ansible's inventory layer reports for a
   # non-string scalar host name - Inventory.add_host's
   # "expected a string but got %s for %s" formats type(host), which is
   # the fully-qualified class, not the short name the task-executor

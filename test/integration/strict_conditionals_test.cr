@@ -4,12 +4,12 @@ require "../minitest_helper"
 # `when: some_string`, `when: some_int`, `when: some_list` all fail the
 # task with "Conditional result (X) was derived from value of type 'T'.
 # Conditionals must have a boolean result." This engine used to apply
-# Python-ish truthiness and run or skip instead - so a task real Ansible
+# Python-ish truthiness and run or skip instead - so a task Ansible
 # refuses to decide at all silently took a branch here.
 #
 # Differentialed against ansible-core 2.19.4 over every shape below,
 # including the ANSIBLE_ALLOW_BROKEN_CONDITIONALS escape hatch, which
-# real Ansible honours and this project's own benchmark harness has set
+# Ansible honours and this project's own benchmark harness has set
 # on the real-Ansible side since round 20.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -53,13 +53,13 @@ describe "strict boolean conditionals" do
     output.must_include("Conditional result (True) was derived from value of type 'str'")
     output.must_include("Conditionals must have a boolean result")
     # The [ERROR] chain's Origin context quotes the playbook SOURCE
-    # (real Ansible's own chain does too); assert on the executed-task
+    # (Ansible's own chain does too); assert on the executed-task
     # display instead.
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
 
   # The case that silently diverged: this engine read "false" as false
-  # and skipped, where real Ansible refuses the conditional outright.
+  # and skipped, where Ansible refuses the conditional outright.
   it "fails for the string 'false' rather than quietly skipping" do
     status, output = run_playbook(playbook_for("s_false"))
 
@@ -92,7 +92,7 @@ describe "strict boolean conditionals" do
   # network_interfaces` with the var defaulting to `[]` (round 84003):
   # the `and` chain's deciding operand is the list itself, so the whole
   # conditional's result is list-typed (Python's `and` returns the
-  # operand, not a bool) - real Ansible fails the task with the
+  # operand, not a bool) - Ansible fails the task with the
   # "Task failed: " prefix this error class carries, not the generic
   # "Error while evaluating conditional: " wrapper an undefined
   # reference gets.
@@ -103,7 +103,7 @@ describe "strict boolean conditionals" do
     output.must_include("Task failed: Conditional result (True) was derived from value of type 'list'")
     output.must_include("Conditionals must have a boolean result")
     # The [ERROR] chain's Origin context quotes the playbook SOURCE
-    # (real Ansible's own chain does too); assert on the executed-task
+    # (Ansible's own chain does too); assert on the executed-task
     # display instead.
     output.wont_include("\"msg\": \"TASK-RAN\"")
   end
@@ -127,7 +127,7 @@ describe "strict boolean conditionals" do
 
     # `not <string>` is a real boolean too - it just happens to be
     # false here, so the task is skipped rather than failed (verified
-    # against real Ansible, which skips it identically).
+    # against Ansible, which skips it identically).
     status, output = run_playbook(playbook_for("not s_text"))
     status.exit_code.must_equal(0)
     output.wont_include("TASK-RAN")
@@ -146,7 +146,7 @@ describe "strict boolean conditionals" do
     output.wont_include("TASK-RAN")
   end
 
-  # Round 400022 (crazikpl.logging): a LIST-form when: is real Ansible's
+  # Round 400022 (crazikpl.logging): a LIST-form when: is Ansible's
   # own sequence of INDEPENDENT conditionals, each type-checked
   # separately - `when: [(str or b2), b]` fails there ("Conditional
   # result (True) was derived from value of type 'str'") even though the
@@ -155,7 +155,7 @@ describe "strict boolean conditionals" do
   # result type is checked - verified live against 2.19.4 over both
   # shapes). Joining the list into one `and` string and strict-checking
   # only the JOINED result made the whole-file divergence: krikri ran
-  # the role's tasks where real ansible-playbook failed outright.
+  # the role's tasks where ansible-playbook failed outright.
   it "type-checks each when: LIST item separately, like the single-string whole result" do
     yaml = <<-YAML
       - hosts: localhost

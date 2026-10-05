@@ -73,7 +73,7 @@ module Krikri::DifferentialFuzz
   # a value, or differing values, is a disagreement - either a real bug
   # or a documented deliberate limit, for the caller to classify.
   class Runner
-    # Disagreement shapes already triaged against real Jinja2 3.1.6 and
+    # Disagreement shapes already triaged against Jinja2 3.1.6 and
     # this codebase's own conventions, reported as known differences
     # instead of findings. Each predicate is kept as tight as the class it
     # describes so a NEW divergence in the same neighborhood still
@@ -121,12 +121,12 @@ module Krikri::DifferentialFuzz
 
     KNOWN_DIFFERENCES = [
       # RESIDUAL after the 2026-09-27 out-of-range fix (krikri-jinja
-      # v0.4.21 now raises like real Ansible for an out-of-range
+      # v0.4.21 now raises like Ansible for an out-of-range
       # list/tuple index, an integer subscript of a None base, and any
       # chain off those strict failures): a bracket-indexed expression
       # whose BASE is itself undefined (`missing_var[9]`,
       # `dict.missing_attr[0]`). The hand-rolled side hard-fails like
-      # real Ansible; the engine deliberately keeps the chain off a
+      # Ansible; the engine deliberately keeps the chain off a
       # lenient undefined LENIENT, because that chain is the documented
       # load-bearing shape for `x | default(other.thing.y)` - a strict
       # chain would fail that real-Ansible-working idiom.
@@ -190,7 +190,7 @@ module Krikri::DifferentialFuzz
       # unary-minus-with-subscript corner shapes, generator-built
       # malformed syntax, and bare-callable attribute references
       # (`str.count`). The hand side answers "undefined"/a fallback value
-      # where real Jinja2 raises.
+      # where Jinja2 raises.
       KnownDifference.new("hand-lenient-unimplemented-construct", ->(o : Outcome) {
         if o.status.one_errored? && o.hand_value.is_a?(String) &&
            (error = o.jinja_error).is_a?(String)

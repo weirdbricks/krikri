@@ -4,13 +4,13 @@ module Krikri
     # repository:'s `.sources` file content. No I/O here - the plugin
     # itself handles file writing/signed_by fetching.
     #
-    # Field ORDER is real ansible.builtin.deb822_repository's own
+    # Field ORDER is Ansible.builtin.deb822_repository's own
     # `for key, value in sorted(params.items())` - alphabetical by the
     # underlying PYTHON PARAM NAME, not by DEB822 field name and not any
     # fixed/declared order - verified directly against a real
     # `ansible-playbook -vvv` run's own `repo:` return value, not
     # assumed from source alone. This matters for idempotency: a file
-    # real Ansible itself wrote and a file this plugin writes must line
+    # Ansible itself wrote and a file this plugin writes must line
     # up byte-for-byte, or a warm rerun against an already-real-Ansible-
     # managed file would spuriously report changed on line-order alone.
     module Deb822RepositoryContent

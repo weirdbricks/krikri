@@ -1,13 +1,13 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible.builtin.dnf/yum treat a scalar `list:` value as a QUERY,
+# Ansible.builtin.dnf/yum treat a scalar `list:` value as a QUERY,
 # never as packages to act on - `dnf: {list: updates}` lists available
 # updates and returns {"changed": false, "results": [...]}. The dnf/yum
 # plugins' parse_package_names used to concatenate a scalar `list:` into
 # the package names instead, so `dnf: {list: updates}` ran
 # `dnf install updates` and failed with "Error: Unable to find a match:
-# updates" where real ansible-playbook succeeded (rc=0). Found via
+# updates" where ansible-playbook succeeded (rc=0). Found via
 # oatakan.rhel_upgrade's own "check for missing updates (dnf)" task
 # (round 310183).
 #
@@ -60,7 +60,7 @@ describe "dnf/yum list: query mode" do
       first["version"].as_s.must_equal("5.14.0")
       first["release"].as_s.must_equal("427.13.1.el9_4")
       first["repo"].as_s.must_equal("baseos")
-      # real's _package_dict reports epoch as a STRING always ("0" when
+      # Ansible's _package_dict reports epoch as a STRING always ("0" when
       # unset) and spells nevra/envra WITHOUT it.
       first["epoch"].as_s.must_equal("0")
       first["nevra"].as_s.must_equal("kernel-5.14.0-427.13.1.el9_4.x86_64")

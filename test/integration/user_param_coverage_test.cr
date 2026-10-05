@@ -6,7 +6,7 @@ require "file_utils"
 # password_expire_account_disable.
 #
 # Every flag's exact shape below was live-verified against ansible-core
-# 2.19.4 by extracting the real module's AnsiballZ payload and running
+# 2.19.4 by extracting the Ansible module's AnsiballZ payload and running
 # it against PATH-shimmed useradd/usermod/luseradd/lgroupmod/lchage (no
 # system mutation), e.g.:
 #   useradd -u 60000 -o -e 2030-01-01 -f 30 -m -k /etc/skel.custom -K UMASK=027 <name>
@@ -180,7 +180,7 @@ describe "user plugin - parameter coverage" do
       end
     end
 
-    it "silently drops skeleton/umask when create_home is off (real Ansible ignores them there too)" do
+    it "silently drops skeleton/umask when create_home is off (Ansible ignores them there too)" do
       with_user_shims(NO_USER, NO_SHADOW, NO_GROUP) do |env, log|
         result = PluginSpecHelper.run("user", {
           "name" => "shim-new", "home" => NEW_HOME,
@@ -248,7 +248,7 @@ describe "user plugin - parameter coverage" do
       end
     end
 
-    it "is re-issued on every modify run even when nothing else differs (real Ansible has no idempotency check for it)" do
+    it "is re-issued on every modify run even when nothing else differs (Ansible has no idempotency check for it)" do
       with_user_shims(EXISTING_PASSWD, EXISTING_SHADOW, EXISTING_GROUP) do |env, log|
         result = PluginSpecHelper.run("user", {
           "name" => EXISTING_USER, "password_expire_account_disable" => "30",
@@ -262,7 +262,7 @@ describe "user plugin - parameter coverage" do
   end
 
   describe "local" do
-    it "fails with real Ansible's exact message when combined with umask" do
+    it "fails with Ansible's exact message when combined with umask" do
       result = PluginSpecHelper.run("user", {
         "name" => "shim-any", "local" => "true", "umask" => "027",
       })

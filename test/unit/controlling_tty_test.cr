@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real ansible-core's ssh connection plugin asks for a remote pty
+# ansible-core's ssh connection plugin asks for a remote pty
 # (`ssh -tt`) for ordinary module dispatch, so anything a `command:`/
 # `shell:` task spawns on the target can open `/dev/tty`. This engine
 # never passes -t/-tt (a pty would merge stderr into stdout and mangle

@@ -8,7 +8,7 @@ require "../minitest_helper"
 # decimal` branch, so a leading-zero-less digit string was parsed as
 # DECIMAL 640 and then handed straight to File.chmod - producing octal
 # 1200 (`--w------T`) instead of the intended 0640 (`rw-r-----`).
-# Real Ansible parses ANY all-digit mode string as octal regardless of
+# Ansible parses ANY all-digit mode string as octal regardless of
 # a leading zero. This left redis-server unable to even read its own
 # rendered /etc/redis/redis.conf, crash-looping on real Atlantic.net
 # hosts. file.cr's own `parse_numeric_mode` already got this right;

@@ -7,12 +7,12 @@
 # certs | Save ca certificate" task (`slurp: {src: ...}`, reading back a
 # just-generated cert to embed its content elsewhere) silently dropped.
 #
-# Always base64-encodes, unconditionally: real ansible-core's argument_
+# Always base64-encodes, unconditionally: ansible-core's argument_
 # spec is exactly `src` (type path, required, aliases [path]) - there is
 # NO `armor` param. An earlier version of this plugin invented one
 # (default true, `armor: false` returning raw UTF-8) and claimed it
-# mirrored real slurp.py; nothing in real Ansible has it (ascii-armor is
-# a GPG/rpm-key concept, not a slurp one). Real Ansible rejects an
+# mirrored real slurp.py; nothing in Ansible has it (ascii-armor is
+# a GPG/rpm-key concept, not a slurp one). Ansible rejects an
 # `armor:` task at argument-spec validation, so this engine does too -
 # same message shape command.cr/shell.cr use for their removed `warn`
 # param.
@@ -35,14 +35,14 @@ module Krikri
         )
       end
 
-      # Real 2.19.11's slurp fails the task with msg "File not found: <src>"
+      # Ansible 2.19.11's slurp fails the task with msg "File not found: <src>"
       # (etc.) in the result dict, but the module process's OSError is what
       # the [ERROR] block renders, appended to that same text: "File not
       # found: <src>: [Errno 2] No such file or directory: '<src>'". The
       # errno wording is CPython's, not Crystal's ("Error opening file with
       # mode 'r': ..."), so it is spelled out here; _ansible_error_detail
       # carries the block text and is stripped from every result dump, so
-      # the fatal JSON keeps real's msg verbatim.
+      # the fatal JSON keeps Ansible's msg verbatim.
       return PluginResult.new(
         changed: false, failed: true,
         msg: "Source is a directory and must be a file: #{src}",
@@ -74,7 +74,7 @@ module Krikri
       # failed_flag opt-in makes the success result carry failed: false
       # so the reorder can place it before changed - without it the
       # executor's missing-failed backfill would append failed AFTER
-      # changed, real's exact opposite.
+      # changed, Ansible's exact opposite.
       PluginResult.new(changed: false, failed: false, msg: "", content: Base64.strict_encode(bytes), source: src, encoding: "base64", failed_flag: false, key_order: SUCCESS_KEY_ORDER)
     end
 

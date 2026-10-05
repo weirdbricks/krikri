@@ -18,20 +18,20 @@ module Krikri
   # whichever host (local or remote) the task targets, so no remote_exec
   # fallback is needed.
   #
-  # Real Ansible's own uri module does NOT support check mode at all - even
+  # Ansible's own uri module does NOT support check mode at all - even
   # a plain GET is skipped outright under --check ("This action (uri) does
-  # not support check mode.", verified against a real ansible-playbook
+  # not support check mode.", verified against a ansible-playbook
   # --check run, not assumed) - so this doesn't special-case GET/HEAD the
   # way an initial reading of the docs might suggest; every method skips.
   #  `changed:` is always false, EXCEPT for the one stateful case real
   #  Ansible's own module has: `dest:` file writing - and there, live-
   #  verified against ansible-core 2.19.4 (see the dest: block below),
-  #  real Ansible reports `changed: true` on EVERY 200 run with a writable
+  #  Ansible reports `changed: true` on EVERY 200 run with a writable
   #  status, even when the response body is byte-identical to what's
   #  already on disk (uri.py's write_file() skips the physical move on a
   #  SHA1 match, but main() sets resp['changed'] = True unconditionally
   #  right after it). The physical write itself is still skipped on
-  #  identical content, exactly like real Ansible's atomic_move-only-on-
+  #  identical content, exactly like Ansible's atomic_move-only-on-
   #  checksum-mismatch.
   #
   #  The idempotency half of that story: when `dest:` already exists as a
@@ -41,7 +41,7 @@ module Krikri
   #  rfc2822_date_string, live-verified). A 304 response then skips the
   #  write entirely and `changed:` stays false - so the warm run of a
   #  role fetching an unchanging file (claranet.postgresql's apt key,
-  #  round 981032) reports `ok` in real Ansible, not `changed`. A 304
+  #  round 981032) reports `ok` in Ansible, not `changed`. A 304
   #  reaches the module as urllib's HTTPError (urllib raises for every
   #  non-2xx it has no handler for), so the result msg carries urllib's
   #  "HTTP Error 304: Not Modified" string while the task itself still
@@ -74,7 +74,7 @@ module Krikri
       username = ["url_username", "user"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first?
       password = ["url_password", "password"].compact_map { |param_name| @params[param_name]? }.reject(&.empty?).first? || ""
 
-      # Real Ansible's uri ACTION plugin (its src: staging and its non-mapping
+      # Ansible's uri ACTION plugin (its src: staging and its non-mapping
       # form-multipart body guard) runs before the module and therefore
       # before every check below - ArgspecValidator's action-level pass
       # is where those live, so they also fire ahead of the
@@ -146,7 +146,7 @@ module Krikri
       # creates: file exists skips with ok without ever reporting the
       # missing src). The plugin binary runs on the target host, so this
       # reads the plugin-host filesystem - identical to remote_src: true.
-      # Real's failure here is its own fail_json with elapsed and NOTHING
+      # Ansible's failure here is its own fail_json with elapsed and NOTHING
       # else: no url, no status, no redirected.
       src_body = nil
       if src = @params["src"]?
@@ -157,7 +157,7 @@ module Krikri
           # the plain IO::Error (File::Error is its SUBCLASS, so the
           # narrower rescue never caught it and the plugin crashed with
           # "Plugin execution failed: read (...): Is a directory") -
-          # real fails the task with exactly this msg instead
+          # Ansible fails the task with exactly this msg instead
           # (live-verified vs 2.19.11: a remote_src: true task with a
           # directory src).
           return PluginResult.new(changed: false, failed: true, msg: "Unable to open source file #{src}", elapsed: 0)
@@ -165,14 +165,14 @@ module Krikri
       end
 
       if true?(@params["_ansible_check_mode"]?)
-        # Real's registered uri check-mode skip runs skipped, msg, changed
+        # Ansible's registered uri check-mode skip runs skipped, msg, changed
         # (live-verified vs 2.19.11 via `{{ r | to_json }}`).
         return PluginResult.new(changed: false, failed: false, msg: "Skipped: uri module does not support check mode", skipped: true,
           key_order: ["skipped", "msg", "changed"])
       end
 
       start = Time.instant
-      # Cookies accumulate across the whole redirect chain (real's
+      # Cookies accumulate across the whole redirect chain (Ansible's
       # HTTPCookieProcessor feeds every hop's response into one jar),
       # collected in response order - see #response_cookies.
       cookie_acc = [] of {String, String}
@@ -186,7 +186,7 @@ module Krikri
         dest_path = expand_tilde(dest_param)
         last_mod_time = File.info(dest_path).modification_time if File.file?(dest_path)
       end
-      # Real Ansible's fetch_url builds the SSL context and resolves the
+      # Ansible's fetch_url builds the SSL context and resolves the
       # gssapi handler BEFORE urllib parses the URL, so a bad ciphers:
       # list, an unusable ca_path:/client_cert:/client_key: or
       # use_gssapi: on a host without python-gssapi fails before any
@@ -210,7 +210,7 @@ module Krikri
       begin
         status, headers, body, redirected, final_url, reason = request(url, method, username, password, src_body, last_mod_time: last_mod_time, cookie_acc: cookie_acc)
       rescue ex
-        # A scheme real's urllib has no handler for never reaches uri.py's
+        # A scheme Ansible's urllib has no handler for never reaches uri.py's
         # resp assembly - urlopen raises URLError("unknown url type: X")
         # and fetch_url turns it into the status -1 shape. Schemes urllib
         # DOES open (file:, data:) hit the opposite wall: the response
@@ -219,7 +219,7 @@ module Krikri
         # TypeError text (live-verified vs 2.19.11 for file:///etc/hostname -
         # the registered result is exactly {failed, changed, exception, msg}
         # with that message, and no url/status/elapsed/redirected at all).
-        # ftp(s) keeps its krikri-side failure: real would attempt the FTP
+        # ftp(s) keeps its krikri-side failure: Ansible would attempt the FTP
         # protocol itself, which this engine does not implement.
         scheme = begin
           URI.parse(url).scheme.try(&.downcase) || ""
@@ -240,7 +240,7 @@ module Krikri
           return failed_request_result(
             "Status code was -1 and not #{status_codes}: Request failed: <urlopen error unknown url type: #{scheme}>", url, start)
         end
-        # Real Ansible's uri result ALWAYS carries a status field, even when
+        # Ansible's uri result ALWAYS carries a status field, even when
         # the request dies before any HTTP response: its fetch_url() info
         # dict is initialized with status=-1 and stays there on connection
         # failures (refused/DNS/timeout). Omitting it here turned a role's
@@ -314,7 +314,7 @@ module Krikri
           apply_file_attributes(dest)
         end
         result.extra["path"] = JSON::Any.new(dest)
-        # Real AnsibleModule._return_formatted's add_path_info: ANY
+        # AnsibleModule._return_formatted's add_path_info: ANY
         # result carrying a path: whose file exists gets the file-common
         # stat keys merged in - including a 304 run (nothing was written
         # but the dest file exists) and a failed run over an existing
@@ -336,14 +336,14 @@ module Krikri
       # urllib raises for: 4xx/5xx and 304) never populates the jar
       # keys, so a failed or 304 result carries neither - hence the
       # status guard (a sub-400 status NOT in status_code still gets
-      # them, exactly like real's fail_json(**uresp) path).
+      # them, exactly like Ansible's fail_json(**uresp) path).
       if status < 400 && status != 304
         cookie_dict = {} of String => JSON::Any
         cookie_acc.each { |(name, value)| cookie_dict[name] = JSON::Any.new(value) }
         result.extra["cookies_string"] = JSON::Any.new(cookie_dict.map { |name, value| "#{name}=#{value}" }.join("; "))
         result.extra["cookies"] = JSON::Any.new(cookie_dict)
       end
-      # Real's registered uri success order (live-verified vs 2.19.11 via
+      # Ansible's registered uri success order (live-verified vs 2.19.11 via
       # `{{ r | to_json }}`): content (only with return_content -
       # exit_json's leading kwarg), redirected, url, status, then EVERY
       # response header transmogrified in response order, then msg,
@@ -351,7 +351,7 @@ module Krikri
       # path by uresp), then add_path_info's stat block. The response
       # headers vary per server, so the order list is built per request;
       # failure results (status not in status_code) keep the historical
-      # order - real's fail_json shape was not pinned here.
+      # order - Ansible's fail_json shape was not pinned here.
       unless failed
         order = [] of String
         order << "content" if result.extra.has_key?("content")
@@ -369,7 +369,7 @@ module Krikri
     end
 
     # Writes the response body to `dest:` unless the file already
-    # contains identical content - mirrors real Ansible's own uri
+    # contains identical content - mirrors Ansible's own uri
     # module (a SHA1 comparison gates only the physical atomic_move,
     # not the reported `changed:` - see the dest: block in #execute for
     # the live-verified semantics).
@@ -385,7 +385,7 @@ module Krikri
       result.extra["content_type"] = JSON::Any.new(content_type)
       result.extra["redirected"] = JSON::Any.new(redirected)
 
-      # Real Ansible's uri module merges EVERY response header into the
+      # Ansible's uri module merges EVERY response header into the
       # result, transmogrified the way its own comment puts it: "replacing
       # '-' with '_', since variables don't work with dashes" and
       # lowercased ("headers are title cased. Lowercase them to be
@@ -396,7 +396,7 @@ module Krikri
       # directly (gantsign.postman does exactly this to resolve the
       # "latest" download filename from a HEAD request - previously
       # missing here, the read hit "'head_query.content_disposition' is
-      # undefined" and failed the task where real Ansible rc=0'd).
+      # undefined" and failed the task where Ansible rc=0'd).
       # Core keys (status/url/changed/...) can't be clobbered by a header
       # name - none of them contain a dash - and content_type/location
       # keep their existing, already-correct values below.
@@ -406,7 +406,7 @@ module Krikri
         result.extra[ukey] = JSON::Any.new(values.last)
       end
 
-      # Real Ansible urljoin()s location against the request URL; this
+      # Ansible urljoin()s location against the request URL; this
       # engine keeps the raw header value (pre-existing behavior).
       if location = headers["Location"]?
         result.extra["location"] = JSON::Any.new(location)
@@ -447,10 +447,10 @@ module Krikri
 
       # Basic auth. force_basic_auth: true sends the Authorization header
       # on the FIRST request (real urls.py's basic_auth_header branch);
-      # the DEFAULT (false) is real Ansible's two-step flow: an
+      # the DEFAULT (false) is Ansible's two-step flow: an
       # unauthenticated first request, then - only on a 401 challenge -
       # one retry WITH the header (urllib's HTTPBasicAuthHandler). The
-      # Digest half of real Ansible's handler pair is deferred, so a
+      # Digest half of Ansible's handler pair is deferred, so a
       # Digest-only endpoint gets our Basic attempt rejected instead of
       # a proper MD5 response.
       forced = true?(@params["force_basic_auth"]?)
@@ -486,7 +486,7 @@ module Krikri
 
     # The name/value pairs of every Set-Cookie header of one response, in
     # header order - the cookie text before the first ';' is "name=value".
-    # Values are kept byte-raw like real's cookiejar (a quoted value stays
+    # Values are kept byte-raw like Ansible's cookiejar (a quoted value stays
     # quoted in both cookies and cookies_string, live-verified vs 2.19.11);
     # header lines without a '=' (or an empty name) are skipped.
     private def response_cookies(headers : HTTP::Headers) : Array(Tuple(String, String))
@@ -524,18 +524,18 @@ module Krikri
     end
 
     # A 303 (or a 301/302 responding to POST) downgrades the redirected
-    # request to GET, matching both real Ansible's underlying urllib
+    # request to GET, matching both Ansible's underlying urllib
     # behavior and every browser's - a plain re-request of the same method
     # against a redirect target is not what a 303 means.
     private def redirect_method(method : String, status_code : Int32) : String
       (status_code == 303 || ((status_code == 301 || status_code == 302) && method == "POST")) ? "GET" : method
     end
 
-    # Real's check_type_int conversion (Decimal(value), integral required):
+    # Ansible's check_type_int conversion (Decimal(value), integral required):
     # a spec-valid int-typed option that is not a plain integer spelling
     # ("1.0") still converts to its truncated int instead of crashing the
     # plugin's own strict parse. A YAML boolean member demotes to
-    # "true"/"false" wire text and real keeps it a Python bool - an int
+    # "true"/"false" wire text and Ansible keeps it a Python bool - an int
     # subclass (True == 1) - so it converts too.
     private def decimal_int(raw : String) : Int32
       return 1 if raw == "true"
@@ -574,11 +574,11 @@ module Krikri
     # redirected: false, elapsed: 0, plus content: "" when return_content
     # asked for the body.
     #
-    # Key order is real's fail_json kwargs order (live-verified vs
+    # Key order is Ansible's fail_json kwargs order (live-verified vs
     # 2.19.11 via `{{ r | to_json }}` on a connection-refused failure):
     # redirected, url, status, elapsed, changed, failed, msg, exception.
     # msg/failed/exception are the executor/backfill keys to_json adds -
-    # real's fail_json binds msg to its named parameter (moving it after
+    # Ansible's fail_json binds msg to its named parameter (moving it after
     # the failed flag it appends) and _return_formatted trails exception
     # last. With return_content: true real calls
     # fail_json(content=..., **uresp), so content leads the whole dict.
@@ -611,7 +611,7 @@ module Krikri
       (@params["body_format"]? || "raw").downcase
     end
 
-    # The Python type name real Ansible puts in its "cannot be type X"
+    # The Python type name Ansible puts in its "cannot be type X"
     # multipart messages, or nil when body: IS a mapping (the only shape
     # that gets past the check). Live-verified against ansible-core
     # 2.19.11 for NoneType/bool/str/int/float/list - the UNTAGGED
@@ -714,7 +714,7 @@ module Krikri
       # decompress: false (real uri.py's decompress param, default true)
       # suppresses gzip at the REQUEST level: Crystal's HTTP::Client
       # otherwise always offers gzip/deflate and transparently inflates
-      # the response, while real Ansible instead decides per-response
+      # the response, while Ansible instead decides per-response
       # (decompress gates its GzipDecodedReader). Asking the server for
       # identity achieves the same observable result: the caller gets
       # exactly the bytes the server meant to send, undecoded. A user-
@@ -792,7 +792,7 @@ module Krikri
       "index.html"
     end
 
-    # The file-common result keys real Ansible's add_file_common_args
+    # The file-common result keys Ansible's add_file_common_args
     # merge into every dest: result (live-verified shape: mode "0644"-
     # style zero-padded octal string, owner/group login names, uid/gid,
     # size, state "file").
@@ -839,7 +839,7 @@ module Krikri
 
       # A present owner:/group: value (explicit empty string included)
       # is always resolved - and an unresolvable name fails the task
-      # like real Ansible's basic.py (round900811 kilip.chezmoi) -
+      # like Ansible's basic.py (round900811 kilip.chezmoi) -
       # instead of the old `&&`-short-circuit that silently skipped the
       # chown whenever the lookup came back empty.
       if owner = @params["owner"]?

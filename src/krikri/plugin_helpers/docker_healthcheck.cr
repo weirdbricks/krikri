@@ -6,9 +6,9 @@ module Krikri
     module DockerHealthcheck
       record Parsed, test : Array(String)?, interval : Int64?, timeout : Int64?, retries : Int64?, start_period : Int64?
 
-      # Matches real Ansible's own `convert_duration_to_nanosecond`
+      # Matches Ansible's own `convert_duration_to_nanosecond`
       # exactly (same regex, same unit set: h/m/s/ms/us - no day unit).
-      # Raises with the real module's own error message shape for an
+      # Raises with the Ansible module's own error message shape for an
       # unparseable string.
       def self.duration_to_ns(str : String) : Int64
         m = str.match(/\A(?:(?<hours>\d+)h)?(?:(?<minutes>\d+)m(?!s))?(?:(?<seconds>\d+)s)?(?:(?<milliseconds>\d+)ms)?(?:(?<microseconds>\d+)us)?\z/)
@@ -23,7 +23,7 @@ module Krikri
         (hours*3600 + minutes*60 + seconds) * 1_000_000_000_i64 + millis*1_000_000_i64 + micros*1_000_i64
       end
 
-      # Matches real Ansible's own `normalize_healthcheck_test`: a plain
+      # Matches Ansible's own `normalize_healthcheck_test`: a plain
       # string (not a JSON array) becomes a CMD-SHELL invocation of that
       # string, matching real Docker CLI/Ansible convention.
       def self.normalize_test(test : JSON::Any) : Array(String)
@@ -32,7 +32,7 @@ module Krikri
       end
 
       # Returns nil if `healthcheck:` was given but has no `test:` (or an
-      # empty one) - matches real Ansible's own `parse_healthcheck`: with
+      # empty one) - matches Ansible's own `parse_healthcheck`: with
       # no test, there's nothing to override, and the image's own
       # healthcheck (if any) is left alone entirely, same as not passing
       # `healthcheck:` at all. `test: ["NONE"]` is the real, documented

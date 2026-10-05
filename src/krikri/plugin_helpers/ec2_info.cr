@@ -10,7 +10,7 @@ module Krikri
     # helper's comment for the credential/region resolution contract
     # (AWS_* env vars, region param fallback). No state/idempotency: each
     # run is one Describe call (plus, for VPCs and AMIs, the same
-    # per-result attribute calls real Ansible makes) with the result list
+    # per-result attribute calls Ansible makes) with the result list
     # shaped the way the real modules shape it.
     #
     # Result shaping parity: the real modules pass the whole boto3 item
@@ -52,7 +52,7 @@ module Krikri
 
       # List params (subnet_ids, vpc_ids, image_ids, owners,
       # executable_users) arrive as JSON list strings; a bare scalar is
-      # accepted too (real Ansible's list type coerces one, and roles
+      # accepted too (Ansible's list type coerces one, and roles
       # write `subnet_ids: subnet-00112233`).
       def self.string_list(raw : String?) : Array(String)
         return [] of String if raw.nil? || raw.empty?
@@ -134,7 +134,7 @@ module Krikri
                 when "instanceState"      then "state"
                   # The XML wire name for the image item's public flag is
                   # isPublic, but boto3's response key is Public (the XML
-                  # differs from the boto3 model here) - real Ansible's
+                  # differs from the boto3 model here) - Ansible's
                   # camel_dict_to_snake_dict output carries `public`.
                 when "isPublic" then "public"
                 else                 camel_to_snake(child.name)
@@ -221,7 +221,7 @@ module Krikri
           next vpc unless object = vpc.as_h?
           vpc_id = object["vpc_id"]?.try(&.as_s?) || ""
 
-          # Real Ansible describes the two DNS attributes per VPC and
+          # Ansible describes the two DNS attributes per VPC and
           # only sets the keys when the attribute call succeeded.
           ["enableDnsSupport", "enableDnsHostnames"].each do |attribute|
             attr_params = [{"VpcId.1", vpc_id}, {"Attribute", attribute}]
@@ -300,7 +300,7 @@ module Krikri
 
       # launchPermission attribute call per image when
       # describe_image_attributes is set. Describing launch permissions
-      # of images owned by others is not permitted and real Ansible
+      # of images owned by others is not permitted and Ansible
       # treats that as non-fatal - any attribute-call failure here just
       # leaves the image without launch_permissions rather than failing
       # the whole read-only lookup.

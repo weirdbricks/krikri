@@ -8,7 +8,7 @@ require "../minitest_helper"
 # lstrip_blocks:, newline_sequence:, output_encoding:).
 #
 # Everything asserted here was live-verified against the locally
-# installed real ansible-core 2.19.4 first (see the per-section
+# installed ansible-core 2.19.4 first (see the per-section
 # comments for what was verified); the six delimiter-string params
 # (block_start_string/block_end_string/variable_start_string/
 # variable_end_string/comment_start_string/comment_end_string) are
@@ -170,7 +170,7 @@ describe "template plugin param coverage" do
     end
 
     it "honors a #jinja2: directive override over the task param" do
-      # Real Ansible's own per-template directive takes precedence over
+      # Ansible's own per-template directive takes precedence over
       # the task args (the action plugin's directive_overrides.fetch) -
       # same precedence trim_blocks: already had.
       src = tmp_path("lstrip_directive.j2")
@@ -278,7 +278,7 @@ describe "template plugin param coverage" do
     end
 
     it "accepts the YAML-escaped literal \"\\n\" form" do
-      # Real Ansible's own wrong_sequences normalization: a literal
+      # Ansible's own wrong_sequences normalization: a literal
       # backslash-n (what CLI -e style passing or sloppy quoting often
       # hands over) means the same as a real newline.
       src = tmp_path("nl_escaped.j2")
@@ -312,7 +312,7 @@ describe "template plugin param coverage" do
       File.delete(playbook) if playbook && File.exists?(playbook)
     end
 
-    it "fails the task with real Ansible's message on an invalid value" do
+    it "fails the task with Ansible's message on an invalid value" do
       src = tmp_path("nl_bad.j2")
       dest = tmp_path("nl_bad.out")
       File.write(src, "A\nB\n")
@@ -398,7 +398,7 @@ describe "template plugin param coverage" do
     end
 
     it "fails the task when a character is unencodable in the target encoding" do
-      # Real Ansible writes with errors='surrogate_or_strict' - "é"
+      # Ansible writes with errors='surrogate_or_strict' - "é"
       # under the ascii codec raises and fails the task (the message
       # text differs between Python's UnicodeEncodeError and iconv's,
       # so only the failure itself is pinned).
@@ -546,7 +546,7 @@ describe "template plugin param coverage" do
     # These specs are meaningless under root (a root process ignores
     # the 0555 directory mode entirely), so they pass through silently
     # there.
-    it "fails with real Ansible's message when the dest directory is not writable" do
+    it "fails with Ansible's message when the dest directory is not writable" do
       skip "needs a non-root environment" if `id -u`.strip == "0"
 
       dir = tmp_path("unsafe_ro_dir")
@@ -600,7 +600,7 @@ describe "template plugin param coverage" do
   describe "seuser:/serole:/setype:/selevel: (SELinux context params)" do
     # Identical semantics to file.cr's merged implementation (see
     # test/integration/file_test.cr's matching section, and the full
-    # the real module grounding in file.cr's comments): real
+    # the Ansible module grounding in file.cr's comments): real
     # Ansible accepts the params on every host but only acts when
     # SELinux is actually enabled - a graceful no-op here (this spec
     # machine is non-SELinux).
@@ -638,7 +638,7 @@ describe "template plugin param coverage" do
   end
 
   describe "attributes: (chattr flags)" do
-    # Mirrors file.cr's merged implementation (real Ansible's
+    # Mirrors file.cr's merged implementation (Ansible's
     # set_attributes_if_different, applied via the real chattr binary,
     # failing the task when chattr does). Applying flags like +i needs
     # CAP_LINUX_IMMUTABLE, i.e. root - which this spec environment
@@ -677,7 +677,7 @@ describe "template plugin param coverage" do
 
       result["failed"].as_bool.must_equal(true)
       # Content may or may not have landed before the attribute step
-      # (real Ansible writes first, applies attrs after) - but the task
+      # (Ansible writes first, applies attrs after) - but the task
       # must fail and never report success with unapplied flags.
       result["changed"].as_bool.must_equal(false)
     end
@@ -773,17 +773,17 @@ describe "template plugin param coverage" do
 end
 
 describe "Python %-formatting in the Crinja engine (the `str % args` operator)" do
-  # Real Jinja2 overloads `%` by left-operand type: a str is printf-style
+  # Jinja2 overloads `%` by left-operand type: a str is printf-style
   # formatting, a number is modulo. The vendored Crinja fork only did
   # numeric modulo, so `' -dns.port=%d' % (coredns_listen_port)` - verbatim
   # in rolehippie.coredns's `service.j2` (round900235) - raised "Both
   # operators need to be numeric". All expected values below were
-  # live-verified against real ansible-core 2.19.4 on the same template.
+  # live-verified against ansible-core 2.19.4 on the same template.
   it "renders the coredns service.j2 idiom (' -dns.port=%d' % port)" do
     render_pct("pct_dnsport", %({{ " -dns.port=%d" % (53) }}\n)).must_equal(" -dns.port=53\n")
   end
 
-  it "renders the common conversions with the same output as real Jinja2" do
+  it "renders the common conversions with the same output as Jinja2" do
     tpl = <<-TPL
       %s: {{ "%s" % "hello" }}
       %d: {{ "%d" % 42 }}

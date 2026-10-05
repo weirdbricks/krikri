@@ -4,7 +4,7 @@ require "./tag_filter"
 module Krikri
   # `--list-tasks` and `--syntax-check`, reproducing real
   # ansible-playbook's own output shape. Every detail below was captured
-  # from a real ansible-core 2.19.4 run rather than invented:
+  # from a ansible-core 2.19.4 run rather than invented:
   #
   #     \nplaybook: p.yml\n
   #     \n  play #1 (localhost): First play\tTAGS: []
@@ -26,7 +26,7 @@ module Krikri
     def self.syntax_check(playbook : Playbook) : Nil
       # A parse failure never reaches here - krikri-playbook.cr's own parse
       # rescue has already reported it and exited 4, which is exactly
-      # what real ansible-playbook does for --syntax-check on a broken
+      # what ansible-playbook does for --syntax-check on a broken
       # playbook. So reaching this point IS the success case.
       puts ""
       puts "playbook: #{playbook.path}"
@@ -78,7 +78,7 @@ module Krikri
       playbook.plays.each_with_index do |play, index|
         puts ""
         puts "  play ##{index + 1} (#{host_pattern(play)}): #{play.name}\tTAGS: [#{play.tags.sort.join(", ")}]"
-        # Real Ansible prints the pattern as a Python list repr, e.g.
+        # Ansible prints the pattern as a Python list repr, e.g.
         # `pattern: ['web']` - verified against ansible-core 2.19.4.
         puts "    pattern: [#{pattern_list(play).map { |entry| "'#{entry}'" }.join(", ")}]"
 
@@ -115,7 +115,7 @@ module Krikri
       effective = (task.tags + inherited).uniq
 
       if task.block?
-        # Real Ansible lists a block's body but NOT its always: tasks
+        # Ansible lists a block's body but NOT its always: tasks
         # (verified: an `always:` entry never appears in --list-tasks
         # output). rescue: is likewise absent from the listing.
         (task.block_tasks || [] of Task).each { |nested| emit(nested, effective) }

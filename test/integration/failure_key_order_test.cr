@@ -1,14 +1,14 @@
 require "../minitest_helper"
 
 # FAILED-result registered key orders, pinned to the shapes live-verified
-# against real ansible-core 2.19.11 by running both engines on a local
+# against ansible-core 2.19.11 by running both engines on a local
 # play (hosts: localhost, connection: local), registering each failure
 # with ignore_errors: true and dumping `{{ r | to_json }}` (the -v/fatal
 # dump sorts alphabetically, so the order is only observable
 # programmatically).
 #
 # A failed command/shell result is NOT the success shape with `failed`
-# moved: real runs the module dict (changed/stdout/stderr/rc/cmd/start/
+# moved: Ansible runs the module dict (changed/stdout/stderr/rc/cmd/start/
 # end/delta), then fail_json's failed/msg, then the derived
 # stdout_lines/stderr_lines, then the controller-appended exception -
 # see plugins/command.cr's FAILED_KEY_ORDER.
@@ -18,7 +18,7 @@ require "../minitest_helper"
 # (unsupported parameter), file (bad state), fail:, service (missing
 # service), getent (unknown database) and mount (unmkdirable path);
 # that order is PluginResult's default failed emission now. Modules
-# passing extra fail_json kwargs keep them kwargs-FIRST (real's
+# passing extra fail_json kwargs keep them kwargs-FIRST (Ansible's
 # fail_json merges failed/msg after the kwargs dict): lineinfile/
 # blockinfile/replace's fail_json(rc=257, ...) registers rc, failed,
 # msg, changed, exception, and wait_for's timeout registers elapsed,

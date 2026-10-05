@@ -115,14 +115,14 @@ end
 # Real apt.py's main() builds `dpkg_options = expand_dpkg_options(
 # p['dpkg_options']) + " -o DPkg::Lock::Timeout=<lock_timeout>"` and
 # passes THAT to install/remove/upgrade/cleanup (the shim logs args only,
-# so real's double quotes around the Dpkg::Options values never reach the
+# so Ansible's double quotes around the Dpkg::Options values never reach the
 # log). Live-verified against ansible-core 2.19.11: `apt-get -y -o
 # Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o
 # DPkg::Lock::Timeout=60 install tree=2.0.2-1`.
 DEFAULT_DPKG_OPTIONS = "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60"
 
 describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
-  # Real ansible-playbook 2.19.11, live-verified in check mode
+  # ansible-playbook 2.19.11, live-verified in check mode
   # (2026-09-13): `apt: {name: ""}` fails with "No package matching ''
   # is available" (an empty string is ONE invalid package name, exactly
   # like any other name missing from the cache) - for state present AND
@@ -132,8 +132,8 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
   # benchmarking inverse_inc.gitlab_buildpkg_tools, whose
   # `name: "{{ lookup('env', 'DEB_PACKAGES_NAME') }}"` renders to ""
   # when the env var is unset - this engine silently no-op'd
-  # ("cache update only") where real Ansible fails the task.
-  it "hard-fails name: \"\" for state present with real Ansible's exact error" do
+  # ("cache update only") where Ansible fails the task.
+  it "hard-fails name: \"\" for state present with Ansible's exact error" do
     with_apt_param_shims("un") do |env, log|
       result = PluginSpecHelper.run("apt", {"name" => "", "state" => "present", "_environment" => env})
       result["failed"].as_bool.must_equal(true)
@@ -160,7 +160,7 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
     end
   end
 
-  # `apt: {name: []}` stays "no packages" (live-verified: real Ansible
+  # `apt: {name: []}` stays "no packages" (live-verified: Ansible
   # runs the cache update only and reports changed from that) - the
   # parser stringifies a literal empty list to "[]" precisely so the
   # plugin can tell it apart from the empty STRING (see
@@ -174,9 +174,9 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
     end
   end
 
-  # Real ansible-playbook 2.19.11, live-verified: `apt: name:
+  # ansible-playbook 2.19.11, live-verified: `apt: name:
   # "['probe-pkg-one', 'probe-pkg-two']"` (a Python-repr STRING, not a
-  # real YAML list) is a plain string - real Ansible comma-splits it
+  # real YAML list) is a plain string - Ansible comma-splits it
   # and fails with "No package(s) matching '['probe-pkg-one''
   # available". Native typing requires the template's whole parsed AST
   # to be one output node wrapping one expression, so block-tag output
@@ -189,7 +189,7 @@ describe "apt plugin - name: parsing (empty names, repr-looking strings)" do
       call = install_call(log) || ""
       call.wont_equal("")
       # The RAW comma-split garbage tokens (bracket remnants verbatim),
-      # NOT the repaired/re-parsed clean name pair real Ansible never
+      # NOT the repaired/re-parsed clean name pair Ansible never
       # sees. Real apt.py wraps each spec in naive `'%s'` quoting with no
       # shell escaping, so the shim's log (which records argv after the
       # shell has dequoted it) shows the bracket remnants unquoted - each
@@ -325,7 +325,7 @@ describe "apt plugin - parameter coverage" do
           "_environment" => env,
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-        # Real's state=latest runs the SAME install() as state=present
+        # Ansible's state=latest runs the SAME install() as state=present
         # (apt.py main(): state_upgrade=True), so --only-upgrade is a
         # leading flag in the same slot - verified live against
         # ansible-core 2.19.11.
@@ -462,7 +462,7 @@ describe "apt plugin - parameter coverage" do
     # against a different ansible-core pinned here). The engine matches
     # 2.19.11: apt.cr's argspec accepts it and the shared
     # BasePlugin#validate_bool_params! type-checks it.
-    it "auto_install_module_deps is bool-validated like real 2.19.11, not rejected" do
+    it "auto_install_module_deps is bool-validated like Ansible 2.19.11, not rejected" do
       result = PluginSpecHelper.run("apt", {
         "name"                     => "krikri-fake-pkg",
         "state"                    => "present",
@@ -499,7 +499,7 @@ describe "apt plugin - parameter coverage" do
           falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
 
           # During the apt-get window the file existed with exactly the
-          # content real Ansible's __enter__ writes.
+          # content Ansible's __enter__ writes.
           File.read(log).must_include("POLICY-DURING-OP:\n#!/bin/sh\nexit 101\n")
           # After the operation it is gone again (no backup existed).
           File.exists?(policy_path).must_equal(false)

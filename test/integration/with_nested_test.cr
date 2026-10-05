@@ -26,7 +26,7 @@ describe "with_nested: templated scalar sources" do
     # time, pinning each cartesian factor to size 1 no matter how many
     # elements the variable actually held. The loop iterated once per
     # outer source with `item` = the whole rendered inner list, where
-    # real Ansible iterates once per PAIR of elements.
+    # Ansible iterates once per PAIR of elements.
     status, output = run_playbook(<<-YAML)
       - name: repro
         hosts: localhost
@@ -114,7 +114,7 @@ describe "with_nested: templated scalar sources" do
   end
 
   it "iterates a literal string term one element per character" do
-    # Real ansible-core 2.19.11 (live-verified): the nested lookup
+    # ansible-core 2.19.11 (live-verified): the nested lookup
     # iterates each term directly as a sequence, so a literal string
     # term contributes one element per CHARACTER - `with_nested: [cd,
     # [1]]` yields [c,1] then [d,1], where krikri used to keep "cd"
@@ -179,7 +179,7 @@ describe "with_nested: templated scalar sources" do
 
   it "expands a direct scalar source's string terms per character" do
     # The DIRECT scalar form (`with_nested: "{{ var }}"`) resolves to the
-    # term LIST at runtime; real Ansible then iterates each term as a
+    # term LIST at runtime; Ansible then iterates each term as a
     # sequence (live-verified: over combos = ["cd", [1]] it yields [c,1]
     # then [d,1]).
     status, output = run_playbook(<<-YAML)

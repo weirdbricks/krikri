@@ -21,7 +21,7 @@ module Krikri
 
     # run_acl's check_rc=True semantics: a nonzero exit fails the task
     # (getfacl/setfacl missing, filesystem without ACL support, invalid
-    # entity, ...) - matches the real module's fail_json behavior.
+    # entity, ...) - matches the Ansible module's fail_json behavior.
     private def run_acl_checked(cmd : Array(String)) : Array(String)
       result = remote_exec(cmd.map { |word| Process.quote(word) }.join(' '))
       if result[:exit_code] != 0
@@ -30,7 +30,7 @@ module Krikri
       PluginHelpers::AclCommand.filter_lines(result[:stdout])
     end
 
-    # The real module's state: absent apply deliberately swallows
+    # The Ansible module's state: absent apply deliberately swallows
     # errors (run_acl with check_rc=False) - the changed check already
     # ran, and a removal racing a concurrent change is not worth
     # failing the task over.
@@ -64,7 +64,7 @@ module Krikri
 
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: path") unless path
 
-      # Real Ansible's argument_spec rejects an out-of-choices etype at
+      # Ansible's argument_spec rejects an out-of-choices etype at
       # argument-validation time, before any state logic runs.
       if et = etype
         unless ETYPES.includes?(et)
@@ -141,8 +141,8 @@ module Krikri
         PluginHelpers::AclCommand.build_command("get", path, follow, default, recursive, recalculate_mask, use_nfsv4_acls)
       )
 
-      # Real ansible.posix.acl: module.exit_json(changed=changed, msg=msg,
-      # acl=acl) - live-verified against real 2.19.11 via a registered
+      # Ansible.posix.acl: module.exit_json(changed=changed, msg=msg,
+      # acl=acl) - live-verified against Ansible 2.19.11 via a registered
       # {{ r | to_json }} dump in the podman container (changed, unchanged,
       # query and check-mode runs all identical).
       PluginResult.new(changed: changed, failed: false, msg: msg, acl: acl, key_order: ["changed", "msg", "acl"])

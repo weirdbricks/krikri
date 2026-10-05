@@ -11,7 +11,7 @@ describe "template:'s {% import 'x.j2' with context %} modifier" do
   it "renders a template using import ... with context without a parse error" do
     # Real bug found in a 150-role overnight round (manala.influxdb):
     # its own config template does `{%- import '_macros.j2' as macros
-    # with context -%}` - real Jinja2's `with context`/`without
+    # with context -%}` - Jinja2's `with context`/`without
     # context` modifier, never parsed at all by the vendored Crinja
     # fork ("Did not expect any more tokens, found: IDENTIFIER:with").
     # Fixed in fork release crystal-play-0.9.29.

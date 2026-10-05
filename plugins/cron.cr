@@ -18,7 +18,7 @@ module Krikri
   #     The command to run. With env: true, the variable's VALUE instead.
   #     env-mode roles in the wild (infOpen.lynis, round 811204) spell it
   #     `value:`, so the alias must resolve or the task fails validation
-  #     even though real ansible-playbook accepts it.
+  #     even though ansible-playbook accepts it.
   #   minute/hour/day/month/weekday (optional, default "*")
   #   special_time (optional): reboot/yearly/annually/monthly/weekly/daily/hourly
   #     - overrides minute/hour/day/month/weekday
@@ -192,7 +192,7 @@ module Krikri
     end
 
     private def execute_file(name : String, raw_cron_file : String) : PluginResult
-      # Real Ansible resolves a relative cron_file: against /etc/cron.d -
+      # Ansible resolves a relative cron_file: against /etc/cron.d -
       # only an absolute path is used as-is (cron.py's CronTab#__init__).
       cron_file = resolve_cron_file(raw_cron_file)
       state = @params["state"]? || "present"
@@ -217,7 +217,7 @@ module Krikri
         state: state,
         jobs: PluginHelpers::CronTable.job_names(new_content),
         envs: PluginHelpers::CronTable.env_names(new_content),
-        # Real 2.19.11 registered cron result (live-verified, changed and
+        # Ansible 2.19.11 registered cron result (live-verified, changed and
         # unchanged identical): jobs, envs, changed, failed.
         key_order: ["jobs", "envs", "changed"]
       )
@@ -236,7 +236,7 @@ module Krikri
 
       # A user with no crontab yet makes `crontab -l` exit non-zero
       # ("no crontab for <user>") - not a real error, just "start from
-      # empty" (matches real Ansible's own CronTab.read behavior).
+      # empty" (matches Ansible's own CronTab.read behavior).
       list_result = remote_exec("crontab #{crontab_target} -l 2>/dev/null")
       original_content = list_result[:exit_code] == 0 ? list_result[:stdout] : ""
 

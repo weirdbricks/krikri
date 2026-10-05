@@ -7,7 +7,7 @@ require "socket"
 # server at all and always run).
 #
 # Real (ansible-core 2.19.11 + community.postgresql 4.2.0) does not
-# word a failed connect itself: the real module's
+# word a failed connect itself: the Ansible module's
 # connect_to_db() fails with
 #   module.fail_json(msg="unable to connect to database: %s" % conn_err)
 # where conn_err is libpq's own connection-error text, so that is
@@ -32,7 +32,7 @@ require "socket"
 #   unable to connect to database: connection to server at "127.0.0.1",
 #   port 35433 failed: FATAL:  database "nosuchdb" does not exist\n
 #
-# Registered shape is real's plain fail_json(msg=...) one:
+# Registered shape is Ansible's plain fail_json(msg=...) one:
 # {failed, msg, changed, exception} - krikri emits no deprecations key
 # for these (no alias param is set in any of these cases).
 #
@@ -118,7 +118,7 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
     skip "no PostgreSQL server at 127.0.0.1:35433" unless pg2_reachable?
     result = PluginSpecHelper.run("postgresql_query",
       CONN_LOGIN.merge({"login_port" => "35433", "login_password" => "wrongpw", "query" => "SELECT 1"}))
-    # No login_db given: real's postgresql_query also warns about the default database.
+    # No login_db given: Ansible's postgresql_query also warns about the default database.
     assert_conn_failure(result,
       "unable to connect to database: connection to server at \"127.0.0.1\", port 35433 failed: FATAL:  password authentication failed for user \"postgres\"\n",
       with_db_warning: true)

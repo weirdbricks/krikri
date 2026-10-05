@@ -20,7 +20,7 @@ module Krikri
       # because the src/dest/output_encoding conversions need the native
       # type (src is coerced through Python str() here; dest rides the
       # marker to the plugin binary, which applies the same coercion, and
-      # output_encoding is read through real's own `or 'utf-8'` fallback
+      # output_encoding is read through Ansible's own `or 'utf-8'` fallback
       # plus its encode() type crash - see template_output_encoding).
       # Every OTHER param is demoted back to its plain string first, so the
       # Jinja knob bools (`trim_blocks: true`) and strings see exactly the
@@ -36,17 +36,17 @@ module Krikri
       end
       @params = demoted
 
-      # newline_sequence: template-only param (real Ansible strips it from
+      # newline_sequence: template-only param (Ansible strips it from
       # the module args - it is consumed HERE, on the controller, by the
       # Jinja environment). Default "\n"; the three documented values are
       # accepted, including their YAML-escaped literal forms ("\\n" typed
       # with a backslash, which YAML/CLI quoting can hand over as a
-      # literal two-character string - real Ansible's own
+      # literal two-character string - Ansible's own
       # wrong_sequences normalization), anything else fails the task with
-      # real Ansible's exact message before any template is touched
+      # Ansible's exact message before any template is touched
       # (live-verified against ansible-core 2.19.4; the 2.19.11 bytes
       # carry REAL control characters - the Python source literal
-      # "\n, \r or \r\n" - and real's error pipeline .strip()s the
+      # "\n, \r or \r\n" - and Ansible's error pipeline .strip()s the
       # message, dropping the trailing " \r\n", which is what both the
       # [ERROR] block and the fatal JSON then show).
       # `.presence` is deliberately NOT used on the raw value: it treats
@@ -71,7 +71,7 @@ module Krikri
         return ActionResult.failure("Missing required parameter: src")
       end
 
-      # An EMPTY src skips real's search entirely (its `source and ...`
+      # An EMPTY src skips Ansible's search entirely (its `source and ...`
       # branch never runs, so no candidate list is built) and fails with
       # the bare not-found wording.
       if src.empty?
@@ -79,7 +79,7 @@ module Krikri
       end
 
       # A non-string YAML literal src (`src: true`) is coerced through
-      # Python str() by real's action plugin before the search - bools
+      # Python str() by Ansible's action plugin before the search - bools
       # render as "True"/"False" (live-verified: real searches for a file
       # literally named "True"), so a bare `src: true` must look for
       # "True", not the YAML text "true" (see NON_STRING_PARAM_PREFIX).
@@ -87,10 +87,10 @@ module Krikri
         src = Krikri.python_str_scalar(native)
       end
 
-      # Real Ansible's own _find_needle/copy action wording for a missing
+      # Ansible's own _find_needle/copy action wording for a missing
       # source: a RELATIVE src reports the full searched-paths list (the
       # task's search stack plus the playbook basedir, see NeedleLookup),
-      # an absolute one reports no list at all (real's absolute branch
+      # an absolute one reports no list at all (Ansible's absolute branch
       # never populates one) - both live-verified against 2.19.11.
       resolved_src, candidates = resolve_controller_src(src)
       unless resolved_src
@@ -115,7 +115,7 @@ module Krikri
       # Calculate MD5 of rendered content
       content_md5 = Digest::MD5.hexdigest(rendered_content)
 
-      # newline_sequence: real Ansible passes this to the Jinja2
+      # newline_sequence: Ansible passes this to the Jinja2
       # environment, whose lexer normalizes EVERY newline in the rendered
       # output (the template source's own line breaks and any Jinja-emitted
       # ones alike) to the requested sequence - verified byte-level
@@ -130,7 +130,7 @@ module Krikri
         rendered_content = rendered_content.split(/\r\n|\r|\n/).join(newline_sequence)
       end
 
-      # output_encoding: real's action plugin writes the rendered result
+      # output_encoding: Ansible's action plugin writes the rendered result
       # into its own temporary file with Python's
       # `to_bytes(resultant, encoding=output_encoding, errors=...)` and only
       # THEN hands the task to the copy action plugin - so a non-string
@@ -163,10 +163,10 @@ module Krikri
       ActionResult.success?(modified_params, changed: false)
     end
 
-    # The encoding real's template action plugin writes the rendered
+    # The encoding Ansible's template action plugin writes the rendered
     # result with, and the Python TypeError it dies with when the value
     # cannot be one - the pair `{encoding, crash_message}`, exactly the
-    # shape of real's own line
+    # shape of Ansible's own line
     # `output_encoding = self._task.args.get('output_encoding', 'utf-8') or 'utf-8'`
     # followed by its `to_bytes(resultant, encoding=output_encoding)`
     # (template.py:74 and :158, live-verified against 2.19.11):
@@ -177,16 +177,16 @@ module Krikri
     #   try to encode to "false"/"0" and fail a task real completes);
     # - a TRUTHY non-string value crashes Python's codec stack - "encode()
     #   argument 'encoding' must be str, not _AnsibleTaggedInt" for an
-    #   int, plain 'bool' for a bool (bools are not tagged in real 2.19),
+    #   int, plain 'bool' for a bool (bools are not tagged in Ansible 2.19),
     #   '_AnsibleTaggedFloat'/'_AnsibleTaggedList'/'_AnsibleTaggedDict'
     #   for the rest;
     # - a plain string is the codec name as written (an unknown one still
-    #   fails the task with real's "unknown encoding: ..." wording, which
+    #   fails the task with Ansible's "unknown encoding: ..." wording, which
     #   the plugin binary produces). A LIST of plain strings is
     #   indistinguishable from such a string on the params wire (the
     #   parser comma-joins it), so it keeps the string reading - the one
     #   deliberate gap here; a list with non-string members keeps its
-    #   marker and is read as the list real sees.
+    #   marker and is read as the list Ansible sees.
     private def template_output_encoding : {String?, String?}
       raw = @params["output_encoding"]?
       return {nil, nil} if raw.nil?
@@ -209,13 +209,13 @@ module Krikri
       "encode() argument 'encoding' must be str, not #{Krikri.python_value_type_name(native)}"
     end
 
-    # Whether *name* is a codec real's Python stack can encode to. Real
+    # Whether *name* is a codec Ansible's Python stack can encode to. Real
     # resolves the name in its own codec registry and raises
     # LookupError("unknown encoding: <name>") for one it does not have -
     # from the same to_bytes call as the non-string crash above, so an
     # unknown codec is reported as an action-plugin crash there too, not
     # as a module failure. The candidate search mirrors the plugin
-    # binary's own encode_output (real's documented "latin-1" is
+    # binary's own encode_output (Ansible's documented "latin-1" is
     # "latin1"/"ISO-8859-1" to iconv); the byte-level conversion itself
     # still happens in the plugin binary, which is the only place the
     # rendered content exists.
@@ -288,7 +288,7 @@ module Krikri
     end
 
     # Loader rooted at the template's own directory plus its role's
-    # templates/ ancestors, matching real Ansible's role template search
+    # templates/ ancestors, matching Ansible's role template search
     # path (the engine's default loader searches only the CWD).
     private def build_template_loader(template_path : String) : KrikriJinja::Loader?
       tpl_dir = File.dirname(File.expand_path(template_path))
@@ -311,7 +311,7 @@ module Krikri
       TemplateSearchPathLoader.new(searchpaths)
     end
 
-    # Real Ansible's own wording for a strict-undefined failure is
+    # Ansible's own wording for a strict-undefined failure is
     # "'name' is undefined"; krikri-jinja already uses that phrasing. An
     # attribute miss is reworded from Jinja's "'dict object' has no
     # attribute 'x'" to ansible-core's "object of type 'dict' has no
@@ -322,7 +322,7 @@ module Krikri
     end
 
     # JSON-shaped counterpart of #prepare_template_vars, for the krikri-jinja
-    # render path: real Ansible templates a role default's own value
+    # render path: Ansible templates a role default's own value
     # recursively, so a default that is itself an unrendered expression
     # resolves before the template sees it.
     #
@@ -339,7 +339,7 @@ module Krikri
     # cause as the engine-scope conversion's render_pure_mustache_value).
     # defer_unresolved keeps this path's existing laziness: a leaf that
     # references an undefined variable stays raw until a template that
-    # actually reads it fails, like real Ansible.
+    # actually reads it fails, like Ansible.
     private def prepare_template_vars_json(template_path : String) : Hash(String, JSON::Any)
       substitutor = VarSubstitutor.new(vars: @vars)
       # Unsafe gate (VarSubstitutor.resolved_var_name?, the same per-host
@@ -359,7 +359,7 @@ module Krikri
       @vars.each do |key, value|
         if key == "hostvars"
           # The hostvars magic is NOT one host's value: each entry must
-          # re-render in ITS OWN host's scope (real Ansible's HostVarsVars
+          # re-render in ITS OWN host's scope (Ansible's HostVarsVars
           # templar). The generic re-render below would have rendered
           # every entry with THIS host's vars.
           vars[key] = VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true)
@@ -370,7 +370,7 @@ module Krikri
             value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)
           rescue Krikri::UndefinedVariableError
             # A role default that references an undefined variable stays raw;
-            # only a template that actually uses it fails, like real Ansible.
+            # only a template that actually uses it fails, like Ansible.
           end
         end
         vars[key] = value
@@ -391,7 +391,7 @@ module Krikri
 
     # Rewrites Jinja2 inline conditional expressions `{{ A if C else B }}`
     # into the Crinja-parseable `{{ C | ternary(A, B) }}` form. This is
-    # real Jinja2 (used by dev-sec os_hardening), which Crinja 0.9.0 cannot
+    # Jinja2 (used by dev-sec os_hardening), which Crinja 0.9.0 cannot
     # parse. Only `{{ }}` expression blocks are touched; `{% %}` statement
     # blocks are left as-is.
     #
@@ -400,7 +400,7 @@ module Krikri
     # match keeps the ` if ` / ` else ` as the top-level separator, so an
     # operand that is itself a parenthesized ternary (`(B if C2 else D)`)
     # is handled naturally by the nested `( ... )` captures.
-    # The ` else ... ` branch is optional - real Jinja2 permits `{{ A if C
+    # The ` else ... ` branch is optional - Jinja2 permits `{{ A if C
     # }}` on its own (renders as empty/Undefined when C is false;
     # konstruktoid-hardening's sshd_config.j2 does this throughout, e.g.
     # `{{ 'Ciphers ' ~ sshd_ciphers | join(',') if sshd_ciphers }}` to
@@ -434,7 +434,7 @@ module Krikri
       \}\}                        # closing }}
     /x
 
-    # Method-call `.join(` form that real Jinja2 permits but Crinja's
+    # Method-call `.join(` form that Jinja2 permits but Crinja's
     # parser rejects: `{{ "SEP".join(LIST) }}` is the standard `sep.join(list)`
     # idiom (dev-sec os_hardening's securetty template uses it). Rewritten
     # into the equivalent `LIST | join("SEP")` filter, which Crinja supports.
@@ -515,7 +515,7 @@ module Krikri
     # by sorting the raw dict instead of its item tuples. Removed once
     # `.items()` support landed in the fork - verified live against
     # both jtyr.nsswitch (`.items() | sort`) and jtyr.motd (`.items()`
-    # alone, item.motd.j2), byte-for-byte identical to real Ansible.
+    # alone, item.motd.j2), byte-for-byte identical to Ansible.
     FOR_TUPLE_PARENS = /(\{%-?\s*for\s+)\(([^)]+)\)(\s+in\s+)/
 
     # Reads one of the six Jinja delimiter-string task params, falling
@@ -525,18 +525,18 @@ module Krikri
       (raw.nil? || raw.empty?) ? default : raw
     end
 
-    # Real Ansible's _find_needle search for a bare relative template src
+    # Ansible's _find_needle search for a bare relative template src
     # on the controller: a standalone playbook task's `src: foo.j2` also
     # resolves against the PLAYBOOK's own directory and its templates/
     # subdir (which is how `template: src: bench-report.j2` finds
     # <playbook_dir>/templates/bench-report.j2 when the process CWD is
     # somewhere else entirely). Returns the resolved path, or nil when
     # every candidate is exhausted - the caller then fails the task with
-    # real Ansible's exact "Could not find or access" wording.
-    # real Ansible's path_dwim_relative_stack shape: an absolute (or ~)
+    # Ansible's exact "Could not find or access" wording.
+    # Ansible's path_dwim_relative_stack shape: an absolute (or ~)
     # src is checked as-is with NO candidate list, a relative one is
     # searched through the task's search stack (ansible_search_path,
-    # minus the trailing basedir entry real's job var appends - the dwim
+    # minus the trailing basedir entry Ansible's job var appends - the dwim
     # lookup adds the basedir separately and unconditionally) plus the
     # playbook basedir. Returns {resolved path or nil, candidate list}.
     private def resolve_controller_src(src : String) : {String?, Array(String)}
@@ -555,7 +555,7 @@ module Krikri
     end
 
     # The raw dwim search stack reconstructed from ansible_search_path
-    # (which the executor builds in real's job-var shape: search stack
+    # (which the executor builds in Ansible's job-var shape: search stack
     # plus the basedir appended when not already present). The dwim
     # lookup itself must NOT see that appended basedir - it adds its own
     # unconditionally - so a trailing entry equal to the playbook dir is
@@ -597,11 +597,11 @@ module Krikri
 
     # Parses a leading `#jinja2: key:value, key2:value2` directive line
     # (only recognized on the template's literal first line, matching
-    # real Ansible) into a {key => bool} overrides hash, and returns the
+    # Ansible) into a {key => bool} overrides hash, and returns the
     # template content with that line removed. Only trim_blocks/
     # lstrip_blocks are understood (the only ones any Crinja config knob
     # here maps to); an unrecognized key is ignored rather than raising -
-    # real Ansible supports a couple of others (keep_trailing_newline,
+    # Ansible supports a couple of others (keep_trailing_newline,
     # variable_start_string, ...) this directive parser doesn't map
     # (the delimiter strings are honored as TASK params instead, see
     # #delimiter_param). No directive line at all returns an empty
@@ -724,7 +724,7 @@ module Krikri
     # second time and mangles it further. Recursing here, before the
     # outer rewrite is assembled, fixes both branches in one pass so
     # nothing nested is left for a second pass to mishandle.
-    # Real Jinja2 (and every real playbook/template) writes list/tuple
+    # Jinja2 (and every real playbook/template) writes list/tuple
     # membership as the bare infix operator `X in [...]`/`X not in [...]`
     # - standard Python/Jinja2 syntax. Crinja has no infix `in` operator
     # at all, only a `is in(seq)` TEST (`Crinja.test({seq: ...}, :in)`),
@@ -735,7 +735,7 @@ module Krikri
     # Rewrites a single self-contained `LEFT (not )?in CONTAINER`
     # expression into `LEFT is (not )?in(CONTAINER_AS_LIST)` - a `(...)`
     # tuple-literal container is converted to a `[...]` list literal
-    # (Crinja's `:in` test reads its `seq` argument from a real Jinja
+    # (Crinja's `:in` test reads its `seq` argument from a Jinja
     # list, not a tuple, which Crinja doesn't have as its own literal
     # type at all). Returns *expr* unchanged if it isn't a clean, single
     # top-level `in`/`not in` expression (e.g. a compound `X in Y and Z`
@@ -773,7 +773,7 @@ module Krikri
                      elsif container =~ /\A[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*\z/
                        # A bare variable/dotted/indexed reference
                        # (`ansible_facts.processor`, not a `[...]`
-                       # literal or `(...)` tuple) - real Ansible roles
+                       # literal or `(...)` tuple) - Ansible roles
                        # check membership against a variable-bound list
                        # far more often than an inline literal one.
                        # Crinja's own `is in(seq)` test takes `seq:
@@ -828,7 +828,7 @@ module Krikri
       else_idx = index_of_token_from(expr, " else ", if_idx)
 
       then_part = rewrite_ternary_expr(strip_wrapping_parens(expr[0...if_idx].strip))
-      # A missing ` else ` branch (`{{ A if C }}`, real Jinja2's own
+      # A missing ` else ` branch (`{{ A if C }}`, Jinja2's own
       # else-less inline conditional) renders as empty/Undefined when C
       # is false - `''` reproduces that in the ternary filter form.
       if else_idx >= 0
@@ -908,8 +908,8 @@ module Krikri
     #
     # A String value that itself contains "{{" is re-templated first -
     # see JinjaRenderer#prepare_crinja_vars for the full rationale
-    # (real Ansible re-templates every variable's value recursively
-    # wherever it's used; real Jinja2 itself does not, so a role default
+    # (Ansible re-templates every variable's value recursively
+    # wherever it's used; Jinja2 itself does not, so a role default
     # like geerlingguy.nginx's own `nginx_worker_processes: '"{{
     # ansible_processor_vcpus | default(ansible_processor_count) }}"'`
     # would otherwise render as the literal, still-unparsed inner text).

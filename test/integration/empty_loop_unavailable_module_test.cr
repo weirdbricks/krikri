@@ -11,7 +11,7 @@ require "file_utils"
 # emptiness" - drove a bogus rc=4 on an otherwise-green run: found via
 # telekom_mms.grafana, whose grafana_datasource/grafana_folder/grafana_
 # team/grafana_user/grafana_dashboard tasks all loop over empty role
-# defaults (real Ansible: skipped=5, rc=0; krikri rc=4 "completed with
+# defaults (Ansible: skipped=5, rc=0; krikri rc=4 "completed with
 # unavailable modules").
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -79,7 +79,7 @@ describe "an unimplemented module behind an empty loop is a plain skip, rc=0" do
       YAML
     status.success?.must_equal(false, output)
     status.exit_code.must_equal(4, output)
-    # The old "✔ unavailable modules" footer is gone (real ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
+    # The old "✔ unavailable modules" footer is gone (ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
     output.must_include("PLAY RECAP", output)
   end
 
@@ -95,6 +95,6 @@ describe "an unimplemented module behind an empty loop is a plain skip, rc=0" do
       YAML
     status.success?.must_equal(false, output)
     status.exit_code.must_equal(4, output)
-    # The old "✔ unavailable modules" footer is gone (real ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
+    # The old "✔ unavailable modules" footer is gone (ansible-playbook prints nothing after the recap); rc=4 and the skip shape remain the observable behavior.
   end
 end

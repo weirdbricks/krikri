@@ -17,7 +17,7 @@ module Krikri
       end
 
       # systemd's own bad states, reported as "status" in preference to
-      # the ACTIVE column - real Ansible's `SystemctlScanService.
+      # the ACTIVE column - Ansible's `SystemctlScanService.
       # BAD_STATES`, checked across every field EXCEPT the trailing
       # description (which can contain any of these words innocently).
       BAD_STATES = {"not-found", "masked", "failed"}
@@ -26,7 +26,7 @@ module Krikri
       # Ansible's `_list_from_units`. Returns {name => {state, status}}.
       # This listing is the one that carries units with NO unit file at
       # all - generated, transient and template-instance units - which
-      # is why real Ansible reads it IN ADDITION to list-unit-files
+      # is why Ansible reads it IN ADDITION to list-unit-files
       # rather than using the unit files alone as the key set.
       def self.parse_units(output : String) : Hash(String, NamedTuple(state: String, status: String))
         result = Hash(String, NamedTuple(state: String, status: String)).new
@@ -43,7 +43,7 @@ module Krikri
         result
       end
 
-      # `systemctl list-unit-files --type service --all`, real Ansible's
+      # `systemctl list-unit-files --type service --all`, Ansible's
       # `_list_from_unit_files`: "UNIT_FILE STATE [VENDOR PRESET]".
       # Same as #parse_unit_files but filtered on ".service" the way the
       # real module filters it, so a wrapped/odd line can't contribute a
@@ -61,7 +61,7 @@ module Krikri
 
       # `systemctl show a.service b.service --property=Id
       # --property=ActiveState` - blank-line-separated blocks, one per
-      # requested unit, in request order. Real Ansible issues one
+      # requested unit, in request order. Ansible issues one
       # `systemctl show` PER unit; batching is the same data for one
       # subprocess instead of dozens.
       #
@@ -71,7 +71,7 @@ module Krikri
       # `Id=systemd-logind.service`, so an Id-keyed result loses the
       # alias entirely and reports it "unknown" - which is exactly what
       # a first cut of this did, on all 12 aliases of a stock Debian
-      # host. Real Ansible keys by the name it asked about, and so does
+      # host. Ansible keys by the name it asked about, and so does
       # this.
       #
       # Returns nil if the block count doesn't match the request, which
@@ -94,7 +94,7 @@ module Krikri
       # Units `systemctl show` cannot be asked about at all: a template
       # unit with an empty instance (`autovt@.service`, `getty@.service`)
       # is "neither a valid invocation ID nor unit name", and ONE of them
-      # in an argument list fails the entire call. Real Ansible asks per
+      # in an argument list fails the entire call. Ansible asks per
       # unit, so it just gets a failed rc for these and leaves their
       # state "unknown" - verified live: `autovt@.service` and
       # `getty@.service` both come back state "unknown" from real
@@ -105,7 +105,7 @@ module Krikri
         !name.includes?("@.")
       end
 
-      # `service --status-all`'s own SysV listing, real Ansible's
+      # `service --status-all`'s own SysV listing, Ansible's
       # `ServiceScanService._list_sysvinit` regex
       # (`^\s*\[ (?P<state>\+|\-) \]\s+(?P<name>.+)$`): a "+" means
       # running, a "-" stopped, and anything else on the line (a "?" for

@@ -4,7 +4,7 @@ require "../minitest_helper"
 # gathering, krikri resolved `ansible_hostname` to the inventory host name
 # ("localhost"), so `ansible_hostname | default(...)` - the idiomatic
 # "have facts been gathered yet" guard - silently produced the wrong value.
-# Real Ansible leaves ansible_hostname undefined until setup/gather_facts
+# Ansible leaves ansible_hostname undefined until setup/gather_facts
 # populates it (verified live against ansible-core 2.19: the template below
 # renders "host=x" without facts, the real hostname after them).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

@@ -1,7 +1,7 @@
 require "krikri-jinja/krikri_jinja"
 
 module Krikri
-  # Real Ansible searches a role's template includes across the template's own
+  # Ansible searches a role's template includes across the template's own
   # directory, its `templates/` ancestors, and the role root (a template can
   # `{% include 'templates/other.j2' %}` by a role-root-relative path), while
   # krikri-jinja's FileSystemLoader is rooted at a single directory.

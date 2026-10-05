@@ -1,13 +1,13 @@
 require "file_utils"
 require "../minitest_helper"
 
-# Real Ansible loads ALL of a play's roles - and their vars/main.yml and
+# Ansible loads ALL of a play's roles - and their vars/main.yml and
 # defaults/main.yml - into the variable manager when the play is SET UP,
 # not when each role's tasks reach the front of the queue. So a role can
 # see the vars of a role that runs AFTER it. This engine scoped them to
 # the owning role (and, since 0.9.599, its dependents), so such a
 # reference resolved to nothing - which is what made geerlingguy.php's
-# own `when: php_packages is not defined` run a task real Ansible skips
+# own `when: php_packages is not defined` run a task Ansible skips
 # (`php_packages` lives in buluma.php/vars/main.yml, a role that runs
 # later in the same dependency chain). Found round 183.
 #
@@ -185,7 +185,7 @@ describe "cross-role variable scope" do
   end
 
   it "ranks a REGISTERED variable above the role's own vars of the same name" do
-    # Real Ansible's precedence puts registered vars (19) well above role
+    # Ansible's precedence puts registered vars (19) well above role
     # vars (15). This engine applied role vars with a blind overwrite, so
     # a task registering into a name its own role's vars/main.yml also
     # defines lost the command's output entirely - verified against
@@ -232,7 +232,7 @@ describe "cross-role variable scope" do
                 msg: "after={{ incl_var | default('UNDEF') }} d={{ incl_default | default('UNDEF') }}"
         YAML
 
-      # Real Ansible instantiates roles: at play setup; include_role: is
+      # Ansible instantiates roles: at play setup; include_role: is
       # dynamic and keeps its vars scoped unless `public: true`, so the
       # play-wide layers must take only STATIC roles.
       output.must_include("after=UNDEF d=UNDEF")

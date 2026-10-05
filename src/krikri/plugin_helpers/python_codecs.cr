@@ -1,6 +1,6 @@
 module Krikri
   # Python codec names, for modules whose `encoding:` parameter has to
-  # behave like real Ansible's (replace:, and every file-reading module
+  # behave like Ansible's (replace:, and every file-reading module
   # that forwards the name to a Python `bytes.decode(encoding)`).
   #
   # Real resolves the name in CPython's own codec registry and raises
@@ -21,7 +21,7 @@ module Krikri
   # `bytes.decode()` accepts. Names are compared in the normalized
   # spelling Python itself compares them in (lower-cased, every
   # non-alphanumeric run folded to "_"), so "Latin-1", "latin 1" and
-  # "LATIN1" all resolve like real's codecs.lookup().
+  # "LATIN1" all resolve like Ansible's codecs.lookup().
   module PythonCodecs
     extend self
 

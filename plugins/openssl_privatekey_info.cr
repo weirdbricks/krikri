@@ -10,7 +10,7 @@ module Krikri
   # (community.crypto.openssl_privatekey_info) - loads a private key and
   # reports its facts. Read-only.
   #
-  # Result shape matched against the real module (community.crypto 3.1.1):
+  # Result shape matched against the Ansible module (community.crypto 3.1.1):
   #
   #   can_load_key / can_parse_key - always present; the module FAILS
   #     (rather than returning) when the key cannot be parsed, with
@@ -21,7 +21,7 @@ module Krikri
   #   type / public_data - RSA: size/modulus/exponent; ECC:
   #     curve/x/y/exponent_size; Ed25519/X25519/etc.: empty dict
   #   key_is_consistent - nil unless check_consistency: true (a sign/verify
-  #     round trip is what the real module does; openssl cannot be asked
+  #     round trip is what the Ansible module does; openssl cannot be asked
   #     for exactly that in one shot, and no role passes the flag)
   #   private_data - only with return_private_key_data: true (RSA
   #     p/q/exponent, DSA x, ECC multiplier), parsed the same way
@@ -31,7 +31,7 @@ module Krikri
   class OpensslPrivatekeyInfoPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # The real module's argument_spec - no file-common args (no
+    # The Ansible module's argument_spec - no file-common args (no
     # add_file_common_args), no aliases.
     SPEC = {
       "path"                    => [] of String,
@@ -42,7 +42,7 @@ module Krikri
       "select_crypto_backend"   => [] of String,
     }
 
-    # Live-verified against real ansible-core 2.19.11 (community.crypto
+    # Live-verified against ansible-core 2.19.11 (community.crypto
     # 3.1.1) via `{{ r | to_json }}` dumps, identical with and without
     # return_private_key_data and in check mode: private_data sits after
     # public_data; ansible_facts (controller-added, not emitted here) sits
@@ -121,7 +121,7 @@ module Krikri
       res
     end
 
-    # Real AnsibleModule validation order (ArgumentSpecValidator.validate):
+    # AnsibleModule validation order (ArgumentSpecValidator.validate):
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). Types: return_private_key_data and
     # check_consistency are bool; the rest are str/path.
@@ -157,7 +157,7 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: msg)
     end
 
-    # Real Ansible wraps the underlying library error; its exact text
+    # Ansible wraps the underlying library error; its exact text
     # varies by cryptography version and failure mode. The constant part
     # is what a role can actually branch on: the module's own prefix.
     private def status_err_text(err : IO::Memory) : String

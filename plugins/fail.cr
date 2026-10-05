@@ -8,10 +8,10 @@ module Krikri
   # (its own `when:`, evaluated by the executor before a plugin ever
   # runs, is what makes real playbooks use it conditionally - the module
   # itself takes no condition of its own). Never reports changed, runs
-  # identically under check mode (matches real Ansible - failing is not
+  # identically under check mode (matches Ansible - failing is not
   # a state change to skip).
   #
-  # msg carries the task arg's NATIVE type: real's fail ACTION plugin
+  # msg carries the task arg's NATIVE type: Ansible's fail ACTION plugin
   # assigns `result['msg'] =
   # self._task.args.get('msg')` verbatim - no str() coercion anywhere -
   # so a non-string YAML literal (the parser marks those; see

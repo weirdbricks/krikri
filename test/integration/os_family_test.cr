@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # ansible_os_family for a DERIVATIVE distro. On LMDE 7 (ID=linuxmint,
-# ID_LIKE=debian) real Ansible reports "Debian" while this engine
+# ID_LIKE=debian) Ansible reports "Debian" while this engine
 # reported "Linux" - so every `when: ansible_os_family == "Debian"` gate
 # in every role silently skipped, and an OS-keyed
 # `vars-{{ ansible_os_family }}.yml` pointed at a file that does not

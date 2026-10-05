@@ -34,10 +34,10 @@ module Krikri
 
     private def parse_user_list(list_out : NamedTuple(exit_code: Int32, stdout: String, stderr: String), user : String) : {Bool, Array(String)?}
       # user rows: "user\t[tags]"; the listing includes the header row.
-      # Capture the user's current tags too - the real module skips the
+      # Capture the user's current tags too - the Ansible module skips the
       # set_user_tags call when they already match (an unconditional
       # apply made every warm pass report changed).
-      # Tag parsing mirrors the real module's process_tags: strip ALL
+      # Tag parsing mirrors the Ansible module's process_tags: strip ALL
       # brackets and spaces from the bracketed tag list, then split on
       # commas. This also converges state written by the old JSON-array
       # format (rabbitmqctl stored the literal tag ["administrator"],
@@ -77,7 +77,7 @@ module Krikri
 
     private def add_user_if_missing(user : String, existing : Bool) : Bool
       return false if existing
-      # password changes for an EXISTING user: the real module compares
+      # password changes for an EXISTING user: the Ansible module compares
       # the stored hash and only rewrites on a mismatch; unconditionally
       # running change_password made every warm pass report changed
       # (mrlesmithjr.rabbitmq round-196 re-run). Match the create-time-

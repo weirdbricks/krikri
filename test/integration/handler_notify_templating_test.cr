@@ -53,7 +53,7 @@ describe "notify: with a templated handler name" do
   end
 
   it "matches a role-qualified \"X : name\" notify: against the handler's own bare rendered name" do
-    # Real Ansible auto-namespaces a role-loaded handler with a
+    # Ansible auto-namespaces a role-loaded handler with a
     # qualifier prefix ("<role> : <handler name>") that isn't always
     # the role that literally defines handlers/main.yml (a nested
     # include_role case can qualify with the CALLING role's name

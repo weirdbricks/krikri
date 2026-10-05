@@ -3,7 +3,7 @@ require "file_utils"
 
 # `copy:` with `content:` + `force: false` against an EXISTING file.
 #
-# Real Ansible's `force: false` means "only put it there if it is not
+# Ansible's `force: false` means "only put it there if it is not
 # there already" - an existing destination is left completely alone,
 # content and all, and the task reports ok/changed=false.
 #
@@ -12,14 +12,14 @@ require "file_utils"
 # a difference, and overwrote. Found live on `mrlesmithjr.mdadm`, whose
 # "Arrays | Ensure mdadm conf file exists" task is exactly
 # `content: "" / force: false` aimed at the distro's own
-# /etc/mdadm/mdadm.conf. Real ansible-playbook left the 688-byte file
+# /etc/mdadm/mdadm.conf. ansible-playbook left the 688-byte file
 # untouched and reported ok; krikri-playbook truncated it to 0 bytes and
 # reported changed. That is data loss, not a cosmetic verdict
 # difference, which is why this is pinned at the plugin level rather
 # than left to the benchmark round that caught it.
 #
 # (The spec uses a non-empty stand-in content: an empty-string content
-# is itself a task failure in real Ansible - see
+# is itself a task failure in Ansible - see
 # copy_empty_content_spec.cr - so it cannot exercise the force path.)
 private def with_temp_dir(&)
   dir = File.tempname("copy-force-spec")

@@ -3,13 +3,13 @@ require "json"
 # Runner for role-local custom FILTER plugins - a role's own
 # `filter_plugins/*.py` (and the playbook-adjacent `filter_plugins/`),
 # the filter-side twin of PythonModuleRunner's `library/*.py` support
-# (0.9.819). Real Ansible loads a role's own `filter_plugins/` directory
+# (0.9.819). Ansible loads a role's own `filter_plugins/` directory
 # on the CONTROLLER the same way it loads role-private modules: a plugin
 # file exposing a `FilterModule` class whose `filters()` method returns
 # the `{filter_name: callable}` dict (e.g. stackhpc.luks's `luks_key`,
 # MichaelRigart.interfaces's `bond_check`). Before this, any task
 # templating through such a filter hard-failed with "No filter named
-# 'X'." where real ansible-playbook resolved and ran it.
+# 'X'." where ansible-playbook resolved and ran it.
 #
 # Unlike a module, a filter runs controller-side during Jinja2 template
 # rendering - there is nothing to upload to a target. The runner instead
@@ -28,7 +28,7 @@ require "json"
 # plugins (the overwhelming majority) behave bit-for-bit identically.
 #
 # Deliberately scoped to role-private `filter_plugins/` directories and
-# the playbook-adjacent `filter_plugins/` (real Ansible's two most
+# the playbook-adjacent `filter_plugins/` (Ansible's two most
 # common search roots, mirroring PythonModuleRunner#find_source);
 # third-party COLLECTION filter plugins (bodsch.*, community.*) are
 # still the unchanged scope cut - those live inside installed
@@ -36,7 +36,7 @@ require "json"
 #
 # `@pass_context`-decorated filters (stackhpc.luks's whole
 # `filter_plugins/general.py` - `luks_key` etc., round 952562) follow
-# real Jinja2's calling convention: Jinja auto-injects a Context as the
+# Jinja2's calling convention: Jinja auto-injects a Context as the
 # FIRST positional argument, ahead of the piped value, so `{{ item |
 # luks_key }}` calls `luks_key(context, item)`. Calling the function
 # with just the piped value put `item` in the `context` slot and failed
@@ -63,7 +63,7 @@ module Krikri
 
     # Finds every `.py` file under the role's own `filter_plugins/` and
     # the playbook-adjacent `filter_plugins/` (nearest-first order;
-    # real Ansible loads ALL files in a plugin directory, not
+    # Ansible loads ALL files in a plugin directory, not
     # name-matched ones, so there is no per-filter filename check here
     # the way a module's `library/<name>.py` lookup has). Empty when
     # neither root exists - the overwhelmingly common case.
@@ -84,7 +84,7 @@ module Krikri
       sources.uniq
     end
 
-    # The CONTROLLER's own python3 - the interpreter real Ansible needs
+    # The CONTROLLER's own python3 - the interpreter Ansible needs
     # on the controller anyway (same detection pattern facts_gatherer
     # uses for its controller-side needs).
     def python_executable : String?
@@ -261,7 +261,7 @@ module Krikri
           plugin_class = getattr(module, "FilterModule", None)
           if plugin_class is None:
               return {}
-          # Real Ansible's own PluginLoader instantiates the plugin
+          # Ansible's own PluginLoader instantiates the plugin
           # class before calling filters() on the instance - a
           # filters() defined as a plain instance method (the common
           # spelling) fails with "missing self" when called on the

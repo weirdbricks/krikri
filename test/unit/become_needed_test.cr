@@ -6,11 +6,11 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
 
   describe ".become_needed?" do
     it "is false when escalating to the user we already are" do
-      # Real Ansible's own gate (_low_level_execute_command):
+      # Ansible's own gate (_low_level_execute_command):
       # `C.BECOME_ALLOW_SAME_USER or (buser != ruser or not any((ruser,
       # buser)))`. Since become_user defaults to root and most
       # inventories connect as root, the common `become: true` task runs
-      # with NO sudo at all under real Ansible - verified live, on a host
+      # with NO sudo at all under Ansible - verified live, on a host
       # with no sudo installed at all.
       Krikri::PluginManager.become_needed?(true, "root", "root").must_equal(false)
     end
@@ -25,7 +25,7 @@ describe "Krikri::PluginManager (become_needed_test.cr)" do
     end
 
     it "escalates when neither user is known" do
-      # real Ansible's `not any((ruser, buser))` arm: with nothing to
+      # Ansible's `not any((ruser, buser))` arm: with nothing to
       # compare, it escalates rather than assuming they match.
       Krikri::PluginManager.become_needed?(true, nil, nil).must_equal(true)
       Krikri::PluginManager.become_needed?(true, "", "").must_equal(true)

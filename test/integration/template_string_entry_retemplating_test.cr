@@ -9,7 +9,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 # A variable value that is itself a Jinja-containing string must be fully
 # re-templated - recursively, to a fixed point, PRESERVING TYPES - before a
-# .j2 template sees it. Real Ansible re-templates a list entry whose whole
+# .j2 template sees it. Ansible re-templates a list entry whose whole
 # value is one `{{ }}` expression that evaluates to a dict into a REAL dict,
 # so `{% for item in list %}{{ item.items() }}` works; rendering that entry
 # to a substituted STRING (dict.update-then-discard style text, or the

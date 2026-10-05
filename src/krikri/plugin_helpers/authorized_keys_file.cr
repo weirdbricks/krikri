@@ -4,7 +4,7 @@ module Krikri
     # present/absent in an OpenSSH authorized_keys-style file, entirely
     # without I/O so it's unit-testable with plain strings.
     module AuthorizedKeysFile
-      # The real module's own VALID_SSH2_KEY_TYPES (ansible.posix
+      # The Ansible module's own VALID_SSH2_KEY_TYPES (ansible.posix
       # authorized_key's parsekey): a line is a key line iff one of its
       # whitespace-separated tokens is exactly one of these.
       KEY_TYPES = %w(
@@ -49,17 +49,17 @@ module Krikri
         ensure_keys(text, [key_line], present)
       end
 
-      # Multi-key form mirroring the real module's enforce_state: each new
-      # key is matched against the file by its blob (the real module's
+      # Multi-key form mirroring the Ansible module's enforce_state: each new
+      # key is matched against the file by its blob (the Ansible module's
       # parsekeys dict is keyed on the blob alone), and "already present"
       # means the whole parsed key matches - blob, type, OPTIONS DICT, and
       # comment. key_options are part of that comparison in the real
       # module (its parsed_new_key[:4] != existing_keys[blob][:4] check),
       # so adding key_options: to an existing bare key is a real change:
       # the old line is deleted and the options-prefixed line re-serialized
-      # (moved to the end of the file, like the real module's
+      # (moved to the end of the file, like the Ansible module's
       # delete-then-reinsert). On any write the whole file is
-      # re-serialized from its parsed keys, exactly like the real module's
+      # re-serialized from its parsed keys, exactly like the Ansible module's
       # serialize() pass. With `exclusive` (state present only), every
       # existing key whose blob isn't among the new keys is deleted - the
       # real module's "remove all other keys to honor exclusive".
@@ -83,7 +83,7 @@ module Krikri
           changed = result_lines.size != before
         end
 
-        # Real Ansible writes the file by serializing every parsed key
+        # Ansible writes the file by serializing every parsed key
         # through its canonical form (option dict -> "k,k=v " prefix,
         # "type blob comment" body) - and only when something changed (a
         # fully-matched run never touches the file, byte-for-byte).
@@ -95,7 +95,7 @@ module Krikri
       # state=present without exclusive: for each requested key, a file
       # line with the same blob is either left alone (fully matching) or
       # replaced by the re-serialized requested key (moved to the end,
-      # like the real module's delete-then-reinsert); an unmatched key is
+      # like the Ansible module's delete-then-reinsert); an unmatched key is
       # appended at the end. Returns whether anything changed.
       private def self.apply_present(result_lines : Array(String), requested : Array(ParsedKey?)) : Bool
         changed = false
@@ -142,7 +142,7 @@ module Krikri
         end
       end
 
-      # Mirrors the real module's parsekey: whitespace-split tokens (its
+      # Mirrors the Ansible module's parsekey: whitespace-split tokens (its
       # shlex runs with quotes disabled, so a quoted option chunk with
       # spaces just becomes several tokens later re-joined), the first
       # known key-type token ends the options prefix, the blob follows it,
@@ -162,7 +162,7 @@ module Krikri
         ParsedKey.new(options, tokens[index], blob, comment)
       end
 
-      # Mirrors the real module's parseoptions: split on commas that
+      # Mirrors the Ansible module's parseoptions: split on commas that
       # aren't inside quotes, then "k=v" pairs (value kept verbatim,
       # quotes included) and bare "k" flags.
       private def self.parse_options(options : String) : Hash(String, String?)
@@ -200,7 +200,7 @@ module Krikri
         parts
       end
 
-      # Mirrors the real module's serialize: options comma-joined (bare
+      # Mirrors the Ansible module's serialize: options comma-joined (bare
       # flags vs k=v) followed by a space, then "type blob comment". The
       # comment-less line really does end with a trailing space in the
       # real module's output ("...%s %s %s\n" with an empty comment) -

@@ -46,7 +46,7 @@ describe "file plugin" do
     end
 
     it "carries no msg when the directory's attributes already match (round900902 juju4.adduser)" do
-      # Real Ansible's file module result on an unchanged directory has
+      # Ansible's file module result on an unchanged directory has
       # NO msg key at all - just the stat fields; this engine used to
       # report "Directory attributes updated" alongside changed: false
       # on every converged re-run.
@@ -60,7 +60,7 @@ describe "file plugin" do
       result["msg"]?.must_be_nil
     end
 
-    it "reports a change without any msg when a directory's attributes change (real's file module has none)" do
+    it "reports a change without any msg when a directory's attributes change (Ansible's file module has none)" do
       path = tmp_path("changed_msg_dir")
       Dir.mkdir_p(path)
       File.chmod(path, 0o755)
@@ -79,7 +79,7 @@ describe "file plugin" do
     # empty path to nothing ("issue creating  as" - double space) with
     # the errno text in Python's b'' bytes-repr, same convention as
     # oserror_repr.
-    it "fails state=directory with real Ansible's ensure_directory OSError abort" do
+    it "fails state=directory with Ansible's ensure_directory OSError abort" do
       result = PluginSpecHelper.run("file", {"path" => "", "state" => "directory"})
 
       result["failed"].as_bool.must_equal(true)
@@ -103,7 +103,7 @@ describe "file plugin" do
       result["msg"].as_s.must_equal("Error, could not touch target.")
     end
 
-    it "is a no-op ok for state=absent (real Ansible's empty-path absent)" do
+    it "is a no-op ok for state=absent (Ansible's empty-path absent)" do
       result = PluginSpecHelper.run("file", {"path" => "", "state" => "absent"})
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -139,7 +139,7 @@ describe "file plugin" do
       expect((File.info(path).modification_time) > (old_mtime)).must_equal(true)
     end
 
-    it "expands a leading ~ in path using $HOME (real Ansible's file module is type: path)" do
+    it "expands a leading ~ in path using $HOME (Ansible's file module is type: path)" do
       original_home = ENV["HOME"]?
       home = File.join(Dir.tempdir, "crystal_ansible_spec_home_#{Random.rand(100_000)}")
       Dir.mkdir_p(home)
@@ -165,7 +165,7 @@ describe "file plugin" do
     end
 
     it "updates a directory's attributes under its default state: file" do
-      # Real Ansible's file module applies owner/group/mode to whatever type
+      # Ansible's file module applies owner/group/mode to whatever type
       # the path already is - a directory at a state: file task (no explicit
       # state: directory) is updated, not an error. dev-sec os_hardening
       # loops such a task over /etc/crontab plus the /etc/cron.* directories.
@@ -180,7 +180,7 @@ describe "file plugin" do
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o700)
     end
 
-    it "updates group ownership on a Unix socket (real Ansible's own default-to-file behavior for any non-directory path)" do
+    it "updates group ownership on a Unix socket (Ansible's own default-to-file behavior for any non-directory path)" do
       # robertdebock.docker's own "Change group for docker socket" handler
       # does exactly this against a real dockerd-created /var/run/docker.sock.
       path = tmp_path("real.sock")
@@ -221,7 +221,7 @@ describe "file plugin" do
       (File.info(path, follow_symlinks: false).permissions.value & 0o100).must_equal(0o100)
     end
 
-    it "fails on an invalid symbolic mode with real Ansible's message" do
+    it "fails on an invalid symbolic mode with Ansible's message" do
       path = tmp_path("invalid-mode.txt")
       File.write(path, "hi")
 
@@ -242,8 +242,8 @@ describe "file plugin" do
   end
 
   describe "default state resolution (no state:)" do
-    it "creates the directory tree when the path is absent and recurse: yes (real Ansible's absent-path + recurse defaulting)" do
-      # Real Ansible's file module defaults state to the path's *current*
+    it "creates the directory tree when the path is absent and recurse: yes (Ansible's absent-path + recurse defaulting)" do
+      # Ansible's file module defaults state to the path's *current*
       # state; when the path doesn't exist at all and recurse: yes is set,
       # that default resolves to state=directory and the module creates
       # the tree. dev-sec nginx-hardening's `file: {path: /etc/nginx,
@@ -275,7 +275,7 @@ describe "file plugin" do
       (File.info(path, follow_symlinks: false).permissions.value & 0o777).must_equal(0o600)
     end
 
-    it "fails an existing FILE with recurse: yes and no state (real Ansible: 'recurse option requires state to be directory')" do
+    it "fails an existing FILE with recurse: yes and no state (Ansible: 'recurse option requires state to be directory')" do
       # Live-verified against ansible-core 2.19.4: `recurse` is checked
       # UNCONDITIONALLY after state resolution - an existing file (state
       # defaults to "file", its own current type) with recurse: yes
@@ -481,7 +481,7 @@ describe "file plugin" do
 
     it "accepts a raw numeric uid/gid string for owner:/group: (not just a name)" do
       # Real bug found benchmarking buluma.maven (round 165): `group:
-      # "0"` (a real, common numeric-ID idiom - real Ansible resolves it
+      # "0"` (a real, common numeric-ID idiom - Ansible resolves it
       # directly rather than treating it as a name lookup) always raised
       # "chown failed: failed to look up group 0" - round162's 0.9.519
       # owner:/group: strict-lookup fix only ever tried a NAME lookup.
@@ -499,7 +499,7 @@ describe "file plugin" do
       result["changed"].as_bool.must_equal(false)
     end
 
-    it "fails (matching real Ansible's own 'chown failed: failed to look up user') when owner: names a nonexistent user" do
+    it "fails (matching Ansible's own 'chown failed: failed to look up user') when owner: names a nonexistent user" do
       # Real bug found benchmarking robertdebock.openbao_agent on Rocky
       # 9.6 (round 162): a directory-creation task with `owner: openbao`
       # BEFORE any earlier task creates that system user - real
@@ -520,7 +520,7 @@ describe "file plugin" do
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "group" => "nonexistent_group_xyz_abc"})
 
       result["failed"].as_bool.must_equal(true)
-      # "chgrp failed", not "chown failed" - real Ansible's basic.py
+      # "chgrp failed", not "chown failed" - Ansible's basic.py
       # set_group_if_different (basic.py:830) fails with exactly this
       # string, verified live against ansible-core 2.19.11 (both a
       # nonexistent name and an explicit group: "" produce "chgrp
@@ -577,17 +577,17 @@ describe "file plugin" do
 
   describe "attr:/attributes: (chattr flags)" do
     # Real bug found benchmarking l3d.resolvconf (warm idempotency):
-    # real Ansible's "Resolv.conf is ino longer immutable." task
+    # Ansible's "Resolv.conf is ino longer immutable." task
     # (file: {path: /etc/resolv.conf, attr: '-i'}) reports changed on
-    # EVERY run - real Ansible's set_attributes_if_different
+    # EVERY run - Ansible's set_attributes_if_different
     # re-runs chattr and reports changed
     # unconditionally for '-'-prefixed requests, whether or not the flag
     # is actually set (ansible/ansible#33745). Krikri previously ignored
     # the attr: param entirely, so the warm rerun under-reported
-    # changed=0 where real Ansible reports changed=1.
-    it "reports changed on every run for '-'-prefixed attr, flag set or not (real Ansible's quirk)" do
+    # changed=0 where Ansible reports changed=1.
+    it "reports changed on every run for '-'-prefixed attr, flag set or not (Ansible's quirk)" do
       # Skip on filesystems that reject chattr flag ops entirely
-      # (rootless fuse-overlayfs containers) - real Ansible fails the
+      # (rootless fuse-overlayfs containers) - Ansible fails the
       # task there identically, so this success-path pin can't hold.
       skip "filesystem rejects chattr flag operations" unless PluginSpecHelper.chattr_clear_supported?
       path = tmp_path("attr_clear_i.txt")
@@ -616,7 +616,7 @@ describe "file plugin" do
       # '='-mod requests compare the whole current lsattr flag string
       # against the requested letters - a plain file's flags ("e" on
       # ext4, "" on tmpfs) never equal "i", so changed is reported
-      # (real Ansible's own whole-string comparison, not per-flag).
+      # (Ansible's own whole-string comparison, not per-flag).
       path = tmp_path("attr_set_i.txt")
       File.write(path, "x")
 
@@ -635,7 +635,7 @@ describe "file plugin" do
   end
 
   describe "access_time_format:/modification_time_format:" do
-    # Real Ansible's file module defaults both format params to
+    # Ansible's file module defaults both format params to
     # %Y%m%d%H%M.%S - the shape this plugin hard-coded before the
     # format params existed. Live-verified against ansible-core 2.19.4
     # (including the custom-format case below).
@@ -654,7 +654,7 @@ describe "file plugin" do
     end
 
     it "applies a custom strptime format when one is given" do
-      # Mirrors the real module's own EXAMPLES entry:
+      # Mirrors the Ansible module's own EXAMPLES entry:
       # access_time: '{{ "%Y%m%d%H%M.%S" | strftime(stat.atime) }}' - but
       # with a differently-shaped format to prove the format param is
       # actually consulted, not just the default shape parsed.
@@ -670,7 +670,7 @@ describe "file plugin" do
       file_atime(path).must_equal(Time.local(2024, 1, 1, 12, 0, 0))
     end
 
-    it "fails the task when the value doesn't match its format (real Ansible's own fail_json message shape)" do
+    it "fails the task when the value doesn't match its format (Ansible's own fail_json message shape)" do
       # Real module: get_timestamp_for_time -> fail_json("Error while
       # obtaining timestamp for time X using format Y: ...") - the
       # default format can't parse "2024-01-01 12:00".
@@ -704,7 +704,7 @@ describe "file plugin" do
     # Real behavior live-verified against ansible-core 2.19.4 on this
     # non-SELinux machine: all four params are silently ACCEPTED, the
     # task reports plain ok/changed per the stat result, no error, and
-    # the result carries no SELinux-context keys at all - real Ansible's
+    # the result carries no SELinux-context keys at all - Ansible's
     # set_context_if_different opens with `if not self.selinux_enabled():
     # return changed`, a graceful no-op, and its add_path_info only adds
     # a `secontext` result key when SELinux is enabled.
@@ -744,16 +744,16 @@ describe "file plugin" do
   end
 
   describe "unsafe_writes:" do
-    # Real Ansible's file module accepts unsafe_writes: via the file-common
-    # args (the real module adds it with default False), but for
+    # Ansible's file module accepts unsafe_writes: via the file-common
+    # args (the Ansible module adds it with default False), but for
     # file: specifically it has no observable effect - file.py never calls
     # atomic_move (the only place unsafe_writes actually changes behavior,
     # a fallback when the atomic temp-file+rename fails). Live-verified
     # against ansible-core 2.19.4: the param is accepted silently and the
     # task behaves identically to without it. So: accept-and-track, no
-    # real write-path logic - matching real Ansible's own behavior for
+    # real write-path logic - matching Ansible's own behavior for
     # this module.
-    it "is accepted and has no observable effect (matching real Ansible's file module)" do
+    it "is accepted and has no observable effect (matching Ansible's file module)" do
       path = tmp_path("unsafe_writes.txt")
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "touch", "unsafe_writes" => "true"})
 
@@ -773,7 +773,7 @@ describe "file plugin" do
   end
 end
 
-# Real ansible-core 2.19.11's registered file result key order -
+# ansible-core 2.19.11's registered file result key order -
 # live-verified via `{{ r | to_json }}` on registered file: tasks (the
 # -v dump sorts alphabetically, so the order is only observable
 # programmatically). The module's ensure_* helpers build their dict as
@@ -793,7 +793,7 @@ describe "file plugin result key order" do
     result = PluginSpecHelper.run("file", {"path" => path, "mode" => "0600"})
 
     result["changed"].as_bool.must_equal(true)
-    # Real's file module carries NO msg key on any success path -
+    # Ansible's file module carries NO msg key on any success path -
     # attribute updates included (live-verified vs 2.19.11: a mode
     # change on an existing file serializes as path, changed, the stat
     # block, failed). The old "File attributes updated" msg must stay

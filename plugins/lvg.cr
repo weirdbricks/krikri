@@ -11,21 +11,21 @@ module Krikri
   #
   # Implemented against real lvg.py's control flow:
   #   - discovery via `vgs --noheadings -o vg_name,pv_count,lv_count
-  #     --separator ';' <vg>` (real's own -o list, so lv_count is
+  #     --separator ';' <vg>` (Ansible's own -o list, so lv_count is
   #     available for the absent-state refusal)
-  #   - on an existing VG: real's PV diff - requested PVs missing from
+  #   - on an existing VG: Ansible's PV diff - requested PVs missing from
   #     the VG get pvcreate -f + vgextend; VG PVs not in the request get
-  #     `vgreduce --force` (unless remove_extra_pvs=false), with real's
+  #     `vgreduce --force` (unless remove_extra_pvs=false), with Ansible's
   #     "Unable to extend/reduce ..." fail_json messages
   #   - remove via vgremove --force, but only when the VG holds no
-  #     logical volumes or force=true - otherwise real's exact
+  #     logical volumes or force=true - otherwise Ansible's exact
   #     "Refuse to remove non-empty volume group ..." failure
   #   - check mode: discovery runs for real, mutating commands are not
   #     run (changed verdict still reported)
   #
-  # pesize is accepted and forwarded to vgcreate -s (real's default
+  # pesize is accepted and forwarded to vgcreate -s (Ansible's default
   # is 4M); pv_options/vg_options are split on whitespace and
-  # appended, matching the real module's own shlex-lite handling of
+  # appended, matching the Ansible module's own shlex-lite handling of
   # them.
   class LvgPlugin < BasePlugin
     # Real lvg.py's state choices (community.general 7.1.0 added
@@ -74,10 +74,10 @@ module Krikri
           msg: missing_executable_message("vgs"))
       end
 
-      # Real's "No physical volumes given." fires after find_vg, and
+      # Ansible's "No physical volumes given." fires after find_vg, and
       # only when the VG doesn't exist yet (pvs_required = present-state
       # AND this_vg is None) - a state=present call against an existing
-      # VG without pvs is real's grow-to-nothing no-op, not an error.
+      # VG without pvs is Ansible's grow-to-nothing no-op, not an error.
       discovery = remote_exec("vgs --noheadings -o vg_name,pv_count,lv_count --separator ';' #{Shell.single_quote(vg)} 2>/dev/null")
       vg_exists = false
       lv_count = 0
@@ -99,7 +99,7 @@ module Krikri
       # Real checks every requested PV device for existence BEFORE any LVM
       # command runs (lvg.py: os.path.realpath on each entry, then
       # os.path.exists -> "Device {dev} not found."), which is the failure
-      # the kop_storage lvg_fail probe captures: real never reaches
+      # the kop_storage lvg_fail probe captures: Ansible never reaches
       # vgcreate with a nonexistent PV. The resolved (realpath'd) names
       # are what real feeds to every later command and comparison.
       resolved_pvs = [] of String
@@ -145,9 +145,9 @@ module Krikri
       return PluginResult.new(changed: false, failed: false) unless vg_exists
       return PluginResult.new(changed: true, failed: false) if check_mode
 
-      # Real refuses to remove a VG that still holds logical volumes
+      # Ansible refuses to remove a VG that still holds logical volumes
       # unless force=true (round 993003 cold cleanup: kop_vg still
-      # contained kop_lv, so real failed the cleanup task with real's
+      # contained kop_lv, so real failed the cleanup task with Ansible's
       # exact refusal message while krikri marched into vgremove and
       # surfaced the interactive-prompt rc/err instead).
       unless lv_count == 0 || force
@@ -155,7 +155,7 @@ module Krikri
           msg: "Refuse to remove non-empty volume group #{vg} without force=true")
       end
 
-      # Real always passes --force here (its own command list hardcodes
+      # Ansible always passes --force here (its own command list hardcodes
       # it), whether or not the force parameter was set.
       result = remote_exec("vgremove --force #{Shell.single_quote(vg)}")
       unless result[:exit_code] == 0
@@ -167,7 +167,7 @@ module Krikri
       PluginResult.new(changed: true, failed: false)
     end
 
-    # real's fail_json kwargs (rc, err) lead the registered result, then
+    # Ansible's fail_json kwargs (rc, err) lead the registered result, then
     # failed/msg/changed/exception (round 992003 lvol_fail capture; same
     # rule for lvg's rc/err-carrying failures).
     private LVG_FAIL_KEY_ORDER = %w[rc err failed msg changed exception]
@@ -185,7 +185,7 @@ module Krikri
       parsed = pv_entries
       return parsed if parsed.is_a?(PluginResult)
 
-      # Real's used_pvs gate: a requested PV that already belongs to a
+      # Ansible's used_pvs gate: a requested PV that already belongs to a
       # DIFFERENT volume group fails before any command runs.
       used = parsed.select { |entry| pvs.includes?(entry[:name]) && !entry[:vg_name].empty? && entry[:vg_name] != vg }
       unless used.empty?
@@ -219,7 +219,7 @@ module Krikri
         return PluginResult.new(changed: true, failed: false)
       end
 
-      # Real's PV-diff on an existing VG: PVs in the VG but not requested
+      # Ansible's PV-diff on an existing VG: PVs in the VG but not requested
       # get vgreduce'd (unless remove_extra_pvs=false), requested PVs not
       # in the VG get pvcreate -f + vgextend. Adds run before removes.
       # This is what makes a warm rerun against a stale VG fail exactly

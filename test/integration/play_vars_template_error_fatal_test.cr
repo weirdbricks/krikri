@@ -3,7 +3,7 @@ require "../minitest_helper"
 
 # A templating error raised while resolving a play's own `vars:` (e.g. a
 # folded `>-` scalar whose expression fails when the var is finally read)
-# is fatal to the ENTIRE playbook run in real Ansible, not an ordinary
+# is fatal to the ENTIRE playbook run in Ansible, not an ordinary
 # per-host failure: every host that reads the bad var fails, and once
 # every host of the play's (serial) batch has failed,
 # PlaybookExecutor.run's per-batch check aborts the whole run - no
@@ -89,7 +89,7 @@ describe "a play vars: templating error" do
 
   # Only h1 reads the bad var; h2 stays healthy, so the batch is not
   # fully failed and the second play still runs - per-host failure
-  # semantics for the partial case, exactly as real Ansible.
+  # semantics for the partial case, exactly as Ansible.
   it "lets the second play run when only part of the batch reads it" do
     _code, output = run_two_play_playbook(<<-YAML)
           - name: read the bad var on h1 only
@@ -102,7 +102,7 @@ describe "a play vars: templating error" do
     output.must_include("SECOND-PLAY-RAN")
   end
 
-  # The abort rule is cause-agnostic in real Ansible: an ordinary module
+  # The abort rule is cause-agnostic in Ansible: an ordinary module
   # failure across the whole batch stops the run the same way.
   it "aborts before the second play on an ordinary all-host module failure too" do
     dir = File.tempname("vars-fatal-mod")

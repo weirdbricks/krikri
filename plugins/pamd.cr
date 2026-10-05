@@ -9,7 +9,7 @@ module Krikri
   # match community.general.pamd's own Python logic (linked-list-of-
   # rules model, control normalization, insert-skip-comments behavior)
   # rather than a simplified reimplementation - verified against the
-  # real module source (ansible_collections/the real module
+  # real module source (ansible_collections/the Ansible module
   # modules/pamd.py).
   #
   # A PAM config line has the shape `TYPE CONTROL MODULE_PATH
@@ -29,7 +29,7 @@ module Krikri
   # Matching (`matches?`): type/control/module_path must equal a rule's
   # own type/NORMALIZED-control/path exactly - the CONTROL PARAMETER
   # ITSELF IS NOT NORMALIZED, only what's stored from parsing/writing a
-  # rule is (mirrors the real module's `PamdRule.matches` comparing the
+  # rule is (mirrors the Ansible module's `PamdRule.matches` comparing the
   # raw match arg against the normalized `rule_control` property).
   class PamdRuleLine
     property rule_type : String
@@ -126,7 +126,7 @@ module Krikri
       changes = apply_state(lines, state, type, control, module_path)
       return changes if changes.is_a?(PluginResult)
 
-      # Real runs service.validate() over EVERY line after taking the
+      # Ansible runs service.validate() over EVERY line after taking the
       # action and before writing - an invalid rule (bad control, or an
       # unparseable line the parser kept verbatim) fails the module even
       # when nothing changed, and nothing is written.
@@ -160,7 +160,7 @@ module Krikri
         key_order: ["changed", "change_count", "backupdest"])
     end
 
-    # Real AnsibleModule setup surface, in the validator's errors[0]
+    # AnsibleModule setup surface, in the validator's errors[0]
     # order (mutually exclusive -> required -> types -> choices ->
     # required_if -> unsupported) - all BEFORE the file is opened, so
     # e.g. state=before without the new_* triple fails the same way
@@ -329,7 +329,7 @@ module Krikri
     # Parses a module_arguments param value. It arrives as a plain
     # String (per this codebase's param convention): either a
     # JSON-array-shaped string (a YAML list templated through) or a
-    # bare string, which real Ansible's own `type: list` coercion
+    # bare string, which Ansible's own `type: list` coercion
     # further comma-splits before this module's own whitespace
     # splitting runs.
     private def parse_module_arguments(raw : String?, return_none : Bool = false) : Array(String)?
@@ -368,7 +368,7 @@ module Krikri
           args = split_arg_tokens(m[4])
           PamdRuleLine.new(m[1], m[2], m[3], args)
         else
-          PamdRuleLine.other(raw, :unparsed) # unparseable line - preserved verbatim, invalid per real's validate()
+          PamdRuleLine.other(raw, :unparsed) # unparseable line - preserved verbatim, invalid per Ansible's validate()
         end
       end
     end
@@ -528,9 +528,9 @@ module Krikri
 
     # Returns the backup file path ("" when backup: yes wasn't given),
     # so #execute can echo it as the backupdest result field. Naming
-    # matches real ansible's backup_local() helper (used by pamd's
+    # matches Ansible's backup_local() helper (used by pamd's
     # backup): <path>.<file-owner-uid>.<YYYY-MM-DD@HH:MM:SS>~ -
-    # live-verified against real ansible 2026-09-13.
+    # live-verified against Ansible 2026-09-13.
     private def backup(path : String) : String
       return "" unless true?(@params["backup"]?)
       timestamp = Time.local.to_s("%Y-%m-%d@%H:%M:%S")

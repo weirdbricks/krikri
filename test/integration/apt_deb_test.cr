@@ -9,13 +9,13 @@ require "file_utils"
 # until that whole install finished. The old code's ensure-scoped delete
 # around just the download removed the file before the very next
 # `dpkg-deb -f`, failing every URL deb: with "dpkg-deb: error: failed to
-# read archive ... No such file or directory". Real Ansible's own apt
+# read archive ... No such file or directory". Ansible's own apt
 # module (apt.py's `if '://' in p['deb']: fetch_file(...)`) downloads to
 # a module-tmpdir temp registered with add_cleanup_file, i.e. removed
 # only at module exit. The local-path deb: case must be completely
 # untouched: no download step at all.
 #
-# Result-value pins come from the real 2.19.11 podman-container oracle
+# Result-value pins come from the Ansible 2.19.11 podman-container oracle
 # captures (apt_check_deb / apt_real_deb / apt_real_deb_again /
 # apt_fail_deb_*): real install_deb runs `dpkg <options> -i <deb>`, its
 # success exit is exit_json(changed=True, stdout=out, stderr=err,
@@ -123,7 +123,7 @@ describe "apt plugin deb: URL download-then-install" do
 
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(true)
-      # Real's deb exits carry NO msg key (the old "Installed ..." msg
+      # Ansible's deb exits carry NO msg key (the old "Installed ..." msg
       # was this engine's invention).
       result["msg"]?.must_be_nil
       result["stdout"].as_s.must_include("Setting up krikri-spec-deb (1.0)")
@@ -140,7 +140,7 @@ describe "apt plugin deb: URL download-then-install" do
       # ensure-scoped delete removed it before that read, which is the
       # exact regression here). Real dpkg-deb -f succeeded above (the
       # fixture's Package: krikri-spec-deb metadata drove the idempotency
-      # probe), and the install itself went through real's
+      # probe), and the install itself went through Ansible's
       # `dpkg <options> -i <deb>` shape.
       dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       install_calls = dpkg_calls.select(&.includes?(" -i "))
@@ -151,10 +151,10 @@ describe "apt plugin deb: URL download-then-install" do
       temp_path = install_line.split(" ").last
       temp_path.starts_with?(File.join(Dir.tempdir, ".krikri-playbook-deb-")).must_equal(true)
       # Command-line apt-get/dpkg refuse non-.deb files with "Unsupported
-      # file ... given on commandline" (python-apt, which real Ansible
+      # file ... given on commandline" (python-apt, which Ansible
       # uses, never sees the filename, so only our own path was broken).
       temp_path.ends_with?(".deb").must_equal(true)
-      # Real Ansible's add_cleanup_file semantics: the temp is removed
+      # Ansible's add_cleanup_file semantics: the temp is removed
       # at module exit, not before the install.
       File.exists?(temp_path).must_equal(false)
       # The apt-get dependency fallback never ran for a dep-free deb.
@@ -215,7 +215,7 @@ describe "apt plugin deb: URL download-then-install" do
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
       result["changed"].as_bool.must_equal(false)
       result["msg"]?.must_be_nil
-      # Real's already-installed deb exit: empty stdout/stderr and diff
+      # Ansible's already-installed deb exit: empty stdout/stderr and diff
       # as the EMPTY STRING (retvals.get('diff', '')).
       result["stdout"].as_s.must_equal("")
       result["stderr"].as_s.must_equal("")
@@ -249,19 +249,19 @@ describe "apt plugin deb: URL download-then-install" do
     end
   end
 
-  it "registers real's DebPackage-construction failure wording for a missing deb file" do
+  it "registers Ansible's DebPackage-construction failure wording for a missing deb file" do
     result = PluginSpecHelper.run("apt", {
       "deb"   => "/tmp/krikri-spec-nosuch.deb",
       "state" => "present",
     })
 
     result["failed"].as_bool.must_equal(true)
-    # python-apt's own open() error text, via real's
+    # python-apt's own open() error text, via Ansible's
     # "Unable to install package: <e>" fail_json.
     result["msg"].as_s.must_equal("Unable to install package: E:Could not open file /tmp/krikri-spec-nosuch.deb - open (2: No such file or directory)")
   end
 
-  it "registers real's DebPackage-construction failure wording for a non-archive file" do
+  it "registers Ansible's DebPackage-construction failure wording for a non-archive file" do
     dir = File.join(Dir.tempdir, "krikri-apt-deb-bad-#{Random.rand(1_000_000)}")
     FileUtils.mkdir_p(dir)
     begin

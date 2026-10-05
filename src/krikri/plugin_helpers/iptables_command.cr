@@ -7,14 +7,14 @@ module Krikri
     # `plugins/iptables.cr`, split out so it can be unit-tested without a
     # real `iptables` binary/root (`-C`/`-A`/`-D` all require
     # CAP_NET_ADMIN, unavailable in the spec sandbox - see
-    # `plugins/iptables.cr`'s own doc comment). Mirrors real Ansible's
+    # `plugins/iptables.cr`'s own doc comment). Mirrors Ansible's
     # `construct_rule()` flag-for-flag, including its exact ordering
     # (matters for `-C` to actually match what `-A` would insert), its
     # `push_arguments()` command framing (rule_num only on `-I`, `-w`
     # after the action, `--numeric` only on the `-L` call sites), and its
     # argument-spec validation messages (mutually_exclusive /
     # required_if / required_by wording from
-    # the real module).
+    # the Ansible module).
     module IptablesCommand
       # Real-Ansible parameter order, flag-for-flag (construct_rule()).
       # Returns the flag list, or a real-Ansible failure message when
@@ -132,7 +132,7 @@ module Krikri
         end
         append_param(rule, params["reject_with"]?, "--reject-with")
         if params["ip_version"]? == "both" && (icmp = params["icmp_type"]?)
-          # Real Ansible's ICMP_TYPE_OPTIONS["both"] is the single flag
+          # Ansible's ICMP_TYPE_OPTIONS["both"] is the single flag
           # string "--icmp-type --icmpv6-type" followed by the one value -
           # i.e. both flags share the one value, on both binaries'
           # identical rule string.
@@ -146,7 +146,7 @@ module Krikri
         end
 
         # Real quirk 2: `match_set` without `match_set_flags` appends
-        # real's None into the rule list (append_match_flag takes the
+        # Ansible's None into the rule list (append_match_flag takes the
         # flag value unconditionally), so the module's own
         # `rule=' '.join(construct_rule(...))` raises with the index of
         # that None. Verified live against ansible-core 2.19.11.
@@ -170,7 +170,7 @@ module Krikri
         end
       end
 
-      # Real Ansible's push_arguments(): everything it builds (the `-C`
+      # Ansible's push_arguments(): everything it builds (the `-C`
       # check, `-A`/`-I`/`-D` applies, the `-F`/`-P`/`-L`/`-N`/`-X`
       # chain/policy operations) shares this framing - `-t table`,
       # action, chain, the insert position (only on `-I`), then `-w`
@@ -188,8 +188,8 @@ module Krikri
         parts.join(" ")
       end
 
-      # Real Ansible's argument-spec validation for this module,
-      # message-for-message (the real module wording),
+      # Ansible's argument-spec validation for this module,
+      # message-for-message (the Ansible module wording),
       # in its own evaluation order: mutually_exclusive (which real
       # Ansible checks BEFORE applying defaults, so only an explicitly
       # passed flush: counts), then the per-parameter choices, then
@@ -235,7 +235,7 @@ module Krikri
         end
         # flush defaults to False, so this fires whenever chain is
         # absent and flush is not truthy - including a policy: task
-        # without a chain (real Ansible fails that the same way).
+        # without a chain (Ansible fails that the same way).
         flush = params["flush"]?
         flush_true = flush ? ["true", "yes", "1", "on", "y", "t"].includes?(flush.downcase) : false
         unless flush_true
@@ -284,7 +284,7 @@ module Krikri
         end
       end
 
-      # append_tcp_flags(): both keys must be present (real Ansible
+      # append_tcp_flags(): both keys must be present (Ansible
       # silently skips the flag otherwise); list values arrive
       # JSON-encoded (the engine's dict-param stringification) and get
       # comma-joined like Python's ','.join().
@@ -305,7 +305,7 @@ module Krikri
         end
       end
 
-      # `match:` as a list of exact tokens (real Ansible's
+      # `match:` as a list of exact tokens (Ansible's
       # `'conntrack' in params['match']` membership tests are token
       # equality, not substring tests).
       private def self.match_tokens(params : Hash(String, String)) : Array(String)

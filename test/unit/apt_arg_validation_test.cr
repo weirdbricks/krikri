@@ -1,16 +1,16 @@
 require "../minitest_helper"
 
 # Pins plugins/apt.cr's AnsibleModule argument-validation surface
-# against real ansible.builtin.apt (bookworm ansible-core 2.14 apt.py;
+# against Ansible.builtin.apt (bookworm ansible-core 2.14 apt.py;
 # live-diffed via the podman-diff apt_edge_cases harness). The
-# previously hand-rolled wording diverged from real 2.14 in three ways:
-# the mutually-exclusive check did not exist at all (A6 - real fails
+# previously hand-rolled wording diverged from Ansible 2.14 in three ways:
+# the mutually-exclusive check did not exist at all (A6 - Ansible fails
 # name:+upgrade: at module setup, before any apt-get runs), state
-# choices only recognized a third of real's list (A7 - 2.14 also
+# choices only recognized a third of Ansible's list (A7 - 2.14 also
 # accepts build-dep and fixed), and the unsupported-parameters message
 # was built from a hardcoded param list instead of the argspec (A8).
 describe "apt plugin argument validation" do
-  it "fails name+upgrade at setup with real's mutually-exclusive wording (A6)" do
+  it "fails name+upgrade at setup with Ansible's mutually-exclusive wording (A6)" do
     result = PluginSpecHelper.run("apt", {"name" => "curl", "upgrade" => "yes"})
 
     result["failed"].as_bool.must_equal(true)
@@ -24,14 +24,14 @@ describe "apt plugin argument validation" do
     result["msg"].as_s.must_equal("parameters are mutually exclusive: deb|package|upgrade")
   end
 
-  it "rejects a state outside real 2.14's choice list with the choices wording (A7)" do
+  it "rejects a state outside Ansible 2.14's choice list with the choices wording (A7)" do
     result = PluginSpecHelper.run("apt", {"name" => "curl", "state" => "installed-nowhere"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("value of state must be one of: absent, build-dep, fixed, latest, present, got: installed-nowhere")
   end
 
-  it "accepts every choice real 2.14's argspec lists, including build-dep and fixed" do
+  it "accepts every choice Ansible 2.14's argspec lists, including build-dep and fixed" do
     # Accepted at module setup (the failure these pins guard against is
     # the old "Invalid state:" fall-through) - each then fails later on
     # this machine for its own reasons, which the apt_edge_cases real
@@ -80,7 +80,7 @@ describe "apt plugin argument validation" do
                                     "The value 'sometimes' is not a valid boolean. Valid booleans include: ")
   end
 
-  it "still accepts the alias names real's argspec lists" do
+  it "still accepts the alias names Ansible's argspec lists" do
     result = PluginSpecHelper.run("apt", {"pkg" => "curl", "krikri_not_an_apt_param" => "yes"})
 
     result["msg"].as_s.must_include("Unsupported parameters for (ansible.builtin.apt) module: krikri_not_an_apt_param")

@@ -9,12 +9,12 @@ require "../minitest_helper"
 # error - NOT an "object of type 'dict' has no attribute 'id'" template
 # exception. Found via pluggero.upgrade (round 601548), whose
 # 01_install.yml's last candidate is `noauto_install_{{ ansible_lsb.id
-# }}.yml` and which ships no RedHat-family file at all: real ansible-core
+# }}.yml` and which ships no RedHat-family file at all: ansible-core
 # 2.19.4 recaps failed=1 with "No file was found when using first_found.",
 # krikri recap failed with the raw attribute exception instead.
 #
 # The SCALAR string form (`with_first_found: "{{ undefined_var }}"`) stays
-# strict - real Ansible templates the keyword's own value strictly there
+# strict - Ansible templates the keyword's own value strictly there
 # (round174 matrix scenario 5b, verified live against the same 2.19.4:
 # "Task failed: 'undefined_var' is undefined") - see
 # loop_source_strict_undefined_spec.cr's with_first_found example.

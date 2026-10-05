@@ -7,7 +7,7 @@ require "../minitest_helper"
 # observed from a single in-process unit spec). See KNOWN_MISSING.md's
 # (now-fixed) "No fact-caching support" entry and FactCache's own
 # comment for why this is gated on --gathering smart specifically -
-# verified live against ansible-core 2.19.12: real Ansible's own
+# verified live against ansible-core 2.19.12: Ansible's own
 # default `implicit` gathering re-gathers even with a warm fact-cache
 # configured; only `smart` consults it.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -31,7 +31,7 @@ private def run(playbook : String, extra_args : Array(String), cache_dir : Strin
 end
 
 describe "ANSIBLE_CACHE_PLUGIN=jsonfile fact caching" do
-  it "is ignored under the default implicit gathering (matches real Ansible: cache alone never skips gathering)" do
+  it "is ignored under the default implicit gathering (matches Ansible: cache alone never skips gathering)" do
     cache_dir = File.tempname("fact-cache")
     playbook = File.tempname("fact-cache-implicit", ".yml")
     File.write(playbook, <<-YAML)

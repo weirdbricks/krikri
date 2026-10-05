@@ -9,7 +9,7 @@ module Krikri
   # marks), so the positions come from a second, cheap pass over the raw
   # libyaml event stream - the same parser Crystal's YAML.parse uses, so
   # the structure (and therefore the path correspondence) is identical by
-  # construction, and the marks are byte-identical to real Ansible's own
+  # construction, and the marks are byte-identical to Ansible's own
   # libyaml-derived Origin positions (0-based mark -> 1-based line/col).
   #
   # Used only to label task-failure error blocks with their playbook

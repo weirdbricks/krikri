@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Parameter-coverage pass for `community.general.zfs:`'s argument
-# validation, matching real AnsibleModule's construction-time behavior:
+# validation, matching AnsibleModule's construction-time behavior:
 # required args (name AND state, sorted into one plural message), the
 # state choices (in the spec's own "absent, present" order, with the
 # "got:" colon), and the origin-on-snapshot check that real zfs.py runs
@@ -72,7 +72,7 @@ describe "zfs plugin - argument validation" do
     result["msg"].as_s.must_equal("cannot specify origin when operating on a snapshot")
   end
 
-  it "fails the binary lookup with real's quoted-executable wording" do
+  it "fails the binary lookup with Ansible's quoted-executable wording" do
     result = run_zfs({"name" => "rpool/krikri", "state" => "present"}, path: "/nonexistent-krikri-spec-path")
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Failed to find required executable \"zfs\" in paths: /nonexistent-krikri-spec-path")

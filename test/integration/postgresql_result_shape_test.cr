@@ -5,7 +5,7 @@ require "socket"
 # against a throwaway PostgreSQL at 127.0.0.1:35432 (pended when nothing
 # is listening there).
 #
-# Every shape asserted here was live-verified against real ansible-core
+# Every shape asserted here was live-verified against ansible-core
 # 2.19.11 + community.postgresql 4.2.0 on a real PostgreSQL 17 server:
 #
 # - postgresql_db's exit_json(changed=..., db=db, executed_commands=[...])
@@ -22,7 +22,7 @@ require "socket"
 #   query_result, query_all_results, rowcount, execution_time_ms, failed}.
 #
 # A FAILED postgresql_* result (e.g. the engine's own
-# "missing required arguments: db" pre-flight) is real's plain fail_json
+# "missing required arguments: db" pre-flight) is Ansible's plain fail_json
 # shape - {failed, msg, changed, exception} - which is what the shared
 # argument-spec path now emits.
 private def shape_postgres_reachable? : Bool
@@ -119,7 +119,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     shape_keys(result).must_equal(["user", "changed", "queries", "failed"])
     result["user"].as_s.must_equal("shape_u1")
     result["changed"].as_bool.must_equal(true)
-    # Real's user_add() leaves the %(password)s placeholder literal and
+    # Ansible's user_add() leaves the %(password)s placeholder literal and
     # appends the (empty) flags string, hence the trailing space.
     result["queries"].as_a.map(&.as_s).must_equal(["CREATE USER \"shape_u1\" "])
     result["failed"].as_bool.must_equal(false)
@@ -205,11 +205,11 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
 
   # ---- postgresql_privs -------------------------------------------------
   #
-  # Real Ansible builds ONE statement from the module params (its own
+  # Ansible builds ONE statement from the module params (its own
   # QueryBuilder), appends it to executed_queries and reports the whole
   # list under `queries` - unconditionally, whether or not it ended up
   # changing anything (its `changed` comes from diffing the ACL before and
-  # after it ran). Live-verified against real ansible-core 2.19.11 +
+  # after it ran). Live-verified against ansible-core 2.19.11 +
   # community.postgresql 4.2.0.
 
   private PRIVS_SETUP_SQL = [
@@ -314,7 +314,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
       ["GRANT CREATE ON database \"postgres\" TO \"shape_pg_privs_role\";"])
   end
 
-  it "postgresql_privs all_in_schema uses real's ALL TABLES IN SCHEMA clause" do
+  it "postgresql_privs all_in_schema uses Ansible's ALL TABLES IN SCHEMA clause" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     privs_reset
     result = privs_result_for({"type" => "table", "objs" => "ALL_IN_SCHEMA",
@@ -344,7 +344,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
       ["REVOKE \"shape_pg_privs_grp\" FROM \"shape_pg_privs_mem\";"])
   end
 
-  it "postgresql_privs grant_option false adds real's REVOKE GRANT OPTION FOR line" do
+  it "postgresql_privs grant_option false adds Ansible's REVOKE GRANT OPTION FOR line" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     privs_reset
     result = privs_result_for({"type" => "table", "objs" => "shape_pg_t1",
@@ -383,7 +383,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
     ])
   end
 
-  it "postgresql_privs default_privs target_roles adds real's FOR ROLE clause" do
+  it "postgresql_privs default_privs target_roles adds Ansible's FOR ROLE clause" do
     skip "no PostgreSQL server at 127.0.0.1:35432" unless shape_postgres_reachable?
     privs_reset
     result = privs_result_for({"type" => "default_privs", "objs" => "TABLES",
@@ -409,7 +409,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
 
   # ---- postgresql_query -------------------------------------------------
   #
-  # Real Ansible's exit_json(changed, query, query_list, statusmessage,
+  # Ansible's exit_json(changed, query, query_list, statusmessage,
   # query_result, query_all_results, rowcount, execution_time_ms), with
   # failed:false backfilled by the controller after the module's kwargs -
   # hence its position. No msg on success. A statement that produced no

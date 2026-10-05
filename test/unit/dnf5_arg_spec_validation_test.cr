@@ -51,7 +51,7 @@ describe "dnf5: argument-spec validation" do
     result["msg"].as_s.must_include("is not a valid boolean")
   end
 
-  it "rejects an explicit null name with real Ansible's NoneType message" do
+  it "rejects an explicit null name with Ansible's NoneType message" do
     result = run_dnf5(%({"state": "present", "name": null}))
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("argument 'name' is of type NoneType and we were unable to convert to list: " \

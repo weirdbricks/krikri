@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Result-shape pass for `subversion:`'s before/after fields, verified
-# live against real ansible-core (2.19/2.21 - the module's success-shape
+# live against ansible-core (2.19/2.21 - the module's success-shape
 # code is identical in both):
 #
 #   fresh checkout:   {"changed": true, "before": null,
@@ -12,7 +12,7 @@ require "file_utils"
 #   export:           {"changed": true} - no before/after, no msg
 #   update r2->r3:    {"changed": true, "before": [..], "after": [..]}
 #
-# No success path ever carries a `msg` (real Ansible's subversion.py
+# No success path ever carries a `msg` (Ansible's subversion.py
 # only passes msg to fail_json). before/after is a two-element
 # [revision-line, URL-line] pair from `svn info` (real get_revision()
 # returns a 2-tuple), and check mode on an existing working copy

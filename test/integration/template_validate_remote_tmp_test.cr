@@ -9,10 +9,10 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 # Found via bertvv.dhcp round 312: template:'s `validate:` staging used
-# to happen next to dest_dir instead of real Ansible's own remote_tmp
+# to happen next to dest_dir instead of Ansible's own remote_tmp
 # (`~/.ansible/tmp/...`) location, which could make a validate: command
 # confined by AppArmor/SELinux to the target program's own real config
-# paths see a different outcome than real Ansible. Fixed by staging
+# paths see a different outcome than Ansible. Fixed by staging
 # under /tmp (remote_tmp-style) again, using FileUtils.mv (stdlib) for
 # the final move so a destination on a different filesystem than /tmp
 # doesn't reintroduce the earlier cross-device File.rename bug (see

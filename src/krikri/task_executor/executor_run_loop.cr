@@ -30,7 +30,7 @@ module Krikri
     # result for BOTH tasks before h1 reports task 1 at all.
     #
     # Bounded by --forks, like every other fan-out here. Output is NOT
-    # buffered per host: real Ansible interleaves these lines as they
+    # buffered per host: Ansible interleaves these lines as they
     # happen, which is the whole visible point of the strategy.
     private def run_free : Nil
       hosts = @hosts
@@ -124,7 +124,7 @@ module Krikri
 
     # True once this play should stop for EVERY host. Also records the
     # decision so krikri-playbook.cr can skip the remaining serial: batches
-    # - real Ansible does not start the next batch after an abort
+    # - Ansible does not start the next batch after an abort
     # (verified: `serial: 1` + any_errors_fatal with h2 failing runs h1's
     # batch fully, then stops; h3 never runs at all).
     getter? play_aborted : Bool = false
@@ -140,7 +140,7 @@ module Krikri
         if @any_errors_fatal
           true
         elsif limit = @max_fail_percentage
-          # Strictly greater, matching real Ansible.
+          # Strictly greater, matching Ansible.
           (failed * 100.0 / hosts.size) > limit
         else
           false
@@ -153,7 +153,7 @@ module Krikri
       true
     end
 
-    # Emits real Ansible's UNREACHABLE! line for *host* and books it as
+    # Emits Ansible's UNREACHABLE! line for *host* and books it as
     # either ignored (ignore_unreachable:) or unreachable, halting the
     # host in the latter case.
     private def run_task_batch(tasks : Array(Task), hosts : Array(Host)) : Nil
@@ -163,7 +163,7 @@ module Krikri
         next unless step_allows?(task)
 
         # A host known to be unreachable produces an unreachable result
-        # for every task, exactly as real Ansible does when the
+        # for every task, exactly as Ansible does when the
         # connection keeps failing - and `ignore_unreachable: true`
         # makes that one ignored rather than fatal, letting the host go
         # on to the next task.
@@ -193,7 +193,7 @@ module Krikri
           @halted_hosts.includes?(host.name) || @unreachable_hosts.includes?(host.name)
         end
 
-        # Once every host in scope is halted/unreachable, real Ansible ends
+        # Once every host in scope is halted/unreachable, Ansible ends
         # the play right there rather than continuing to print empty "TASK
         # [...]" banners for the remaining tasks - a host can't become
         # active again within this same task list (only rescue:/always:
@@ -205,7 +205,7 @@ module Krikri
 
         active_hosts = halt_rejected.reject { |host| role_ended_for_host?(task, host) }
         # Every active host had this role ended for it - a fully consumed
-        # task prints nothing at all (real Ansible's silent iterator
+        # task prints nothing at all (Ansible's silent iterator
         # consume), but later tasks outside the role still run.
         next if active_hosts.empty?
 
@@ -219,7 +219,7 @@ module Krikri
           next
         end
 
-        # The banner prints once per task, not per host - real Ansible's
+        # The banner prints once per task, not per host - Ansible's
         # own convention - so a templated name is rendered against
         # whichever host will actually run first (matches this file's
         # existing `run_once`-style "first host" precedent elsewhere).
@@ -251,7 +251,7 @@ module Krikri
     # so a condition that RAISES must be pushed down and re-raised once
     # per child task rather than failing the block as a unit - see
     # execute_block's own rescue for the live-verified semantics. The
-    # include_tasks: caller leaves this false: there, real Ansible fails
+    # include_tasks: caller leaves this false: there, Ansible fails
     # the single include task itself (verified live, round173), so the
     # swallow path below is already correct for it.
     private def partition_by_when(task : Task, hosts : Array(Host), inherit_on_error : Bool = false) : {Array(Host), Array(Host)}
@@ -267,7 +267,7 @@ module Krikri
           # Same degrade-to-one-clean-failed-task shape as execute_task's
           # own build_vars_context rescue (0.9.885) and the include_
           # tasks/include_role/include_vars paths' own rescues: the task's
-          # own `vars:` block used an unknown filter, real Ansible fails
+          # own `vars:` block used an unknown filter, Ansible fails
           # just that task with "No filter named 'X'." - a raise here only
           # affects THIS host (same as the WhenEvaluationError rescue
           # below); the failed host is excluded from both run_hosts and
@@ -328,7 +328,7 @@ module Krikri
       end
 
       # Printed as each host FINISHES, not in host order afterwards -
-      # real ansible-playbook reports the fast host first when a slower
+      # ansible-playbook reports the fast host first when a slower
       # one is still working, and this engine used to hold everything
       # back and then print in inventory order. Each host's output is
       # still flushed as one buffered block, so completion order costs
@@ -412,7 +412,7 @@ module Krikri
     private def execute_task(task : Task, host : Host) : Nil
       # A `meta: end_role` for this host consumes every remaining task of
       # the calling role silently - no banner, no result, no recap
-      # counter (real Ansible's iterator peek/consume behavior). The
+      # counter (Ansible's iterator peek/consume behavior). The
       # check sits here, the single funnel every task path (top-level
       # loop, blocks, nested include_role/include_tasks lists) goes
       # through, so the run loop's own active_hosts rejection above only
@@ -427,7 +427,7 @@ module Krikri
         # latent since meta: shipped (clear_facts/flush_handlers are
         # rarely when:-gated in practice), surfaced adding end_host/
         # end_play, whose whole point is frequently being conditional
-        # per host. Verified against real ansible-playbook: a when:-false
+        # per host. Verified against ansible-playbook: a when:-false
         # meta: task prints "skipping: [host]" but - like every other
         # meta: outcome - does NOT bump the recap's skipped= counter
         # (defer_stats: true), unlike an ordinary task's when: skip.
@@ -443,13 +443,13 @@ module Krikri
       return execute_validate_argument_spec(task, host) if task.validate_argument_spec?
 
       # run_once: only ONE host in the play actually executes it; later
-      # hosts get no output/stats at all, matching real Ansible - but
+      # hosts get no output/stats at all, matching Ansible - but
       # still pick up whatever it registered, so later tasks on those
       # hosts can reference the same variable. Which host executes is
       # elected on first arrival (the first host to reach this point for
       # this task) rather than pinned to the literal first inventory
       # host - if that host is unreachable/halted the task used to never
-      # run anywhere, while real Ansible runs it on the first *active*
+      # run anywhere, while Ansible runs it on the first *active*
       # host. Election is safe under cooperative scheduling: the
       # check-and-set below has no yield point between the read and the
       # write.
@@ -469,7 +469,7 @@ module Krikri
       unless vars_context
         begin
           # loop_lenient_vars: a looped task's vars: render with `item`
-          # unbound here, but real Ansible only ever evaluates a looped
+          # unbound here, but Ansible only ever evaluates a looped
           # task's vars: per actual iteration - a zero-iteration loop
           # (stackhpc.luks round 960004) never evaluates them at all, and
           # a non-empty loop re-renders them per item inside the loop
@@ -480,7 +480,7 @@ module Krikri
           # (render_task_vars) - and while a vars: expression that
           # legitimately raises is dropped raise-to-absent there, an
           # unknown filter name is deliberately re-raised (see
-          # render_task_vars's own rescue): real Ansible hard-fails the
+          # render_task_vars's own rescue): Ansible hard-fails the
           # task with "No filter named 'X'." (nephelaiio.pip /
           # nephelaiio.gitlab's own nephelaiio.plugins.sorted_get).
           # Nothing between here and krikri-playbook's top-level run
@@ -537,7 +537,7 @@ module Krikri
                     begin
                       resolve_delegate_host(task, host, vars_context, shared: shared_sub, strict: true)
                     rescue ex : WhenEvaluationError
-                      # Real Ansible evaluates when: before ever templating
+                      # Ansible evaluates when: before ever templating
                       # delegate_to:, so a when: that is False without the undefined
                       # variable bound (`when: restic_backup_destination_server is
                       # defined`) is a plain skip, not a failure. Otherwise degrade to
@@ -586,8 +586,8 @@ module Krikri
         # uses for a when: failure - a real `failed: true` result flowing
         # through finish_single_task (register/notify/display/stats/halt,
         # ignore_errors: and all), recapping failed=1 (never reached the
-        # loop, so never skipped=1 either) - matching real Ansible's own
-        # degrade-to-one-clean-failed-task behavior. Real 2.19.11 also
+        # loop, so never skipped=1 either) - matching Ansible's own
+        # degrade-to-one-clean-failed-task behavior. Ansible 2.19.11 also
         # prefixes the loop-source error with "Task failed: " and prints
         # the fatal JSON with changed=false (live-verified: `loop: "{{
         # no_such_list }}"` on an undefined var → fatal {"changed": false,
@@ -604,7 +604,7 @@ module Krikri
         rescue ex : WhenEvaluationError
           # Strict loop-ITEM templating failure (deep_render_item) - same
           # degrade-to-one-clean-failed-task shape as the loop-SOURCE
-          # resolution failure rescue above: real Ansible templates the
+          # resolution failure rescue above: Ansible templates the
           # loop list with module-arg strictness before any iteration runs
           # (igor_nikiforov.etcd's `{{ etcd_config['data-dir'] }}` on a
           # dict missing that key), so this is one failed task, recapped
@@ -659,7 +659,7 @@ module Krikri
 
     # Resolve delegate_to: to the Host whose connection the module should
     # actually run against. Variables used to substitute a templated
-    # delegate_to: value are still `host`'s own (real Ansible doesn't
+    # delegate_to: value are still `host`'s own (Ansible doesn't
     # delegate variables, only the connection).
     #
     # strict: templates the delegate_to: value with module-arg strictness -
@@ -670,7 +670,7 @@ module Krikri
     # "undefined" (aheimsbakk.restic_backup's "Destination - create
     # destination user": the subsequent plugin upload then died as an
     # unhandled "ssh: Could not resolve hostname undefined" exception that
-    # aborted the whole run, where real Ansible fails just the task with
+    # aborted the whole run, where Ansible fails just the task with
     # "'restic_backup_destination_server' is undefined"). Deliberately
     # narrow: only a bare/chain reference is strict (substitute's own
     # strict: boundary) - compound expressions with filters keep the
@@ -712,7 +712,7 @@ module Krikri
     end
 
     # Shared lenient when: re-check for a delegate_to: templating failure -
-    # real Ansible evaluates when: BEFORE delegate_to:, so a when: that is
+    # Ansible evaluates when: BEFORE delegate_to:, so a when: that is
     # False without the undefined variable ever bound is a plain skip
     # (never touches the delegate target). Same shape the loop-resolution
     # sites use. Always evaluated leniently: a when: that is ITSELF
@@ -761,10 +761,10 @@ module Krikri
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
     private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
-      # Real Ansible's conditional-as-template deprecation fires while the
+      # Ansible's conditional-as-template deprecation fires while the
       # conditional is being evaluated (see
       # maybe_conditional_delimiters_deprecation) - before the evaluation
-      # itself, matching real's warning-then-error order for a non-string
+      # itself, matching Ansible's warning-then-error order for a non-string
       # whole-template result.
       maybe_conditional_delimiters_deprecation(task, when_condition, "when", vars_context) if task
       sub = substitutor || VarSubstitutor.new(vars: vars_context, host_name: host.name)
@@ -776,7 +776,7 @@ module Krikri
         # ANSIBLE_ALLOW_BROKEN_CONDITIONALS relaxes it there and here.
         ConditionalEvaluator.evaluate(substituted_condition, vars_context, strict: true, raise_undefined: true)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
-        # A non-boolean `when:` result gets real Ansible's own "Task
+        # A non-boolean `when:` result gets Ansible's own "Task
         # failed: " prefix, not this method's generic conditional-eval
         # wrapper - verified against ansible-core 2.19.12's exact fatal
         # msg for `when: network_interfaces is defined and network_
@@ -793,7 +793,7 @@ module Krikri
       end
     end
 
-    # A when: LIST is real Ansible's own sequence of INDEPENDENT
+    # A when: LIST is Ansible's own sequence of INDEPENDENT
     # conditionals, each one type-checked for a boolean result separately
     # (live-verified against 2.19.4: `when: [str_var, bool_var]` fails
     # with "Conditional result ... was derived from value of type 'str'"
@@ -832,7 +832,7 @@ module Krikri
     #
     # Order matters and is live-verified (round174 differential matrix
     # against ansible-core 2.19.12, plus buluma.mount's own assert.yml):
-    # real Ansible consults the task's OWN when: before treating an
+    # Ansible consults the task's OWN when: before treating an
     # undefined loop source as fatal.
     #
     #   when: false            + undefined loop -> skip  (scenario 7)
@@ -842,7 +842,7 @@ module Krikri
     #
     # Note the middle case is why this must NOT be a pre-gate that
     # bails out whenever the condition mentions the loop variable: those
-    # conditions are exactly the ones real Ansible still evaluates (with
+    # conditions are exactly the ones Ansible still evaluates (with
     # `item` unbound) to decide the task is skippable. It equally must
     # not pre-empt a loop that resolves FINE - a normal defined loop with
     # `when: item.enabled` is evaluated per item downstream, untouched by
@@ -861,7 +861,7 @@ module Krikri
     # (critically, see 40671ba/0.9.539) no site can add a raising loop
     # resolver without also getting a working rescue, since every call is
     # wrapped by this method.
-    # Real Ansible's with_items: (unlike loop:) implicitly applies
+    # Ansible's with_items: (unlike loop:) implicitly applies
     # flatten(levels=1) across the rendered elements: `with_items: ["{{
     # list_a }}", "{{ list_b }}"]`, where list_a/list_b each render to
     # their own list, yields one iteration per INNER element (all of
@@ -874,12 +874,12 @@ module Krikri
     # at parse time only for a literal with_items: array, never for
     # loop:, which has no such behavior).
     private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false, item : JSON::Any? = nil) : Bool
-      # Real Ansible evaluates a non-looped task's `when:` BEFORE it ever
+      # Ansible evaluates a non-looped task's `when:` BEFORE it ever
       # attempts to resolve the task's module - so a `when:` that itself
       # raises (an undefined variable, a bad attribute access) is a fatal
       # conditional error even when that same task's module is ALSO
       # unimplemented (round 900000-900999: lukapetrovic-git.azure_ad_app,
-      # CyVerse-Ansible.rabbitmq_vhost - real ansible-playbook rc=2
+      # CyVerse-Ansible.rabbitmq_vhost - ansible-playbook rc=2
       # "Error while evaluating conditional: '...' is undefined", krikri
       # silently skipped). The old code short-circuited an
       # unavailable-module task straight to the skip below without ever
@@ -887,7 +887,7 @@ module Krikri
       # So evaluate strictly here, exactly like the available-module path:
       # a raise propagates to the call site's existing WhenEvaluationError
       # rescue and becomes a real failed task; a clean false takes the
-      # normal skip below WITHOUT registering the module (real Ansible
+      # normal skip below WITHOUT registering the module (Ansible
       # never reaches module resolution for a when:-false task); only a
       # truthy condition - or no when: at all - counts as genuinely
       # reached for the end-of-run exit-4 accounting.
@@ -896,7 +896,7 @@ module Krikri
       # <name>.py` source CAN run - the arbitrary-Python-module runner
       # (PythonModuleRunner) executes it on the target with the target's
       # own python3 - so such a task falls through to normal conditional
-      # evaluation and dispatch instead of the skip (real Ansible runs
+      # evaluation and dispatch instead of the skip (Ansible runs
       # these as ordinary Python; the previous unconditional skip
       # diverged on every role leaning on its own library/, seen
       # repeatedly benchmarking linux-system-roles).
@@ -938,7 +938,7 @@ module Krikri
     end
 
     # Builds the `failed: true` result shape a raised when: evaluation
-    # produces, matching real Ansible's own "Task failed: Error while
+    # produces, matching Ansible's own "Task failed: Error while
     # evaluating conditional: ..." - for callers (execute_task_once,
     # execute_looped_task_batched) whose return value flows through the
     # normal result pipeline (finish_single_task/finish_looped_task),
@@ -972,7 +972,7 @@ module Krikri
     # print, respecting `ignore_errors:` the same way `ResultDisplay.
     # update_stats` treats an ignored failure everywhere else (ok+=1 AND
     # ignored+=1, not failed+=1, host not halted - verified directly
-    # against a real ansible-playbook run: `ignore_errors: true` on a
+    # against a ansible-playbook run: `ignore_errors: true` on a
     # when:-raising task prints "...ignoring" and continues with `ok=2
     # ... ignored=1`, exit 0). Always returns `false`, the same "don't
     # run this task" signal every caller already treats a when:-skip as.
@@ -999,12 +999,12 @@ module Krikri
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.name}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         elsif conditional_evaluation_failure?(msg)
-          # Real ansible-core 2.19.11 (live-captured): a conditional-
+          # ansible-core 2.19.11 (live-captured): a conditional-
           # evaluation failure prints a two-level [ERROR] chain block on
           # stdout BEFORE the fatal line, and the fatal line itself is the
           # result JSON {"changed": false, "msg": "Task failed: ..."} - the
           # error message prefixed with "Task failed: " - not the bare
-          # message. A looped task's per-item failure lines use real's
+          # message. A looped task's per-item failure lines use Ansible's
           # loop-failure shape instead of the solo fatal: one
           # (`failed: [host] (item=N) => {...}` - item BEFORE the =>),
           # with the chain printed once per task, before the items.
@@ -1025,7 +1025,7 @@ module Krikri
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
-        # Same changed-carrying shape as when_error_result: real Ansible's
+        # Same changed-carrying shape as when_error_result: Ansible's
         # registered var for a conditional-evaluation failure carries
         # changed=false+failed=true+msg (live-verified, ansible-core
         # 2.19.11).
@@ -1039,7 +1039,7 @@ module Krikri
     end
 
     # A skipped task's own register: still gets set (to a `changed:
-    # false, skipped: true` result, matching real Ansible) rather than
+    # false, skipped: true` result, matching Ansible) rather than
     # left holding whatever a previous task/loop iteration happened to
     # register under the same name. Without this, dev-sec os_hardening's
     # `register: mountpoint` / `when: mountpoint.changed` pair (each
@@ -1060,7 +1060,7 @@ module Krikri
       return {false, nil} unless exec_host == host
       return {false, nil} if PluginManager.local_connection?(exec_host, vars_context)
       # An unresolvable connection type must take the solo path, where
-      # execute_task_once's own check fails the task like real Ansible -
+      # execute_task_once's own check fails the task like Ansible -
       # the batch script would silently SSH instead.
       return {false, nil} if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
                              PluginManager.connection_plugin_not_found?(conn_type)
@@ -1156,7 +1156,7 @@ module Krikri
                            # Same degrade-to-one-clean-failed-task shape as
                            # execute_task's own build_vars_context rescue: the
                            # member's own vars: block used an unknown filter,
-                           # real Ansible fails just that task with "No filter
+                           # Ansible fails just that task with "No filter
                            # named 'X'." - cache the failed result so the
                            # consumer reports it instead of the process
                            # crashing out of execute_batch_group entirely.
@@ -1346,7 +1346,7 @@ module Krikri
         # interpret_batch_script: the daemon's parsed response is a raw
         # module wire result, and a SUCCESSFUL module's wire JSON carries
         # no "failed" key at all (BasePlugin#to_json omits it, exactly
-        # like real Ansible's module protocol - the CONTROLLER backfills
+        # like Ansible's module protocol - the CONTROLLER backfills
         # failed: false). Found via round 813096 (also 813254/813290/
         # 813354, one root cause: ~/scratch/krt-results/
         # 813096_atlantic_elan_monitoring_blackbox_exporter/): a
@@ -1354,7 +1354,7 @@ module Krikri
         # "failed" key, and the elan.monitoring_* roles' sibling block
         # condition `when: registered["failed"] or ...` then died with
         # "object of type 'dict' has no attribute 'failed'" once per loop
-        # item on the warm run, where real ansible-playbook skips the
+        # item on the warm run, where ansible-playbook skips the
         # block. The daemon-side run_batch backfills too, so this is
         # belt-and-suspenders against a stale pre-fix daemon binary still
         # resident on a remote host - but it is what makes this path
@@ -1413,7 +1413,7 @@ module Krikri
     # parser's best-effort literal guess) if there's no expr, or if
     # rendering it produces something ConditionalEvaluator can't use.
     # A task's effective check mode: its own `check_mode:` when it has
-    # one, otherwise the run-wide `--check` flag. Real Ansible honours
+    # one, otherwise the run-wide `--check` flag. Ansible honours
     # BOTH directions (verified against ansible-core 2.19.4):
     # `check_mode: true` simulates a task during an ordinary run, and
     # `check_mode: false` lets a task really execute during a `--check`
@@ -1463,7 +1463,7 @@ module Krikri
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
-      # Real's unarchive/assemble action plugins crash on non-string
+      # Ansible's unarchive/assemble action plugins crash on non-string
       # literal args at their own controller-side touch points, before
       # the src staging paths could leak the marker into a message or
       # upload path - see unarchive_assemble_literal_type_failure.
@@ -1493,7 +1493,7 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
-      # Real's assemble action expands the destination's user path itself
+      # Ansible's assemble action expands the destination's user path itself
       # after the fragments are staged and before the copy module ever
       # validates anything - so a non-string literal dest crashes the
       # action instead of failing the copy spec. See
@@ -1502,7 +1502,7 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
-      # Real's dest expand crash fires only after the src lookup succeeded
+      # Ansible's dest expand crash fires only after the src lookup succeeded
       # - here that is after inline_copy_source_content above - and after
       # the required-argument checks (see execute_task_once's identical
       # hook placement).
@@ -1510,7 +1510,7 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
-      # Real's add_host: the name failure / groups failure (action stage)
+      # Ansible's add_host: the name failure / groups failure (action stage)
       # and the inventory.add_host name crash (result-processing stage,
       # which aborts the whole run) - see add_host_literal_type_failure.
       # Same hook as execute_task_once's own, for the batched path.
@@ -1530,7 +1530,7 @@ module Krikri
           # An ACTION-level failure (a bare AnsibleActionFail raised by
           # the plugin itself) renders without the "Module failed." chain
           # segment - see ActionResult#action_level. A crash_failure's msg
-          # is real's own "Task failed: <exception>" wrapper while its
+          # is Ansible's own "Task failed: <exception>" wrapper while its
           # [ERROR] block text stays bare - see ActionResult#error_detail.
           failed["_ansible_action_level"] = true if action_result.action_level?
           if detail = action_result.error_detail?
@@ -1636,7 +1636,7 @@ module Krikri
     # shallow copy - Task is shared across hosts and loop iterations, so
     # the resolved name/params must never be written back onto it. A
     # resolution failure raises (caught by the caller's "finalization of
-    # task args failed" rescue) as one clean failed task - real Ansible's
+    # task args failed" rescue) as one clean failed task - Ansible's
     # own "couldn't resolve module/action 'x'" verdict for a templated
     # name that renders to something unknown.
     private def resolve_templated_action(task : Task, substitutor : VarSubstitutor) : Task
@@ -1684,11 +1684,11 @@ module Krikri
         # ignore_errors: and all), and - critically - a LOOPED caller
         # collects it into `finish_looped_task`'s per-item results array,
         # so a looped when: failure correctly aggregates to `failed=1`
-        # in the recap (matching real Ansible's "One or more items
+        # in the recap (matching Ansible's "One or more items
         # failed"), not `skipped=1` the way silently returning nil here
         # used to.
         #
-        # Real ansible-core 2.19.11 prints the [ERROR] chain block BEFORE
+        # ansible-core 2.19.11 prints the [ERROR] chain block BEFORE
         # the fatal line (see emit_when_error_chain) - here, at catch
         # time, so it precedes whatever the pipeline prints. For a looped
         # task every failing item raises through this same rescue; the
@@ -1698,7 +1698,7 @@ module Krikri
         return when_error_result(ex, task)
       end
 
-      # Real Ansible resolves the task's effective connection type through
+      # Ansible resolves the task's effective connection type through
       # its plugin loader right after the when: evaluates and BEFORE the
       # module ever runs, failing the task with "Task failed: the
       # connection plugin 'X' was not found" when nothing resolves -
@@ -1710,7 +1710,7 @@ module Krikri
       # override - see build_vars_context). Previously ANY non-"local"
       # value silently fell back to SSH: an unresolvable connection
       # turned into a bogus UNREACHABLE ("Failed to connect to the host
-      # via ssh") instead of real Ansible's one clean failed task.
+      # via ssh") instead of Ansible's one clean failed task.
       if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
          PluginManager.connection_plugin_not_found?(conn_type)
         return apply_changed_failed_when(task, JSON.parse({
@@ -1728,7 +1728,7 @@ module Krikri
       rescue ex
         # A raised exception during param substitution (e.g. lookup('url',
         # ...) hitting a real HTTP error - see ExpressionEvaluator#
-        # fetch_url_lines's own comment) means real Ansible's own
+        # fetch_url_lines's own comment) means Ansible's own
         # "finalization of task args failed" hard stop: it fails the
         # ENCLOSING TASK cleanly (one recap entry, playbook continues to
         # whatever's next per normal when:/rescue: semantics), not the
@@ -1738,9 +1738,9 @@ module Krikri
         # with an unhandled-exception stack trace instead - found
         # benchmarking buluma.victoriametrics's own `set_fact: _checksums:
         # "{{ lookup('url', ...) }}"` against a 404'd release checksums
-        # file (a broken-upstream default, but real Ansible still
+        # file (a broken-upstream default, but Ansible still
         # degrades to one clean failed task, not a crash).
-        # No "changed" key would match real Ansible's pre-2.19 display;
+        # No "changed" key would match Ansible's pre-2.19 display;
         # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
         # so the failed result carries changed: false.
         emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
@@ -1748,19 +1748,19 @@ module Krikri
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
         # as failed/changed, and arg finalization failed before any module
-        # ran - real Ansible (ansible-core 2.19) still reports
+        # ran - Ansible (ansible-core 2.19) still reports
         # `fatal: ... Finalization of task args ... failed` on this task
         # even with `failed_when: false` set (previously the finalization
         # failure was funneled through failed_when: like a runtime result,
         # so `failed_when: false` swallowed it as `ok:` and the play
         # continued to the next task). ignore_errors: still applies
-        # downstream (real Ansible honors it here: ignored=1, play
+        # downstream (Ansible honors it here: ignored=1, play
         # continues), which this plain failed result preserves.
         return result
       end
 
       # Action-only directives (debug/assert/fail/pause/script/... and
-      # group_by) are validated by real's ACTION PLUGIN, before any
+      # group_by) are validated by Ansible's ACTION PLUGIN, before any
       # action runs - this pre-action hook handles exactly those; the
       # post-action hook below handles every module-level spec. Placed
       # before the controller-side pseudo-module branches (group_by)
@@ -1786,7 +1786,7 @@ module Krikri
 
       warn_groupby_storage(task)
       substituted_params = resolve_role_relative_src(task, substituted_params)
-      # Real's copy ACTION plugin rejects src+content together before
+      # Ansible's copy ACTION plugin rejects src+content together before
       # anything else runs (even before the src file lookup) - live-
       # verified ordering, see ArgspecValidator's module comment.
       if violation = copy_src_content_conflict(task, substituted_params)
@@ -1800,13 +1800,13 @@ module Krikri
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
       substituted_params = copied
-      # Real's dest expand crash fires only after the src lookup succeeded
+      # Ansible's dest expand crash fires only after the src lookup succeeded
       # (inline_copy_source_content above) - the last of copy.py's
       # non-string-literal crash points, see copy_literal_type_failure.
       if violation = copy_dest_expand_failure(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
-      # Real's unarchive/assemble action plugins crash on non-string
+      # Ansible's unarchive/assemble action plugins crash on non-string
       # literal args at their own controller-side touch points, before
       # the src staging paths could leak the marker into a message or
       # upload path - see unarchive_assemble_literal_type_failure.
@@ -1828,7 +1828,7 @@ module Krikri
         return apply_changed_failed_when(task, staged_assemble, vars_context, host)
       end
       substituted_params = staged_assemble
-      # Real's assemble action expands the destination's user path itself
+      # Ansible's assemble action expands the destination's user path itself
       # after the fragments are staged and before the copy module ever
       # validates anything - so a non-string literal dest crashes the
       # action instead of failing the copy spec. See
@@ -1842,7 +1842,7 @@ module Krikri
       # here, since Task is shared/reused across hosts and loop iterations.
       substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
-      # Real's add_host: the groups failure (action stage) and the
+      # Ansible's add_host: the groups failure (action stage) and the
       # inventory.add_host name crash (result-processing stage, which
       # aborts the whole run) - see add_host_literal_type_failure.
       if violation = add_host_literal_type_failure(task, substituted_params)
@@ -1869,7 +1869,7 @@ module Krikri
           # An ACTION-level failure (a bare AnsibleActionFail raised by
           # the plugin itself) renders without the "Module failed." chain
           # segment - see ActionResult#action_level. A crash_failure's msg
-          # is real's own "Task failed: <exception>" wrapper while its
+          # is Ansible's own "Task failed: <exception>" wrapper while its
           # [ERROR] block text stays bare - see ActionResult#error_detail.
           failed["_ansible_action_level"] = true if action_result.action_level?
           if detail = action_result.error_detail?
@@ -1891,7 +1891,7 @@ module Krikri
         end
       end
 
-      # Data-driven module argument validation against real Ansible's own
+      # Data-driven module argument validation against Ansible's own
       # argument specs (see ArgspecValidator) - the same checks the real
       # module's AnsibleModule init runs, controller-side, before the
       # plugin is dispatched (so a typo'd option fails without any file
@@ -1981,8 +1981,8 @@ module Krikri
     RAW_MODULES = {"raw", "ansible.builtin.raw", "ansible.legacy.raw"}
 
     # raw: is aliased to the shell plugin binary, whose result carries
-    # command-style keys (cmd/start/end/delta, an empty msg) real's raw
-    # action never returns. Real's raw result is
+    # command-style keys (cmd/start/end/delta, an empty msg) Ansible's raw
+    # action never returns. Ansible's raw result is
     # {rc, stdout, stdout_lines, stderr, stderr_lines, changed, failed}
     # plus msg/exception on a non-zero rc (live-verified 2.19.11).
     # Internal `_ansible_*` keys the failure renderer needs are kept,
@@ -1991,7 +1991,7 @@ module Krikri
       return result unless RAW_MODULES.includes?(task.action_name || task.module_name)
       hash = result.as_h? || return result
       failed = hash["failed"]?.try(&.as_bool?) || false
-      # raw: does not support check mode: real's executor skips it with the
+      # raw: does not support check mode: Ansible's executor skips it with the
       # bare {skipped, failed, changed} shape.
       if hash["skipped"]?.try(&.as_bool?)
         return JSON.parse({"skipped" => true, "failed" => false, "changed" => false}.to_json)
@@ -2019,7 +2019,7 @@ module Krikri
     end
 
     # Modules whose registered per-item results (loop `results[]`) carry
-    # real's `invocation.module_args` and whose args this engine can
+    # Ansible's `invocation.module_args` and whose args this engine can
     # reproduce from the argspec table (verified against ansible-core 2.19.11).
     INVOCATION_MODULES = %w[command shell stat file ping slurp lineinfile replace blockinfile find getent]
 
@@ -2043,7 +2043,7 @@ module Krikri
     # `library/<name>.py` source through the py_module plugin. The
     # source travels embedded in the plugin config (base64) so the
     # normal upload-and-execute transport works unchanged for remote
-    # hosts; the module's argument dict mirrors real Ansible's typed
+    # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
     private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil) : JSON::Any
@@ -2077,13 +2077,13 @@ module Krikri
       end
 
       # A role shipping its OWN custom module_utils packages (e.g.
-      # linux-system-roles.storage's the real module beside its
+      # linux-system-roles.storage's the Ansible module beside its
       # library/blivet.py) gets that tree bundled into the plugin config
       # the same way the module source itself travels (base64, relative
       # path -> content) - the plugin stages it under
-      # the real module on the target so the module's `from
+      # the Ansible module on the target so the module's `from
       # ansible.module_utils.<role_pkg>...` import resolves, mirroring
-      # real Ansible's AnsiballZ bundling of the role's own
+      # Ansible's AnsiballZ bundling of the role's own
       # module_utils/. A role with NO module_utils/ directory - the
       # common case - sends no extra payload at all.
       module_utils_files = PythonModuleRunner.collect_module_utils_files(task.role_path, @playbook_dir)
@@ -2156,7 +2156,7 @@ module Krikri
     # async:/poll: - runs the module as a detached background OS process
     # (spawned via a hidden `__async_run` re-invocation of this same
     # binary, not a Fiber, so the job survives even if the poll loop or
-    # the whole playbook run finishes first - closer to how real Ansible's
+    # the whole playbook run finishes first - closer to how Ansible's
     # background job outlives the control connection). Local connections
     # use that path; REMOTE connections (round 189: mrlesmithjr.
     # change-hostname's own `shutdown -r now` + `async: 1`/`poll: 0`
@@ -2167,7 +2167,7 @@ module Krikri
     # then nohup-launched detached on the target with its stdout (the
     # module's own JSON result) collected into ~/.ansible_async/<jid>
     # via an atomic tmp+mv, and poll:ed by cat-ing that file over SSH.
-    # Real's TaskExecutor collects every deprecation emitted while the
+    # Ansible's TaskExecutor collects every deprecation emitted while the
     # task ran into its DeferredWarningContext and puts the collected list
     # on the result as `deprecations` (executor/task_executor.py's
     # result.update(deprecations=...)) - live-verified vs 2.19.11 via
@@ -2201,7 +2201,7 @@ module Krikri
       # "no module ever ran to produce a real result" - a become
       # failure, a crashed/missing plugin binary, an SSH-level nonzero
       # exit) has no module JSON for failed_when:/changed_when: to
-      # reinterpret in the first place. Real Ansible's own equivalent
+      # reinterpret in the first place. Ansible's own equivalent
       # (a become/connection failure - e.g. "Premature end of stream
       # waiting for become success") is unignorable by failed_when: -
       # verified live against ansible-core 2.19.4: a `delegate_to:
@@ -2223,7 +2223,7 @@ module Krikri
       # skip: that result carries no `skipped` key there (it's an
       # ordinary ok result with the full module shape, rc: 0 included -
       # see the plugins' own skip branches), so its changed_when: IS
-      # evaluated, exactly as in real Ansible.
+      # evaluated, exactly as in Ansible.
       return result if result.as_h?.try(&.["skipped"]?.try(&.as_bool?))
 
       eval_context = vars_context
@@ -2239,7 +2239,7 @@ module Krikri
       # OWN result, which for set_fact already has those facts merged in.
       # Found via smlloyd.authselect (RHEL-family round 60487): `set_fact:
       # {authselect_current_profile: ...}` with a `changed_when:` that
-      # references `authselect_current_profile` right back - real Ansible
+      # references `authselect_current_profile` right back - Ansible
       # resolves it fine, this engine raised "'authselect_current_profile'
       # is undefined" without this merge.
       if (facts = result.as_h?.try(&.[]?("ansible_facts"))) && (facts_hash = facts.as_h?)
@@ -2257,7 +2257,7 @@ module Krikri
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
 
         begin
-          # raise_undefined: true - real ansible-core 2.19 raises while
+          # raise_undefined: true - ansible-core 2.19 raises while
           # EVALUATING a changed_when:/failed_when: that reaches an
           # undefined reference ("object of type 'dict' has no attribute
           # 'diff'" for cloudalchemy.pushgateway's own `changed_when`
@@ -2290,14 +2290,14 @@ module Krikri
             end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
-          # Matches real Ansible: a changed_when:/failed_when: whose value
+          # Matches Ansible: a changed_when:/failed_when: whose value
           # resolves to None (not a real boolean), or whose evaluation hits
           # an undefined variable / missing dict attribute, fails the task
           # outright rather than being silently truthy-converted to false.
           # UnknownFilterError joins the same rescue (jasonheecs.
           # digitalocean's `changed_when: not python_check.stdout |
           # search('/bin/python')` - `search` is a real-Ansible TEST, not
-          # a filter, so real ansible fails the task with "No filter named
+          # a filter, so Ansible fails the task with "No filter named
           # 'search'.") - previously only the two conditional errors were
           # caught here and the unknown-filter raise escaped all the way
           # out of #run, crashing the whole binary with a stack trace.
@@ -2321,17 +2321,17 @@ module Krikri
     # when `failed` and the task didn't opt out via ignore_errors:.
     #
     # A failed `run_once:` task halts every OTHER host in the play too
-    # (real ansible-core's _process_pending_results: a failed run_once
+    # (ansible-core's _process_pending_results: a failed run_once
     # result calls iterator.mark_host_failed(h) for every host in the
     # play except unreachable ones, so no host proceeds into later
     # tasks). Only the host that actually executed the task flows through
     # the normal display/stats path above - the others get no failed=
     # counter and no fatal line of their own, they simply stop (verified
-    # against real ansible-playbook 2.19.11: a run_once ansible.builtin.
+    # against ansible-playbook 2.19.11: a run_once ansible.builtin.
     # fail in a 3-host play recaps failed=1 and no host reaches the next
     # task's banner).
     # force_halt skips the ignore_errors: check - for a dynamic
-    # include_role:'s role-resolution failure, which real Ansible halts
+    # include_role:'s role-resolution failure, which Ansible halts
     # on unconditionally (live-verified vs 2.19.11: `failed=1 ignored=0`
     # even with ignore_errors: true on the include task).
     private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false) : Nil
@@ -2384,7 +2384,7 @@ module Krikri
 
     # Expands a block:-wrapped handlers/main.yml entry into its own
     # block_tasks, so a task's `notify:` naming the INNER task's name
-    # (not the outer block's) resolves correctly - real Ansible flattens
+    # (not the outer block's) resolves correctly - Ansible flattens
     # block-nested handlers the same way. Found via robertdebock.rsyslog,
     # whose handlers/main.yml wraps its real handler purely to add
     # rescue-time diagnostics:
@@ -2402,7 +2402,7 @@ module Krikri
     # only ever compared against the flat top-level handler.name, never
     # recursing into a block-type handler's own block_tasks.
     #
-    # Verified live against real ansible-core 2.19.4 and 2.21.3 (both
+    # Verified live against ansible-core 2.19.4 and 2.21.3 (both
     # agree) before writing this, since the obvious guess (teach
     # HandlerRunner to run a rescue-wrapped sub-block) turns out to be
     # WRONG:
@@ -2456,7 +2456,7 @@ module Krikri
         # banner below would still print).
         next if role_ended_for_host?(nested_task, host)
 
-        # A nested block: is transparent - like real Ansible, a named
+        # A nested block: is transparent - like Ansible, a named
         # block gets no "TASK [...]" banner of its own, only its members
         # do (execute_task already dispatches straight to execute_block,
         # which prints its own children's banners via this same

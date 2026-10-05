@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # include_role:/import_role:/import_tasks:/include_tasks: argument
-# validation at PARSE time - real ansible-core's TaskInclude.check_options
+# validation at PARSE time - ansible-core's TaskInclude.check_options
 # and IncludeRole.load run while the playbook is loading, so every bad
 # argument aborts the whole run with an "[ERROR]: ..." block (plus the
 # task's Origin block, except the FROM_ARGS raise) and rc=4 before any
@@ -82,7 +82,7 @@ describe "PlaybookParser include directive argument validation" do
   end
 
   it "refuses a non-string *_from value at parse time WITHOUT an Origin block" do
-    # The FROM_ARGS raise carries no obj=data in real's source, so its
+    # The FROM_ARGS raise carries no obj=data in Ansible's source, so its
     # block is just the [ERROR] line (live-verified vs 2.19.11).
     path = write_playbook(PluginSpecHelper.tmp_path("incdir_from_int"), <<-YAML)
         - name: t1
@@ -173,7 +173,7 @@ describe "PlaybookParser include directive argument validation" do
       "unexpected parameter type in action: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>")
   end
 
-  it "renders the missing import_tasks file the way real's DataLoader error does (no Origin, rc=1 path)" do
+  it "renders the missing import_tasks file the way Ansible's DataLoader error does (no Origin, rc=1 path)" do
     root = PluginSpecHelper.tmp_path("incdir_import_missing")
     path = write_playbook(root, <<-YAML)
         - name: t1
@@ -210,7 +210,7 @@ describe "PlaybookParser include directive argument validation" do
     ex.message.to_s.must_equal("Invalid options for ansible.builtin.import_role: bogus")
   end
 
-  it "reports import_role naming a missing role with real's search-path message and the name value's Origin" do
+  it "reports import_role naming a missing role with Ansible's search-path message and the name value's Origin" do
     root = PluginSpecHelper.tmp_path("incdir_import_role_missing")
     path = write_playbook(root, <<-YAML)
         - name: t1

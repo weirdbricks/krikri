@@ -5,7 +5,7 @@ require "../../src/krikri/plugin_helpers/apt_lock_retry"
 # 0.9.502. Round 153 (2026-08-20) found that krikri-playbook's `apt:`
 # failed fast when the host's dpkg lock was held by another process
 # (Ubuntu's unattended-upgr, an in-progress apt on another shell, etc.)
-# while real Ansible's apt module waited it out via `lock_timeout: 60`
+# while Ansible's apt module waited it out via `lock_timeout: 60`
 # (default), krikri-playbook failed fast.
 #
 # Tests the retry helpers via the `AptLockRetry` module directly with a
@@ -91,7 +91,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       stub.exec_count.must_equal(2)
     end
 
-    it "does NOT retry on non-lock failures - matches real Ansible's selective retry" do
+    it "does NOT retry on non-lock failures - matches Ansible's selective retry" do
       stub = StubExec.new([DPKG_BROKEN_REPO])
       r = HostClass.new.apt_with_lock_retry("apt-get -y install nginx", 30, ->(c : String) { stub.call(c) })
       r[:exit_code].must_equal(100)
@@ -143,7 +143,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       stub.exec_count.must_equal(2)
     end
 
-    it "does NOT retry on non-lock failures (broken repo) - matches real Ansible" do
+    it "does NOT retry on non-lock failures (broken repo) - matches Ansible" do
       stub = StubExec.new([DPKG_BROKEN_REPO])
       r = HostClass.new.apt_get_update_with_retry("apt-get update", 5, 1, ->(c : String) { stub.call(c) })
       r[:exit_code].must_equal(100)
@@ -151,7 +151,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
     end
   end
 
-  describe "default constants match real Ansible's apt module" do
+  describe "default constants match Ansible's apt module" do
     it "DEFAULT_LOCK_TIMEOUT = 60" do
       Krikri::AptLockRetry::DEFAULT_LOCK_TIMEOUT.must_equal(60)
     end
@@ -171,7 +171,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
     end
 
     it "returns false for a plain locate-miss on a valid (even if empty) cache" do
-      # Confirmed live (0.9.737): real ansible-playbook does NOT retry
+      # Confirmed live (0.9.737): ansible-playbook does NOT retry
       # here - `package_status()` fails straight to fail_json with "No
       # package matching '%s' is available", no implicit update at all.
       HostClass.new.apt_corrupt_lists?(APT_LOCATE_MISS[:stderr]).must_equal(false)
@@ -199,9 +199,9 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       stub.exec_count.must_equal(1)
     end
 
-    it "does NOT retry on a plain locate-miss - matches real Ansible's fail-fast on a valid cache" do
+    it "does NOT retry on a plain locate-miss - matches Ansible's fail-fast on a valid cache" do
       # This is the exact scenario the original (0.9.736) gate got
-      # wrong: it retried-and-succeeded here, while real ansible-playbook
+      # wrong: it retried-and-succeeded here, while ansible-playbook
       # fails outright with "No package matching 'w3m' is available" -
       # confirmed live against both `package: {name: w3m, state: present}`
       # and the buluma.httpd role's `apache2` install, both on a
@@ -287,12 +287,12 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
   end
 
   # Regression spec for the geerlingguy.kubernetes changed-count gap
-  # (rounds 65166/65311, fixed 0.9.835): real Ansible's apt module
+  # (rounds 65166/65311, fixed 0.9.835): Ansible's apt module
   # auto-installs python3-apt at module start and respawns, so its host
   # moves to the mtime-diff changed-reporting path after the first apt
   # task; this engine previously never installed the bindings, so it
   # stayed on the "absent → changed=false" path forever and a later
-  # `apt: {update_cache: true}` task reported ok where real Ansible
+  # `apt: {update_cache: true}` task reported ok where Ansible
   # reported changed.
   describe "#apt_auto_install_python_apt" do
     it "is a no-op when the bindings are already importable" do
@@ -360,7 +360,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
   # must never run under --check. apt.cr gates its own call with
   # `unless @check_mode` and refuses the task outright when the
   # bindings are absent; package.cr's cache-refresh-only path
-  # (`package: {update_cache: true}`, which real Ansible delegates to
+  # (`package: {update_cache: true}`, which Ansible delegates to
   # the apt module) shipped without any gate at all for one commit -
   # a dry run would have installed python3-apt for real.
   describe "#apt_check_mode_python_apt_refusal" do
@@ -376,7 +376,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
       stub.exec_count.must_equal(1)
     end
 
-    it "returns real Ansible's own refusal message in check mode when the bindings are missing, without installing anything" do
+    it "returns Ansible's own refusal message in check mode when the bindings are missing, without installing anything" do
       commands = [] of String
       msg = HostClass.new.apt_check_mode_python_apt_refusal(true, ->(c : String) {
         commands << c
@@ -390,7 +390,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
 
   # Regression spec for the apt-404-on-krikri-host-only pattern (rounds
   # 72311/72313/72363 - lfit.lf-dev-libs, lfit.mono-install,
-  # markosamuli.pyenv). Real Ansible's `package:` action plugin
+  # markosamuli.pyenv). Ansible's `package:` action plugin
   # delegates to the apt module, whose main() refreshes the cache
   # BEFORE install() whenever update_cache: is set - all three roles
   # pass `update_cache: true` in the same task as the install. This
@@ -400,7 +400,7 @@ describe "apt lock-contention retry helpers (round 153 follow-up, 0.9.502)" do
   # long-superseded versions (linux-libc-dev 5.15.0-33.34,
   # libdpkg-perl 1.21.1ubuntu2.1 - all 2022-era) and 404'd fetching
   # their .debs from the live mirror, which only carries current
-  # versions. Real Ansible on a simultaneously-provisioned host ran
+  # versions. Ansible on a simultaneously-provisioned host ran
   # the refresh first, resolved current versions, and succeeded.
   describe "#apt_update_cache_before_operation" do
     it "returns nil in check mode without running anything" do

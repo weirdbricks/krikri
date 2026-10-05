@@ -3,7 +3,7 @@ require "../../src/krikri/task_executor"
 
 # Regression spec for the dirless-infra findings report (Bug 2): a
 # `copy: {src: /etc/caddy/tls/wildcard.crt, ...}` whose controller-side
-# src does not exist must FAIL the task like real ansible-playbook
+# src does not exist must FAIL the task like ansible-playbook
 # ("Could not find or access '<src>' on the Ansible Controller."), in
 # ordinary AND check mode - previously the missing src silently fell
 # through param staging, the plugin's check-mode run had nothing to

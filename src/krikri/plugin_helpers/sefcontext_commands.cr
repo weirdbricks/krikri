@@ -7,7 +7,7 @@ module Krikri
     # semanage_fcontext_modify / semanage_fcontext_delete), unit-testable
     # without an SELinux policy store.
     module SefcontextCommands
-      # The real module's option_to_file_type_str: seobject's own record
+      # The Ansible module's option_to_file_type_str: seobject's own record
       # spelling for each ftype letter - the exact string `semanage
       # fcontext -l` prints in its middle column.
       FILE_TYPE_STR = {

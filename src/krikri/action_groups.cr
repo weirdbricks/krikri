@@ -3,7 +3,7 @@ require "yaml"
 module Krikri
   # `module_defaults:` accepts an ACTION GROUP key (`group/aws`,
   # `group/consul`) standing for every module in that group, instead of
-  # naming each one. Real Ansible learns group membership from each
+  # naming each one. Ansible learns group membership from each
   # installed collection's `meta/runtime.yml`:
   #
   #     action_groups:
@@ -39,7 +39,7 @@ module Krikri
       "testlegacy" => [] of String,
     }
 
-    # Where collections live, in real Ansible's own search order.
+    # Where collections live, in Ansible's own search order.
     def self.collection_paths : Array(String)
       paths = [] of String
       if configured = ENV["ANSIBLE_COLLECTIONS_PATH"]? || ENV["ANSIBLE_COLLECTIONS_PATHS"]?
@@ -65,7 +65,7 @@ module Krikri
 
       # ansible.builtin defines action groups of its own, almost all of
       # them nothing but extend_group pointers into a collection. They
-      # matter even when that collection is ABSENT: real Ansible accepts
+      # matter even when that collection is ABSENT: Ansible accepts
       # `group/aws` with amazon.aws not installed (the group exists, it
       # just resolves to no modules) while rejecting `group/demo`
       # outright. Seeding them here reproduces that distinction without
@@ -91,7 +91,7 @@ module Krikri
       resolved = Hash(String, Array(String)).new
       raw.each_key { |name| resolved[name] = resolve(name, raw, extends, Set(String).new) }
 
-      # Keyed by FULLY-QUALIFIED name only. Real Ansible resolves a bare
+      # Keyed by FULLY-QUALIFIED name only. Ansible resolves a bare
       # `group/demo` against ansible.builtin (verified: it fails with
       # "could not resolve the module_defaults group ansible.builtin.demo"
       # even when another installed collection defines a `demo` group) -
@@ -145,7 +145,7 @@ module Krikri
     end
 
     # The modules named by a `group/<name>` key, or nil when nothing
-    # defines it - the caller turns that into real Ansible's own error.
+    # defines it - the caller turns that into Ansible's own error.
     # A bare name is qualified into ansible.builtin, exactly as real
     # Ansible does.
     def self.modules_for(group_key : String) : Array(String)?
@@ -154,7 +154,7 @@ module Krikri
       groups[qualified]?
     end
 
-    # The name real Ansible reports in its error for an unresolvable
+    # The name Ansible reports in its error for an unresolvable
     # group, so the message can match.
     def self.qualified_name(group_key : String) : String
       name = group_key.lchop("group/")

@@ -7,7 +7,7 @@ require "../src/krikri/plugin_helpers/python_lib_gate"
 module Krikri
   # Seboolean plugin - toggles an SELinux boolean via `getsebool`/
   # `setsebool`. Compatible with Ansible's ansible.posix.seboolean
-  # (verified against real ansible-playbook on a Rocky 9.6 target with
+  # (verified against ansible-playbook on a Rocky 9.6 target with
   # SELinux genuinely enforcing).
   #
   # Real seboolean.py binds libselinux/libsemanage directly rather than
@@ -15,7 +15,7 @@ module Krikri
   # this codebase's general shell-out approach for SELinux/RPM tooling -
   # see selinux.cr/rpm_key.cr's own class docs for the same trade-off),
   # since `getsebool`/`setsebool` are the same underlying libsemanage
-  # policy store the real module manipulates.
+  # policy store the Ansible module manipulates.
   #
   # Argument validation runs BEFORE any SELinux call, matching real
   # AnsibleModule's argument_spec order of operations:
@@ -27,7 +27,7 @@ module Krikri
   #   insensitive) is accepted; anything else fails the task instead of
   #   silently defaulting.
   #
-  # Disabled-host behavior mirrors the real module's flow exactly: the
+  # Disabled-host behavior mirrors the Ansible module's flow exactly: the
   # enabled-check (`get_runtime_status`) only runs when
   # ignore_selinux_state is false, and the non-persistent branch is
   # guarded by `selinux.is_selinux_enabled()` - so with
@@ -86,7 +86,7 @@ module Krikri
       result.extra["persistent"] = JSON.parse(persistent.to_json)
       result.extra["state"] = JSON.parse(desired_on.to_json)
 
-      # Real's persistent branch talks to the semanage policy store
+      # Ansible's persistent branch talks to the semanage policy store
       # regardless of the running kernel state; the non-persistent
       # branch is guarded by is_selinux_enabled() - a disabled host is
       # a no-op success there, matching real.
@@ -122,7 +122,7 @@ module Krikri
       result
     end
 
-    # Real's enabled check is libselinux's is_selinux_enabled(); the
+    # Ansible's enabled check is libselinux's is_selinux_enabled(); the
     # closest CLI proxy is whether `getenforce` runs and reports
     # something other than Disabled.
     # missing_required_lib() gate: probe the target's python3 for the two

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# lookup('inventory_hostnames', pattern) - real Ansible's own inventory
+# lookup('inventory_hostnames', pattern) - Ansible's own inventory
 # lookup plugin, previously unimplemented (fell through to "undefined").
 # The real plugin builds a throwaway InventoryManager purely from
 # variables['groups'] and runs the standard host-pattern machinery over

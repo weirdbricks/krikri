@@ -2,13 +2,13 @@ require "file_utils"
 require "../minitest_helper"
 
 # An include_tasks: whose included file fails to LOAD (not a task inside it
-# failing) must recap the include task itself as failed= only. Real Ansible
+# failing) must recap the include task itself as failed= only. Ansible
 # credits no `ok` for it - the include never completed - verified live
 # against ansible-core 2.19.11 with a minimal include_tasks: ->
 # import_role: missing-role repro: both the looped and non-looped shapes
 # recap ok=0 failed=1 (round 979000 buluma.tomcat: its instance.yml pulls
 # in the buluma.service dependency via import_role:, and with that role not
-# installed krikri recapped ok=46 failed=1 where real Ansible recaps
+# installed krikri recapped ok=46 failed=1 where Ansible recaps
 # ok=45 failed=1 - the include was credited ok at include-entry time and
 # then fail_include booked failed on top).
 #

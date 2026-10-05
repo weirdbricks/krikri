@@ -12,7 +12,7 @@ require "../minitest_helper"
 #      module_utils' get_bin_path - i.e. WITHOUT the "Error message:"
 #      wrapper, which only the zone check and command failures use.
 #
-# Live-diffed vs real ansible-playbook through the kpg32 generator sweep
+# Live-diffed vs ansible-playbook through the kpg32 generator sweep
 # (12/15 timezone playbooks) and a local ansible_connection=local repro
 # against a host without hwclock.
 describe "timezone plugin backend init ordering" do

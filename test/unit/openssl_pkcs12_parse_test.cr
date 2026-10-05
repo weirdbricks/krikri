@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/openssl_pkcs12.cr's native libcrypto parse (action=parse)
 # and the backend constructor's eager file reads against real
-# community.crypto.openssl_pkcs12 (live-diffed vs real ansible-playbook
+# community.crypto.openssl_pkcs12 (live-diffed vs ansible-playbook
 # 2.19.11):
 #
 # - the parse action dumps the private key first, then the certificates

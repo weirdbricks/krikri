@@ -20,7 +20,7 @@ ensure
 end
 
 describe "loop:/with_items: single-element list holding a template that resolves to a scalar" do
-  it "runs exactly one iteration with the scalar as item, matching real ansible-playbook" do
+  it "runs exactly one iteration with the scalar as item, matching ansible-playbook" do
     # Real bug found immediately after auditing (and fixing) 8 copies of
     # the recursive-re-templating gap: `["{{ scalar_var }}"]` is real
     # Ansible's own "with_items: flattens one level" idiom - the parser
@@ -31,7 +31,7 @@ describe "loop:/with_items: single-element list holding a template that resolves
     # for a scalar, which fell through every other loop resolver too and
     # left the task with NO loop items at all - not skipped, not looped,
     # run once with `item` silently "undefined" instead of the real
-    # value. Verified against real ansible-playbook directly: `loop:`
+    # value. Verified against ansible-playbook directly: `loop:`
     # and `with_items:` both treat this identically, not just
     # with_items:'s own documented legacy flatten behavior.
     status, output = run_playbook(<<-YAML)
@@ -67,7 +67,7 @@ describe "loop:/with_items: single-element list holding a template that resolves
   end
 
   it "keeps a wrapped list template as ONE iteration whose item is the whole list" do
-    # The other half of real Ansible's rule for a one-element array
+    # The other half of Ansible's rule for a one-element array
     # source, and the half that used to be wrong the other way: `loop:`
     # templates the whole source LIST, so the array IS the item list and
     # a list-producing element stays a single item. Live-verified against

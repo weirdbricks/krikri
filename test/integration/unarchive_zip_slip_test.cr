@@ -9,12 +9,12 @@ require "file_utils"
 # archive must never be able to make krikri write, chmod or chown anything
 # outside dest, and must never make krikri dereference a symlink member.
 #
-# Everything here was live-verified against real ansible-playbook 2.19.11
-# (same vectors, same archives): real Ansible stays safe on every one of
+# Everything here was live-verified against ansible-playbook 2.19.11
+# (same vectors, same archives): Ansible stays safe on every one of
 # them - GNU tar refuses `..` members at extraction (exit 2), Info-ZIP
 # unzip strips `../`/leading-`/` components and exits 1 (a warning real
 # Ansible fails the task on, which is why extract_zip must not use -q:
-# -q suppresses the warning AND the nonzero exit), and real Ansible's
+# -q suppresses the warning AND the nonzero exit), and Ansible's
 # attribute pass uses os.lchown / chmod-with-restore so it never follows
 # a symlink member either.
 # crystal spec created this once in Spec.before_suite (rm_rf + mkdir
@@ -98,7 +98,7 @@ python = <<-PY
                 a.writestr("d/pwned.txt", "THRU-D")
 
     # absolute member name - must be treated exactly the way tar/unzip/
-    # real Ansible treat it: leading '/' stripped, extracted INSIDE dest
+    # Ansible treat it: leading '/' stripped, extracted INSIDE dest
     with tarfile.open(os.path.join(d, "abs.tar"), "w") as t:
         ti = tarfile.TarInfo(canary); ti.size = 5
         t.addfile(ti, io.BytesIO(b"hello"))
@@ -129,7 +129,7 @@ describe "unarchive plugin: hostile-archive (zip-slip class) containment" do
     File.read(CANARY).must_equal("CANARY-SECRET")
   end
 
-  it "never chmods through a tar symlink member (real Ansible's set_mode_if_different net effect: target mode unchanged)" do
+  it "never chmods through a tar symlink member (Ansible's set_mode_if_different net effect: target mode unchanged)" do
     reset_canary
     dest = fresh_dest("tar-link")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(SLIP_DIR, "slip-link.tar"), "dest" => dest, "mode" => "0644"})
@@ -174,7 +174,7 @@ describe "unarchive plugin: hostile-archive (zip-slip class) containment" do
     File.read(CANARY).must_equal("CANARY-SECRET")
   end
 
-  it "treats an absolute member name the way tar/unzip/real Ansible do: leading '/' stripped, extracted inside dest" do
+  it "treats an absolute member name the way tar/unzip/Ansible do: leading '/' stripped, extracted inside dest" do
     reset_canary
     dest = fresh_dest("tar-abs")
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(SLIP_DIR, "abs.tar"), "dest" => dest, "mode" => "0644"})

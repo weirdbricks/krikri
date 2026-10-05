@@ -15,19 +15,19 @@ module Krikri
     #   CLI and every other Docker SDK honor), falling back further to
     #   Docr::Client's own UNIX-socket default when neither is set.
     # - tls: bool, default false (or the DOCKER_TLS env var if the param
-    #   itself is omitted, matching real Ansible's own documented
+    #   itself is omitted, matching Ansible's own documented
     #   fallback) - secures the connection with TLS *without* verifying
     #   the server's certificate. validate_certs: true takes precedence
-    #   over this if both are given, matching real Ansible's own
+    #   over this if both are given, matching Ansible's own
     #   documented behavior exactly (verified against its source, not
     #   assumed from a one-line doc summary) - cert paths alone, with
     #   neither tls: nor validate_certs: set (as a param or via their
     #   own env vars), do NOT turn on TLS on their own (a real,
     #   easy-to-get-wrong distinction: this codebase originally inferred
-    #   TLS from cert-path presence alone, which real Ansible's own
+    #   TLS from cert-path presence alone, which Ansible's own
     #   community.docker collection does not - confirmed the hard way,
     #   by getting a real "Client sent an HTTP request to an HTTPS
-    #   server" error from real Ansible until this was fixed to require
+    #   server" error from Ansible until this was fixed to require
     #   an explicit tls:/validate_certs: flag).
     # - validate_certs (alias tls_verify): bool, default false (or the
     #   DOCKER_TLS_VERIFY env var) - secures the connection with TLS
@@ -36,7 +36,7 @@ module Krikri
     #   key file paths. If none of the three are given as params and
     #   DOCKER_CERT_PATH is set, falls back to
     #   $DOCKER_CERT_PATH/ca.pem/cert.pem/key.pem respectively - the
-    #   Docker CLI's own convention (real Ansible does the same:
+    #   Docker CLI's own convention (Ansible does the same:
     #   verified against its source, not assumed) - explicit params
     #   always win over the env var fallback, but it's all-or-nothing
     #   with DOCKER_CERT_PATH itself (no mixing one explicit path with
@@ -68,7 +68,7 @@ module Krikri
       # in (the module spec overrides these on key collision), with their
       # aliases. Keys the plugins' own validation must treat as legal and
       # type-convert (timeout int; tls/use_ssh_client/validate_certs/debug
-      # bool) - real AnsibleModule validation runs over the MERGED spec,
+      # bool) - AnsibleModule validation runs over the MERGED spec,
       # so an invalid `timeout:` fails a docker_network task exactly the
       # same as a docker_login one.
       COMMON_SPEC = {

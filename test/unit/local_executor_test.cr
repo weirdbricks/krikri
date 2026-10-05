@@ -60,7 +60,7 @@ describe Krikri::LocalExecutor do
     # shell process's argv, where any local user's `ps` could read secret
     # values while the task ran. The task environment now travels through
     # the child process's own environment (Process.new's env:, exactly how
-    # real Ansible hands the dict to subprocess), so the child still sees
+    # Ansible hands the dict to subprocess), so the child still sees
     # the byte-exact value...
     it "applies env through the child environment, byte-exact, including shell metacharacters" do
       secret = "s3cr3t'x\"y\$z`w -dash\nline2"
@@ -87,7 +87,7 @@ describe Krikri::LocalExecutor do
       result[:stdout].includes?("bash").must_equal(true)
     end
 
-    # Real Ansible overlays the task environment ONTO the module process's
+    # Ansible overlays the task environment ONTO the module process's
     # inherited environment (the old export prefix inherited it too), so an
     # override must not wipe the rest of the environment.
     it "merges env over the inherited environment instead of replacing it" do

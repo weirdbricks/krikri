@@ -136,7 +136,7 @@ describe "strict-undefined when: - execute_block (single-host block:)" do
   # ansible-core 2.19.12 on Rocky 9.6 (round173): the first task of
   # block: fails, the rest of that list is skipped by the halt, and
   # always: STILL runs and fails the same way => failed=2.
-  it "fails block: and always: separately (failed=2), matching real Ansible's when: inheritance" do
+  it "fails block: and always: separately (failed=2), matching Ansible's when: inheritance" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local

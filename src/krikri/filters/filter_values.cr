@@ -48,7 +48,7 @@ module Krikri
           # Real Python/Jinja2's len(None) raises TypeError - found via
           # levonet.ci_github_pr_description's `... | length` on a None
           # input, where krikri's own leniency (returning 0) let a task
-          # pass that real Ansible fails outright with this exact
+          # pass that Ansible fails outright with this exact
           # message.
           raise "object of type 'NoneType' has no len()"
         when Int64, Int32, Float64, Bool
@@ -82,7 +82,7 @@ module Krikri
       # NOTE (round185): this is a coercion for a non-dict value that is
       # nonetheless DEFINED, nothing more. It used to claim it made
       # dict2items "tolerant of undefined ... the way Ansible itself is",
-      # which was factually wrong - real Ansible hard-fails
+      # which was factually wrong - Ansible hard-fails
       # `{{ x | dict2items }}` for an undefined x, and this leniency was
       # what made a genuinely undefined loop source silently resolve to
       # zero items (buluma.environment). The undefined case is now caught
@@ -181,7 +181,7 @@ module Krikri
         end
       end
 
-      # Real Jinja2's min/max compare items natively: numbers by value,
+      # Jinja2's min/max compare items natively: numbers by value,
       # strings lexicographically. The old min_by/max_by over numeric()
       # coerced every non-numeric item to 0.0, so `['b','a'] | min`
       # returned 'b'. Python 3 would raise TypeError on a mixed

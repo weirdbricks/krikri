@@ -5,7 +5,7 @@ require "file_utils"
 # surface (AnsibleModule setup, all running BEFORE the service file is
 # opened) and the post-action service.validate() pass over every line.
 # Found via the pamd_edge_cases podman-diff case (live-diffed against
-# real ansible-playbook, community.general 13.3.0). All file access is
+# ansible-playbook, community.general 13.3.0). All file access is
 # under a tmp_path subtree via the `path` param - never the real
 # /etc/pam.d.
 

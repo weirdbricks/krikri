@@ -59,7 +59,7 @@ describe "copy: with validate:" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(false)
-    # Real's copy module fails with fail_json(msg="failed to validate",
+    # Ansible's copy module fails with fail_json(msg="failed to validate",
     # exit_status=rc, stdout=..., stderr=...) - the wording is
     # "failed to validate", never "Validation failed"
     # (live-verified vs 2.19.11 at -v: the fatal dump is exactly

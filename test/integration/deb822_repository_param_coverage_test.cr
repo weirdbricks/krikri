@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Proactive parameter-coverage pass for the deb822_repository plugin,
-# verified field-by-field against the real module's observed behavior.
+# verified field-by-field against the Ansible module's observed behavior.
 #
 # - format_field_name maps name → X-Repolib-Name, uris → URIs, and every
 #   other param via param.replace('_', '-').title() (types → Types,
@@ -10,7 +10,7 @@ require "../minitest_helper"
 #   languages/targets/exclude/include) are documented LIST types, so a
 #   real YAML list arrives here as a JSON-array-shaped STRING after
 #   task-param substitution; a comma-separated scalar is accepted too
-#   (real Ansible's check_type_list backward compat).
+#   (Ansible's check_type_list backward compat).
 # - Bool-typed params are written as literal yes/no, only when given.
 # - inrelease_path IS written to the file (real module never pops it,
 #   unlike mode/state) as "Inrelease-Path:".
@@ -18,7 +18,7 @@ require "../minitest_helper"
 #   (`for key, value in sorted(params.items())`), pinned by the
 #   full-render fixture below.
 # - The result carries the rendered content back as `repo:`, matching
-#   the real module's own documented RETURN block - which is also what
+#   the Ansible module's own documented RETURN block - which is also what
 #   makes these check-mode specs able to assert exact rendering without
 #   root (the real write path needs /etc/apt/sources.list.d/).
 #
@@ -50,7 +50,7 @@ describe "deb822_repository param coverage" do
     result["repo"].as_s.must_include("Types: deb deb-src")
   end
 
-  it "still accepts a comma-separated scalar for a list param (real Ansible's check_type_list backward compat)" do
+  it "still accepts a comma-separated scalar for a list param (Ansible's check_type_list backward compat)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "param-audit-comma-scalar",
       "uris"                => "https://example.com/repo",
@@ -185,7 +185,7 @@ describe "deb822_repository param coverage" do
     )
   end
 
-  it "normalizes a name with spaces into the real module's filename slug" do
+  it "normalizes a name with spaces into the Ansible module's filename slug" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "Param Audit Slug",
       "uris"                => "https://example.com/repo",
@@ -193,7 +193,7 @@ describe "deb822_repository param coverage" do
       "_ansible_check_mode" => "true",
     })
 
-    # Real's result carries no msg; the slug shows up in the echoed dest
+    # Ansible's result carries no msg; the slug shows up in the echoed dest
     # path (live-verified 2.19.11: repo, changed, dest, key_filename, failed).
     dest = result["dest"].as_s
     dest.must_include("Param-Audit-Slug.sources")

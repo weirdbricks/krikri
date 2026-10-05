@@ -1,7 +1,7 @@
 # Bit-exact reimplementation of CPython's `random.Random` as needed by the
 # Jinja2 `random` filter (`{{ N | random(seed=inventory_hostname) }}`,
 # `{{ list | random(seed=...) }}`), so the SAME seed string produces the
-# SAME value real ansible-playbook would on the target host - the whole
+# SAME value ansible-playbook would on the target host - the whole
 # point of a seeded random is cross-run (and cross-engine) stability, e.g.
 # lean_delivery.jenkins_slave's password generation picking a uid less than
 # 65534 deterministically per inventory host.

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/variable_substitutor"
 
-# Real ansible-core 2.19.11 renders `{{ esc }}` where esc's own value is
+# ansible-core 2.19.11 renders `{{ esc }}` where esc's own value is
 # `{{ '{{' }} literal {{ '}}' }}` to the literal TEXT "{{ literal }}" and
 # never re-scans that output; krikri's span re-pass templated the finished
 # brace text a second time ("{{ literal }}" -> "literal") or crashed on it.

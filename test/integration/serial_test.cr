@@ -1,7 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# `serial:` batches a play: real Ansible runs the WHOLE play against one
+# `serial:` batches a play: Ansible runs the WHOLE play against one
 # batch of hosts at a time, which is what makes a rolling restart
 # rolling. This engine ignored the keyword entirely, so `serial: 1` still
 # hit every host simultaneously - the batching that exists to protect a

@@ -9,7 +9,7 @@ module Krikri
     # binding).
     module PostgresqlQueryHeuristics
       # First significant SQL word, skipping line comments and block
-      # comments - the same leading-keyword view the real module's
+      # comments - the same leading-keyword view the Ansible module's
       # statusmessage check is driven by.
       def self.leading_keyword(sql : String) : String
         scanner = sql
@@ -29,7 +29,7 @@ module Krikri
         scanner.match(/\A[a-zA-Z_]+/).try(&.[0]) || ""
       end
 
-      # The real module's rule, applied to the synthesized command tag:
+      # The Ansible module's rule, applied to the synthesized command tag:
       # SELECT/SHOW never report changed; UPDATE/INSERT/DELETE report
       # changed only when the affected-row count is non-zero (its
       # "len(s) == 2/3" checks); anything else (CREATE, DROP, ALTER,

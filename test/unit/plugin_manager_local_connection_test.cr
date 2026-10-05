@@ -8,7 +8,7 @@ describe "Krikri::PluginManager (plugin_manager_local_connection_test.cr)" do
       # Real bug found benchmarking ansible-community.ansible-vault's own
       # local package download/unarchive tasks, all written as
       # `delegate_to: 127.0.0.1` (a common Ansible idiom, treated
-      # identically to "localhost" by real Ansible) - previously only
+      # identically to "localhost" by Ansible) - previously only
       # "localhost" was recognized, so a delegated task tried to SSH-
       # upload plugin binaries to "127.0.0.1" as if it were a genuine
       # remote target.

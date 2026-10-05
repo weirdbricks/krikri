@@ -7,7 +7,7 @@ require "socket"
 # 127.0.0.1:35434 (pended when nothing is listening there; the
 # connection-refused cases need no server and always run).
 #
-# the real module calls
+# the Ansible module calls
 # `module.warn("Database name has not been passed, used default
 # database to connect to.")` before connect_to_db(), and AnsibleModule's
 # self.warn() does BOTH: prints `[WARNING]: <text>` on stderr and puts the
@@ -21,7 +21,7 @@ require "socket"
 #   The `db:` alias counts as a database name, so a task passing it does
 #   NOT warn (only the alias deprecation is reported).
 # - postgresql_db / postgresql_user: NEVER warn - their own `db`/`name`
-#   param is the database they manage, and real's result carries no
+#   param is the database they manage, and Ansible's result carries no
 #   `warnings` key at all without a login_db.
 # - postgresql_privs: real REQUIRES login_db (its pre-flight fails with
 #   "missing required arguments: login_db"), so the warning can never
@@ -84,7 +84,7 @@ describe "community.postgresql.* no-database warning (127.0.0.1:35434)" do
   it "postgresql_query orders warnings before deprecations when both apply" do
     skip "no PostgreSQL server at 127.0.0.1:35434" unless pg_warn_reachable?
     # `host:` alone (no `db:`) so the default-database warning fires AND
-    # an alias deprecation is collected - real's order is
+    # an alias deprecation is collected - Ansible's order is
     # ..., failed, warnings, deprecations.
     result = PluginSpecHelper.run("postgresql_query",
       {"login_host" => "127.0.0.1", "host" => "127.0.0.1", "login_port" => "35434",
@@ -95,7 +95,7 @@ describe "community.postgresql.* no-database warning (127.0.0.1:35434)" do
 
   it "postgresql_query connection failure without login_db still carries the warning" do
     # No server needed: the refused port fails before any query runs, and
-    # real's warning rides along with the fail_json result.
+    # Ansible's warning rides along with the fail_json result.
     result = PluginSpecHelper.run("postgresql_query",
       {"login_host" => "127.0.0.1", "login_port" => "59999", "login_user" => "postgres", "query" => "SELECT 1"})
     reg_keys(result).must_equal(["failed", "msg", "changed", "exception", "warnings"])

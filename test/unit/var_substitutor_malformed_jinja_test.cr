@@ -19,7 +19,7 @@ end
 
 describe "Krikri::VarSubstitutor (var_substitutor_malformed_jinja_test.cr)" do
   include RaisesAssertion
-  describe "malformed Jinja2 (unclosed {{ }} span) hard-errors like real Jinja2" do
+  describe "malformed Jinja2 (unclosed {{ }} span) hard-errors like Jinja2" do
     include RaisesAssertion
     it "raises on a stray single closing brace inside the span (the patroni shape)" do
       sub = Krikri::VarSubstitutor.new(vars: jvars({"__postgresql_apt_filename" => "pgdg"}))

@@ -45,7 +45,7 @@ describe "kernel_blacklist plugin" do
     File.read(file).must_equal("")
   end
 
-  it "rejects a user-supplied check_mode module param like real's unsupported-params validator" do
+  it "rejects a user-supplied check_mode module param like Ansible's unsupported-params validator" do
     file = PluginSpecHelper.tmp_path("kernel-blacklist-check-mode-param.conf")
     File.delete(file) if File.exists?(file)
 
@@ -56,7 +56,7 @@ describe "kernel_blacklist plugin" do
     File.exists?(file).must_equal(false)
   end
 
-  it "strips trailing whitespace when rewriting (real's rstrip line read)" do
+  it "strips trailing whitespace when rewriting (Ansible's rstrip line read)" do
     file = PluginSpecHelper.tmp_path("kernel-blacklist-rstrip.conf")
     File.write(file, "blacklist other   \n")
 
@@ -66,25 +66,25 @@ describe "kernel_blacklist plugin" do
     File.read(file).must_equal("blacklist other\nblacklist krikri_mod\n")
   end
 
-  it "reports real's missing-required-arguments wording" do
+  it "reports Ansible's missing-required-arguments wording" do
     result = PluginSpecHelper.run("kernel_blacklist", {} of String => String)
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: name")
   end
 
-  it "reports real's choices wording in the spec's declaration order (absent, present)" do
+  it "reports Ansible's choices wording in the spec's declaration order (absent, present)" do
     result = PluginSpecHelper.run("kernel_blacklist", {"name" => "k", "state" => "bogus"})
     result["msg"].as_s.must_equal("value of state must be one of: absent, present, got: bogus")
   end
 
-  it "reports real's unsupported-parameters wording" do
+  it "reports Ansible's unsupported-parameters wording" do
     result = PluginSpecHelper.run("kernel_blacklist", {"name" => "k", "krikri_param" => "yes"})
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("Unsupported parameters for (community.general.kernel_blacklist) module: krikri_param. " \
                                   "Supported parameters include: blacklist_file, name, state.")
   end
 
-  it "emits no msg key on success (real's StateModuleHelper output has no msg)" do
+  it "emits no msg key on success (Ansible's StateModuleHelper output has no msg)" do
     file = PluginSpecHelper.tmp_path("kernel-blacklist-no-msg.conf")
     File.delete(file) if File.exists?(file)
 
@@ -93,7 +93,7 @@ describe "kernel_blacklist plugin" do
     result.as_h.has_key?("msg").must_equal(false)
   end
 
-  it "fails with real's wrapped Errno-2 open failure when the parent dir is missing (no mkdir_p)" do
+  it "fails with Ansible's wrapped Errno-2 open failure when the parent dir is missing (no mkdir_p)" do
     parent = PluginSpecHelper.tmp_path("kernel-blacklist-missing-parent")
     Dir.delete(parent) if Dir.exists?(parent)
     file = File.join(parent, "blacklist.conf")

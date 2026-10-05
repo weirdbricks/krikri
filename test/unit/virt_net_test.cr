@@ -39,7 +39,7 @@ Bridge:         virbr0
       "<network><name>default</name><forward mode='nat'/><domain name='example.lan'/><mac address='52:54:00:aa:bb:cc'/></network>"
     end
 
-    it "extracts the fact fields the real module xpath-scans" do
+    it "extracts the fact fields the Ansible module xpath-scans" do
       Krikri::PluginHelpers::VirshNet.parse_forward_mode(xml).must_equal("nat")
       Krikri::PluginHelpers::VirshNet.parse_domain(xml).must_equal("example.lan")
       Krikri::PluginHelpers::VirshNet.parse_macaddress(xml).must_equal("52:54:00:aa:bb:cc")
@@ -78,7 +78,7 @@ Bridge:         virbr0
       cmd.not_nil!.wont_include("--live")
     end
 
-    it "rejects non-host sections like the real module" do
+    it "rejects non-host sections like the Ansible module" do
       Krikri::PluginHelpers::VirshNet.net_update_command("qemu:///system", "br_nat", "<bridge/>", false).must_be_nil
     end
   end
@@ -100,7 +100,7 @@ describe "virt_net registration" do
 end
 
 describe "virt_net plugin - argument validation before the HAS_VIRT probe" do
-  # Real AnsibleModule construction (choices + required_if) fires BEFORE
+  # AnsibleModule construction (choices + required_if) fires BEFORE
   # the libvirt import probe, so a libvirt-less host still fails invalid
   # arguments with parameters.py's wording - found via the
   # virt_net_edge_cases podman-diff case, where the probe message leaked

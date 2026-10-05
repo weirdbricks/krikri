@@ -7,8 +7,8 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 # Regression tests for the six module groups a krikri-playbook-generator
 # sweep (seed 32) flagged: expect, setup, subversion, apt_key, xml and
 # deb822_repository. Every case below was reproduced locally against
-# real ansible-playbook 2.19.11 (ansible_connection=local, no gather
-# caching) before the fix, and the expected string is real's own.
+# ansible-playbook 2.19.11 (ansible_connection=local, no gather
+# caching) before the fix, and the expected string is Ansible's own.
 
 # --- subversion -------------------------------------------------------------
 #
@@ -35,7 +35,7 @@ describe "subversion plugin - executable resolution order (kpg32)" do
 
     result["failed"].as_bool.must_equal(true)
     # ENOENT, and the command named is the CHECKOUT (the first svn call
-    # real makes here), space-joined in real's own argv order - the
+    # real makes here), space-joined in Ansible's own argv order - the
     # global options before the subcommand.
     result["rc"].as_i64.must_equal(2)
     result["cmd"].as_s.must_equal("#{missing} --non-interactive --no-auth-cache --trust-server-cert " \
@@ -128,7 +128,7 @@ describe "setup gather_timeout as a native YAML int (kpg32)" do
     expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
   end
 
-  it "still rejects a genuinely non-numeric gather_timeout with real's message" do
+  it "still rejects a genuinely non-numeric gather_timeout with Ansible's message" do
     # The marker's payload has to come back as the VALUE it stood for;
     # a string real cannot convert must still fail the module.
     result = JSON.parse(Krikri::FactsGatherer.run(JSON.parse({
@@ -141,7 +141,7 @@ describe "setup gather_timeout as a native YAML int (kpg32)" do
   end
 
   it "reports a bad gather_subset rather than the gather_timeout when both are given" do
-    # Real's AnsibleModule validates gather_timeout (an int) at
+    # Ansible's AnsibleModule validates gather_timeout (an int) at
     # construction and only then runs the module body, which is where
     # "Bad subset" comes from - so a VALID timeout must not shadow it.
     result = JSON.parse(Krikri::FactsGatherer.run(JSON.parse({
@@ -159,7 +159,7 @@ end
 
 # --- deb822_repository: choices on a type: list option ----------------------
 #
-# Real runs _validate_argument_values on the ALREADY type-converted
+# Ansible runs _validate_argument_values on the ALREADY type-converted
 # parameters, and its per-member branch is guarded by
 # `isinstance(parameters[param], list)` - which every `type: list`
 # option satisfies by then, because check_type_list has already
@@ -167,7 +167,7 @@ end
 # reports the PER-MEMBER wording, not the single-value one.
 
 describe "deb822_repository types: validation wording (kpg32)" do
-  it "reports a scalar given to a list+choices option in real's per-member wording" do
+  it "reports a scalar given to a list+choices option in Ansible's per-member wording" do
     vars = Hash(String, JSON::Any).new
     params = {
       "name"       => "whizio",
@@ -217,7 +217,7 @@ end
 
 # --- xml / expect: missing-Python-library gates ----------------------------
 #
-# Real's xml and expect import lxml/pexpect at MODULE level, so a target
+# Ansible's xml and expect import lxml/pexpect at MODULE level, so a target
 # without them fails with missing_required_lib() before the module
 # validates a parameter, reads a file or spawns anything. krikri
 # implements both natively (krikri-xml, and the pty layer) and so has no
@@ -229,13 +229,13 @@ end
 private def python_without_libs(name : String) : String
   dir = PluginSpecHelper.tmp_path("kpg32-pylibs-#{name}")
   Dir.mkdir_p(dir)
-  # Named for the FIRST entry of real's INTERPRETER_PYTHON_FALLBACK:
+  # Named for the FIRST entry of Ansible's INTERPRETER_PYTHON_FALLBACK:
   # discovery runs `command -v` over that list and this directory is the
-  # whole PATH for the duration, so this is the interpreter real would
+  # whole PATH for the duration, so this is the interpreter Ansible would
   # hand the module - and the one missing_required_lib's sys.executable
   # then names.
   shim = File.join(dir, "python3.13")
-  # Reports its own executable the way real's missing_required_lib names
+  # Reports its own executable the way Ansible's missing_required_lib names
   # it, then fails any import with Python's own ImportError tail.
   # Pure shell (parameter expansion only): this directory is the whole
   # PATH for the duration, so an external helper like sed is not there.
@@ -270,11 +270,11 @@ describe "expect plugin - pexpect library gate (kpg32)" do
     expect(str_starts_with?(msg, "Failed to import the required Python library (pexpect) on ")).must_equal(true)
     expect(msg.includes?("'s Python ")).must_equal(true)
     expect(msg.ends_with?("please consult the documentation on ansible_python_interpreter")).must_equal(true)
-    # The command is NOT named: real never reaches the spawn.
+    # The command is NOT named: Ansible never reaches the spawn.
     expect(msg.includes?("jzosqw")).must_equal(false)
   end
 
-  it "wins over the creates:/removes: skip, which real also never reaches" do
+  it "wins over the creates:/removes: skip, which Ansible also never reaches" do
     dir = python_without_libs("pexpect-skip")
     dest = PluginSpecHelper.tmp_path("kpg32-expect-creates")
 
@@ -333,7 +333,7 @@ describe "xml plugin - lxml library gate (kpg32)" do
     expect(msg.ends_with?("please consult the documentation on ansible_python_interpreter")).must_equal(true)
   end
 
-  it "wins over the missing-source message, which real also never reaches" do
+  it "wins over the missing-source message, which Ansible also never reaches" do
     dir = python_without_libs("lxml-missing-source")
 
     result = PluginSpecHelper.run("xml", {

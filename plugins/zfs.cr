@@ -16,13 +16,13 @@ module Krikri
   # - extra_zfs_properties: dict of zfs properties (volsize ->
   #   -V, volblocksize -> -b, everything else -o k=v at create time;
   #   `zfs set` on an existing dataset). Python-style bools are
-  #   normalized to on/off like the real module.
+  #   normalized to on/off like the Ansible module.
   #
   # Idempotency: present against an existing dataset compares each
   # requested property's current value (via `zfs get`) and only sets
   # the ones that differ; absent destroys with -R only when the
   # dataset exists. Creation-only properties (e.g. volblocksize) on an
-  # already-existing dataset behave like the real module: they compare
+  # already-existing dataset behave like the Ansible module: they compare
   # against '-'-sourced values and `zfs set` fails on them if they
   # actually differ.
   #
@@ -33,11 +33,11 @@ module Krikri
     # The registered success shape (round 992003 kop_storage captures):
     # exit_json(**result) with result built as dict(name=, state=), then
     # diff, then the extra_zfs_properties, then changed - [name, state,
-    # diff, ..., changed, failed]. The real module never passes msg on a
+    # diff, ..., changed, failed]. The Ansible module never passes msg on a
     # success exit.
     private ZFS_KEY_ORDER_BASE = %w[name state diff]
 
-    # real's fail_json kwargs (cmd, rc, stdout, stderr - basic.py's
+    # Ansible's fail_json kwargs (cmd, rc, stdout, stderr - basic.py's
     # run_command(check_rc=True) failure) lead the registered result,
     # then failed/msg, then the stdout_lines/stderr_lines basic.py
     # derives, then changed/exception (round 992003 zfs_fail).
@@ -47,7 +47,7 @@ module Krikri
       name = @params["name"]?
       state = @params["state"]?
 
-      # Real AnsibleModule construction - required args (name and
+      # AnsibleModule construction - required args (name and
       # state, sorted) and the state choices fire here, before the
       # origin check and the zfs/zpool binary lookup below.
       missing = ["name", "state"].select { |arg| arg == "name" ? !name : !state }
@@ -63,17 +63,17 @@ module Krikri
       properties = parse_properties
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      # Real's main() runs this check before Zfs.__init__ does the
+      # Ansible's main() runs this check before Zfs.__init__ does the
       # binary lookup, so origin-on-snapshot wins even on a host
       # without the zfs binaries.
       if origin && name.includes?('@')
         return PluginResult.new(changed: false, failed: true, msg: "cannot specify origin when operating on a snapshot")
       end
 
-      # The real module resolves both binaries with
+      # The Ansible module resolves both binaries with
       # get_bin_path(required=True) up front and fails with this exact
       # wording when either is absent - kept identical so a non-ZFS
-      # host fails the task with real Ansible's message instead of a
+      # host fails the task with Ansible's message instead of a
       # FileNotFoundError from spawning a missing binary.
       ["zfs", "zpool"].each do |binary|
         unless executable_in_path?(binary)
@@ -224,9 +224,9 @@ module Krikri
       run!(zfs_path, Krikri::PluginHelpers::ZfsCommands.set_property_command(name, prop, value), "set property #{prop}", false)
     end
 
-    # Runs a zfs command; in check mode it is a no-op (real's Zfs class
+    # Runs a zfs command; in check mode it is a no-op (Ansible's Zfs class
     # guards every mutating method). On failure, returns the registered
-    # failure shape real's run_command(check_rc=True) produces:
+    # failure shape Ansible's run_command(check_rc=True) produces:
     # fail_json(cmd=..., rc=..., stdout=..., stderr=...) with msg = the
     # rstripped stderr (round 992003 zfs_fail capture).
     private def run!(zfs_path : String, cmd : Array(String), what : String, check_mode : Bool) : PluginResult?

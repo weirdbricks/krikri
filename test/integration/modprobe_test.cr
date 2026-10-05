@@ -3,18 +3,18 @@ require "../minitest_helper"
 private MODPROBE_BUILTIN = "/lib/modules/#{File.read("/proc/sys/kernel/osrelease").chomp}/modules.builtin"
 
 describe "modprobe plugin" do
-  # Real AnsibleModule validates the argument spec before anything else
+  # AnsibleModule validates the argument spec before anything else
   # (before get_bin_path, before any state check) - verified live against
-  # real ansible-playbook with the modprobe binary hidden: the state
+  # ansible-playbook with the modprobe binary hidden: the state
   # choice error still wins. podman-diff modprobe_edge_cases M2/M3/M9.
-  it "fails with real Ansible's missing-name arg-spec message" do
+  it "fails with Ansible's missing-name arg-spec message" do
     result = PluginSpecHelper.run("modprobe", {"state" => "absent"})
 
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_equal("missing required arguments: name")
   end
 
-  it "fails with real Ansible's state choice message for an invalid state" do
+  it "fails with Ansible's state choice message for an invalid state" do
     result = PluginSpecHelper.run("modprobe", {"name" => "krikri-notamodule", "state" => "loaded"})
 
     result["failed"].as_bool.must_equal(true)

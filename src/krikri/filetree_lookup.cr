@@ -3,7 +3,7 @@ require "./plugin_helpers/facts_gatherer"
 
 # Krikri::FiletreeLookup - a native reimplementation of the
 # community.general.filetree lookup plugin (with_community.general.filetree:),
-# behavior matched to `the real module` (verified
+# behavior matched to `the Ansible module` (verified
 # against the collection source, not guessed).
 #
 # Real semantics (all load-bearing for the roles that use it):
@@ -24,7 +24,7 @@ require "./plugin_helpers/facts_gatherer"
 #     epoch floats.
 #
 # A missing root yields no entries rather than failing - os.walk of a
-# nonexistent path simply yields nothing, and real Ansible passes that
+# nonexistent path simply yields nothing, and Ansible passes that
 # empty list straight through (a fully-empty loop skips the task; it is
 # never an error).
 #
@@ -62,7 +62,7 @@ module Krikri::FiletreeLookup
   # to a walked root, walks it, and returns the combined entry list in
   # real filetree's own yield order. *role_path* (the current role's
   # root, when the task runs inside a role) is what a RELATIVE source
-  # resolves against - real Ansible's lookup dwims relative paths through
+  # resolves against - Ansible's lookup dwims relative paths through
   # path_dwim_relative(basedir, 'files', ...), which for a role task
   # means the role's own files/ directory; an absolute source (the
   # overwhelmingly common form - `{{ role_path }}/templates/config/` and

@@ -17,8 +17,8 @@ describe "a looped handler whose every item is skipped by when:" do
     # gate, so on Ubuntu every item skips. Krikri aggregated that to a
     # changed:false/already_displayed result with no "skipped" flag, so
     # the recap counted the handler as ok - finishing ok=9/skipped=1
-    # where real ansible-playbook (2.19.11) finishes ok=8/skipped=2.
-    # Real Ansible also prints one bare trailing
+    # where ansible-playbook (2.19.11) finishes ok=8/skipped=2.
+    # Ansible also prints one bare trailing
     # "skipping: [host]" line after the per-item skip lines.
     src_dir = File.tempname("handler-loop-all-skipped")
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))

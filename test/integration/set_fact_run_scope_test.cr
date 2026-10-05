@@ -3,7 +3,7 @@ require "file_utils"
 
 # Real-Ansible parity: `set_fact:` ranks near the top of the precedence
 # ladder and persists for the WHOLE RUN - a play-2 play var must not
-# shadow a play-1 set_fact. Verified against real ansible-core 2.19.4
+# shadow a play-1 set_fact. Verified against ansible-core 2.19.4
 # (two-play repro prints play 1's set_fact value in play 2 even though
 # play 2 declares a same-named vars: entry); this engine used to reset
 # the set_fact store per play and printed play 2's play var instead.

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Role-local custom `lookup_plugins/*.py` support - real Ansible loads a
+# Role-local custom `lookup_plugins/*.py` support - Ansible loads a
 # role's own lookup_plugins/ directory on the CONTROLLER (a lookup
 # plugin's name IS its file name) and runs its LookupModule's
 # `run(terms, variables, **kwargs)`. Before this, any lookup()/query()
@@ -11,7 +11,7 @@ require "file_utils"
 # and manala.accounts. See PythonLookupRunner for the mechanism.
 #
 # The dispatch specs here require the controller python3 to import the
-# real `ansible` package; on a controller without it every dispatch
+# `Ansible` package; on a controller without it every dispatch
 # degrades to the previous undefined/[] behavior instead (asserted in
 # the last spec, which passes either way).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
@@ -63,7 +63,7 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     output.must_include("x-c", output)
   end
 
-  it "resolves query() inside a real Jinja for-loop block (the {{ }}-path's Crinja renderer)" do
+  it "resolves query() inside a Jinja for-loop block (the {{ }}-path's Crinja renderer)" do
     root = File.tempname("lookup-plugins-crinja-block")
     write_role_with_lookup(root)
     dest = File.join(root, "out.txt")

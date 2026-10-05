@@ -16,7 +16,7 @@ module Krikri
         Group.new(fields[0], fields[2])
       end
 
-      # `local: true`'s existence check - real Ansible's own group_exists
+      # `local: true`'s existence check - Ansible's own group_exists
       # reads /etc/group directly (its own comment: the grp module "does not
       # distinguish between local and directory accounts") instead of any
       # NSS query, scanning the file's lines REVERSED so the LAST matching
@@ -29,7 +29,7 @@ module Krikri
         nil
       end
 
-      # `local: true`'s gid-in-use pre-check - real Ansible's own
+      # `local: true`'s gid-in-use pre-check - Ansible's own
       # _local_check_gid_exists runs before every lgroupadd/lgroupmod with a
       # gid and fails when any NSS-visible group (grp.getgrall, so the full
       # listing, not a single-key lookup) already owns that gid under a
@@ -37,7 +37,7 @@ module Krikri
       # with gid 4 fails "GID '4' already exists with group 'adm'" while the
       # same request without local is left to lgroupadd/groupadd's own
       # duplicate-gid handling). Returns the conflicting group's name, or nil
-      # when the gid is free. Faithfully replicates the real module's
+      # when the gid is free. Faithfully replicates the Ansible module's
       # Python-truthiness quirk: `if self.gid:` means gid 0 skips the check
       # entirely (live-verified - gid 0 with a different name does NOT fail).
       def self.local_gid_conflict(content : String, name : String, gid : String) : String?
@@ -52,14 +52,14 @@ module Krikri
 
       # groupadd/lgroupadd argument list for a brand new group. Desired
       # values that are nil are simply omitted, letting groupadd apply its
-      # own defaults. Flag order matches the real module's group_add exactly
+      # own defaults. Flag order matches the Ansible module's group_add exactly
       # (live-verified: `groupadd -g 1234 -o -r -K GID_MIN=500 -K GID_MAX=1000
       # g1`): -g gid, then -o (non_unique - only ever meaningful alongside a
-      # -g, same nesting real Ansible uses), then -r (system - passed
+      # -g, same nesting Ansible uses), then -r (system - passed
       # unconditionally on the local path too, lgroupadd accepts it:
       # `lgroupadd -r g1-sys-xyz`), then the -K GID_MIN/GID_MAX pairs.
       #
-      # The -K pairs never ride along on the local path - real Ansible
+      # The -K pairs never ride along on the local path - Ansible
       # refuses gid_min/gid_max + local outright before any command runs
       # (live-verified: "'gid_min' can not be used with 'local'"), and even
       # without that gate its local branch never emits them.
@@ -93,7 +93,7 @@ module Krikri
       # groupmod/lgroupmod flags needed to reconcile an existing group with
       # the desired gid. Empty array means nothing to change. -o
       # (non_unique) only ever rides along with a gid that's actually
-      # changing - real Ansible nests it inside its own gid-differs branch
+      # changing - Ansible nests it inside its own gid-differs branch
       # (live-verified: `groupmod -g 4711 -o root`, and nothing when the
       # gid already matches).
       def self.groupmod_flags(current : Group, desired_gid : String?, non_unique : Bool = false) : Array(String)

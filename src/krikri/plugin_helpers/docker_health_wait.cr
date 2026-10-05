@@ -3,7 +3,7 @@ require "json"
 module Krikri
   module PluginHelpers
     # DockerHealthWait - real community.docker's `docker_container
-    # state=healthy` wait loop, behavior matched to the real module
+    # state=healthy` wait loop, behavior matched to the Ansible module
     # module.py's `wait_for_state` (as called for the healthy state with
     # `wait_states=['starting', 'unhealthy']`,
     # `complete_states=['healthy', None]`, `max_wait=healthy_wait_timeout`,
@@ -14,33 +14,33 @@ module Krikri
     # marked source-only):
     # - polls the container's inspect output, reading
     #   State.Health.Status; `None`/missing (no healthcheck) is
-    #   immediately healthy - real's own "`None` means that no health
+    #   immediately healthy - Ansible's own "`None` means that no health
     #   check enabled; simply treat this as 'healthy'".
     # - 'unhealthy' is a WAIT state, not an immediate failure: the loop
     #   keeps polling until the timeout expires (live-verified: real
     #   reports the timeout message, not an "unhealthy" message).
     # - poll delay starts at 1s and grows exponentially (*1.1) capped at
-    #   10s (real's own comment: 25 iterations to reach the cap).
+    #   10s (Ansible's own comment: 25 iterations to reach the cap).
     # - timeout: fires when `total_wait > max_wait or delay < 1e-4`
     #   (after clamping the last sleep to not overshoot max_wait) with
-    #   real's wording `Timeout of <max_wait> seconds exceeded while
+    #   Ansible's wording `Timeout of <max_wait> seconds exceeded while
     #   waiting for container "<id>"` (Float64 formatting, so
     #   healthy_wait_timeout: 8 renders as "8.0").
-    # - a vanished container (inspect 404) fails with real's
+    # - a vanished container (inspect 404) fails with Ansible's
     #   (sic) "Encontered vanished container while waiting for container
-    #   "<id>"" - the typo is real's own, mirrored verbatim.
-    # - any other health status fails with real's "Encontered unexpected
+    #   "<id>"" - the typo is Ansible's own, mirrored verbatim.
+    # - any other health status fails with Ansible's "Encontered unexpected
     #   state "<status>" while waiting for container "<id>"" (in
     #   practice unreachable for real daemons, whose only health
     #   statuses are starting/healthy/unhealthy/none).
-    # - other inspect errors fail with real's "Error inspecting
+    # - other inspect errors fail with Ansible's "Error inspecting
     #   container: <error>".
     #
     # Both the inspect call and the sleep are injected so the loop is
     # unit-testable without a daemon (sleep_fn in tests returns
     # immediately; the plugin passes a real `sleep`).
     module DockerHealthWait
-      # Real's fail() carries the last inspect result into the result
+      # Ansible's fail() carries the last inspect result into the result
       # dict as `container:` (timeout and unexpected-state cases) - nil
       # for the vanished case, where there is nothing to inspect.
       class Failure < Exception
@@ -60,7 +60,7 @@ module Krikri
       WAIT_STATES     = ["starting", "unhealthy"] of String?
       COMPLETE_STATES = ["healthy", nil] of String?
 
-      # Real's `state_info.get('Status')` on `State.Health` - missing
+      # Ansible's `state_info.get('Status')` on `State.Health` - missing
       # State, missing Health (no healthcheck) or missing Status all
       # mean None (immediately healthy).
       def self.health_status(inspect_json : JSON::Any) : String?
@@ -103,7 +103,7 @@ module Krikri
           end
           sleep_fn.call(delay)
           total_wait += delay
-          # Exponential backoff, never longer than 10 seconds (real's
+          # Exponential backoff, never longer than 10 seconds (Ansible's
           # own comment: 25 iterations to reach the cap).
           delay = {delay * 1.1, 10.0}.min
         end

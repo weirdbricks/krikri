@@ -36,9 +36,9 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
   describe "strict ordering comparisons (differential-fuzz fix)" do
     # The hand-rolled evaluator used to stringify both operands and
     # compare the texts, silently answering ordering comparisons real
-    # Jinja2/Python raises TypeError on (and real ansible-playbook fails
+    # Jinja2/Python raises TypeError on (and ansible-playbook fails
     # the task) - found by bin/differential_fuzz against the krikri-jinja
-    # engine, which already raises exactly what real Jinja2 3.1.6 raises.
+    # engine, which already raises exactly what Jinja2 3.1.6 raises.
     # Deliberately KEPT lenient: two raw strings (int/float-parsable
     # pairs numerically first, exactly as before - module stdout values
     # are strings in real roles), and a numeric string against a real
@@ -109,7 +109,7 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
       evaluator.evaluate("count > 1.5").must_equal("true")
     end
 
-    it "raises when the right operand is a bare boolean keyword (real Jinja syntax error)" do
+    it "raises when the right operand is a bare boolean keyword (Jinja syntax error)" do
       v = Hash(String, JSON::Any).new
       v["list_strs"] = JSON.parse(%(["b", "a"]))
       evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)

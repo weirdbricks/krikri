@@ -9,7 +9,7 @@ private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
 describe "a named block: nested inside another block:" do
-  it "prints no banner of its own, only its members' - matching real Ansible" do
+  it "prints no banner of its own, only its members' - matching Ansible" do
     # Real bug found benchmarking prometheus.prometheus.alertmanager round
     # 134: run_task_list (used for block_tasks/rescue_tasks/always_tasks on
     # the single-host path) printed a "TASK [...]" banner unconditionally

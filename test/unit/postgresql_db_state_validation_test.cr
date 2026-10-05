@@ -1,8 +1,8 @@
 require "../minitest_helper"
 
 # postgresql_db must reject an invalid `state` at argument-validation
-# time, BEFORE any connection attempt - matching real's argument_spec
-# (verified in the podman-diff harness, cases Q3/Q10: real reports
+# time, BEFORE any connection attempt - matching Ansible's argument_spec
+# (verified in the podman-diff harness, cases Q3/Q10: Ansible reports
 # "value of state must be one of: absent, dump, present, restore, got:
 # ..." against a server that isn't even reachable, while this plugin
 # used to connect first and fail on the unreachable server instead).

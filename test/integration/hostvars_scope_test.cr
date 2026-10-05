@@ -1,6 +1,6 @@
 # Cross-host hostvars rendering scope: a value read through
 # hostvars[<other host>] must render in THAT host's own variable context
-# (real Ansible's HostVarsVars templar - the per-host templar ansible-core
+# (Ansible's HostVarsVars templar - the per-host templar ansible-core
 # builds for every hostvars entry), never the reading host's. Before this
 # was fixed, every re-render funnel (the span re-pass, the plain-lookup
 # re-render, the extract filter, the jinja engine's hostvars preparation,

@@ -3,12 +3,12 @@ require "file_utils"
 
 # Registered-result key orders for the script/make/expect/htpasswd/npm/
 # package/apt_repository/deb822_repository plugins, pinned to the orders
-# live-verified against real ansible-core 2.19.11 by registering each
+# live-verified against ansible-core 2.19.11 by registering each
 # module's result and dumping `{{ r | to_json }}` (see
 # key_order_sweep_test.cr for the general method; the -v dump sorts
 # alphabetically, so the order is only observable programmatically).
 #
-# The pins cover the keys krikri emits, in real's relative order: real's
+# The pins cover the keys krikri emits, in Ansible's relative order: Ansible's
 # registered result additionally carries controller-appended
 # ansible_facts (interpreter discovery) and backfilled failed: false /
 # warnings after the module dict, which krikri's module wire omits.
@@ -101,7 +101,7 @@ describe "make plugin result key order (sweep7)" do
 end
 
 describe "package plugin result key order (sweep7)" do
-  # Real 2.19.11's package: action plugin delegates to apt on this host,
+  # Ansible 2.19.11's package: action plugin delegates to apt on this host,
   # so the registered shape IS apt's. Live-verified (unprivileged:
   # unchanged paths + check mode, whose --simulate runs need no root):
   # unchanged present = changed, cache_updated, cache_update_time; bare
@@ -207,7 +207,7 @@ describe "package plugin result key order (sweep7)" do
 end
 
 describe "npm plugin result key order (sweep7)" do
-  # Real 2.19.11 community.general npm has a SINGLE exit -
+  # Ansible 2.19.11 community.general npm has a SINGLE exit -
   # exit_json(changed=changed) - so every success shape registers just
   # changed (no msg/stdout; the "Package ..."-style msgs were krikri's
   # own borrow, now dropped). Live-verified with the offline-safe
@@ -239,7 +239,7 @@ describe "npm plugin result key order (sweep7)" do
 end
 
 describe "htpasswd plugin result key order (sweep7)" do
-  # Real 2.19.11 community.general htpasswd exit_json's (msg=...,
+  # Ansible 2.19.11 community.general htpasswd exit_json's (msg=...,
   # changed=...) with NO path key in the result - live-verified create
   # (msg, changed), idempotent rerun (msg, changed), update and remove.
   it "registers a fresh create as msg, changed" do
@@ -298,7 +298,7 @@ describe "htpasswd plugin result key order (sweep7)" do
 end
 
 describe "expect plugin result key order (sweep7)" do
-  # Real 2.19.11 expect.py builds result = dict(cmd, stdout, rc, start,
+  # Ansible 2.19.11 expect.py builds result = dict(cmd, stdout, rc, start,
   # end, delta, changed) and the creates:/removes: skip exits
   # exit_json(cmd, stdout, changed, rc) - live-verified both, with
   # stdout_lines after changed/rc in each.
@@ -354,7 +354,7 @@ describe "expect plugin result key order (sweep7)" do
 end
 
 describe "script plugin result key order (sweep7)" do
-  # Real 2.19.11's script ACTION plugin builds its own result dict
+  # Ansible 2.19.11's script ACTION plugin builds its own result dict
   # (rc, stdout, stdout_lines, stderr, stderr_lines, changed) around the
   # module run; failed: false lands after changed via the executor
   # backfill. Live-verified with a plain run and a passing-args run.
@@ -407,7 +407,7 @@ describe "script plugin result key order (sweep7)" do
               dest: KRIKRI_DUMP_PATH
     YAML
 
-    # Real's action-side skip registers exactly [skipped, msg, changed]
+    # Ansible's action-side skip registers exactly [skipped, msg, changed]
     # (no failed key); krikri's gate runs module-side, so the executor's
     # module-result failed: false backfill still appends after changed -
     # a residual CONTENT divergence, the ORDER of the shared keys is the

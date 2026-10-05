@@ -95,7 +95,7 @@ describe "a handler nested inside a block:" do
     output.wont_include("SHOULD-NOT-RUN")
   end
 
-  # Verified against real ansible-core 2.19.4/2.21.3: notifying a
+  # Verified against ansible-core 2.19.4/2.21.3: notifying a
   # flattened block member runs ONLY that task - the block's rescue:
   # is completely inert for handler purposes, not merely deferred. A
   # failure in the notified task fails the run outright (rescued=0),
@@ -130,7 +130,7 @@ describe "a handler nested inside a block:" do
 
   # rescue:/always: members are not flattened at all - a task
   # notifying one of THEIR names directly must still fail, matching
-  # real Ansible exactly (verified live: notifying a rescue: task's own
+  # Ansible exactly (verified live: notifying a rescue: task's own
   # name raises "handler not found" too).
   it "does not make a rescue: task independently notify-able" do
     status, _ = run_playbook(<<-YAML)
@@ -158,11 +158,11 @@ describe "a handler nested inside a block:" do
     status.success?.must_equal(false)
   end
 
-  # Verified live against real ansible-core 2.19.12 in a container: a
+  # Verified live against ansible-core 2.19.12 in a container: a
   # block used as a handler is never itself a runnable unit (only its
   # flattened children are), so its own top-level notify: - a real
   # feature for a REGULAR block, firing once if any nested task changed
-  # - never fires; real Ansible's run showed only the notified child's
+  # - never fires; Ansible's run showed only the notified child's
   # own handler, never the block's notify: target. This engine's
   # flatten already drops the enclosing block Task (and its notify:)
   # once children are promoted to standalone handlers, so this is

@@ -3,11 +3,11 @@ require "../minitest_helper"
 require "socket"
 
 # Registered-result SHAPE (keys, values and wire order) for the
-# community.mysql plugins, pinned to real ansible-playbook 2.19.11 with
+# community.mysql plugins, pinned to ansible-playbook 2.19.11 with
 # community.mysql 5.0.2 against a real MySQL 8.4 server, observed through
 # `{{ r | to_json }}` on a registered task (the -v dump sorts
 # alphabetically, so the order is only observable programmatically - see
-# key_order_sweep9_test.cr for the general method). Real's registered
+# key_order_sweep9_test.cr for the general method). Ansible's registered
 # result also carries `deprecations` after `failed` - that is the
 # collection-version redirect community.mysql -> ansible.mysql emitted by
 # the collection loader, not part of the module's own result dict - and
@@ -144,7 +144,7 @@ describe "mysql_db plugin result shape" do
   # sibling workers (see test/minitest_helper.cr).
   serial!
 
-  # Real's exit_json for present/absent carries no `msg` key at all, and
+  # Ansible's exit_json for present/absent carries no `msg` key at all, and
   # reports `executed_commands` as the mogrified statement it ran.
   it "registers a create as changed, db, db_list, executed_commands, failed" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -165,7 +165,7 @@ describe "mysql_db plugin result shape" do
   end
 
   # The idempotent no-op still reports `executed_commands`, as an empty
-  # list (real only ever leaves the key out in check mode).
+  # list (Ansible only ever leaves the key out in check mode).
   it "registers the already-present no-op with an empty executed_commands" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML), create_db_play("shape_db2"))
@@ -181,7 +181,7 @@ describe "mysql_db plugin result shape" do
     dump["executed_commands"].as_a.size.must_equal(0)
   end
 
-  # Real returns a DIFFERENT exit_json in check mode, before
+  # Ansible returns a DIFFERENT exit_json in check mode, before
   # `executed_commands` is ever populated - so the key is absent there
   # even on a run that would have changed something.
   it "registers a check-mode create without executed_commands" do
@@ -219,7 +219,7 @@ describe "mysql_db plugin result shape" do
     dump["executed_commands"].as_a.map(&.as_s).must_equal(["DROP DATABASE `shape_db4`"])
   end
 
-  # Real's `name:` is a list: `db` is the names joined by a space and
+  # Ansible's `name:` is a list: `db` is the names joined by a space and
   # `db_list` the list itself, and one statement is reported per created
   # database - with `encoding:`/`collation:` reaching the statement as
   # the quoted string literals real binds them as.
@@ -251,7 +251,7 @@ describe "mysql_query plugin result shape" do
   # sibling workers (see test/minitest_helper.cr).
   serial!
 
-  # Real passes no `msg` on success; `execution_time_ms` is a per
+  # Ansible passes no `msg` on success; `execution_time_ms` is a per
   # statement float (milliseconds, 4 decimals) that cannot be asserted
   # exactly - only its presence and per-statement arity.
   it "registers a select as changed, executed_queries, query_result, rowcount, execution_time_ms, failed" do
@@ -311,7 +311,7 @@ describe "mysql_user plugin result shape" do
   # sibling workers (see test/minitest_helper.cr).
   serial!
 
-  # Real's own user_add branch: `user` is the `name:` param echoed
+  # Ansible's own user_add branch: `user` is the `name:` param echoed
   # verbatim, `password_changed` is true for the create, null for a
   # check-mode create (nothing was attempted), and `attributes` is null
   # unless `attributes:` was given. Each spec owns its own account, so
@@ -349,7 +349,7 @@ describe "mysql_user plugin result shape" do
     dump["password_changed"].as_bool.must_equal(false)
   end
 
-  it "registers a delete and the already-absent no-op with real's wording" do
+  it "registers a delete and the already-absent no-op with Ansible's wording" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML), create_user_play("kru_delete@localhost"))
             - name: delete
@@ -377,7 +377,7 @@ describe "mysql_user plugin result shape" do
     dump["password_changed"].as_bool.must_equal(false)
   end
 
-  # The check-mode create is the one path where real reports
+  # The check-mode create is the one path where Ansible reports
   # `password_changed` as null rather than a boolean.
   it "registers a check-mode create with a null password_changed" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -401,10 +401,10 @@ describe "mysql_info plugin result shape" do
   # sibling workers (see test/minitest_helper.cr).
   serial!
 
-  # Real's exit_json always leads with the three server/connector facts
+  # Ansible's exit_json always leads with the three server/connector facts
   # and then appends exactly the subsets the filter kept, in the order
   # its own dict declares them.
-  it "registers every subset, in real's order, with no filter" do
+  it "registers every subset, in Ansible's order, with no filter" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML))
             - name: everything
@@ -419,9 +419,9 @@ describe "mysql_info plugin result shape" do
     ])
     dump["changed"].as_bool.must_equal(false)
     dump["server_engine"].as_s.must_equal("MySQL")
-    # `version` is a dict whose own key order is real's dict(...) order.
+    # `version` is a dict whose own key order is Ansible's dict(...) order.
     dump["version"].as_h.keys.must_equal(%w[major minor release suffix full])
-    # Empty on a standalone server - real reports them as empty dicts, not
+    # Empty on a standalone server - Ansible reports them as empty dicts, not
     # by omitting the keys.
     dump["slave_hosts"].as_h.must_be_empty
     dump["slave_status"].as_h.must_be_empty
@@ -442,7 +442,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version failed deprecations])
   end
 
-  # A YAML list of subset names: real's argspec types `filter` as a list,
+  # A YAML list of subset names: Ansible's argspec types `filter` as a list,
   # so both spellings reach the same code.
   it "registers only the listed subsets for a YAML list filter" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -473,7 +473,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
   end
 
-  # Real's comma-separated string form of the same list.
+  # Ansible's comma-separated string form of the same list.
   it "registers only the comma-separated subsets for a string filter" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
     dump = registered_dump(task_body(<<-YAML))
@@ -486,7 +486,7 @@ describe "mysql_info plugin result shape" do
     dump.as_h.keys.must_equal(%w[changed server_engine connector_name connector_version version databases failed deprecations])
   end
 
-  # Real's `!name` exclusion form as a list, and the rule that an
+  # Ansible's `!name` exclusion form as a list, and the rule that an
   # inclusion alongside an exclusion makes the exclusion irrelevant.
   it "registers every subset but settings and engines for a list of exclusions" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -506,7 +506,7 @@ describe "mysql_info plugin result shape" do
     ])
   end
 
-  # A filter element that is not a subset name: real warns per element
+  # A filter element that is not a subset name: Ansible warns per element
   # (in the order given) and ignores it.
   it "warns and ignores an unknown filter element" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -523,7 +523,7 @@ describe "mysql_info plugin result shape" do
     dump["warnings"].as_a.map(&.as_s).must_equal(["filter element: bogus is not allowable, ignored"])
   end
 
-  # Real's `!name` exclusion form, and its rule that any inclusion makes
+  # Ansible's `!name` exclusion form, and its rule that any inclusion makes
   # the exclusions irrelevant.
   it "registers every subset but settings for filter '!settings'" do
     skip "no MySQL server at #{MYSQL_HOST}:#{MYSQL_PORT}" unless mysql_reachable?
@@ -545,13 +545,13 @@ end
 # `exclude_fields:` support in mysql_info, against a throwaway MySQL at
 # 127.0.0.1:33307 (pended when nothing is listening there).
 #
-# Real's community.mysql 5.0.2 mysql_info.py passes `exclude_fields` to
+# Ansible's community.mysql 5.0.2 mysql_info.py passes `exclude_fields` to
 # __get_databases, which drops each named field from the emitted
 # per-database dict AND from the information_schema query that would
 # have produced it. Only `db_size` and `db_table_count` are supported -
 # anything else is silently ignored (no warning, no error), as the
 # module's own documentation promises. Every value pinned here was
-# live-verified against real ansible-playbook 2.19.11 with
+# live-verified against ansible-playbook 2.19.11 with
 # community.mysql 5.0.2 on MySQL 8.4.
 private EXCL_HOST = "127.0.0.1"
 private EXCL_PORT = 33307
@@ -625,7 +625,7 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
                 #{excl_login_args}
               register: r
     YAML
-    # Real still names every database it found - the dict is per
+    # Ansible still names every database it found - the dict is per
     # database, just with no keys left in it.
     (dump["databases"].as_h.size > 0).must_equal(true)
     dump["databases"].as_h.each_value do |entry|
@@ -633,7 +633,7 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
     end
   end
 
-  # Real's argspec types `exclude_fields` as a list, so a YAML list
+  # Ansible's argspec types `exclude_fields` as a list, so a YAML list
   # reaches the same code as the comma-separated string form.
   it "honors a YAML list of exclude_fields" do
     skip "no MySQL server at #{EXCL_HOST}:#{EXCL_PORT}" unless excl_reachable?
@@ -687,7 +687,7 @@ describe "mysql_info exclude_fields (127.0.0.1:33307)" do
       entry.as_h.keys.must_equal(%w[tables])
     end
     # The scratch database holds no tables, so it can only be present
-    # through the SHOW DATABASES branch - real reports it as
+    # through the SHOW DATABASES branch - Ansible reports it as
     # {"tables": 0}, and an excluded `size` must be absent, not 0.
     dump["databases"].as_h["excl_shape_db"].as_h.must_equal({"tables" => JSON::Any.new(0_i64)})
   end

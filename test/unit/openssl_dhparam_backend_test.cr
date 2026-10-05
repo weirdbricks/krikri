@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Pins plugins/openssl_dhparam.cr's backend selection against real
-# community.crypto.openssl_dhparam (live-diffed vs real ansible-playbook
+# community.crypto.openssl_dhparam (live-diffed vs ansible-playbook
 # 2.19.11): the cryptography backend's generate raises the
 # "DH key_size must be at least 512 bits" ValueError for undersized
 # params as an UNHANDLED module exception (the fatal msg carries the
@@ -44,10 +44,10 @@ describe "openssl_dhparam backend selection" do
   # kpg35 sweep #216: the explicit `openssl` backend on a host WITHOUT
   # the openssl CLI used to die with "Error executing process: 'openssl'".
   # The backend now runs the same libcrypto call the CLI makes, natively,
-  # and reproduces the CLI stderr the real module passes to fail_json
+  # and reproduces the CLI stderr the Ansible module passes to fail_json
   # verbatim - including libcrypto's own error line (whose 12-hex prefix
   # is the printing thread's id, a per-process value; masked in
-  # byte-parity runs). Live-diffed vs real ansible-playbook 2.19.11.
+  # byte-parity runs). Live-diffed vs ansible-playbook 2.19.11.
   it "fails an undersized openssl-backend generate with the CLI's exact stderr" do
     work = PluginSpecHelper.tmp_path("dhparam-small-cli")
     Dir.mkdir_p(work)
@@ -67,7 +67,7 @@ describe "openssl_dhparam backend selection" do
                    "dhparam: Generating DH key parameters failed\n" \
                    "#{msg.lines.last}\n")
     # Everything up to the thread-id prefix is deterministic (same
-    # libcrypto real's CLI links); the prefix itself differs per process.
+    # libcrypto Ansible's CLI links); the prefix itself differs per process.
     assert_match(
       /^[0-9A-F]{12}0000:error:0280007E:Diffie-Hellman routines:dh_builtin_genparams:modulus too small:\S*dh_gen\.c:\d+:$/,
       msg.lines.last)

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered ini_file result key order -
+# ansible-core 2.19.11's registered ini_file result key order -
 # live-verified via `{{ r | to_json }}` on registered ini_file: tasks:
 # changed, diff, msg, path, then backup_file only when a backup was
 # taken, then the add_path_info stat block, failed - identical on

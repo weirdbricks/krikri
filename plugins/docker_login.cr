@@ -5,11 +5,11 @@
 # .molecule_docker_ci uses it; previously unavailable -> rc=4
 # "unavailable modules").
 #
-# Semantics matching the real module:
+# Semantics matching the Ansible module:
 # - registry_url (aliases registry/url; default the legacy Docker Hub
 #   endpoint), username/password (required when state=present -
 #   "state is present but all of the following are missing: ..."),
-#   reauthorize (bool-converted, like real's merged-spec type
+#   reauthorize (bool-converted, like Ansible's merged-spec type
 #   conversion), config_path (default ~/.docker/config.json, the
 #   dockercfg_path alias), state present/absent - plus the full
 #   AnsibleModule validation surface (merged-spec type conversion,
@@ -18,9 +18,9 @@
 #   daemon-facing runs.
 # - state=present: existing auths[<registry>] entry decoding to the same
 #   username AND password with no reauthorize is a no-op (changed=false,
-#   no registry round trip - the real module returns the stored authcfg
+#   no registry round trip - the Ansible module returns the stored authcfg
 #   immediately); otherwise the credentials are validated and stored via
-#   `docker login` (which is what the real module's daemon /auth call +
+#   `docker login` (which is what the Ansible module's daemon /auth call +
 #   DockerFileStore.store achieve together), changed=true.
 # - state=absent: the registry's auth entry is erased from the config
 #   file (0600, like the real DockerFileStore._write) when present,
@@ -53,12 +53,12 @@ module Krikri
     # "login_result": {}}` and then DELETES `actions` again before
     # exit_json (docker_login.py's main) - so a successful register
     # carries exactly changed + login_result, with the module protocol's
-    # `failed` last. Live-verified against real ansible-core 2.19.11 +
+    # `failed` last. Live-verified against ansible-core 2.19.11 +
     # community.docker 5.2.1 (a state=absent logout registers
     # {"changed": false, "login_result": {}, "failed": false}, no msg).
     KEY_ORDER = %w[changed login_result failed]
 
-    # Real's own wrapper for a DockerException escaping the module body.
+    # Ansible's own wrapper for a DockerException escaping the module body.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     def execute : PluginResult
@@ -108,7 +108,7 @@ module Krikri
       censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
     end
 
-    # A successful login/logout carries no msg: real's `actions` list
+    # A successful login/logout carries no msg: Ansible's `actions` list
     # (which held every human-readable line) is deleted before exit_json,
     # so nothing survives it but changed and login_result.
     private def success_result(changed : Bool, login_result : JSON::Any) : PluginResult
@@ -129,7 +129,7 @@ module Krikri
       result
     end
 
-    # Real AnsibleModule validation over the merged spec, in
+    # AnsibleModule validation over the merged spec, in
     # arg_spec.ArgumentSpecValidator.validate order: required ->
     # types (merged-spec order: common args first) -> choices ->
     # required_together -> required_if -> unsupported (deferred last).
@@ -218,7 +218,7 @@ module Krikri
       return success_result(changed: false, login_result: JSON.parse("{}")) unless updated
 
       write_config(config_path, updated)
-      # Real's logout() never touches login_result - it stays at the
+      # Ansible's logout() never touches login_result - it stays at the
       # empty dict its result was seeded with.
       success_result(changed: true, login_result: JSON.parse("{}"))
     end

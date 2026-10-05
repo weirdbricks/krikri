@@ -7,7 +7,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # nowhere (`my_config: {foo: {bar: "{{ some_undefined_var }}"}}`) fed
 # through a serializing filter (`{{ my_config | to_json }}`, and the
 # same via `| to_nice_yaml`) silently serialized the literal text
-# "undefined" as ordinary content - real ansible-playbook fails
+# "undefined" as ordinary content - ansible-playbook fails
 # immediately ("'some_undefined_var' is undefined", because it
 # templates every nested string value at every level, strictly).
 #
@@ -17,7 +17,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # Crinja path via JinjaRenderer's own context conversion - both
 # converge on rerender_nested_templates/rerender_string_value, which
 # used to render nested leaves LENIENTLY. Every expectation below was
-# verified against real ansible-core running the equivalent playbook.
+# verified against ansible-core running the equivalent playbook.
 describe "an undefined variable nested inside a dict/list value fed through a filter" do
   private def v_base
     h = Hash(String, JSON::Any).new
@@ -36,7 +36,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
     # to_nice_yaml is NOT in FilterEngine::KNOWN_FILTER_NAMES - the chain
     # dispatch first tries Crinja (whose context conversion now raises),
     # falls back to the hand-rolled chain head (whose re-render raises
-    # the same way), so the task fails like real Ansible instead of
+    # the same way), so the task fails like Ansible instead of
     # serializing the sentinel text. JinjaRenderer#render's own direct
     # entry point deliberately swallows generic errors (lenient
     # give-back-the-text), so this goes through VarSubstitutor#substitute
@@ -57,7 +57,7 @@ describe "an undefined variable nested inside a dict/list value fed through a fi
   end
 
   it "still renders a nested leaf that guards its own missing name with default()" do
-    # The leniency real Ansible itself shows - a `default()`-guarded
+    # The leniency Ansible itself shows - a `default()`-guarded
     # nested leaf is legitimately defined-by-fallback - must survive
     # the strict fix, same carve-out raise_if_strict_undefined applies.
     v = Hash(String, JSON::Any).new

@@ -4,7 +4,7 @@ module Krikri
   # spec can require it directly without triggering plugins/systemd.cr's
   # bottom-of-file STDIN entry point.
   #
-  # - `force` (bool, no default): real Ansible's own systemd module
+  # - `force` (bool, no default): Ansible's own systemd module
   #   prepends `--force` to its systemctl invocation when set - here
   #   applied to the enable/disable/mask/unmask calls, the commands where
   #   it actually changes behavior.

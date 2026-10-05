@@ -1,6 +1,6 @@
 ---
 name: launch-roles
-description: Run a full krikri-role-tester round end-to-end against real Ansible Galaxy roles — launch, monitor, triage, dispatch fixes, and confirm them. Use whenever the user asks to "launch roles", "run a round", "start a batch", "test some roles", or names specific roles/a role count to test against krikri-playbook vs real ansible-playbook. Covers picking roles, choosing a fresh round-start, fetching Atlantic.net credentials, respecting Atlantic.net's concurrency limit, running the batch, monitoring it to completion, triaging divergences, dispatching root-cause fixes to Crush, validating and landing each fix, confirming the fix against the real host, and syncing the round's docs. Atlantic.net only — the Kata backend is retired (not enough value for the reliability cost; see step 4).
+description: Run a full krikri-role-tester round end-to-end against Ansible Galaxy roles — launch, monitor, triage, dispatch fixes, and confirm them. Use whenever the user asks to "launch roles", "run a round", "start a batch", "test some roles", or names specific roles/a role count to test against krikri-playbook vs ansible-playbook. Covers picking roles, choosing a fresh round-start, fetching Atlantic.net credentials, respecting Atlantic.net's concurrency limit, running the batch, monitoring it to completion, triaging divergences, dispatching root-cause fixes to Crush, validating and landing each fix, confirming the fix against the real host, and syncing the round's docs. Atlantic.net only — the Kata backend is retired (not enough value for the reliability cost; see step 4).
 ---
 
 # Launch roles (krikri-role-tester full round)
@@ -230,9 +230,9 @@ Then, per `AGENTS.md`'s triage step:
 - Dedupe the divergences — if two or more roles hit the same root cause,
   that's one fix to make, not two.
 - For each divergence, confirm it's a real `krikri-playbook` bug with a
-  minimal repro against real `ansible-playbook` before treating it as one —
+  minimal repro against `ansible-playbook` before treating it as one —
   plenty of "bugs" turn out to be broken upstream roles, missing Galaxy
-  roles, or role-side gaps that affect real Ansible identically.
+  roles, or role-side gaps that affect Ansible identically.
 - Report the triaged results to the user (CLEAN count, DIVERGENT roles with
   their deduped root causes, any BLOCKED/GALAXY_MISSING roles) — this is
   where the user's input is actually needed (deciding what's worth fixing

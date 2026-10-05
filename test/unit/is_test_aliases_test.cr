@@ -22,7 +22,7 @@ end
 
 describe "is* test aliases (P2.1-P2.3)" do
   # Shared fixture tree on the CONTROLLER's filesystem (these path tests
-  # always check the controller, like real Ansible's os.path.* wrappers).
+  # always check the controller, like Ansible's os.path.* wrappers).
   TMPDIR    = File.tempname("/tmp", "is_alias_spec")
   Dir.mkdir_p(TMPDIR)
   REAL_FILE = File.join(TMPDIR, "real.conf")

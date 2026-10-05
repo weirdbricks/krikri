@@ -5,7 +5,7 @@ require "file_utils"
 # ansible-playbook 2.19.11 on this host (2026-10-01, krikri-playbook
 # generator round 33 re-sweep):
 #
-#   - an unsupported parameter is rejected by real's argument spec
+#   - an unsupported parameter is rejected by Ansible's argument spec
 #     ("Unsupported parameters for (community.general.cronvar) module:
 #     <name>. Supported parameters include: ...") - the module name is
 #     the spelling AS WRITTEN in the task, and the option list is sorted
@@ -33,7 +33,7 @@ ensure
 end
 
 describe "cronvar argument spec" do
-  it "rejects a hallucinated option with real's unsupported-parameters wording" do
+  it "rejects a hallucinated option with Ansible's unsupported-parameters wording" do
     output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -99,7 +99,7 @@ describe "cronvar cron_file parent directory" do
       "Parent directory '/etc/cron.d/krikri-spec-missing-dir' does not exist for cron_file: 'krikri-spec-missing-dir/vars'")
   end
 
-  it "beats the module's own missing-value check, like real's constructor" do
+  it "beats the module's own missing-value check, like Ansible's constructor" do
     result = PluginSpecHelper.run("cronvar", {
       "name"      => "MAILTO",
       "cron_file" => "/krikri/definitely/not/here/vars",
@@ -111,7 +111,7 @@ describe "cronvar cron_file parent directory" do
 end
 
 describe "cronvar cron_file write failure" do
-  it "reports real's uncaught-OSError shape when the file cannot be written" do
+  it "reports Ansible's uncaught-OSError shape when the file cannot be written" do
     # root ignores the mode bits, so there is nothing to observe there.
     skip "running as root: the mode bits do not deny the write" if PluginSpecHelper.running_as_root?
 

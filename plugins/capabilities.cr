@@ -84,7 +84,7 @@ module Krikri
 
     # Commit the new capability set (or just report it, in check mode)
     #
-    # Key orders live-verified against real 2.19.11 (community.general
+    # Key orders live-verified against Ansible 2.19.11 (community.general
     # capabilities.py's three exit_json shapes): unchanged ->
     # changed,state; check-mode change -> changed,msg; real change ->
     # changed,state,msg,stdout.
@@ -146,7 +146,7 @@ module Krikri
       end
 
       if op_index == -1
-        # Real's message interpolates the OPS TUPLE, so it prints with
+        # Ansible's message interpolates the OPS TUPLE, so it prints with
         # Python repr punctuation (live-verified against real
         # ansible-playbook 2.19.11, which says
         # Couldn't find operator (one of: ('=', '-', '+'))).
@@ -162,7 +162,7 @@ module Krikri
       Process.quote(s)
     end
 
-    # the real module get_bin_path(): the module process's PATH
+    # the Ansible module get_bin_path(): the module process's PATH
     # first, then the /sbin, /usr/sbin and /usr/local/sbin dirs that
     # exist and are not listed already; first executable match wins.
     private def find_executable(name : String) : String?

@@ -30,7 +30,7 @@ describe "with_community.general.flattened:" do
     # and `next unless value` silently DROPPED the literal source
     # entirely instead of contributing it as one item. The whole loop
     # produced ZERO items instead of the literal paths, and the task
-    # (which real ansible-playbook runs against all 6 real directories)
+    # (which ansible-playbook runs against all 6 real directories)
     # failed outright with "find: 'undefined': No such file or
     # directory" - LoopResolver's own (dead, never-called) with_flattened
     # module method got this right, misleadingly making the bug look

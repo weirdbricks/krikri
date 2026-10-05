@@ -3,10 +3,10 @@
 # the `docker compose` v2 CLI plugin. Behavior matched to community.docker's
 # docker_compose_v2 module (KNOWN_MISSING's "unimplemented collection
 # modules" entry: mrlesmithjr.blocky uses it; previously rc=4 "unavailable
-# modules" where real ansible rc=0'd).
+# modules" where Ansible rc=0'd).
 #
-# Mirrors the real module's structure (community.docker's
-# the real module BaseComposeManager + the module's own
+# Mirrors the Ansible module's structure (community.docker's
+# the Ansible module BaseComposeManager + the module's own
 # get_up_cmd/get_down_cmd/get_restart_cmd/cmd_stop):
 #   - state=present   -> `docker compose ... up --detach --no-color
 #     --quiet-pull` (ALWAYS detached - there is no attach mode), flags
@@ -19,7 +19,7 @@
 #   - state=stopped   -> `up --no-start` (creates missing containers)
 #     then - only when `docker compose ps` shows something still running
 #     - `stop` (Compose's stop "always claims it is stopping containers",
-#     so the real module gates the second command the same way)
+#     so the Ansible module gates the second command the same way)
 #   - changed is computed from the command's own stderr event lines
 #     (Container/Network/Volume/Image <id> <Status>, `<service> Pulling`,
 #     image-layer pull progress), not hardcoded: only the "working"
@@ -28,12 +28,12 @@
 #     that is what makes a warm `state: present` run converge to
 #     changed=0. For up, service-level pull events are always ignored and
 #     build events are ignored when ignore_build_events is true (the
-#     default, matching the real module).
+#     default, matching the Ansible module).
 #   - check_mode appends --dry-run to every command and still computes
 #     changed from the parsed dry-run events.
 #
 # Deliberate simplifications, each equivalent on every supported Compose:
-#   - events are always parsed as TEXT (the real module switches to
+#   - events are always parsed as TEXT (the Ansible module switches to
 #     --progress json + a JSON parser on Compose >= 2.29; the default
 #     non-TTY progress output is the same text format either way, so the
 #     parsed event set is identical)
@@ -43,7 +43,7 @@
 #     fails with its own error in that case, same net rc/changed
 #   - definition: (a dict) is written to a temp compose.yaml via JSON
 #     flow syntax - JSON is valid YAML, so Compose parses it identically
-#     to the real module's safe_dump output
+#     to the Ansible module's safe_dump output
 require "json"
 require "../src/krikri/base_plugin"
 
@@ -57,15 +57,15 @@ module Krikri
     # behavior on it (list_containers_raw's --no-trunc on >= 2.23).
     @compose_version = ""
 
-    # The real module's DOCKER_STATUS_WORKING - the only statuses that
+    # The Ansible module's DOCKER_STATUS_WORKING - the only statuses that
     # ever flip changed to true (plus image-layer pull progress below).
     WORKING_STATUSES = %w[Creating Starting Restarting Stopping Killing Removing Recreate Pulling Building]
-    # The real module's DOCKER_STATUS (done + working + pull + error +
+    # The Ansible module's DOCKER_STATUS (done + working + pull + error +
     # waiting) - needed to distinguish `Container x <status>` from
     # `Container x <msg>` (the real parser swaps them when the third
     # token isn't a known status).
     KNOWN_STATUSES = WORKING_STATUSES + %w[Started Healthy Exited Restarted Running Created Stopped Killed Removed Recreated Pulled Built Error Waiting]
-    # Real's own registered key order for a successful run
+    # Ansible's own registered key order for a successful run
     # (ComposeManager#run: cmd_up/down/restart/stop fills changed,
     # actions, stdout, stderr; run then adds containers and images;
     # cleanup_result drops an empty stdout/stderr). Live-verified
@@ -74,11 +74,11 @@ module Krikri
     # update_failed adds these on top of the update_result keys.
     FAILED_KEY_ORDER = %w[changed actions stdout stderr failed msg cmd rc]
 
-    # The real module's DOCKER_PULL_PROGRESS_WORKING - image-layer
+    # The Ansible module's DOCKER_PULL_PROGRESS_WORKING - image-layer
     # progress lines that count as changes.
     PULL_PROGRESS_WORKING = %w[Pulling fs layer Waiting Downloading Verifying Checksum Extracting Working]
 
-    # One parsed stderr event - the real module's Event namedtuple.
+    # One parsed stderr event - the Ansible module's Event namedtuple.
     record Event, type : String, id : String, status : String?, msg : String? = nil
 
     def execute : PluginResult
@@ -87,7 +87,7 @@ module Krikri
       pull = @params["pull"]? || "policy"
       build = @params["build"]? || "policy"
       recreate = @params["recreate"]? || "auto"
-      # Real AnsibleModule validation order (arg_spec.ArgumentSpecValidator
+      # AnsibleModule validation order (arg_spec.ArgumentSpecValidator
       # .validate): mutually_exclusive -> type conversion -> choices ->
       # required_one_of -> required_by.
       if err = validate_mutually_exclusive
@@ -125,7 +125,7 @@ module Krikri
                  run_command(restart_cmd(check_mode), ignore_pulls: false, ignore_builds: false, check_mode: check_mode)
                end
 
-      # Real's ComposeManager#run finishes every non-failing path with
+      # Ansible's ComposeManager#run finishes every non-failing path with
       # `result["containers"] = self.list_containers()` and
       # `result["images"] = self.list_images()`, then cleanup_result()
       # drops an empty stdout/stderr. Live-verified key-for-key against
@@ -139,7 +139,7 @@ module Krikri
       result
     end
 
-    # The real module's argspec choices - each param validated against
+    # The Ansible module's argspec choices - each param validated against
     # its own list, in argument_spec declaration order (AnsibleModule
     # renders them in that order).
     CHOICE_VALUES = {
@@ -424,12 +424,12 @@ module Krikri
 
     # Runs `<docker> compose <base args> <cmd args>` on the target and
     # turns the parsed stderr events into changed/failed - the match of
-    # the real module's run-and-then-update_result/update_failed flow.
+    # the Ansible module's run-and-then-update_result/update_failed flow.
     private def run_command(cmd_args : Array(String), ignore_pulls : Bool, ignore_builds : Bool, check_mode : Bool) : PluginResult
       result = remote_exec(capture_cmd(cmd_args))
       events = parse_events(result[:stderr])
 
-      # Real's update_result sets changed/actions/stdout/stderr on the
+      # Ansible's update_result sets changed/actions/stdout/stderr on the
       # result dict (that insertion order is what real registers), and
       # update_failed then adds failed/msg/cmd/rc on top of it.
       final = PluginResult.new(changed: has_changes?(events, ignore_pulls, ignore_builds), failed: false, failed_flag: false)
@@ -453,7 +453,7 @@ module Krikri
       final
     end
 
-    # Real's update_failed msg: one "Error when processing <type> <id>: "
+    # Ansible's update_failed msg: one "Error when processing <type> <id>: "
     # line per error event, "General error: " for an unknown event with no
     # id, or the bare non-zero return code when no error event parsed.
     private def failure_msg(events : Array(Event), rc : Int32) : String
@@ -468,7 +468,7 @@ module Krikri
       errors.empty? ? "Return code #{rc} is non-zero" : errors.join("\n")
     end
 
-    # Real's extract_actions: every event whose status is a WORKING one
+    # Ansible's extract_actions: every event whose status is a WORKING one
     # (plus deduplicated image-layer pull progress) as
     # {what, id, status}.
     private def extract_actions(events : Array(Event)) : JSON::Any
@@ -489,14 +489,14 @@ module Krikri
       JSON::Any.new(actions)
     end
 
-    # Real's ResourceType is lowercase ("container", "network",
+    # Ansible's ResourceType is lowercase ("container", "network",
     # "image-layer", ...) whatever the text event line capitalized.
     private def action_json(event : Event) : JSON::Any
       JSON::Any.new({"what" => JSON::Any.new(event.type.downcase.gsub("imagelayer", "image-layer")), "id" => JSON::Any.new(event.id),
                      "status" => JSON::Any.new(event.status.to_s)})
     end
 
-    # Real's list_containers: `compose ps --format json --all`, with
+    # Ansible's list_containers: `compose ps --format json --all`, with
     # Labels split on commas into a dict and Names/Networks split into
     # lists (Publishers defaulted to a list).
     private def list_containers : JSON::Any
@@ -523,7 +523,7 @@ module Krikri
       JSON::Any.new(items.map { |item| JSON::Any.new(item) })
     end
 
-    # Real's list_images: `compose images --format json` (a JSON array,
+    # Ansible's list_images: `compose images --format json` (a JSON array,
     # or a dict keyed by image ID on Compose >= 2.37).
     private def list_images : JSON::Any
       entries = compose_json_array("images --format json")
@@ -574,7 +574,7 @@ module Krikri
       args
     end
 
-    # Runs with cwd=project_src (the real module passes cwd= to every
+    # Runs with cwd=project_src (the Ansible module passes cwd= to every
     # call, so relative --file/--env-file paths resolve the same way).
     private def capture_cmd(cmd_args : Array(String)) : String
       "cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{cmd_args.map { |arg| q(arg) }.join(" ")}"
@@ -616,9 +616,9 @@ module Krikri
       parts.map { |part| part || 0 }
     end
 
-    # Writes definition: to a temp compose.yaml the way the real module
+    # Writes definition: to a temp compose.yaml the way the Ansible module
     # does (mkdtemp + compose.yaml). JSON flow syntax IS valid YAML, so
-    # Compose parses this identically to the real module's safe_dump.
+    # Compose parses this identically to the Ansible module's safe_dump.
     private def write_definition(definition : JSON::Any) : String
       dir = remote_exec("mktemp -d -t ansible.XXXXXX")[:stdout].strip
       File.write(File.join(dir, "compose.yaml"), definition.to_json)
@@ -646,7 +646,7 @@ module Krikri
       end
     end
 
-    # Text-mode event parser - the match of the real module's
+    # Text-mode event parser - the match of the Ansible module's
     # parse_events/_extract_event text path (its --progress json branch
     # is deliberately not ported, see the module comment). Events are
     # {resource_type, resource_id, status, msg}; only status matters for
@@ -687,7 +687,7 @@ module Krikri
         next false unless status
         if WORKING_STATUSES.includes?(status)
           # ignore_service_pull_events only ignores SERVICE-type pull
-          # events (the real module's has_changes does the same).
+          # events (the Ansible module's has_changes does the same).
           next false if ignore_pulls && status == "Pulling" && e.type == "Service"
           next false if ignore_builds && status == "Building"
           true

@@ -26,10 +26,10 @@ module Krikri
     # in exactly one returned group.
     # *aborts_on_notify* (supplied by TaskExecutor, which owns the play's
     # handler list) answers "if this task fires its notify:, will the run
-    # abort with HandlerNotFoundError?" - real Ansible stops right there,
+    # abort with HandlerNotFoundError?" - Ansible stops right there,
     # having run nothing after it, while a batch group would already have
     # executed every remaining step in the same SSH round trip, applying
-    # real side effects on the target that real Ansible never applies.
+    # real side effects on the target that Ansible never applies.
     # Such a task therefore ENDS its group (it may still run batched with
     # what precedes it - the abort happens after it, not before). Only a
     # notify: that is CERTAIN to abort breaks the run, so an ordinary
@@ -202,10 +202,10 @@ module Krikri
     # remaining step in that group along with it (observed running
     # konstruktoid-hardening's UFW rule section: the whole host went
     # unreachable partway through a batched run of consecutive `ufw:`
-    # tasks, at a point real ansible-playbook's own one-connection-per-
+    # tasks, at a point ansible-playbook's own one-connection-per-
     # task run had already gotten past cleanly). Always its own group
     # trades a little round-trip efficiency for the same safety
-    # property real Ansible has here unconditionally.
+    # property Ansible has here unconditionally.
     private def self.reconfigures_firewall?(task : Task) : Bool
       # ufw: applies live firewall rules; sysctl: (ansible.posix.sysctl)
       # can just as easily disrupt live networking when the setting
@@ -268,7 +268,7 @@ module Krikri
     # top-level var) in a `when:` immediately after a "Populate service
     # facts." task. Batched together, `services` was still undefined
     # when the `when:` got rendered, so the task always silently skipped
-    # - a real behavioral divergence (real Ansible correctly ran it),
+    # - a real behavioral divergence (Ansible correctly ran it),
     # not just wasted work.
     private def self.produces_ansible_facts?(task : Task) : Bool
       %w[getent package_facts service_facts set_fact].any? { |name| task.module_name.ends_with?(name) }
@@ -301,7 +301,7 @@ module Krikri
       # `item` unbound, its strict `{{ item[1] }}` param substitution
       # raised, and the group's fail-fast halted the whole batch BEFORE
       # the next member was ever prepared - which then got no batch-cache
-      # entry and printed "skipping:" (real Ansible: "ok:"), silently
+      # entry and printed "skipping:" (Ansible: "ok:"), silently
       # dropping a real task's execution. Any empty-list templated
       # with_nested:/with_flattened: task immediately followed by a
       # non-looped task hits this.
@@ -330,7 +330,7 @@ module Krikri
     # batch returns, against that member's batch-prep-time vars_context
     # - so a changed_when: referencing an earlier group member's
     # register: would hit an undefined name there and strictly fail the
-    # task where real Ansible resolves it. failed_when: keeps no such
+    # task where Ansible resolves it. failed_when: keeps no such
     # scan: a failed_when:-bearing task never shares a group - see
     # retroactive_verdict? - so its expression can only ever reference
     # registers from before the run started).

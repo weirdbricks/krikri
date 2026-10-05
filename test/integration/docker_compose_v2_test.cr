@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # community.docker.docker_compose_v2 - previously an unimplemented
-# collection module (rc=4 "unavailable modules" where real ansible ran
+# collection module (rc=4 "unavailable modules" where Ansible ran
 # it; mrlesmithjr.blocky is the corpus role). These specs exercise the
 # plugin binary directly through the same stdin-JSON entrypoint
 # PluginManager uses.
@@ -52,7 +52,7 @@ describe "docker_compose_v2 plugin" do
     result["msg"].as_s.must_include("is not a directory")
   end
 
-  it "fails with the real module's missing-compose-file message on an empty project dir" do
+  it "fails with the Ansible module's missing-compose-file message on an empty project dir" do
     dir = File.tempname("dcv2-empty", ".d")
     Dir.mkdir(dir)
     result = PluginSpecHelper.run("docker_compose_v2", {
@@ -168,7 +168,7 @@ describe "docker_compose_v2 plugin (live docker)" do
 end
 
 # Registered-result shape parity for docker_compose_v2, live-verified
-# key-for-key against real ansible-core 2.19.11 + community.docker 5.2.1:
+# key-for-key against ansible-core 2.19.11 + community.docker 5.2.1:
 # a successful run registers changed/actions/stdout/stderr (with an
 # empty one dropped)/containers/images - and NO msg at all.
 describe "docker_compose_v2 result shape" do
@@ -176,7 +176,7 @@ describe "docker_compose_v2 result shape" do
   # never run alongside sibling workers (see test/minitest_helper.cr).
   serial!
 
-  it "matches real's up key set and order" do
+  it "matches Ansible's up key set and order" do
     skip "docker compose CLI not available" unless compose_available?
 
     dir = File.tempname("dcv2-shape", ".d")
@@ -204,7 +204,7 @@ describe "docker_compose_v2 result shape" do
     end
   end
 
-  it "matches real's down key set and order" do
+  it "matches Ansible's down key set and order" do
     skip "docker compose CLI not available" unless compose_available?
 
     dir = File.tempname("dcv2-shape-down", ".d")

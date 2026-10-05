@@ -3,11 +3,11 @@ require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
-    # URLPreflight - the failures real Ansible's fetch_url reports BEFORE
+    # URLPreflight - the failures Ansible's fetch_url reports BEFORE
     # urllib ever opens the URL, shared by the uri and get_url plugins.
     #
-    # Real Ansible builds a request in three steps that all happen before
-    # a single byte goes out (the real module's Request.open, 2.19.11):
+    # Ansible builds a request in three steps that all happen before
+    # a single byte goes out (the Ansible module's Request.open, 2.19.11):
     #
     #   1. _configure_auth() - with use_gssapi: true the module imports
     #      python-gssapi, and a host without it raises MissingModuleError
@@ -119,7 +119,7 @@ module Krikri
 
       # The _configure_auth half: use_gssapi: on a host whose python cannot
       # import gssapi. A python that vanished between the two probes (or
-      # refuses to run at all) must not crash the task - real's own
+      # refuses to run at all) must not crash the task - Ansible's own
       # message needs an interpreter path to be worth anything, so with
       # none found the check simply passes.
       private def self.gssapi_failure : Failure?
@@ -137,7 +137,7 @@ module Krikri
       # The make_context half, in its own order: cafile (its own open),
       # then set_ciphers, then load_cert_chain. The cipher list is
       # applied BEFORE the client certificate chain is loaded
-      # (ansible-core 2.19.11's the real module make_context), so a
+      # (ansible-core 2.19.11's the Ansible module make_context), so a
       # task carrying BOTH a garbage ciphers: list and a
       # client_cert:/client_key: that do not exist reports the cipher
       # failure, not the missing file - live-verified vs 2.19.11 on
@@ -159,7 +159,7 @@ module Krikri
 
         # client_key is only ever read as load_cert_chain's keyfile=, and
         # that call only happens when client_cert is given - a task with a
-        # client_key alone has its file never opened by real Ansible
+        # client_key alone has its file never opened by Ansible
         # (live-verified vs 2.19.11: get_url with only a missing client_key:
         # still reaches the request).
         chain_files = client_cert ? [client_cert, client_key] : [] of String?
@@ -174,7 +174,7 @@ module Krikri
         nil
       end
 
-      # Real Ansible's own missing_required_lib wording (basic.py's
+      # Ansible's own missing_required_lib wording (basic.py's
       # _handle_missing_required_lib), the same shape nsupdate.cr and
       # aws_module_args.cr already emit for gssapi and boto3: the
       # hostname, the interpreter the module would have run under, the
@@ -214,7 +214,7 @@ module Krikri
         false
       end
 
-      # Real Ansible runs the module under the interpreter it discovered
+      # Ansible runs the module under the interpreter it discovered
       # for the host; aws_module_args.cr's boto3 gate asks python3 for
       # its own sys.executable the same way, and that is the path real
       # Ansible's message quotes.

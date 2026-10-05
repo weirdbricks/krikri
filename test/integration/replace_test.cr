@@ -75,8 +75,8 @@ describe "replace plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
-  it "anchors ^ and $ at line boundaries (real Ansible's re.MULTILINE)" do
-    # The inmotionhosting.wordpress round-82013 divergence: real Ansible's
+  it "anchors ^ and $ at line boundaries (Ansible's re.MULTILINE)" do
+    # The inmotionhosting.wordpress round-82013 divergence: Ansible's
     # replace.py compiles with re.MULTILINE, so "Listen 443$" matches the
     # tab-indented Listen lines inside <IfModule> blocks mid-file; without
     # MULTILINE only an end-of-file match counts and the task misreports ok.
@@ -138,7 +138,7 @@ describe "replace plugin" do
   end
 
   it "adds no suffix when the requested mode already matches the file" do
-    # Real's set_file_attributes_if_different returns False when nothing
+    # Ansible's set_file_attributes_if_different returns False when nothing
     # actually drifted, so a re-run with no content change and the mode
     # already in place is a plain ok with an empty msg.
     path = fresh_file("mode_already.conf", "a=1\n")
@@ -157,7 +157,7 @@ describe "replace plugin" do
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "^x", "replace" => "y", "owner" => me, "group" => me, "mode" => "0600"})
 
     result["failed"]?.must_be_nil
-    # The attributes are applied to the file, but real's replace result
+    # The attributes are applied to the file, but Ansible's replace result
     # is only {changed, failed, msg, rc} - it never merges the
     # add_path_info stat fields nor echoes owner/group/mode
     # (live-verified vs 2.19.11 at -v). Assert both halves: the
@@ -194,7 +194,7 @@ describe "replace plugin" do
     path = fresh_file("both.conf", "<VirtualHost *>\n  Line1\n  Line2\n</VirtualHost>\nother\n")
 
     # after/before are compiled with re.DOTALL only (no re.MULTILINE) in
-    # real Ansible - `^`/`$` inside them anchor to the whole-content
+    # Ansible - `^`/`$` inside them anchor to the whole-content
     # start/end, not line boundaries, so unanchored literals are used here
     # (live-verified against real Python's re module with this exact
     # module.py pattern-construction logic).
@@ -234,8 +234,8 @@ describe "replace plugin" do
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "gpgcheck=0", "replace" => "gpgcheck=1"})
 
     result["changed"].as_bool.must_equal(true)
-    # Real's replace only ever sets backup_file when backup: yes was
-    # given (the real module backs up conditionally, then
+    # Ansible's replace only ever sets backup_file when backup: yes was
+    # given (the Ansible module backs up conditionally, then
     # exit_json(backup_file=...) only inside that branch) - without it
     # the key is absent entirely, not empty
     # (live-verified vs 2.19.11 at -v).
@@ -316,7 +316,7 @@ describe "replace plugin" do
   # encoding:, re.sub's replacement-template parser for replace:), and
   # every wording below is live-verified against ansible-core 2.19.11.
 
-  it "fails with real's module-crash wording on an encoding Python has no codec for" do
+  it "fails with Ansible's module-crash wording on an encoding Python has no codec for" do
     # real decodes the file's bytes inside to_text(), so an unknown
     # codec name dies with a LookupError its own `except OSError` does
     # not catch - the module-crash path, not fail_json. This engine
@@ -383,10 +383,10 @@ describe "replace plugin" do
     File.read(named).must_equal("kpg!\n")
   end
 
-  it "fails with real's module-crash wording on a group name the pattern does not define" do
+  it "fails with Ansible's module-crash wording on a group name the pattern does not define" do
     # The IndexError for an unknown group name escapes replace.py's own
     # `except re.error`, so it is a module crash rather than a
-    # fail_json - the fatal msg keeps real's "Task failed: Module
+    # fail_json - the fatal msg keeps Ansible's "Task failed: Module
     # failed: " wrapper while the [ERROR] block shows the bare text
     # (carried in _ansible_error_detail).
     path = fresh_file("groupname.txt", "kpg here\n")
@@ -422,7 +422,7 @@ describe "replace plugin" do
 
   it "interprets an octal escape as a byte and keeps a non-letter escape literal" do
     # \101 is the byte 'A'; "\-" has no entry in re.ESCAPES and is not a
-    # letter, so real writes the backslash and the dash through as they
+    # letter, so Ansible writes the backslash and the dash through as they
     # are (only an unknown LETTER is a "bad escape" there).
     path = fresh_file("octal.txt", "first\n")
 
@@ -438,9 +438,9 @@ describe "replace plugin" do
   # re.error - the module-crash wrapper, live-verified vs 2.19.11 for
   # each wording.
 
-  it "rejects the PCRE (?<name>...) group spelling like real's Python re" do
+  it "rejects the PCRE (?<name>...) group spelling like Ansible's Python re" do
     # Python only takes (?P<name>...); PCRE2 also accepts (?<name>...),
-    # which this engine used to compile and RUN where real fails.
+    # which this engine used to compile and RUN where Ansible fails.
     path = fresh_file("named_angle.txt", "bar baz\nbar\n")
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(?<foo>bar)", "replace" => "BAZ"})
@@ -451,7 +451,7 @@ describe "replace plugin" do
     File.read(path).must_equal("bar baz\nbar\n")
   end
 
-  it "rejects the PCRE (?'name'...) single-quote group spelling like real's Python re" do
+  it "rejects the PCRE (?'name'...) single-quote group spelling like Ansible's Python re" do
     path = fresh_file("named_quote.txt", "bar baz\nbar\n")
 
     result = PluginSpecHelper.run("replace", {"path" => path, "regexp" => "(?'foo'bar)", "replace" => "BAZ"})
@@ -470,7 +470,7 @@ describe "replace plugin" do
     File.read(path).must_equal("bar! baz\n")
   end
 
-  it "reproduces real's uncaught re.error module crash for a bad regexp" do
+  it "reproduces Ansible's uncaught re.error module crash for a bad regexp" do
     # Position 10 is Python's own accounting: the index of the
     # unterminated '(' - not PCRE2's end-of-pattern offset.
     path = fresh_file("bad_regexp.txt", "hello world\n")
@@ -578,7 +578,7 @@ describe "replace plugin" do
     String.new(bytes).must_equal("caf\xE9 DONE\nnext line\n")
   end
 
-  it "matches one undecodable byte with . like real's surrogate does" do
+  it "matches one undecodable byte with . like Ansible's surrogate does" do
     path = File.join(replace_dir, "surrogate_dot.txt")
     File.write(path, "caf".to_slice + Bytes[0xe9] + " done\n".to_slice)
 

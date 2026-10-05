@@ -4,7 +4,7 @@ require "file_utils"
 # A play/task `vars:` entry using one of ansible-core's reserved variable
 # names warns at compile time: "[WARNING]: Found variable using reserved
 # name 'X'." + an Origin block naming the var key's own position, one
-# blank line after each block. Byte-for-byte vs real ansible-playbook
+# blank line after each block. Byte-for-byte vs ansible-playbook
 # 2.19.11 (pr.yml-shape probes via scripts/output_parity.sh).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

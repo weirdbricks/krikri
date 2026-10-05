@@ -7,7 +7,7 @@ describe "wait_for plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  it "is skipped under check_mode, matching real Ansible's own skip text" do
+  it "is skipped under check_mode, matching Ansible's own skip text" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "1", "_ansible_check_mode" => "true"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["skipped"].as_bool.must_equal(true)
@@ -84,7 +84,7 @@ describe "wait_for plugin" do
   describe "search_regex against an open socket (not just a file)" do
     # Real bug found via a proactive scope-cut audit: search_regex was
     # only ever matched against a file's content, never against data
-    # read from an open port - the real module's own
+    # read from an open port - the Ansible module's own
     # source connects, then reads (accumulating bytes) until the regex
     # matches, the connection closes, or the overall timeout passes.
     it "succeeds once the server sends data matching the regex" do
@@ -107,7 +107,7 @@ describe "wait_for plugin" do
       server.try(&.close)
     end
 
-    it "times out with real Ansible's own search-string message when the regex never appears" do
+    it "times out with Ansible's own search-string message when the regex never appears" do
       server = TCPServer.new("127.0.0.1", 0)
       port = server.local_address.port
       spawn do
@@ -129,7 +129,7 @@ describe "wait_for plugin" do
 
   it "never reports changed" do
     result = PluginSpecHelper.run("wait_for", {"timeout" => "0"})
-    # Real's wait_for wire carries no changed at all (exit_json passes
+    # Ansible's wait_for wire carries no changed at all (exit_json passes
     # none; the task executor backfills failed, changed onto the
     # registered result).
     result["changed"]?.must_equal(nil)

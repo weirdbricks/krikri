@@ -6,11 +6,11 @@ describe "package plugin" do
   it "rejects state: installed on a Debian-family host with apt's own choices error" do
     # `package:` is a dispatcher - state validation happens inside the
     # DELEGATED module, so the accepted choices are host-dependent. On
-    # Debian-family hosts real ansible-core fails at setup with apt's
+    # Debian-family hosts ansible-core fails at setup with apt's
     # list and never installs - live-verified against
     # ansible-playbook 2.19.11 (ChristopherDavenport.universal-tomcat,
     # round 984025: this engine used to alias installed→present for
-    # every family and reported ok where real Ansible errors).
+    # every family and reported ok where Ansible errors).
     result = PluginSpecHelper.run("package",
       {"name" => "bash", "state" => "installed", "_ansible_check_mode" => "true", "use" => "apt"})
 
@@ -33,8 +33,8 @@ describe "package plugin" do
     removed["msg"].as_s.wont_include("must be one of")
   end
 
-  it "fails a use: naming a backend this engine doesn't ship, with real Ansible's message" do
-    # Real Ansible's package action plugin checks its controller-side
+  it "fails a use: naming a backend this engine doesn't ship, with Ansible's message" do
+    # Ansible's package action plugin checks its controller-side
     # module library and fails before anything runs: live-verified
     # (`ansible localhost -m package -a "name=x state=present
     # use=nonexistentmgr"` => 'Could not find a matching action for the
@@ -48,7 +48,7 @@ describe "package plugin" do
   end
 
   it "use: overrides auto-detection unconditionally (dnf backend honored on an apt host)" do
-    # Real Ansible dispatches straight to the `use:`-named module - NOT
+    # Ansible dispatches straight to the `use:`-named module - NOT
     # a fallback: live-verified `use: dnf` on this apt host still ran
     # the dnf module (which then failed on-target for lack of dnf).
     # Here the override picks the dnf backend, whose rpm-based
@@ -68,14 +68,14 @@ describe "package plugin" do
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
     result["changed"].as_bool.must_equal(false)
-    # Real 2.19.11's unchanged-present exit carries NO msg - just the
+    # Ansible 2.19.11's unchanged-present exit carries NO msg - just the
     # cache pair (live-verified; see key_order_sweep7_test.cr).
     result["cache_updated"].as_bool.must_equal(false)
     result["msg"]?.must_be_nil
   end
 
   it "the ansible_package_use variable overrides auto-detection but loses to use:" do
-    # Real Ansible 2.17+: the ansible_package_use variable overrides
+    # Ansible 2.17+: the ansible_package_use variable overrides
     # auto-detection, while an explicit `use:` option still takes
     # precedence over the variable.
     with_var = PluginSpecHelper.run("package",
@@ -92,7 +92,7 @@ describe "package plugin" do
 
   it "treats a missing name as a no-op, not a hard error (round 83221)" do
     # adfinis-sygroup.apache's `package: {state: present}` task has no
-    # `name:` key at all. Real Ansible's apt backend never hard-fails a
+    # `name:` key at all. Ansible's apt backend never hard-fails a
     # missing name (its required_one_of gate is defeated by the
     # upgrade/autoremove defaults) - it exits changed=false. Verified
     # live: `ansible localhost -m package -a "state=present"` => SUCCESS,
@@ -107,7 +107,7 @@ describe "package plugin" do
 
   it "treats an empty-string name as a no-op (round 83246)" do
     # `name: '{{ var }}'` with the var an empty list templates to "[]" or
-    # an empty string; real Ansible's apt backend exits changed=false on
+    # an empty string; Ansible's apt backend exits changed=false on
     # an empty package list for both present and absent. This engine
     # used to run `apt-get remove` on the empty token and report
     # "Package  removed" (double space) as changed on every run.
@@ -116,7 +116,7 @@ describe "package plugin" do
         {"name" => empty_name, "state" => "absent"})
 
       result["changed"].as_bool.must_equal(false)
-      # Real 2.19.11's absent-nochange exit is a bare exit_json(changed=
+      # Ansible 2.19.11's absent-nochange exit is a bare exit_json(changed=
       # False) with no msg at all (live-verified; see
       # key_order_sweep7_test.cr) - so the msg key may be absent entirely.
       (result["msg"]? || JSON::Any.new("")).as_s.wont_include("removed")

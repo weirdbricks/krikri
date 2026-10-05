@@ -14,8 +14,8 @@ module Krikri
   # mount point, and tags every entry with the `ansible_context`
   # (source file + raw source line) it came from.
   #
-  # Implementation notes on real Ansible's behavior this mirrors
-  # (the real module + the real module):
+  # Implementation notes on Ansible's behavior this mirrors
+  # (the Ansible module + the Ansible module):
   #   - default `sources` is ["all"] -> DYNAMIC_SOURCES (/etc/mtab,
   #     /proc/mounts, /etc/mnttab) then STATIC_SOURCES (/etc/fstab,
   #     /etc/vfstab, /etc/filesystems); repeat sources (including a
@@ -57,7 +57,7 @@ module Krikri
       %w[include_aggregate_mounts]
     end
 
-    # Every bool option here defaults to None in real's argspec, so an
+    # Every bool option here defaults to None in Ansible's argspec, so an
     # explicit null skips type validation there (see
     # BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
@@ -110,7 +110,7 @@ module Krikri
       end
     end
 
-    # ----- source resolution (mirrors get_sources() in the real module) -----
+    # ----- source resolution (mirrors get_sources() in the Ansible module) -----
 
     private def get_sources : Array(String)
       requested = pattern_list("sources")
@@ -200,7 +200,7 @@ module Krikri
     # fstab / /proc/mounts / /etc/mtab column format:
     #   device mount fstype options [dump [passno]]
     # Comments and blank lines skipped; octal escapes (\040 etc.) decoded
-    # as real's replace_octal_escapes does.
+    # as Ansible's replace_octal_escapes does.
     private def parse_fstab_columns(lines : Array(String)) : Array({fields: Hash(String, JSON::Any), line: String})
       out = [] of {fields: Hash(String, JSON::Any), line: String}
       lines.each do |raw_line|
@@ -311,7 +311,7 @@ module Krikri
     # First definition per mount point wins for mount_points; the full
     # list is returned as aggregate_mounts only when
     # include_aggregate_mounts is true. A null/unset value with duplicates
-    # present emits real's warning.
+    # present emits Ansible's warning.
     private def dedup(entries : Array(Hash(String, JSON::Any)), warnings : Array(String)) : {Hash(String, JSON::Any), Array(JSON::Any)}
       mount_points = Hash(String, JSON::Any).new
       mounts_by_source = Hash(String, Array(String)).new
@@ -330,11 +330,11 @@ module Krikri
       if include_aggregate_null
         dups = mounts_by_source.select { |_src, mnts| mnts.uniq.size != mnts.size }
         unless dups.empty?
-          # Real's wording renders the per-source mount-point list as a
+          # Ansible's wording renders the per-source mount-point list as a
           # PYTHON list repr (f"{src} ({duplicates})" where duplicates
           # is the full list for that source, repeats included) - not a
           # comma join, and not just the repeated entries. Live-verified
-          # against real ansible-playbook 2.19.11 on this host.
+          # against ansible-playbook 2.19.11 on this host.
           listed = dups.map { |src, mnts| "#{src} (#{python_list_repr(mnts)})" }.join(", ")
           warnings << "mount_facts: ignoring repeat mounts in the following sources: #{listed}. " \
                       "You can disable this warning by configuring the 'include_aggregate_mounts' option as True or False."
@@ -360,7 +360,7 @@ module Krikri
     # statvfs mirror via `stat -f` (same fields the setup gatherer reads):
     # %S f_frsize %b f_blocks %f f_bfree(all) %a f_bavail(non-root)
     # %c f_files %d f_favail. Returns {} when the mount can't be read or
-    # f_frsize is 0 (real returns {} there too, e.g. autofs).
+    # f_frsize is 0 (Ansible returns {} there too, e.g. autofs).
     private def get_mount_size(mountpoint : String) : Hash(String, Int64)?
       out = run_capture("stat", ["-f", "--format=%S %b %f %a %c %d", mountpoint])
       return nil unless out
@@ -408,7 +408,7 @@ module Krikri
       rescue
         # /dev/disk/by-uuid doesn't exist on this host (e.g. a container
         # image without it) - fall through to the lsblk path, which is
-        # what real Ansible's mount_facts relies on anyway.
+        # what Ansible's mount_facts relies on anyway.
       end
 
       if executable?("lsblk")
@@ -423,7 +423,7 @@ module Krikri
       nil
     end
 
-    # NOTE: real Ansible's `timeout:`/`on_timeout:` hang protection is not
+    # NOTE: Ansible's `timeout:`/`on_timeout:` hang protection is not
     # reproduced here - this Crystal target's Process.run has no timeout
     # parameter, so an unresponsive mount is reported as "no size stats for
     # that mount" (stat fails -> get_mount_size returns nil) rather than
@@ -493,7 +493,7 @@ module Krikri
       end
     end
 
-    # Octal escape decoding (\040 -> space) matching real's
+    # Octal escape decoding (\040 -> space) matching Ansible's
     # replace_octal_escapes.
     private def replace_octal_escapes(value : String) : String
       value.gsub(/\\[0-7]{3}/) do |match|

@@ -11,7 +11,7 @@ module Krikri
 
     # List of available (implemented) plugins - using FQCN. Almost all of
     # these are ansible.builtin.* (bundled with ansible-core); two
-    # exceptions verified against a real ansible-core install (not
+    # exceptions verified against a ansible-core install (not
     # assumed): authorized_key lives in the separate ansible.posix
     # collection, and archive/unarchive live in community.general - neither
     # ships with ansible-core itself.
@@ -42,7 +42,7 @@ module Krikri
       "ansible.builtin.debug",
       "ansible.builtin.command",
       "ansible.builtin.setup",
-      # gather_facts (0.9.1351): real Ansible also lets `gather_facts`
+      # gather_facts (0.9.1351): Ansible also lets `gather_facts`
       # be invoked as an ordinary task action (it delegates to setup
       # with the task's gather_subset/gather_timeout/fact_path/filter)
       # - useful for re-gathering mid-play or gathering with different
@@ -70,7 +70,7 @@ module Krikri
       # so it needs its own registration (see plugins/mount_facts.cr).
       "ansible.builtin.mount_facts",
       "ansible.posix.selinux",
-      # synchronize (0.9.916): rsync-wrapper module, real Ansible's most
+      # synchronize (0.9.916): rsync-wrapper module, Ansible's most
       # common way to move files between hosts. Controller-side by nature
       # (see SynchronizeActionPlugin's own comment) - listed here plus
       # plugins/synchronize.cr/binary so the task isn't dropped at parse
@@ -84,7 +84,7 @@ module Krikri
       "ansible.builtin.group",
       "ansible.builtin.git",
       "ansible.builtin.pip",
-      # community.general, not ansible.builtin - real Ansible's own gem
+      # community.general, not ansible.builtin - Ansible's own gem
       # module has always lived in that collection, never ansible-core.
       # Registered under the wrong namespace before, so a role writing
       # the (correct, and far more common in practice) fully-qualified
@@ -111,19 +111,19 @@ module Krikri
       "ansible.posix.acl",
       # ansible.builtin.acl (0.9.1119): same legacy-redirect shape as
       # ansible.builtin.mount below - acl lives in ansible.posix, and
-      # real ansible-core's own ansible_builtin_runtime.yml transparently
+      # ansible-core's own ansible_builtin_runtime.yml transparently
       # redirects the ansible.builtin. spelling, so a task written with
       # the builtin FQCN must reach the same plugin instead of being
       # dropped as "Plugin not available". Both spellings registered;
       # get_local_plugin_path strips both prefixes to the same binary.
       "ansible.builtin.acl",
       "ansible.posix.authorized_key",
-      # ansible.builtin.authorized_key (0.9.941): real ansible-core ships a
+      # ansible.builtin.authorized_key (0.9.941): ansible-core ships a
       # legacy redirect so the historically-core `authorized_key` module
       # still resolves under `ansible.builtin.` even though the actual
       # implementation moved to ansible.posix years ago - the
       # ome.local_accounts round (400072) hard-stopped on the builtin
-      # spelling while real ansible-playbook ran it fine. Both spellings
+      # spelling while ansible-playbook ran it fine. Both spellings
       # are registered; simple_plugin_name strips both prefixes to the
       # same `authorized_key` plugin binary.
       "ansible.builtin.authorized_key",
@@ -215,7 +215,7 @@ module Krikri
       "community.general.modprobe",
       # kernel_blacklist (0.9.951): `blacklist <module>` entry management
       # in /etc/modprobe.d/ (grycap.im round 410111 hard-stopped on it
-      # where real ansible-playbook ran 844s of the role cleanly). Pure
+      # where ansible-playbook ran 844s of the role cleanly). Pure
       # file editing - see plugins/kernel_blacklist.cr.
       "community.general.kernel_blacklist",
       "community.general.pamd",
@@ -289,7 +289,7 @@ module Krikri
       "community.general.nsupdate",
       # easy_install (0.9.941): legacy Python library installs via
       # easy_install, virtualenv support included (cchurch.virtualenv
-      # round 300033 calls it). install-only by nature - the real module
+      # round 300033 calls it). install-only by nature - the Ansible module
       # has no absent state either.
       "community.general.easy_install",
       # mysql_variables (0.9.942): MySQL/MariaDB global variable query/
@@ -335,7 +335,7 @@ module Krikri
       "ansible.builtin.set_fact",
       # add_host (0.9.960): controller-only action plugin that mutates the
       # run's shared in-memory inventory (like group_by:/set_stats: below,
-      # there is NO plugins/add_host.cr - real Ansible's own add_host has
+      # there is NO plugins/add_host.cr - Ansible's own add_host has
       # no target-side module either, so there is nothing to execute on a
       # target). Listed here so the task isn't silently dropped at parse
       # time as "Plugin not available"; see AddHostActionPlugin.
@@ -391,7 +391,7 @@ module Krikri
       # Bare short names are listed alongside the FQCNs because
       # roles write `ec2_key:` unqualified far more often than fully
       # qualified, and amazon.aws is not in MODULE_SEARCH_COLLECTIONS
-      # (real Ansible resolves bare AWS module names through its own
+      # (Ansible resolves bare AWS module names through its own
       # auto-aliasing, not collection search).
       "amazon.aws.ec2_key",
       "amazon.aws.ec2_security_group",
@@ -423,7 +423,7 @@ module Krikri
     }
 
     # The collections a bare (non-FQCN) module name resolves against, in
-    # real Ansible's own default search order - `getent:` (no `ansible.
+    # Ansible's own default search order - `getent:` (no `ansible.
     # builtin.` prefix) is extremely common in real-world playbooks/roles
     # (dev-sec's own molecule test fixtures use it, unlike the role's own
     # tasks, which are always fully qualified) and previously only ever
@@ -438,7 +438,7 @@ module Krikri
       # community.crypto (round 188): openssl_privatekey, openssl_csr,
       # x509_certificate, openssl_pkcs12, openssh_keypair. Roles write
       # the bare short names (`openssl_privatekey:`, `openssl_csr:`, ...),
-      # and real Ansible auto-resolves them to `community.crypto.<name>`
+      # and Ansible auto-resolves them to `community.crypto.<name>`
       # via the collection aliasing mechanism. Without this entry, the
       # `MODULE_SEARCH_COLLECTIONS` loop in #resolve_module_name never
       # tries the `community.crypto.` prefix, the bare name is
@@ -454,7 +454,7 @@ module Krikri
       # short names (SimpliField.rabbitmq and rockandska.rabbitmq rounds
       # both write `rabbitmq_plugin:` unqualified) - without this entry
       # the bare name is unresolvable and the task is dropped as
-      # "unavailable module" where real ansible resolves it through
+      # "unavailable module" where Ansible resolves it through
       # collection search.
       "community.rabbitmq",
       "community.crypto",
@@ -473,7 +473,7 @@ module Krikri
       "ansible.builtin.raw", "ansible.legacy.raw",
     }
 
-    # Real Ansible module aliases - a second FQCN (or bare name) that
+    # Ansible module aliases - a second FQCN (or bare name) that
     # resolves to the exact same module, not merely a similarly-named
     # one. `systemd_service` was added in ansible-core 2.12 as the
     # "correct" name (`systemd` was ambiguous with `systemd_service`/
@@ -489,8 +489,8 @@ module Krikri
       "systemd_service"                 => "ansible.builtin.systemd",
       "ansible.builtin.systemd_service" => "ansible.builtin.systemd",
       "ansible.legacy.systemd_service"  => "ansible.builtin.systemd",
-      # raw: has no real Ansible-module counterpart of its own in this
-      # codebase - unlike real Ansible (whose raw: exists specifically to
+      # raw: has no Ansible-module counterpart of its own in this
+      # codebase - unlike Ansible (whose raw: exists specifically to
       # run on hosts with no Python interpreter at all, executed straight
       # over the connection plugin with zero module machinery),
       # krikri-playbook never ships Python modules to begin with, so
@@ -531,7 +531,7 @@ module Krikri
       # shipping a near-duplicate of it. Deliberately permissive on the
       # community.crypto FQCN, which a current community.crypto
       # tombstones (2.0.0+): the engine would otherwise hard-stop a role
-      # real Ansible 2.10-2.11 ran fine, and the module behind it is
+      # Ansible 2.10-2.11 ran fine, and the module behind it is
       # fully implemented either way.
       "openssl_certificate"                   => "community.crypto.x509_certificate",
       "ansible.builtin.openssl_certificate"   => "community.crypto.x509_certificate",
@@ -560,7 +560,7 @@ module Krikri
     # ansible-playbook's exact hard-stop wording, verified live against
     # ansible-core 2.19.11. Shared verbatim by all three tombstone
     # spellings (bare, community.general.- and community.docker.-
-    # qualified): real Ansible echoes the RESOLVED module name, never
+    # qualified): Ansible echoes the RESOLVED module name, never
     # the as-written spelling, for this one.
     DOCKER_COMPOSE_REMOVAL_MESSAGE = "The 'community.docker.docker_compose' module has been removed. " \
                                      "This module uses docker-compose v1, which is End of Life since July 2022. " \
@@ -571,7 +571,7 @@ module Krikri
     # these module FQCNs to their ansible.mysql.* homes with a deprecation
     # (removal_version 6.0.0, warning_text "Use ansible.mysql.<module>
     # instead.") - live-verified against the installed community.mysql
-    # 5.0.2's meta/runtime.yml and real ansible-core 2.19.11's console
+    # 5.0.2's meta/runtime.yml and ansible-core 2.19.11's console
     # output (mysql_replication/mysql_role redirect the same way but are
     # not krikri-supported modules, so they are deliberately absent: an
     # unsupported module's divergence is out of scope per the coverage
@@ -591,7 +591,7 @@ module Krikri
       "community.mysql.mysql_variables" => "ansible.mysql.mysql_variables",
     }
 
-    # The exact console [DEPRECATION WARNING] text real ansible-core
+    # The exact console [DEPRECATION WARNING] text ansible-core
     # 2.19.11 prints for one of the redirects above (live-verified: the
     # loader's warning_text joined onto the "has been deprecated." stem,
     # followed by Display's removal-version tail naming the collection and
@@ -623,17 +623,17 @@ module Krikri
       }.to_json)
     end
 
-    # Bare module names real ansible-core can no longer resolve in ANY
+    # Bare module names ansible-core can no longer resolve in ANY
     # collection (removed from ansible-core years ago and from the
-    # collections that absorbed them), so every real ansible-playbook
+    # collections that absorbed them), so every ansible-playbook
     # install hard-stops on them. Deliberately minimal: an entry here
     # hard-stops the whole run at parse time, so a name belongs here
     # only when it is unresolvable on EVERY real controller - never a
     # module that a current collection still ships. Widening = adding
-    # entries here. Value is real Ansible's own hard-stop error text for
+    # entries here. Value is Ansible's own hard-stop error text for
     # that name: nil means the generic couldn't-resolve wording (what
     # ansible-core prints when nothing anywhere resolves the name),
-    # while some removed names have real Ansible print its own specific
+    # while some removed names have Ansible print its own specific
     # removal message instead - verified live against ansible-core
     # 2.19.11, including which names get which wording.
     REMOVED_MODULE_TOMBSTONES = {
@@ -676,7 +676,7 @@ module Krikri
       # lucasmaurice.awx (round 900444) writes the bare name; this
       # engine previously fell through to the unavailable-module path
       # and failed at RUN time with a misleading "docker: No such file
-      # or directory" instead of matching real Ansible's own
+      # or directory" instead of matching Ansible's own
       # removed-module hard stop. docker_compose_v2 itself is a
       # separate, fully-implemented plugin (plugins/docker_compose_v2.cr)
       # - this tombstones only the removed v1 module.

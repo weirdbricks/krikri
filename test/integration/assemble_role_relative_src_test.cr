@@ -17,7 +17,7 @@ describe "assemble:'s relative src: resolves against the role's files/ directory
     # own files/ directory. Only copy:/template: were wired into
     # resolve_role_relative_src, so assemble:'s src: reached the plugin
     # as the bare relative string "files/" and failed with
-    # "Source (files/) does not exist" while real ansible-playbook
+    # "Source (files/) does not exist" while ansible-playbook
     # (whose assemble action plugin runs _find_needle('files', src))
     # assembled it fine.
     src_dir = File.tempname("assemble-role-relative-src")

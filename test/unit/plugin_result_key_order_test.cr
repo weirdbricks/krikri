@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/base_plugin"
 
 # PluginResult#key_order - the optional wire-key reorder that lets a
-# module's serialized result match real Ansible's own dict insertion
+# module's serialized result match Ansible's own dict insertion
 # order (exit_json's msg/status_code kwargs lead, then the module's
 # result dict, then add_path_info's stat block) instead of
 # PluginResult's engine-wide fixed leading keys
@@ -13,7 +13,7 @@ require "../../src/krikri/base_plugin"
 # The real-order reference here is command-module-shaped (see the
 # get_url integration test for a live-verified module order): krikri's
 # command plugin wire result is changed, exception, failed, msg, then
-# the module keys, while real's registered command result runs
+# the module keys, while Ansible's registered command result runs
 # changed, stdout, stderr, rc, cmd, start, end, delta, failed, msg, ...
 # (verified against ansible-core 2.19.11 via `{{ r | to_json }}`).
 describe "PluginResult#key_order" do
@@ -61,7 +61,7 @@ describe "PluginResult#key_order" do
     ])
   end
 
-  it "emits real's plain fail_json order by default for a failed result without key_order" do
+  it "emits Ansible's plain fail_json order by default for a failed result without key_order" do
     # live-verified against 2.19.11 across slurp/stat/file/fail/service/
     # getent/mount plain failures: failed, msg, changed, exception
     result = Krikri::PluginResult.new(changed: false, failed: true, msg: "boom", url: "http://h/f")

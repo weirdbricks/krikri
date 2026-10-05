@@ -42,37 +42,37 @@ module Krikri
   #   already available (`archive.cr` already depends on all three for
   #   the same reason) - `.zst` shells out to the `zstd` CLI binary
   #   instead (no Crystal zstd binding vendored here), which is actually
-  #   what real Ansible's own module does for `.zst` too
+  #   what Ansible's own module does for `.zst` too
   #   (`module.get_bin_path('zstd', True)`, piped through a subprocess -
   #   verified against its actual source), so this one codec isn't a step
-  #   down from real Ansible's own behavior the way it would be for the
+  #   down from Ansible's own behavior the way it would be for the
   #   other three. Command shape (`mysqldump
   #   --user=U --password='PW' --host=H --port=P dbname --quick` /
   #   `mysql --user=U --password='PW' --host=H --port=P --one-database
   #   dbname < target`, including the `--quick`/`--one-database` flags
   #   defaulting on) and the always-`changed: true`-on-success behavior
   #   (dump/import are not idempotency-checked at all, unlike
-  #   present/absent above) verified against a real `ansible-playbook`
+  #   present/absent above) verified against a `ansible-playbook`
   #   run with `community.mysql.mysql_db` against a real MariaDB 11
   #   server, not assumed from the docs.
   # - state: dump/import only: `config_file:` (a `my.cnf`-format options
-  #   file, passed as `--defaults-extra-file=` - real Ansible's own
+  #   file, passed as `--defaults-extra-file=` - Ansible's own
   #   mysqldump/mysql invocation demands this be the very first flag, so
   #   it's built first here too, not just appended anywhere) /
   #   `restrict_config_file:` (bool - `--defaults-file=` instead, meaning
   #   *only* `config_file:` is read, no other implicit option files).
-  #   `name: all` (real Ansible has no separate `all_databases:` boolean
+  #   `name: all` (Ansible has no separate `all_databases:` boolean
   #   param at all despite this plugin's own prior doc comment claiming
   #   otherwise - verified against its actual `argument_spec` - it's
   #   triggered by passing the literal db name `all`) uses
   #   `--all-databases` for dump and skips `--one-database <name>`
-  #   entirely for import, matching real Ansible's own `db_dump`/
+  #   entirely for import, matching Ansible's own `db_dump`/
   #   `db_import`.
   # - state: dump only: `single_transaction:`/`skip_lock_tables:`/
   #   `hex_blob:` (bools), `ignore_tables:` (comma-separated
   #   `database_name.table_name` entries, one `--ignore-table=` per
   #   entry), `master_data:` (0 (default, omitted)/1/2 -
-  #   `--master-data=N`; real Ansible switches to `--source-data=N` for
+  #   `--master-data=N`; Ansible switches to `--source-data=N` for
   #   MySQL, not MariaDB, servers at 8.2.0+, a version/implementation
   #   check this plugin doesn't replicate - `--master-data=` is accepted
   #   by every server this project targets, a documented simplification),
@@ -86,18 +86,18 @@ module Krikri
   # straight through and surfaces as whatever error the server itself
   # returns; dump/import's own `--default-character-set=`.
   class MysqlDbPlugin < BasePlugin
-    # Real 2.19.11's exit_json for present/absent (live-verified with
+    # Ansible 2.19.11's exit_json for present/absent (live-verified with
     # community.mysql 5.0.2, `{{ r | to_json }}`, MySQL 8.4):
     # changed, db, db_list, executed_commands, failed - with no `msg` key
     # at all on those paths. `executed_commands` is absent in check mode
-    # (real returns a different exit_json before ever touching the
+    # (Ansible returns a different exit_json before ever touching the
     # executed_commands list). Dump/import lead with msg instead.
     private SUCCESS_KEY_ORDER = %w[changed db db_list executed_commands msg failed]
 
     private CHECK_KEY_ORDER = %w[changed db db_list failed]
 
     def execute : PluginResult
-      # Real Ansible's `name:` param has `aliases: [db]` - same bug
+      # Ansible's `name:` param has `aliases: [db]` - same bug
       # class fixed for postgresql_db/postgresql_user in round 43
       # (robertdebock.postgres): a real playbook writing `db: mydb`
       # (the alias) got "missing required argument: name" no matter
@@ -114,7 +114,7 @@ module Krikri
         return run_dump_or_import(state, raw_name.to_s)
       end
 
-      # Real Ansible's `name:` is `type='list', elements='str'` - a YAML
+      # Ansible's `name:` is `type='list', elements='str'` - a YAML
       # scalar and a list both work, and a multi-name run reports BOTH
       # shapes (`db` is the names joined by a space, `db_list` the list
       # itself). An empty name exits early, changed: false, with the raw
@@ -170,7 +170,7 @@ module Krikri
 
       encoding = @params["encoding"]?
       collation = @params["collation"]?
-      # Real Ansible binds encoding/collation as query parameters, which
+      # Ansible binds encoding/collation as query parameters, which
       # reach the server as single-quoted string literals - MySQL accepts
       # both a bare identifier and a string literal for CHARACTER SET/
       # COLLATE, so quote_str here matches real behavior AND makes
@@ -182,7 +182,7 @@ module Krikri
       end
 
       executed = missing.map do |each|
-        # Real Ansible reports the statement as its driver *mogrified* it,
+        # Ansible reports the statement as its driver *mogrified* it,
         # i.e. the CREATE DATABASE line with the parameters interpolated -
         # exactly the text this plugin sends.
         statement = "CREATE DATABASE #{quote_ident(each)}#{clause}"
@@ -217,10 +217,10 @@ module Krikri
         executed_commands: json_strings(executed), failed_flag: true, key_order: SUCCESS_KEY_ORDER)
     end
 
-    # Real Ansible's `name:` is a list; krikri's param channel hands a YAML
+    # Ansible's `name:` is a list; krikri's param channel hands a YAML
     # list over as its JSON encoding (the same convention mysql_query's
     # own `query:` parsing follows), so decode that shape here.
-    # Real Ansible's `name:` accepts a scalar or a list; either way it
+    # Ansible's `name:` accepts a scalar or a list; either way it
     # arrives here as a list of names.
     private def normalize_db_list(raw) : Array(String)
       return raw.as_a.map(&.to_s) if raw.is_a?(Array)
@@ -270,7 +270,7 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
 
       write_target(target, result[:stdout])
-      # dump/import lead with msg in real's own exit_json (and carry the
+      # dump/import lead with msg in Ansible's own exit_json (and carry the
       # shell command it ran in executed_commands, which this plugin's
       # native-codec path does not build as a single string).
       PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
@@ -292,7 +292,7 @@ module Krikri
       File.delete?(sql_path) if sql_path != target
 
       return PluginResult.new(changed: false, failed: true, msg: result[:stderr]) unless result[:exit_code] == 0
-      # dump/import lead with msg in real's own exit_json (and carry the
+      # dump/import lead with msg in Ansible's own exit_json (and carry the
       # shell command it ran in executed_commands, which this plugin's
       # native-codec path does not build as a single string).
       PluginResult.new(changed: true, failed: false, msg: "", db: name, db_list: [name],
@@ -322,7 +322,7 @@ module Krikri
     # never appears in argv at all, and the file is 0600 and always
     # removed, preserving the tool's exit code. (With a user-supplied
     # config_file: the old --password= argv form remains, since only one
-    # defaults file may be given - matching real Ansible's own behavior
+    # defaults file may be given - matching Ansible's own behavior
     # when config_file is passed.)
     private def stages_defaults_file? : Bool
       pw = @params["login_password"]?
@@ -391,12 +391,12 @@ module Krikri
     # codecs (and the same "native over shelling out" preference)
     # archive.cr already depends on. .zst shells out to the `zstd` CLI
     # binary instead - no Crystal zstd binding is vendored in this
-    # codebase, but real Ansible's own module does exactly the same
+    # codebase, but Ansible's own module does exactly the same
     # thing for `.zst` (`module.get_bin_path('zstd', True)`, piped
     # through a subprocess - verified against its actual source, unlike
-    # gzip/bzip2/xz, which real Ansible *also* shells out to but this
+    # gzip/bzip2/xz, which Ansible *also* shells out to but this
     # codebase deliberately went native for since bindings already
-    # existed), so this is arguably more faithful to real Ansible's own
+    # existed), so this is arguably more faithful to Ansible's own
     # implementation than the other three, not less.
     private def write_target(target : String, content : String) : Nil
       return write_zst(target, content) if target.ends_with?(".zst")

@@ -5,7 +5,7 @@ require "../../src/krikri/playbook_parser"
 # using the LEGACY free-form `action: <module> [args]` syntax previously
 # made `action` itself the module name; the plugin lookup failed
 # ("Plugin binary not found: action") and the exception escaped as an
-# unhandled crash of the whole binary. Real Ansible treats `action:` as
+# unhandled crash of the whole binary. Ansible treats `action:` as
 # "run this module" - value is `<module> [k=v ...]` or `{module:, args:}`.
 describe "Krikri::PlaybookParser (playbook_parser_action_test.cr)" do
   describe "legacy action: directive (round 192)" do
@@ -59,14 +59,14 @@ describe "Krikri::PlaybookParser (playbook_parser_action_test.cr)" do
     end
 
     it "parses the dict form action: {module:, ...} with DIRECT sibling params, no args: wrapper (round 812021, cchurch.admin-users)" do
-      # Real Ansible's own documented dict-form action:/local_action:
+      # Ansible's own documented dict-form action:/local_action:
       # syntax: every key other than `module` IS a param directly, no
       # args: nesting required. cchurch.admin-users' own `action:
       # {module: "{{ ansible_pkg_mgr }}", name: ..., state: present}`
       # (templated module name, direct name:/state: siblings) previously
       # dropped name:/state: entirely - only an explicit args: dict was
       # ever read - failing "Missing required parameter: name" even
-      # though real Ansible forwards them fine.
+      # though Ansible forwards them fine.
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: dict form direct siblings
           hosts: all

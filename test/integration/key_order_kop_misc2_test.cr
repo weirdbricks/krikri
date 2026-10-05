@@ -22,7 +22,7 @@ require "digest/md5"
 #   add_path_info overwrites `state` with the dest file's kind and
 #   appends the stat block; the download failure is the downloader's
 #   "Failed to download artifact <g:a:v> because of HTTP Error <c>:
-#   <reason>for URL <url>" (real's own missing space before "for URL");
+#   <reason>for URL <url>" (Ansible's own missing space before "for URL");
 # - community.docker.current_container_facts: ansible_facts, failed,
 #   changed (exit_json(ansible_facts=...) with no changed);
 # - community.libvirt.virt_net command results: exit_json(**{command:
@@ -192,13 +192,13 @@ describe "round 994002 kop_misc2 registered key order" do
   describe "community.general.maven_artifact" do
     # The lxml import gate sits between the argspec validation and the
     # download; without it the download shapes below are unreachable
-    # (the module fails with real's missing_required_lib message first).
+    # (the module fails with Ansible's missing_required_lib message first).
     private def lxml_available? : Bool
       Process.run("python3", {"-c", "import lxml"},
         output: Process::Redirect::Close, error: Process::Redirect::Close).success?
     end
 
-    it "skips in check mode like real's action-level gate" do
+    it "skips in check mode like Ansible's action-level gate" do
       value = run_registered_value(registered_dump_play(<<-YAML), check_mode: true)
         - name: check mode
           community.general.maven_artifact:
@@ -333,7 +333,7 @@ describe "round 994002 kop_misc2 registered key order" do
       end
     end
 
-    it "fails a 404 with real's downloader message (including the missing space before 'for URL')" do
+    it "fails a 404 with Ansible's downloader message (including the missing space before 'for URL')" do
       server = HTTP::Server.new do |context|
         context.response.status_code = 404
       end
@@ -385,14 +385,14 @@ describe "round 994002 kop_misc2 registered key order" do
   describe "community.libvirt.virt_net command: undefine" do
     # The undefine-on-missing-network shape needs `virsh` present (the
     # HAS_VIRT gate); a shim that always fails its probes stands in for
-    # a libvirt daemon with no networks - the real module's
+    # a libvirt daemon with no networks - the Ansible module's
     # EntryNotFound path.
     it "registers undefine, failed, changed with no changed on the wire" do
       shim_dir = PluginSpecHelper.tmp_path("kop-virsh-shim")
       Dir.mkdir_p(shim_dir)
       shim = File.join(shim_dir, "virsh")
       # A virsh whose every probe fails: net-info/net-dumpxml exit
-      # nonzero, which is exactly real's EntryNotFound path for a
+      # nonzero, which is exactly Ansible's EntryNotFound path for a
       # libvirt daemon with no networks.
       File.write(shim, "#!/bin/sh\nexit 1\n")
       File.chmod(shim, 0o755)
@@ -418,8 +418,8 @@ describe "round 994002 kop_misc2 registered key order" do
     # network, the raw libvirt XML error for a bad define). Krikri shells
     # out to virsh, whose stderr wraps the same errors as "error: " lines
     # with an extra "Failed to ..." headline - the shim reproduces those
-    # wrappers so the mapped plugin msgs can be pinned to real's.
-    it "maps a missing network on start to real's 'network NAME not found'" do
+    # wrappers so the mapped plugin msgs can be pinned to Ansible's.
+    it "maps a missing network on start to Ansible's 'network NAME not found'" do
       value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
         - name: start a network that does not exist
           community.libvirt.virt_net:
@@ -432,7 +432,7 @@ describe "round 994002 kop_misc2 registered key order" do
       value["msg"].as_s.must_equal("network kop_probe_net not found")
     end
 
-    it "maps a missing network on get_xml to real's 'network NAME not found'" do
+    it "maps a missing network on get_xml to Ansible's 'network NAME not found'" do
       value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
         - name: get xml of a network that does not exist
           community.libvirt.virt_net:
@@ -445,7 +445,7 @@ describe "round 994002 kop_misc2 registered key order" do
       value["msg"].as_s.must_equal("network kop_probe_net not found")
     end
 
-    it "maps a missing network on status to real's 'network NAME not found'" do
+    it "maps a missing network on status to Ansible's 'network NAME not found'" do
       value = run_registered_value(registered_dump_play(<<-YAML), env: missing_net_shim_env)
         - name: status of a network that does not exist
           community.libvirt.virt_net:
@@ -509,8 +509,8 @@ describe "round 994002 kop_misc2 registered key order" do
     end
   end
 
-  describe "community.libvirt.virt_net state: msg carries real's libvirt rc (round 996005)" do
-    # Real's core() puts the libvirt return value itself into `msg` on
+  describe "community.libvirt.virt_net state: msg carries Ansible's libvirt rc (round 996005)" do
+    # Ansible's core() puts the libvirt return value itself into `msg` on
     # every state branch that changed anything:
     # `res['msg'] = v.start(name)` / `v.destroy(name)` /
     # v.undefine(name), each of which returns what libvirt's
@@ -519,7 +519,7 @@ describe "round 994002 kop_misc2 registered key order" do
     # exactly {changed: true, msg: 0, failed: false} for both
     # virt_net_start (state: active) and virt_net_stop (state: inactive);
     # krikri registered [changed, failed] with no msg at all. The
-    # check-mode branch keeps NO msg (real's conn.create/destroy exit
+    # check-mode branch keeps NO msg (Ansible's conn.create/destroy exit
     # from inside the method there, round994002 virt_net_check), and an
     # already-converged state keeps no msg either.
     private def stateful_virsh_shim_env
@@ -621,7 +621,7 @@ describe "round 994002 kop_misc2 registered key order" do
       value["msg"].raw.must_equal(0_i64)
     end
 
-    it "registers state=absent with msg 0 (real's undefine return)" do
+    it "registers state=absent with msg 0 (Ansible's undefine return)" do
       shim = stateful_virsh_shim_env
       value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env])
         - name: undefine the probe network (changed)
@@ -635,7 +635,7 @@ describe "round 994002 kop_misc2 registered key order" do
       value["msg"].raw.must_equal(0_i64)
     end
 
-    it "keeps the check-mode state change msg-less (real exits from inside the method)" do
+    it "keeps the check-mode state change msg-less (Ansible exits from inside the method)" do
       shim = stateful_virsh_shim_env
       value = run_registered_value(registered_dump_play(<<-YAML), env: shim[:env], check_mode: true)
         - name: start the probe network in check mode (changed)

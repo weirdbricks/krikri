@@ -1,6 +1,6 @@
 module Krikri
   module PluginHelpers
-    # Real Ansible's the real module get_bin_path(required=True):
+    # Ansible's the Ansible module get_bin_path(required=True):
     # resolves a module's required binary at module start, BEFORE any
     # state check, and fails with exactly this message when nothing
     # executable is found - so even a state-only task
@@ -8,7 +8,7 @@ module Krikri
     # fails on a host that lacks the binary. This engine's plugins used
     # to short-circuit on their own state checks first and report
     # "already in desired state" success on hosts where the underlying
-    # binary was missing entirely - a false success real Ansible never
+    # binary was missing entirely - a false success Ansible never
     # produces. Found via an ad-hoc CLI comparison sweep against real
     # ansible, 2026-09-13.
     module GetBinPath

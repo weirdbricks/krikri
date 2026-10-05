@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Pins plugins/seboolean.cr's library gate against real
-# ansible.posix.seboolean 2.19.11: the real module binds libselinux and
+# ansible.posix.seboolean 2.19.11: the Ansible module binds libselinux and
 # libsemanage at import time and fails through missing_required_lib()
 # when either is absent - before the SELinux-enabled check and before
 # any parameter's runtime use, so on a host without those Python bindings
@@ -46,7 +46,7 @@ describe "seboolean plugin python library gate" do
     "please consult the documentation on ansible_python_interpreter"
   end
 
-  it "fails with real's missing_required_lib wording when a binding is absent" do
+  it "fails with Ansible's missing_required_lib wording when a binding is absent" do
     probe = python_probe
     skip "host has no python to probe with" unless probe
     python, has_selinux, has_semanage = probe

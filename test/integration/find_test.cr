@@ -40,7 +40,7 @@ describe "find plugin" do
   end
 
   it "accepts the singular path= alias for paths=" do
-    # Real Ansible's find module declares `paths` with aliases `path`
+    # Ansible's find module declares `paths` with aliases `path`
     # and `name` - a single-directory search almost always uses the
     # singular form. Found via robertdebock.dovecot's own "Find users
     # in /var/spool/mail" task (`path: /var/spool/mail`), which real
@@ -299,7 +299,7 @@ describe "find plugin" do
       paths_of(result).must_include(File.join(link, "t.txt"))
     end
 
-    it "still classifies a symlink as link with follow: true (real Ansible lstats every entry regardless of follow)" do
+    it "still classifies a symlink as link with follow: true (Ansible lstats every entry regardless of follow)" do
       link = with_follow_fixture
 
       result = PluginSpecHelper.run("find", {"paths" => tmp_dir, "patterns" => "follow_link", "file_type" => "link", "follow" => "true"})
@@ -336,7 +336,7 @@ describe "find plugin" do
       paths_of(result).must_equal([raw_path])
     end
 
-    it "does not affect get_checksum - real Ansible hashes raw bytes regardless of encoding" do
+    it "does not affect get_checksum - Ansible hashes raw bytes regardless of encoding" do
       bin_path = File.join(tmp_dir, "cksum.bin")
       File.write(bin_path, "\xFF\xFE data")
       expected = Digest::SHA1.hexdigest("\xFF\xFE data")

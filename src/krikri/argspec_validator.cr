@@ -3,7 +3,7 @@ require "digest/sha1"
 require "big"
 require "./param_sentinels"
 
-# Data-driven module argument validation, matching real ansible-core's
+# Data-driven module argument validation, matching ansible-core's
 # AnsibleModule argument-spec checks word-for-word.
 #
 # The spec table (data/argspecs.json) is GENERATED from the installed
@@ -11,7 +11,7 @@ require "./param_sentinels"
 # module's own AnsibleModule(argument_spec=...) call (options, aliases,
 # types, required, choices, defaults, mutually_exclusive/required_together/
 # required_one_of/required_if/required_by) plus live-probed facts the spec
-# itself cannot tell you (which module name real prints in
+# itself cannot tell you (which module name Ansible prints in
 # "Unsupported parameters for (...) module" when an action plugin delegates
 # - template runs copy, shell runs command - and which action-only
 # directives validate at all).
@@ -29,7 +29,7 @@ module Krikri
   module ArgspecValidator
     extend self
 
-    # Kept out of validation: engine-internal wire keys real's module
+    # Kept out of validation: engine-internal wire keys Ansible's module
     # never sees (real strips the _ansible_* namespace generically; the
     # others are krikri's own bookkeeping keys).
     # Package-manager modules `package: use:` can name (core + common community).
@@ -42,7 +42,7 @@ module Krikri
       "__original_src_basename",
     ]
 
-    # The assemble-only options real's action plugin consumes itself and
+    # The assemble-only options Ansible's action plugin consumes itself and
     # never forwards to the copy module it delegates to when
     # remote_src: is falsy (assemble.py action's clean-up loop).
     ASSEMBLE_ACTION_CONSUMED = ["remote_src", "regexp", "delimiter", "ignore_hidden", "decrypt"]
@@ -58,9 +58,9 @@ module Krikri
       !Krikri.lenient_boolean_true?(params["remote_src"]?)
     end
 
-    # convert_bool.py's BOOLEANS as real's error message reprs them (a
+    # convert_bool.py's BOOLEANS as Ansible's error message reprs them (a
     # Python set iteration - order differs between module processes, so
-    # this fixed order is one real emits; only the membership is stable).
+    # this fixed order is one Ansible emits; only the membership is stable).
     BOOLEANS_REPR = %w['off' 1 'true' 'y' 0 'false' 'on' 'no' '1' 'yes' '0' 'n' 'f' 't']
     REAL_TRUE     = %w[y yes on 1 true t]
     REAL_FALSE    = %w[n no off 0 false f]
@@ -73,7 +73,7 @@ module Krikri
       # Action-only directives (debug, assert, fail, ...) fail with a
       # chain that has no "Module failed." middle segment.
       getter? action_level : Bool
-      # debug's fatal dump carries ONLY msg (real's callback shape for
+      # debug's fatal dump carries ONLY msg (Ansible's callback shape for
       # its own action result) - its failure result omits "changed".
       getter? omit_changed : Bool
 
@@ -99,9 +99,9 @@ module Krikri
 
     @@option_order : Hash(String, Array(String))? = nil
 
-    # Each module's option names in real's argument_spec DECLARATION order
+    # Each module's option names in Ansible's argument_spec DECLARATION order
     # (data/argspecs.json preserves it; Crystal's JSON object decode does
-    # not). Real's validation walks the spec dict in declaration order, so
+    # not). Ansible's validation walks the spec dict in declaration order, so
     # the first failing option - not the hash-decoded order - decides which
     # type/choices error wins. Re-read through a pull parser because the
     # table itself was decoded order-less above.
@@ -150,7 +150,7 @@ module Krikri
     end
 
     # The action-plugin-level failures whose text is not a spec-check
-    # message (real's action plugins check these before the module's own
+    # message (Ansible's action plugins check these before the module's own
     # AnsibleModule init runs), keyed by module; every one of these
     # modules has a table entry, so checking them before the entry
     # lookup changes nothing.
@@ -196,14 +196,14 @@ module Krikri
       outcome = validate_spec_entry(action_name, module_name, entry, params, vars_context)
 
       # A removed_in_version-marked param the task passed deprecates at
-      # the real module's own bootstrap (_handle_params). The warning
+      # the Ansible module's own bootstrap (_handle_params). The warning
       # travels in the module RESULT, so whether it reaches stderr
       # mirrors how the module run ends: a module-level spec failure IS
-      # real's AnsibleModule fail_json exit (unsupported parameters,
+      # Ansible's AnsibleModule fail_json exit (unsupported parameters,
       # mutually exclusive, ...) and shows the deprecation; an
       # action-plugin-level failure, a skip or an unreachable never run
       # the module, so they print nothing; and an uncaught module
-      # exception drops it - real's crash wrapper builds its result
+      # exception drops it - Ansible's crash wrapper builds its result
       # without the collected deprecations (all live-verified vs 2.19.11
       # with openssl_pkcs12's maciter_size). Module-level failures emit
       # right here (the module has "run" - bootstrap and all - and
@@ -238,8 +238,8 @@ module Krikri
     end
 
     # The spec-check tail of validate (everything but the removed-param
-    # gate): failure is the first spec error in real's check order, nil
-    # when the params pass. deferred is real's "the action plugin settled
+    # gate): failure is the first spec error in Ansible's check order, nil
+    # when the params pass. deferred is Ansible's "the action plugin settled
     # the outcome itself" exits, where the module may not run at all - a
     # passing-but-deferred validation must not pre-arm the removed-param
     # deprecation.
@@ -370,7 +370,7 @@ module Krikri
       # check could tell from a plain string - unless one of its members was
       # a non-string scalar, which the parser marks per member. Those marked
       # values are re-encoded as the JSON array they really are (before the
-      # strip below drops the markers), so debug's type errors report real's
+      # strip below drops the markers), so debug's type errors report Ansible's
       # list - and repr it with the same members. A list of strings only
       # stays indistinguishable: nothing about its wire is marked.
       if module_name == "ansible.builtin.debug"
@@ -417,7 +417,7 @@ module Krikri
     #
     # A remote_src the action plugin treats as falsy
     # (boolean(strict=False) - every non-BOOLEANS_TRUE value, invalid
-    # spellings included) and a src that is NOT a directory: real's
+    # spellings included) and a src that is NOT a directory: Ansible's
     # action plugin assembles the fragments on the controller and
     # delegates the file placement to the COPY module (assemble.py
     # action: _execute_module('ansible.legacy.copy')) after stripping
@@ -431,7 +431,7 @@ module Krikri
     # strict=False), not a falsy-spelling list: an INVALID spelling
     # ('timjjr') or an explicit None returns False from boolean()
     # without raising, so it delegates exactly like 'false' does - and
-    # the copy module never sees remote_src at all, which is why real's
+    # the copy module never sees remote_src at all, which is why Ansible's
     # fatal for a typo'd gorup + non-bool 'timjjr' remote_src is copy's
     # Unsupported-parameters error, not assemble's remote_src
     # bool-conversion error (the assemble module, and its strict
@@ -500,7 +500,7 @@ module Krikri
     #     if/elif) - a truthy remote_src: returns from the action plugin
     #     before either branch runs, and the module's own copy of the
     #     check then produces the different, module-worded message (see
-    #     plugins/uri.cr). Real sees the TEMPLATED args here, so every
+    #     plugins/uri.cr). Ansible sees the TEMPLATED args here, so every
     #     non-bool scalar/container reports its _AnsibleTagged* subclass
     #     name while a bool stays plain `bool` (live-verified vs
     #     2.19.11 across NoneType/bool/str/int/float/list).
@@ -512,7 +512,7 @@ module Krikri
     # same filesystem and the existence check is the whole story.
     private def uri_action_failure(params : Hash(String, String), non_string_natives : Hash(String, JSON::Any), non_string_lists : Hash(String, JSON::Any)) : Failure?
       # A truthy remote_src: short-circuits the whole controller-side
-      # branch (real's action plugin returns the module result directly),
+      # branch (Ansible's action plugin returns the module result directly),
       # so neither check below can fire.
       return nil if Krikri.lenient_boolean_true?(params["remote_src"]?)
 
@@ -531,7 +531,7 @@ module Krikri
     end
 
     # Python class name for a uri body: that is not a mapping, spelled the
-    # way real's own action-plugin guard spells it. A parser-marked
+    # way Ansible's own action-plugin guard spells it. A parser-marked
     # non-string YAML literal or list literal (NON_STRING_PARAM_PREFIX /
     # the member markers) keeps its native type; every other value
     # arrives as text, where a value that parses as JSON is a container
@@ -754,8 +754,8 @@ module Krikri
       end
     end
 
-    # A bool-typed wire value: real's own TRUE/FALSE words convert, and
-    # anything else rides through as the plain string (real's
+    # A bool-typed wire value: Ansible's own TRUE/FALSE words convert, and
+    # anything else rides through as the plain string (Ansible's
     # boolean(value, strict=False) leaves an unrecognized spelling
     # alone rather than failing here).
     private def convert_invocation_bool(raw : String) : JSON::Any
@@ -774,7 +774,7 @@ module Krikri
     end
 
     # Wire params, alias-normalized: canonical name -> raw wire string.
-    # Real's _handle_aliases runs before every check, so an alias
+    # Ansible's _handle_aliases runs before every check, so an alias
     # spelling counts exactly like its canonical name; anything that
     # maps to neither lands in the unsupported list (reported LAST).
     private def collect_provided(
@@ -802,7 +802,7 @@ module Krikri
       entry["consumed_by_action"]?.try(&.as_a?.try(&.map(&.as_s))) || [] of String
     end
 
-    # Real's action-plugin presence checks are None checks
+    # Ansible's action-plugin presence checks are None checks
     # (self._task.args.get('src', None)): the key must exist AND hold a
     # non-None value - an explicitly null param counts as absent, an
     # empty string does not.
@@ -811,8 +811,8 @@ module Krikri
       !value.nil? && value != Krikri::NONE_SENTINEL
     end
 
-    # The spec-check chain in real Ansible's ArgumentSpecValidator order;
-    # only the FIRST failing check's message is ever surfaced (real's
+    # The spec-check chain in Ansible's ArgumentSpecValidator order;
+    # only the FIRST failing check's message is ever surfaced (Ansible's
     # AnsibleModule fails on errors[0]).
     private def run_spec_checks(
       spec_owner : String,
@@ -824,7 +824,7 @@ module Krikri
       non_string_natives : Hash(String, JSON::Any),
       non_string_lists : Hash(String, JSON::Any),
     ) : String?
-      # Real's ArgumentSpecValidator.validate runs its no_log value walk
+      # Ansible's ArgumentSpecValidator.validate runs its no_log value walk
       # (_list_no_log_values) immediately after alias resolution - before
       # mutually_exclusive, required, or any type conversion. A string
       # element of a dict-typed option THAT HAS suboptions (or a dict
@@ -866,11 +866,11 @@ module Krikri
     end
 
     # Resolves fact-delegated specs (service -> systemd, package -> apt)
-    # and computes the module name real would print for this invocation.
+    # and computes the module name Ansible would print for this invocation.
     # Returns {print_name, effective_entry} - effective_entry nil means
     # the spec target cannot be determined (no host fact), so validation
     # is skipped rather than guessed.
-    # Computes the module name real would print for this invocation, the
+    # Computes the module name Ansible would print for this invocation, the
     # effective entry, and the FQCN whose declaration-ordered options the
     # spec checks walk (a fact-delegated target owns the order, not the
     # action spelling).
@@ -906,7 +906,7 @@ module Krikri
       {"ansible.legacy.#{module_name.split(".").last}", entry, module_name}
     end
 
-    # Facts not gathered: real's action plugin runs setup for just the
+    # Facts not gathered: Ansible's action plugin runs setup for just the
     # delegating fact on demand. service: systemd only when PID 1 is
     # systemd, any other manager runs the service module ITSELF against
     # its own spec. package: the host's package manager (apt on Debian).
@@ -946,7 +946,7 @@ module Krikri
       defaults
     end
 
-    # Real's check_mutually_exclusive runs BEFORE defaults are applied:
+    # Ansible's check_mutually_exclusive runs BEFORE defaults are applied:
     # only actually-provided params count (aliases resolve to their
     # canonical name for the count).
     private def check_mutually_exclusive(entry : JSON::Any, provided : Hash(String, String)) : String?
@@ -985,7 +985,7 @@ module Krikri
         return error if error
         # The option's own type converted cleanly: a list typed option
         # with an elements= constraint converts each element in the same
-        # walk (real's check_type_list runs the element checker inline),
+        # walk (Ansible's check_type_list runs the element checker inline),
         # so uri's status_code element failure is part of the types pass
         # and beats any later option's type error and every choices check
         # (live-verified vs 2.19.11).
@@ -995,15 +995,15 @@ module Krikri
       nil
     end
 
-    # Real's custom callable type (assert action's str_or_list_of_str): a
+    # Ansible's custom callable type (assert action's str_or_list_of_str): a
     # string passes, a list whose every element is a string passes, and
     # anything else raises TypeError("a string or list of strings is
     # required"), which _validate_argument_types wraps as "argument 'x' is
     # of type <native type> and we were unable to convert to
     # str_or_list_of_str: ...". The wire sees a marked non-string scalar
-    # (int/float/bool) where real sees the native Python value; a plain
-    # string wire value IS real's str case, and a JSON-encoded list is
-    # real's list case.
+    # (int/float/bool) where Ansible sees the native Python value; a plain
+    # string wire value IS Ansible's str case, and a JSON-encoded list is
+    # Ansible's list case.
     private def str_or_list_type_error(name : String, raw : String, native : JSON::Any?) : String?
       tail = "a string or list of strings is required"
       if list = (JSON.parse(raw) rescue nil).try(&.as_a?)
@@ -1020,13 +1020,13 @@ module Krikri
       "argument '#{name}' is of type #{kind} and we were unable to convert to str_or_list_of_str: #{tail}"
     end
 
-    # Real's _list_no_log_values walk: for every provided option that is
+    # Ansible's _list_no_log_values walk: for every provided option that is
     # type=dict, or type=list with elements=dict AND its own options=
     # sub-spec, each element must be a dict - a string element goes
     # through check_type_dict (bare TypeError on failure, surfaced
     # verbatim as the module failure msg) and a parsed dict descends one
     # level into the sub-spec recursively. Elements that are neither
-    # strings nor dicts fail with real's own (format-arg-swapped)
+    # strings nor dicts fail with Ansible's own (format-arg-swapped)
     # "Value 'x' in the sub parameter field 'y' must be a ..." wording.
     private def check_no_log_walk(options : Hash(String, JSON::Any), provided : Hash(String, String), order : Array(String)?) : String?
       ordered_option_pairs(options, order).each do |name, spec|
@@ -1045,7 +1045,7 @@ module Krikri
     end
 
     # One option's (container-or-string) wire value against its
-    # sub-spec. Real sees the decoded param: a list is iterated, anything
+    # sub-spec. Ansible sees the decoded param: a list is iterated, anything
     # else is treated as a one-element list.
     private def no_log_walk_elements(sub_spec : Hash(String, JSON::Any), value : JSON::Any,
                                      arg_name : String, wanted_type : String) : String?
@@ -1073,7 +1073,7 @@ module Krikri
     end
 
     # Recursion one level down: the parsed dict's values against the
-    # sub-spec's own dict-shaped options (real's
+    # sub-spec's own dict-shaped options (Ansible's
     # _list_no_log_values(sub_argument_spec, sub_param)).
     private def no_log_walk_params(spec : Hash(String, JSON::Any), params : JSON::Any) : String?
       return nil unless params_h = params.as_h?
@@ -1091,7 +1091,7 @@ module Krikri
     end
 
     # check_type_dict's conversion semantics on a string: a "{"-leading
-    # string must be a JSON object (real also tries literal_eval - krikri
+    # string must be a JSON object (Ansible also tries literal_eval - krikri
     # approximates the same way its top-level dict conversion already
     # does), a string containing "=" must be fully key=value shaped, and
     # anything else raises the bare "dictionary requested, could not
@@ -1107,7 +1107,7 @@ module Krikri
       "dictionary requested, could not parse JSON or key=value"
     end
 
-    # Real's key=value field splitter (quote- and escape-aware, fields
+    # Ansible's key=value field splitter (quote- and escape-aware, fields
     # separated on commas/spaces): every field must carry an "=" or the
     # whole string fails with the "key=value format" wording.
     private def kv_parse_error(raw : String) : String?
@@ -1190,15 +1190,15 @@ module Krikri
       end
     end
 
-    # One wire value -> real's typed view. The wire is strings-only, so
+    # One wire value -> Ansible's typed view. The wire is strings-only, so
     # the JSON container shapes a whole-span native param carries are
-    # decoded here (real sees the actual list/dict; krikri sees its JSON
-    # text). A YAML boolean rides as exactly "true"/"false" - real sees
+    # decoded here (Ansible sees the actual list/dict; krikri sees its JSON
+    # text). A YAML boolean rides as exactly "true"/"false" - Ansible sees
     # a Python bool, which is an int subclass and passes int/float/list
     # checks but fails dict conversion.
     private def type_error(name : String, wanted : String, raw : String, spec : JSON::Any, native : JSON::Any? = nil) : String?
       is_null = raw == Krikri::NONE_SENTINEL
-      # Real skips type conversion entirely for a None that is neither
+      # Ansible skips type conversion entirely for a None that is neither
       # required nor defaulted ("if value is None and not required and
       # default is None: continue").
       if is_null
@@ -1215,7 +1215,7 @@ module Krikri
       conversion_type_error(name, wanted, raw, kind, native)
     end
 
-    # The per-wanted-type dispatch (real's checker selection). Keeps
+    # The per-wanted-type dispatch (Ansible's checker selection). Keeps
     # type_error itself under the complexity limit now that the
     # int-callable branch joined the chain.
     private def conversion_type_error(name : String, wanted : String, raw : String, kind : Symbol, native : JSON::Any?) : String?
@@ -1244,7 +1244,7 @@ module Krikri
       required = spec["required"]?.try(&.as_bool?) || false
       has_default = spec["default"]? != nil
       return nil if !required && !has_default
-      # Real's checker for None: str converts to "" (no error); bool/
+      # Ansible's checker for None: str converts to "" (no error); bool/
       # float/dict/list/jsonarg raise "<class 'NoneType'> cannot be
       # converted to ..."; int goes through Decimal and reprs the
       # value ('"None" cannot be converted to an int').
@@ -1320,7 +1320,7 @@ module Krikri
     end
 
     # debug's `var:` rides the _check_type_str_no_conversion CALLABLE
-    # (the real module:44), not the 'str' type name: the checker
+    # (the Ansible module:44), not the 'str' type name: the checker
     # accepts a string and NOTHING else - no int()/str() coercion - so any
     # natively-typed value is rejected outright, with the checker's own
     # repr in the "we were unable to convert to <name>" slot and its
@@ -1378,7 +1378,7 @@ module Krikri
       "<class 'dict'> cannot be converted to a list"
     end
 
-    # Real's check_type_list runs the elements= checker on every element
+    # Ansible's check_type_list runs the elements= checker on every element
     # inline; only int and dict elements are strict enough to ever fail
     # here (str/path/raw elements coerce leniently), so only those two
     # are mirrored. The first failing element's error wins, wrapped as
@@ -1405,7 +1405,7 @@ module Krikri
       nil
     end
 
-    # One element against the dict checker (real's check_type_dict): a
+    # One element against the dict checker (Ansible's check_type_dict): a
     # dict passes, a string goes through the JSON/key=value conversion
     # (each failure its own wording), anything else fails with its
     # Python class ("<class 'int'> cannot be converted to a dict").
@@ -1431,7 +1431,7 @@ module Krikri
       end
     end
 
-    # The list real's check_type_list would hand to the element checker:
+    # The list Ansible's check_type_list would hand to the element checker:
     # a natively-typed param is its own container (or a one-element list),
     # a JSON/demoted-YAML list decodes to its members, and a plain string
     # splits on commas (or stands alone) - see the native elements probes.
@@ -1580,13 +1580,13 @@ module Krikri
         next unless raw
         choices = spec["choices"]?.try(&.as_a?) || next
         allowed = choices_strings(choices)
-        # Real runs _validate_argument_values on the ALREADY
+        # Ansible runs _validate_argument_values on the ALREADY
         # type-converted parameters, and its list branch is guarded by
         # `isinstance(parameters[param], list)` - which every option
         # declared `type: list` satisfies, because check_type_list has
         # already comma-split a scalar by then. So a scalar given to a
         # list+choices option reports the PER-MEMBER wording (the list
-        # comment in real's code says as much: "Allow one or more when
+        # comment in Ansible's code says as much: "Allow one or more when
         # type='list' param with choices"), not the single-value one -
         # `deb822_repository: types: <not deb|deb-src>` fails with "must
         # be one or more of: ... Got no match for: <value>".
@@ -1625,7 +1625,7 @@ module Krikri
     end
 
     # Presence for the group checks: provided, or a non-null spec default
-    # (real's first _set_defaults pass runs before these checks).
+    # (Ansible's first _set_defaults pass runs before these checks).
     private def present?(name : String, provided : Hash(String, String), defaults : Hash(String, JSON::Any)) : Bool
       return true if provided.has_key?(name)
       if d = defaults[name]?
@@ -1725,7 +1725,7 @@ module Krikri
       nil
     end
 
-    # Real's UnsupportedError wording: the offending names sorted, then
+    # Ansible's UnsupportedError wording: the offending names sorted, then
     # the spec's own option names sorted with ONE trailing parenthetical
     # holding all the spec's aliases sorted together.
     private def unsupported_params_message(print_name : String, unsupported : Array(String), options : Hash(String, JSON::Any)) : String
@@ -1766,7 +1766,7 @@ module Krikri
 
     # fail/group_by/wait_for_connection: the action plugin's own
     # "Invalid options for <action>: <names>" check (comma, no space,
-    # real's ','.join of the offending set).
+    # Ansible's ','.join of the offending set).
     private def virtual_invalid_options_failure(print_name : String, params : Hash(String, String), valid : Array(String)) : Failure?
       unsupported = params.keys.reject do |key|
         key.starts_with?("_ansible_") || INTERNAL_KEYS.includes?(key) || valid.includes?(key)

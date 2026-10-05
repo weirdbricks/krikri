@@ -6,7 +6,7 @@ module Krikri
     # the blockinfile plugin, factored out the same way LineEditor is for
     # lineinfile so it can be unit tested without touching the filesystem.
     #
-    # Behavior verified empirically against real `ansible-playbook` (not
+    # Behavior verified empirically against `ansible-playbook` (not
     # assumed from docs): the begin/end marker lines are matched by exact
     # equality (not regex), an existing block's insertion position never
     # moves once found (only its interior is rewritten), a fresh block is
@@ -16,7 +16,7 @@ module Krikri
     # already present").
     module BlockEditor
       # Returns {new_lines, changed}. append_newline/prepend_newline mirror
-      # real Ansible's blank-line padding around the block (present state
+      # Ansible's blank-line padding around the block (present state
       # only): prepend puts a blank line between the preceding content and
       # the block (skipped at BOF or when the preceding line is already
       # blank), append puts one between the block and what follows it
@@ -43,7 +43,7 @@ module Krikri
       ) : {Array(String), Bool}
         begin_index, end_index = find_block(lines, marker_begin_line, marker_end_line)
 
-        # state: absent returns here, so everything below IS real's
+        # state: absent returns here, so everything below IS Ansible's
         # `present` path - including its padding, which real gates on
         # `present` alone and not on there being a block to insert.
         if state == "absent"
@@ -65,7 +65,7 @@ module Krikri
             insert_with_newlines(lines, insert_index, desired, append_newline, prepend_newline)
           end
 
-        # Real Ansible byte-compares original vs result; in the stripped-
+        # Ansible byte-compares original vs result; in the stripped-
         # lines domain the array comparison is the same question.
         {new_lines, new_lines != lines}
       end

@@ -10,22 +10,22 @@ module Krikri
   # connectable/closed, a file appears/disappears, or a regex is found in a
   # file, gating a later task on readiness.
   #
-  # Real Ansible's wait_for has no check-mode support at all (verified
-  # against a real ansible-playbook --check run, not assumed - same
+  # Ansible's wait_for has no check-mode support at all (verified
+  # against a ansible-playbook --check run, not assumed - same
   # "remote module (wait_for) does not support check mode" skip text this
   # plugin reuses verbatim) and never reports changed - it only ever waits,
   # never mutates anything.
   #
   # state: drained polls /proc/net/tcp (IPv4 only - see
   # PluginHelpers::ProcNetTcp's own class doc for why IPv6 is a scope
-  # cut) directly, matching real Ansible's own `LinuxTCPConnectionInfo`
+  # cut) directly, matching Ansible's own `LinuxTCPConnectionInfo`
   # strategy - the file's own hex encoding (byte-reversed IP octets, a
   # plain 4-digit hex port, and a two-digit connection-state code) was
   # verified against this machine's own real /proc/net/tcp output, and
-  # the state-code mapping against the real module's own
+  # the state-code mapping against the Ansible module's own
   # source, not assumed. `active_connection_states:` (default
   # ESTABLISHED/FIN_WAIT1/FIN_WAIT2/SYN_RECV/SYN_SENT/TIME_WAIT, matching
-  # real Ansible's own default) and `exclude_hosts:` (IPv4 literals only,
+  # Ansible's own default) and `exclude_hosts:` (IPv4 literals only,
   # same scope cut as `host:` itself - no DNS resolution) are both
   # supported. `host:` must resolve to a literal IPv4 address for
   # `drained:` specifically (this plugin's other states already default
@@ -39,13 +39,13 @@ module Krikri
   # budget passes - see `#check_port_regex`'s own doc comment for the
   # exact behavior matched (and the one simplification: a single read
   # loop per connection attempt bounded by the overall deadline, rather
-  # than replicating real Ansible's own `select()`-based remaining-time
+  # than replicating Ansible's own `select()`-based remaining-time
   # tracking byte-for-byte - functionally equivalent, reconnects via the
   # same outer poll/sleep loop on any timeout/disconnect either way).
   class WaitForPlugin < BasePlugin
     def execute : PluginResult
       if true?(@params["_ansible_check_mode"]?)
-        # Real's registered wait_for check-mode skip runs skipped, msg,
+        # Ansible's registered wait_for check-mode skip runs skipped, msg,
         # failed, changed (live-verified vs 2.19.11 via `{{ r | to_json }}`;
         # basic.py's module-side skip goes through exit_json with no
         # changed, and the task executor backfills failed, changed at the
@@ -72,9 +72,9 @@ module Krikri
       end
 
       # With no port/path given, wait_for is just a plain sleep for the
-      # full timeout - matches real Ansible's own documented behavior
+      # full timeout - matches Ansible's own documented behavior
       # ("used without other conditions it is equivalent of just
-      # sleeping"), verified against a real ansible-playbook run (it does
+      # sleeping"), verified against a ansible-playbook run (it does
       # not return early).
       if port.nil? && path.nil?
         sleep(timeout.seconds)
@@ -166,7 +166,7 @@ module Krikri
         changed: false, failed: true,
         msg: @params["msg"]? || "Timeout when waiting for #{host}:#{port} to drain",
         elapsed: (Time.instant - started).total_seconds.to_i,
-        # real's fail_json puts the elapsed kwarg first: elapsed, failed,
+        # Ansible's fail_json puts the elapsed kwarg first: elapsed, failed,
         # msg, changed, exception (live-verified against 2.19.11 on the
         # port-timeout path, same kwargs shape here)
         key_order: %w[elapsed failed msg changed exception]
@@ -194,7 +194,7 @@ module Krikri
         changed: false, failed: true,
         msg: @params["msg"]? || timeout_message(port, path),
         elapsed: (Time.instant - started).total_seconds.to_i,
-        # real's fail_json puts the elapsed kwarg first: elapsed, failed,
+        # Ansible's fail_json puts the elapsed kwarg first: elapsed, failed,
         # msg, changed, exception (live-verified against 2.19.11:
         # "Timeout when waiting for 127.0.0.1:59999")
         key_order: %w[elapsed failed msg changed exception]
@@ -202,7 +202,7 @@ module Krikri
     end
 
     private def success_result(path : String?, match : Regex::MatchData?, started : Time::Instant) : PluginResult
-      # Real's registered wait_for success runs state, port, search_regex,
+      # Ansible's registered wait_for success runs state, port, search_regex,
       # match_groups, match_groupdict, path, elapsed, then (for an
       # existing path) add_path_info's uid/gid/owner/group/mode/size, and
       # ends failed, changed - wait_for.py's exit_json passes no changed
@@ -268,21 +268,21 @@ module Krikri
     end
 
     # search_regex matched against data read from an open socket, not
-    # just a file - verified against the real module's
+    # just a file - verified against the Ansible module's
     # observed behavior: connects, then reads (accumulating bytes) until the
     # regex matches, the connection closes, or *deadline* (this poll
     # iteration's own overall timeout budget, not a fresh per-call one)
-    # passes - matching real Ansible's own single-connection read loop
+    # passes - matching Ansible's own single-connection read loop
     # bounded by its own remaining-time budget, not a fixed per-attempt
     # timeout. A connection refused/reset, a read timeout, or a closed
     # connection with no match all fall through to {false, nil} - the
     # outer poll loop (already implemented) reconnects and retries after
-    # its own sleep: interval, same as real Ansible's outer while loop
+    # its own sleep: interval, same as Ansible's outer while loop
     # does on any not-yet-satisfied iteration.
     private def check_port_regex(port : Int32, regex : String, deadline : Time::Instant) : {Bool, Regex::MatchData?}
       host = @params["host"]? || "127.0.0.1"
       connect_timeout = (@params["connect_timeout"]? || "5").to_i.seconds
-      # Real Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
+      # Ansible compiles search_regex with re.MULTILINE (wait_for.py) -
       # Python's re.M only moves ^/$ to line boundaries; `.` must NOT cross
       # newlines. Crystal's MULTILINE constant implies DOTALL (regex.cr maps
       # it to PCRE MULTILINE | DOTALL), so MULTILINE_ONLY is the

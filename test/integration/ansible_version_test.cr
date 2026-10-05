@@ -17,10 +17,10 @@ describe "ansible_version magic var" do
     # silently mis-evaluated the comparison (masking the gap); after
     # 0.9.517 it hard-failed the task outright ("'ansible_version.string'
     # is undefined") - a real regression surfaced by a real fix, not
-    # caused by it. Real ansible-core reports its own controller version
+    # caused by it. ansible-core reports its own controller version
     # here (verified live: {"full": "2.19.4", "major": 2, "minor": 19,
     # "revision": 4, "string": "2.19.4"} against ansible-core 2.19.4) -
-    # this engine deliberately reports a fixed real ansible-core version
+    # this engine deliberately reports a fixed ansible-core version
     # rather than its own "0.9.x" project version, since every
     # version-gated role feature in the wild expects a 2.x-shaped
     # comparison target.

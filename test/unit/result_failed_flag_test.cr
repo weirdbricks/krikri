@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/task_executor/result_display"
 
-# Pins Krikri::result_failed_flag against real ansible-core's async
+# Pins Krikri::result_failed_flag against ansible-core's async
 # fire-and-forget launch result, which puts INTEGER 0 (not false) in the
 # "failed" key - Python truthiness makes that falsy, but a hard
 # JSON::Any#as_bool cast crashes the executor on it. Confirmed via the

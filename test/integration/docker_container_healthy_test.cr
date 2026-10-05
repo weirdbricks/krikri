@@ -21,7 +21,7 @@ describe "docker_container state=healthy" do
     result["msg"].as_s.must_include("missing required argument: name")
   end
 
-  it "reports real's type error for a non-numeric healthy_wait_timeout" do
+  it "reports Ansible's type error for a non-numeric healthy_wait_timeout" do
     result = PluginSpecHelper.run("docker_container", {
       "name"                 => "krikri-hc-badt-#{Process.pid}",
       "image"                => "busybox:latest",
@@ -71,7 +71,7 @@ describe "docker_container state=healthy" do
     end
   end
 
-  it "fails with real's timeout wording when the healthcheck never turns healthy" do
+  it "fails with Ansible's timeout wording when the healthcheck never turns healthy" do
     skip("no reachable docker daemon") unless daemon_reachable?
     name = "krikri-hc-fail-#{Process.pid}"
     begin

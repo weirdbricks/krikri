@@ -4,7 +4,7 @@ module Krikri
   # Registry of UNSAFE TEXTS - strings that are verbatim content, never
   # template text, wherever they surface. Two sources feed it:
   #
-  # - YAML `!unsafe`-tagged scalars (real Ansible's `!unsafe` tag: "this
+  # - YAML `!unsafe`-tagged scalars (Ansible's `!unsafe` tag: "this
   #   value is never templated"). Parsed YAML loses tag information by
   #   the time it becomes JSON::Any, so each YAML var source (playbook,
   #   role defaults/vars, vars_files, include_vars, inventory host/group
@@ -19,7 +19,7 @@ module Krikri
   #   the name gate stops a DIRECT reference (`{{ r.stdout }}`) from
   #   re-rendering, while the text set also stops the same hostile text
   #   after it flowed through an author-defined template or a set_fact
-  #   copy - real ansible-core's taint follows the data, and a hostile
+  #   copy - ansible-core's taint follows the data, and a hostile
   #   target must not get controller code execution by returning stdout
   #   shaped like `{{ lookup('pipe', ...) }}` no matter how many author
   #   templates relay it.
@@ -31,7 +31,7 @@ module Krikri
   # The registry is closed under DERIVATION: every render whose output
   # was demonstrably fed by a registered/execution-resolved string is
   # itself recorded (#mark_unsafe at the span gate, #mark_derived for
-  # whole-text concatenation), so the set tracks real ansible-core's
+  # whole-text concatenation), so the set tracks ansible-core's
   # taint-follows-the-data type across transforms that change the text
   # (`| trim`, `| lower`) and through author templates that relay it.
   module UnsafeValues
@@ -77,7 +77,7 @@ module Krikri
     # container's stringified form (`["{{ ... }}"]`, `{"k": "{{ ... }}"}`)
     # is a member nowhere, yet every hostile leaf it carries appears in it
     # verbatim - a re-render decision on that text must treat it as
-    # tainted exactly like real ansible-core's taint-follows-the-data
+    # tainted exactly like ansible-core's taint-follows-the-data
     # model, or the hostile leaves inside the container get rendered as
     # controller-side template text (a task-level `vars: b: "{{ r.stdout_
     # lines }}"` re-rendered the whole-list repr and executed a
@@ -94,7 +94,7 @@ module Krikri
     # evaluation path has just established that a render's OUTPUT was fed
     # by execution-resolved data (the span gate saw a resolved root in the
     # expression, a registered hostile inside the output, or a resolved
-    # hostvars origin). Real ansible-core types that output
+    # hostvars origin). ansible-core types that output
     # AnsibleUnsafeText and every later decision honors the type; krikri
     # has no string type to piggyback on, so the derivation is recorded
     # here the moment it happens - otherwise a transform that alters the

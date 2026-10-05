@@ -2,7 +2,7 @@ require "file_utils"
 require "../minitest_helper"
 
 # include_vars: with a failing templated path must fail the include_vars
-# task ITSELF with an undefined-variable error, matching real Ansible -
+# task ITSELF with an undefined-variable error, matching Ansible -
 # verified live against ansible-core 2.19.4 with minimal repros:
 #
 #   - `include_vars: "{{ users }}"` with no `users` anywhere:
@@ -19,7 +19,7 @@ require "../minitest_helper"
 # "undefined" and fail with "include_vars: file not found: undefined"
 # (gantsign.oh-my-zsh, round 192's cosmetic-differences entry in
 # KNOWN_MISSING.md), or worse, silently "succeed" loading an empty
-# fallback file. Real Ansible's own "Finalization of task args ... failed:
+# fallback file. Ansible's own "Finalization of task args ... failed:
 # Error while resolving value for '_raw_params':" wrapper is the same 2.19
 # presentation layer every other module's undefined-arg failure already
 # drops (this engine reports the bare cause text, "'users' is undefined" -
@@ -132,7 +132,7 @@ describe "include_vars: with a failing templated path" do
     #
     # The whole lookup used to collapse to the literal text "undefined"
     # ("include_vars: file not found: undefined") without even trying
-    # the individual candidates; real Ansible tries vars/Ubuntu.yml
+    # the individual candidates; Ansible tries vars/Ubuntu.yml
     # (miss), then vars/Debian.yml (found, on a Debian-family target).
     status, output = run_in_role_tree(
       <<-YAML,

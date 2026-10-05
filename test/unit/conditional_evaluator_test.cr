@@ -96,7 +96,7 @@ describe Krikri::ConditionalEvaluator do
     # ontic.git (round 601424): its defaults/main.yml defines git_config/
     # git_users as bare YAML nulls (defined, but None - NOT undefined)
     # and every task in tasks/configure.yml is gated on `git_config |
-    # default(None) != None`. Real Ansible's single-argument default()
+    # default(None) != None`. Ansible's single-argument default()
     # substitutes only for a genuinely UNDEFINED variable, never a
     # defined-but-null one, so the comparison is None vs None and every
     # gated task skips. The generic path rendered the chain to empty
@@ -122,7 +122,7 @@ describe Krikri::ConditionalEvaluator do
 
     # default() DOES substitute for a genuinely undefined variable - the
     # chain resolves to None either way, so the comparison still answers
-    # false (verified against real ansible-playbook: `nope |
+    # false (verified against ansible-playbook: `nope |
     # default(None) != None` skips there, no undefined-variable error).
     it "evaluates the same comparison false for a genuinely undefined variable too" do
       Krikri::ConditionalEvaluator.evaluate("nope_var | default(None) != None", EMPTY_VARS).must_equal(false)
@@ -138,13 +138,13 @@ describe Krikri::ConditionalEvaluator do
     # default()` with the role's bare-key `sysctl_overwrite:` null
     # default. Under ansible-core 2.19's strict conditional type check,
     # the defined None passed through default() reaches the check as
-    # NoneType - live-verified against real ansible-playbook - while
+    # NoneType - live-verified against ansible-playbook - while
     # this codebase's string-based filter-chain delegation previously
     # stringified that same None to "" (a bare null renders empty text,
     # which #format_value must keep doing for output rendering) and the
     # strict check rejected it as type 'str' instead. A genuinely
     # missing variable still substitutes to the empty string and fails
-    # as type 'str', exactly like real Ansible.
+    # as type 'str', exactly like Ansible.
     it "fails the strict check as NoneType, not str, for a defined-null variable through a bare default()" do
       v = vars({"sysctl_overwrite" => nil} of String => JSON::Any::Type)
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError, /NoneType/) do
@@ -196,7 +196,7 @@ describe Krikri::ConditionalEvaluator do
       # boolean expression. Found via bodsch.dnsmasq's own "ensure
       # dnsmasq.service.d is present" block: a 4-item when: list whose
       # last item is exactly this shape, with the referenced lists all
-      # empty - real ansible-core 2.19.4 skips the block, crystal ran it.
+      # empty - ansible-core 2.19.4 skips the block, crystal ran it.
       v = Hash(String, JSON::Any).new
       v["d"] = JSON.parse(%q({"unit": {"after": [], "wants": [], "requires": []}}))
       cond = "(d.unit | count > 0) and ((d.unit.after is defined and d.unit.after | count > 0) or " \
@@ -215,7 +215,7 @@ describe Krikri::ConditionalEvaluator do
       # gates on `when: not helm_check.stat.exists or "{{ helm_version
       # }}" not in helm_existing_version.stdout`. With the binary not
       # yet installed, `not helm_check.stat.exists` alone is already
-      # true, and real Ansible's `or` short-circuits there without ever
+      # true, and Ansible's `or` short-circuits there without ever
       # evaluating the second clause (whose own `.stdout` is undefined
       # after a failed_when:false command spawn failure - erroring if
       # actually evaluated). `evaluate` used to check a leading "not "
@@ -233,7 +233,7 @@ describe Krikri::ConditionalEvaluator do
       # own `when:` uses the compressed zero-space spelling:
       # `not(( sap_hana_deployment_zip_file_name is none ) or
       # (sap_hana_deployment_zip_file_name | trim == ''))` with the var
-      # null. Real ansible-playbook (2.19.x, verified live) skips the
+      # null. ansible-playbook (2.19.x, verified live) skips the
       # task: `is none` is True, the `or` short-circuits True, `not` ->
       # False. Here only the SPACED `not (` spelling was recognized -
       # the `(` of `not(` is glued to the keyword, so no leading-`not`
@@ -268,7 +268,7 @@ describe Krikri::ConditionalEvaluator do
 
     it "evaluates simple no-space not(x is none) like real Python's not (x is none)" do
       # Same zero-space spelling, single paren pair, no boolean inside -
-      # real ansible-playbook (verified live) skips on a null var. This
+      # ansible-playbook (verified live) skips on a null var. This
       # shape used to slip through to the `is none` type-test shortcut
       # with a garbage var_name ("not(x") and only accidentally
       # evaluated false; it must evaluate false through the real
@@ -318,7 +318,7 @@ describe Krikri::ConditionalEvaluator do
       # Found via geerlingguy.swap's own "Disable swap (if configured)."
       # task: `when: ansible_facts.memory_mb['swap']['total'] > 0` -
       # dotted attribute access into the ansible_facts dict followed by
-      # bracket-style nested-key access. Real Ansible (Jinja2) treats a
+      # bracket-style nested-key access. Ansible (Jinja2) treats a
       # dict's keys as attributes too, so this resolves; the original
       # failure was a missing `memory_mb` fact (see facts_gatherer_spec),
       # this pins the evaluator side of the same chain so neither half
@@ -401,7 +401,7 @@ describe Krikri::ConditionalEvaluator do
       # command's `.rc`) keeps its real Int64 type - comparing an Int64
       # against String array elements unstringified always came back
       # false, so `rc not in [...]` always evaluated true regardless of
-      # the real rc, hard-failing a task real Ansible treats as success.
+      # the real rc, hard-failing a task Ansible treats as success.
       v = Hash(String, JSON::Any).new
       v["result"] = JSON.parse(%({"rc": 4}))
       Krikri::ConditionalEvaluator.evaluate("result.rc in [0, 3, 4]", v).must_equal(true)
@@ -440,10 +440,10 @@ describe Krikri::ConditionalEvaluator do
       ).must_equal(false)
     end
 
-    it "hard-errors an UNDEFINED left operand against a plain-string container with real Ansible's TypeError message shape" do
+    it "hard-errors an UNDEFINED left operand against a plain-string container with Ansible's TypeError message shape" do
       # Open gap closed, from asg1612.gluster round71000 (requeue):
       # `when: "node_1 in hostvars[inventory_hostname]['ansible_nodename']"`
-      # with `node_1` never defined by the playbook. Real Jinja2's `x in
+      # with `node_1` never defined by the playbook. Jinja2's `x in
       # y` calls `y.__contains__(x)`; a plain Python str.__contains__
       # requires its argument to itself be a `str`, and Jinja2 defers
       # the undefined raise to force time, so the Undefined marker
@@ -592,7 +592,7 @@ describe Krikri::ConditionalEvaluator do
     # Regression tests for a real, previously-shipped gap: this bare
     # (non-{{ }}) evaluator only ever did a plain vars.has_key?(expr)
     # lookup, so a when:/until:/changed_when:/failed_when: referencing a
-    # dotted result field (the ordinary, unwrapped way real Ansible
+    # dotted result field (the ordinary, unwrapped way Ansible
     # expects when: to be written) silently evaluated to undefined
     # instead of the real value.
     it "resolves a single-level dotted field for equality" do
@@ -646,7 +646,7 @@ describe Krikri::ConditionalEvaluator do
     # key that is itself indexed (`dict[other['key']]`) it stopped at the
     # INNER close bracket and extracted the malformed `other['key'` as
     # the key text - the whole expression then raised "... is undefined"
-    # where real Ansible resolves it and evaluates the comparison
+    # where Ansible resolves it and evaluates the comparison
     # normally. See variable_lookup_spec.cr for the VariableLookup-level
     # regression test; this pins the same shape through the bare when:
     # evaluator that the role actually hits.
@@ -784,7 +784,7 @@ describe Krikri::ConditionalEvaluator do
     end
 
     it "raises on an undefined bare operand of a paren-less `+` concat" do
-      # Real Ansible fatally fails `when: "'v' + no_such_var in ..."`
+      # Ansible fatally fails `when: "'v' + no_such_var in ..."`
       # with "'no_such_var' is undefined" (live-verified) - the lenient
       # ExpressionEvaluator delegation must not silently bake the
       # undefined in as "" and skip.
@@ -812,7 +812,7 @@ describe Krikri::ConditionalEvaluator do
       rendered.must_equal("v0.19.4")
     end
 
-    it "evaluates 'is mapping' / 'is sequence' (plus negations), real Jinja2 type tests" do
+    it "evaluates 'is mapping' / 'is sequence' (plus negations), Jinja2 type tests" do
       # Real bug found benchmarking cloudalchemy.grafana's own defaults-
       # sanity assert: `grafana_security is mapping`. Entirely
       # unimplemented before - fell through to #evaluate_truthiness,
@@ -888,7 +888,7 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("java_version | int in [6, 7, 8]", v).must_equal(false)
     end
 
-    it "evaluates 'is none', real Jinja2's None/null test" do
+    it "evaluates 'is none', Jinja2's None/null test" do
       # Real bug found benchmarking robertdebock.mysql's own defaults-
       # sanity assert: `mysql_bind_address is defined and
       # mysql_bind_address is string and mysql_bind_address is not none`
@@ -904,7 +904,7 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("a_null is none", v).must_equal(true)
     end
 
-    it "evaluates 'is match(...)' / 'is search(...)' (plus negations), real Jinja2 regex tests" do
+    it "evaluates 'is match(...)' / 'is search(...)' (plus negations), Jinja2 regex tests" do
       # Real bug found benchmarking geerlingguy.node_exporter's own
       # `when: node_exporter_version is match("latest") or
       # node_exporter_version is not defined` (deciding whether to
@@ -1053,7 +1053,7 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate("conn_ok is reachable", v).must_equal(true)
     end
 
-    it "evaluates real Jinja2 'is [not] <test>' expressions with krikri-jinja" do
+    it "evaluates Jinja2 'is [not] <test>' expressions with krikri-jinja" do
       # Real bug found benchmarking robertdebock.nomad's own assert:
       # `nomad_server_bootstrap_expect is not divisibleby 2` (verifying
       # an odd bootstrap_expect count). `divisibleby` (like most of
@@ -1198,13 +1198,13 @@ describe Krikri::ConditionalEvaluator do
     # Real bug found benchmarking robertdebock.cve_2024_3094:
     # `failed_when: xz_version.stdout | ansible.builtin.regex_search("5\.6\.(0|1)")`
     # on an unaffected xz version (no regex match, regex_search returns
-    # None). Real Ansible's changed_when:/failed_when: (unlike when:,
+    # None). Ansible's changed_when:/failed_when: (unlike when:,
     # which freely truthy-converts) require the templated result to
     # already be a real boolean - a None specifically raises "Conditional
     # result (...) was derived from value of type 'NoneType'.
     # Conditionals must have a boolean result." and fails the task,
     # rather than being silently truthy-converted to false. Verified live
-    # against real ansible-playbook (Rocky 9.6): py failed rc=2, crystal
+    # against ansible-playbook (Rocky 9.6): py failed rc=2, crystal
     # (pre-fix) silently passed rc=0.
     it "raises on a bare filter expression that resolves to None" do
       v = Hash(String, JSON::Any).new
@@ -1233,7 +1233,7 @@ describe Krikri::ConditionalEvaluator do
     # valid JSON, so it fell back to wrapping the literal string "True" -
     # the strict check two callers up then raised "Conditional result
     # (True) was derived from value of type 'str'" even though the
-    # operand really was boolean. Verified live: real ansible-core 2.19.12
+    # operand really was boolean. Verified live: ansible-core 2.19.12
     # runs the handler; crystal (pre-fix) hard-failed it.
     it "does not raise for a bare `x | bool` filter chain that resolves to a real boolean" do
       v = Hash(String, JSON::Any).new
@@ -1248,12 +1248,12 @@ describe Krikri::ConditionalEvaluator do
     # dns_forced_in_dhclientconf and item.value != ""`, where
     # dns_forced_in_dhclientconf DEFAULTS to a whole-value template
     # (`"{{ansible_os_family == 'Debian' or ansible_os_family ==
-    # 'Redhat'}}"`). Real Ansible's Jinja2-native templating preserves
+    # 'Redhat'}}"`). Ansible's Jinja2-native templating preserves
     # the boolean TYPE all the way through variable storage for a
     # whole-value template like this; this codebase's string-based
     # substitution renders the SAME semantic value as the literal text
     # "True" instead - previously indistinguishable from a genuinely
-    # non-boolean string (which real Ansible DOES correctly reject
+    # non-boolean string (which Ansible DOES correctly reject
     # under ansible-core 2.19's strict conditional-boolean requirement)
     # and always raised, even for the plain bare-variable idiom (`when:
     # dns_forced_in_dhclientconf` alone), not just combined via `and`.
@@ -1332,7 +1332,7 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
-    it "an 'or' chain short-circuiting on a non-boolean operand still raises - real ansible-core rejects ANY non-bool type" do
+    it "an 'or' chain short-circuiting on a non-boolean operand still raises - ansible-core rejects ANY non-bool type" do
       # The deciding operand for `or` is the first TRUTHY one (`b`, a
       # non-empty dict) - real Python's `or` never even evaluates `c`
       # once it finds one. But ansible-core 2.19's strict conditional
@@ -1434,7 +1434,7 @@ describe Krikri::ConditionalEvaluator do
       ).must_equal(true)
     end
 
-    it "respects real Jinja precedence when the branches contain and/or" do
+    it "respects Jinja precedence when the branches contain and/or" do
       v = Hash(String, JSON::Any).new
       Krikri::ConditionalEvaluator.evaluate("true and false if true else true and true", v).must_equal(false)
     end
@@ -1448,7 +1448,7 @@ describe Krikri::ConditionalEvaluator do
   describe "raise_undefined: true (task-level when: strict-undefined semantics)" do
     # Round 172 (buluma.git_tag, Rocky 9.6): `when: git_remote != '' and
     # git_remote != None` with git_remote genuinely undefined (no
-    # default, never set anywhere). Real Ansible raises ("'git_remote'
+    # default, never set anywhere). Ansible raises ("'git_remote'
     # is undefined") and fails the task; the pre-fix lenient evaluator
     # resolved both comparisons anyway (nil != '' -> true, nil != None
     # -> false) and evaluated the whole `and` as false, silently
@@ -1498,9 +1498,9 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
-    it "reports a missing dict attribute the way real Ansible does, not as a plain undefined" do
+    it "reports a missing dict attribute the way Ansible does, not as a plain undefined" do
       # cloudalchemy.pushgateway's own `changed_when` references `.diff`
-      # on a module result dict that has none. Real ansible-core 2.19
+      # on a module result dict that has none. ansible-core 2.19
       # raises "object of type 'dict' has no attribute 'diff'" (verified
       # live) - naming the dict, not the whole path, is what tells the
       # role author the variable itself resolved fine.
@@ -1583,10 +1583,10 @@ describe Krikri::ConditionalEvaluator do
 
   describe "`| length` on a native number in a when: (srsp.oracle-java)" do
     # Real bug found benchmarking wcm_io_devops.aem_cms (via its nested
-    # dep srsp.oracle-java) against real ansible-core 2.19.4: the role's
+    # dep srsp.oracle-java) against ansible-core 2.19.4: the role's
     # `when: java_version > 8 and java_subversion | length == 0`, where
     # set_fact preserved `java_latest_subversion[13]` (a YAML float,
-    # 0.1) as a native float. Real Ansible FAILS the task there ("object
+    # 0.1) as a native float. Ansible FAILS the task there ("object
     # of type '_AnsibleTaggedFloat' has no len()"), ending the play with
     # ok=8/skipped=7/failed=1; krikri's hand-rolled FilterEngine took
     # the decimal string repr's length (3), so the condition evaluated
@@ -1619,7 +1619,7 @@ describe Krikri::ConditionalEvaluator do
     it "evaluates a YAML folded-scalar condition with embedded newlines from more-indented continuation lines" do
       # mrlesmithjr.network-tweaks: `(a is defined and\n  a) and (item.set is\n  #   defined and\n    item.set)` - real newlines in the condition string silently
       # evaluated FALSE for every loop item before the whitespace
-      # normalizer; real Ansible (real Python parser) runs them.
+      # normalizer; Ansible (real Python parser) runs them.
       v = vars({"a" => true} of String => JSON::Any::Type)
       condition = "(a is defined and\n              a) and\n              (b is defined and\n                b)"
       v2 = vars({"a" => true, "b" => true} of String => JSON::Any::Type)
@@ -1701,7 +1701,7 @@ describe Krikri::ConditionalEvaluator do
     # Real bug found via oasis_roles.rhsm's own `when: rhsm_username !=
     # omit or rhsm_activationkey != omit` (the standard "was this
     # optional param actually given" idiom, both vars themselves
-    # defaulting to `"{{ omit }}"`) - real Ansible always has `omit`
+    # defaulting to `"{{ omit }}"`) - Ansible always has `omit`
     # defined as a magic bareword; this evaluator had no case for it at
     # all, raising "'omit' is undefined" and failing the whole task
     # instead of just evaluating the comparison.
@@ -1732,7 +1732,7 @@ describe Krikri::ConditionalEvaluator do
       %((("'rsyslog_elks' in group_names") or rsyslog_use_remote))
     end
 
-    it "raises with real Ansible's 'str' message when 'rsyslog_elks' is NOT in group_names" do
+    it "raises with Ansible's 'str' message when 'rsyslog_elks' is NOT in group_names" do
       v = Hash(String, JSON::Any).new
       v["group_names"] = JSON.parse(%(["web", "db"]))
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
@@ -1741,7 +1741,7 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
-    it "raises identically when 'rsyslog_elks' IS in group_names - real Ansible never gets to group membership" do
+    it "raises identically when 'rsyslog_elks' IS in group_names - Ansible never gets to group membership" do
       v = Hash(String, JSON::Any).new
       v["group_names"] = JSON.parse(%(["rsyslog_elks", "web"]))
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
@@ -1838,7 +1838,7 @@ describe Krikri::ConditionalEvaluator do
   # Round 82024 regression cover (inmotionhosting.php_fpm): a var whose
   # OWN VALUE is still unrendered Jinja bottoming out at a name set
   # nowhere (`site_errorlog: "/home/{{ system_user }}/logs/x.log"` with
-  # no system_user anywhere). Real Ansible's recursive re-templating
+  # no system_user anywhere). Ansible's recursive re-templating
   # renders that value strictly during a `when:` conditional, failing
   # with the INNERMOST missing name; krikri's lenient re-render baked
   # the "undefined" sentinel into the string and the conditional
@@ -1886,7 +1886,7 @@ describe Krikri::ConditionalEvaluator do
   # set_fact on a compare-to that is itself a whole selectattr chain with
   # quoted arguments, and the truncated compare-to
   # (`... | selectattr("name"`) hard-failed as "No filter named
-  # 'selectattr(\"name\"'." where real ansible-playbook evaluates the
+  # 'selectattr(\"name\"'." where ansible-playbook evaluates the
   # condition fine (verified live against ansible-core: supported
   # distro/version/arch -> skip, old version -> run).
   describe "is version() with commas inside its own arguments (round 812053)" do

@@ -3,7 +3,7 @@ require "json"
 # Runner for role-local custom LOOKUP plugins - a role's own
 # `lookup_plugins/*.py` (and the playbook-adjacent `lookup_plugins/`),
 # the lookup-side twin of PythonFilterRunner's `filter_plugins/*.py`
-# support. Real Ansible loads a role's own `lookup_plugins/` directory
+# support. Ansible loads a role's own `lookup_plugins/` directory
 # on the CONTROLLER the same way it loads role-private
 # `filter_plugins/`: a plugin file exposing a `LookupModule` class
 # subclassing `ansible.plugins.lookup.LookupBase`, whose `run(terms,
@@ -14,16 +14,16 @@ require "json"
 # fell through ExpressionEvaluator's "undefined" fallback - which
 # `evaluate_query` collapses to an empty list, so a
 # `loop: "{{ query(...) }}"` iterated ZERO times and the whole task
-# vanished from the run where real ansible-playbook executes it once
+# vanished from the run where ansible-playbook executes it once
 # per result item.
 #
 # Unlike a module, a lookup runs controller-side during Jinja2 template
 # rendering - there is nothing to upload to a target. The runner
 # instead delegates to the CONTROLLER's own python3 (the same
-# interpreter real Ansible itself needs on the controller): a small
+# interpreter Ansible itself needs on the controller): a small
 # wrapper script is fed the plugin source paths plus the call as JSON
 # on stdin, imports the plugin file, finds its `LookupModule` class,
-# instantiates it (real Ansible's own PluginLoader passes
+# instantiates it (Ansible's own PluginLoader passes
 # loader/templar; every real-world plugin this scope covers only uses
 # inherited `LookupBase` instance methods like `_flatten`, which
 # `LookupBase.__init__` sets up fine with its own `loader=None,
@@ -39,7 +39,7 @@ require "json"
 # majority) behave bit-for-bit identically.
 #
 # Deliberately scoped to role-private `lookup_plugins/` directories and
-# the playbook-adjacent `lookup_plugins/` (real Ansible's two most
+# the playbook-adjacent `lookup_plugins/` (Ansible's two most
 # common search roots, mirroring PythonFilterRunner#find_sources and
 # PythonModuleRunner#find_source); third-party COLLECTION lookup
 # plugins are still the unchanged scope cut - those live inside
@@ -51,7 +51,7 @@ module Krikri
     # Raised when a lookup invocation fails after the plugin was found
     # and dispatched (a Python exception inside `run`, an unparseable
     # wrapper response). Callers surface it as a real lookup failure
-    # (real Ansible fails the task with the plugin's own error) - it is
+    # (Ansible fails the task with the plugin's own error) - it is
     # never an "unknown lookup" condition.
     class LookupError < Exception
     end
@@ -67,7 +67,7 @@ module Krikri
     # role's own `lookup_plugins/` first, then the playbook-adjacent
     # one (nearest-first, same convention as
     # PythonFilterRunner#find_sources). Unlike filters - whose names
-    # come from each FilterModule's `filters()` dict - real Ansible's
+    # come from each FilterModule's `filters()` dict - Ansible's
     # plugin loader derives a lookup plugin's name from its FILE NAME,
     # so no Python introspection (and no mtime cache) is needed here:
     # `lookup_plugins/manala_environment_files.py` IS the
@@ -81,7 +81,7 @@ module Krikri
       nil
     end
 
-    # The CONTROLLER's own python3 - the interpreter real Ansible needs
+    # The CONTROLLER's own python3 - the interpreter Ansible needs
     # on the controller anyway (same detection pattern as
     # PythonFilterRunner#python_executable).
     def python_executable : String?
@@ -90,7 +90,7 @@ module Krikri
 
     # Invokes the `LookupModule` from the plugin source for *name* with
     # the resolved *terms*/*kwargs* and the current task *variables*
-    # (real Ansible passes its own vars dict, which conventionally
+    # (Ansible passes its own vars dict, which conventionally
     # carries an `omit` key - see expression_evaluator's call site),
     # returning the structured result list. Raises LookupError when the
     # invocation fails (callers degrade to "undefined" only when the
@@ -165,7 +165,7 @@ module Krikri
 
     # The controller-side wrapper: imports the plugin file, finds its
     # `LookupModule` class (required to subclass the real
-    # `ansible.plugins.lookup.LookupBase`, exactly like real Ansible's
+    # `ansible.plugins.lookup.LookupBase`, exactly like Ansible's
     # own loader check), instantiates it with the base class's own
     # defaults, and calls `run(terms, variables=..., **kwargs)`,
     # printing the JSON-encoded result. Always responds with a

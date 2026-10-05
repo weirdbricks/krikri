@@ -234,7 +234,7 @@ module Krikri
       {"version", "version_compare"}.each do |test_name|
         KrikriJinja.register_default_json_test(test_name) do |value, args, kwargs|
           # A dict operand (the bare `ansible_version` magic var rather than
-          # its `.full` field) is a templating error in real Ansible, not a
+          # its `.full` field) is a templating error in Ansible, not a
           # digit scan over the dict's text (timorunge.pmm_client).
           if value.raw.is_a?(Hash)
             raise KrikriJinja::TemplateError.new(
@@ -254,7 +254,7 @@ module Krikri
           pattern = py_str(args[0]? || kwargs["pattern"]? || JSON::Any.new(""))
           options = Regex::Options::None
           options |= Regex::Options::IGNORE_CASE if (args[1]? || kwargs["ignorecase"]?).try { |flag| py_truthy(flag) }
-          # Python's re.M (what real Ansible's test kwargs build) only moves
+          # Python's re.M (what Ansible's test kwargs build) only moves
           # ^/$ to line boundaries; `.` must NOT cross newlines. Crystal's
           # Regex::Options::MULTILINE maps to PCRE MULTILINE|DOTALL (Ruby
           # semantics), so MULTILINE_ONLY is the Python-equivalent here.
@@ -366,9 +366,9 @@ module Krikri
 
     def self.register : Nil
       KrikriJinja.default_engine.finalize = ->(value : KrikriJinja::AnyValue) { ansible_finalize(value) }
-      # Real ansible-core fails `{% for k, v in some_dict %}`, but roles that
+      # ansible-core fails `{% for k, v in some_dict %}`, but roles that
       # pass on it in practice (jtyr.motd, jtyr.nsswitch) reach this form
-      # with values real Ansible keeps as pairs; keep it working.
+      # with values Ansible keeps as pairs; keep it working.
       KrikriJinja.default_engine.dict_pair_unpacking = true
       KrikriJinja.register_default_json_filter("pytruthy") do |value, _args, _kwargs|
         JSON::Any.new(py_truthy(value))
@@ -580,7 +580,7 @@ module Krikri
         end
       end
 
-      # Real Jinja2's `first`/`last` on an empty sequence produce an undefined
+      # Jinja2's `first`/`last` on an empty sequence produce an undefined
       # that fails the moment anything touches it ("No first item, sequence
       # was empty."); raising here gives the same task failure instead of a
       # silently undefined value (`ansible_mounts | selectattr(...) | first`
@@ -618,7 +618,7 @@ module Krikri
 
       # `shuffle(seed=None)`: Python's `Random(seed).shuffle`, bit for bit, so
       # a seeded shuffle (os_hardening's per-host password alphabet) gives
-      # the permutation real Ansible does.
+      # the permutation Ansible does.
       KrikriJinja.register_default_json_filter("shuffle") do |value, args, kwargs|
         items = (value.as_a? || (value.as_s? || "").chars.map { |char| JSON::Any.new(char.to_s) }).dup
         seed = args[0]? || kwargs["seed"]?

@@ -4,7 +4,7 @@ require "../minitest_helper"
 
 # Round 601090 (robertdebock.common, kata backend, WARM rerun): a host
 # the previous run had left dead must come out of this engine exactly
-# like real ansible-playbook's own warm rerun did - `fatal: ...
+# like ansible-playbook's own warm rerun did - `fatal: ...
 # UNREACHABLE!` at Gathering Facts, the host halted for the rest of the
 # run (no further per-host activity, no "failed" tasks booked against
 # it), recap `unreachable=1 failed=0`, exit 4.
@@ -66,7 +66,7 @@ describe "an unreachable host discovered mid-run" do
 
     output.must_include(%(fatal: [deadhost]: UNREACHABLE!))
     # The host is halted: the follow-up task never reports against it
-    # at all - no "failed:", no "skipping:" (real Ansible books
+    # at all - no "failed:", no "skipping:" (Ansible books
     # skipped=0 for a host removed at its first task), no further
     # activity of any kind.
     output.wont_include(%(fatal: [deadhost]: FAILED!))

@@ -5,7 +5,7 @@ module Krikri
   # Round 153 (2026-08-20) found that krikri-playbook's `apt:` module
   # failed fast when the host's dpkg lock was held by another process
   # (Ubuntu's unattended-upgr, an in-progress apt on another shell, etc.)
-  # while real Ansible's apt module waited it out via `lock_timeout: 60`
+  # while Ansible's apt module waited it out via `lock_timeout: 60`
   # (default). Same parameter names here so playbooks that override
   # them on either engine work identically.
   #
@@ -22,13 +22,13 @@ module Krikri
     # Ansible's `apt` module default.
     DEFAULT_LOCK_TIMEOUT = 60
 
-    # Defaults for `apt-get update` - match real Ansible's `apt` module
+    # Defaults for `apt-get update` - match Ansible's `apt` module
     # defaults exactly.
     DEFAULT_UPDATE_CACHE_RETRIES         =  5
     DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY = 12
 
     # Detects the dpkg/apt lock contention stderr patterns that
-    # `apt-get` itself emits. Matches real Ansible's python-apt-based
+    # `apt-get` itself emits. Matches Ansible's python-apt-based
     # wait/retry detection (which checks the same three patterns on
     # `OSError` from apt's `cache_lock`/`system_lock`). Conservative:
     # any other stderr fails fast, even if it's "lock-related", so
@@ -39,17 +39,17 @@ module Krikri
         stderr.includes?("/var/lib/dpkg/lock")
     end
 
-    # Matches real Ansible's `apt` module's `lock_timeout` retry behavior
+    # Matches Ansible's `apt` module's `lock_timeout` retry behavior
     # on install/remove/upgrade operations. Only retries when stderr
     # indicates dpkg lock contention - other failures (broken repo,
     # missing package, signature mismatch) fail-fast on the first
-    # attempt, matching real Ansible's selective-retry behavior.
+    # attempt, matching Ansible's selective-retry behavior.
     #
     # Sleeps in 3-second increments between attempts - bounds total
     # controller-fiber blocking time across multiple retries, well
     # within the user-visible `lock_timeout`. Returns the last
     # lock-holding error when the budget is exhausted, exactly the
-    # way real Ansible's apt module does.
+    # way Ansible's apt module does.
     def apt_with_lock_retry(cmd : String, lock_timeout : Int32,
                             exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
       start = Time.instant
@@ -67,12 +67,12 @@ module Krikri
       end
     end
 
-    # Matches real Ansible's `apt` module's `update_cache_retries` +
+    # Matches Ansible's `apt` module's `update_cache_retries` +
     # `update_cache_retry_max_delay` on `apt-get update`. Exponential
     # backoff starting at 1s, doubled each attempt, capped at
     # `retry_max_delay`. Only retries on lock contention - other
     # apt-get update failures (broken repo, network) fail-fast,
-    # matching real Ansible's selective-retry behavior.
+    # matching Ansible's selective-retry behavior.
     def apt_get_update_with_retry(cmd : String, retries : Int32, retry_max_delay : Int32,
                                   exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
       delay = 1
@@ -93,7 +93,7 @@ module Krikri
     # unparseable on-disk package index - NOT a plain "package doesn't
     # exist in an otherwise-valid cache" miss.
     #
-    # Real Ansible's apt module (python-apt-backed) only retries when
+    # Ansible's apt module (python-apt-backed) only retries when
     # `apt.Cache()` itself raises a `SystemError` whose message mentions
     # `/var/lib/apt/lists/` (`get_cache()` in ansible's `apt.py`) - that
     # is specifically a cache *open/parse* failure (corrupt or
@@ -102,7 +102,7 @@ module Krikri
     # cache does NOT trigger it: `package_status()` fails straight to
     # `fail_json("No package matching '%s' is available")` with no
     # retry at all - confirmed live (0.9.737) against a genuinely empty
-    # `/var/lib/apt/lists/`, where real ansible-playbook failed outright
+    # `/var/lib/apt/lists/`, where ansible-playbook failed outright
     # on `package: {name: w3m, state: present}` with that exact message
     # and krikri (this helper's previous, over-broad
     # "Unable to locate package" gate) silently installed it instead - a
@@ -119,7 +119,7 @@ module Krikri
       stderr.includes?("The package lists or status file could not be parsed or opened")
     end
 
-    # Same mtime probe real Ansible's `get_cache_mtime()`/
+    # Same mtime probe Ansible's `get_cache_mtime()`/
     # `get_updated_cache_time()` use: the update-success-stamp if
     # present, else the /var/lib/apt/lists directory's own mtime.
     # Shared between apt.cr's own before/after cache-update comparison
@@ -133,7 +133,7 @@ module Krikri
     end
 
     # Can the target's Python see the python3-apt bindings? Same two
-    # interpreters real Ansible's apt module probes
+    # interpreters Ansible's apt module probes
     # (probe_interpreters_for_module(['/usr/bin/python3', '/usr/bin/python'],
     # 'apt')) before deciding whether to auto-install python3-apt and
     # respawn under an interpreter that can see it - see apt.cr's own
@@ -147,7 +147,7 @@ module Krikri
       result[:exit_code] == 0
     end
 
-    # Emulates real Ansible's apt module module-start auto-install of the
+    # Emulates Ansible's apt module module-start auto-install of the
     # python3-apt bindings (apt.py's probe_interpreters_for_module +
     # "Updating cache and auto-installing missing dependency" path): a
     # real, PERSISTENT host mutation that changes every later apt
@@ -159,16 +159,16 @@ module Krikri
     # Ansible runs before respawning itself. Returns nil when the
     # bindings were already present (a no-op) or the install succeeded;
     # returns the failed command result when either command failed,
-    # mirroring real Ansible's check_rc=True hard failure.
+    # mirroring Ansible's check_rc=True hard failure.
     #
     # This engine previously only emulated the FIRST invocation's
     # observable `changed` behavior (the round-30001 rule) without ever
     # performing the install, so a host that started without the
     # bindings stayed on the "absent → changed=false" cache-refresh path
-    # forever, while real Ansible moved to the mtime-diff path after its
+    # forever, while Ansible moved to the mtime-diff path after its
     # very first apt task. Found via geerlingguy.kubernetes (rounds
     # 65166/65311): the role's "Ensure dependencies are installed." task
-    # triggers real Ansible's auto-install, so its later "Update Apt
+    # triggers Ansible's auto-install, so its later "Update Apt
     # cache." task (immediately after deb822_repository added the
     # pkgs.k8s.io repo, whose freshly-fetched indexes genuinely move the
     # lists mtime) reported changed=true there, while this engine stayed
@@ -187,7 +187,7 @@ module Krikri
       nil
     end
 
-    # Real Ansible's apt module cannot run at all in check mode when it
+    # Ansible's apt module cannot run at all in check mode when it
     # can't see the python3-apt bindings: its auto-install fallback
     # (apt_auto_install_python_apt above) is a real, PERSISTENT host
     # mutation, and check mode must never mutate the target - so the
@@ -208,9 +208,9 @@ module Krikri
       CHECK_MODE_NO_PYTHON_APT_MSG
     end
 
-    # Real Ansible's `changed` semantics for a cache-refresh-ONLY apt
+    # Ansible's `changed` semantics for a cache-refresh-ONLY apt
     # invocation (no name:/upgrade:/deb: alongside it): WITHOUT
-    # python3-apt, real Ansible auto-installs it before its own
+    # python3-apt, Ansible auto-installs it before its own
     # measurement window opens (that auto-install runs a full `apt-get
     # update` first, then respawns and reads mtime entirely AFTER the
     # prefetch) - so it always reports `changed: false` here regardless
@@ -221,7 +221,7 @@ module Krikri
     # cache-refresh path (`update_cache: true` with no `name:`) doesn't
     # duplicate-and-drift from this logic the way it previously did
     # (found via robertdebock.update_package_cache: this engine
-    # hardcoded `changed: true` for apt unconditionally, real Ansible's
+    # hardcoded `changed: true` for apt unconditionally, Ansible's
     # `ok`/`changed: false` on an already-fresh mirror).
     def apt_cache_refresh_changed?(pre_mtime : Int32, post_mtime : Int32,
                                    exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
@@ -229,7 +229,7 @@ module Krikri
       post_mtime != pre_mtime
     end
 
-    # Real Ansible's apt module silently recovers from an install
+    # Ansible's apt module silently recovers from an install
     # failure caused by a corrupt/unparseable on-disk package index:
     # `get_cache()` catches the `apt.Cache()` `SystemError` and retries
     # `apt-get update` (up to twice) before re-opening the cache. Only
@@ -249,7 +249,7 @@ module Krikri
       exec_remote.call(cmd)
     end
 
-    # Real Ansible's apt.py main() runs the cache refresh BEFORE any
+    # Ansible's apt.py main() runs the cache refresh BEFORE any
     # install/remove/upgrade whenever `update_cache:` is set (or any
     # `cache_valid_time:` is) - unconditionally with the default
     # cache_valid_time: 0 (only the stamp-mtime + cache_valid_time < now

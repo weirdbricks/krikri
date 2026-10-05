@@ -15,10 +15,10 @@ module Krikri
   # or remote, via PluginManager's own upload+exec) the task targets, so
   # the request to the link-local 169.254.169.254 endpoint naturally
   # comes from the right place - no remote_exec fallback needed. Only
-  # meaningful when run ON a real EC2 instance (real Ansible's own
+  # meaningful when run ON a real EC2 instance (Ansible's own
   # module has the identical restriction - IMDS doesn't exist off-EC2).
   #
-  # Mirrors the real module's algorithm closely: fetch an IMDSv2 session
+  # Mirrors the Ansible module's algorithm closely: fetch an IMDSv2 session
   # token, then recursively walk the meta-data/ and dynamic/ trees the
   # same way (a GET on a directory path returns a newline-separated
   # listing; each non-directory leaf is fetched and, if its content
@@ -86,10 +86,10 @@ module Krikri
       facts["ansible_ec2_instance_tags_keys"] = JSON::Any.new(tag_keys.map { |key| JSON::Any.new(key) })
 
       tags = Hash(String, JSON::Any).new
-      # Matches real Ansible's own get_instance_tags: looks up the RAW
+      # Matches Ansible's own get_instance_tags: looks up the RAW
       # (un-mangled) tag key against the already fix_invalid_varnames'd
       # facts dict - a hyphenated tag name would genuinely miss here in
-      # real Ansible too, not a bug introduced by this port.
+      # Ansible too, not a bug introduced by this port.
       tag_keys.each do |key|
         value = facts["ansible_ec2_tags_instance_#{key}"]?
         tags[key] = value if value
@@ -97,7 +97,7 @@ module Krikri
       facts["ansible_ec2_instance_tags"] = JSON::Any.new(tags)
     end
 
-    # Matches real Ansible's own _mangle_fields: turns a raw {full URL =>
+    # Matches Ansible's own _mangle_fields: turns a raw {full URL =>
     # content} map into {"ansible_ec2_<dash-joined-relative-path>" =>
     # content}, plus the one special case (an IAM security-credentials
     # role directory) that also gets a synthetic "iam-instance-profile-
@@ -127,7 +127,7 @@ module Krikri
       new_data
     end
 
-    # Recursively walks a metadata directory the same way real Ansible's
+    # Recursively walks a metadata directory the same way Ansible's
     # own #fetch does: a GET on a directory-shaped URI returns a
     # newline-separated listing of child names (subdirectories end in
     # "/"); each leaf gets fetched and stored, with a JSON-object leaf
@@ -182,7 +182,7 @@ module Krikri
       with_retry(label) { request(url, "PUT", http_headers) }
     end
 
-    # Matches real Ansible's own retry policy: a 401/403 fails
+    # Matches Ansible's own retry policy: a 401/403 fails
     # immediately (an auth problem retrying won't fix), any other
     # non-200/404 status gets ONE retry after a short pause, and only
     # THEN gives up.
@@ -201,7 +201,7 @@ module Krikri
     private def request(url : String, method : String, headers : HTTP::Headers) : HTTP::Client::Response
       uri = URI.parse(url)
       client = HTTP::Client.new(uri)
-      # 10s, matching real Ansible's own fetch_url default timeout (the
+      # 10s, matching Ansible's own fetch_url default timeout (the
       # module passes no explicit timeout) - both connect and read.
       # KRIKRI_EC2_METADATA_TIMEOUT_SECONDS is a test-only override for
       # the unreachable-service spec (off EC2 that spec would otherwise

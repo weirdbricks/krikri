@@ -7,7 +7,7 @@ module Krikri
   # computes the ENTIRE task result itself (ActionResult.final - no module
   # binary is ever dispatched, local or remote).
   #
-  # This mirrors real Ansible's own architecture rather than working
+  # This mirrors Ansible's own architecture rather than working
   # around this engine's: synchronize is not a normal target-side module
   # there either. Its action plugin munges src/dest into rsync's remote
   # form and hands off to a module that ultimately shells out to the
@@ -41,7 +41,7 @@ module Krikri
   # changed-detection comment.
   #
   # Known divergence: delegate_to: to a host that is neither localhost
-  # nor the sync endpoint (real Ansible runs rsync ON the delegate,
+  # nor the sync endpoint (Ansible runs rsync ON the delegate,
   # connecting out to the inventory host) is not modeled - here the
   # delegate-resolved host IS the endpoint, which covers the shapes real
   # roles actually write apart from that one: no delegate_to:, delegate_to:
@@ -49,7 +49,7 @@ module Krikri
   class SynchronizeActionPlugin < ActionPlugin
     # Real module success shape: exit_json(changed=, msg=, rc=, cmd=,
     # stdout_lines=) then the controller backfills failed: false last.
-    # The empty msg is kept (the real module passes msg=out_clean
+    # The empty msg is kept (the Ansible module passes msg=out_clean
     # explicitly, and exit_json emits the key even as "").
     SUCCESS_KEY_ORDER = ["changed", "msg", "rc", "cmd", "stdout_lines", "failed"]
     # Real failure shape: fail_json(msg=err, rc=rc, cmd=cmdstr) -
@@ -64,7 +64,7 @@ module Krikri
     # controller's changed/exception backfill.
     PARAM_FAILURE_KEY_ORDER = ["failed", "msg", "changed"]
 
-    # Real's up-front parameter checks (both ends set, mode push|pull), as
+    # Ansible's up-front parameter checks (both ends set, mode push|pull), as
     # a final failed result; nil when the params are valid.
     private def invalid_params_result(src_param, dest_param, mode : String) : ActionResult?
       if !src_param || !dest_param || src_param.empty? || dest_param.empty?
@@ -95,7 +95,7 @@ module Krikri
       private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
 
       # delegate_to: a local-transport host (localhost) while the task's
-      # own host is a different, non-localhost host: real Ansible runs
+      # own host is a different, non-localhost host: Ansible runs
       # rsync ON THE CONTROLLER (the delegate's connection is local) and
       # qualifies the mode-dependent OTHER end from the TASK host's own
       # connection details - rsync then dials that host over its own ssh
@@ -110,15 +110,15 @@ module Krikri
         return result
       end
 
-      # Real's dest_is_local edge case: delegate_to naming the task's OWN
+      # Ansible's dest_is_local edge case: delegate_to naming the task's OWN
       # host (delegate_to: "{{ inventory_hostname }}" is the common
-      # spelling). Real's action plugin decides dest_is_local=true /
+      # spelling). Ansible's action plugin decides dest_is_local=true /
       # use_delegate=true, keeps src/dest PLAIN local paths (no
       # user@host: prefix, no --rsh, no private-key munging) and runs the
       # module ON that host, where rsync syncs the two local paths
       # directly. Mirror it by handing the params back to the executor
       # unchanged: the synchronize module binary then runs on the host
-      # itself (same dispatch real's _execute_module does), producing the
+      # itself (same dispatch Ansible's _execute_module does), producing the
       # local-rsync cmd/rc/msg real registers. A remote push/pull WITHOUT
       # this delegation (rsync run from the controller, remote end
       # qualified user@host:) is unchanged below.
@@ -164,7 +164,7 @@ module Krikri
     # Shared tail: run the rsync argv and translate its outcome into the
     # task's final result (both the delegated-to-controller path and the
     # endpoint-on-@host path end here). Same result shape the module
-    # binary produces (plugins/synchronize.cr), because real runs the
+    # binary produces (plugins/synchronize.cr), because Ansible runs the
     # module here too and registers ITS result: exit_json/fail_json's key
     # order plus the controller's failed/changed/exception backfill.
     private def finish(argv : Array(String)) : ActionResult
@@ -195,7 +195,7 @@ module Krikri
       }, key_order: SUCCESS_KEY_ORDER, include_empty_msg: true))
     end
 
-    # Real Ansible's C.LOCALHOST set - the addresses that mean "this same
+    # Ansible's C.LOCALHOST set - the addresses that mean "this same
     # machine" to rsync's own transport.
     private def localhost_addr?(addr : String) : Bool
       ["localhost", "127.0.0.1", "::1"].includes?(addr)
@@ -222,7 +222,7 @@ module Krikri
     # host's own parsed port. *fallback_host* is whose parsed port wins
     # when neither param nor vars carry one - the delegate-resolved @host
     # normally, but the TASK host on the delegated-to-controller path
-    # (real Ansible reads inv_port from the original host's task_vars).
+    # (Ansible reads inv_port from the original host's task_vars).
     private def resolve_dest_port(fallback_host : Host = @host) : Int32?
       if dest_port = @params["dest_port"]?
         return dest_port.strip.to_i if dest_port.strip =~ /\A\d+\z/

@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Pins plugins/ufw.cr's argument-validation surface against real
 # community.general.ufw's AnsibleModule setup (live-diffed vs real
 # ansible-playbook via the podman-diff ufw_edge_cases harness in a
-# ufw-less container - real runs all of this BEFORE its
+# ufw-less container - Ansible runs all of this BEFORE its
 # get_bin_path(required=True), the only byte-comparable surface without
 # a working ufw/netfilter):
 #

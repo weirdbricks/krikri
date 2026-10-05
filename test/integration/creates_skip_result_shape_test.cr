@@ -6,7 +6,7 @@ require "file_utils"
 # `command: loginctl enable-linger ...` with `creates:`, `register:`,
 # and `changed_when: [user_linger.rc == 0, "'skipped' not in
 # user_linger.stdout"]`. On the warm run the creates: file already
-# exists, so the module never runs - and real ansible-core 2.19.4's
+# exists, so the module never runs - and ansible-core 2.19.4's
 # skip result still carries the FULL command-module shape, `rc: 0`
 # included (live-verified: `{"changed": false, "cmd": [...], "delta":
 # null, ..., "rc": 0, "stdout": "skipped, since ... exists",

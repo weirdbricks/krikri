@@ -25,7 +25,7 @@ describe "fetch plugin" do
 
     result = PluginSpecHelper.run("fetch", {"src" => src, "dest" => "#{dest_root}/"}, LOCAL_VARS)
     result["changed"].as_bool.must_equal(false)
-    # Real's already-present fetch result is {changed, checksum, dest,
+    # Ansible's already-present fetch result is {changed, checksum, dest,
     # failed, file, md5sum} - no msg key at all on either the first or
     # the second (unchanged) run (live-verified vs 2.19.11 at -v).
     result["msg"]?.must_be_nil

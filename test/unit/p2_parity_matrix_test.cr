@@ -120,7 +120,7 @@ describe "P2.16 cross-engine parity matrix" do
     "uri test positive"               => {"{{ web_url is uri }}", "True"},
     "uri test negative"               => {"{{ not_url is uri }}", "False"},
     "url test positive"               => {"{{ web_url is url }}", "True"},
-    # The name is the tested VALUE (`'upper' is filter`); real ansible-core
+    # The name is the tested VALUE (`'upper' is filter`); ansible-core
     # fails `text is filter('upper')` outright.
     "filter meta-test (registered name)" => {"{{ 'upper' is filter }}", "True"},
     "filter meta-test (unknown name)"    => {"{{ 'nosuchfilter' is filter }}", "False"},

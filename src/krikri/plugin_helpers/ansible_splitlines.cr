@@ -2,7 +2,7 @@ require "json"
 
 module Krikri
   module PluginHelpers
-    # AnsibleSplitlines - pure logic matching real Ansible's
+    # AnsibleSplitlines - pure logic matching Ansible's
     # `stdout_lines`/`stderr_lines` derivation, which is built from Python's
     # `str.splitlines()`, not Crystal's plain `String#split("\n")`. The two
     # differ on exactly the cases that matter for real command output: empty

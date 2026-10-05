@@ -16,7 +16,7 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
     # iterated ZERO times instead of erroring, so the block content -
     # and the resulting file - ended up empty rather than listing the
     # real hosts. A LATER task's `grep ... <that file>` then failed
-    # (no match in an empty file) - while real ansible-playbook, which
+    # (no match in an empty file) - while ansible-playbook, which
     # has always populated this var, succeeded.
     src = File.tempname("play-hosts-src", ".j2")
     dest = File.tempname("play-hosts-dest")
@@ -58,7 +58,7 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
     # ansible-core 2.23), and krikri-playbook never registered it, so
     # the role's cluster-mode minio_env.j2 (`{% for host in play_hosts
     # %}{{ hostvars[host].ansible_host }}...{% endfor %}`) hard-failed
-    # with "'play_hosts' is undefined" where real ansible-playbook
+    # with "'play_hosts' is undefined" where ansible-playbook
     # renders the host list.
     playbook = File.tempname("play-hosts-alias", ".yml")
 

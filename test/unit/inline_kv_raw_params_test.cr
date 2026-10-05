@@ -3,7 +3,7 @@ require "../../src/krikri/playbook_parser"
 
 # Old-style inline `key=value key2=value2` module-argument shorthand
 # (`apt: pkg=unzip={{ v }} state=present`, azavea.unzip's own "Install
-# unzip" task, found by a real-host benchmark round): real Ansible's
+# unzip" task, found by a real-host benchmark round): Ansible's
 # parse_kv puts "_raw_params" in the result ONLY when the string
 # contains tokens with no "=" (leftover free-form text); a fully
 # key=value string produces no "_raw_params" at all. krikri used to set
@@ -42,7 +42,7 @@ describe "Krikri::PlaybookParser (inline_kv_raw_params_test.cr)" do
     end
 
     it "still emits _raw_params for leftover non-kv tokens, alongside the parsed k=v params" do
-      # Same split real Ansible makes (parse_kv, check_raw=false): the kv
+      # Same split Ansible makes (parse_kv, check_raw=false): the kv
       # token becomes a param AND the bare token becomes _raw_params.
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: mixed string

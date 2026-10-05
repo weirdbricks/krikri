@@ -5,7 +5,7 @@ require "../../src/krikri/plugin_helpers/lvol_size"
 # lvol.py's own parsing loop (read from a live collection install) - the
 # plugin shells out to real vgs/lvs (needs actual LVM volume groups to
 # exercise), so the grammar is what's testable in isolation. The error
-# strings below are the real module's fail_json messages verbatim.
+# strings below are the Ansible module's fail_json messages verbatim.
 describe Krikri::PluginHelpers::LvolSize do
   describe ".parse" do
     it "returns nil for no size" do
@@ -66,7 +66,7 @@ describe Krikri::PluginHelpers::LvolSize do
     end
 
     it "rejects bad size specifications" do
-      # the real module's own message, with the size as typed
+      # the Ansible module's own message, with the size as typed
       [".5", "abc", "1x", "-"].each do |bad|
         parsed, error = Krikri::PluginHelpers::LvolSize.parse(bad)
         parsed.must_be_nil

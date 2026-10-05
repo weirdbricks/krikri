@@ -1,11 +1,11 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered blockinfile result key order -
+# ansible-core 2.19.11's registered blockinfile result key order -
 # live-verified via `{{ r | to_json }}` on registered blockinfile:
 # tasks: changed, msg, diff, then backup_file only when a backup was
 # actually taken, then failed - identical on create, change, remove and
-# already-correct runs, and in check mode. Real's wire result ALWAYS
+# already-correct runs, and in check mode. Ansible's wire result ALWAYS
 # carries the diff key (a two-entry content/attributes list whose
 # before/after bodies are empty outside --diff mode), so the pins below
 # expect it on every success. failed: false is backfilled by the

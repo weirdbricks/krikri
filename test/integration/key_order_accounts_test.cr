@@ -16,7 +16,7 @@ require "json"
 # pinned by the round 992000 capture and the container replay instead,
 # and noted in comments where relevant.
 #
-# The params-echo modules (authorized_key, known_hosts) follow real's
+# The params-echo modules (authorized_key, known_hosts) follow Ansible's
 # echo rule: explicitly-passed params alphabetically (the controller
 # sorts the module-args handoff), then not-passed params in a fixed
 # per-module order - verified live against four different explicit-param
@@ -116,7 +116,7 @@ describe "known_hosts plugin result key order" do
     File.delete(path) if path && File.exists?(path)
   end
 
-  it "serializes a no-match removal as the full echo shape with changed: false (real's early return, not the bare one)" do
+  it "serializes a no-match removal as the full echo shape with changed: false (Ansible's early return, not the bare one)" do
     path = PluginSpecHelper.tmp_path("kh-order-absent-again")
     File.delete(path) if File.exists?(path)
 
@@ -138,7 +138,7 @@ describe "known_hosts plugin result key order" do
     File.delete(path) if path && File.exists?(path)
   end
 
-  # Real's check-mode path exits INSIDE enforce_state with
+  # Ansible's check-mode path exits INSIDE enforce_state with
   # exit_json(changed=, diff=) - no params echo, no stat block
   # (round 992000's known_hosts_check: [changed, diff, failed]).
   it "serializes a check-mode add as just changed + diff" do
@@ -205,9 +205,9 @@ describe "authorized_key plugin result key order" do
     `rm -rf #{base} && mkdir -p #{base}`
     path = File.join(base, "authorized_keys")
 
-    # manage_dir: false keeps this root-free - real's manage_dir branch
+    # manage_dir: false keeps this root-free - Ansible's manage_dir branch
     # chowns the parent dir to the user (root here), which fails EPERM
-    # for a non-root caller exactly like real does.
+    # for a non-root caller exactly like Ansible does.
     result = PluginSpecHelper.run("authorized_key", {
       "user"       => "root",
       "key"        => "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC testkey@x comment",
@@ -227,7 +227,7 @@ describe "authorized_key plugin result key order" do
     `rm -rf #{base}` if base
   end
 
-  it "serializes an idempotent rerun with NO changed key (the executor backfills failed-then-changed, real's [..., keyfile, failed, changed] shape)" do
+  it "serializes an idempotent rerun with NO changed key (the executor backfills failed-then-changed, Ansible's [..., keyfile, failed, changed] shape)" do
     base = PluginSpecHelper.tmp_path("ak-order-exists")
     `rm -rf #{base} && mkdir -p #{base}`
     path = File.join(base, "authorized_keys")
@@ -266,7 +266,7 @@ describe "authorized_key plugin result key order" do
     ])
   end
 
-  it "fails a garbage key with real's plain fail shape [failed, msg, changed, exception]" do
+  it "fails a garbage key with Ansible's plain fail shape [failed, msg, changed, exception]" do
     result = PluginSpecHelper.run("authorized_key", {
       "user" => "root", "key" => "not-a-real-ssh-key", "state" => "present",
     })
@@ -331,7 +331,7 @@ describe "user plugin result key order" do
   # Real checks a given group: BEFORE useradd and fails with a plain
   # fail_json - no name/rc echo (round 992000's user_fail: [failed, msg,
   # changed, exception], msg "Group kop_nosuchgroup does not exist").
-  it "fails a nonexistent group: with the plain fail shape and real's message" do
+  it "fails a nonexistent group: with the plain fail shape and Ansible's message" do
     result = PluginSpecHelper.run("user", {
       "name" => "krikri-kop-nobody", "group" => "krikri-kop-nosuchgroup",
     })
@@ -396,7 +396,7 @@ describe "group plugin result key order" do
     result.as_h.keys.must_equal(["changed"])
   end
 
-  # Real's group command failures are fail_json(name=group.name, msg=err)
+  # Ansible's group command failures are fail_json(name=group.name, msg=err)
   # - the name kwarg LEADS, before failed/msg (round 992000's group_fail:
   # [name, failed, msg, changed, exception]). Safe on any host: gid_max
   # below gid_min makes groupadd refuse without creating anything, root

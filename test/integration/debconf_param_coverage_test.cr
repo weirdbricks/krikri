@@ -3,7 +3,7 @@ require "file_utils"
 require "../../src/krikri/param_sentinels"
 
 # Parameter-coverage pass for `debconf:`'s required_together contract:
-# real ansible-core's debconf.py declares
+# ansible-core's debconf.py declares
 # `required_together=(['question', 'vtype', 'value'],)`, enforced by
 # AnsibleModule with validation.py's exact message "parameters are
 # required together: question, vtype, value" - any one (or two) of the
@@ -38,7 +38,7 @@ private def debconf_env(dir : String, log : String, show_output : String) : Stri
 end
 
 describe "debconf plugin - required_together (question/vtype/value)" do
-  it "fails when only vtype is given (real Ansible's required_together violation)" do
+  it "fails when only vtype is given (Ansible's required_together violation)" do
     dir, log = debconf_shim_dir("vtype-alone")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -84,7 +84,7 @@ describe "debconf plugin - required_together (question/vtype/value)" do
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "rejects an invalid vtype choice before any debconf call (real Ansible's choices check)" do
+  it "rejects an invalid vtype choice before any debconf call (Ansible's choices check)" do
     dir, log = debconf_shim_dir("bad-vtype")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -138,7 +138,7 @@ describe "debconf plugin - required_together (question/vtype/value)" do
   end
 end
 
-# Non-string `value:` literals: real's debconf.py builds the
+# Non-string `value:` literals: Ansible's debconf.py builds the
 # debconf-set-selections line with a Python `' '.join([pkg, question,
 # vtype, value])` (debconf.py:179), and `value:` is the module's only
 # `type: raw` option - so an int/bool/float literal reaches that join as
@@ -154,8 +154,8 @@ end
 # for those literals (NON_STRING_PARAM_PREFIX / NON_STRING_MEMBER_PREFIX,
 # see src/krikri/param_sentinels.cr); the end-to-end rendering of the
 # same crash is covered in non_string_literal_params_test.cr.
-describe "debconf plugin - non-string value: literals (real's set_selection join crash)" do
-  it "crashes on an int value like real's uncaught ' '.join TypeError" do
+describe "debconf plugin - non-string value: literals (Ansible's set_selection join crash)" do
+  it "crashes on an int value like Ansible's uncaught ' '.join TypeError" do
     dir, log = debconf_shim_dir("int-value")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -174,7 +174,7 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "crashes on a bool value with real's own plain type name" do
+  it "crashes on a bool value with Ansible's own plain type name" do
     dir, log = debconf_shim_dir("bool-value")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -190,7 +190,7 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "crashes on a float value with real's own plain type name" do
+  it "crashes on a float value with Ansible's own plain type name" do
     dir, log = debconf_shim_dir("float-value")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -225,11 +225,11 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
     FileUtils.rm_rf(dir) if dir
   end
 
-  # real's `if vtype == 'boolean': value = to_text(value).lower()`
+  # Ansible's `if vtype == 'boolean': value = to_text(value).lower()`
   # (debconf.py:214) runs BEFORE the comparison, so any type becomes text
   # and the join only ever sees a string there - an int value seeds "76"
   # instead of crashing.
-  it "seeds a non-string value as text under vtype boolean, like real's to_text()" do
+  it "seeds a non-string value as text under vtype boolean, like Ansible's to_text()" do
     dir, log = debconf_shim_dir("int-value-boolean")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -246,10 +246,10 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
     FileUtils.rm_rf(dir) if dir
   end
 
-  # name/question/vtype are `type: str`, so real's own spec converts an
+  # name/question/vtype are `type: str`, so Ansible's own spec converts an
   # int literal to its text (check_type_str's allow_conversion) and the
   # join never sees a non-string there - the question is seeded as "16".
-  it "stringifies an int question through real's own type: str conversion" do
+  it "stringifies an int question through Ansible's own type: str conversion" do
     dir, log = debconf_shim_dir("int-question")
     result = PluginSpecHelper.run("debconf", {
       "name"         => Krikri::NON_STRING_PARAM_PREFIX + "7",
@@ -267,9 +267,9 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
   end
 
   # A literal `value:` (or a template that natively resolved to None) is
-  # Python None, not an empty string: real's own guard at debconf.py:210
+  # Python None, not an empty string: Ansible's own guard at debconf.py:210
   # fails the task right after get_selections.
-  it "fails a null value with real's own 'you must supply a valid vtype and value'" do
+  it "fails a null value with Ansible's own 'you must supply a valid vtype and value'" do
     dir, log = debconf_shim_dir("null-value")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -286,11 +286,11 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
     FileUtils.rm_rf(dir) if dir
   end
 
-  # real's multiselect branch joins the LIST (debconf.py:241) and catches
+  # Ansible's multiselect branch joins the LIST (debconf.py:241) and catches
   # its own TypeError into a fail_json rather than crashing - a different
   # message, and it sorts first, so a homogeneous non-string list always
   # names its first element.
-  it "fails a multiselect list of ints with real's own caught TypeError" do
+  it "fails a multiselect list of ints with Ansible's own caught TypeError" do
     dir, log = debconf_shim_dir("multiselect-ints")
     result = PluginSpecHelper.run("debconf", {
       "name"         => "spec.pkg",
@@ -309,7 +309,7 @@ describe "debconf plugin - non-string value: literals (real's set_selection join
 
   # The join sits behind `if changed: if not module.check_mode`, so a
   # --check run never builds the line and reports changed like real.
-  it "reports changed for an int value in check mode, like real's check_mode branch" do
+  it "reports changed for an int value in check mode, like Ansible's check_mode branch" do
     dir, log = debconf_shim_dir("int-value-check")
     result = PluginSpecHelper.run("debconf", {
       "name"                => "spec.pkg",

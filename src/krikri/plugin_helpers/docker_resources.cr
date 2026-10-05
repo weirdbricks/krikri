@@ -4,9 +4,9 @@ module Krikri
     # memory/cpu resource-limit params. No I/O here - docker_container.cr
     # does the actual API calls.
     module DockerResources
-      # Binary (1024-based) size suffixes, matching real Ansible's own
+      # Binary (1024-based) size suffixes, matching Ansible's own
       # `human_to_bytes` (`SIZE_RANGES` in
-      # `the real module`) - K/M/G/T/P are
+      # `the Ansible module`) - K/M/G/T/P are
       # KiB/MiB/GiB/TiB/PiB despite the non-"i" spelling, not decimal
       # 1000-based units.
       SIZE_RANGES = {
@@ -18,7 +18,7 @@ module Krikri
         "B" => 1_i64,
       }
 
-      # Matches real Ansible's own `human_to_bytes`: a bare number with
+      # Matches Ansible's own `human_to_bytes`: a bare number with
       # no unit suffix is returned as-is (already bytes); a number
       # followed by a unit letter (only the first letter matters - "MB"/
       # "M" are equivalent, matching the real function's own
@@ -48,7 +48,7 @@ module Krikri
         human_to_bytes(value)
       end
 
-      # Matches real Ansible's own `_preprocess_cpus`: `cpus:` is a
+      # Matches Ansible's own `_preprocess_cpus`: `cpus:` is a
       # float number of CPUs, converted to Docker's own `NanoCpus`
       # (nanocpus = cpus * 1e9, rounded).
       def self.cpus_to_nano_cpus(cpus : Float64) : Int64

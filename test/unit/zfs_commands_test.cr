@@ -8,7 +8,7 @@ require "../../src/krikri/plugin_helpers/zfs_commands"
 # the `zfs get` output parsing don't.
 describe Krikri::PluginHelpers::ZfsCommands do
   describe ".normalize_value" do
-    it "maps Python bools to on/off like the real module" do
+    it "maps Python bools to on/off like the Ansible module" do
       Krikri::PluginHelpers::ZfsCommands.normalize_value(JSON.parse("true")).must_equal("on")
       Krikri::PluginHelpers::ZfsCommands.normalize_value(JSON.parse("false")).must_equal("off")
     end

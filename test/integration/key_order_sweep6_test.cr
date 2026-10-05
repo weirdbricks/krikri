@@ -1,11 +1,11 @@
 require "../minitest_helper"
 require "socket"
 
-# Real ansible-core 2.19.11 (community.crypto 3.1.1) registered-result key
+# ansible-core 2.19.11 (community.crypto 3.1.1) registered-result key
 # order for the crypto plugins - live-verified via `{{ r | to_json }}` dumps
 # on localhost plays (changed / unchanged rerun / check mode where they
 # differ). `failed: false` is backfilled by the executor after the plugin
-# JSON, so the plugin-level pins omit it, exactly as real's wire shows it
+# JSON, so the plugin-level pins omit it, exactly as Ansible's wire shows it
 # between the module keys and the trailing `warnings`.
 describe "openssl_privatekey plugin result key order" do
   it "serializes a fresh RSA generation as type-size-fingerprint before filename" do
@@ -48,7 +48,7 @@ describe "openssl_privatekey plugin result key order" do
 end
 
 describe "openssl_privatekey_info plugin result key order" do
-  it "serializes an RSA key read with the info keys in real's order" do
+  it "serializes an RSA key read with the info keys in Ansible's order" do
     dir = PluginSpecHelper.tmp_path("ko-pki1")
     FileUtils.mkdir_p(dir)
     path = File.join(dir, "key.pem")
@@ -111,7 +111,7 @@ describe "openssl_publickey plugin result key order" do
 end
 
 describe "openssl_publickey_info plugin result key order" do
-  it "serializes a PEM public key read with the info keys in real's order" do
+  it "serializes a PEM public key read with the info keys in Ansible's order" do
     dir = PluginSpecHelper.tmp_path("ko-pubi1")
     FileUtils.mkdir_p(dir)
     key = File.join(dir, "key.pem")
@@ -291,7 +291,7 @@ describe "x509_certificate plugin result key order" do
 end
 
 describe "x509_certificate_info plugin result key order" do
-  it "serializes a certificate read in real's info order" do
+  it "serializes a certificate read in Ansible's info order" do
     dir = PluginSpecHelper.tmp_path("ko-x509i-1")
     FileUtils.mkdir_p(dir)
     key = File.join(dir, "key.pem")
@@ -403,7 +403,7 @@ describe "get_certificate plugin result key order" do
       result = PluginSpecHelper.run("get_certificate",
         {"host" => "127.0.0.1", "port" => port.to_s})
       # krikri used to merge the full X509CertInfo.parse key set in; it
-      # now passes only the parsed-info keys real's result dict carries,
+      # now passes only the parsed-info keys Ansible's result dict carries,
       # so the registered result is exactly the ten keys below plus the
       # controller-added ansible_facts/warnings tails.
       keys = result.as_h.keys
@@ -456,7 +456,7 @@ describe "xml plugin result key order" do
 end
 
 describe "git_config plugin result key order" do
-  it "serializes a setting change as msg-diff-changed with real's diff shape" do
+  it "serializes a setting change as msg-diff-changed with Ansible's diff shape" do
     dir = PluginSpecHelper.tmp_path("ko-gitcfg-1")
     FileUtils.mkdir_p(dir)
     result = PluginSpecHelper.run("git_config", {
@@ -468,7 +468,7 @@ describe "git_config plugin result key order" do
 
     result["changed"].as_bool.must_equal(true)
     result.as_h.keys.must_equal(["msg", "diff", "changed"])
-    # Real's diff: both headers are " ".join(set_args) (the resolved git
+    # Ansible's diff: both headers are " ".join(set_args) (the resolved git
     # path leading), before/after run through build_diff_value (empty ->
     # "\n", single -> "value\n"). Live-verified vs community.general
     # git_config against ansible-core 2.19.11.
@@ -520,7 +520,7 @@ describe "git_config plugin result key order" do
 end
 
 describe "openssl_csr plugin result key order" do
-  it "serializes a generated CSR with extension keys in real's order" do
+  it "serializes a generated CSR with extension keys in Ansible's order" do
     dir = PluginSpecHelper.tmp_path("ko-csr1")
     FileUtils.mkdir_p(dir)
     key = File.join(dir, "key.pem")

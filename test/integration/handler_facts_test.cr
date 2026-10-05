@@ -5,10 +5,10 @@ require "file_utils"
 # visible to everything that runs after the handler has executed - tasks
 # after a meta: flush_handlers, the next play, handlers later in the same
 # flush, and consumers of a looped handler's per-item facts - exactly like
-# real ansible-core. The handler dispatch path (#execute_handler_plugin_
+# ansible-core. The handler dispatch path (#execute_handler_plugin_
 # once) returned the raw plugin result without merging the action plugin's
 # "ansible_facts" payload into the executor's fact stores, so every one of
-# these consumers saw the fact as undefined while real ansible-playbook
+# these consumers saw the fact as undefined while ansible-playbook
 # kept it visible (a handler's register: already worked - that path shared
 # the regular tasks' register_result).
 #

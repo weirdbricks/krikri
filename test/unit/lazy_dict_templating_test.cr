@@ -6,7 +6,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # Regression specs for the general lazy-dict-templating gap
 # (KNOWN_MISSING.md's last open entry, closed 0.9.741).
 #
-# Real Ansible's templar keeps a variable computed from a `{{ }}`
+# Ansible's templar keeps a variable computed from a `{{ }}`
 # expression a genuine dict/list through the whole vars pipeline
 # (_AnsibleLazyTemplateDict). krikri's substitution is string-based, but
 # recovers real types via the render-then-parse-back machinery added
@@ -50,31 +50,31 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
     V
   end
 
-  # Real ansible-core 2.19: "single: [a][b][c]"
+  # ansible-core 2.19: "single: [a][b][c]"
   it "iterates KEYS for a single-variable for over a computed dict" do
     LazyDictSpecHelpers.render(v, "{% for k in computed %}[{{ k }}]{% endfor %}")
       .must_equal("[b][a][c]")
   end
 
-  # Real ansible-core 2.19: "pairs: (a=1)(b=20)(c=30)"
+  # ansible-core 2.19: "pairs: (a=1)(b=20)(c=30)"
   it "iterates (key, value) pairs via .items()" do
     LazyDictSpecHelpers.render(v, "{% for k, val in computed.items() %}({{ k }}={{ val }}) {% endfor %}")
       .must_equal("(b=20) (a=1) (c=30)")
   end
 
-  # Real ansible-core 2.19: "sort: [a][b][c]"
+  # ansible-core 2.19: "sort: [a][b][c]"
   it "sorts a computed dict to its keys" do
     LazyDictSpecHelpers.render(v, "{% for k in computed | sort %}[{{ k }}]{% endfor %}")
       .must_equal("[a][b][c]")
   end
 
-  # Real ansible-core 2.19: "items-sort: (a=1)(b=20)(c=30)"
+  # ansible-core 2.19: "items-sort: (a=1)(b=20)(c=30)"
   it "sorts an .items() result to pairs" do
     LazyDictSpecHelpers.render(v, "{% for pair in computed.items() | sort %}({{ pair[0] }}={{ pair[1] }}) {% endfor %}")
       .must_equal("(a=1) (b=20) (c=30)")
   end
 
-  # Real ansible-core 2.19: "chain: (a=1)(b=20)(c=30)(d=40)" - a set_fact
+  # ansible-core 2.19: "chain: (a=1)(b=20)(c=30)(d=40)" - a set_fact
   # computed from ANOTHER computed dict stays a real dict through the
   # whole chain.
   it "keeps a chained computed dict a real dict" do
@@ -83,7 +83,7 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
       .must_equal("(a=1) (b=20) (c=30) (d=40)")
   end
 
-  # Real ansible-core 2.19, every shape output-diffed:
+  # ansible-core 2.19, every shape output-diffed:
   # list ['b','a','c'] / join b,a,c / first b, last c / min a, max c /
   # unique ['b','a','c'] / map ['B','A','C'] / select ['b','a'] /
   # reverse ['c','a','b'] - crystal-play-0.9.25's keys-only flip.
@@ -100,7 +100,7 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
     LazyDictSpecHelpers.render(v, "{{ d1 | reverse | list }}").must_equal("['c', 'a', 'b']")
   end
 
-  # Real ansible-core 2.19 hard-FAILS the bare two-variable form over a
+  # ansible-core 2.19 hard-FAILS the bare two-variable form over a
   # dict ("not enough values to unpack"); krikri deliberately keeps it
   # working (jtyr.nsswitch/jtyr.motd shipped and were live-verified on
   # it) - now built by the for tag itself, not by Value#each's default.
@@ -109,7 +109,7 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
       .must_equal("(b=2) (a=1) (c=3)")
   end
 
-  # Real ansible-core 2.19: "dictsort: [['a', 0], ...]" - dictsort keeps
+  # ansible-core 2.19: "dictsort: [['a', 0], ...]" - dictsort keeps
   # returning (key, value) pairs after the keys-flip, AND renders as
   # bracketed nested lists (ansible-core's native-types finalization
   # converts tuples to lists at every output position - the paren-repr
@@ -121,7 +121,7 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
 
   # Same tuple→list conversion at the JSON boundary: a dictsort result
   # interpolated mid-text (not as a whole-{{ }} span) and a computed
-  # .items() pair list must both render bracketed, matching real Ansible.
+  # .items() pair list must both render bracketed, matching Ansible.
   it "renders tuple results as bracketed lists in every output position" do
     LazyDictSpecHelpers.render(v, "value is {{ d1 | dictsort }} ok")
       .must_equal("value is [['a', 1], ['b', 2], ['c', 3]] ok")
@@ -130,7 +130,7 @@ describe "lazy dict-templating: a computed dict var behaves like a real dict" do
       .must_equal("[['b', 2], ['a', 1], ['c', 3]]")
   end
 
-  # Real ansible-core 2.19: "{{ d1 | dictsort | string }}" renders
+  # ansible-core 2.19: "{{ d1 | dictsort | string }}" renders
   # "[('a', 1), ('b', 2), ('c', 3)]" - | string is Python str() BEFORE
   # the native-types tuple->list conversion, the one output position
   # where the paren repr survives. Verified shape-for-shape.
@@ -168,7 +168,7 @@ describe "combine recursive=True deep-merges and list_merge= governs list collis
     result["o"]["a"].as_h.must_equal({"y" => JSON.parse(%(2))})
   end
 
-  it "supports every list_merge mode, matching real ansible-core 2.19" do
+  it "supports every list_merge mode, matching ansible-core 2.19" do
     %w(replace keep append prepend append_rp prepend_rp).each do |mode|
       result = engine.apply(dict, %(combine(#{override.to_json}, recursive=True, list_merge='#{mode}')))
       expected = case mode

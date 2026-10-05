@@ -12,7 +12,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 # Found via a live 100-role confirm round: marcinpraczko.goss-install's
 # own `when: ansible_verbosity is defined` style check raised
 # "'ansible_verbosity' is undefined" outright, since this magic var
-# didn't exist anywhere in this engine before (real Ansible always
+# didn't exist anywhere in this engine before (Ansible always
 # defines it, defaulting to 0 with no -v at all). Fixing the magic var
 # also required fixing debug:'s own pre-existing (separately dead)
 # verbosity: gate, which always compared against a hardcoded 0.

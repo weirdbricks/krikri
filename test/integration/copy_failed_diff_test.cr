@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/task_executor"
 
 # Regression (KNOWN_MISSING "Open, known" item, live-verified vs real
-# ansible-core 2.19.11): a registered FAILED copy: result keeps real's
+# ansible-core 2.19.11): a registered FAILED copy: result keeps Ansible's
 # always-present "diff" key - an empty LIST - on every module-level failure
 # kind (the missing-destination-directory failure and the module's own
 # argspec/bool-conversion failure alike). Krikri omitted the key on failed

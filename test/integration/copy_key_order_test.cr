@@ -2,21 +2,21 @@ require "../minitest_helper"
 require "digest/md5"
 require "file_utils"
 
-# Real ansible-core 2.19.11's registered copy result key orders -
+# ansible-core 2.19.11's registered copy result key orders -
 # live-verified via `{{ r | to_json }}` on registered copy: tasks (the
 # -v dump sorts alphabetically, so the order is only observable
-# programmatically). Real's changed-path result runs diff, dest, src,
+# programmatically). Ansible's changed-path result runs diff, dest, src,
 # md5sum, checksum, changed (, backup_file), then the add_path_info
 # stat block and failed: false; the equal-content and check-mode
-# would-not-change paths dispatch real's FILE module instead, whose
+# would-not-change paths dispatch Ansible's FILE module instead, whose
 # result runs diff, path, changed, the stat block, then the
-# action-injected checksum and dest. Real's src is its staged
+# action-injected checksum and dest. Ansible's src is its staged
 # .source.txt tempfile path - krikri echoes the staging temp the bytes
 # actually travelled through (content path) or the source path itself
 # (src path) - and md5sum is the source content's MD5. krikri's
 # execute() wrapper always materializes a `diff` key (empty list when
-# no diff data - real's own always-present-diff shape), so the pins
-# below cover the keys krikri emits, in real's relative order.
+# no diff data - Ansible's own always-present-diff shape), so the pins
+# below cover the keys krikri emits, in Ansible's relative order.
 describe "copy plugin result key order" do
   it "serializes a content-copy success in real copy's key order" do
     dest = PluginSpecHelper.tmp_path("copy-order-content.txt")
@@ -114,7 +114,7 @@ describe "copy plugin result key order" do
 
     result["changed"].as_bool.must_equal(true)
     File.exists?(dest).must_equal(false)
-    # krikri's check-mode content copy also echoes real's censored
+    # krikri's check-mode content copy also echoes Ansible's censored
     # invocation dict (live-verified at -vvv); it trails the listed keys.
     result.as_h.keys.must_equal(["diff", "changed", "invocation"])
   end
@@ -136,8 +136,8 @@ describe "copy plugin result key order" do
     result = PluginSpecHelper.run("copy", {"src" => src, "dest" => dest})
 
     result["changed"].as_bool.must_equal(true)
-    # Real's directory-copy result is bare {dest, src, changed} - no
-    # stat block, no msg. krikri's extra msg/stat keys trail real's
+    # Ansible's directory-copy result is bare {dest, src, changed} - no
+    # stat block, no msg. krikri's extra msg/stat keys trail Ansible's
     # keys (msg last, after the stat block).
     result.as_h.keys.must_equal([
       "diff", "dest", "changed", "uid", "gid", "owner", "group", "mode", "state", "size", "msg",

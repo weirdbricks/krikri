@@ -9,14 +9,14 @@ module Krikri
     # port 22. Only an explicit `ansible_port` (inventory/CLI) sets this;
     # when nil, SSHManager omits `-p` entirely so ssh's own resolution
     # (~/.ssh/config Port directives, /etc/ssh/ssh_config) takes over,
-    # matching real Ansible's ssh connection plugin. An explicit port
+    # matching Ansible's ssh connection plugin. An explicit port
     # still overrides ssh's config exactly as `-p` always has.
     property port : Int32?
     property vars : Hash(String, JSON::Any)
     # True when the host entry came from an `add_host:` action (or was
     # merged into one) rather than the static inventory. TaskExecutor's
     # hostvars builder enriches such hosts' entries with the play magic
-    # variables real Ansible exposes on every hostvars entry.
+    # variables Ansible exposes on every hostvars entry.
     property? from_add_host : Bool = false
 
     def initialize(@name : String, @user : String? = nil, @port : Int32? = nil)

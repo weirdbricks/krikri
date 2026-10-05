@@ -5,11 +5,11 @@ require "../minitest_helper"
 # 2.19.11: CapabilitiesModule.__init__ resolves BOTH helper binaries
 # through module.get_bin_path(required=True) BEFORE it parses the
 # capability argument, so a host without libcap2-bin reports the missing
-# getcap even when the capability string is malformed - and real's
+# getcap even when the capability string is malformed - and Ansible's
 # operator error interpolates the OPS TUPLE, so it prints with Python
 # repr punctuation ("one of: ('=', '-', '+')").
 #
-# Live-diffed vs real ansible-playbook through the kpg32 generator sweep
+# Live-diffed vs ansible-playbook through the kpg32 generator sweep
 # (15/15 capabilities playbooks) and a local ansible_connection=local
 # repro on a host that does have getcap/setcap installed.
 describe "capabilities plugin binary resolution" do
@@ -28,8 +28,8 @@ describe "capabilities plugin binary resolution" do
     end
   end
 
-  it "reports the operator error with real's tuple repr" do
-    skip "host has no getcap/setcap, so real fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
+  it "reports the operator error with Ansible's tuple repr" do
+    skip "host has no getcap/setcap, so Ansible fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
 
     path = PluginSpecHelper.tmp_path("krikri-cap-op")
     File.write(path, "")
@@ -41,7 +41,7 @@ describe "capabilities plugin binary resolution" do
   end
 
   it "reports the operator error even for a capability that only misses its operator in present state" do
-    skip "host has no getcap/setcap, so real fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
+    skip "host has no getcap/setcap, so Ansible fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
 
     path = PluginSpecHelper.tmp_path("krikri-cap-op2")
     File.write(path, "")
@@ -68,13 +68,13 @@ describe "capabilities plugin binary resolution" do
   end
 
   it "leaves a capability that already holds the wanted entry unchanged" do
-    skip "host has no getcap/setcap, so real fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
+    skip "host has no getcap/setcap, so Ansible fails on the binary lookup first" unless cap_binary_available?("getcap") && cap_binary_available?("setcap")
 
     path = PluginSpecHelper.tmp_path("krikri-cap-absent")
     File.write(path, "")
 
     # The scratch file has no capabilities at all, so the absent branch
-    # finds nothing to remove: real's own unchanged exit, which carries
+    # finds nothing to remove: Ansible's own unchanged exit, which carries
     # state and no msg.
     result = PluginSpecHelper.run("capabilities",
       {"path" => path, "capability" => "cap_net_raw", "state" => "absent"})

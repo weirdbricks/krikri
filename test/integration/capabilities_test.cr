@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Ad-hoc CLI comparison sweep vs real ansible (2026-09-13): verified live
+# Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): verified live
 # against community.general.capabilities (12.5.0, ansible-core 2.19) -
 # the changed path returns changed/state/msg("capabilities changed")/
 # stdout (setcap output, normally empty), the unchanged path returns ONLY

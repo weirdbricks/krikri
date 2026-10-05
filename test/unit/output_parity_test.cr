@@ -6,8 +6,8 @@ require "../../src/krikri/run_options"
 require "../../src/krikri/task_executor/result_display"
 
 # Byte-level output-parity regression tests for the console shapes shared
-# with real ansible-playbook (ansible-core 2.19.11). The exact expected
-# strings here were captured from real ansible-playbook runs (non-tty,
+# with ansible-playbook (ansible-core 2.19.11). The exact expected
+# strings here were captured from ansible-playbook runs (non-tty,
 # ANSIBLE_NOCOLOR=1) via scripts/output_parity.sh.
 private def capture_output(&)
   io = IO::Memory.new
@@ -22,7 +22,7 @@ end
 
 describe Krikri::OutputBanner do
   describe ".stars" do
-    # Real's banner pads to a fixed display width of 79 columns when
+    # Ansible's banner pads to a fixed display width of 79 columns when
     # stdout is not a tty: star count = 79 - len(msg), so "PLAY RECAP"
     # (10 chars) gets 69 stars and the full line is 80 columns.
     it "pads PLAY RECAP to the non-tty 79-column width" do
@@ -40,7 +40,7 @@ describe Krikri::OutputBanner do
   end
 
   describe ".banner" do
-    # Real's banner output is "\n<msg> <stars>\n": one leading blank
+    # Ansible's banner output is "\n<msg> <stars>\n": one leading blank
     # line, then the padded line. Banners are never colorized.
     it "prints a blank line then the padded banner line" do
       out = capture_output { Krikri::OutputBanner.banner("PLAY RECAP") }
@@ -51,7 +51,7 @@ end
 
 describe Krikri::ResultDisplay do
   describe ".show_recap" do
-    # Byte-for-byte against real ansible-playbook's v2_playbook_on_stats
+    # Byte-for-byte against ansible-playbook's v2_playbook_on_stats
     # (non-tty): host padded to 26, then " : ", then the seven counters
     # each shaped `lead=%-4s` joined by single spaces - trailing padding
     # included on the last counter.
@@ -88,7 +88,7 @@ describe Krikri::ResultDisplay do
       Krikri::Host.new("localhost")
     end
 
-    # Real's default callback appends the pretty-sorted result dump after
+    # Ansible's default callback appends the pretty-sorted result dump after
     # " => " on the status line itself (not on a following line).
     it "dumps a debug msg result inline after '=> ' without a changed key" do
       result = JSON.parse(%({"changed": false, "msg": "Output was: Hello World", "_ansible_verbose_always": true}))
@@ -114,7 +114,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("ok: [localhost]\n")
     end
 
-    # Real ansible-playbook labels every result line with the INVENTORY
+    # ansible-playbook labels every result line with the INVENTORY
     # hostname, never the ansible_host address - even for a
     # local-connection host (live-verified 2.19.11:
     # `hA ansible_host=127.0.0.1 ansible_connection=local` prints
@@ -140,7 +140,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("fatal: [localhost]: FAILED! => {\"changed\": true, \"msg\": \"non-zero return code\", \"rc\": 1}\n")
     end
 
-    # Real 2.19.11 (live-verified): a task-level when:/loop-source
+    # Ansible 2.19.11 (live-verified): a task-level when:/loop-source
     # failure's fatal line dumps ONLY the msg - no changed key - while
     # the registered var keeps changed=false+failed=true+msg (the
     # marker key is stripped at register with every other _ansible_*).
@@ -150,7 +150,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: 'x' is undefined\"}\n")
     end
 
-    # Real 2.19.11 (live-verified): assert: tags its FAILURE result
+    # Ansible 2.19.11 (live-verified): assert: tags its FAILURE result
     # _ansible_verbose_always (unless quiet:), so the fatal dump is
     # pretty-printed - 4-space indent, sorted keys.
     it "pretty-dumps a failed assert result tagged _ansible_verbose_always" do
@@ -159,7 +159,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("fatal: [localhost]: FAILED! => {\n    \"assertion\": \"1 == 2\",\n    \"changed\": false,\n    \"evaluated_to\": false,\n    \"msg\": \"Assertion failed\"\n}\n...ignoring\n")
     end
 
-    # Real 2.19.11 (live-verified): the strategy merges the loop item
+    # Ansible 2.19.11 (live-verified): the strategy merges the loop item
     # into every per-item result, so a failed item's dump carries
     # "ansible_loop_var" plus the item under the loop var's name.
     it "restores ansible_loop_var and the item in a failed loop item's dump" do
@@ -174,7 +174,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("failed: [localhost] (item=x) => {\"ansible_loop_var\": \"p\", \"changed\": false, \"msg\": \"same boom\", \"p\": \"x\"}\n")
     end
 
-    # Real 2.19.11 (live-verified): a when:-failed loop item is a
+    # Ansible 2.19.11 (live-verified): a when:-failed loop item is a
     # task-level failure - msg only, no changed key, no loop-item keys.
     it "dumps only the msg for a when-failed loop item" do
       result = JSON.parse(%({"changed": false, "failed": true, "msg": "Task failed: 'x' is undefined", "_ansible_task_error_msg_only": true}))
@@ -182,7 +182,7 @@ describe Krikri::ResultDisplay do
       out.must_equal("failed: [localhost] (item=1) => {\"msg\": \"Task failed: 'x' is undefined\"}\n")
     end
 
-    # Real 2.19.11 (live-verified): a failed solo no_log task prints the
+    # Ansible 2.19.11 (live-verified): a failed solo no_log task prints the
     # CENSORED fatal dump (no secret) plus "...ignoring"; the error
     # block real itself emits there is deliberately not replicated (it
     # leaks the raw message this control exists to hide).

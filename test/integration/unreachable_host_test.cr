@@ -6,7 +6,7 @@ require "../minitest_helper"
 # exception: Failed to upload ... Could not resolve hostname"), print no
 # recap at all, discard every reachable host's results, and exit 1.
 #
-# Real ansible-playbook (2.19.4) reports the host UNREACHABLE!, keeps
+# ansible-playbook (2.19.4) reports the host UNREACHABLE!, keeps
 # going for the others, recaps it as unreachable=1, and exits 4 - which
 # it returns whenever any host was unreachable, ahead of a failed host's
 # 2. Verified for all-unreachable, mixed-with-ok and mixed-with-failed.
@@ -57,7 +57,7 @@ describe "unreachable hosts" do
     output.must_match(/bogus\s+: ok=0\s+changed=0\s+unreachable=1/)
   end
 
-  it "recaps hosts in sorted order, as real Ansible does" do
+  it "recaps hosts in sorted order, as Ansible does" do
     _, output = run_inventory(REACHABLE + UNREACHABLE)
     bogus_at = output.index("bogus  ")
     good_at = output.index("good  ")
@@ -67,7 +67,7 @@ end
 
 describe "unreachable host with gather_facts:" do
   # GROG.reboot went DIVERGENT in a real batch round against a dead kata
-  # VM: real ansible-playbook recapped `unreachable=1 failed=0` (a single
+  # VM: ansible-playbook recapped `unreachable=1 failed=0` (a single
   # connection failure, inside the implicit Gathering Facts task, halts
   # the host before any other task runs), but krikri-playbook recapped
   # `unreachable=1 failed=1` - gather_facts_for_all_hosts didn't know the
@@ -102,7 +102,7 @@ describe "unreachable host with gather_facts:" do
 end
 
 describe "ignore_unreachable:" do
-  # Real Ansible attempts the task, reports UNREACHABLE!, counts it as
+  # Ansible attempts the task, reports UNREACHABLE!, counts it as
   # ok AND ignored, and lets the host CARRY ON - the next task without
   # the flag then fails unreachable normally. Verified against
   # ansible-core 2.19.4: bogus recaps

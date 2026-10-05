@@ -10,7 +10,7 @@ module Krikri
   # Ansible: a dict keyed by unit name (`"sshd.service"`) with
   # {name, source, state, status}.
   #
-  # Real Ansible runs its SysV scan and its systemd scan BOTH, merging
+  # Ansible runs its SysV scan and its systemd scan BOTH, merging
   # the two with systemd's entries winning, and - critically - reports
   # the task SKIPPED ("Failed to find any services...") when the merged
   # result is empty rather than handing back an empty dict. This plugin
@@ -22,8 +22,8 @@ module Krikri
   # sweeping the other plugins for it.
   #
   # Implemented scans: systemd, and SysV via `service --status-all`
-  # (real Ansible's own guard: only when a `service` binary exists and
-  # neither chkconfig nor rc-status does). Real Ansible's remaining
+  # (Ansible's own guard: only when a `service` binary exists and
+  # neither chkconfig nor rc-status does). Ansible's remaining
   # branches - upstart's `initctl list`, RedHat's chkconfig listing, and
   # OpenRC's `rc-status` - are not implemented; on such a host the
   # systemd scan still runs, and if it finds nothing the task is
@@ -34,19 +34,19 @@ module Krikri
   # `systemctl list-units` (only currently loaded units - "state":
   # running/stopped, from the unit's own SUB column) - a unit present in
   # the first but not the second is reported "state": "stopped", matching
-  # real Ansible's own behavior for an installed-but-inactive service.
+  # Ansible's own behavior for an installed-but-inactive service.
   #
   # Read-only, so it's safe under --check.
   class ServiceFactsPlugin < BasePlugin
     def execute : PluginResult
-      # SysV first, systemd second - real Ansible's own module order, and
+      # SysV first, systemd second - Ansible's own module order, and
       # the reason it matters: a service with BOTH an init script and a
       # unit file must end up reported as source "systemd", which only
       # happens if the systemd pass overwrites the sysv one.
       services = gather_sysv
       gather_systemd.each { |name, entry| services[name] = entry }
 
-      # Real Ansible skips rather than returning an empty dict, so a role
+      # Ansible skips rather than returning an empty dict, so a role
       # can tell "no services found" apart from "this host genuinely runs
       # none" - and, more importantly, so a downstream `in
       # ansible_facts.services` test doesn't quietly read as false
@@ -60,7 +60,7 @@ module Krikri
         )
       end
 
-      # Real 2.19.11 registered service_facts result (live-verified):
+      # Ansible 2.19.11 registered service_facts result (live-verified):
       # ansible_facts, failed, changed - exit_json passes no changed, so
       # the wire omits it (omit_changed) and normalize_module_result
       # backfills the failed, changed tail on register. msg is
@@ -75,7 +75,7 @@ module Krikri
       )
     end
 
-    # Real Ansible's two passes, in its order and with its merge rules:
+    # Ansible's two passes, in its order and with its merge rules:
     # `list-units --all` first (the ONLY listing that carries units with
     # no unit file - generated, transient and template-instance units),
     # then `list-unit-files --all` to fill in each unit's real
@@ -86,7 +86,7 @@ module Krikri
     # up from list-units, which is the inverse: every loaded-but-fileless
     # unit was missing from the facts entirely (150 vs 130 units on a
     # plain Debian trixie systemd host), and a unit-file-only entry got a
-    # flat "stopped" where real Ansible reports its raw ActiveState.
+    # flat "stopped" where Ansible reports its raw ActiveState.
     private def gather_systemd : Hash(String, JSON::Any)
       services = Hash(String, JSON::Any).new
       return services unless systemd_managed?
@@ -103,7 +103,7 @@ module Krikri
       )
 
       # Units known only from their file have no state in either listing,
-      # so real Ansible asks systemd directly for each one - batched into
+      # so Ansible asks systemd directly for each one - batched into
       # a single call here (see the parser's own comments).
       unlisted = unit_files.keys.reject { |name| services.has_key?(name) }
       active_states = show_active_states(unlisted)
@@ -111,7 +111,7 @@ module Krikri
       unit_files.each do |name, status|
         if existing = services[name]?
           # A bad state (not-found/masked/failed) outranks the unit
-          # file's own enabled/disabled - real Ansible keeps it.
+          # file's own enabled/disabled - Ansible keeps it.
           next if PluginHelpers::ServiceFactsParser::BAD_STATES.includes?(existing["status"].as_s)
           services[name] = systemd_entry(name, existing["state"].as_s, status)
         else
@@ -156,7 +156,7 @@ module Krikri
       })
     end
 
-    # Real Ansible's guard, not just "is there a service binary": chkconfig
+    # Ansible's guard, not just "is there a service binary": chkconfig
     # or rc-status present means the host is RedHat-style or OpenRC, whose
     # own (unimplemented here) scans own those services instead - running
     # `service --status-all` there would report a different, overlapping
@@ -169,7 +169,7 @@ module Krikri
       PluginHelpers::ServiceFactsParser.parse_sysv_status_all(
         capture("service", ["--status-all"])
       ).each do |name, state|
-        # No "status" key: real Ansible's sysv scan reports name/state/
+        # No "status" key: Ansible's sysv scan reports name/state/
         # source only - it has no enabled/disabled information to give.
         services[name] = JSON::Any.new({
           "name"   => JSON::Any.new(name),

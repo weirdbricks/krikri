@@ -13,11 +13,11 @@ describe "with_file:" do
   # Real bug found benchmarking juju4.adduser's own "Add authorized keys
   # for user" task: `with_file: "{{ adduser_public_keys }}"` (a
   # templated variable resolving to a real list, e.g. [dummykey.pub],
-  # real Ansible's own idiom - the same shape with_fileglob's own
+  # Ansible's own idiom - the same shape with_fileglob's own
   # templated-list handling already covers). with_file: was entirely
   # unimplemented as a distinct loop type - `item` never got bound at
   # all, failing every task with "'item' is undefined" regardless of
-  # whether the listed file actually existed. Real Ansible's `file`
+  # whether the listed file actually existed. Ansible's `file`
   # lookup plugin reads each listed file's CONTENT (not just the
   # filename, unlike with_fileglob's pattern matching) and searches a
   # relative entry under the role's own files/ dir.

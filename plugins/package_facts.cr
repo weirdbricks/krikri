@@ -6,7 +6,7 @@ require "../src/krikri/base_plugin"
 module Krikri
   # PackageFacts Plugin - populate the ansible_facts.packages dict with the
   # installed packages, matching ansible.builtin.package_facts (manager:
-  # auto). The fact shape follows real Ansible: a dict keyed by package name
+  # auto). The fact shape follows Ansible: a dict keyed by package name
   # with each value a list of one-or-more dicts describing an installed
   # version, e.g. {
   #   "libpam-modules" => [{"name" => "libpam-modules", "version" => "1.4.0-19"}]
@@ -18,15 +18,15 @@ module Krikri
   # os_family != Suse/Archlinux, so dpkg is the path the role actually
   # needs. Read-only, so it's safe under --check.
   #
-  # Param coverage matches real Ansible's argument_spec:
-  #   manager:  type list (default ['auto']), lowercased, with real's
+  # Param coverage matches Ansible's argument_spec:
+  #   manager:  type list (default ['auto']), lowercased, with Ansible's
   #             ALIASES (dnf/dnf5/yum/zypper -> rpm; added in ansible-core
   #             2.18). There is deliberately NO "dpkg" manager: real
   #             Ansible - every version - fails "Unsupported package
   #             managers requested: dpkg" (dpkg-query is this engine's
   #             implementation detail of the apt manager, not a real
   #             manager name).
-  #             'auto' expands to real's full PKG_MANAGER_NAMES (only apt
+  #             'auto' expands to Ansible's full PKG_MANAGER_NAMES (only apt
   #             and rpm are gatherable here), keeping user order (real
   #             appends the full sorted name list and drops 'auto' - same
   #             shape, restricted to managers this engine can actually
@@ -34,7 +34,7 @@ module Krikri
   #   strategy: 'first' (default) stops at the first manager that yielded a
   #             NON-EMPTY package list; 'all' queries every manager in the
   #             list. When several managers report the SAME package name,
-  #             real Ansible (package_facts.py main(), the
+  #             Ansible (package_facts.py main(), the
   #             `packages[k].extend(packages_found[k])` branch) appends the
   #             later manager's entries onto the existing name's list - the
   #             package appears once in the dict, with entries from every
@@ -43,12 +43,12 @@ module Krikri
   #             cross-manager collision; 'all' does. This plugin mirrors
   #             that extend-per-name merge exactly.
   #
-  # Failure paths also match real Ansible's wording (verified live against
+  # Failure paths also match Ansible's wording (verified live against
   # ansible-core 2.19.4):
   #   - an unknown manager name fails immediately with "Unsupported package
   #     managers requested: <names>" (real code's unsupported-set check,
   #     before any gathering) - or, when the request also contained 'auto',
-  #     with real's different "Could not auto detect a usable package
+  #     with Ansible's different "Could not auto detect a usable package
   #     manager, check warnings for details." wording for the same
   #     unsupported-name condition;
   #   - known-but-unusable managers just gather nothing (real code's warn
@@ -57,12 +57,12 @@ module Krikri
   #     from the following list: [...], or the required Python library is
   #     not installed. Check warnings for details."
   class PackageFactsPlugin < BasePlugin
-    # krikri's gatherable set, in real Ansible's sorted-name order (apt
-    # before rpm) so 'auto' expansion order matches the real module's
+    # krikri's gatherable set, in Ansible's sorted-name order (apt
+    # before rpm) so 'auto' expansion order matches the Ansible module's
     # iteration order.
     AUTO_DETECT_MANAGERS = ["apt", "rpm"]
 
-    # Canonical names this engine can gather + real Ansible's ALIASES
+    # Canonical names this engine can gather + Ansible's ALIASES
     # (package_facts.py, added in ansible-core 2.18). No "dpkg": real
     # Ansible has no dpkg manager and fails it as unsupported (verified
     # live vs ansible-core 2.14 AND 2.19), and dpkg-query is only this
@@ -79,7 +79,7 @@ module Krikri
     def execute : PluginResult
       strategy = (@params["strategy"]? || "first").to_s
       unless ["first", "all"].includes?(strategy)
-        # Real AnsibleModule argument_spec choices error, verified live:
+        # AnsibleModule argument_spec choices error, verified live:
         # `value of strategy must be one of: first, all, got: bogus`.
         return PluginResult.new(
           changed: false,
@@ -142,13 +142,13 @@ module Krikri
 
       return no_manager_result(managers) if found == 0
 
-      # Real 2.19.11 registered package_facts result (live-verified):
+      # Ansible 2.19.11 registered package_facts result (live-verified):
       # ansible_facts, failed, changed - the module's exit_json passes no
       # changed, so the task executor backfills the failed, changed tail;
-      # the wire omits changed (omit_changed) to match. No msg: real's
+      # the wire omits changed (omit_changed) to match. No msg: Ansible's
       # exit_json passes none either (an earlier krikri-only
       # "Gathered N package facts" msg key sat between ansible_facts and
-      # failed - real has no msg at all, live-verified via
+      # failed - Ansible has no msg at all, live-verified via
       # `{{ r.keys() | list | to_json }}`).
       PluginResult.new(
         changed: false,
@@ -159,13 +159,13 @@ module Krikri
       )
     end
 
-    # Real Ansible's `manager` is a list; in YAML a scalar string is also
-    # accepted (single element, or comma-separated - real AnsibleModule's
+    # Ansible's `manager` is a list; in YAML a scalar string is also
+    # accepted (single element, or comma-separated - AnsibleModule's
     # check_type_list splits those). A templated expression that resolved
     # to a real list reaches the plugin as a JSON-array string (same
     # convention unarchive.cr's parse_list_param documents). ONLY valid
     # JSON - never a Python-repr repair pass: a value that merely LOOKS
-    # like a container is a plain STRING in real ansible-core
+    # like a container is a plain STRING in ansible-core
     # (live-verified vs ansible-playbook 2.19.11, see apt.cr's
     # parse_package_names); a `{% if %}`-rendered "list" is such a
     # string.
@@ -181,7 +181,7 @@ module Krikri
       !Process.find_executable(cmd).nil?
     end
 
-    # Real Ansible's found==0 failure, phrased with the (post-expansion)
+    # Ansible's found==0 failure, phrased with the (post-expansion)
     # manager list and verified live against ansible-core 2.19.4:
     # "Could not detect a supported package manager from the following
     # list: ['rpm'], or the required Python library is not installed.
@@ -198,8 +198,8 @@ module Krikri
     # dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\t${Section}\n'
     # prints one line per package. Repeated prefixes/architectures could
     # yield the same name again; the dict maps name -> [entry...], matching
-    # real Ansible where a package present in multiple
-    # architectures/versions appears as a list. Real Ansible's apt manager
+    # Ansible where a package present in multiple
+    # architectures/versions appears as a list. Ansible's apt manager
     # (python-apt) stamps every entry with source: apt plus arch/category
     # (RETURN doc + live-verified entry keys: arch, category, name, origin,
     # source, version) - origin is python-apt's repo-Release-file Origin

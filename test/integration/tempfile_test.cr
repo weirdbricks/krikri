@@ -54,13 +54,13 @@ describe "tempfile plugin" do
     result["failed"].as_bool.must_equal(true)
   end
 
-  # Real's tempfile module hands `path` straight to Python's
+  # Ansible's tempfile module hands `path` straight to Python's
   # tempfile.mkstemp/mkdtemp and reports the resulting OSError verbatim, so
   # a missing directory yields an errno-shaped message quoting the full
   # path it tried to create - not a module-specific sentence. Only
   # mkstemp's own 8 random characters differ per run (the parity harness
   # masks exactly those); everything around them is fixed.
-  it "reports a missing directory as real's Errno 2, quoting the full path" do
+  it "reports a missing directory as Ansible's Errno 2, quoting the full path" do
     result = PluginSpecHelper.run("tempfile", {"path" => "/no/such/dir/at/all", "suffix" => ".txt"})
 
     result["failed"].as_bool.must_equal(true)
@@ -98,7 +98,7 @@ describe "tempfile plugin" do
     File.delete(file)
   end
 
-  # AnsibleModule's type='path' only expands ~ and $VARS, but real's
+  # AnsibleModule's type='path' only expands ~ and $VARS, but Ansible's
   # tempfile applies os.path.abspath to `dir` for state: file - so that
   # state's error quotes the resolved, normalized absolute path.
   it "resolves a relative path: against the working directory in the error" do
@@ -110,7 +110,7 @@ describe "tempfile plugin" do
     result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.realpath(dir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}\.txt'$/)
   end
 
-  # Real's local connection plugin runs every module with cwd = the
+  # Ansible's local connection plugin runs every module with cwd = the
   # playbook's directory, not the shell's cwd the playbook was launched
   # from - so with a `playbook_dir` in scope, that (not the plugin
   # process's own cwd) is what a relative path resolves against.
@@ -125,7 +125,7 @@ describe "tempfile plugin" do
     result["msg"].as_s.must_match(/^\[Errno 2\] No such file or directory: '#{Regex.escape(File.realpath(basedir))}\/no_such_dir_here\/ansible\.[a-z0-9_]{8}'$/)
   end
 
-  it "normalizes . and .. in path: like real's unfrackpath" do
+  it "normalizes . and .. in path: like Ansible's unfrackpath" do
     basedir = File.join(PluginSpecHelper::TEST_TMP_BASE, "tempfile-norm")
     Dir.mkdir_p(File.join(basedir, "sub"))
 

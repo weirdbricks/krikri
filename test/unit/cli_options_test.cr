@@ -32,7 +32,7 @@ describe Krikri::CliOptions do
       Krikri::CliOptions.extra_scp_args.must_equal(["-o", "BogusOptionXYZ=1"])
     end
 
-    it "includes --ssh-common-args, which real Ansible applies to scp too" do
+    it "includes --ssh-common-args, which Ansible applies to scp too" do
       Krikri::CliOptions.ssh_common_args = "-o StrictHostKeyChecking=no"
       Krikri::CliOptions.scp_extra_args = "-l 8192"
       Krikri::CliOptions.extra_scp_args.must_equal(

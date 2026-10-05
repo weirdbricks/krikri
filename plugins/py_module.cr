@@ -9,7 +9,7 @@ require "../src/krikri/python_module_runner"
 module Krikri
   # PythonModuleRunner plugin - executes a role-private custom module
   # (a `library/*.py` the playbook/role ships) on THIS host using the
-  # target's own python3, the same way real Ansible runs arbitrary
+  # target's own python3, the same way Ansible runs arbitrary
   # Python modules. The controller-side PythonModuleRunner module
   # (src/krikri/python_module_runner.cr) resolves the source and
   # decides new-style (JSON args via the ANSIBLE_MODULE_ARGS env var
@@ -29,14 +29,14 @@ module Krikri
   #     an old-style module.
   #   new_style (required): "true"/"false" - the invocation shape.
   #   check_mode: passed through into the module's `_ansible_check_mode`
-  #     and the ANSIBLE_CHECK_MODE env var (real Ansible runs custom
+  #     and the ANSIBLE_CHECK_MODE env var (Ansible runs custom
   #     modules under check mode too; a module that doesn't support it
   #     is expected to report no changes itself).
   #
   # The module's stdout is scanned for its result JSON (real modules
   # print one; anything before it - warnings, prints - is stripped the
-  # way real Ansible strips it). A module that never printed JSON fails
-  # with its rc and raw output, matching real Ansible's
+  # way Ansible strips it). A module that never printed JSON fails
+  # with its rc and raw output, matching Ansible's
   # "MODULE FAILURE" shape.
   class PyModulePlugin < BasePlugin
     def execute : PluginResult
@@ -57,7 +57,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "py_module: bad module_source: #{ex.message}")
       end
 
-      # Which interpreter runs the module: real Ansible executes a custom
+      # Which interpreter runs the module: Ansible executes a custom
       # module THROUGH ITS OWN SHEBANG LINE (rewritten to the resolved
       # interpreter path), not always python3 - a shell module like
       # linux-system-roles.timesync's library/timesync_provider.sh
@@ -88,7 +88,7 @@ module Krikri
 
       # A new-style module's `from ansible.module_utils.basic import
       # AnsibleModule` needs ansible-core installed ON THE TARGET - which
-      # real Ansible never requires (the AnsiballZ wrapper bundles
+      # Ansible never requires (the AnsiballZ wrapper bundles
       # module_utils INTO the module payload it ships). This plugin runs
       # the raw module script instead, so on a target without
       # ansible-core the import died with ModuleNotFoundError before any
@@ -99,19 +99,19 @@ module Krikri
       # fresh target). Probe for ansible-core first; only when it's
       # missing, write the shim bundle into the module's own directory -
       # Python puts the script's directory first on sys.path, so when
-      # real ansible-core IS installed (probe passed) the shim is never
+      # ansible-core IS installed (probe passed) the shim is never
       # written and the module keeps running against the real basic.py,
       # unchanged from pre-shim behavior.
       #
       # A role shipping its OWN custom module_utils packages (e.g.
-      # linux-system-roles.storage's the real module beside its
+      # linux-system-roles.storage's the Ansible module beside its
       # library/blivet.py) gets that tree staged under
-      # the real module here too, the way real Ansible's AnsiballZ
+      # the Ansible module here too, the way Ansible's AnsiballZ
       # wrapper bundles the role's own module_utils into the zipapp. The
       # controller only sends this when the role actually ships a
       # module_utils/ tree (see executor_run_loop's dispatch), so the
       # common no-module_utils role costs nothing. When staging, the
-      # shim bundle skeleton (ansible/, the real module) is written
+      # shim bundle skeleton (ansible/, the Ansible module) is written
       # UNCONDITIONALLY rather than probe-gated: even with real
       # ansible-core installed on the target, its own package tree can
       # never contain the role's custom package, so only a work-dir-local
@@ -135,7 +135,7 @@ module Krikri
           rel_path = rel
           # Path-traversal guard on the controller-supplied relative
           # path: only plain subdirectory components under
-          # the real module are ever staged.
+          # the Ansible module are ever staged.
           next if rel_path.empty? || rel_path.starts_with?('/')
           next if rel_path.split('/').includes?("..")
           dest = File.join(work_dir, "ansible", "module_utils", rel_path)
@@ -169,7 +169,7 @@ module Krikri
       argv = if python_module && (py = python)
                new_style ? [py, module_path] : ([py, module_path] + parse_kv_argv(kv_argv))
              else
-               # Real Ansible's non-python module protocols (module dev docs):
+               # Ansible's non-python module protocols (module dev docs):
                # a module whose source contains WANT_JSON receives its whole
                # argument dict as ONE serialized-JSON argv element; everything
                # else gets old-style key=value. Executed directly (the file is
@@ -193,7 +193,7 @@ module Krikri
       # args...}}`, or `_load_params` raises "ANSIBLE_MODULE_ARGS not
       # provided." even with real args present at the top level.
       # Confirmed live against ansible-core 2.19.4's own
-      # `the real module` - the previous env-var
+      # `the Ansible module` - the previous env-var
       # approach failed EVERY new-style module invocation with "Failed
       # to decode JSON module parameters." (no valid JSON on stdin at
       # all), silently masking the whole 0.9.819 py_module feature for
@@ -243,7 +243,7 @@ module Krikri
         return result
       end
 
-      # No result JSON at all - real Ansible's MODULE FAILURE shape.
+      # No result JSON at all - Ansible's MODULE FAILURE shape.
       result = PluginResult.new(
         changed: false,
         failed: true,

@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # A loop: source that IS defined but isn't a list is a hard type error in
-# real Ansible, with its own distinct wording. Live-verified against
+# Ansible, with its own distinct wording. Live-verified against
 # ansible-core 2.19.12 on Rocky 9.6 (round174 differential matrix
 # scenarios 11a and 11c) - this engine used to run the task once with
 # `item` bound to the non-list value.
@@ -89,7 +89,7 @@ describe "loop: source must resolve to a list" do
     # `percona_client_repositories: "{{ percona_client_repositories_8 if
     # percona_client_version is version('8.0', '==') else
     # percona_client_repositories_5 }}"` (a ternary choosing between two
-    # role-default LISTS), used directly as `with_items:`. Real Ansible
+    # role-default LISTS), used directly as `with_items:`. Ansible
     # resolves the ternary to the actual list and iterates it fine;
     # resolve_template_value's own re-render step used to go through
     # ExpressionEvaluator#evaluate + JSON.parse, which only ever sees
@@ -183,13 +183,13 @@ describe "loop: source must resolve to a list" do
     # Found live benchmarking HanXHX.debian_bootstrap: its
     # `dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{% endif %}"`
     # default renders to text that happens to look like a Python list
-    # literal, but real ansible-core (2.19.11, live-verified) never
+    # literal, but ansible-core (2.19.11, live-verified) never
     # natively types block-tag output - native typing requires the
     # template's whole parsed AST to be exactly one output node wrapping
     # one expression, so this stays the literal STRING "['dummy']"
     # (`is string` -> True). The set_fact coercion path used to re-parse
     # the repr-looking text into a real array, so the loop below
-    # silently iterated where real Ansible hard-fails.
+    # silently iterated where Ansible hard-fails.
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -208,7 +208,7 @@ describe "loop: source must resolve to a list" do
     output.must_include("type is True value=['dummy']")
   end
 
-  it "hard-fails a loop: over a block-tag set_fact that stayed a string, with real Ansible's exact error" do
+  it "hard-fails a loop: over a block-tag set_fact that stayed a string, with Ansible's exact error" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost
         connection: local
@@ -234,7 +234,7 @@ end
 # that is mixed text around TWO spans ("{{ a }}/{{ b }}") also starts
 # with "{{" and ends with "}}" - the old check treated it as a
 # list-producing loop SOURCE, stripped it greedily into the expression
-# "a }}/{{ b", and failed with "'a }}/{{ b' is undefined". Real Ansible
+# "a }}/{{ b", and failed with "'a }}/{{ b' is undefined". Ansible
 # treats it as one literal loop item whose embedded templates render at
 # item time.
 describe "single-element with_items with TWO spans" do

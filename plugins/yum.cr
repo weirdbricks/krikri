@@ -17,7 +17,7 @@ module Krikri
   # weak_deps=False`, `--best`, `--allowerasing`) are real dnf options
   # forwarded straight through that symlink. NOT verified against a
   # genuinely dnf-less yum (RHEL6/7-era) target - those flags don't
-  # exist on classic yum, and real ansible.builtin.yum's own module
+  # exist on classic yum, and Ansible.builtin.yum's own module
   # internally detects and branches on which backend it's talking to,
   # which this does not replicate. No RHEL7-or-older Atlantic.net image
   # was available to verify that path this round.
@@ -68,7 +68,7 @@ module Krikri
       }
     end
 
-    # These default to None in real's argspec, so an explicit null skips
+    # These default to None in Ansible's argspec, so an explicit null skips
     # type validation there (see BasePlugin#bool_params_none_default).
     protected def bool_params_none_default : Array(String)
       %w[best nobest]
@@ -80,7 +80,7 @@ module Krikri
       "yum"
     end
 
-    # Real ansible.builtin.yum's argument-spec validation rejects ANY
+    # Ansible.builtin.yum's argument-spec validation rejects ANY
     # parameter outside its argument_spec at module-arg validation,
     # before any module code runs - same bug class as dnf.cr's
     # identical check (found via the podman-diff dnf_edge_cases N2
@@ -120,14 +120,14 @@ module Krikri
         )
       end
 
-      # Real AnsibleModule type-converts every bool-typed argument_spec
+      # AnsibleModule type-converts every bool-typed argument_spec
       # param and fails the task on a non-boolean value at module setup -
       # now via the shared BasePlugin#validate_bool_params! (same bug
       # class as dnf.cr's migrated check; the <class 'str'> double-space
       # wording this check used to pin came from 2.14).
       validate_bool_params!
 
-      # Real AnsibleModule's `type: list` argspec coercion fails an
+      # AnsibleModule's `type: list` argspec coercion fails an
       # EXPLICIT None with its generic list-conversion message (param
       # name substituted), while an omitted param and an empty string
       # both coerce to an empty list and pass - live-verified against
@@ -168,7 +168,7 @@ module Krikri
       names = parse_package_names
 
       # `name:` isn't required when `update_cache: true` is given with
-      # nothing else - real Ansible's own yum: module allows a cache-
+      # nothing else - Ansible's own yum: module allows a cache-
       # refresh-only invocation (robertdebock.rpmfusion's own "Yum
       # update cache" handler: `ansible.builtin.yum: {update_cache:
       # yes}`, no name: at all). Matches package.cr's own identical
@@ -182,7 +182,7 @@ module Krikri
       # Get state (default: present) and normalize state aliases
       state = normalized_state
 
-      # Validate state (message matches real Ansible's choices-validation
+      # Validate state (message matches Ansible's choices-validation
       # wording - same class as dnf.cr's aligned message)
       unless ["present", "absent", "latest"].includes?(state)
         return PluginResult.new(
@@ -228,7 +228,7 @@ module Krikri
     # Parse package names from various parameter formats
 
     # Parse the 'name' parameter (can be string or list) - `pkg:` is a
-    # documented alias of `name:` for real Ansible's yum module, same
+    # documented alias of `name:` for Ansible's yum module, same
     # as dnf.cr's own identical fix. Returns nil when neither parameter
     # is present.
 
@@ -246,7 +246,7 @@ module Krikri
     # shells out to the same underlying `dnf` binary on modern RHEL-family
     # hosts (yum is a dnf shim there), so it hits the same "Error: Unknown
     # repo: 'X'" hard-failure for an `enablerepo:` naming a repo that isn't
-    # configured, where real ansible.builtin.yum's own dnf-API-based
+    # configured, where Ansible.builtin.yum's own dnf-API-based
     # implementation just warns and continues.
 
     # Build DNF command line options

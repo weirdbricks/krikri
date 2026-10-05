@@ -19,7 +19,7 @@ describe "a changed_when:/failed_when: whose whole value is one quoted string" d
     #   failed_when: '"mariadb" not in mariadb_version_check.stdout
     #     and mariadb_version_check.rc == 0'
     #   changed_when: not 'mariadb_version_check.rc == 0'
-    # On a host without the mariadb binary, real ansible-playbook
+    # On a host without the mariadb binary, ansible-playbook
     # (core 2.19.4, verified live) ends the task ok (rc=2 ENOENT result,
     # failed_when false, changed_when's quoted string a truthy constant
     # so `not` -> changed=false); krikri failed the task with

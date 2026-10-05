@@ -26,7 +26,7 @@ module Krikri
       private alias BatchOutcome = NamedTuple(changed: Bool, message: String?, output: String, failure: PluginResult?)
 
       # ------------------------------------------------------------------
-      # Real ansible-core 2.19.11 registered-result shapes for the
+      # ansible-core 2.19.11 registered-result shapes for the
       # dnf-family backends (each observed through `{{ r | to_json }}` on
       # a registered task - fedora:41 container for dnf5, Rocky Linux 9
       # for dnf, one FRESH host per engine so both engines saw identical
@@ -54,14 +54,14 @@ module Krikri
       #   failure (failure_response = msg/failures/results/rc): msg,
       #   failures, results, rc, failed.
       #
-      # `ansible_facts` and `warnings` also appear in real's registered
+      # `ansible_facts` and `warnings` also appear in Ansible's registered
       # result (the interpreter-discovery warning and the fact the
       # controller merges in) but have no krikri equivalent - same as
       # every other plugin pinned in this sweep.
       DNF_TRANSACTION_ORDER  = %w[msg changed results rc failed]
       DNF5_TRANSACTION_ORDER = %w[results changed msg rc failed]
       DNF_CACHE_ORDER        = %w[msg changed results rc failed]
-      # `list:` - real's exit_json(msg="", results=results) carries no
+      # `list:` - Ansible's exit_json(msg="", results=results) carries no
       # `changed`, so the CONTROLLER backfills it after `failed`; dnf4
       # passes no rc at all, dnf5 passes rc=0 (both observed live, in
       # this order, on their respective hosts).
@@ -83,13 +83,13 @@ module Krikri
         DNF4_LIST_ORDER
       end
 
-      # The msg real reports for a cache-only refresh. dnf and dnf5 both
+      # The msg Ansible reports for a cache-only refresh. dnf and dnf5 both
       # use "Cache updated" (their own run() early-exit).
       private def cache_updated_msg : String
         "Cache updated"
       end
 
-      # Real's `results` entries are built from the RPM database, not
+      # Ansible's `results` entries are built from the RPM database, not
       # from the requested spec: "Installed: sl-5.02-22.fc41.x86_64".
       # Ask rpm for the installed NEVRA of `pkg` (name-version-release
       # .arch, epoch omitted when zero) and fall back to the requested
@@ -120,7 +120,7 @@ module Krikri
         )
       end
 
-      # Real's check-mode shape: the module runs the SAME transaction
+      # Ansible's check-mode shape: the module runs the SAME transaction
       # planning but stops before touching the host, so it reports what
       # it WOULD have done - `results` naming the RPMs involved and msg
       # "Check mode: No changes made, but would have if not in check
@@ -161,7 +161,7 @@ module Krikri
         )
       end
 
-      # Real's failure shape: msg, failures, results, rc, failed. The
+      # Ansible's failure shape: msg, failures, results, rc, failed. The
       # backend's own error text is what goes in `failures`.
       private def failure_result(msg : String, failures : Array(String), rc : Int32 = 1) : PluginResult
         PluginResult.new(
@@ -182,7 +182,7 @@ module Krikri
         if true?(@params["update_cache"]?)
           result = remote_exec("#{pkg_manager_binary} makecache")
           # changed: false even on success - same fix as dnf.cr's
-          # identical branch (see its own comment): real ansible-core's
+          # identical branch (see its own comment): ansible-core's
           # dnf/yum module never reports changed for a cache-only
           # refresh. Found via round172's buluma.rpmfusion.
           return PluginResult.new(
@@ -204,7 +204,7 @@ module Krikri
         # ansible-core's yum/dnf module reports ok/changed: false for it,
         # not a missing-parameter failure - found via trombik.redhat_repo's
         # "Install extra packages" task (round 601447), which failed here
-        # outright while real ansible-playbook reported ok. Mirrors
+        # outright while ansible-playbook reported ok. Mirrors
         # apt.cr's identical fix for the same bug class (round 84000).
         if @params["name"]? || @params["pkg"]?
           return PluginResult.new(
@@ -281,7 +281,7 @@ module Krikri
       end
 
       # ----- `list:` query mode -----
-      # Real ansible.builtin.dnf/yum treat a scalar `list:` value as a
+      # Ansible.builtin.dnf/yum treat a scalar `list:` value as a
       # QUERY, never as packages to act on: `dnf: {list: updates}`
       # lists available updates and returns {"changed": false,
       # "results": [...]} where each result carries name/arch/epoch/
@@ -289,7 +289,7 @@ module Krikri
       # previously concatenated a scalar `list:` into the package
       # names (parse_package_names' rescue), so `dnf: {list: updates}`
       # ran `dnf install updates` and failed with "Error: Unable to
-      # find a match: updates" where real Ansible succeeded - found
+      # find a match: updates" where Ansible succeeded - found
       # via oatakan.rhel_upgrade's own "check for missing updates
       # (dnf)" task (round 310183). A JSON-array `list:` keeps the
       # old package-list behavior below, so this only intercepts the
@@ -312,7 +312,7 @@ module Krikri
         # The magic query words are POSITIONAL subcommands on the dnf4
         # CLI, but Fedora 41's dnf4 (libdnf5-backed) rejects them -
         # `dnf list installed` exits 1 with "No matching packages to
-        # list", where the equivalent FLAG form works. Real's dnf module
+        # list", where the equivalent FLAG form works. Ansible's dnf module
         # goes through the libdnf API and lists the installed set either
         # way, so retry the magic words as flags before giving up.
         if result[:exit_code] != 0 && (flag = list_flag(query))
@@ -346,7 +346,7 @@ module Krikri
       end
 
       # Parses `dnf list <spec>` / `yum list <spec>` output into result
-      # dicts shaped like real Ansible's own dnf module list results:
+      # dicts shaped like Ansible's own dnf module list results:
       # name/arch/epoch/version/release/repo/nevra/envra. Package lines
       # look like `name.arch  epoch:version-release  repo` (fields
       # separated by runs of 2+ spaces; the repo column may be absent
@@ -411,7 +411,7 @@ module Krikri
           repo = fields[2]?
           nevra = "#{name}-#{version}-#{release}.#{arch}"
 
-          # Real's own per-package dict (dnf.py's _package_dict,
+          # Ansible's own per-package dict (dnf.py's _package_dict,
           # live-verified against ansible-core 2.19.11 on fedora:41):
           # name, arch, epoch (ALWAYS a string, "0" when unset), release,
           # version, repo (the literal column value - "@System" for an
@@ -442,7 +442,7 @@ module Krikri
         # ONLY valid JSON - never a Python-repr repair pass. A value that
         # merely LOOKS like a container (a literal `name: "['pkg1']"`
         # string, or a `{% if %}...{% else %}['pkg1']{% endif %}` block's
-        # rendered output) is a plain STRING in real ansible-core -
+        # rendered output) is a plain STRING in ansible-core -
         # native typing requires the template's whole AST to be one
         # output node wrapping one expression, so block-tag output is
         # never re-parsed (live-verified vs ansible-playbook 2.19.11,
@@ -463,7 +463,7 @@ module Krikri
         to_update = classified[:to_update]
 
         # --check: report what the transaction WOULD have done without
-        # running it (real's module resolves the goal, then stops).
+        # running it (Ansible's module resolves the goal, then stops).
         if check_mode?
           pending = to_install + to_update
           return transaction_result(false) if pending.empty?
@@ -505,7 +505,7 @@ module Krikri
           end
         end
 
-        # Real's no-op path reports NOTHING about the packages that were
+        # Ansible's no-op path reports NOTHING about the packages that were
         # already there (msg "Nothing to do", empty results) - the
         # "Already installed: ..." summary this used to build is a
         # krikri-only shape, dropped to match.
@@ -559,14 +559,14 @@ module Krikri
           end
         end
 
-        # Nothing to do - real's no-op shape (results [], msg "Nothing to
+        # Nothing to do - Ansible's no-op shape (results [], msg "Nothing to
         # do", rc 0), which says nothing about which packages were already
         # absent.
         if to_remove.empty?
           return transaction_result(false)
         end
 
-        # Real's `results` entries name the RPM that was removed, so the
+        # Ansible's `results` entries name the RPM that was removed, so the
         # NEVRA has to be read BEFORE the transaction erases it.
         nevras = {} of String => String
         to_remove.each { |pkg| nevras[pkg] = rpm_nevra(pkg) }
@@ -603,14 +603,14 @@ module Krikri
         end
       end
 
-      # Real Ansible's dnf/yum module `state: latest` installs a not-yet-
+      # Ansible's dnf/yum module `state: latest` installs a not-yet-
       # installed package (there is nothing to "update" yet) and upgrades
       # one that's already present - it never runs a bare `dnf/yum update
       # <name>` unconditionally, which fails outright ("No match for
       # argument", "No packages marked for upgrade") for any name not
       # already installed. Found via alvistack.openjdk (RHEL-family round
       # 60420): `dnf: {name: temurin-21-jdk, state: latest}` on a fresh
-      # host installed fine under real ansible-playbook but failed here.
+      # host installed fine under ansible-playbook but failed here.
       # Reuses the same classify/batch helpers `handle_install` already
       # gets right, just routing "not installed" to an install batch
       # instead of `already_installed`.
@@ -664,7 +664,7 @@ module Krikri
           end
         end
 
-        # `state: latest` on an already-latest host is real's ordinary
+        # `state: latest` on an already-latest host is Ansible's ordinary
         # no-op (results [], msg "Nothing to do") - not a "Packages
         # already at latest version" summary of this engine's own making.
         transaction_result(changed, installed)
@@ -714,7 +714,7 @@ module Krikri
       # least one such count line right after the Transaction Summary
       # header. Round 900999 tcosta84.yum found the gap: its
       # `yum: {name: "@Development tools", state: present}` warm rerun
-      # reported changed: false under real ansible-playbook (whose module
+      # reported changed: false under ansible-playbook (whose module
       # uses the yum Python API and knows nothing needs installing) but
       # changed: true here on every run, because this handler trusted
       # exit_code plus the plain-package "Nothing to do" text alone.
@@ -753,7 +753,7 @@ module Krikri
         end
       end
 
-      # Real's failure shape carries the backend's own error lines in
+      # Ansible's failure shape carries the backend's own error lines in
       # `failures` (failure_response['failures'] is appended to as the
       # transaction goes wrong) - stderr first, then any stdout error
       # lines, each stripped, so the list is deterministic.
@@ -788,7 +788,7 @@ module Krikri
       # through to dnf as part of the package spec: `list: installed`
       # became `dnf list 'installed'`, which matches nothing ("No
       # matching packages to list"), and `list: bash` silently returned
-      # an EMPTY results list instead of the package real's own
+      # an EMPTY results list instead of the package Ansible's own
       # `dnf list bash` reports (both live-verified against
       # ansible-core 2.19.11 on fedora:41). Pass the spec through bare.
       private def list_args(query : String) : String
@@ -853,7 +853,7 @@ module Krikri
 
         if success
           changed = result[:stdout].includes?("Removed:")
-          # Real's autoremove has no prose summary of its own: it goes
+          # Ansible's autoremove has no prose summary of its own: it goes
           # through the very same transaction result as any other dnf
           # call, so a removal reports its `results` entries and a no-op
           # reports "Nothing to do".
@@ -864,9 +864,9 @@ module Krikri
       end
 
       # The packages an autoremove/upgrade transaction reported removing,
-      # in real's `results` spelling. The dnf transaction summary lists
+      # in Ansible's `results` spelling. The dnf transaction summary lists
       # them as "Removed:  <name>-<version>-<release>.<arch>", which is
-      # already exactly the string real's results array carries.
+      # already exactly the string Ansible's results array carries.
       private def autoremove_results(output : String) : Array(String)
         output.each_line.map(&.strip).select { |line| line.starts_with?("Removed:") }.map { |line| line.sub(/^Removed:\s*/, "") }.reject(&.empty?).to_a
       end
@@ -888,7 +888,7 @@ module Krikri
         end
       end
 
-      # The packages an upgrade transaction touched, in real's `results`
+      # The packages an upgrade transaction touched, in Ansible's `results`
       # spelling - the transaction summary's own "Upgraded:" /
       # "Installed:" lines, which are already the exact strings real
       # puts in that array.
@@ -903,7 +903,7 @@ module Krikri
         options << "-y"
 
         # Enable/disable repos - a blank entry (e.g. `enablerepo: "{{ some_var
-        # | default('') }}"` resolving empty) is real Ansible's own no-op,
+        # | default('') }}"` resolving empty) is Ansible's own no-op,
         # not a repo named "". Passing it through as `--enablerepo=` instead
         # makes dnf hard-fail with `Error: Unknown repo: ''` - found via
         # gabops.cron (RHEL-family round 60447).
@@ -921,7 +921,7 @@ module Krikri
           end
         end
 
-        # GPG check - real ansible's dnf module explicitly sets BOTH
+        # GPG check - Ansible's dnf module explicitly sets BOTH
         # conf.gpgcheck AND conf.localpkg_gpgcheck to `not disable_gpg_check`
         # (verified in ansible-core's own dnf.py: "conf.localpkg_gpgcheck =
         # not disable_gpg_check"), overriding dnf's own actual default for
@@ -930,11 +930,11 @@ module Krikri
         # covers the repo-package path; without also forcing
         # `--setopt=localpkg_gpgcheck=1` here, a `name: https://.../foo.rpm`
         # install silently skipped signature verification (inherited dnf's
-        # own default), diverging from real ansible-playbook which
+        # own default), diverging from ansible-playbook which
         # correctly refuses an RPM whose signing key isn't imported. Found
         # benchmarking geerlingguy.selenium's "Install Chrome (if
         # configured, RedHat)" task (direct google-chrome-stable RPM URL,
-        # no imported key) - real ansible failed with "Failed to validate
+        # no imported key) - Ansible failed with "Failed to validate
         # GPG signature", krikri-playbook installed it anyway.
         if true?(@params["disable_gpg_check"]?)
           options << "--nogpgcheck"
@@ -966,11 +966,11 @@ module Krikri
           options << "--allowerasing"
         end
 
-        # Best (default in dnf, but explicit is good). Real ansible-core's
+        # Best (default in dnf, but explicit is good). ansible-core's
         # dnf module has only `nobest` in its shared yumdnf argument spec
         # (`conf.best = not self.nobest`, verified in ansible-core's own
         # dnf.py _configure_base) - there is no `best:` parameter (one was
-        # invented here briefly and had to go, real Ansible rejects it as
+        # invented here briefly and had to go, Ansible rejects it as
         # an unsupported parameter), and the documented default is "set by
         # the operating system distribution", so nothing is emitted when
         # it is not given - the historical unconditional `--best` (dnf's
@@ -987,20 +987,20 @@ module Krikri
         # `base.resolve(allow_erasing=self.allowerasing)`. (NB: the
         # pre-existing `allow_downgrade:` branch above also emits
         # --allowerasing - left as found rather than silently re-pointed,
-        # though real ansible-core implements allow_downgrade in module
+        # though ansible-core implements allow_downgrade in module
         # logic, not via this flag.)
         if true?(@params["allowerasing"]?)
           options << "--allowerasing"
         end
 
         # Run entirely from the local cache - no metadata download/update
-        # (dnf's -C/--cacheonly; real ansible-core sets conf.cacheonly,
+        # (dnf's -C/--cacheonly; ansible-core sets conf.cacheonly,
         # dnf.py _configure_base).
         if true?(@params["cacheonly"]?)
           options << "--cacheonly"
         end
 
-        # Alternate dnf.conf path (dnf's -c/--config). Real ansible-core
+        # Alternate dnf.conf path (dnf's -c/--config). ansible-core
         # points conf.config_file_path at it and fails when unreadable
         # (dnf.py _configure_base); the CLI pass-through relies on dnf's
         # own equivalent read failure.
@@ -1010,14 +1010,14 @@ module Krikri
 
         # Disable dnf.conf excludes entirely ("all"), just [main]'s
         # ("main"), or one repo's ("<repoid>") for this transaction (dnf's
-        # --disableexcludes; real ansible-core appends to
+        # --disableexcludes; ansible-core appends to
         # conf.disable_excludes, dnf.py _configure_base).
         if disable_excludes = @params["disable_excludes"]?
           options << "--disableexcludes=#{disable_excludes}" unless disable_excludes.strip.empty?
         end
 
         # Per-transaction plugin enable/disable (dnf's
-        # --enableplugin/--disableplugin). Real ansible-core passes these
+        # --enableplugin/--disableplugin). ansible-core passes these
         # sets to base.init_plugins (dnf.py _base) - never persisted
         # beyond the transaction, exactly like the CLI flags.
         string_list_param("enable_plugin").each do |plugin|
@@ -1029,7 +1029,7 @@ module Krikri
         end
 
         # Package name(s) to exclude from present/latest operations (dnf's
-        # --exclude; real ansible-core appends to conf.exclude, dnf.py
+        # --exclude; ansible-core appends to conf.exclude, dnf.py
         # _configure_base - a list or comma-separated string, listified
         # exactly like enablerepo/disablerepo already are above). Quoted
         # so a glob like `kernel*` reaches dnf without the target shell
@@ -1039,7 +1039,7 @@ module Krikri
         end
 
         # Alternate install root, relative to which all packages install
-        # (dnf's --installroot; real ansible-core sets conf.installroot,
+        # (dnf's --installroot; ansible-core sets conf.installroot,
         # dnf.py _configure_base, defaulting to "/"). "/" is dnf's own
         # default, so it isn't emitted.
         if installroot = @params["installroot"]?
@@ -1047,14 +1047,14 @@ module Krikri
         end
 
         # Install packages as if running a different OS release version
-        # (dnf's --releasever; real ansible-core overrides
+        # (dnf's --releasever; ansible-core overrides
         # conf.substitutions['releasever'], dnf.py _configure_base).
         if releasever = @params["releasever"]?
           options << "--releasever=#{shell_single_quote(releasever)}" unless releasever.strip.empty?
         end
 
         # Disable SSL validation of the repo servers for this transaction
-        # (dnf's sslverify conf option via --setopt; real ansible-core sets
+        # (dnf's sslverify conf option via --setopt; ansible-core sets
         # conf.sslverify = sslverify, dnf.py _configure_base, default
         # true). Only the false case needs a flag - true is dnf's default.
         if false?(@params["sslverify"]?)
@@ -1068,7 +1068,7 @@ module Krikri
         end
 
         # Alternate package-download directory - only meaningful with
-        # download_only, exactly as in real ansible-core (conf.destdir is
+        # download_only, exactly as in ansible-core (conf.destdir is
         # only set when download_only is set, dnf.py _configure_base).
         if true?(@params["download_only"]?) && (download_dir = @params["download_dir"]?)
           options << "--downloaddir=#{shell_single_quote(download_dir)}" unless download_dir.strip.empty?
@@ -1080,7 +1080,7 @@ module Krikri
       # List-typed params (`exclude:`, `enable_plugin:`, `disable_plugin:`)
       # arrive either as a JSON array string (the PluginManager serializes
       # list params with JSON's own .to_s) or as the comma-separated string
-      # real Ansible's yumdnf.listify_comma_sep_strings_in_list still
+      # Ansible's yumdnf.listify_comma_sep_strings_in_list still
       # accepts for these same options ("It's possible someone passed a
       # comma separated string since it used to be a string type"). ONLY
       # valid JSON, though - never a Python-repr repair pass: a value that

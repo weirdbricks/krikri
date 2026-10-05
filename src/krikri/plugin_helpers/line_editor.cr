@@ -17,9 +17,9 @@ module Krikri
       end
 
       # state: absent - drop every line matching regexp, containing
-      # search_string (literal substring - real Ansible's own matcher for
+      # search_string (literal substring - Ansible's own matcher for
       # state=absent), or - failing both - an exact match against `line`.
-      # firstmatch does NOT apply here: real Ansible removes ALL matching
+      # firstmatch does NOT apply here: Ansible removes ALL matching
       # lines regardless (live-verified against ansible-core 2.19.4).
       # Returns {new_lines, changed}.
       def self.remove_matching(lines : Array(String), line : String?, regexp : String?, search_string : String? = nil) : {Array(String), Bool}
@@ -47,9 +47,9 @@ module Krikri
       # if it's missing. Returns {new_lines, changed}.
       #
       # `search_string` is the literal-substring alternative to `regexp`
-      # (real Ansible's own argument_spec marks them mutually exclusive,
+      # (Ansible's own argument_spec marks them mutually exclusive,
       # so this only ever sees one of the two). `firstmatch` switches the
-      # replacement/insertion target from real Ansible's default LAST
+      # replacement/insertion target from Ansible's default LAST
       # match to the FIRST (live-verified against ansible-core 2.19.4:
       # both the regexp/search_string replacement target and the
       # insertafter/insertbefore anchor honor it, state=absent does not -
@@ -68,13 +68,13 @@ module Krikri
 
         if regexp
           pattern = regexp
-          # Real Ansible's lineinfile (state=present) replaces only the LAST
+          # Ansible's lineinfile (state=present) replaces only the LAST
           # line matching the regexp, not the first. Found live benchmarking
           # geerlingguy.phpmyadmin: its `Add default username and password`
           # lineinfile tasks (regexp `^.+\[['"]host['"]\].+$`) target lines
           # that appear BOTH in the package's populated server block
           # (`...['host'] = $dbserver;`) and as a commented template near
-          # EOF (`// ...['host'] = 'localhost';`). Real ansible rewrites the
+          # EOF (`// ...['host'] = 'localhost';`). Ansible rewrites the
           # final (commented) occurrence, leaving the active one alone;
           # crystal previously replaced the FIRST, leaving the template
           # commented and diverging config.inc.php byte-for-byte.
@@ -90,7 +90,7 @@ module Krikri
 
         if found_index
           if backrefs && pattern
-            # Real Ansible's lineinfile backrefs mode treats `line:` as
+            # Ansible's lineinfile backrefs mode treats `line:` as
             # a REPLACEMENT TEMPLATE for the WHOLE line (Python's
             # `match.expand(line)`, then the entire existing line is
             # overwritten by that expanded text) - not a per-match
@@ -124,7 +124,7 @@ module Krikri
         end
 
         # backrefs: line contains backreferences that only make sense
-        # against an actual regexp match - real Ansible's own documented
+        # against an actual regexp match - Ansible's own documented
         # behavior for backrefs is "if the regexp does not match anywhere
         # in the file, the file will be left unchanged" (dev-sec
         # os_hardening's own `(?!.*no_pass_expiry)` negative-lookahead
@@ -138,7 +138,7 @@ module Krikri
         # "Modify variables in init file." task gives a regexp: that
         # never actually matches the line it (redundantly) also passes
         # as line: - a real, if unusual, shape a real playbook can
-        # write, and real Ansible's own lineinfile module still
+        # write, and Ansible's own lineinfile module still
         # recognizes the target line as already present when it finds
         # it verbatim elsewhere in the file, regardless of whether a
         # regexp: was given at all. Gating this check behind `!regexp`
@@ -149,7 +149,7 @@ module Krikri
         return {new_lines, false} if new_lines.any? { |existing| lines_equal?(existing, line) }
 
         insert_index = insertion_index(new_lines, insertafter, insertbefore, firstmatch)
-        # Real Ansible inserts the raw `line` value plus one line
+        # Ansible inserts the raw `line` value plus one line
         # separator, so an embedded/trailing newline inside `line`
         # lands in the file verbatim (splitting it here keeps this
         # module's separator-less line list byte-identical to that).
@@ -161,7 +161,7 @@ module Krikri
 
       # Maps a `line` value that may contain embedded newlines (typical
       # of a YAML folded scalar, which always ends with one) onto real
-      # Ansible's replace semantics. Real Ansible compares and writes
+      # Ansible's replace semantics. Ansible compares and writes
       # whole file lines WITH their separator, ensuring exactly one
       # trailing separator on the replacement. In this module's
       # separator-less line list that means: compare against the FULL
@@ -202,14 +202,14 @@ module Krikri
       end
 
       # Expands a backrefs replacement template the way Python's
-      # re.Match.expand does - the exact function real Ansible's own
+      # re.Match.expand does - the exact function Ansible's own
       # lineinfile hands `line:` to (its `match.expand(line)`), so the
       # semantics have to match it, not just the numeric group refs:
       # Python templates also interpret standard backslash escapes, so
       # `line: 'MaxAuthTriesProbe \1\nMaxAuthTriesProbeBench \1'` (real
       # sshd-hardening-style playbooks do this to write two lines in one
       # task) expands to TWO physical lines - a literal backslash-n
-      # written into the file diverges from real Ansible byte-for-byte.
+      # written into the file diverges from Ansible byte-for-byte.
       # Covered: \1-\99 positional refs (up to two digits; a group that
       # didn't participate expands to the empty string, like Python),
       # \g<n>/\g<name> refs, and Python's ESCAPES table
@@ -315,10 +315,10 @@ module Krikri
       end
 
       # Position of the line matching `pattern`: the LAST match by default
-      # (real Ansible's lineinfile/blockinfile both scan the whole file
+      # (Ansible's lineinfile/blockinfile both scan the whole file
       # without breaking), or the FIRST when `firstmatch` is set. With
       # `literal: true` the pattern is a plain substring to CONTAIN
-      # (real Ansible's search_string), not a regex.
+      # (Ansible's search_string), not a regex.
       def self.match_index(lines : Array(String), pattern : String, firstmatch : Bool, literal : Bool = false) : Int32?
         matcher = if literal
                     ->(existing : String) { existing.includes?(pattern) }
@@ -330,7 +330,7 @@ module Krikri
 
       # Shared with BlockEditor, so this is public rather than private.
       #
-      # Real Ansible anchors the insertion at the LAST line matching the
+      # Ansible anchors the insertion at the LAST line matching the
       # insertafter/insertbefore pattern (its own loop keeps scanning and
       # only stops early under firstmatch), not the first - live-verified
       # against ansible-core 2.19.4 for both lineinfile and blockinfile
@@ -340,7 +340,7 @@ module Krikri
       def self.insertion_index(lines : Array(String), insertafter : String?, insertbefore : String?, firstmatch : Bool = false) : Int32
         if insertafter
           return lines.size if insertafter == "EOF" || insertafter == "END"
-          # Real Ansible honors insertafter=BOF as top-of-file too (its
+          # Ansible honors insertafter=BOF as top-of-file too (its
           # `elif insertbefore == 'BOF' or insertafter == 'BOF'` branch).
           return 0 if insertafter == "BOF"
           index = match_index(lines, insertafter, firstmatch)

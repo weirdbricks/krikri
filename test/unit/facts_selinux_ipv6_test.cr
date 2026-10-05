@@ -1,10 +1,10 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/facts_gatherer"
 
-# Pins two fact-presence fixes, both against real Ansible's own
+# Pins two fact-presence fixes, both against Ansible's own
 # collector semantics:
 #
-# - ansible_selinux.status: real's SelinuxFactCollector loads
+# - ansible_selinux.status: Ansible's SelinuxFactCollector loads
 #   libselinux.so.1 via ctypes (CDLL('libselinux.so.1')) - Ubuntu ships
 #   libselinux1 as a base dependency even on hosts that never use
 #   SELinux, so real correctly reports "disabled" there. krikri gated on
@@ -13,7 +13,7 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 #   linux-system-roles.selinux's own
 #   `when: ansible_facts['selinux']['status'] == "disabled"` warn task
 #   wrongly skipped (round 952352).
-# - ansible_all_ipv6_addresses: real's LinuxNetwork collector ALWAYS
+# - ansible_all_ipv6_addresses: Ansible's LinuxNetwork collector ALWAYS
 #   emits this fact (an empty list when there is no IPv6 beyond ::1),
 #   never simply absent. krikri never set it, so
 #   linux-system-roles.kdump's set_vars.yml gate
@@ -74,7 +74,7 @@ describe "Krikri::FactsGatherer (facts_selinux_ipv6_test.cr)" do
     it "is always set once network facts are gathered, even with no IPv6 beyond ::1 (round 952548)" do
       facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
 
-      # Same ip-binary gate real Ansible's LinuxNetwork.populate applies
+      # Same ip-binary gate Ansible's LinuxNetwork.populate applies
       # before gathering anything: without iproute2 there are no network
       # facts at all (see facts_mount_network_scoping_spec.cr for FS5).
       ip_present = ((ENV["PATH"]?.try(&.split(':')) || [] of String) +
@@ -88,7 +88,7 @@ describe "Krikri::FactsGatherer (facts_selinux_ipv6_test.cr)" do
       all_ipv6.wont_be_nil
       addresses = all_ipv6.as(JSON::Any).as_a.map(&.as_s)
 
-      # Real Ansible's own exclusion (network/linux.py's
+      # Ansible's own exclusion (network/linux.py's
       # `if not address == '::1'`): lo's one address must not make a
       # no-IPv6 host look like it has one.
       addresses.wont_include("::1")

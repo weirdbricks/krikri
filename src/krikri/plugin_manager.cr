@@ -34,7 +34,7 @@ module Krikri
     # without the per-user component any local user could pre-create the
     # (entirely predictable) directory before krikri's first run and plant
     # binaries later executed via `sudo -n` - the CVE-2014-3498 class that
-    # pushed real Ansible to per-user temp dirs. The bootstrap in
+    # pushed Ansible to per-user temp dirs. The bootstrap in
     # #upload_plugins_to_host additionally VERIFIES ownership (and
     # symlink-freedom) of every component before use and fails the run
     # loudly on a mismatch, and the directories themselves are mode 0711:
@@ -328,7 +328,7 @@ module Krikri
           next if local_connection?(host, host.vars)
 
           # A host whose ansible_connection resolves to no connection
-          # plugin (real Ansible would fail every task with "the
+          # plugin (Ansible would fail every task with "the
           # connection plugin 'X' was not found") must NOT enter this
           # pre-upload pass: attempting the eager SSH upload reported a
           # bogus pre-run UNREACHABLE ("Failed to upload ... ssh:
@@ -424,7 +424,7 @@ module Krikri
       # Previously this re-raised, and nothing up the call chain caught
       # it - so ONE unreachable host in an inventory killed the whole
       # process with a raw Crystal stack trace, no recap at all, and the
-      # results of every reachable host were lost. Real ansible-playbook
+      # results of every reachable host were lost. ansible-playbook
       # reports the host UNREACHABLE!, keeps going for the others, and
       # exits 4. Returning the names lets the caller do the same.
       unreachable = [] of String
@@ -433,7 +433,7 @@ module Krikri
         unreachable << host.name
         # .to_json, not hand-built pseudo-JSON - a hand-escaped message
         # (backslashes, control chars in an ssh error) could produce
-        # malformed output; the real ansible-playbook line this matches
+        # malformed output; the ansible-playbook line this matches
         # emits properly-encoded JSON too.
         msg = {"changed" => false, "msg" => ex.message.to_s.lines.first?.to_s, "unreachable" => true}.to_json
         puts %(fatal: [#{host.name}]: UNREACHABLE! => #{msg}).colorize(:red)
@@ -846,7 +846,7 @@ module Krikri
     # that's exactly backwards for fetch, which needs to run on the
     # controller and pull via BasePlugin#remote_download (SSHManager, using
     # the *original*, non-overridden host/vars) instead.
-    # wait_for_connection: real Ansible's own module retries the actual
+    # wait_for_connection: Ansible's own module retries the actual
     # CONNECTION ATTEMPT from the controller until it succeeds or
     # timeout: is exceeded - it exists specifically for the "just
     # rebooted the target" idiom, where the connection is DOWN when the
@@ -860,7 +860,7 @@ module Krikri
     # the instant the reboot actually took the SSH connection down.
     # Controller-only (like fetch above) so it can retry the connection
     # itself via BasePlugin#remote_exec/SSHManager, the same mechanism
-    # real Ansible's own connection plugin retry uses.
+    # Ansible's own connection plugin retry uses.
     CONTROLLER_ONLY_PLUGINS = {"fetch", "ansible.builtin.fetch", "wait_for_connection", "ansible.builtin.wait_for_connection"}
 
     # Whether *plugin_name* must run on the controller regardless of the
@@ -905,7 +905,7 @@ module Krikri
       elsif controller_only?(plugin_name)
         # A controller-only plugin (fetch, see CONTROLLER_ONLY_PLUGINS'
         # own comment) always runs unprivileged on the controller itself,
-        # regardless of the task's own become: - real Ansible's fetch
+        # regardless of the task's own become: - Ansible's fetch
         # never needs local privilege escalation to write its own
         # download to disk; only the REMOTE read of a privileged source
         # file would need become, which fetch.cr's own remote_exec/
@@ -1007,7 +1007,7 @@ module Krikri
         begin
           normalize_module_result(JSON.parse(output))
         rescue ex
-          # Parsing failed - return error with details. Real Ansible's
+          # Parsing failed - return error with details. Ansible's
           # own equivalent (a become/connection failure, e.g. "Premature
           # end of stream waiting for become success" - no module ever
           # ran, so there's no result JSON to reinterpret) is unignorable
@@ -1047,7 +1047,7 @@ module Krikri
     # run with a stack trace. A host that goes unreachable MID-play
     # (network drops between tasks) now yields a per-task UNREACHABLE
     # result - the same shape the pre-run batch-upload pass produces -
-    # exactly like real Ansible, which never ends a run for one bad
+    # exactly like Ansible, which never ends a run for one bad
     # host. Non-transport exceptions (a missing local binary, a
     # staging-dir safety refusal, anything else) still propagate: those
     # are engine bugs, not unreachability, and must stay loud.
@@ -1369,7 +1369,7 @@ module Krikri
       become_needed?(become, become_user, remote_user) ? "sudo -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" : remote_plugin_path
     end
 
-    # `ANSIBLE_BECOME_ALLOW_SAME_USER` - real Ansible's own config knob,
+    # `ANSIBLE_BECOME_ALLOW_SAME_USER` - Ansible's own config knob,
     # default false, forcing the escalation even when it is a no-op.
     def self.become_allow_same_user? : Bool
       value = ENV["ANSIBLE_BECOME_ALLOW_SAME_USER"]?
@@ -1379,26 +1379,26 @@ module Krikri
 
     # Whether a `become:` task actually needs an escalation command.
     #
-    # Real Ansible does NOT wrap a command in sudo just because `become:
+    # Ansible does NOT wrap a command in sudo just because `become:
     # true` was given - `_low_level_execute_command` gates it on
     # `C.BECOME_ALLOW_SAME_USER or (buser != ruser or not any((ruser,
     # buser)))`, so escalating to the user you already are is skipped
     # entirely. Since `become_user` defaults to root and most inventories
     # connect as root, that means the overwhelmingly common `become:
-    # true` task runs with NO sudo at all under real Ansible.
+    # true` task runs with NO sudo at all under Ansible.
     #
     # This engine wrapped every such task in `sudo -n -u root --`, which
     # works only if sudo happens to be installed: on a minimal image
     # without it (a container, a hardened or slimmed cloud image) EVERY
     # `become: true` task failed with "sudo: command not found" where
-    # real Ansible succeeded. Found while reproducing an unrelated recap
+    # Ansible succeeded. Found while reproducing an unrelated recap
     # delta on a plain debian:trixie container, and confirmed with a
-    # two-task minimal repro against real ansible-core 2.19.
+    # two-task minimal repro against ansible-core 2.19.
     def self.become_needed?(become : Bool, become_user : String?, remote_user : String?) : Bool
       return false unless become
       return true if become_allow_same_user?
 
-      # `not any((ruser, buser))` - with neither side known, real Ansible
+      # `not any((ruser, buser))` - with neither side known, Ansible
       # escalates rather than guessing they match.
       return true if (remote_user.nil? || remote_user.empty?) && (become_user.nil? || become_user.empty?)
 
@@ -1435,7 +1435,7 @@ module Krikri
         }
         # A nonzero exit whose stderr names the SSH transport itself (ssh
         # never reached or never authenticated to the host) is
-        # UNREACHABLE in real Ansible, not a failed task - TaskExecutor's
+        # UNREACHABLE in Ansible, not a failed task - TaskExecutor's
         # facts/task booking paths check this marker and book the host
         # exactly like the pre-run unreachable pass does. A remote plugin
         # crash also arrives here nonzero, but its stderr names the
@@ -1460,7 +1460,7 @@ module Krikri
       end
     end
 
-    # Controller-side result normalization - real Ansible's own
+    # Controller-side result normalization - Ansible's own
     # task_executor._execute_internal pass, applied to every module
     # result before register:/when:/display ever see it: a module wire
     # result only carries `failed` when the module called fail_json (a
@@ -1479,7 +1479,7 @@ module Krikri
       hash = result.as_h? || return result
 
       # Module warnings are NOT part of the module's wire dict in the
-      # registered result: real 2.19.11 (live-verified: user create with a
+      # registered result: Ansible 2.19.11 (live-verified: user create with a
       # warning, systemd with enabled:) registers ... ansible_facts,
       # failed, warnings - the executor backfills failed (and changed)
       # onto the wire dict and the module's warnings land AFTER that
@@ -1501,9 +1501,9 @@ module Krikri
       # exception shape ({failed, msg} only - see PluginResult#to_json's
       # omit_changed); backfilling it with changed: false here would
       # turn a registered variable's undefined `changed` into a defined
-      # one, diverging from real Ansible's failure surface. Modules whose
+      # one, diverging from Ansible's failure surface. Modules whose
       # exit_json passes no changed (ping/getent/wait_for/...) get it
-      # backfilled here on success exactly like real's task executor;
+      # backfilled here on success exactly like Ansible's task executor;
       # the deliberate no-changed failures skip that.
       if !hash.has_key?("changed") && !hash["failed"].as_bool?
         hash["changed"] = JSON::Any.new(false)
@@ -1520,7 +1520,7 @@ module Krikri
     # both execute_local_plugin and execute_remote_plugin need the same
     # become/become_user/error-or-nil triple. Defaults become_user to
     # "root" when become: is set but become_user: wasn't given, matching
-    # real Ansible's own default.
+    # Ansible's own default.
     #
     # No become password support (`ansible_become_pass`/
     # `--ask-become-pass`) - sudo always runs with `-n` (non-interactive),
@@ -1562,7 +1562,7 @@ module Krikri
       # the current working directory - otherwise krikri-playbook could
       # only ever be invoked from inside its own checkout (`cd
       # /path/to/krikri-playbook && ./bin/krikri-playbook playbook.yml`),
-      # unlike real ansible-playbook, which can run from anywhere.
+      # unlike ansible-playbook, which can run from anywhere.
       # Memoized: this is a readlink("/proc/self/exe") syscall, and it
       # resolves a path that cannot change for the life of the process,
       # yet it was paid on every single plugin resolution.
@@ -1590,7 +1590,7 @@ module Krikri
     # dirs (traversable so the become_user can reach the binary, never
     # listable or writable by anyone else), 0755 on the staged binary.
     #
-    # Real Ansible never executes its own module files in place - it
+    # Ansible never executes its own module files in place - it
     # always copies them to a tmp location the target user can reach
     # first. execute_local_plugin previously always ran the compiled
     # binary straight from wherever krikri-playbook itself was installed
@@ -1662,13 +1662,13 @@ module Krikri
     end
 
     # Connection types this engine can actually dispatch, matched
-    # CASE-SENSITIVELY exactly like real Ansible's own plugin loader,
+    # CASE-SENSITIVELY exactly like Ansible's own plugin loader,
     # which looks the name up verbatim against plugin filenames (no
     # lowercasing anywhere in the resolution path - verified live against
     # ansible-core 2.19.11: `connection: Local` fails the task with "the
     # connection plugin 'Local' was not found", and so does any FQCN that
     # names no real connection plugin, e.g. `community.grafana.grafana`).
-    # "smart" is real Ansible's default alias resolving to ssh for a
+    # "smart" is Ansible's default alias resolving to ssh for a
     # remote host; paramiko_ssh is still ssh for this engine's purposes.
     SUPPORTED_CONNECTION_TYPES = Set{
       "local", "ssh", "smart", "paramiko_ssh",
@@ -1678,7 +1678,7 @@ module Krikri
       "ansible.legacy.paramiko_ssh",
     }
 
-    # Connection plugins real Ansible RESOLVES (shipped in ansible-core
+    # Connection plugins Ansible RESOLVES (shipped in ansible-core
     # itself, so the loader never returns not-found for them) but this
     # engine has no transport for: psrp/winrm (Windows), etc. They keep
     # the same "unknown connection falls back to SSH" behavior every
@@ -1690,11 +1690,11 @@ module Krikri
 
     # Whether *raw* (the effective connection type: an inventory/role/
     # task-level ansible_connection value, or a task's own `connection:`
-    # keyword after substitution) names no connection plugin real Ansible
+    # keyword after substitution) names no connection plugin Ansible
     # could resolve either - so a task using it must fail the way real
     # Ansible's TaskExecutor._get_connection does, instead of silently
     # falling back to SSH. A collection-qualified name is checked against
-    # the controller's own collection paths exactly like real Ansible's
+    # the controller's own collection paths exactly like Ansible's
     # loader: a plugin that EXISTS there (containers.podman.podman,
     # community.docker.docker) keeps the engine's long-standing SSH
     # fallback - this engine can't exec inside a container target, but
@@ -1730,12 +1730,12 @@ module Krikri
       # and the engine crashed with an unhandled "ssh: connect to host
       # localhost port 22: Connection refused" trying to upload the
       # get_url plugin binary to the controller as if it were a remote
-      # target - where real Ansible runs the task locally and rc=0s.
+      # target - where Ansible runs the task locally and rc=0s.
       if conn = host.vars["ansible_connection"]?
         return conn.as_s? == "local"
       end
 
-      # Check if host is localhost - "127.0.0.1" is real Ansible's other
+      # Check if host is localhost - "127.0.0.1" is Ansible's other
       # well-known spelling for the controller itself (`delegate_to:
       # 127.0.0.1` is a common idiom for a controller-side task,
       # ansible-community.ansible-vault's own local package download/

@@ -193,7 +193,7 @@ module PluginSpecHelper
   # accepts `chattr -i` at all. Rootless fuse-overlayfs containers (and
   # other fuse-backed overlay filesystems) reject every chattr flag
   # operation, even clearing a flag that isn't set - and on such a
-  # filesystem real Ansible fails the task with "chattr failed"
+  # filesystem Ansible fails the task with "chattr failed"
   # identically, so the '-'-prefixed attributes specs (which pin the
   # success path only real chattr-capable filesystems can take) probe
   # this first and skip rather than assert success the target fs can
@@ -210,7 +210,7 @@ module PluginSpecHelper
   # Whether the spec process itself runs as root (uid 0). Some plugin
   # behaviors only exist as root (sysctl -w actually writing the live
   # kernel value) while others only reproduce as non-root (unarchive's
-  # Uid/Gid idempotency, where real Ansible only ignores a tar
+  # Uid/Gid idempotency, where Ansible only ignores a tar
   # Uid/Gid-differs line when run as root) - both gate on this same
   # probe so the privilege condition is stated and checked one way.
   def self.running_as_root? : Bool
@@ -230,7 +230,7 @@ module PluginSpecHelper
   # Whether the environment can apply POSIX ACLs at all: a real
   # `setfacl` on a throwaway file succeeds. Needs root or CAP_FOWNER
   # plus a filesystem mounted with acl support (tmpfs and most fuse
-  # overlay mounts reject it outright), and on such a host real Ansible
+  # overlay mounts reject it outright), and on such a host Ansible
   # fails the acl task identically - so the acl specs that pin the
   # success path probe this first and skip rather than assert a change
   # the filesystem can never record.
@@ -247,7 +247,7 @@ module PluginSpecHelper
   # Whether the environment can apply file capabilities at all: a real
   # `setcap` on a throwaway file succeeds. Needs root or CAP_SETFCAP;
   # rootless containers reject every setcap operation, and on such an
-  # environment real Ansible fails the task identically, so specs
+  # environment Ansible fails the task identically, so specs
   # pinning the changed path (which only a capability-capable
   # environment can produce) probe this first and skip rather than
   # assert success the environment can never deliver.

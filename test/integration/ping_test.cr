@@ -5,7 +5,7 @@ describe "ping plugin" do
     result = PluginSpecHelper.run("ping", {} of String => String)
 
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-    # Real's ping module wire carries ONLY {ping} - no changed (exit_json
+    # Ansible's ping module wire carries ONLY {ping} - no changed (exit_json
     # passes none; the task executor backfills failed, changed onto the
     # registered result).
     result["changed"]?.must_equal(nil)
@@ -18,7 +18,7 @@ describe "ping plugin" do
     result["ping"].as_s.must_equal("hello")
   end
 
-  it "fails with data: crash, real Ansible's own deliberate-failure test path" do
+  it "fails with data: crash, Ansible's own deliberate-failure test path" do
     result = PluginSpecHelper.run("ping", {"data" => "crash"})
 
     result["failed"].as_bool.must_equal(true)

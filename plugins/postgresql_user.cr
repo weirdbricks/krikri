@@ -19,7 +19,7 @@ module Krikri
   # architecture note (talks to the server directly over PostgreSQL's own
   # wire protocol via will/crystal-pg).
   #
-  # Real Ansible splits role management (this module) from database/table
+  # Ansible splits role management (this module) from database/table
   # privilege GRANTs (a separate module, postgresql_privs) - this plugin
   # follows the same split rather than folding privilege management into
   # user management the way this codebase's mysql_user.cr does (MySQL's
@@ -28,7 +28,7 @@ module Krikri
   #
   # Supported parameters:
   # - name: role name (required)
-  # - password: idempotent, like real Ansible - the desired password is
+  # - password: idempotent, like Ansible - the desired password is
   #   diffed against the role's stored pg_authid.rolpassword verifier
   #   (see PostgresqlPasswordVerifier: SCRAM verifiers compared by
   #   recomputing the ServerKey from the plaintext, pre-hashed inputs
@@ -37,7 +37,7 @@ module Krikri
   #   ALTER ROLE ... PASSWORD only runs when they actually differ.
   # - state: present (default) / absent
   # - role_attr_flags: "LOGIN,CREATEDB,NOSUPERUSER" (comma-separated,
-  #   real Ansible's own format) - via a new pure
+  #   Ansible's own format) - via a new pure
   #   src/krikri/plugin_helpers/postgresql_role_flags.cr, diffed
   #   against the role's actual pg_roles attribute columns; only the
   #   flags actually given are compared, so omitting role_attr_flags:
@@ -46,7 +46,7 @@ module Krikri
   #   login_user (default "postgres"), login_password,
   #   login_unix_socket (takes precedence over login_host/login_port),
   #   login_db (database to connect to - default "postgres", matching
-  #   real Ansible's own default)
+  #   Ansible's own default)
   # - check_mode
   #
   # Not implemented: database/table privilege grants (see above -
@@ -57,7 +57,7 @@ module Krikri
     ROLE_ATTR_COLUMNS = %w[rolsuper rolinherit rolcreaterole rolcreatedb rolcanlogin rolreplication rolbypassrls]
 
     # community.postgresql's shared connection spec still ACCEPTS its
-    # deprecated aliases, and real warns about each one the task uses
+    # deprecated aliases, and Ansible warns about each one the task uses
     # (both on stderr and in the registered result's trailing
     # `deprecations` list) - see PluginHelpers::PostgresqlDeprecations.
     def finalize_result(result : PluginResult) : PluginResult
@@ -65,7 +65,7 @@ module Krikri
     end
 
     def execute : PluginResult
-      # Real Ansible's `name:` param has `aliases: ['user']` - same bug
+      # Ansible's `name:` param has `aliases: ['user']` - same bug
       # class as postgresql_db's `db:` alias (round 43,
       # robertdebock.postgres): its own "Create postgres users" task
       # writes `user: "{{ item.name }}"`, which this plugin didn't
@@ -82,7 +82,7 @@ module Krikri
 
       desired_flags = @params["role_attr_flags"]?.try { |spec| PluginHelpers::PostgresqlRoleFlags.parse(spec) }
 
-      # Real Ansible's `login_db:` param has a deprecated `aliases:
+      # Ansible's `login_db:` param has a deprecated `aliases:
       # [db]` - same bug class as this file's own `user:`/`name:` fix
       # above. robertdebock.postgres's own "Create postgres users" task
       # writes `db: "{{ item.db | default(omit) }}"` (the alias), which
@@ -114,15 +114,15 @@ module Krikri
       PluginHelpers::DbErrors.query_failed(ex, "PostgreSQL")
     end
 
-    # Real Ansible's exit_json(**kw) with kw = dict(user=user) then
+    # Ansible's exit_json(**kw) with kw = dict(user=user) then
     # kw['user_removed'], kw['changed'], kw['queries']
     # (postgresql_user.py:919, 955/965, 975-976) - `failed: false` is
     # backfilled by the controller after the module's own kwargs. `queries`
     # is the list of SQL statement TEMPLATES the module appended to
     # executed_queries (unmogrified - the %(password)s placeholders stay
     # literal, and the flags string is appended verbatim after a join, so a
-    # no-flag CREATE USER carries real's trailing space). Live-verified
-    # against real ansible-core 2.19.11 + community.postgresql 4.2.0.
+    # no-flag CREATE USER carries Ansible's trailing space). Live-verified
+    # against ansible-core 2.19.11 + community.postgresql 4.2.0.
     SUCCESS_KEY_ORDER = %w[user user_removed changed queries failed]
 
     private def user_result(
@@ -142,7 +142,7 @@ module Krikri
       if existing_flags
         changed = update_existing_role(db, name, existing_flags, password, desired_flags, check_mode, queries)
       else
-        # Real's user_add() records the CREATE template even under check
+        # Ansible's user_add() records the CREATE template even under check
         # mode (the module is never executed, but the template is already
         # appended) - live-verified.
         queries << create_template(name, password, desired_flags)
@@ -155,16 +155,16 @@ module Krikri
       user_result(name, changed, queries)
     end
 
-    # Real Ansible's own user_add() uses `CREATE USER`, not `CREATE
+    # Ansible's own user_add() uses `CREATE USER`, not `CREATE
     # ROLE` - they're otherwise identical in Postgres, but `CREATE
     # USER` implies LOGIN by default while plain `CREATE ROLE`
     # defaults to NOLOGIN. Real bug found benchmarking
     # robertdebock.postgres (round 43): with no `role_attr_flags:`
     # given at all (the common case - most playbooks just want a
     # normal login-capable user), this plugin created a role that
-    # couldn't log in at all, while real Ansible's created one that
+    # couldn't log in at all, while Ansible's created one that
     # could - confirmed via `\du` showing "Cannot login" here vs.
-    # empty attributes on real Ansible's identically-configured run.
+    # empty attributes on Ansible's identically-configured run.
     private def create_template(
       name : String, password : String?, desired_flags : Hash(String, Bool)?,
     ) : String
@@ -211,7 +211,7 @@ module Krikri
       changed
     end
 
-    # Real's pwchanging ALTER template (postgresql_user.py:639-647):
+    # Ansible's pwchanging ALTER template (postgresql_user.py:639-647):
     # 'ALTER USER "name"' + 'WITH ENCRYPTED' + 'PASSWORD %(password)s' +
     # the (possibly empty) role_attr_flags string.
     private def alter_password_template(name : String, password : String) : String
@@ -229,7 +229,7 @@ module Krikri
     private def ensure_absent(db : DB::Database, name : String, exists : Bool, check_mode : Bool) : PluginResult
       return user_result(name, false, [] of String) unless exists
 
-      # Real's check-mode absent path never reaches user_delete(), so
+      # Ansible's check-mode absent path never reaches user_delete(), so
       # executed_queries stays empty while user_removed is still true
       # (postgresql_user.py:951-956); a real drop appends the DROP and
       # sets user_removed to the drop's own changed (965).
@@ -245,10 +245,10 @@ module Krikri
       desired.any? { |flag, value| existing[flag]? != value }
     end
 
-    # Real Ansible's user_should_we_change_password(): diff the desired
+    # Ansible's user_should_we_change_password(): diff the desired
     # password against pg_authid.rolpassword (not pg_roles - the
     # verifier only lives there) so an unchanged repeat call is a no-op.
-    # Like the real module, a server that won't reveal the verifier (or
+    # Like the Ansible module, a server that won't reveal the verifier (or
     # has no row for the role) makes the password count as different.
     private def password_should_change?(db : DB::Database, name : String, password : String) : Bool
       current_password = begin

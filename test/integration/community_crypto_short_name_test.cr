@@ -5,7 +5,7 @@ require "../minitest_helper"
 # FQCN and actually run the plugin - the same way `ansible.builtin.foo` ->
 # `foo` and `apt_key:` -> `ansible.builtin.apt_key` already worked. Bare
 # short names are the community-collection idiom (every role benchmarked
-# writes the short form, not the FQCN), and real Ansible auto-aliases
+# writes the short form, not the FQCN), and Ansible auto-aliases
 # them via the collection-aliasing mechanism.
 #
 # Pre-fix the bare name was unresolvable (MODULE_SEARCH_COLLECTIONS
@@ -33,7 +33,7 @@ describe "community.crypto.* short name resolution" do
   # The pre-fix behavior: bare `openssl_privatekey:` -> "uses
   # unimplemented plugin: openssl_privatekey" warning, task skipped
   # silently. Post-fix: the task actually runs and the plugin's
-  # changed/ok status is what real ansible would produce.
+  # changed/ok status is what Ansible would produce.
   it "runs `openssl_privatekey:` (bare) without the unimplemented-plugin warning" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

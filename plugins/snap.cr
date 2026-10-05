@@ -9,7 +9,7 @@ module Krikri
   #
   # Implemented against real snap.py's control flow:
   #   - discovery via `snap list <name>` per name (exit code 0 =
-  #     installed; real uses the same command and treats "not
+  #     installed; Ansible uses the same command and treats "not
   #     installed"/exit 64 output as absent)
   #   - install via `snap install <name>` (+ `--classic`, +
   #     `--channel <c>`; `--jailmode` not implemented - no tested
@@ -17,15 +17,15 @@ module Krikri
   #     `snap disable|enable <name>`
   #   - `options:` (space/comma-separated key=value pairs) applied via
   #     `snap set <name> <key=value>...` after install only (matching
-  #     real's post-install set), and compared against
+  #     Ansible's post-install set), and compared against
   #     `snap get <name> <key>` for idempotency
   #   - state: enabled/disabled inspect the Notes column of
-  #     `snap list <name>` (real parses the same output; a disabled
+  #     `snap list <name>` (Ansible parses the same output; a disabled
   #     snap shows "disabled" in its notes)
   #   - check mode: discovery runs for real, mutating commands are not
   #     run (changed verdict still reported)
   #
-  # `name:` accepts a comma/space-separated list (real accepts a YAML
+  # `name:` accepts a comma/space-separated list (Ansible accepts a YAML
   # list or a comma-separated string; krikri flattens task params to
   # strings, so the string forms are what arrive here).
   class SnapPlugin < BasePlugin

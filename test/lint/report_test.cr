@@ -3,7 +3,7 @@ require "../../src/krikri_lint/lint"
 
 module Krikri::Lint
   # The exact escape sequences matter: these assertions are the byte-level
-  # contract with real ansible-lint's default, parseable and quiet output.
+  # contract with ansible-lint's default, parseable and quiet output.
   describe Formatter do
     private def violation(**kwargs)
       Violation.new(
@@ -196,7 +196,7 @@ module Krikri::Lint
       # Upstream's app.py has an `if summary.fixed` branch, but its fix()
       # pops fixed matches from the result before count_results runs, so
       # the ", and fixed N issue(s)" clause can never be reached (verified
-      # against real ansible-lint 25.2.1 with --fix). krikri drops fixed
+      # against ansible-lint 25.2.1 with --fix). krikri drops fixed
       # matches the same way and must not print the clause either.
       lines = report([pkg_violation], 1, nil, 1).lines(false)
       lines.join("\n").wont_match(/and fixed/)
