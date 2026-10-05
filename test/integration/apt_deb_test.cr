@@ -29,15 +29,24 @@ require "file_utils"
 # plugin's `dpkg-deb -f` read is genuinely executed, not shape-matched)
 # plus a PATH shim dir: `curl` stages the fixture onto its -o target
 # (standing in for the network, optionally failing with a caller-chosen
-# exit code) and logs every invocation; `dpkg` logs every invocation and
-# answers `-l <pkg>` with an optionally-installed status line while
-# simulating a successful `-i` install; `apt-get` logs and exits 0 (the
-# dependency-resolution fallback for debs dpkg cannot install alone).
-# Real /usr/bin binaries stay reachable behind the shim dir, so
-# `dpkg-deb -f` runs for real against the fixture. Yields the
-# `_environment` JSON param, the fixture path, the curl call log, the
-# dpkg call log and the apt-get call log.
-private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : String? = nil, dpkg_install_exit : Int32 = 0, &)
+# exit code) and logs every invocation; `dpkg` logs every invocation,
+# answers `-l <pkg>` with an optionally-installed status line, delegates
+# `--compare-versions` to the real /usr/bin/dpkg (Debian-version
+# ordering is not reimplemented in a shell shim) and simulates a
+# successful `-i` install; `dpkg-query` answers with an optional
+# pre-set status-line set (driving the dependency resolver's installed
+# status probe); `apt-cache` answers `policy <name>` with a
+# "Candidate: 1.0" line for a configurable name list (nothing for any
+# other name = an unknown name); `apt-get` logs, prints optional
+# stdout/stderr and exits with a configurable code. Real /usr/bin
+# binaries stay reachable behind the shim dir, so `dpkg-deb -f` runs
+# for real against the fixture. Yields the `_environment` JSON param,
+# the fixture path, the curl call log, the dpkg call log and the
+# apt-get call log.
+private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : String? = nil, dpkg_install_exit : Int32 = 0,
+                                   depends : String? = nil, recommends : String? = nil,
+                                   dpkg_query_lines : String? = nil, apt_candidate_names : String? = nil,
+                                   apt_get_exit : Int32 = 0, apt_get_stdout : String = "", apt_get_stderr : String = "", &)
   dir = File.join(Dir.tempdir, "krikri-apt-deb-#{Random.rand(1_000_000)}")
   shims = File.join(dir, "shims")
   FileUtils.mkdir_p(File.join(dir, "pkg", "DEBIAN"))
@@ -47,9 +56,11 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
   dpkg_log = File.join(dir, "dpkg.log")
   apt_log = File.join(dir, "apt.log")
 
-  File.write(File.join(dir, "pkg", "DEBIAN", "control"),
-    "Package: krikri-spec-deb\nVersion: 1.0\nArchitecture: all\n" \
-    "Maintainer: spec <spec@local>\nDescription: krikri apt deb spec fixture\n")
+  control = "Package: krikri-spec-deb\nVersion: 1.0\nArchitecture: all\n" \
+            "Maintainer: spec <spec@local>\nDescription: krikri apt deb spec fixture\n"
+  control += "Depends: #{depends}\n" if depends
+  control += "Recommends: #{recommends}\n" if recommends
+  File.write(File.join(dir, "pkg", "DEBIAN", "control"), control)
   build = Process.run("dpkg-deb", ["--build", "--root-owner-group", File.join(dir, "pkg"), fixture],
     output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
   raise "dpkg-deb --build failed for the spec fixture" unless build.success?
@@ -73,6 +84,9 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
   File.write(File.join(shims, "dpkg"), <<-SHIM)
     #!/bin/sh
     echo "$@" >> "$KRIKRI_DPKG_CALLS"
+    if [ "$1" = "--compare-versions" ]; then
+      exec /usr/bin/dpkg "$@"
+    fi
     if [ "$1" = "-l" ]; then
       if [ -n "$KRIKRI_DPKG_INSTALLED_LINE" ]; then
         echo "$KRIKRI_DPKG_INSTALLED_LINE"
@@ -86,13 +100,37 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
     echo "Setting up krikri-spec-deb (1.0) ..."
     exit "$KRIKRI_DPKG_INSTALL_EXIT"
     SHIM
+  File.write(File.join(shims, "dpkg-query"), <<-SHIM)
+    #!/bin/sh
+    if [ -n "$KRIKRI_DPKG_QUERY_LINES" ]; then
+      printf '%s\n' "$KRIKRI_DPKG_QUERY_LINES"
+    fi
+    exit 0
+    SHIM
+  File.write(File.join(shims, "apt-cache"), <<-SHIM)
+    #!/bin/sh
+    for n in $KRIKRI_APT_CANDIDATE_NAMES; do
+      if [ "$n" = "$2" ]; then
+        echo "Candidate: 1.0"
+      fi
+    done
+    exit 0
+    SHIM
   File.write(File.join(shims, "apt-get"), <<-SHIM)
     #!/bin/sh
     echo "$@" >> "$KRIKRI_APT_CALLS"
-    exit 0
+    if [ -n "$KRIKRI_APT_GET_STDOUT" ]; then
+      printf '%s\n' "$KRIKRI_APT_GET_STDOUT"
+    fi
+    if [ -n "$KRIKRI_APT_GET_STDERR" ]; then
+      printf '%s\n' "$KRIKRI_APT_GET_STDERR" >&2
+    fi
+    exit "$KRIKRI_APT_GET_EXIT"
     SHIM
   File.chmod(File.join(shims, "curl"), 0o755)
   File.chmod(File.join(shims, "dpkg"), 0o755)
+  File.chmod(File.join(shims, "dpkg-query"), 0o755)
+  File.chmod(File.join(shims, "apt-cache"), 0o755)
   File.chmod(File.join(shims, "apt-get"), 0o755)
 
   env = {
@@ -104,6 +142,11 @@ private def with_deb_fixture_shims(curl_exit : Int32 = 0, dpkg_installed_line : 
     "KRIKRI_CURL_EXIT"           => curl_exit.to_s,
     "KRIKRI_DPKG_INSTALL_EXIT"   => dpkg_install_exit.to_s,
     "KRIKRI_DPKG_INSTALLED_LINE" => dpkg_installed_line.to_s,
+    "KRIKRI_DPKG_QUERY_LINES"    => dpkg_query_lines.to_s,
+    "KRIKRI_APT_CANDIDATE_NAMES" => apt_candidate_names.to_s,
+    "KRIKRI_APT_GET_EXIT"        => apt_get_exit.to_s,
+    "KRIKRI_APT_GET_STDOUT"      => apt_get_stdout,
+    "KRIKRI_APT_GET_STDERR"      => apt_get_stderr,
   }.to_json
   yield env, fixture, curl_log, dpkg_log, apt_log
 ensure
@@ -228,7 +271,11 @@ describe "apt plugin deb: URL download-then-install" do
     end
   end
 
-  it "falls back to apt-get install when dpkg -i cannot resolve the deb's dependencies" do
+  it "registers Ansible's dpkg failure shape when a dep-free deb's dpkg -i fails (no apt-get fallback)" do
+    # Real install_deb never falls back to `apt-get install <deb>`: the
+    # dependency pre-install goes through install() BEFORE the dpkg run,
+    # so a deb with no dependency fields whose dpkg -i fails (e.g. a
+    # failing preinst script) fails with the dpkg failure shape directly.
     with_deb_fixture_shims(dpkg_install_exit: 1) do |env, fixture, _, dpkg_log, apt_log|
       result = PluginSpecHelper.run("apt", {
         "deb"               => fixture,
@@ -237,15 +284,13 @@ describe "apt plugin deb: URL download-then-install" do
         "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
       })
 
-      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
-      result["changed"].as_bool.must_equal(true)
-      # dpkg -i ran and failed first; apt-get then resolved the install.
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("dpkg --force-confdef --force-confold -i #{fixture} failed")
+      # dpkg -i ran exactly once and apt-get never ran - the dependency
+      # pre-install has nothing to do when the deb declares no Depends.
       dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
       dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
-      apt_calls = File.exists?(apt_log) ? File.read_lines(apt_log) : [] of String
-      apt_calls.size.must_equal(1)
-      apt_calls.first.must_include("install")
-      apt_calls.first.must_include(fixture)
+      File.exists?(apt_log).must_equal(false)
     end
   end
 
@@ -276,6 +321,197 @@ describe "apt plugin deb: URL download-then-install" do
       result["msg"].as_s.must_equal("Unable to install package: E:Invalid archive signature")
     ensure
       FileUtils.rm_rf(dir)
+    end
+  end
+end
+
+# Regression spec for the round-1200xxx divergence (appsilon.r_language,
+# JonasPammer/kso512.checkmk_server, Oefenweb.rstudio_server): real
+# install_deb resolves the .deb's own Depends/Pre-Depends FIRST -
+# missing dependencies go through install()'s apt-get machinery - and
+# only then runs `dpkg <options> -i`. A bare dpkg -i cannot resolve
+# dependencies and dies with "dependency problems prevent
+# configuration", which is exactly what the old engine registered (the
+# real roles' missing deps: libbz2-dev/traceroute/libssl-dev et al).
+# The old `apt-get install <deb>` dpkg-failure fallback is gone - real
+# install_deb has no such second chance.
+describe "apt plugin deb: dependency pre-install" do
+  it "pre-installs the deb's missing dependencies via apt-get, then runs dpkg -i" do
+    with_deb_fixture_shims(depends: "dep-a, dep-b",
+      dpkg_query_lines: "", apt_candidate_names: "dep-a dep-b",
+      apt_get_stdout: "Setting up dep-a (1.0) ...") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["msg"]?.must_be_nil
+
+      # One apt-get install for BOTH missing deps in one shot, each spec
+      # carrying install()'s resolved-candidate pin, before dpkg runs.
+      apt_calls = File.exists?(apt_log) ? File.read_lines(apt_log) : [] of String
+      apt_calls.size.must_equal(1)
+      apt_calls.first.must_include("install")
+      apt_calls.first.must_include("dep-a=1.0")
+      apt_calls.first.must_include("dep-b=1.0")
+      apt_calls.first.wont_include(fixture)
+
+      # dpkg -i ran once, AFTER the deps install.
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
+
+      # install_deb's merge: deps stdout first, dpkg stdout after.
+      stdout = result["stdout"].as_s
+      deps_idx = stdout.index("Setting up dep-a (1.0) ...")
+      deb_idx = stdout.index("Setting up krikri-spec-deb (1.0)")
+      flunk("expected deps output before dpkg output") unless deps_idx && deb_idx && deps_idx < deb_idx
+
+      # retvals carried a diff with diff mode off -> the bare {} stays,
+      # parse_diff of the dpkg output does NOT replace it here.
+      result["diff"].as_h.size.must_equal(0)
+    end
+  end
+
+  it "satisfies a versioned dependency from the already-installed package without touching apt-get" do
+    with_deb_fixture_shims(depends: "dep-a (>= 1.0)",
+      dpkg_query_lines: "ii 1.0 dep-a") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      result["stdout"].as_s.must_include("Setting up krikri-spec-deb (1.0)")
+      File.exists?(apt_log).must_equal(false)
+      # The satisfaction decision went through dpkg's own version ordering.
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.any?(&.includes?("--compare-versions")).must_equal(true)
+      dpkg_calls.count(&.includes?(" -i ")).must_equal(1)
+    end
+  end
+
+  it "picks the first installable alternative of an or-group dependency" do
+    with_deb_fixture_shims(depends: "dep-a | dep-b",
+      apt_candidate_names: "dep-a dep-b") do |env, fixture, _, _, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      apt_calls = File.exists?(apt_log) ? File.read_lines(apt_log) : [] of String
+      apt_calls.size.must_equal(1)
+      apt_calls.first.must_include("dep-a=1.0")
+      apt_calls.first.wont_include("dep-b")
+    end
+  end
+
+  it "fails with DebPackage's unsatisfiable-dependency wording before any install runs" do
+    with_deb_fixture_shims(depends: "dep-x (>= 2.0)") do |env, fixture, _, dpkg_log, apt_log|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      # python-apt's gettext string, trailing "\n" included; no
+      # alternative has an apt candidate, so the group is unsatisfiable.
+      result["msg"].as_s.must_equal("Dependency is not satisfiable: dep-x (>= 2.0)\n")
+      File.exists?(apt_log).must_equal(false)
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
+    end
+  end
+
+  it "re-fails install()'s retvals when the dependency apt-get install fails" do
+    with_deb_fixture_shims(depends: "dep-a",
+      apt_candidate_names: "dep-a",
+      apt_get_exit: 100, apt_get_stderr: "E: Unable to locate package dep-a") do |env, fixture, _, dpkg_log, _|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      # install()'s own failure msg shape, re-failed by install_deb
+      # (apt-get resolves through PATH, so the binary in the quoted cmd
+      # is the shim's absolute path).
+      result["msg"].as_s.must_include("' failed: E: Unable to locate package dep-a")
+      result["msg"].as_s.must_include("install 'dep-a=1.0'")
+      result["rc"].as_i.must_equal(100)
+      # The dpkg run never happened - the deps install short-circuits it.
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
+    end
+  end
+
+  it "fails with DebPackage's later-version wording when the installed version is newer" do
+    with_deb_fixture_shims(dpkg_installed_line: "ii  krikri-spec-deb  2.0  all  krikri apt deb spec fixture") do |env, fixture, _, dpkg_log, _|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("A later version is already installed")
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      dpkg_calls.select(&.includes?(" -i ")).empty?.must_equal(true)
+    end
+  end
+
+  it "proceeds with the dpkg downgrade when force: releases the later-version gate" do
+    with_deb_fixture_shims(dpkg_installed_line: "ii  krikri-spec-deb  2.0  all  krikri apt deb spec fixture") do |env, fixture, _, dpkg_log, _|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "force"             => "true",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(true)
+      dpkg_calls = File.exists?(dpkg_log) ? File.read_lines(dpkg_log) : [] of String
+      install_calls = dpkg_calls.select(&.includes?(" -i "))
+      install_calls.size.must_equal(1)
+      install_calls.first.must_include("--force-all")
+    end
+  end
+
+  it "merges the deps and dpkg diffs through install_deb's prepared-append rule in diff mode" do
+    with_deb_fixture_shims(depends: "dep-a",
+      apt_candidate_names: "dep-a",
+      apt_get_stdout: "Reading state information...\n1 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.\n") do |env, fixture, _, _, _|
+      result = PluginSpecHelper.run("apt", {
+        "deb"               => fixture,
+        "state"             => "present",
+        "_ansible_diff"     => "true",
+        "_environment"      => env,
+        "_policy_rc_d_path" => File.join(File.dirname(fixture), "policy-rc.d"),
+      })
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      prepared = result["diff"].as_h["prepared"].as_s
+      deps_idx = prepared.index("1 upgraded, 1 newly installed")
+      deb_idx = prepared.index("Setting up krikri-spec-deb (1.0)")
+      flunk("expected deps output before dpkg output") unless deps_idx && deb_idx && deps_idx < deb_idx
+      # install_deb's own separator between the two prepared chunks.
+      prepared.must_include("not upgraded.\n\nSelecting previously unselected package")
     end
   end
 end

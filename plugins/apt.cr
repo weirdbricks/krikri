@@ -652,8 +652,15 @@ module Krikri
       # distinct from `name:` (a repository package name/version).
       # Ansible's apt module derives the package's own name+version from
       # the .deb's control metadata (`dpkg-deb -f`) to decide idempotency,
-      # then installs via `apt-get install` (not a bare `dpkg -i`) so apt
-      # resolves any of the .deb's own dependencies too. Entirely
+      # then mirrors install_deb(): the .deb's own Depends/Pre-Depends are
+      # resolved FIRST (missing ones installed through the normal apt-get
+      # install() path) and only then does `dpkg <options> -i` run - a
+      # bare dpkg -i cannot resolve dependencies and dies with "dependency
+      # problems prevent configuration" (round-1200xxx: appsilon.r_language,
+      # JonasPammer/kso512.checkmk_server, kso512.checkmk_server and
+      # Oefenweb.rstudio_server all failed exactly that way while real
+      # ansible-playbook installed the missing deps and succeeded).
+      # Entirely
       # unimplemented before - found via robertdebock.zabbix_repository's
       # own "Install (apt) repository" task (`apt: {deb: "{{
       # zabbix_repository_package }}"}`, round 18) - fell straight through
@@ -1122,7 +1129,7 @@ module Krikri
       # failing every URL deb: with "No such file or directory"
       # (round900223, j91321.sysmon's packages-microsoft-prod.deb task).
       begin
-        install_deb_file(path, lock_timeout)
+        install_deb_file(path, lock_timeout, messages, changed)
       ensure
         File.delete(downloaded_tmp) if downloaded_tmp
       end
@@ -1131,7 +1138,7 @@ module Krikri
     # The metadata-read + idempotency + install half of #handle_deb,
     # shared by the URL (downloaded temp path) and local-file cases so a
     # local deb: path never gains URL-only behavior.
-    private def install_deb_file(path : String, lock_timeout : Int32) : PluginResult
+    private def install_deb_file(path : String, lock_timeout : Int32, messages : Array(String), changed : Bool) : PluginResult
       # python-apt's DebPackage construction is the FIRST thing real
       # install_deb does, and its SystemError text IS the registered
       # failure msg ("Unable to install package: <e>" - round-99500x
@@ -1158,10 +1165,14 @@ module Krikri
         return unable_to_install("E:Invalid archive signature")
       end
 
-      # Read the .deb's own control metadata to find its real package
-      # name/version, the same identity Ansible's apt module checks
-      # against dpkg's installed-package database for idempotency.
-      info_result = remote_exec("dpkg-deb -f #{shell_single_quote(path)} Package Version")
+      # Read the .deb's own control metadata: the name/version identity
+      # Ansible's apt module checks against dpkg's installed-package
+      # database for idempotency, plus the dependency fields real
+      # install_deb resolves BEFORE any dpkg run (DebPackage.depends
+      # folds Depends AND Pre-Depends; Recommends joins in only when
+      # install_recommends is explicitly true) - one dpkg-deb -f call
+      # for all of them.
+      info_result = remote_exec("dpkg-deb -f #{shell_single_quote(path)} Package Version Pre-Depends Depends Recommends")
       if info_result[:exit_code] != 0
         return PluginResult.new(
           changed: false,
@@ -1170,27 +1181,196 @@ module Krikri
         )
       end
 
-      pkg_name = nil
-      pkg_version = nil
-      info_result[:stdout].each_line do |line|
-        if line.starts_with?("Package:")
-          pkg_name = line.sub("Package:", "").strip
-        elsif line.starts_with?("Version:")
-          pkg_version = line.sub("Version:", "").strip
+      fields = parse_deb_control_fields(info_result[:stdout])
+      pkg_name = fields["Package"]?
+      pkg_version = fields["Version"]?
+
+      installed_deb_ver : String? = nil
+      if pkg_name && pkg_version
+        check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
+        if check_result[:exit_code] == 0
+          installed_deb_ver = installed_version(check_result[:stdout])
+          if installed_deb_ver == pkg_version
+            # Real install_deb's already-installed exit: the deps install
+            # produced no retvals, so exit_json(changed=False,
+            # stdout='', stderr='', diff='') - diff is the EMPTY STRING,
+            # not a dict (round-99500x apt_real_deb_again capture), and
+            # there is no msg key.
+            return PluginResult.new(changed: false, failed: false,
+              stdout: "", stderr: "", diff: JSON::Any.new(""),
+              key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+          end
         end
       end
 
-      if pkg_name && pkg_version
-        check_result = remote_exec("dpkg -l #{shell_single_quote(pkg_name)} 2>/dev/null | grep '^ii'")
-        if check_result[:exit_code] == 0 && installed_version(check_result[:stdout]) == pkg_version
-          # Real install_deb's already-installed exit: the deps install
-          # produced no retvals, so exit_json(changed=False,
-          # stdout='', stderr='', diff='') - diff is the EMPTY STRING,
-          # not a dict (round-99500x apt_real_deb_again capture), and
-          # there is no msg key.
-          return PluginResult.new(changed: false, failed: false,
-            stdout: "", stderr: "", diff: JSON::Any.new(""),
-            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+      # Real install_deb, past the same-version skip, runs pkg.check()
+      # before anything is installed. Its version gate fires first: a deb
+      # OLDER than the installed version fails with "A later version is
+      # already installed" (a plain fail_json(msg=...), the round-1100002
+      # apt_fail_deb capture's [failed, msg, changed, exception] shape)
+      # unless force: or allow_downgrade: releases it - allow_downgrade
+      # by explicitly passing on that one failure string. The comparison
+      # goes through dpkg's own Debian-version ordering (not a
+      # reimplemented comparator) and only when the name is installed at
+      # a DIFFERENT version than the deb carries.
+      if installed_deb_ver && pkg_version && installed_deb_ver != pkg_version &&
+         !@force && !@allow_downgrade &&
+         dpkg_version_compares([{installed_deb_ver.not_nil!, ">", pkg_version.not_nil!}])[0]
+        return PluginResult.new(changed: false, failed: true,
+          msg: "A later version is already installed")
+      end
+
+      # DebPackage.check()'s dependency half, CLI-mirrored: the .deb's
+      # own Depends/Pre-Depends are resolved BEFORE the dpkg run - missing
+      # dependencies go through the normal install() machinery first,
+      # because `dpkg -i` itself cannot resolve dependencies and dies on
+      # "dependency problems prevent configuration" (round-1200xxx:
+      # appsilon.r_language, JonasPammer/kso512.checkmk_server,
+      # Oefenweb.rstudio_server all failed exactly there while real
+      # ansible-playbook pre-installed the missing deps and succeeded).
+      # The or-group rules mirror python-apt: a group is satisfied when
+      # any alternative is installed at a constraint-satisfying version
+      # (unversioned deps are satisfied by the bare installed name);
+      # otherwise the first alternative apt can actually install wins -
+      # unknown names and purely virtual ones ("Candidate: (none)") are
+      # skipped the way _satisfy_or_group skips them, and a group with no
+      # selectable alternative fails check() with "Dependency is not
+      # satisfiable: <or-group>". (python-apt additionally resolves a
+      # virtual dep through a lone provider and honors Provides:-based
+      # satisfaction for unversioned deps - neither is reachable without
+      # an in-process apt cache here; those fall through to apt-get's own
+      # handling, which errors where python-apt would have auto-picked.)
+      deps_to_install = [] of String
+      dep_groups = parse_dep_string(fields["Depends"]?) + parse_dep_string(fields["Pre-Depends"]?)
+      unless dep_groups.empty?
+        dep_alt_names = Set(String).new
+        dep_groups.each do |alternatives|
+          alternatives.each { |alternative| dep_alt_names << alternative.name }
+        end
+        statuses = dpkg_installed_status(dep_alt_names.to_a.map(&.split(":").first))
+        # Every version constraint an INSTALLED alternative can answer,
+        # in one batched dpkg --compare-versions round trip.
+        compare_pairs = [] of {String, String, String}
+        sat_pair_group = [] of Int32
+        dep_groups.each_with_index do |alternatives, group_idx|
+          alternatives.each do |alternative|
+            next unless alternative.oper && alternative.version
+            st = statuses[alternative.name.split(":").first]?
+            next unless st && st[0] && st[1]
+            compare_pairs << {st[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+            sat_pair_group << group_idx
+          end
+        end
+        sat_answers = dpkg_version_compares(compare_pairs)
+
+        group_satisfied = Array(Bool).new(dep_groups.size, false)
+        sat_answers.each_with_index do |satisfied, i|
+          group_satisfied[sat_pair_group[i]] = true if satisfied
+        end
+        unsatisfied = [] of Array(DebDepAlternative)
+        dep_groups.each_with_index do |alternatives, group_idx|
+          next if group_satisfied[group_idx]
+          # an installed alternative with NO version constraint satisfies
+          # its group outright (python-apt's unversioned installed check)
+          group_satisfied[group_idx] = alternatives.any? do |alternative|
+            next false if alternative.oper || alternative.version
+            st = statuses[alternative.name.split(":").first]?
+            st && st[0]
+          end
+          unsatisfied << alternatives unless group_satisfied[group_idx]
+        end
+
+        # One apt-cache policy round trip per batch for every alternative
+        # of the unsatisfied groups (see #apt_candidates_batch).
+        unsatisfied_alt_names = Set(String).new
+        unsatisfied.each do |alternatives|
+          alternatives.each { |alternative| unsatisfied_alt_names << alternative.name }
+        end
+        candidates = apt_candidates_batch(unsatisfied_alt_names.to_a)
+        res_pairs = [] of {String, String, String}
+        res_pair_slot = Hash({Int32, Int32}, Int32).new
+        unsatisfied.each_with_index do |alternatives, group_idx|
+          alternatives.each_with_index do |alternative, alt_idx|
+            res = candidates[alternative.name]?
+            next unless res && res[0] && res[1]
+            next unless alternative.oper && alternative.version
+            res_pair_slot[{group_idx, alt_idx}] = res_pairs.size
+            res_pairs << {res[1].not_nil!, alternative.oper.not_nil!, alternative.version.not_nil!}
+          end
+        end
+        res_answers = dpkg_version_compares(res_pairs)
+
+        unsatisfied.each_with_index do |alternatives, group_idx|
+          pick : String? = nil
+          alternatives.each_with_index do |alternative, alt_idx|
+            res = candidates[alternative.name]?
+            next unless res && res[0] && res[1]
+            if pi = res_pair_slot[{group_idx, alt_idx}]?
+              next unless res_answers[pi]
+            end
+            pick = alternative.name
+            break
+          end
+          unless pick
+            # DebPackage._satisfy_or_group's own failure: the ONLY
+            # fail_json check() produces before install() ever runs -
+            # the plain [failed, msg, changed, exception] shape, with the
+            # msg carrying the trailing "\n" of the gettext string.
+            return PluginResult.new(changed: false, failed: true,
+              msg: "Dependency is not satisfiable: #{dep_or_str(alternatives)}\n")
+          end
+          deps_to_install << pick
+        end
+      end
+
+      # Real install_deb's Recommends handling, verbatim INCLUDING its
+      # wart: with install_recommends explicitly true the raw Recommends
+      # field is split on WHITESPACE and every token joins the deps list
+      # ("a, b (>= 1)" becomes the specs "a," "b" "(>=" "1)") - upstream
+      # hands those to install() unfiltered, where a junk token fails
+      # "No package matching '(>=' is available" like any other unknown
+      # name. An unset install_recommends (None) is falsy upstream and
+      # skips the field entirely.
+      if @install_recommends == true && (rec = fields["Recommends"]?)
+        deps_to_install.concat(rec.split)
+      end
+
+      # The deps install through install()'s own machinery, then - only
+      # once it succeeded - the dpkg run, exactly install_deb's sequence.
+      # Its failure retvals (msg/stdout/stderr/rc, NO cache keys -
+      # install_deb exits before main()'s cache-key append) are re-failed
+      # as-is: fail_json(**retvals) captures msg as its named parameter
+      # and re-adds it AFTER kwargs, so the registered order is
+      # [stdout, stderr, rc, failed, msg, *_lines] - the same kwargs rule
+      # that puts msg after failed in the round-99500x
+      # apt_fail_install_dpkgopt capture (where main()'s cache keys sit
+      # between rc and failed).
+      deps_stdout = ""
+      deps_stderr = ""
+      deps_diff_prepared : String? = nil
+      deps_had_retvals = false
+      unless deps_to_install.empty?
+        deps_result = handle_install(deps_to_install, messages, changed, lock_timeout, deb_deps: true)
+        if deps_result.failed?
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: deps_result.msg,
+            stdout: deps_result.extra["stdout"]?.try(&.as_s) || "",
+            stderr: deps_result.extra["stderr"]?.try(&.as_s) || "",
+            rc: deps_result.extra["rc"]?.try(&.as_i) || 1,
+            key_order: ["stdout", "stderr", "rc", "failed", "msg", "stdout_lines", "stderr_lines"]
+          )
+        end
+        if deps_result.extra.has_key?("stdout")
+          # install() ran apt-get: retvals = {changed, stdout, stderr,
+          # diff}. The all-deps-already-installed case produces the bare
+          # {changed: False} retvals with no stdout at all, which merges
+          # below exactly like an empty retvals dict.
+          deps_stdout = deps_result.extra["stdout"].as_s
+          deps_stderr = deps_result.extra["stderr"].as_s
+          deps_had_retvals = true
+          deps_diff_prepared = deps_result.diff.try(&.as_h?).try(&.["prepared"]?).try(&.as_s)
         end
       end
 
@@ -1219,15 +1399,31 @@ module Krikri
             changed: false,
             failed: true,
             msg: "#{dpkg_cmd} failed",
-            stdout: deb_result[:stdout],
-            stderr: deb_result[:stderr],
+            stdout: deps_stdout + deb_result[:stdout],
+            stderr: deps_stderr + deb_result[:stderr],
             key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
           )
         end
         # Real install_deb's success exit: exit_json(changed=True,
-        # stdout=stdout, stderr=stderr, diff=diff) - changed is
-        # unconditionally true once the dpkg command ran, and diff is
-        # parse_diff(out) with NO diff-mode guard.
+        # stdout=stdout, stderr=stderr, diff=diff) with the deps install's
+        # retvals merged in - stdout/stderr CONCATENATED (deps output
+        # first), and diff following install_deb's own merge rule: when
+        # retvals carried a diff (deps reached apt-get), its `prepared`
+        # grows by the dpkg output in diff mode and the diff stays the
+        # bare {} retvals carried in non-diff mode; with no deps retvals
+        # at all, diff is parse_diff(dpkg out) with NO diff-mode guard.
+        if deps_had_retvals
+          merged_diff = if prepared = deps_diff_prepared
+                          JSON.parse({"prepared" => "#{prepared}\n\n#{deb_result[:stdout]}"}.to_json)
+                        else
+                          JSON.parse("{}")
+                        end
+          return PluginResult.new(changed: true, failed: false,
+            stdout: deps_stdout + deb_result[:stdout],
+            stderr: deps_stderr + deb_result[:stderr],
+            diff: merged_diff,
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
+        end
         return PluginResult.new(changed: true, failed: false,
           stdout: deb_result[:stdout],
           stderr: deb_result[:stderr],
@@ -1235,30 +1431,15 @@ module Krikri
           key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
       end
 
-      # dpkg -i cannot resolve the .deb's own dependencies - real
-      # pre-installs them through python-apt's missing_deps and its own
-      # install() first. Without a dependency resolver here, fall back
-      # to `apt-get install <deb>`, which resolves them (its output then
-      # differs from Ansible's deps-then-dpkg concatenation - a known
-      # residual); when that also fails, Ansible's dpkg failure shape is
-      # what a no-dependency .deb (e.g. a failing preinst script)
-      # produces, so it is what gets registered.
-      fallback_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive apt-get -y #{expand_dpkg_options} install #{shell_single_quote(path)}".squeeze(' '), lock_timeout, ->remote_exec(String)) }
-      if fallback_result[:exit_code] == 0
-        unless apt_summary_had_no_effect?(fallback_result[:stdout])
-          return PluginResult.new(changed: true, failed: false,
-            stdout: fallback_result[:stdout],
-            stderr: fallback_result[:stderr],
-            diff: @diff_mode ? apt_install_diff(fallback_result[:stdout]) : JSON.parse("{}"),
-            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"])
-        end
-      end
+      # dpkg failed after the deps install succeeded (or with no deps at
+      # all, e.g. a failing preinst script): Ansible's "<cmd> failed"
+      # shape over the same merged stdout/stderr.
       PluginResult.new(
         changed: false,
         failed: true,
         msg: "#{dpkg_cmd} failed",
-        stdout: deb_result[:stdout],
-        stderr: deb_result[:stderr],
+        stdout: deps_stdout + deb_result[:stdout],
+        stderr: deps_stderr + deb_result[:stderr],
         key_order: ["stdout", "stderr", "failed", "msg", "stdout_lines", "stderr_lines"]
       )
     end
@@ -1269,12 +1450,131 @@ module Krikri
       PluginResult.new(changed: false, failed: true, msg: "Unable to install package: #{detail}")
     end
 
+    # Parses the control-field dump `dpkg-deb -f <deb> F1 F2 ...` prints
+    # ("Name: value" lines; folded continuation lines start with
+    # whitespace and join their field with a single space) into a
+    # name->value map. A requested-but-absent field simply has no entry.
+    private def parse_deb_control_fields(stdout : String) : Hash(String, String)
+      fields = {} of String => String
+      current : String? = nil
+      stdout.each_line do |line|
+        if (line.starts_with?(' ') || line.starts_with?('\t')) && (cur = current)
+          fields[cur] = "#{fields[cur]} #{line.strip}"
+        elsif (m = line.match(/^([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)$/))
+          current = m[1]
+          fields[current.not_nil!] = m[2].strip
+        end
+      end
+      fields
+    end
+
+    # One alternative of a dependency or-group: the bare package name
+    # (any :arch suffix kept verbatim) plus its optional version
+    # constraint operands. Architecture lists and profile restrictions
+    # are parsed past and never consulted, matching what this CLI-level
+    # mirror can act on.
+    private struct DebDepAlternative
+      getter name : String
+      getter oper : String?
+      getter version : String?
+
+      def initialize(@name, @oper, @version)
+      end
+    end
+
+    # apt_pkg.parse_depends's structure: comma-separated groups, each a
+    # '|' list of alternatives, each with an optional "(op version)"
+    # constraint. Empty segments drop out (a trailing comma or empty
+    # group is not a dependency).
+    private def parse_dep_string(value : String?) : Array(Array(DebDepAlternative))
+      return [] of Array(DebDepAlternative) unless value
+      groups = [] of Array(DebDepAlternative)
+      value.split(",").each do |group|
+        alts = group.split("|").compact_map do |raw|
+          s = raw.strip
+          next nil if s.empty?
+          name_match = s.match(/^[^\s(\[<]+/)
+          next nil unless name_match
+          oper : String? = nil
+          version : String? = nil
+          if cm = s.match(/\((<<|<=|<|>>|>=|>|=)\s+([^)]+)\)/)
+            oper = cm[1]
+            version = cm[2].strip
+          end
+          DebDepAlternative.new(name_match[0], oper, version)
+        end
+        groups << alts unless alts.empty?
+      end
+      groups
+    end
+
+    # DebPackage._satisfy_or_group's failure-string serialization of one
+    # or-group: "name" or "name (oper version)", alternatives joined by
+    # "|".
+    private def dep_or_str(alternatives : Array(DebDepAlternative)) : String
+      alternatives.map do |alternative|
+        alternative.oper && alternative.version ? "#{alternative.name} (#{alternative.oper} #{alternative.version})" : alternative.name
+      end.join("|")
+    end
+
+    # One batched `dpkg --compare-versions` round trip for every
+    # constraint/version comparison a deb: install needs (dpkg's own
+    # Debian version ordering - epoch, tilde, letter-vs-number - is not
+    # reimplemented here). Each pair evaluates
+    # `dpkg --compare-versions 'a' '<op>' 'b'` and answers on its own
+    # "K<n>=Y/N" marker line; a pair whose dpkg invocation errors answers
+    # false (the && || chain still emits the marker).
+    private def dpkg_version_compares(pairs : Array({String, String, String})) : Array(Bool)
+      return [] of Bool if pairs.empty?
+      cmd = pairs.map_with_index do |(a, op, b), i|
+        "dpkg --compare-versions #{shell_single_quote(a)} #{shell_single_quote(op)} #{shell_single_quote(b)} && echo 'K#{i}=Y' || echo 'K#{i}=N'"
+      end.join("; ")
+      result = remote_exec(cmd)
+      answers = Array(Bool).new(pairs.size, false)
+      result[:stdout].each_line do |line|
+        if (m = line.match(/^K(\d+)=(Y|N)\s*$/)) && (idx = m[1].to_i) < pairs.size
+          answers[idx] = m[2] == "Y"
+        end
+      end
+      answers
+    end
+
+    # Batched form of #apt_candidate for the deb: dependency resolution:
+    # one apt-cache policy round trip for a whole list of names, with a
+    # marker line between probes. Same per-name semantics as its
+    # single-name sibling: no stanza at all -> unknown (false, nil),
+    # "Candidate: (none)"/empty -> known but purely virtual (true, nil),
+    # otherwise (true, candidate version).
+    private def apt_candidates_batch(names : Array(String)) : Hash(String, {Bool, String?})
+      result = {} of String => {Bool, String?}
+      return result if names.empty?
+      probes = names.map do |name|
+        "echo #{shell_single_quote("==KRIKRI-POLICY== #{name}")}; apt-cache policy #{shell_single_quote(name)} 2>/dev/null"
+      end.join("; ")
+      probe = remote_exec(probes)
+      current : String? = nil
+      probe[:stdout].each_line do |line|
+        if line.starts_with?("==KRIKRI-POLICY== ")
+          current = line.lchop("==KRIKRI-POLICY== ").strip
+          result[current] = {false, nil}
+        elsif (cur = current) && line.strip.starts_with?("Candidate:")
+          version = line.split("Candidate:")[1]?.try(&.strip) || ""
+          result[cur] = {true, version.empty? || version == "(none)" ? nil : version}
+        end
+      end
+      result
+    end
+
     # Handle installing packages. build_dep: is real apt.py's
     # state=build-dep (install() with build_dep=True: every spec goes to
     # `apt-get build-dep` verbatim, no installed-status short-circuit);
     # fixed_state: is state=fixed (the normal install path plus
-    # --fix-broken).
-    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false) : PluginResult
+    # --fix-broken); deb_deps: is install_deb()'s dependency pre-install
+    # call, which passes NONE of force/autoremove/only_upgrade/
+    # default_release to install() (its own kwargs fix them at their
+    # defaults) while fail_on_autoremove and the allow_* flags still
+    # travel through.
+    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false, deb_deps : Bool = false) : PluginResult
       # An empty package name (from `name: ""` or an empty comma
       # segment - parse_package_names keeps those now) is a hard failure
       # in Ansible's apt module, same as any other name missing
@@ -1400,14 +1700,14 @@ module Krikri
         # build-dep %s").
         flags = [
           real_dpkg_options(lock_timeout),
-          @only_upgrade ? "--only-upgrade" : "",
+          (!deb_deps && @only_upgrade) ? "--only-upgrade" : "",
           fixed_state ? "--fix-broken" : "",
-          @force ? "--force-yes" : "",
+          (!deb_deps && @force) ? "--force-yes" : "",
         ] of String
-        flags << (true?(@params["autoremove"]?) ? "--auto-remove" : "") unless build_dep
+        flags << (!deb_deps && true?(@params["autoremove"]?) ? "--auto-remove" : "") unless build_dep
         flags << (@fail_on_autoremove ? "--no-remove" : "")
         flags << (@check_mode ? "--simulate" : "")
-        install_cmd = "#{apt_get_bin} -y #{flags.join(" ")} #{build_dep ? "build-dep" : "install"} #{pkg_list}#{apt_install_trailing_flags}"
+        install_cmd = "#{apt_get_bin} -y #{flags.join(" ")} #{build_dep ? "build-dep" : "install"} #{pkg_list}#{apt_install_trailing_flags(!deb_deps)}"
 
         # Real sets DEBIAN_FRONTEND (and DEBIAN_PRIORITY/LC_*) via
         # run_command_environ_update, NOT in the command string - the
@@ -1885,13 +2185,16 @@ module Krikri
     end
 
     # The options Ansible's install() appends AFTER the package
-    # list, in its own construction order: -t <default_release>, the
+    # list, in its own construction order: -t <default_release> (skipped
+    # when include_default_release is false - install_deb()'s dependency
+    # pre-install call passes install() no default_release, so even a
+    # `default_release:` task param must not leak a -t into it), the
     # APT::Install-Recommends override (only when install_recommends: is
     # explicitly set - nil keeps apt's own default), then the three
     # --allow-* flags.
-    private def apt_install_trailing_flags : String
+    private def apt_install_trailing_flags(include_default_release : Bool = true) : String
       flags = [] of String
-      if release = @default_release
+      if include_default_release && (release = @default_release)
         flags << "-t #{shell_single_quote(release)}"
       end
       # `!= nil` (not a bare truthiness check) - false is falsy in
