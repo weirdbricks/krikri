@@ -176,8 +176,7 @@ module Krikri
     # argument_spec types it as list) - a real YAML list arrives here as
     # a JSON-array-shaped string after task-param substitution, so parse
     # it with the same convention as unarchive.cr's parse_list_param:
-    # JSON array first, then comma-split for a plain scalar (real
-    # Ansible's check_type_list also accepts a comma-separated string
+    # JSON array first, then comma-split for a plain scalar (Ansible's check_type_list also accepts a comma-separated string
     # for backward compat). ONLY valid JSON - never a Python-repr repair
     # pass: a value that merely LOOKS like a container is a plain STRING
     # in ansible-core (live-verified vs ansible-playbook 2.19.11,

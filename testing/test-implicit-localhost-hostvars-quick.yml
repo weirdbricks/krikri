@@ -1,7 +1,7 @@
 # Implicit-localhost hostvars regression (round900712
 # gzm55.require_implicity_localhost): the inventory here (passed explicitly
 # by the spec - inventory-hostvars-local.ini) defines NO localhost host at
-# all, yet real Ansible still exposes a synthesized implicit-localhost entry
+# all, yet Ansible still exposes a synthesized implicit-localhost entry
 # via hostvars['localhost'] from a play targeting a completely different
 # machine. The assertions mirror the real role's own assert (no
 # inventory_file on the implicit entry) plus the minimal magic var set

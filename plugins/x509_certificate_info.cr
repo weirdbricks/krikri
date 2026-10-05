@@ -88,7 +88,7 @@ module Krikri
     # required_one_of -> types -> choices -> mutually_exclusive ->
     # unsupported (deferred last). Types are str/path/dict here; the
     # dict-typed valid_at's elements each must be a string (a check the
-    # real module runs right before parsing, failing with the same
+    # Ansible module runs right before parsing, failing with the same
     # wording).
     private def validate_arguments : PluginResult?
       if @params["path"]?.nil? && @params["content"]?.nil?

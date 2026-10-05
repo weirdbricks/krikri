@@ -167,7 +167,7 @@ describe "yum_repository plugin" do
     content.must_include("sslverify = 0")
   end
 
-  # Real argument_spec aliases are resolved to the canonical key and the
+  # Ansible's argument_spec aliases are resolved to the canonical key and the
   # alias spelling never lands in the file as its own key (Ansible
   # pops aliases from the params dict before its write loop).
   it "resolves the excludepkgs alias to exclude" do
@@ -308,7 +308,7 @@ describe "yum_repository plugin" do
     )
   end
 
-  # A present alias beats the canonical name when both are given - real
+  # A present alias beats the canonical name when both are given -
   # ansible-core's _handle_aliases overwrite order (same convention stat.cr
   # verified against Ansible).
   it "lets a present alias win over the canonical name when both are given" do

@@ -14,7 +14,7 @@
 #   maven-metadata-local.xml for file:// repositories (the plugin used
 #   to read maven-metadata.xml and never find it)
 # - dest as a directory gets the generated filename; re-run is
-#   idempotent; state=absent is a documented no-op (the real module
+#   idempotent; state=absent is a documented no-op (the Ansible module
 #   ignores it and still downloads)
 - hosts: all
   gather_facts: false

@@ -8,7 +8,7 @@ require "../../src/krikri/conditional_evaluator"
 # attempted), never silently evaluate as if it were a real test. There
 # is a `list` FILTER and an `is iterable` test, but NO `is list` TEST.
 # Found via sunfoxcz.dkim (round 74502): its first `fail:` task's when:
-# list is [dkim_domains is not defined, dkim_domains is not list]; real
+# list is [dkim_domains is not defined, dkim_domains is not list];
 # Ansible fails immediately with "Syntax error in expression: No test
 # named 'list'.", while here the first clause was already False, the
 # short-circuit never reached the invalid clause, and the role ran 6

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs one Galaxy role against a fresh Kata pair: real ansible-playbook on
+# Runs one Galaxy role against a fresh Kata pair: ansible-playbook on
 # host A, krikri-playbook on host B, cold + warm on each, PLAY RECAP diffed.
 #
 #   ./run_role.sh <role> <octetA> <octetB> <results_dir>

@@ -20,8 +20,7 @@ module Krikri
 
       # The host whose hostvars entry the CURRENT resolve is walking
       # within, when it descended through `hostvars[<host>]` - values
-      # fetched inside that entry re-render in THAT host's scope (real
-      # Ansible's HostVarsVars templar), not the reading host's. Scoped
+      # fetched inside that entry re-render in THAT host's scope (Ansible's HostVarsVars templar), not the reading host's. Scoped
       # per public entry point (save/clear/restore), so one lookup
       # object reused across expressions never leaks one expression's
       # origin into the next; sub-expression resolutions (bracket keys,
@@ -706,7 +705,7 @@ module Krikri
                     @vars[arg]?.try(&.as_a?)
                   end
           return nil unless items
-          # Each list element is re-rendered before joining - real
+          # Each list element is re-rendered before joining -
           # Ansible's recursive re-templating applies per-element too, not
           # just to the list variable itself. Oefenweb.fail2ban's own
           # fail2ban_dependencies has a templated 2nd element (a ternary

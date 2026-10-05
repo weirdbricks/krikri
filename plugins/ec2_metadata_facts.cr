@@ -27,8 +27,7 @@ module Krikri
   # dynamic/instance-identity/document's own "accountId" JSON key
   # becomes ansible_ec2_instance_identity_document_accountid).
   #
-  # Not implemented: gzip/zlib-compressed user-data decoding (real
-  # Ansible's own decode_user_data - an edge case for cloud-init
+  # Not implemented: gzip/zlib-compressed user-data decoding (Ansible's own decode_user_data - an edge case for cloud-init
   # payloads compressed at upload time, not the common case).
   class Ec2MetadataFactsPlugin < BasePlugin
     TOKEN_URI = "http://169.254.169.254/latest/api/token"
@@ -41,7 +40,7 @@ module Krikri
     class FetchError < Exception; end
 
     def execute : PluginResult
-      # Real module: an out-of-range (or non-numeric - its AnsibleModule
+      # Ansible module: an out-of-range (or non-numeric - its AnsibleModule
       # int-type conversion rejects that too) metadata_token_ttl_seconds
       # fails with this exact message BEFORE any network I/O.
       ttl = (@params["metadata_token_ttl_seconds"]? || "60").to_i?

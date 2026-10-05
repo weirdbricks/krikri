@@ -1,5 +1,5 @@
 # docker_network_info edge cases. NO docker daemon inside either
-# harness container: real AnsibleDockerClient eagerly pings the daemon
+# harness container: AnsibleDockerClient eagerly pings the daemon
 # at module init, so the valid-args case fails there (failed=True
 # changed=False) and krikri reaches the same failed=/changed= via its
 # own connection attempt - compared failed=/changed= only. The

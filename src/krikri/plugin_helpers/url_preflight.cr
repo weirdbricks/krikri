@@ -74,7 +74,7 @@ module Krikri
 
       # The `ciphers` is the OpenSSL cipher-list string the real params join
       # into ("all ciphers are joined in order with ':'", get_url's own
-      # docs) - nil or empty means "don't set them", in which case real
+      # docs) - nil or empty means "don't set them", in which case
       # Ansible skips set_ciphers entirely.
       def self.check(
         url : String,
@@ -216,7 +216,7 @@ module Krikri
 
       # Ansible runs the module under the interpreter it discovered
       # for the host; aws_module_args.cr's boto3 gate asks python3 for
-      # its own sys.executable the same way, and that is the path real
+      # its own sys.executable the same way, and that is the path
       # Ansible's message quotes.
       private def self.python_interpreter : String?
         ["python3", "python"].each do |name|

@@ -151,7 +151,7 @@
         dat_urlencoded: "{{ 'a b&c' | urlencode }}"
         dat_split_list: "{{ 'x:y:z' | split(':') }}"
 
-    - name: Assert expression results match real Ansible exactly
+    - name: Assert expression results match Ansible exactly
       ansible.builtin.assert:
         that:
           - dat_math == 20

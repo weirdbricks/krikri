@@ -12,7 +12,7 @@ require "../minitest_helper"
 # counter directly even when the looped caller had deferred the stats to
 # it: konstruktoid.hardening's looped "Ensure restrict compilers access
 # via DNF post-transaction-actions Plugin" (when:-gated on RedHat, so
-# every item skips on a Debian host) recapped skipped=110 where real
+# every item skips on a Debian host) recapped skipped=110 where
 # ansible-playbook said 101 (rounds 999040/999050) - the extra 9 being
 # exactly this task's loop iterations.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

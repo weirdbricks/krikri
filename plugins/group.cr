@@ -16,7 +16,7 @@ module Krikri
   #     (passed to lgroupadd on the local path too - Ansible emits it
   #     there unconditionally and libuser's lgroupadd accepts it)
   #   force (optional, default no): groupdel's -f flag - delete the group
-  #     even when it is some user's primary group. DELETE-only: real
+  #     even when it is some user's primary group. DELETE-only:
   #     ansible.builtin.group's Linux path never passes anything to
   #     groupadd/groupmod for force (its documented meaning is "delete a
   #     group even if it is the primary group of a user", live-verified:
@@ -30,8 +30,7 @@ module Krikri
   #     gid: whenever non_unique: is given (required_if - live-verified
   #     failure text replicated below).
   #   gid_min/gid_max (optional): groupadd's -K GID_MIN=.../-K GID_MAX=...
-  #     - constrains the auto-assigned gid range at CREATION only (real
-  #     Ansible's group_mod branch never emits them, live-verified).
+  #     - constrains the auto-assigned gid range at CREATION only (Ansible's group_mod branch never emits them, live-verified).
   #     Mutually exclusive with local: (Ansible fails before anything
   #     runs - live-verified texts below).
   #   local (optional, default no): operate on the local group files only,
@@ -120,7 +119,7 @@ module Krikri
     # own group_exists() reads /etc/group directly (its own comment: the
     # grp module "does not distinguish between local and directory
     # accounts"), because getent would happily report a directory/SSSD/
-    # LDAP group that the libuser tools cannot touch. Fails with real
+    # LDAP group that the libuser tools cannot touch. Fails with
     # Ansible's own message when the file can't be read at all.
     private def lookup(name : String) : PluginHelpers::GroupState::Group?
       if local?

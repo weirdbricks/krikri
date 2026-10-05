@@ -76,7 +76,7 @@
     - ansible.builtin.debug:
         msg: "C7 failed={{ c7.failed }} changed={{ c7.changed }}"
 
-    - name: "C8 both minute and special_time given (real ansible rejects)"
+    - name: "C8 both minute and special_time given (Ansible rejects)"
       ansible.builtin.cron:
         name: krikri-diff-c
         minute: "5"

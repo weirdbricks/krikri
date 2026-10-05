@@ -203,7 +203,7 @@ module Krikri
       expanded_creates = expand_tilde(creates)
       return nil unless remote_file_exists?(expanded_creates) || remote_dir_exists?(expanded_creates)
 
-      # skipped: true - finish_single_task turns this into real
+      # skipped: true - finish_single_task turns this into
       # ansible's "skipping: [host]" display + skipped= accounting.
       # Without it the skip displayed as `ok:` with the message as
       # body and counted ok=1, off-by-one vs Ansible's recap on
@@ -742,7 +742,7 @@ module Krikri
       # A tar built via `tar czf archive.tar.gz -C src .` (archiving the
       # CURRENT directory) lists a leading self-referential "./" member
       # for the archived directory itself - `Path[dest, "./"]` normalizes
-      # right back to dest. This is deliberately NOT filtered out: real
+      # right back to dest. This is deliberately NOT filtered out:
       # Ansible (live-verified against ansible-core 2.19.11) DOES apply
       # a requested mode:/owner: to dest itself in this shape - dest at
       # 700, an archive whose own "./" entry records 775, and a task
@@ -778,7 +778,7 @@ module Krikri
         if owner = @params["owner"]?
           # -h: chown defaults to dereferencing symlinks, which would
           # let an archive's symlink member redirect the ownership
-          # change onto any file it points at (outside dest) - real
+          # change onto any file it points at (outside dest) -
           # Ansible's set_owner_if_different always uses os.lchown,
           # never the dereferencing form.
           result = remote_exec("find #{member_args} -exec chown -h #{shell_single_quote(owner)} {} +")
@@ -787,8 +787,7 @@ module Krikri
           end
         end
         if group = @params["group"]?
-          # -h: same symlink-dereference hazard as chown above (real
-          # Ansible's set_group_if_different uses os.lchown too).
+          # -h: same symlink-dereference hazard as chown above (Ansible's set_group_if_different uses os.lchown too).
           result = remote_exec("find #{member_args} -exec chgrp -h #{shell_single_quote(group)} {} +")
           if result[:exit_code] != 0
             return PluginResult.new(changed: true, failed: true, msg: "Failed to set group under #{dest}: #{result[:stderr]}")

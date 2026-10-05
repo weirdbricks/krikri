@@ -13,7 +13,7 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       # relying on that Unix-socket-by-default behavior (peer auth,
       # matching the task's own become_user: postgres) - forcing TCP
       # instead hit real pg_hba.conf's `ident` gate for TCP connections
-      # (no ident daemon running) and failed outright, while real
+      # (no ident daemon running) and failed outright, while
       # Ansible connected fine via the socket's `peer` auth.
       Krikri::PluginHelpers::PostgresqlConnection.build_uri.must_equal(
         "postgres:/postgres?host=%2Fvar%2Frun%2Fpostgresql"

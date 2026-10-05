@@ -388,7 +388,7 @@ module Krikri
       task.role_path.try { |role_dir| roots << role_dir }
       # A relative include_vars: path in a role's own top-level tasks/
       # main.yml (not reached via include_tasks:, so include_file_dir
-      # above is nil) resolves against that file's own directory, real
+      # above is nil) resolves against that file's own directory,
       # Ansible's usual "relative to the file it's written in" rule -
       # jnv.debian-backports's own `include_vars: "../defaults/{{
       # ansible_distribution }}.yml"` needs roles/<role>/tasks/ as a
@@ -520,8 +520,7 @@ module Krikri
       # a file literally named "undefined" (the old bug: the engine's
       # own "undefined" sentinel string leaking through as a filename).
       begin
-        # Loop-source resolution sees the alias-free snapshot (real
-        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        # Loop-source resolution sees the alias-free snapshot (Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
         loop_vars_context = loop_source_vars_context(task, host, vars_context)
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
           task.loop_items || resolve_loop_template(task, loop_vars_context) || resolve_loop_nested(task, loop_vars_context, host.name) || resolve_loop_together(task, loop_vars_context, host.name) || resolve_fileglob(task, host, loop_vars_context) || resolve_loop_lookup(task, loop_vars_context)
@@ -560,7 +559,7 @@ module Krikri
         rendered_items = flatten_with_items_one_level(rendered_items) if task.loop_items_needs_flatten?
         rendered_items.each_with_index do |item, loop_index|
           item_context = vars_context.dup
-          # loop_control: { loop_var: some_name } REPLACES "item" - real
+          # loop_control: { loop_var: some_name } REPLACES "item" -
           # ansible-core binds the item ONLY under the custom name
           # (`item | default('x')` reads unset alongside a loop_var;
           # live-verified against 2.19.11). buluma.confluence's own
@@ -719,7 +718,7 @@ module Krikri
           # `skip: true` (parsed into loop_first_found_skip) is the only
           # thing that makes Ansible tolerate a miss. Found live
           # benchmarking robertdebock.release on Rocky 9.6: no `CentOS-9.
-          # yml`/`Rocky-9.yml` vars file exists in the role at all - real
+          # yml`/`Rocky-9.yml` vars file exists in the role at all -
           # ansible-playbook correctly fails at "load release_packages";
           # this previously always skipped instead, silently continuing
           # past a role whose OS-specific package list was never loaded.
@@ -733,7 +732,7 @@ module Krikri
           return
         end
         vars_context["item"] = items.first unless task.loop_var
-        # loop_control: { loop_var: some_name } REPLACES "item" - real
+        # loop_control: { loop_var: some_name } REPLACES "item" -
         # ansible-core binds the item ONLY under the custom name (live-
         # verified against 2.19.11). This dedicated with_first_found:
         # path previously only ever bound "item"; arillso.*'s
@@ -764,7 +763,7 @@ module Krikri
         # live against 2.19.4 with a minimal repro), it does not render the
         # path to the literal text "undefined" and fail with "file not
         # found: undefined" (the old behavior, gantsign.oh-my-zsh round
-        # 192's cosmetic-differences entry). Cause text only - real
+        # 192's cosmetic-differences entry). Cause text only -
         # Ansible's own "Finalization of task args ... failed: Error while
         # resolving value for '_raw_params':" wrapper is the same 2.19
         # presentation layer every other module's undefined-arg failure
@@ -994,7 +993,7 @@ module Krikri
     # roots (role vars/, the role root above it, the including file's
     # directory, the role root, the role's tasks/, the process cwd) but
     # accepts a path that EXISTS at the candidate (the caller then
-    # distinguishes "missing" from "exists but not a directory", real
+    # distinguishes "missing" from "exists but not a directory",
     # Ansible's own two distinct error messages).
     private def resolve_include_vars_dir_path(task : Task, candidate : String) : String?
       return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
@@ -1085,7 +1084,7 @@ module Krikri
     private def finish_include_vars_failure(task : Task, host : Host, message : String) : Nil
       # Ansible's own failed_when: override applies to include_vars:'s
       # OWN file-not-found failure exactly as to any module result - the
-      # include_vars action's failure is an ordinary task result dict real
+      # include_vars action's failure is an ordinary task result dict
       # Ansible runs through the same failed_when: evaluation as everything
       # else. Verified live against ansible-core 2.19: `include_vars: {file:
       # definitely_does_not_exist.yml}, failed_when: false` shows the task as
@@ -1122,7 +1121,7 @@ module Krikri
       end
 
       display_include_vars_failure(task, host, message)
-      # ignore_errors: on a failed include_vars: - matching real
+      # ignore_errors: on a failed include_vars: - matching
       # Ansible's own strategy/__init__.py, which counts this as `ok`
       # AND `ignored`, never `failed`, and never halts the host. Found
       # via CyVerse-Ansible.ez's own "include variables ..., if error,
@@ -1547,13 +1546,12 @@ module Krikri
       #
       # resolve_loop_items_or_raise: round174 matrix scenario 12a - a
       # genuinely undefined loop: source must fail this include_tasks:
-      # task itself, BEFORE the included file is ever entered - real
+      # task itself, BEFORE the included file is ever entered -
       # Ansible never reaches the included task at all. swallow_when_error
       # below is the same task-level (no item_label) failure shape run_
       # include_tasks_once's own WhenEvaluationError rescue uses.
       begin
-        # Loop-source resolution sees the alias-free snapshot (real
-        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        # Loop-source resolution sees the alias-free snapshot (Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
         loop_vars_context = loop_source_vars_context(task, host, base_vars_context)
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
           task.loop_items || resolve_first_found(task, host, loop_vars_context) ||
@@ -1759,7 +1757,7 @@ module Krikri
       # Loading it anyway meant a load-time failure in a LATER iteration's
       # file (03_reboot.yml's unimplemented ansible.windows.win_reboot
       # raising UnresolvedModuleError) surfaced as a SECOND failed= entry
-      # after the host had already failed, recapping failed=2 where real
+      # after the host had already failed, recapping failed=2 where
       # Ansible - whose own module resolution never errors there - recaps
       # failed=1 with only the original task's error.
       if @halted_hosts.includes?(host.name)
@@ -1939,7 +1937,7 @@ module Krikri
       halt_if_failed(task, host, true)
     end
 
-    # include_tasks: whose file resolves nowhere at run time - real
+    # include_tasks: whose file resolves nowhere at run time -
     # Ansible's own fatal include shape (live-verified vs 2.19.11):
     # STDERR gets the DataLoader error block (no Origin), STDOUT gets
     # the fatal dump with the as-written file under "include:", the
@@ -2060,7 +2058,7 @@ module Krikri
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
         # Same degrade-to-one-clean-failed-task shape as the include_
         # tasks paths' own build_vars_context rescues: the include_role:
-        # statement's own `vars:` block used an unknown filter, real
+        # statement's own `vars:` block used an unknown filter,
         # Ansible fails just that include task with "No filter named
         # 'X'." instead of the whole process crashing out of execute_
         # task's include_role dispatch.
@@ -2070,12 +2068,10 @@ module Krikri
       # Same scalar-template loop gap as execute_include_tasks above.
       #
       # resolve_loop_items_or_raise: round174 matrix scenario 12b - same
-      # class of gap/fix as execute_include_tasks just above (real
-      # Ansible never enters the role at all on an undefined loop:
+      # class of gap/fix as execute_include_tasks just above (Ansible never enters the role at all on an undefined loop:
       # source).
       begin
-        # Loop-source resolution sees the alias-free snapshot (real
-        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        # Loop-source resolution sees the alias-free snapshot (Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
         loop_vars_context = loop_source_vars_context(task, host, base_vars_context)
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
           task.loop_items ||
@@ -2248,7 +2244,7 @@ module Krikri
         # own comment for the graceful/hard-stop boundary.
         raise ex
       rescue ex : RoleNotFoundError
-        # include_role: naming a role that resolves nowhere is real
+        # include_role: naming a role that resolves nowhere is
         # Ansible's own fatal include failure shape (live-verified vs
         # 2.19.11): the loader's AnsibleError goes to STDERR as an
         # "[ERROR]: the role 'x' was not found in <search paths>" block
@@ -2452,7 +2448,7 @@ module Krikri
       # already handled for first_found's own paths: entries
       # (ExpressionEvaluator#resolve_first_found_roots). Without this,
       # `File.join(role_dir, src)` doubled the subdir
-      # (".../templates/templates/opt/...", never existing), while real
+      # (".../templates/templates/opt/...", never existing), while
       # ansible-playbook correctly resolves it against the role root.
       # Tried only as a fallback (role_dir/src checked first, matching
       # every existing role using the plain "opt/atlassian/..." form

@@ -208,14 +208,14 @@ module Krikri
         name = parts.join(" ")
       else
         # A dnf comps-group spec (`@Development tools`) legitimately
-        # contains a literal space and is still ONE atomic name - real
+        # contains a literal space and is still ONE atomic name -
         # Ansible's package/dnf module treats a string `name:` as a
         # single element and passes it whole to dnf's group API. Found
         # via andrewrothstein.gcc-toolbox's `package: {name: '{{ item }}'}`
         # loop on Rocky 9.6 (round 65000+): the space made this look
         # like the legacy multi-name string, the group reached dnf
         # unquoted as two tokens (`@Development` + `tools`), and dnf
-        # rejected it with "Unable to find a match: tools" while real
+        # rejected it with "Unable to find a match: tools" while
         # ansible-playbook installed the group fine.
         single_name = trimmed.starts_with?('@') || !trimmed.includes?(' ')
         names = single_name ? [trimmed] : trimmed.split(' ').reject(&.empty?)
@@ -278,13 +278,13 @@ module Krikri
       end
 
       # An empty name that SURVIVED parsing (`name: ""`, or an empty
-      # comma segment) is a hard failure for present/latest - real
+      # comma segment) is a hard failure for present/latest -
       # Ansible treats it as one (invalid) package name and fails with
       # "No package matching '' is available" (live-verified vs
       # ansible-playbook 2.19.11 for both the apt and package modules in
       # check mode). state: absent tolerates one - Ansible's remove
       # path just reports ok there. The old `names.all?(&.strip.empty?)`
-      # "Nothing to do" collapsed this into a silent success where real
+      # "Nothing to do" collapsed this into a silent success where
       # Ansible fails the task.
       if state != "absent" && names.any?(&.empty?)
         return PluginResult.new(
@@ -962,7 +962,7 @@ module Krikri
         end
 
         # `--only-upgrade` skips a package that isn't ALREADY installed
-        # entirely (exit 0, "0 upgraded, 0 newly installed") - real
+        # entirely (exit 0, "0 upgraded, 0 newly installed") -
         # Ansible's own state: latest installs a not-yet-present package
         # too (plain apt-get install already does both), so this was
         # simply wrong - same bug independently duplicated in apt.cr's

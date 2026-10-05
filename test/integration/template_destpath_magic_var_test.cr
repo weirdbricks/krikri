@@ -12,7 +12,7 @@ describe "template:'s template_destpath magic var" do
     # Real bug found in a 150-role overnight round (inmotionhosting.
     # monit): its own templates/etc/systemd/restart.conf.j2 starts with
     # `# {{ template_destpath }}` - a common convention for stamping a
-    # template's destination as a comment for auditability. Real
+    # template's destination as a comment for auditability.
     # Ansible's template action plugin has injected template_destpath
     # (alongside template_host/template_path/template_fullpath/
     # template_run_date, all already implemented here) since 2.8;

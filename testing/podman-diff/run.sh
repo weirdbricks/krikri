@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local differential-testing loop: runs the same edge-case fixture
-# playbooks under real ansible-playbook (container A) and
+# playbooks under ansible-playbook (container A) and
 # krikri-playbook (container B), both via ansible_connection=local
 # inside their own throwaway podman container, and diffs the debug
 # output lines so a single divergent case is visible without needing
@@ -175,7 +175,7 @@ if printf '%s\n' "${cases[@]}" | grep -qE '^(openssh_keypair|openssl_publickey)'
 fi
 
 # java_cert cases need a real keytool (JRE) in BOTH containers, plus
-# openssl (the real module shells to it for x509 parsing, krikri's
+# openssl (the Ansible module shells to it for x509 parsing, krikri's
 # plugin needs it for the same fixture-generation the real side does).
 if printf '%s\n' "${cases[@]}" | grep -q '^java_cert'; then
   log "installing default-jre-headless + openssl for java_cert cases"
@@ -199,10 +199,10 @@ if printf '%s\n' "${cases[@]}" | grep -q '^gem'; then
 fi
 
 # firewalld cases need the firewalld PACKAGE (firewall-offline-cmd +
-# the python bindings the real module imports) in BOTH containers -
-# without it real ansible.posix.firewalld dies on the import before any
+# the python bindings the Ansible module imports) in BOTH containers -
+# without it Ansible.posix.firewalld dies on the import before any
 # validation, manufacturing a divergence. No daemon runs (no systemd);
-# the real module auto-detects offline mode, same backend krikri
+# the Ansible module auto-detects offline mode, same backend krikri
 # drives. Gated on the requested case list like the mysql cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^firewalld'; then
   log "installing firewalld package (offline-cmd + bindings) for firewalld cases"
@@ -249,7 +249,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^current_container_facts'; then
     || { log "FATAL: community.docker install failed"; exit 1; }
 fi
 
-# expect cases need pexpect in the REAL container - real
+# expect cases need pexpect in the REAL container -
 # ansible.builtin.expect.py fails with "Failed to import the required
 # Python library (pexpect)." before any behavior otherwise. krikri's
 # plugin talks to the kernel pty directly (openpty + fork), so it needs
@@ -352,7 +352,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^modprobe'; then
 fi
 
 # iptables cases need the real iptables(8) binary in BOTH containers -
-# krikri's plugin shells to it exactly like real Ansible - and
+# krikri's plugin shells to it exactly like Ansible - and
 # --privileged is already on for both containers; a rootless-podman
 # netfilter restriction, if present, fails BOTH engines identically.
 # The venv from the deb822 block below is reused when needed: bookworm's
@@ -424,7 +424,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^lvol'; then
 fi
 
 # npm cases need a real node + npm in BOTH containers (krikri's npm
-# shells to the same npm binary real Ansible resolves via
+# shells to the same npm binary Ansible resolves via
 # get_bin_path) - debian:bookworm-slim ships without either, which
 # would make every case fail with "Failed to find required executable"
 # on both sides and exercise nothing. Real installs hit the live npm
@@ -437,7 +437,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^npm'; then
   done
 fi
 
-# synchronize cases need the rsync binary in BOTH containers - real
+# synchronize cases need the rsync binary in BOTH containers -
 # ansible.posix.synchronize and krikri's action plugin both shell to
 # it, and with ansible_connection=local both rsync endpoints are the
 # same machine. Gated on the requested case list like the modprobe
@@ -451,7 +451,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^synchronize'; then
 fi
 
 # acl cases need the acl package (getfacl/setfacl) in BOTH containers -
-# real ansible.builtin.acl and krikri's plugin both shell to it, and
+# Ansible.builtin.acl and krikri's plugin both shell to it, and
 # debian:bookworm-slim ships without it. Gated on the requested case
 # list like the modprobe cases above.
 if printf '%s\n' "${cases[@]}" | grep -q '^acl'; then
@@ -501,7 +501,7 @@ fi
 
 # py_module cases need the playbook-dir library/ fixture modules seeded
 # into BOTH containers BEFORE ansible-playbook loads the playbook:
-# real Ansible resolves a task's module name at playbook-LOAD time
+# Ansible resolves a task's module name at playbook-LOAD time
 # against the on-disk library/ (a module written by an earlier playbook
 # task is invisible to it -> "ERROR! couldn't resolve module/action",
 # rc=4, zero tasks run), while krikri resolves lazily per task. The
@@ -519,7 +519,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^py_module'; then
 fi
 
 # subversion cases need the real svn + svnadmin binaries in BOTH
-# containers (real ansible.builtin.subversion and krikri's plugin both
+# containers (Ansible.builtin.subversion and krikri's plugin both
 # shell out to svn), plus a seeded local file:// repo so real
 # checkout/update/export/idempotency paths actually run. Gated on the
 # requested case list like the modprobe cases above.
@@ -546,7 +546,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^virt_net'; then
 fi
 
 # easy_install cases need python3-setuptools (the easy_install binary)
-# in BOTH containers - the real module and krikri's plugin both shell
+# in BOTH containers - the Ansible module and krikri's plugin both shell
 # to it, and debian:bookworm-slim ships without it. The dry-run probe
 # hits the live PyPI index; both engines run the identical binary so
 # they see the identical network. Gated on the requested case list
@@ -573,7 +573,7 @@ if printf '%s\n' "${cases[@]}" | grep -q '^maven_artifact'; then
 fi
 
 # zfs cases are argument-validation only: neither container installs
-# zfs/zpool (no /dev/zfs in a container anyway), so real's
+# zfs/zpool (no /dev/zfs in a container anyway), so Ansible's
 # get_bin_path failure is the first reachable non-argument failure on
 # both sides - no installs needed, listed here for the record.
 
@@ -609,7 +609,7 @@ for case_file in "${cases[@]}"; do
     > "$RESULTS/${case_name}_krikri.log" 2>&1
   rc_b=$?
 
-  # Extract just the debug-line payloads. Real ansible-playbook prints
+  # Extract just the debug-line payloads. ansible-playbook prints
   # them as `"msg": "F1 failed=..."`, krikri-playbook as a plain
   # `  F1 failed=...` - the label+key=value pattern (not just "F1")
   # is what lets this match both formats while skipping TASK-name
@@ -622,7 +622,7 @@ for case_file in "${cases[@]}"; do
   # vacuous MATCHes) for two-letter prefixes.
   msgs_a="$RESULTS/${case_name}_real.msgs"
   msgs_b="$RESULTS/${case_name}_krikri.msgs"
-  # Real ansible-playbook prints msg as a JSON string, so backslashes
+  # ansible-playbook prints msg as a JSON string, so backslashes
   # in actual on-disk content arrive doubled ("\\1" for "\1") and must
   # be unescaped to compare with krikri-playbook's raw plain-text
   # output. The placeholder pass below unescapes \\ without turning a
@@ -632,8 +632,8 @@ for case_file in "${cases[@]}"; do
   # Volatile backup paths (backup_file: pid + timestamp) are masked so
   # an otherwise-identical run still MATCHes.
   extract() {
-    # Drop real ansible's error-context source echo first: a failed task
-    # makes real ansible-playbook print the surrounding playbook lines
+    # Drop Ansible's error-context source echo first: a failed task
+    # makes ansible-playbook print the surrounding playbook lines
     # prefixed with a line number ("37         msg: \"V2b failed=...\""),
     # which would otherwise double-extract the PREVIOUS debug label with
     # its raw unrendered template and show as a phantom divergence.
@@ -644,7 +644,7 @@ for case_file in "${cases[@]}"; do
     # sed below turns into the same " | " separator) - without the
     # rejoin, only the first line of every wrapped krikri msg got
     # extracted and every multi-line message showed as a phantom
-    # divergence. 4-space-indented lines (real's JSON, krikri's nested
+    # divergence. 4-space-indented lines (Ansible's JSON, krikri's nested
     # detail dumps) are never continuation lines; records reset at TASK
     # headers so a failed task's own "  Message: ..." detail can never
     # bleed into a later label.

@@ -203,8 +203,8 @@ describe "get_url plugin" do
     # openobserve from openobserve.ai" task: `checksum: "{{
     # openobserve_hash | default(omit) }}"` where openobserve_hash
     # DEFAULTS to "" - a real, DEFINED empty string, not undefined - for
-    # this OS/arch combination, so default(omit) never fires; both real
-    # Ansible and krikri receive checksum: "" identically. Real
+    # this OS/arch combination, so default(omit) never fires; both
+    # Ansible and krikri receive checksum: "" identically.
     # Ansible's own get_url module treats a falsy checksum the same as
     # an absent one; this previously tried to verify against the empty
     # string and failed every download with "checksum mismatch:
@@ -446,8 +446,7 @@ describe "get_url plugin" do
 
   it "is idempotent when force is given but the existing content already matches (no checksum needed)" do
     # Real bug found benchmarking geerlingguy.jenkins: its own "Add
-    # Jenkins apt repository key." task uses force: true (real
-    # Ansible's own get_url semantics: force: true means "always
+    # Jenkins apt repository key." task uses force: true (Ansible's own get_url semantics: force: true means "always
     # re-fetch, bypassing freshness checks" - NOT "always report
     # changed"; it still compares the freshly downloaded content
     # against dest: before deciding changed). Previously

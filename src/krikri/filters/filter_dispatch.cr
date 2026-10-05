@@ -346,7 +346,7 @@ module Krikri
           # checksum/filename pairs.
           if attr = parse_kwarg(filter_args, "attribute")
             # A deferred leaf (see #strict_render_deferred_leaves) extracted
-            # by map(attribute=...) is genuinely ACCESSED here - real
+            # by map(attribute=...) is genuinely ACCESSED here -
             # Ansible renders it (and fails on an undefined-bottoming
             # template), and so did this engine before the chain head
             # stopped eagerly raising on the whole structure. Strict
@@ -643,7 +643,7 @@ module Krikri
           # #random_choice/#py_random_for_seed helpers) is retired for the
           # ONE native Crinja.filter(:random) registration (jinja_filters.cr)
           # via #delegate_to_jinja_filter, same seed= kwarg shape. Seeded
-          # runs use PyRandom on both engines, so krikri and real
+          # runs use PyRandom on both engines, so krikri and
           # ansible-playbook produce the SAME value for the same seed;
           # unseeded runs stay NONdeterministic on both (the registration's
           # unseeded path previously fell into a constant-seeded PyRandom,
@@ -651,7 +651,7 @@ module Krikri
           # Jinja's nondeterminism alongside this migration).
           # krikri-jinja's native random filter now matches Ansible's
           # PyRandom semantics for both integer and string seeds, so the
-          # deterministic register:'d password value is identical to real
+          # deterministic register:'d password value is identical to
           # ansible-playbook's.
           positional, kwargs = split_positional_and_kwargs(filter_args, ["seed"])
           args = positional.map(&.to_json)
@@ -1067,7 +1067,7 @@ module Krikri
             JSON::Any.new(full.transform_values { |v| JSON::Any.new(v) })
           end
         when "zip", "zip_longest"
-          # zip(*others)/zip_longest(*others, fillvalue=None) - real
+          # zip(*others)/zip_longest(*others, fillvalue=None) -
           # Ansible filters, Python's own zip()/itertools.zip_longest().
           #
           # Phase-3 consolidation slice #5: the hand-rolled N-way zip this
@@ -1129,7 +1129,7 @@ module Krikri
           # to this dispatch, where an unknown-filter error would have
           # replaced the real undefined-name message (caught by
           # test/unit/nested_container_undefined_filter_test.cr). The
-          # strict re-render below restores fail-on-access, matching real
+          # strict re-render below restores fail-on-access, matching
           # Ansible for a serializer that reads every leaf.
           sort_keys = (kw = parse_kwarg_expr(filter_args, "sort_keys")) ? truthy?(kw) : true
           kwargs = Hash(String, JSON::Any).new
@@ -1142,7 +1142,7 @@ module Krikri
           isbits = (kw = parse_kwarg_expr(filter_args, "isbits")) ? truthy?(kw) : false
           JSON::Any.new(FilterCore.format_human_readable(bytes, isbits))
         when "human_to_bytes"
-          # human_to_bytes(default_unit=None, isbits=False) - real
+          # human_to_bytes(default_unit=None, isbits=False) -
           # Ansible filter, the inverse of human_readable: parses
           # "10GB"/"1.5 MB" etc back into a raw byte count.
           JSON::Any.new(FilterCore.parse_human_to_bytes(as_string(value)))
@@ -1197,7 +1197,7 @@ module Krikri
           #
           # Phase-3 consolidation slice #5: hand-rolled copy retired for
           # the ONE native Crinja.filter(:log) registration via
-          # #delegate_to_jinja_filter. base= is a real kwarg in real
+          # #delegate_to_jinja_filter. base= is a real kwarg in
           # ansible (live-verified `8 | log(base=2)` -> 3.0); the old
           # positional-only parse turned that exact form into a natural
           # log by failing to resolve `base=2` as a number.
@@ -1263,7 +1263,7 @@ module Krikri
           # Phase-3 consolidation slice #5: the hand-rolled copy is
           # retired for the ONE native Crinja.filter(:rekey_on_member)
           # registration via #delegate_to_jinja_filter. Two arbitrated
-          # fixes come with the bridge, both live-verified against real
+          # fixes come with the bridge, both live-verified against
           # ansible-core 2.19.11: a NON-STRING member value (e.g. a
           # numeric id) is stringified into the key (`{"id":5}` rekeys
           # to `"5"` there; the old copy silently skipped the item), and
@@ -1299,7 +1299,7 @@ module Krikri
           # HostVarsVarsDict wrapper - its hostvars is the plain JSON
           # hash @vars carries): container object identity with
           # @vars["hostvars"] supplies the "HostVarsVars" miss label
-          # the core uses at every level under it, matching real
+          # the core uses at every level under it, matching
           # Ansible's wrapper-typed per-host dicts.
           args = split_top_level_args(filter_args)
           container = args[0]?.try { |arg| resolve_expression(arg) }
@@ -1357,7 +1357,7 @@ module Krikri
           # filter: encrypts value into ansible-vault ciphertext text
           # using *secret* as the vault password (an explicit filter
           # argument, NOT the session-wide --vault-password-file/
-          # --ask-vault-pass secret Vault.password holds - real
+          # --ask-vault-pass secret Vault.password holds -
           # Ansible's own vault filter takes its own key this way too).
           args = split_top_level_args(filter_args)
           secret = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""

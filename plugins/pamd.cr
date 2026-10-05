@@ -9,14 +9,14 @@ module Krikri
   # match community.general.pamd's own Python logic (linked-list-of-
   # rules model, control normalization, insert-skip-comments behavior)
   # rather than a simplified reimplementation - verified against the
-  # real module source (ansible_collections/the Ansible module
+  # Ansible module source (ansible_collections/the Ansible module
   # modules/pamd.py).
   #
   # A PAM config line has the shape `TYPE CONTROL MODULE_PATH
   # [MODULE_ARGUMENTS]`.
   #
   # Parameters:
-  # - name, type, control, module_path (all required, always - real
+  # - name, type, control, module_path (all required, always -
   #   Ansible requires `control` even for state: absent)
   # - new_type / new_control / new_module_path: required for state:
   #   before/after; used by state: updated to change the matched rule
@@ -76,7 +76,7 @@ module Krikri
     VALID_CONTROL_VALUES  = ["success", "open_err", "symbol_err", "service_err", "system_err", "buf_err", "perm_denied", "auth_err", "cred_insufficient", "authinfo_unavail", "user_unknown", "maxtries", "new_authtok_reqd", "acct_expired", "session_err", "cred_unavail", "cred_expired", "cred_err", "no_module_data", "conv_err", "authtok_err", "authtok_recover_err", "authtok_lock_busy", "authtok_disable_aging", "try_again", "ignore", "abort", "authtok_expired", "module_unknown", "bad_item", "conv_again", "incomplete", "default"]
     VALID_CONTROL_ACTIONS = ["ignore", "bad", "die", "ok", "done", "reset"]
 
-    # Real argument_spec - no aliases.
+    # Ansible's argument_spec - no aliases.
     SPEC = {
       "name"             => %w[],
       "type"             => %w[],
@@ -135,7 +135,7 @@ module Krikri
       end
 
       # Real community.general.pamd's success result is exactly
-      # {changed, change_count, backupdest} - verified live against real
+      # {changed, change_count, backupdest} - verified live against
       # ansible (community.general 13.3.0 ad-hoc CLI comparison,
       # privileged podman container, 2026-09-13; re-verified 2.19.11
       # unprivileged against a temp path dir) - with no msg at all:

@@ -12,7 +12,7 @@ module Krikri
   #
   # Talks to the Docker Engine API directly - a local UNIX socket by
   # default, or a remote daemon over TCP(+TLS) via docker_host:/TLS
-  # params below (see PluginHelpers::DockerClient) - the same thing real
+  # params below (see PluginHelpers::DockerClient) - the same thing
   # Ansible's own community.docker collection does, via the Docker SDK
   # for Python, using the docr shard. See the weirdbricks/docr fork's
   # commit history for the reconnect/DOCKER_HOST/nullable-field/TCP+TLS
@@ -48,7 +48,7 @@ module Krikri
   #   false on a match - NOT an unconditional `changed: true` the way a
   #   naive reading of the trigger condition alone would suggest) -
   #   caught live against a real Docker daemon: initially implemented as
-  #   unconditional `changed: true`, then found to diverge from real
+  #   unconditional `changed: true`, then found to diverge from
   #   ansible-playbook's own observed `changed: false` for this exact
   #   scenario before this was fixed.
   #
@@ -76,7 +76,7 @@ module Krikri
       end
 
       state = @params["state"]? || "present"
-      # Real argument_spec gives state/source their choices lists, so
+      # Ansible's argument_spec gives state/source their choices lists, so
       # AnsibleModule's choice checks (parameters.py's exact wording)
       # fire before the required_if source check and before anything
       # daemon-contacting - previously a bogus state silently fell into

@@ -12,7 +12,7 @@ describe "a {{ }} expression whose leading whitespace is a non-ASCII Unicode spa
     # Real bug found benchmarking buluma.bind's own etc_named.conf.j2:
     # `dnssec-validation {{ bind_dnssec_validation }};` - a U+00A0
     # (NO-BREAK SPACE) right after `{{` instead of a regular space, a
-    # common copy/paste artifact in real-world template files. Real
+    # common copy/paste artifact in real-world template files.
     # ansible-playbook (Python's `re` module, Unicode-mode by default)
     # renders this fine; Crinja's own lexer previously checked a fixed
     # ASCII-only [' ', '\t', '\n', '\r'] whitespace set (Symbol::

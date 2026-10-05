@@ -1,12 +1,12 @@
 # community.general.zfs edge cases - argument-validation surface only:
 # neither container installs the zfs/zpool binaries (there is no
 # /dev/zfs in a container, so real pool operations are impossible
-# anyway), which makes real's get_bin_path failure the first reachable
+# anyway), which makes Ansible's get_bin_path failure the first reachable
 # non-argument failure and krikri's equivalent probe the same. The
 # point of the case is what runs BEFORE that: required-args validation
-# (with real's plural "missing required arguments: name, state"
+# (with Ansible's plural "missing required arguments: name, state"
 # wording), the state choices ordering ("absent, present"), and the
-# origin-on-snapshot check, which real runs before the binary lookup.
+# origin-on-snapshot check, which Ansible runs before the binary lookup.
 # Msg wording IS compared; the PATH inside both containers is
 # identical, so the get_bin_path failure text matches byte-for-byte.
 - hosts: all

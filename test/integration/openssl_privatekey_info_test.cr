@@ -19,7 +19,7 @@ describe "openssl_privatekey_info plugin" do
     result["can_load_key"].as_bool.must_equal(true)
     result["can_parse_key"].as_bool.must_equal(true)
     # key_is_consistent stays nil unless check_consistency: true - the
-    # real module leaves it None there too.
+    # Ansible module leaves it None there too.
     result["key_is_consistent"].as_s?.must_be_nil
     result["type"].as_s.must_equal("RSA")
     result["public_key"].as_s.must_include("-----BEGIN PUBLIC KEY-----")

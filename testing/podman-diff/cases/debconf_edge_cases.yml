@@ -1,6 +1,6 @@
 # debconf edge cases. Fully testable here: the harness containers are
 # real Debian (debconf-show/debconf-set-selections ship with the debconf
-# package the base image already has), and real Ansible's own module
+# package the base image already has), and Ansible's own module
 # shells to the same binaries this plugin drives - no gate needed. The
 # two engines run in SEPARATE containers, so the tzdata state-mutation
 # sequence is independent per engine. Msg wording differs between

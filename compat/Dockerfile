@@ -1,4 +1,4 @@
-# Compatibility test image: real ansible-core AND a from-source build of
+# Compatibility test image: ansible-core AND a from-source build of
 # krikri-playbook, side by side, so compat/run.cr can run the same
 # playbook through both and diff the results.
 #
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # the container via its init.d script (no systemd needed). Server and
     # client come from the same distro release, so pg_dump/mysqldump never
     # hit a server-vs-client version mismatch. python3-pymysql /
-    # python3-psycopg2 are what real Ansible's own community.mysql /
+    # python3-psycopg2 are what Ansible's own community.mysql /
     # community.postgresql modules import on the *target*'s system python.
     mariadb-server \
     mariadb-client \

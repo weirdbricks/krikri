@@ -16,7 +16,7 @@
 # interactive shell session looks like to a program that checks
 # `tcgetpgrp()`/job-control signals, not just `isatty()`.
 #
-# Real expect.py semantics reproduced here (confirmed against real
+# Real expect.py semantics reproduced here (confirmed against
 # ansible-playbook via the expect_edge_cases podman-diff case):
 # - command is NOT run through a shell - pexpect shlex-splits it and
 #   execs the binary directly, so `$HOME`, `>`, `|` etc. stay literal

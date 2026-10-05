@@ -79,7 +79,7 @@ module Krikri
       # in file order - real cron.py's get_envnames (`^\S+=` match, the
       # name being everything before the first '='; no comment
       # exclusion, so a commented-out `#FOO=bar` still counts, exactly
-      # like real module), reported as the result's `envs` field.
+      # like Ansible module), reported as the result's `envs` field.
       def self.env_names(text : String) : Array(String)
         text.split("\n").compact_map do |line|
           next nil unless line.matches?(/^\S+=/)

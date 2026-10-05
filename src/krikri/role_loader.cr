@@ -21,7 +21,7 @@ module Krikri
     # playbook_dir/roles/name, ./roles/name relative to CWD, and
     # ANSIBLE_ROLES_PATH/Galaxy-default roles_paths) - exposed publicly
     # (resolve_role_dir itself is private) so PlaybookParser can do the
-    # same existence check for a task-level `import_role:`, which real
+    # same existence check for a task-level `import_role:`, which
     # Ansible resolves STATICALLY (before any task runs) exactly like a
     # play-level `roles:` entry or a meta/main.yml dependency already
     # does via #load_role's own RoleNotFoundError raise - previously
@@ -180,7 +180,7 @@ module Krikri
 
       tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
 
-      # `when:` on a roles: entry or a meta/main.yml dependency is real
+      # `when:` on a roles: entry or a meta/main.yml dependency is
       # Ansible's own RoleRequirement field - it does NOT gate the role
       # "as a whole" the way it might look; Ansible statically
       # resolves the role's tasks and combines this when: (parent
@@ -213,7 +213,7 @@ module Krikri
       parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new,
       # Whether this role's own defaults/vars join the PLAY-WIDE layers
       # every role can see (Play#all_role_defaults/#all_role_vars). True
-      # for a static `roles:` entry and its meta dependencies, which real
+      # for a static `roles:` entry and its meta dependencies, which
       # Ansible loads at play setup; FALSE for include_role:, whose
       # vars/defaults Ansible keeps scoped to that inclusion unless
       # it is `public: true` - contributing them here would expose them
@@ -291,7 +291,7 @@ module Krikri
       # via that exact `_common` scenario: node_exporter's own `node_
       # exporter_textfile_dir` default (defaults/main.yml) went undefined
       # the moment its own `node_exporter.service.j2` template got
-      # rendered from within _common's included tasks, even though real
+      # rendered from within _common's included tasks, even though
       # Ansible keeps it in scope - `task.role_defaults` was previously
       # always just THIS role's own defaults, discarding the whole
       # ancestor chain.
@@ -308,7 +308,7 @@ module Krikri
       # carried before, so a dependency's defaults were loaded, used for
       # that dependency's OWN tasks, and then discarded - every such
       # cross-role reference silently resolved to nothing. Lower
-      # precedence than this role's own defaults, matching real
+      # precedence than this role's own defaults, matching
       # Ansible's own dependency-then-self load order.
       defaults = parent_defaults.merge(dependency_defaults).merge(defaults)
       own_vars = load_vars_file_main(File.join(role_dir, "vars"))
@@ -335,7 +335,7 @@ module Krikri
       # overriding that value for the dependency's OWN tasks only): the
       # declaring role's own LATER task (`when: not certbot_auto_renew`,
       # relying on ITS OWN `certbot_auto_renew: true` default) saw the
-      # dependency's overridden `false` instead, running when real
+      # dependency's overridden `false` instead, running when
       # Ansible correctly skipped it.
       if play_scope
         own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
@@ -560,7 +560,7 @@ module Krikri
     # install`'s own way of shipping roles, distinct from a plain Galaxy
     # role install) - entirely unimplemented before: resolve_role_dir only
     # ever looked under a playbook's own roles:/ directory, so any
-    # collection-shipped role failed outright ("Role not found"). Real
+    # collection-shipped role failed outright ("Role not found").
     # Ansible resolves this by searching each configured collections path
     # for `ansible_collections/<namespace>/<collection>/roles/<role>` -
     # mirrored here against the same locations Ansible checks:

@@ -12,7 +12,7 @@ require "json"
 # The query dispatch mirrors the installed collection's own
 # `ipaddr_utils.ipaddr()` query_func_map exactly - including the
 # queries that map does NOT have ('addr', 'bin', 'hex', 'reserved',
-# 'unspecified', 'host-prefixed', 'netprefix' all fail with real
+# 'unspecified', 'host-prefixed', 'netprefix' all fail with
 # Ansible's own "unknown filter type" error on ansible-core 2.19.4 /
 # ansible.utils, verified live, so they fail here too rather than being
 # "helpfully" implemented as aliases the real plugin does not have).

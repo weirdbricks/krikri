@@ -155,7 +155,7 @@ module Krikri
     # failure). Message live-verified against bookworm's
     # ansible-core 2.14. check_mode/diff_mode/_verbosity/_environment
     # are engine-internal keys injected by the executor, not part of
-    # the real argument_spec, so they are not rejected. (use_backend
+    # Ansible's argument_spec, so they are not rejected. (use_backend
     # is in upstream's dnf argument_spec per dnf.py, so it stays
     # accepted here; bookworm's 2.14 rejects it live - a known
     # version difference, left matching upstream's spec.)
@@ -201,7 +201,7 @@ module Krikri
       # ansible-core 2.19.11 for each of dnf's four `type: list` params
       # (`use_backend: yum4` forced on a Debian host to reach argspec
       # validation at all). Round 900905 officel.httpd found the gap:
-      # every loop item's `enablerepo: ~` default made real
+      # every loop item's `enablerepo: ~` default made
       # ansible-playbook fail the task while this engine silently
       # dropped the null and installed the packages anyway. The
       # explicit-null gate (not a plain empty-string check) is what

@@ -12,7 +12,7 @@ require "../minitest_helper"
 #   task-param substitution; a comma-separated scalar is accepted too
 #   (Ansible's check_type_list backward compat).
 # - Bool-typed params are written as literal yes/no, only when given.
-# - inrelease_path IS written to the file (real module never pops it,
+# - inrelease_path IS written to the file (Ansible module never pops it,
 #   unlike mode/state) as "Inrelease-Path:".
 # - Fields are emitted sorted by the underlying PYTHON param name
 #   (`for key, value in sorted(params.items())`), pinned by the
@@ -97,7 +97,7 @@ describe "deb822_repository param coverage" do
     repo.wont_include("By-Hash")
   end
 
-  it "defaults Types: to deb when types is omitted (real module's own argument_spec default)" do
+  it "defaults Types: to deb when types is omitted (Ansible module's own argument_spec default)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "param-audit-types-default",
       "uris"                => "https://example.com/repo",
@@ -108,7 +108,7 @@ describe "deb822_repository param coverage" do
     result["repo"].as_s.must_include("Types: deb")
   end
 
-  it "writes inrelease_path as Inrelease-Path: (real module never pops it from params)" do
+  it "writes inrelease_path as Inrelease-Path: (Ansible module never pops it from params)" do
     result = PluginSpecHelper.run("deb822_repository", {
       "name"                => "param-audit-inrelease",
       "uris"                => "https://example.com/repo",

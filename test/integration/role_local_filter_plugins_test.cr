@@ -162,7 +162,7 @@ describe "role-local filter_plugins/*.py custom filters" do
     # spellings are asserted together: the builtin-only chain, the
     # custom filter without the paren (both already worked), and the
     # custom filter behind the paren (the divergence - krikri rendered
-    # the literal string "undefined" into a download URL while real
+    # the literal string "undefined" into a download URL while
     # ansible-playbook resolved the latest version).
     root = File.tempname("filter-plugins-paren-attr")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "filter_plugins"))

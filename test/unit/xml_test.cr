@@ -310,7 +310,7 @@ describe "community.general.xml plugin" do
     end
   end
 
-  describe "xpath semantics (matching real module)" do
+  describe "xpath semantics (matching Ansible module)" do
     it "treats add_children on a nonmatching xpath as a silent no-op" do
       result = run_xml(JSON.parse(%({"xmlstring": "<a><b/></a>", "xpath": "/a/nope", "add_children": [{"c": "1"}]})))
       expect(falsey?(result["failed"]?)).must_equal(true)

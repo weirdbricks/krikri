@@ -37,7 +37,7 @@
 #     --progress json + a JSON parser on Compose >= 2.29; the default
 #     non-TTY progress output is the same text format either way, so the
 #     parsed event set is identical)
-#   - the Compose >= 2.18.0 minimum-version check is kept (real module's
+#   - the Compose >= 2.18.0 minimum-version check is kept (Ansible module's
 #     own failure message), but the version probe is skipped when
 #     `docker compose version` itself fails - the first real command
 #     fails with its own error in that case, same net rc/changed
@@ -110,7 +110,7 @@ module Krikri
         return err
       end
 
-      # Real module's validation order: project dir first, then files.
+      # Ansible module's validation order: project dir first, then files.
       if err = validate_project_files
         return err
       end
@@ -167,7 +167,7 @@ module Krikri
       nil
     end
 
-    # Real module's mutually_exclusive: [(definition, project_src),
+    # Ansible module's mutually_exclusive: [(definition, project_src),
     # (definition, files)] - key-presence based (count_terms intersects
     # parameter names, not values).
     private def validate_mutually_exclusive : PluginResult?
@@ -297,7 +297,7 @@ module Krikri
       parsed.as_h? ? parsed : nil
     end
 
-    # Real module's minimum Compose version gate (same failure message).
+    # Ansible module's minimum Compose version gate (same failure message).
     # A failed version probe is NOT an error - the first real command
     # surfaces its own failure (rc != 0) in that case, same net result.
     private def validate_compose_version : PluginResult?
@@ -332,14 +332,14 @@ module Krikri
       nil
     end
 
-    # state=present: real module's get_up_cmd.
+    # state=present: Ansible module's get_up_cmd.
     private def run_up(check_mode : Bool, pull : String, build : String, recreate : String) : PluginResult
       ignore_builds = @params["ignore_build_events"]?.nil? || @params["ignore_build_events"] != "false"
       run_command(up_cmd(check_mode, pull, build, recreate, no_start: false),
         ignore_pulls: true, ignore_builds: ignore_builds, check_mode: check_mode)
     end
 
-    # state=absent: real module's get_down_cmd.
+    # state=absent: Ansible module's get_down_cmd.
     private def run_down(check_mode : Bool) : PluginResult
       args = ["down"]
       args << "--remove-orphans" if true?(@params["remove_orphans"]?)
@@ -355,7 +355,7 @@ module Krikri
       run_command(args, ignore_pulls: false, ignore_builds: false, check_mode: check_mode)
     end
 
-    # state=stopped: real module's cmd_stop - `up --no-start` first
+    # state=stopped: Ansible module's cmd_stop - `up --no-start` first
     # (creates any missing containers), then `stop` only when something
     # is actually still running.
     private def run_stop(check_mode : Bool, pull : String, build : String, recreate : String) : PluginResult
@@ -374,7 +374,7 @@ module Krikri
       run_command(args, ignore_pulls: false, ignore_builds: false, check_mode: check_mode)
     end
 
-    # Real module's get_up_cmd - ALWAYS detached, --no-color --quiet-pull
+    # Ansible module's get_up_cmd - ALWAYS detached, --no-color --quiet-pull
     # unconditionally, every other flag strictly conditional.
     private def up_cmd(check_mode : Bool, pull : String, build : String, recreate : String, no_start : Bool) : Array(String)
       args = ["up", "--detach", "--no-color", "--quiet-pull"]
@@ -561,7 +561,7 @@ module Krikri
       "docker"
     end
 
-    # Real module's get_base_args (text-progress variant): --ansi never
+    # Ansible module's get_base_args (text-progress variant): --ansi never
     # always, then the project/file/env/profile wiring. Paths are
     # single-quoted - all of them can contain spaces.
     private def compose_base_args : Array(String)
@@ -588,7 +588,7 @@ module Krikri
       shell_single_quote(s)
     end
 
-    # Real module's version gate (Docker CLI ... has the compose plugin
+    # Ansible module's version gate (Docker CLI ... has the compose plugin
     # with version X; need version 2.18.0 or later). Skipped (nil error)
     # when the probe itself fails - the real command will surface its own
     # error in that case.
@@ -629,7 +629,7 @@ module Krikri
       value.try(&.split(',').map(&.strip).reject(&.empty?)) || [] of String
     end
 
-    # Real module's _are_containers_stopped: `compose ps --format json
+    # Ansible module's _are_containers_stopped: `compose ps --format json
     # --all` - true when every container's State is in the stopped set
     # (or there are no containers at all).
     private def containers_all_stopped? : Bool
@@ -680,7 +680,7 @@ module Krikri
       events
     end
 
-    # Real module's has_changes.
+    # Ansible module's has_changes.
     private def has_changes?(events : Array(Event), ignore_pulls : Bool, ignore_builds : Bool) : Bool
       events.any? do |e|
         status = e.status

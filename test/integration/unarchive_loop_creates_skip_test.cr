@@ -80,8 +80,7 @@ describe "looped unarchive with per-item creates: skip (executor_loops#finish_lo
 
   it "shows skipping: for the creates:-satisfied item and changed: for the rest, with the registered aggregate still holding all items" do
     # The mixed-shape half of the same gap: a partially-skipped loop
-    # must book its recap ONLY from the items that actually ran (real
-    # Ansible adds no separate skipped= bump when at least one item
+    # must book its recap ONLY from the items that actually ran (Ansible adds no separate skipped= bump when at least one item
     # executed), while register:'d .results still exposes the skipped
     # items alongside the executed ones.
     dest = fresh_dest("mixed")

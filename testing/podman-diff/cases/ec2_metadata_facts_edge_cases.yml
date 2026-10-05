@@ -1,10 +1,10 @@
-# ec2_metadata_facts module edge cases. The real 169.254.169.254 IMDS
+# ec2_metadata_facts module edge cases. The Ansible 169.254.169.254 IMDS
 # endpoint does not exist inside either container (and only ever answers
-# on a real EC2 instance - real Ansible's own module has the identical
+# on a real EC2 instance - Ansible's own module has the identical
 # restriction), so everything here is validation-first: the
 # metadata_token_ttl_seconds range check must fail BEFORE any network
 # I/O with the module's exact failure shape, a non-numeric ttl must fail
-# the task (real AnsibleModule int conversion rejects it, this engine
+# the task (AnsibleModule int conversion rejects it, this engine
 # must not silently default), and a VALID ttl must fail cleanly at the
 # network attempt in BOTH engines (failed=true, changed=false) rather
 # than crashing or hanging. The fact-gathering walk itself (token ->

@@ -335,7 +335,7 @@ module Krikri
           # connect refused") that marked the host unreachable before a
           # single task ran, swallowing the per-task connection failure
           # entirely. Skipped here, so execution reaches the per-task
-          # check (execute_task_once) and fails tasks the way real
+          # check (execute_task_once) and fails tasks the way
           # Ansible does.
           next if (conn_type = host.vars["ansible_connection"]?.try(&.as_s?)) &&
                   connection_plugin_not_found?(conn_type)
@@ -1683,15 +1683,14 @@ module Krikri
     # engine has no transport for: psrp/winrm (Windows), etc. They keep
     # the same "unknown connection falls back to SSH" behavior every
     # unimplemented-but-real connection plugin always had here - failing
-    # them as "not found" would misreport a resolvable connection (real
-    # Ansible reaches an actual connection ATTEMPT for those, failing
+    # them as "not found" would misreport a resolvable connection (Ansible reaches an actual connection ATTEMPT for those, failing
     # with a connect error, not a resolution error).
     RESOLVABLE_UNIMPLEMENTED_CONNECTION_TYPES = Set{"psrp", "winrm"}
 
     # Whether *raw* (the effective connection type: an inventory/role/
     # task-level ansible_connection value, or a task's own `connection:`
     # keyword after substitution) names no connection plugin Ansible
-    # could resolve either - so a task using it must fail the way real
+    # could resolve either - so a task using it must fail the way
     # Ansible's TaskExecutor._get_connection does, instead of silently
     # falling back to SSH. A collection-qualified name is checked against
     # the controller's own collection paths exactly like Ansible's

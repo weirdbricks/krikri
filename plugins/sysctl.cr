@@ -15,7 +15,7 @@ module Krikri
   # - sysctl_file: config file to edit (default /etc/sysctl.conf)
   # - sysctl_set: also verify/apply the value against the running kernel
   #   via `sysctl -w` (default false - most usage is just editing the
-  #   file; this needs root/appropriate capabilities the same way real
+  #   file; this needs root/appropriate capabilities the same way
   #   Ansible's does)
   # - reload: run `sysctl -p <sysctl_file>` to apply the file's contents
   #   to the running kernel when the file changed (default true, matching
@@ -24,7 +24,7 @@ module Krikri
   # - check_mode: report what would change without writing anything or
   #   touching the running kernel
   #
-  # File format and rewrite logic verified by reading the real
+  # File format and rewrite logic verified by reading the
   # ansible.posix sysctl.py source directly, not assumed from docs:
   # `key=value\n` (no surrounding spaces), comments and blank lines
   # preserved verbatim, first occurrence of a duplicated key wins (later
@@ -197,7 +197,7 @@ module Krikri
       return [] of String unless remote_file_exists?(sysctl_file)
 
       if local_connection?
-        # File.read_lines of an empty file yields [] (matching real
+        # File.read_lines of an empty file yields [] (matching
         # Ansible's splitlines()), which is slightly more correct than the
         # old shell path's [""] artifact - both are a no-op for the
         # changed-flag, so the only difference is an empty seed file.

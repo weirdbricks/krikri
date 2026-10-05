@@ -4,7 +4,7 @@ module Krikri
     # community.general.kernel_blacklist (see plugins/kernel_blacklist.cr):
     # given the blacklist file's existing lines, computes what the file
     # should look like for the requested state. Pure functions so the
-    # real module's match semantics are unit-testable without a
+    # Ansible module's match semantics are unit-testable without a
     # modprobe.d directory to write to.
     #
     # The Ansible module (Blacklist in kernel_blacklist.py) matches with

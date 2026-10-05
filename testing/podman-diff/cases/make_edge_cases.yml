@@ -1,4 +1,4 @@
-# community.general.make edge cases. The real module shells to make
+# community.general.make edge cases. The Ansible module shells to make
 # (or gmake - neither image ships either, so run.sh installs the make
 # package in BOTH containers). Real make.py specifics under test:
 # - parameters.py "missing required arguments: chdir"

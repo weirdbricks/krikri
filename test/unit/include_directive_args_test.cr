@@ -24,7 +24,7 @@ private def write_playbook(root : String, tasks_yaml : String) : String
   path
 end
 
-# The `~/.ansible/roles` entry of the "was not found in ..." message. Real
+# The `~/.ansible/roles` entry of the "was not found in ..." message.
 # ansible resolves `~` through `os.path.expanduser`, which reads `$HOME`
 # first and only falls back to the passwd entry, so the expectation has to
 # be built the same way - `Path.home` alone disagrees on any host where the

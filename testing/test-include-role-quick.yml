@@ -1,4 +1,4 @@
-# include_role smoke test - safe under --check and for real runs: the
+# include_role smoke test - safe under --check and for Ansible runs: the
 # only non-debug task is a file: touch against a throwaway /tmp path.
 
 - name: include_role smoke test

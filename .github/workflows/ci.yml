@@ -37,14 +37,14 @@ jobs:
         # capabilities plugin), kmod (modprobe), python3-venv (pip
         # plugin's virtualenv tests), python3-apt (the apt plugin's
         # candidate pre-flight - without it the plugin auto-installs
-        # python3-apt like real Ansible does, which pollutes the apt
+        # python3-apt like Ansible does, which pollutes the apt
         # tests' own apt-get call logs), python3-debian (deb822_repository
-        # imports debian.deb822 exactly like the real module and fails the
+        # imports debian.deb822 exactly like the Ansible module and fails the
         # task without it; its tests pin a host where the module works),
         # python3-pexpect / python3-lxml (the real expect and
         # community.general.xml modules import exactly those libraries on
         # the target host - without them every one of those specs gets
-        # real's "Failed to import the required Python library" task
+        # Ansible's "Failed to import the required Python library" task
         # failure instead of the behavior it pins). NOTE: do NOT add
         # python3-semantic-version here: the maven_artifact tests pin a
         # host where that import FAILS (version_by_spec is rejected with
@@ -72,7 +72,7 @@ jobs:
 
       - name: Install ansible-core for lookup-plugin tests
         # The role-local lookup_plugins/*.py tests dispatch through the
-        # controller's python3 and need it to import the real `ansible`
+        # controller's python3 and need it to import the `Ansible`
         # package (the engine degrades to the old undefined/[] behavior
         # without it, which four of those tests fail on by design).
         run: pip3 install --break-system-packages ansible-core

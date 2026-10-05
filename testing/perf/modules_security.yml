@@ -27,7 +27,7 @@
 #   the probe host could cut the run's own SSH access mid-playbook.
 #   Every rule is deleted again in its section's cleanup tasks.
 # - Modules with no reachable backend on the target are gated with
-#   capability probes so they SKIP the way real Ansible does
+#   capability probes so they SKIP the way Ansible does
 #   (skipped: in the recap), never faked: the SELinux family (no
 #   SELinux on Debian-family hosts), firewalld (RHEL-family), and
 #   java_cert unless a JDK (keytool) happens to be installed.
@@ -147,7 +147,7 @@
     # ---------------------------------------------------------------
     # Capability probes: every gated module family gets one probe, a
     # skip notice when it fails, and `when:` guards on its whole
-    # section. Skips must look like real Ansible skips (skipped: in
+    # section. Skips must look like Ansible skips (skipped: in
     # the recap), never faked successes.
     # ---------------------------------------------------------------
     - name: Probe SELinux getenforce
@@ -448,7 +448,7 @@
       # failed_when: false overwrites the flag to false, which made the
       # assert self-contradictory (it checked `is failed` on a result it had
       # just forced to not-failed) - so it failed identically on both
-      # engines. Verified against real ansible-core 2.19.11: ignore_errors
+      # engines. Verified against ansible-core 2.19.11: ignore_errors
       # leaves `is failed` true and books the task as ignored.
       ignore_errors: true
 

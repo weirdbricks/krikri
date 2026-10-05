@@ -68,7 +68,7 @@ module Krikri
 
       # Parses `zfs get -H -p -o property,source all <name>` output,
       # keeping only properties whose source is local/received/- (the
-      # real module's own filter - creation-only properties are kept via
+      # Ansible module's own filter - creation-only properties are kept via
       # the '-' source so an existing dataset with an unchanged
       # creation-only property doesn't error on a warm run).
       def self.parse_list_properties(output : String) : Array(String)

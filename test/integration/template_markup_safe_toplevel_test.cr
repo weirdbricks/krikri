@@ -45,7 +45,7 @@ describe "a template whose whole rendered value is Markup-wrapped (xanmanning.k3
     # string), the engine's top-level JSON conversion had no case for
     # Markup and crashed with "Failed to render template: line 0: value
     # of type KrikriJinja::Markup is not JSON-compatible" - found via
-    # xanmanning.k3s's k3s.service.j2 (rounds 979194/986000), where real
+    # xanmanning.k3s's k3s.service.j2 (rounds 979194/986000), where
     # ansible-playbook 2.19.11 renders the file fine. Fixed in
     # krikri-jinja v0.4.19 by unwrapping Markup to its underlying string
     # in to_json_any, matching Jinja2 (Markup is-a str).

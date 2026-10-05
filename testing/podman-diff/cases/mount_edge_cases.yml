@@ -3,7 +3,7 @@
 # privileged harness containers, so the fstab lifecycle is exercised for
 # real: create, idempotent rerun, remove, idempotent rerun. state=
 # mounted would actually mount - kept to a tmpfs src, which a
-# privileged container can mount for real, matching real Ansible's own
+# privileged container can mount for real, matching Ansible's own
 # changed/ok cadence.
 - hosts: all
   gather_facts: false

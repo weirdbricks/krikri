@@ -59,7 +59,7 @@ describe GroupState do
       GroupState.local_gid_conflict("root:x:0:\n", "newgrp", "4711").must_be_nil
     end
 
-    it "skips the check entirely for gid 0 (real module's Python `if self.gid:` truthiness, live-verified)" do
+    it "skips the check entirely for gid 0 (Ansible module's Python `if self.gid:` truthiness, live-verified)" do
       GroupState.local_gid_conflict("root:x:0:\n", "other", "0").must_be_nil
     end
   end

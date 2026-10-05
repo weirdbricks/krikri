@@ -9,7 +9,7 @@ module Krikri
     # `complete_states=['healthy', None]`, `max_wait=healthy_wait_timeout`,
     # `health_state=True`) and its per-state failure wordings.
     #
-    # Behavior mirrored exactly (live-verified against real
+    # Behavior mirrored exactly (live-verified against
     # ansible-playbook 2.19.11 + the local docker/podman daemon unless
     # marked source-only):
     # - polls the container's inspect output, reading

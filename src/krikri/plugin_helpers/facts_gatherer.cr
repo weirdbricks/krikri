@@ -188,7 +188,7 @@ module Krikri
     # Every subset name ansible-core 2.19.4 accepts - the exact list
     # its own Bad-subset failure message enumerates (captured live from
     # `setup` on this machine). krikri implements only the network/
-    # hardware/mounts families plus the min bundle; names that real
+    # hardware/mounts families plus the min bundle; names that
     # Ansible resolves to collectors krikri has no implementation for
     # (virtual, dns, selinux, ...) are ACCEPTED but gather nothing extra,
     # because failing them would break every role that uses a valid
@@ -210,12 +210,12 @@ module Krikri
       virtualization_tech_host virtualization_type
     ]
 
-    # Which subset tokens map to which krikri gatherer family - real
+    # Which subset tokens map to which krikri gatherer family -
     # Ansible's aliases_map (each collector's _fact_ids): asking for a
     # single fact id like `all_ipv4_addresses` turns on that collector's
     # whole family, exactly as Ansible's fact_id -> collector map
     # does. The min-bundle subset names (distribution, python, user, ...)
-    # are absent: they resolve to the min bundle itself, which real
+    # are absent: they resolve to the min bundle itself, which
     # Ansible always gathers first anyway.
     FAMILY_SUBSETS = {
       "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
@@ -251,7 +251,7 @@ module Krikri
     # Ansible's get_collector_names,
     # narrowed to the families this engine implements: 'min' is prepended
     # unconditionally, "min"/"all" (and their negations) are special, a
-    # positive unknown token FAILS (BadSubsetError, mirroring real
+    # positive unknown token FAILS (BadSubsetError, mirroring
     # Ansible's TypeError), a negated unknown token is ignored, and an
     # empty resolution widens to everything. Later tokens win. Returns
     # the set of families to gather.
@@ -327,7 +327,7 @@ module Krikri
 
       # The minimal set, always gathered unless "min" itself was excluded
       # (!min / !all,!min) - hostname, OS/distribution, the interpreter,
-      # the user, the clock and the environment. This is what real
+      # the user, the clock and the environment. This is what
       # Ansible's "min" subset covers.
       if families.includes?("min")
         gather_hostname(facts)
@@ -341,7 +341,7 @@ module Krikri
         gather_system_capabilities_facts(facts)
       end
 
-      # ansible_local - custom *.fact files under fact_path. Part of real
+      # ansible_local - custom *.fact files under fact_path. Part of
       # Ansible's minimal subset ('local'); dropped only by !local or
       # !min.
       if families.includes?("local")
@@ -672,7 +672,7 @@ module Krikri
       end.find { |contents| !contents.empty? }
       facts["ansible_machine_id"] = machine_id if machine_id
 
-      # service_mgr - which init system manages services. Mirrors real
+      # service_mgr - which init system manages services. Mirrors
       # Ansible's ServiceMgrFactCollector chain, in its own order:
       # PID 1's comm first ("init" and anything ending in "sh" - a
       # container's shell - is untrusted and falls through to the
@@ -875,7 +875,7 @@ module Krikri
     # heuristics Ansible's fact gathering uses. Returns the virtualization
     # type name (e.g. "docker", "lxc", "kvm", "xen"), or "None" (the exact
     # string Ansible uses) when running on bare metal / a plain host.
-    # ansible_pkg_mgr / ansible_facts.pkg_mgr - which package manager real
+    # ansible_pkg_mgr / ansible_facts.pkg_mgr - which package manager
     # Ansible's own pkg_mgr.py fact module reports, entirely unset before this
     # (found via openstack.ansible-hardening's own `include_tasks: "{{
     # ansible_facts['pkg_mgr'] }}.yml"` - the role's main OS-dispatch point,
@@ -1002,7 +1002,7 @@ module Krikri
       value.nil? || value.empty? ? nil : "container"
     end
 
-    # The RAW text of whichever os-release file #parse_os_release used - real
+    # The RAW text of whichever os-release file #parse_os_release used -
     # Ansible's distribution-file parsers match substrings against the whole
     # file, not against parsed key/value pairs (`"Mint" in data`), so a
     # faithful port needs the original text.
@@ -1063,7 +1063,7 @@ module Krikri
       # `regex_replace` filter downstream can't operate on - failing the
       # whole template render. `gateway` was missing entirely (not just
       # incomplete) until found benchmarking buluma.checkmk_agent's own
-      # `when: ansible_facts['default_ipv4'].gateway is defined` - real
+      # `when: ansible_facts['default_ipv4'].gateway is defined` -
       # Ansible's `is defined` check was true (every routable host has a
       # default gateway), crystal's was always false since the key never
       # existed, so the gated debug task was silently skipped instead of
@@ -1081,7 +1081,7 @@ module Krikri
         # `network` and `netmask` - Ansible's default_ipv4 always
         # carries the subnet address ("192.168.1.0") and dotted netmask
         # ("255.255.255.0") of the default route's interface; both come
-        # from the same per-interface inet line (`address/prefix`) real
+        # from the same per-interface inet line (`address/prefix`)
         # Ansible's netifaces pass reads. Found benchmarking
         # crazikpl.blackbox_exporter's defaults:
         # `"{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"`
@@ -1578,7 +1578,7 @@ module Krikri
       sprintf("%.2f %s", size, units[unit])
     end
 
-    # Mount facts - a list of dicts, one per mounted filesystem, matching real
+    # Mount facts - a list of dicts, one per mounted filesystem, matching
     # Ansible's ansible_mounts shape (mount/device/fstype/opts are the fields
     # roles like os_hardening read). Parsed from /proc/self/mountinfo rather
     # than forking `mount`, and bounded to real bind/devtmpfs noise that roles
@@ -1685,7 +1685,7 @@ module Krikri
     # comparison inside the assert is what broke. Reads statvfs(2) directly
     # through LibC (declared at the top of this file next to uname) instead
     # of forking a `stat -f` subprocess per mount - identical numbers, just
-    # fetched via a syscall instead of a subprocess. Same fields real
+    # fetched via a syscall instead of a subprocess. Same fields
     # Ansible's own `os.statvfs()` reads:
     #   block_size (f_frsize, what `stat -f %S` reports)
     #   block_total (f_blocks)   block_free, all users (f_bfree)
@@ -1988,7 +1988,7 @@ module Krikri
     # 'virtual' subset, which `!all` (min only) never selects (real W2
     # min output has NO virtualization facts, W5 all does - podman-diff
     # setup case), so reporting them under min made this engine's `!all`
-    # result diverge by two keys. The tech_guest/tech_host lists real
+    # result diverge by two keys. The tech_guest/tech_host lists
     # Ansible also reports (as sets, serialized as lists) were missing
     # entirely.
     #
@@ -2279,7 +2279,7 @@ module Krikri
     def run(config : JSON::Any?) : String
       params = Krikri.restore_native_param_values(config.try(&.["params"]?))
 
-      # gather_subset: comma-separated in string form (type=list in real
+      # gather_subset: comma-separated in string form (type=list in
       # Ansible's argument spec, whose check_type_list splits on ','
       # WITHOUT stripping - live-verified: "network, virtual" with a
       # space FAILS the Ansible module with "Bad subset ' virtual'"), an
@@ -2292,7 +2292,7 @@ module Krikri
       # before falling back to the ordinary comma-split Ansible's
       # own argspec does for a genuinely scalar string. Only valid JSON
       # counts (same precedent as apt.cr/package.cr's name parsing): a
-      # Python-repr-looking string keeps the comma-split, matching real
+      # Python-repr-looking string keeps the comma-split, matching
       # Ansible.
       requested_subset = ["all"]
       params.try(&.["gather_subset"]?).try do |raw|

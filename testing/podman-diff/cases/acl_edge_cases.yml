@@ -1,5 +1,5 @@
 # acl module edge cases. Needs the `acl` package (getfacl/setfacl) in
-# BOTH containers (real ansible.builtin.acl and krikri's plugin both
+# BOTH containers (Ansible.builtin.acl and krikri's plugin both
 # shell to it) - installed by run.sh's gated block. Each case registers
 # its result and prints an "A<n> key=value" debug line for run.sh's
 # diff extraction. failed=/changed=/on-disk behavior are what matter;

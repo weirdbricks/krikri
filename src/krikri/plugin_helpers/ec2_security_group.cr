@@ -20,7 +20,7 @@ module Krikri
     #   cidr_ip, cidr_ipv6, group_id, group_name, prefix_list_id} dicts;
     #   a rule with no source at all defaults to 0.0.0.0/0.
     # - a rule may instead carry `ports`, a list of single ports and/or
-    #   "N-M" range strings (real module docs, amazon.aws >= 2.4); each
+    #   "N-M" range strings (Ansible module docs, amazon.aws >= 2.4); each
     #   element becomes its own rule (from=to=port, or from=N to=M),
     #   expanded against the rule's source list like the Ansible module's
     #   expand_rule.
@@ -74,7 +74,7 @@ module Krikri
       end
 
       # Returns one Rule per (ports x source) combination, mirroring the
-      # real module's expand_rule: from_port/to_port win over ports, and
+      # Ansible module's expand_rule: from_port/to_port win over ports, and
       # each `ports` element (a single port or an "N-M" range string)
       # becomes its own rule sharing the rule's source list.
       private def self.parse_rule_hash(hash : Hash(String, JSON::Any)) : Array(Rule)
@@ -278,7 +278,7 @@ module Krikri
           create_params << {"VpcId", vpc_id} if vpc_id && !vpc_id.empty?
 
           steps = [Ec2Api::Step.new("CreateSecurityGroup", create_params)]
-          # Real module's create path revokes the group's pre-existing
+          # Ansible module's create path revokes the group's pre-existing
           # rules before authorizing the desired ones, and handles
           # ingress before egress (remove_old_permissions then
           # add_new_permissions).

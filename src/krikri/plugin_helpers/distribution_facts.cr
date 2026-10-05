@@ -12,7 +12,7 @@ module Krikri
       # Ansible's own `parse_distribution_file_Debian`, ported branch
       # for branch and IN ITS ORDER - the order is load-bearing, since
       # several of these substrings co-occur in one /etc/os-release (LMDE's
-      # own file mentions linuxmint.com, Kali's mentions Debian), and real
+      # own file mentions linuxmint.com, Kali's mentions Debian), and
       # Ansible's first matching branch wins.
       #
       # Ansible reports a per-distro DISPLAY NAME here, not the
@@ -172,7 +172,7 @@ module Krikri
       # (round 195): the role's with_first_found list keys a vars file off
       # `{{ ansible_distribution_file_variety | lower }}.yml` (→ redhat.yml
       # on Rocky), and with the keys never set here the template raised
-      # "'ansible_distribution_file_variety' is undefined" where real
+      # "'ansible_distribution_file_variety' is undefined" where
       # Ansible rc=0'd. matched branch by branch against observed output (see the follow-up block
       # below for the walk itself).
       OSDIST_LIST = [

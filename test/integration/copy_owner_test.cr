@@ -49,7 +49,7 @@ describe "copy plugin - owner/group" do
   end
 
   it "fails with Ansible's exact message when group: is an explicit empty string" do
-    # Same round900811 bug class as the empty owner: above - real
+    # Same round900811 bug class as the empty owner: above -
     # Ansible's group analogue is "chgrp failed: failed to look up
     # group " (basic.py:830, chgrp not chown), trailing space included.
     dest = File.tempname("copy-empty-group-spec")

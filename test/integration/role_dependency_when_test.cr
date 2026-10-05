@@ -11,7 +11,7 @@ require "file_utils"
 # unconditionally regardless of its own when:.
 #
 # Found via Graylog2.graylog's own meta/main.yml dependency on
-# lean_delivery.java (`when: graylog_install_java`, undefined - real
+# lean_delivery.java (`when: graylog_install_java`, undefined -
 # Ansible fails/skips the WHOLE dependency's task tree; this engine ran
 # it anyway, which walked straight into a real network 404 partway
 # through that dependency's own task list).

@@ -5,7 +5,7 @@ describe "copy plugin - directory-style dest (trailing /)" do
   it "appends src basename to a trailing-/ dest whose directory does not exist yet" do
     # Real bug found benchmarking l3d.unbound, whose config-fragment
     # tasks pass `dest: /etc/unbound/unbound.conf.d/` (trailing slash,
-    # directory created by an earlier file: task in the play). Real
+    # directory created by an earlier file: task in the play).
     # Ansible's copy treats a trailing path separator as an explicit
     # "this is a directory" signal regardless of whether it exists on
     # disk yet; this used to append the basename only when

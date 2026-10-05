@@ -194,7 +194,7 @@ describe "git plugin" do
     # N <repo>`) and then tried `git checkout <version>` against that
     # limited history - a tag/branch other than the default branch's
     # current tip was never fetched at all, failing with "pathspec
-    # '<version>' did not match any file(s) known to git", while real
+    # '<version>' did not match any file(s) known to git", while
     # ansible-playbook succeeded (its own git module fetches a targeted
     # refspec for the requested ref at the given depth instead of just
     # shallow-cloning the default branch). v1 here is NOT on main's

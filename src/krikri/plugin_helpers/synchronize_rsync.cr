@@ -55,12 +55,12 @@ module Krikri
                         private_key : String? = nil, dest_port : Int32? = nil) : Array(String)
       argv = ["rsync"]
 
-      # delay_updates defaults true, compress defaults true (real module
+      # delay_updates defaults true, compress defaults true (Ansible module
       # argument_spec), both explicit-false suppressible.
       argv << "--delay-updates" << "-F" if bool(params["delay_updates"]?, default: true)
       argv << "--compress" if bool(params["compress"]?, default: true)
       argv << "--timeout=#{params["rsync_timeout"]}" if int?(params["rsync_timeout"]?)
-      # Real module appends --dry-run right here, immediately after the
+      # Ansible module appends --dry-run right here, immediately after the
       # timeout flag and BEFORE the delete/archive flags
       # (synchronize.py:503-504) - not at the tail of the argv.
       argv << "--dry-run" if bool(params["_ansible_check_mode"]?)
@@ -73,7 +73,7 @@ module Krikri
       if archive
         argv << "--archive"
         # Each toggle defaults to archive's value; only an EXPLICIT false
-        # cancels its half of --archive (real module: --no-recursive etc.
+        # cancels its half of --archive (Ansible module: --no-recursive etc.
         # under the archive branch) - absent means "follow archive", so
         # the tri-state bool_opt (nil for absent) is load-bearing here.
         argv << "--no-recursive" if bool_opt(params["recursive"]?) == false
@@ -96,7 +96,7 @@ module Krikri
 
       if needs_rsh?(src, dest)
         has_rsh_opt = parse_list(params["rsync_opts"]?).any?(&.includes?("--rsh"))
-        # Real module: `ssh -S none` (no multiplexing by default), the
+        # Ansible module: `ssh -S none` (no multiplexing by default), the
         # private key, the port, and - unless verify_host: - the same
         # no-host-key-check pair its own non-interactive runs use.
         unless has_rsh_opt
@@ -152,7 +152,7 @@ module Krikri
       parts.join(" ")
     end
 
-    # Real module: `if '/' not in rsync: rsync = get_bin_path(rsync,
+    # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
     # required=True)` - the reported cmd carries the RESOLVED path
     # (/usr/bin/rsync), not the bare name. Runs wherever the module
     # itself runs: controller-side in the action plugin's local-rsync

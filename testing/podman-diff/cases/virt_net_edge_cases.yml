@@ -1,10 +1,10 @@
 # community.libvirt.virt_net edge cases - argument-validation surface
-# only: neither container has a libvirt daemon, and the real module
+# only: neither container has a libvirt daemon, and the Ansible module
 # deliberately gets NO python3-libvirt either, so every valid-argument
-# path fails on the real module's HAS_VIRT probe ("The `libvirt`
+# path fails on the Ansible module's HAS_VIRT probe ("The `libvirt`
 # module is not importable. Check the requirements.") - exactly what
 # krikri's plugin mirrors with the absent `virsh` binary. The point
-# of the case is what runs BEFORE that probe: real AnsibleModule
+# of the case is what runs BEFORE that probe: AnsibleModule
 # construction (choice checks on state/command, required_if name for
 # the entry commands) fires before any import probing, and krikri's
 # plugin must match that order and wording. Msg wording IS compared;

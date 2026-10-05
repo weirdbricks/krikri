@@ -28,7 +28,7 @@ module Krikri
   #   in one string) support, matching how every real caller in this
   #   codebase already writes it (one statement per list element).
   # - login_host/login_port/login_user/login_password/login_unix_socket
-  # - login_db: initial database selected on connect (real module: `db =
+  # - login_db: initial database selected on connect (Ansible module: `db =
   #   module.params['login_db']`; no separate `db` alias). Without it the
   #   connection starts with no database selected, so an unqualified query
   #   fails with "No database selected".
@@ -48,7 +48,7 @@ module Krikri
   # `cursor.rowcount > 0` check (mysql_query.py's DML_QUERY_KEYWORDS loop),
   # not an unconditional true. A DDL statement (CREATE/DROP/ALTER/RENAME/
   # TRUNCATE) or anything else still reports changed unconditionally - the
-  # real module's DDL branch does its own already-exists detection that
+  # Ansible module's DDL branch does its own already-exists detection that
   # isn't replicated here, so unconditional-true is the safe default for
   # the DDL/unrecognized case. Real bug found benchmarking
   # devsec.hardening.mysql_hardening (round 25 live-reverify): the role's
@@ -205,7 +205,7 @@ module Krikri
       [raw]
     end
 
-    # Real module's per-statement changed scan: the lstripped, uppercased
+    # Ansible module's per-statement changed scan: the lstripped, uppercased
     # first KEYWORD_SCAN_LEN characters checked for keyword SUBSTRINGS -
     # DML only counts when that statement's rowcount > 0, DDL always
     # counts.

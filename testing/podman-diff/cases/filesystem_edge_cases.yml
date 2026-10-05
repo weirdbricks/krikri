@@ -2,7 +2,7 @@
 # "device" so no loop devices are needed: mkswap/mkfs.ext4 on a file
 # work identically in a container. The two engines run in SEPARATE
 # containers, so the state-mutation sequence is independent per engine.
-# Only failed=/changed= are rendered (not msg) because real's choice-
+# Only failed=/changed= are rendered (not msg) because Ansible's choice-
 # list wording for a bogus fstype is Python-set-ordered and would
 # phantom-diverge run-to-run.
 - hosts: all

@@ -11,7 +11,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # (_AnsibleLazyTemplateDict). krikri's substitution is string-based, but
 # recovers real types via the render-then-parse-back machinery added
 # piecemeal over rounds 303-305 - which left two residual divergence
-# classes this file pins, both verified shape-for-shape against real
+# classes this file pins, both verified shape-for-shape against
 # ansible-core 2.19 (output-diffed, /tmp battery playbooks):
 #
 # 1. The vendored crinja fork's iteration default for a BARE dict

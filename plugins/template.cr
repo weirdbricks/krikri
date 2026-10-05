@@ -153,7 +153,7 @@ module Krikri
       # Live-verified against ansible-core 2.19.4: follow=true writes the
       # target (link still a link afterwards), follow=false replaces the
       # link. Resolution happens BEFORE the identical-content check so
-      # idempotency compares against the target's content, matching real
+      # idempotency compares against the target's content, matching
       # Ansible's own comparison of the followed path's checksum. A
       # dangling symlink is deliberately NOT resolved (File.exists?
       # returns false for one) - Ansible's default path unlinks and
@@ -404,7 +404,7 @@ module Krikri
       end
 
       # Write to temporary file first (for atomic write + validation).
-      # Staged in a remote_tmp-style location (`/tmp`), matching real
+      # Staged in a remote_tmp-style location (`/tmp`), matching
       # Ansible's own `~/.the Ansible module` staging - NOT
       # dest_dir, which this plugin used previously. That dest-adjacent
       # staging was itself a fix for a real cross-device `File.rename`
@@ -487,14 +487,14 @@ module Krikri
       # follow=false semantics). When rename can't work - /tmp being a
       # separate tmpfs mount is very common, and the whole reason
       # staging moved back to /tmp was a cross-device "Invalid
-      # cross-device link" (see temp_file's comment above) - real
+      # cross-device link" (see temp_file's comment above) -
       # Ansible falls back to staging NEXT TO dest (mkstemp in the dest
       # directory, same filesystem) and renaming from there. Doing that
       # explicitly matters: a naive copy-onto-dest fallback (e.g.
       # FileUtils.mv's own cross-device path) OPENS dest for writing,
       # which follows a symlink - a dest symlink would get its target
-      # overwritten instead of replaced, silently diverging from real
-      # Ansible's follow=false (and silently "succeeding" where real
+      # overwritten instead of replaced, silently diverging from
+      # Ansible's follow=false (and silently "succeeding" where
       # Ansible's follow default writes a real file).
       begin
         File.rename(temp_file, dest)

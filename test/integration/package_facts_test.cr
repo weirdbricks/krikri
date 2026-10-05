@@ -138,7 +138,7 @@ describe "package_facts plugin" do
   end
 
   it "fails an unknown manager name with Ansible's exact 'Unsupported package managers requested' error" do
-    # Real module fails BEFORE any gathering when a requested name isn't a
+    # Ansible module fails BEFORE any gathering when a requested name isn't a
     # known manager or alias (verified live against ansible-core 2.19.4:
     # "Unsupported package managers requested: bogusmgr"). This plugin used
     # to route unknown names through the found==0 "Could not detect"

@@ -8,7 +8,7 @@
 # unavailable -> rc=4 "unavailable modules").
 #
 # Semantics matching the Ansible module:
-# - variable is required=True in the real argument_spec, so a missing
+# - variable is required=True in Ansible's argument_spec, so a missing
 #   variable fails at module setup with "missing required arguments:
 #   variable" (the module body's own "Cannot run without variable to
 #   operate with" check is unreachable dead code in the Ansible module -
@@ -187,7 +187,7 @@ module Krikri
     private def read_variable(connection : DB::Database, variable : String) : String?
       # SHOW VARIABLES returns two columns (Variable_name, Value) - the
       # value is the SECOND one. Reading column 0 with `as: String` echoed
-      # the variable's own name back as its value (ad-hoc CLI sweep vs real
+      # the variable's own name back as its value (ad-hoc CLI sweep vs
       # ansible, 2026-09-13: msg was "max_connections" instead of "151").
       value = connection.query_one?("SHOW VARIABLES WHERE Variable_name = ?", variable) do |row|
         row.read(String)

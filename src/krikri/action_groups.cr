@@ -146,7 +146,7 @@ module Krikri
 
     # The modules named by a `group/<name>` key, or nil when nothing
     # defines it - the caller turns that into Ansible's own error.
-    # A bare name is qualified into ansible.builtin, exactly as real
+    # A bare name is qualified into ansible.builtin, exactly as
     # Ansible does.
     def self.modules_for(group_key : String) : Array(String)?
       name = group_key.lchop("group/")

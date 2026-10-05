@@ -10,7 +10,7 @@ require "file_utils"
 # `~user` form via the passwd database, so `command: tar -xzf /tmp/x.tar.gz
 # -C ~root/bin starship` runs at /root/bin - viasite-ansible.zsh's "Extract
 # starship to ~root/bin" task (round 200970) failed here with
-# "tar: ~root/bin: Cannot open: No such file or directory" where real
+# "tar: ~root/bin: Cannot open: No such file or directory" where
 # ansible-playbook succeeded, because only the executable token was
 # expanded and the `-C ~root/bin` argument reached tar literally.
 #

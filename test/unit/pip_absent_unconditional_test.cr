@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Regression spec for pip's state=absent path, added in 0.9.1095.
 # Found via the podman-diff harness
-# (testing/podman-diff/cases/pip_edge_cases.yml, case Q5): real
+# (testing/podman-diff/cases/pip_edge_cases.yml, case Q5):
 # Ansible's pip module runs `pip uninstall` UNCONDITIONALLY and lets
 # pip's own "not installed" output line decide changed=false - it does
 # not pre-check installed-ness locally. This engine used to skip the

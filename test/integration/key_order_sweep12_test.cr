@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # Registered-result key orders for the storage plugins (lvg, lvol,
-# parted, zfs, mount), pinned to the orders live-captured against real
+# parted, zfs, mount), pinned to the orders live-captured against
 # ansible-core on a real Ubuntu 22.04 host in round 992003
 # (kop_storage): every probed task registered r and a following debug
 # emitted `{{ r | to_json }}`, and krikri-role-tester's keyorder report

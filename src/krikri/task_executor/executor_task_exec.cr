@@ -241,7 +241,7 @@ module Krikri
     # type coercion, which accepts a numeric string for `int`, a single
     # scalar promoted to a one-element list for `list`, etc.) - this only
     # flags a value that's unambiguously the wrong shape (a Hash/Array
-    # where a scalar was declared, or vice versa), not every case real
+    # where a scalar was declared, or vice versa), not every case
     # Ansible's coercion would technically also accept.
     private def argument_type_matches?(value : JSON::Any, declared_type : String) : Bool
       case declared_type
@@ -468,7 +468,7 @@ module Krikri
 
     # set_stats: - same "no uploaded plugin binary" category as
     # group_by:/reboot: above. Writes into CustomStats (a process-wide
-    # accumulator, not scoped to this TaskExecutor instance - real
+    # accumulator, not scoped to this TaskExecutor instance -
     # Ansible's own custom-stats block covers the WHOLE run, and
     # krikri-playbook.cr constructs a fresh TaskExecutor per play).
     private def execute_reboot(params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any),
@@ -608,7 +608,7 @@ module Krikri
         report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context))
         # Only a host whose unreachability is FATAL (not
         # ignore_unreachable:'d away) is remembered: an ignored
-        # unreachable keeps being retried per task, exactly like real
+        # unreachable keeps being retried per task, exactly like
         # Ansible, so it must not be pinned into the never-retry set.
         @unreachable_hosts << host.name unless task.ignore_unreachable?
         return
@@ -667,7 +667,7 @@ module Krikri
         connection_host = host.name
 
         # A static import_role: (Task#is_static_import), like a block:,
-        # produces no result of its own when skipped either - real
+        # produces no result of its own when skipped either -
         # Ansible's static splice means there's nothing here to show
         # "skipping" for (see is_static_import's own comment). The
         # included role's own tasks simply never got spliced in, with no
@@ -726,7 +726,7 @@ module Krikri
     # through the value-level UnsafeValues registry and mark_derived.
     private def loop_items_derive_from_unsafe_data?(task : Task, host_name : String) : Bool
       # A generic `with_<lookup>:` loop's items ARE lookup results (a
-      # command's stdout for with_lines, a URL body for with_url) - real
+      # command's stdout for with_lines, a URL body for with_url) -
       # Ansible marks every lookup result unsafe, so they are data, never
       # template text: rendering them ran `{{ lookup('pipe', ...) }}` that
       # a with_lines command merely printed.
@@ -1069,7 +1069,7 @@ module Krikri
 
     # Ansible's own failure text for a controller-side src: miss
     # (copy action plugin) - byte-identical to the unarchive variant
-    # below so divergence triage compares cleanly against a real
+    # below so divergence triage compares cleanly against a
     # ansible-playbook run of the same role. A relative src carries the
     # full Searched-in list (Ansible's AnsibleFileNotFound paths); an
     # absolute one carries none (Ansible's absolute lookup branch never
@@ -1318,10 +1318,10 @@ module Krikri
     # (verified live against ansible-core 2.19). Previously a controller
     # miss silently returned params unchanged, so the plugin ran anyway
     # and its remote_file_exists? check found the file ON THE TARGET -
-    # exactly the shape get_url downloads into - and succeeded where real
+    # exactly the shape get_url downloads into - and succeeded where
     # Ansible fails. Found via andrewrothstein.func_e (round 810153):
     # get_url pulls the tarball to the remote /tmp, then unarchive: with
-    # no remote_src: (and arguably a buggy role) must fail per real
+    # no remote_src: (and arguably a buggy role) must fail per
     # Ansible, not paper over it.
     #
     # Returns either the (possibly rewritten) params hash on success, or
@@ -1340,7 +1340,7 @@ module Krikri
       # task whose src: was downloaded straight to the remote by an
       # earlier task - without this check that reads as remote_src:
       # false (the default), so staging looked for src: on the
-      # CONTROLLER, found nothing, and failed the task where real
+      # CONTROLLER, found nothing, and failed the task where
       # Ansible (which treats copy: no identically to remote_src: true)
       # succeeds.
       return params if params.has_key?("copy") && !ansible_boolean_param?(params["copy"]?)
@@ -1653,7 +1653,7 @@ module Krikri
       final_params = params.dup
       final_params["_ansible_check_mode"] = resolve_task_check_mode(task, vars_context).to_s
       final_params["_ansible_diff"] = @diff_mode.to_s
-      # The module name exactly as the playbook invoked it - real
+      # The module name exactly as the playbook invoked it -
       # Ansible's check-mode skip message echoes it ("remote module
       # (ansible.builtin.tempfile) does not support check mode", see
       # tempfile.cr), and the plugin has no other way to recover the
@@ -2129,7 +2129,7 @@ module Krikri
     # inside the module's own AnsibleModule init - i.e. after the action
     # plugin stage, before any module-side file access - which is exactly
     # where the two callers of this hook sit.
-    # Core modules whose real module source declares
+    # Core modules whose Ansible module source declares
     # supports_check_mode=False (and whose plugin mirrors the skip).
     NO_CHECK_MODE_MODULES = %w[
       ansible.builtin.uri ansible.builtin.wait_for ansible.builtin.tempfile
@@ -2312,7 +2312,7 @@ module Krikri
 
     # Register task result as a variable
     private def register_result(host : Host, register_name : String, result : JSON::Any) : Nil
-      # Strip private `_ansible_*` result keys before register: - real
+      # Strip private `_ansible_*` result keys before register: -
       # Ansible never lets them through (live-verified: assert:'s own
       # `_ansible_verbose_always` is absent from the registered var), and
       # the assert plugins' `_ansible_quiet` display marker is likewise

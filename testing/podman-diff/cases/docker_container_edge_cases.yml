@@ -2,7 +2,7 @@
 # harness container (and no docker-in-podman), so cases that would
 # actually create/pull/run a container are NOT testable here - that
 # needs a real daemon and is deferred to the Atlantic.net role rounds.
-# What IS testable is argument validation that real Ansible performs in
+# What IS testable is argument validation that Ansible performs in
 # argument_spec BEFORE any daemon contact (missing required params,
 # invalid choices, unsupported parameters), plus "no daemon -> both
 # engines fail". The real side runs community.docker.docker_container

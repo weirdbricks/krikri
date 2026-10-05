@@ -502,7 +502,7 @@ describe "file plugin" do
     it "fails (matching Ansible's own 'chown failed: failed to look up user') when owner: names a nonexistent user" do
       # Real bug found benchmarking robertdebock.openbao_agent on Rocky
       # 9.6 (round 162): a directory-creation task with `owner: openbao`
-      # BEFORE any earlier task creates that system user - real
+      # BEFORE any earlier task creates that system user -
       # ansible-playbook correctly fails ("chown failed: failed to look
       # up user openbao"); this previously left the chown uid at its -1
       # sentinel (never set, never checked) and simply never attempted
@@ -597,7 +597,7 @@ describe "file plugin" do
       result["changed"].as_bool.must_equal(true)
       falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
 
-      # Warm rerun - still changed, this task never converges in real
+      # Warm rerun - still changed, this task never converges in
       # Ansible either.
       warm = PluginSpecHelper.run("file", {"path" => path, "attr" => "-i"})
       warm["changed"].as_bool.must_equal(true)
@@ -671,7 +671,7 @@ describe "file plugin" do
     end
 
     it "fails the task when the value doesn't match its format (Ansible's own fail_json message shape)" do
-      # Real module: get_timestamp_for_time -> fail_json("Error while
+      # Ansible module: get_timestamp_for_time -> fail_json("Error while
       # obtaining timestamp for time X using format Y: ...") - the
       # default format can't parse "2024-01-01 12:00".
       path = tmp_path("fmt_mismatch.txt")

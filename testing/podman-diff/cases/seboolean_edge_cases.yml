@@ -3,7 +3,7 @@
 # (no /sys/fs/selinux, no getenforce binary), so the module's actual
 # get/set path is NOT testable here (it was verified against a real
 # Rocky 9.6 enforcing host; see plugins/seboolean.cr's class docs).
-# What IS testable is everything real ansible.posix.seboolean does
+# What IS testable is everything Ansible.posix.seboolean does
 # before touching libselinux/libsemanage: required-arg collection
 # (sorted, comma-joined), bool-type conversion of state/persistent/
 # ignore_selinux_state, and the "SELinux is disabled" runtime-status
@@ -12,7 +12,7 @@
 # and masks all of it.
 #
 # B8/B9/B11 are the interesting disabled-host paths: with
-# ignore_selinux_state: true real skips the runtime-status gate, and
+# ignore_selinux_state: true Ansible skips the runtime-status gate, and
 # the NON-persistent branch is guarded by is_selinux_enabled() (0
 # here), so it exits a no-op SUCCESS with changed=False. The
 # persistent branch bypasses that guard (it talks to the semanage

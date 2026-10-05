@@ -3,7 +3,7 @@
 # docker_network / docker_image against a real docker.io daemon. Targets the
 # KNOWN_MISSING.md Docker gaps: check-mode create_parameters (real records
 # defaulted options), list options whose elements contain commas, and the
-# error wording after real's own prefixes.
+# error wording after Ansible's own prefixes.
 # Convention: every probed task registers r and is followed by a debug
 # emitting "KEYORDER|<module>_<case>|<registered result as json>".
 # ignore_errors everywhere; all names are kop_-prefixed so cold+warm are safe.

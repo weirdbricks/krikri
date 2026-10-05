@@ -200,7 +200,7 @@ module Krikri
         # `name: "{{ redhat_repo_extra_packages }}"` with the var
         # defaulting to `[]` renders as the literal string "[]", which
         # `names_from_name_param` parses down to an empty array. That's
-        # exactly as "nothing to install" as no name: at all, and real
+        # exactly as "nothing to install" as no name: at all, and
         # ansible-core's yum/dnf module reports ok/changed: false for it,
         # not a missing-parameter failure - found via trombik.redhat_repo's
         # "Install extra packages" task (round 601447), which failed here
@@ -1061,7 +1061,7 @@ module Krikri
           options << "--setopt=sslverify=False"
         end
 
-        # Download packages without installing (dnf's --downloadonly; real
+        # Download packages without installing (dnf's --downloadonly;
         # ansible-core sets conf.downloadonly, dnf.py _configure_base).
         if true?(@params["download_only"]?)
           options << "--downloadonly"
@@ -1084,7 +1084,7 @@ module Krikri
       # accepts for these same options ("It's possible someone passed a
       # comma separated string since it used to be a string type"). ONLY
       # valid JSON, though - never a Python-repr repair pass: a value that
-      # merely LOOKS like a container is a plain STRING in real
+      # merely LOOKS like a container is a plain STRING in
       # ansible-core (live-verified vs ansible-playbook 2.19.11, see
       # apt.cr's parse_package_names), and a whole-value `{{ list_var }}`
       # container arg arrives as the double-quoted JSON the wire

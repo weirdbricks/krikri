@@ -1,5 +1,5 @@
 # wait_for_connection edge cases. The module is an action plugin in
-# real Ansible (a controller-side retry loop around the ping module;
+# Ansible (a controller-side retry loop around the ping module;
 # the plugins/wait_for_connection.cr port retries the connection itself
 # the same way). The harness containers use ansible_connection=local,
 # so the success path is trivially immediate - the interesting case is

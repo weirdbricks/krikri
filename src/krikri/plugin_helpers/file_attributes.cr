@@ -2,7 +2,7 @@ module Krikri
   module PluginHelpers
     # FileAttributes - pure parsing for stat's get_mime/get_attributes
     # options. Both shell out in Ansible too (`file` and `lsattr`
-    # have no native Crystal or stdlib equivalent - this mirrors real
+    # have no native Crystal or stdlib equivalent - this mirrors
     # Ansible's own the Ansible module exactly, not a missed
     # native-conversion opportunity like stat/find's old shell versions
     # were), so this module only covers parsing their output, not running

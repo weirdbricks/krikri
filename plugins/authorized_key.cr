@@ -83,7 +83,7 @@ module Krikri
         return failure
       end
 
-      # Real module's looks_like_url/fetch_file: a key that is a URL
+      # Ansible module's looks_like_url/fetch_file: a key that is a URL
       # (http/https/ftp/file) is fetched first and the fetched body
       # becomes the key material - "invalid key specified: https://..."
       # never happens on Ansible (lucasmaurice.users, jtprogru.hosts).
@@ -94,7 +94,7 @@ module Krikri
       # hard-fails the task when the user isn't in the passwd DB - it
       # never guesses a home directory for a user that doesn't exist
       # (round 811277, jtprogru.profile: krikri silently invented
-      # /home/jtprogru/.ssh/authorized_keys and "succeeded" where real
+      # /home/jtprogru/.ssh/authorized_keys and "succeeded" where
       # ansible-playbook fails, live-verified).
       if failure = missing_user_result(true?(@params["_ansible_check_mode"]?))
         return failure
@@ -133,7 +133,7 @@ module Krikri
       # is rewritten as "<key_options> <type> <blob> <comment>". Both it
       # and the comment param replace fields of the parsed key BEFORE
       # the idempotency comparison, so a difference in either is a real
-      # change (real module: parsed_new_key[:4] != existing_keys[blob][:4]).
+      # change (Ansible module: parsed_new_key[:4] != existing_keys[blob][:4]).
       key_lines = prepared.key_lines
       if key_options = @params["key_options"]?
         key_lines = key_lines.map { |line| apply_key_options(line, key_options) }
@@ -247,7 +247,7 @@ module Krikri
     # A Ansible playbook can legitimately compute an empty key
     # value at render time (weareinteractive.users' own `key: "{{
     # user.authorized_keys | default([]) | join('\n') }}"`, empty
-    # whenever authorized_keys isn't set for that user) - real
+    # whenever authorized_keys isn't set for that user) -
     # Ansible's own module treats that as a true no-op (doesn't even
     # create the file), not "add a blank line". Without this,
     # AuthorizedKeysFile#ensure both added a blank line AND could
@@ -282,7 +282,7 @@ module Krikri
       "#{key_options} #{tokens[type_index..].join(" ")}"
     end
 
-    # Real module's comment-param overwrite: everything after the blob is
+    # Ansible module's comment-param overwrite: everything after the blob is
     # the comment, and a given comment: replaces it wholesale.
     private def apply_comment(line : String, comment : String) : String
       tokens = line.split

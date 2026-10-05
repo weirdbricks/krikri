@@ -1,6 +1,6 @@
 ---
 # Comprehensive ansible.builtin.dnf5 option-coverage harness. Runs against a
-# Fedora 41 (dnf5) host with connection: local under BOTH real ansible-playbook
+# Fedora 41 (dnf5) host with connection: local under BOTH ansible-playbook
 # and krikri-playbook (see run_compare.sh); each writes a canonical per-task
 # status report so the two engines can be diffed exactly.
 #

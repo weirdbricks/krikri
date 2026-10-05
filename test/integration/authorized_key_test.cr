@@ -51,7 +51,7 @@ describe "authorized_key plugin" do
 
     result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
 
-    # Real module sets NO changed at all on the idempotent path
+    # Ansible module sets NO changed at all on the idempotent path
     # (enforce_state only sets params['changed']=True on the do_write
     # paths); the executor backfills failed-then-changed, which is why
     # Ansible's registered shape there ends [..., keyfile, failed, changed]
@@ -66,7 +66,7 @@ describe "authorized_key plugin" do
 
     result = PluginSpecHelper.run("authorized_key", {"path" => path, "key" => RSA_KEY})
 
-    # Real module: parsed_new_key[:4] != existing_keys[blob][:4] - the
+    # Ansible module: parsed_new_key[:4] != existing_keys[blob][:4] - the
     # parsed comment is in that tuple, so a comment-only difference is a
     # real change (the old line is replaced by the new comment).
     result["changed"].as_bool.must_equal(true)
@@ -171,7 +171,7 @@ describe "authorized_key plugin" do
     result["keyfile"].as_s.must_equal("/root/.ssh/authorized_keys")
   end
 
-  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13): real
+  # Ad-hoc CLI comparison sweep vs Ansible (2026-09-13):
   # ansible.posix.authorized_key returns its ENTIRE module.params dict
   # (with keyfile/changed merged in), so every effective parameter -
   # including defaulted (manage_dir/exclusive/validate_certs/follow) and
@@ -179,7 +179,7 @@ describe "authorized_key plugin" do
   # plus AnsibleModule.add_path_info's stat fields whenever the echoed
   # `path` param points at an existing file. Previously only
   # changed/msg/path/state came back.
-  it "echoes the full effective parameter set plus file stat fields (real module's exit_json(**params) shape)" do
+  it "echoes the full effective parameter set plus file stat fields (Ansible module's exit_json(**params) shape)" do
     path = tmp_path("authorized-key-fields")
     File.write(path, "#{RSA_KEY}\n")
 
@@ -188,7 +188,7 @@ describe "authorized_key plugin" do
       "key_options" => "no-port-forwarding", "comment" => "krikri test",
     })
 
-    # Real module: key_options are part of the parsed-key comparison, so
+    # Ansible module: key_options are part of the parsed-key comparison, so
     # adding them to an existing bare key is a real change - the line is
     # rewritten with the options prefix (plus the comment param).
     result["changed"].as_bool.must_equal(true)
@@ -213,7 +213,7 @@ describe "authorized_key plugin" do
     result["size"].as_i64.must_equal("no-port-forwarding ssh-rsa #{RSA_KEY.split(" ")[1]} krikri test".bytesize + 1)
   end
 
-  # podman-diff authorized_key_edge_cases (2026-09-15): real
+  # podman-diff authorized_key_edge_cases (2026-09-15):
   # ansible.posix.authorized_key splits the key into lines, drops blank
   # and '#'-prefixed ones, and hard-fails on the FIRST line without a
   # known SSH2 key-type token ("invalid key specified:") - garbage is
@@ -231,10 +231,10 @@ describe "authorized_key plugin" do
     File.exists?(path).must_equal(false)
   end
 
-  # round 825388 batch (lucasmaurice.users, jtprogru.hosts): real
+  # round 825388 batch (lucasmaurice.users, jtprogru.hosts):
   # ansible.posix.authorized_key fetches a key that looks like a URL
   # (http/https/ftp/file) before line-splitting - "invalid key
-  # specified: https://github.com/bob.keys" never happens on real
+  # specified: https://github.com/bob.keys" never happens on
   # Ansible. file:// is spec'd here (network-independent); the http(s)
   # path shares the same dispatch.
   it "fetches a file:// URL key instead of failing with invalid-key" do

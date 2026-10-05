@@ -4,9 +4,9 @@
 #
 # The `ansible` counterpart to krikri-playbook.cr's `ansible-playbook`
 # reimplementation: runs exactly ONE module against a pattern of
-# inventory hosts, matching real ansible-core's own `ansible <pattern>
+# inventory hosts, matching ansible-core's own `ansible <pattern>
 # -m <module> -a <args>` ad-hoc surface - a separate binary, not a
-# krikri-playbook subcommand, for the same reason real Ansible ships
+# krikri-playbook subcommand, for the same reason Ansible ships
 # `ansible` and `ansible-playbook` as two distinct executables rather
 # than folding ad-hoc mode into ansible-playbook's own CLI. Reuses the
 # exact same TaskExecutor/PluginManager/InventoryParser machinery as
@@ -15,7 +15,7 @@
 # TaskExecutor's `adhoc: true` flag (see task_executor/executor.cr and
 # task_executor/result_display.cr's display_adhoc_result).
 #
-# The option surface mirrors real `ansible`'s own --help (verified
+# The option surface mirrors `Ansible`'s own --help (verified
 # against ansible-core 2.19.4): playbook-only flags (tags, --syntax-check,
 # --list-tasks, ...) are deliberately absent, while everything real
 # ad-hoc mode accepts is accepted here. Where krikri-playbook.cr
@@ -37,8 +37,8 @@ require "./src/krikri/vault_cli"
 require "./src/krikri/task_executor"
 
 # Colorize is tty-gated by default (non-tty output stays plain, matching
-# real ansible's isatty check); ANSIBLE_FORCE_COLOR=1 forces it back on
-# for the same piped-output use cases real ansible supports it for.
+# Ansible's isatty check); ANSIBLE_FORCE_COLOR=1 forces it back on
+# for the same piped-output use cases Ansible supports it for.
 Colorize.enabled = true if ENV["ANSIBLE_FORCE_COLOR"]? == "1"
 
 pattern = ""
@@ -169,7 +169,7 @@ begin
       vault_password_file = file
     end
 
-    # Real Ansible's own alias for --vault-password-file (ansible-core
+    # Ansible's own alias for --vault-password-file (ansible-core
     # 2.19.4's --help lists both spellings together).
     parser.on("--vault-pass-file=FILE", "Alias for --vault-password-file") do |file|
       vault_password_file = file
@@ -313,7 +313,7 @@ elsif ask_vault_pass
 end
 
 # Resolve module_name to its AVAILABLE_PLUGINS FQCN, same as a playbook
-# task would - the plugin binary is looked up by FQCN, and real ansible
+# task would - the plugin binary is looked up by FQCN, and Ansible
 # accepts a bare module name here too (`ansible all -m ping`).
 resolved_module = Krikri::PlaybookParser.resolve_module_name(module_name)
 unless resolved_module
@@ -357,7 +357,7 @@ if user = remote_user
   hosts.each(&.user=(user))
 end
 
-# The connection/become flags are, in real Ansible, exactly "set this
+# The connection/become flags are, in Ansible, exactly "set this
 # connection variable for every host" - the same wiring
 # krikri-playbook.cr uses (applied as host vars on top of whatever the
 # inventory said). The hosts here are the same objects the executor and
@@ -410,7 +410,7 @@ end
 # discard; the flag is accepted and correct, it simply has nothing older
 # to clear. Same reasoning as krikri-playbook.cr's own --flush-cache.
 _ = flush_cache
-# --task-timeout: real Ansible enforces a per-task wall-clock timeout.
+# --task-timeout: Ansible enforces a per-task wall-clock timeout.
 # This engine has no task-level enforcement point yet, so the flag is
 # accepted (and parses/validates as an integer) but not enforced.
 _ = task_timeout
@@ -473,7 +473,7 @@ executor = Krikri::TaskExecutor.new(
   inventory: inventory,
   forks: forks,
   extra_vars: extra_vars,
-  # Real Ansible's playbook_dir magic var for an ad-hoc run defaults to
+  # Ansible's playbook_dir magic var for an ad-hoc run defaults to
   # the working directory (TaskExecutor's own default); --playbook-dir
   # substitutes it explicitly.
   playbook_dir: playbook_dir_effective,

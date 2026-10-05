@@ -212,7 +212,7 @@ describe Krikri::SynchronizeRsync do
       # `{% if %}...{% else %}['a']{% endif %}` block's rendered output)
       # is a plain STRING in ansible-core (live-verified vs
       # ansible-playbook 2.19.11, see apt.cr's parse_package_names) -
-      # the old single-quote "repair" turned it into a list real
+      # the old single-quote "repair" turned it into a list
       # Ansible never had.
       Krikri::SynchronizeRsync.parse_list(%(["--a", "--b"])).must_equal(["--a", "--b"])
       Krikri::SynchronizeRsync.parse_list("['--a', '--b']").must_equal(["['--a'", "'--b']"])

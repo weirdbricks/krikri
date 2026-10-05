@@ -11,9 +11,9 @@ module Krikri
     # (AWS_* env vars, region param fallback). No state/idempotency: each
     # run is one Describe call (plus, for VPCs and AMIs, the same
     # per-result attribute calls Ansible makes) with the result list
-    # shaped the way the real modules shape it.
+    # shaped the way the Ansible modules shape it.
     #
-    # Result shaping parity: the real modules pass the whole boto3 item
+    # Result shaping parity: the Ansible modules pass the whole boto3 item
     # through camel_dict_to_snake_dict (so every CamelCase response key
     # becomes snake_case, nested sets included), add an `id` key for
     # backwards compatibility (subnets/VPCs), and overwrite `tags` with
@@ -142,7 +142,7 @@ module Krikri
           value = jsonify(child)
           # The same wire-vs-boto3 gap hits numeric fields: boto3 parses
           # these into real integers before Ansible's shaping ever runs,
-          # so a string like "4091" diverges from real module output.
+          # so a string like "4091" diverges from Ansible module output.
           numeric = value.as_s? &&
                     INTEGER_FIELDS.includes?(child.name) &&
                     value.as_s.matches?(/\A-?\d+\z/)
@@ -166,7 +166,7 @@ module Krikri
         raw == "true" || raw == "True" || raw == "yes"
       end
 
-      # Real modules' success result carries only `changed` plus the list
+      # Ansible modules' success result carries only `changed` plus the list
       # key - no msg (that's fail_json-only per the module protocol).
       private def self.result(key : String, entries : Array(JSON::Any)) : Krikri::PluginResult
         built = Krikri::PluginResult.new(changed: false, failed: false)
@@ -174,7 +174,7 @@ module Krikri
         built
       end
 
-      # The real modules always set `tags` (a tag-key -> value dict, {}
+      # The Ansible modules always set `tags` (a tag-key -> value dict, {}
       # when there are none) even when the describe response carries no
       # tagSet at all.
       private def self.with_tags(item : JSON::Any) : JSON::Any
@@ -251,7 +251,7 @@ module Krikri
         wire = numbered_params(string_list(params["image_ids"]?), "ImageId") +
                numbered_params(string_list(params["executable_users"]?), "ExecutableUser")
 
-        # Real module's owner optimization: numeric account IDs become an
+        # Ansible module's owner optimization: numeric account IDs become an
         # owner-id filter (much faster than the Owners param), "self"
         # must stay an Owners param (not a valid owner-alias filter), and
         # anything else becomes an owner-alias filter.
@@ -291,7 +291,7 @@ module Krikri
           end
         end
 
-        # Real module sorts by creation_date (possibly missing).
+        # Ansible module sorts by creation_date (possibly missing).
         images = images.sort_by { |image| image["creation_date"]?.try(&.as_s?) || "" }
         result("images", images)
       rescue ex : Ec2Api::Error

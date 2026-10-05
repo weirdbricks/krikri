@@ -4,7 +4,7 @@ require "file_utils"
 # groupby's result shape and its variable-storage warning. Jinja2
 # 3.x do_groupby yields _GroupTuple namedtuples: json.dumps (debug:) shows
 # each group as a [grouper, list] ARRAY, item.0/item.1 indexing works, and
-# .grouper/.list attribute access works (namedtuple fields). Real
+# .grouper/.list attribute access works (namedtuple fields).
 # ansible-core 2.19.11 also warns "Type 'GroupTuple' is unsupported in
 # variable storage, converting to 'list'." whenever the pairs land in
 # storage (task-arg finalization, set_fact) - but NOT when a | map(...)

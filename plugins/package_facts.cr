@@ -21,7 +21,7 @@ module Krikri
   # Param coverage matches Ansible's argument_spec:
   #   manager:  type list (default ['auto']), lowercased, with Ansible's
   #             ALIASES (dnf/dnf5/yum/zypper -> rpm; added in ansible-core
-  #             2.18). There is deliberately NO "dpkg" manager: real
+  #             2.18). There is deliberately NO "dpkg" manager:
   #             Ansible - every version - fails "Unsupported package
   #             managers requested: dpkg" (dpkg-query is this engine's
   #             implementation detail of the apt manager, not a real
@@ -63,7 +63,7 @@ module Krikri
     AUTO_DETECT_MANAGERS = ["apt", "rpm"]
 
     # Canonical names this engine can gather + Ansible's ALIASES
-    # (package_facts.py, added in ansible-core 2.18). No "dpkg": real
+    # (package_facts.py, added in ansible-core 2.18). No "dpkg":
     # Ansible has no dpkg manager and fails it as unsupported (verified
     # live vs ansible-core 2.14 AND 2.19), and dpkg-query is only this
     # engine's implementation detail of the apt manager.
@@ -92,7 +92,7 @@ module Krikri
 
       bad = requested.reject { |mgr_name| CANONICAL_MANAGERS.has_key?(mgr_name) || mgr_name == "auto" }
       unless bad.empty?
-        # Real module fails BEFORE gathering anything, and the message
+        # Ansible module fails BEFORE gathering anything, and the message
         # differs depending on whether 'auto' was among the requested
         # names (real code's `if 'auto' in module.params['manager']`
         # branch, verified live): with 'auto' present it's

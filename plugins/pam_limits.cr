@@ -37,7 +37,7 @@ module Krikri
 
     DEFAULT_DEST = "/etc/security/limits.conf"
 
-    # Real argument_spec, declaration order - no aliases.
+    # Ansible's argument_spec, declaration order - no aliases.
     SPEC = {
       "domain"     => %w[],
       "limit_type" => %w[],

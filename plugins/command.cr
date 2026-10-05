@@ -33,7 +33,7 @@ module Krikri
   # the same) - found the hard way, not assumed: a real playbook
   # comparing `result.stdout == "someuser"` after `command: whoami`
   # failed here despite the values looking identical when printed,
-  # because the captured stdout still had its trailing newline; real
+  # because the captured stdout still had its trailing newline;
   # ansible-playbook strips it, so real playbooks are routinely written
   # assuming stdout has no trailing newline.
   class CommandPlugin < BasePlugin
@@ -266,7 +266,7 @@ module Krikri
         end
       end
 
-      # Command module doesn't support check mode (Ansible behavior). Real
+      # Command module doesn't support check mode (Ansible behavior).
       # Ansible's own command/shell action plugin still populates the FULL
       # normal result shape (cmd/rc/stdout/stdout_lines/stderr/
       # stderr_lines/start/end/delta, all empty/zero/null) rather than a
@@ -419,7 +419,7 @@ module Krikri
         end
 
         # Give this process (and therefore the command spawned below,
-        # and everything under it) a controlling terminal, the way real
+        # and everything under it) a controlling terminal, the way
         # ansible-core's `ssh -tt` does for the whole remote process
         # tree - see ControllingTty's own comment for why the tty is
         # manufactured here rather than requested from ssh. stdin/

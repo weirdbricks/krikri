@@ -31,7 +31,7 @@ module Krikri
   class PodmanImagePlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Real argument_spec (containers.podman podman_image.py), name =>
+    # Ansible's argument_spec (containers.podman podman_image.py), name =>
     # aliases - as shipped in the latest GALAXY release the podman-diff
     # harness installs: pull_policy/retry/retry_delay exist on MAIN only
     # (live-verified - Ansible rejects both with Unsupported parameters).
@@ -355,7 +355,7 @@ module Krikri
     private def extra_args : String
       args = @params["pull_extra_args"]?.presence
       return "" unless args
-      # Real module: args.extend(shlex.split(pull_extra_args)) - one argv
+      # Ansible module: args.extend(shlex.split(pull_extra_args)) - one argv
       # element per token, each of which is quoted on its own here.
       " #{Shell.shlex_split(args).map { |token| Shell.quote_arg(token) }.join(" ")}"
     end

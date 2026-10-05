@@ -97,9 +97,9 @@ describe UserState do
       # %}['a']{% endif %}` block's rendered output - is a plain STRING
       # (live-verified vs ansible-playbook 2.19.11 for the same bug
       # class on apt's name:). The single-quote "repair" this spec used
-      # to assert turned that string into a real group list real
+      # to assert turned that string into a real group list
       # Ansible never had; passing the raw text to `-G` now fails with
-      # useradd's own "group ... does not exist" exactly like real
+      # useradd's own "group ... does not exist" exactly like
       # Ansible's comma-split garbage does.
       args = UserState.useradd_args("mongodb_exporter", nil, nil, "['mongodb_exporter', 'ssl-cert']", nil, nil, nil, false, true)
       args.must_equal(["-G '['\\''mongodb_exporter'\\'', '\\''ssl-cert'\\'']'", "-m", "'mongodb_exporter'"])

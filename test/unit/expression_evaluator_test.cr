@@ -544,7 +544,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "resolves a first_found paths: entry relative to the role's tasks/ dir, not just role_path itself" do
     # buluma.confluence's own idiom: `paths: ['../vars']`, meant to be
     # interpreted relative to the INCLUDING TASK FILE's own directory
-    # (tasks/main.yml -> tasks/../vars == role_dir/vars) - real
+    # (tasks/main.yml -> tasks/../vars == role_dir/vars) -
     # ansible-playbook resolves it this way; this engine previously only
     # ever tried role_path itself as the base (role_dir/../vars, one
     # level too far up), never finding the real file.
@@ -652,7 +652,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   # NOT under files/. Ansible's `file` lookup resolves terms through
   # find_file_in_search_path's two-probe search order - `<dir>/files/<term>`
   # first, then `<dir>/<term>` directly - so the caller's own subdirectory
-  # components reach the role root (live-verified against real
+  # components reach the role root (live-verified against
   # ansible-playbook: the lookup succeeds; `files/` is a search HINT, not a
   # forced prefix). This engine used to unconditionally prepend files/,
   # failing with "File not found" on a path Ansible resolves.
@@ -686,7 +686,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   # evaluator. The previous "undefined" fallback let the literal text
   # "undefined" get written straight into a real target file
   # (`~/.ssh/authorized_keys`, via `lookup('file', ssh_user_pubkey)` on
-  # a host with no `~/.ssh/id_rsa.pub`) instead of failing like real
+  # a host with no `~/.ssh/id_rsa.pub`) instead of failing like
   # Ansible does.
   it "raises (does not silently return 'undefined') for lookup('file', ...) on a missing file" do
     v = Hash(String, JSON::Any).new
@@ -777,7 +777,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   it "evaluates lookup('template', path, template_vars=dict(...)) merging the kwarg's dict into the rendered template's own vars" do
     # Real bug found benchmarking bimdata.ferm's own defaults/main.yml:
     # `_ferm_rules: "{{ lookup('template', 'get_vars.j2', template_vars=
-    # dict(app_name='ferm', var_type='rule')) | from_json }}"` - real
+    # dict(app_name='ferm', var_type='rule')) | from_json }}"` -
     # Ansible's own template lookup plugin merges template_vars='s dict
     # into the vars available to the rendered template, on top of (never
     # replacing) the calling context's own vars. Entirely ignored
@@ -898,7 +898,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   end
 
   it "supports q(...) as a full alias for query(...)" do
-    # Real bug found benchmarking nephelaiio.devtools: `q(...)` is real
+    # Real bug found benchmarking nephelaiio.devtools: `q(...)` is
     # Ansible's documented short alias for `query(...)` (same lookup
     # dispatch, always the list form) - only `query(` was matched, so
     # `q('first_found', include_files, errors='ignore')` fell through to
@@ -1835,7 +1835,7 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
   describe "native-typing indirection comparisons (KNOWN_MISSING.md's narrow one-off fix)" do
     # robertdebock.java/buluma.java's real shape: vars/main.yml maps
     # ansible_distribution to a YAML-int Java version table, indirects
-    # it twice, and gates a task on `java_version == 8` - on real
+    # it twice, and gates a task on `java_version == 8` - on
     # ansible-core 2.19 the indirected value stays a native int and the
     # comparison is True; this engine's `{{ }}` substitution preserves
     # the SOURCE type as a string through a bare indirection (see

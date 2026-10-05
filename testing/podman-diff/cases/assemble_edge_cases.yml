@@ -90,7 +90,7 @@
     - ansible.builtin.debug:
         msg: "C5 failed={{ c5.failed }} changed={{ c5.changed }}"
 
-    - name: "C6 assemble with regexp matching NOTHING (real Ansible fails: no fragments found)"
+    - name: "C6 assemble with regexp matching NOTHING (Ansible fails: no fragments found)"
       ansible.builtin.assemble:
         src: /tmp/podman-diff-c-frag
         dest: /tmp/podman-diff-c6-out.conf

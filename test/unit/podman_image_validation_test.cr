@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/podman_image.cr's argument-validation surface against real
 # containers.podman.podman_image's AnsibleModule setup (source-verified
-# against the module's main() argument_spec; live-diffed vs real
+# against the module's main() argument_spec; live-diffed vs
 # ansible-playbook via the podman-diff podman_image_edge_cases harness -
 # Ansible runs all of this BEFORE the podman executable probe, the only
 # byte-comparable surface without a podman binary):

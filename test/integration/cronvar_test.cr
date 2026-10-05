@@ -76,7 +76,7 @@ describe "cronvar plugin" do
     content.wont_include("MAILTO=root")
   end
 
-  it "is a no-op on an assignment that already holds the value, even with spaces around the = (real module only rewrites when the parsed value differs)" do
+  it "is a no-op on an assignment that already holds the value, even with spaces around the = (Ansible module only rewrites when the parsed value differs)" do
     path = tmp_path("cronvar-spaces.txt")
     File.write(path, "MAILTO = root\n")
 

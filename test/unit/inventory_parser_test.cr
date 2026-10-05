@@ -150,7 +150,7 @@ describe Krikri::InventoryParser do
       inventory.hosts["web1"].vars["myvar"].must_equal(JSON::Any.new(nil))
     end
 
-    # `~` is YAML's null alias, and an INI inventory is not YAML - real
+    # `~` is YAML's null alias, and an INI inventory is not YAML -
     # Ansible leaves it as the one-character string.
     it "keeps a bare ~ as a string" do
       write(File.join(root, "inventory.ini"), <<-INI)

@@ -175,7 +175,7 @@ module Krikri
 
       # Anything this handler notified that sits at or BEFORE its
       # own position has already been passed, so it needs the
-      # second pass. Collected during pass one only - real
+      # second pass. Collected during pass one only -
       # Ansible drops notifications raised during the second.
       if pass == 0 && (result["changed"]?.try(&.as_bool?) == true)
         # Read from the handler's OWN notify: list rather than

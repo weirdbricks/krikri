@@ -26,7 +26,7 @@ require "file_utils"
 # (containers.podman.podman_container behind `when: podman_containers is
 # defined`, false on the role's own defaults - Ansible ok=7
 # changed=2, krikri rc=4 with zero tasks run), mashimom.oh-my-zsh (apk:
-# behind `when: ansible_pkg_mgr == 'apk'` on a Debian host - real
+# behind `when: ansible_pkg_mgr == 'apk'` on a Debian host -
 # Ansible's only failure was a later, unrelated one), and ~23 more of
 # the same shape (Windows-only modules, OS-family branches, feature-flag
 # definedness checks).
@@ -132,7 +132,7 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
   end
 
   it "runs to completion when a when:-gated unimplemented module's gate is false" do
-    # kubernetes.core is a real, commonly-installed collection real
+    # kubernetes.core is a real, commonly-installed collection
     # ansible-playbook would resolve and run fine here - krikri simply
     # hasn't ported this specific module. Round 811000: the module name
     # must be resolved lazily like Ansible does (only once the

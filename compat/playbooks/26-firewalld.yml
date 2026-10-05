@@ -57,7 +57,7 @@
       register: disable_rerun_result
 
     # Query state via firewall-offline-cmd's own --query-<thing> rather
-    # than diffing the raw zone XML: real Ansible's firewalld module
+    # than diffing the raw zone XML: Ansible's firewalld module
     # leaves the zone file in a very slightly different (but
     # behaviorally identical) shape than driving firewall-offline-cmd
     # directly does - a bare <forward/> element sometimes survives one

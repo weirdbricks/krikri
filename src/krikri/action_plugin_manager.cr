@@ -142,7 +142,7 @@ module Krikri
       # Same pattern for the task's resolved check mode - the
       # controller-only plugins never go through build_plugin_config's
       # own check_mode injection, so synchronize (whose check-mode
-      # behavior IS the rsync --dry-run flag, real module's own shape)
+      # behavior IS the rsync --dry-run flag, Ansible module's own shape)
       # reads it back from here.
       params["_ansible_check_mode"] = check_mode.to_s
 

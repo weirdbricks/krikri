@@ -33,7 +33,7 @@ module Krikri
   #     modules under check mode too; a module that doesn't support it
   #     is expected to report no changes itself).
   #
-  # The module's stdout is scanned for its result JSON (real modules
+  # The module's stdout is scanned for its result JSON (Ansible modules
   # print one; anything before it - warnings, prints - is stripped the
   # way Ansible strips it). A module that never printed JSON fails
   # with its rc and raw output, matching Ansible's
@@ -92,7 +92,7 @@ module Krikri
       # module_utils INTO the module payload it ships). This plugin runs
       # the raw module script instead, so on a target without
       # ansible-core the import died with ModuleNotFoundError before any
-      # result JSON was printed - hard-FAILING the task where real
+      # result JSON was printed - hard-FAILING the task where
       # ansible-playbook succeeded (found via newrelic.newrelic-infra's
       # own "Setup agent config *NIX": the role ships its own
       # library/merge_yaml.py, which took this path and failed on every
@@ -112,7 +112,7 @@ module Krikri
       # module_utils/ tree (see executor_run_loop's dispatch), so the
       # common no-module_utils role costs nothing. When staging, the
       # shim bundle skeleton (ansible/, the Ansible module) is written
-      # UNCONDITIONALLY rather than probe-gated: even with real
+      # UNCONDITIONALLY rather than probe-gated: even with
       # ansible-core installed on the target, its own package tree can
       # never contain the role's custom package, so only a work-dir-local
       # `ansible` package (which shadows the installed one - the script
@@ -187,7 +187,7 @@ module Krikri
       # AnsiballZ wrapper (exactly this plugin's situation: it runs the
       # raw module script directly with `python3 module.py`, argv[1]
       # omitted). That path reads a JSON blob from STDIN - NOT an
-      # `ANSIBLE_MODULE_ARGS` environment variable, which real
+      # `ANSIBLE_MODULE_ARGS` environment variable, which
       # ansible-core 2.19's basic.py doesn't read at all - and the blob
       # must be a WRAPPER object, `{"ANSIBLE_MODULE_ARGS": {...actual
       # args...}}`, or `_load_params` raises "ANSIBLE_MODULE_ARGS not

@@ -19,7 +19,7 @@ FROM docker.io/library/debian:trixie
 # - which reads as "Plugin execution failed on remote" on the very first
 # Gathering Facts task of every play. Found when a re-pulled debian:trixie
 # base (rebuild after the SSH-keypair fix) no longer carried libxml2 in
-# the dependency closure of the packages below. Real ansible-playbook
+# the dependency closure of the packages below. ansible-playbook
 # needs only python3, so the failure looked like a krikri-only divergence.
 RUN apt-get update && apt-get install -y \
         systemd systemd-sysv dbus \

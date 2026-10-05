@@ -62,7 +62,7 @@ module Krikri
   #   the rendered Signed-By: field after the key has been fetched and
   #   stored. OR inline ASCII-armored GPG key text, detected by its
   #   "-----BEGIN PGP" leading bytes and rendered as a Deb822 folded
-  #   multi-line value (indented continuation lines, matching real
+  #   multi-line value (indented continuation lines, matching
   #   Ansible's own format_multiline). OR a key fingerprint (40 hex chars),
   #   space-normalized and emitted literally on one line.
   # - state: present (default) | absent
@@ -70,7 +70,7 @@ module Krikri
   #   Ansible's own module default)
   #
   # Idempotency: compares the fully-rendered file content against
-  # whatever's already on disk at the target path - matching real
+  # whatever's already on disk at the target path - matching
   # Ansible's own module, which rewrites (not merges) the whole file
   # and reports changed based on a content diff.
   #
@@ -121,7 +121,7 @@ module Krikri
       # the podman-diff deb822_repository_edge_cases V5 harness case.
       # check_mode/diff_mode/_verbosity/_environment are engine-internal
       # keys injected by the executor (see build_plugin_config), not
-      # part of the real argument_spec, so none are rejected.
+      # part of Ansible's argument_spec, so none are rejected.
       deb822_supported = {"allow_downgrade_to_insecure", "allow_insecure", "allow_weak", "architectures", "by_hash", "check_date", "check_valid_until", "components", "date_max_future", "enabled", "exclude", "include", "inrelease_path", "languages", "mode", "name", "pdiffs", "signed_by", "state", "suites", "targets", "trusted", "types", "uris"}
       deb822_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
       unsupported = @params.keys.reject { |k| deb822_supported.includes?(k) || deb822_internal.includes?(k) }
@@ -278,7 +278,7 @@ module Krikri
     # parse_list_param (JSON array first, then comma-split for a plain
     # scalar, matching Ansible's own check_type_list backward-compat
     # behavior). ONLY valid JSON - never a Python-repr repair pass: a
-    # value that merely LOOKS like a container is a plain STRING in real
+    # value that merely LOOKS like a container is a plain STRING in
     # ansible-core (live-verified vs ansible-playbook 2.19.11, see
     # apt.cr's parse_package_names); a whole-value `{{ list_var }}`
     # container arg arrives as the double-quoted JSON the wire

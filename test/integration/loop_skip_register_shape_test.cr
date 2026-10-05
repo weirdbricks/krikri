@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # The REGISTERED shape of a looped task whose `when:` skipped items, and
-# of the plain non-looped skip beside it, pinned key-order-and-all to real
+# of the plain non-looped skip beside it, pinned key-order-and-all to
 # ansible-core 2.19.11 (a real-ansible run of the same playbook, with
 # `{{ x | to_json }}` of each register). Real records EVERY iterated item
 # in the loop's `results` - a when:-false one carrying the same

@@ -50,7 +50,7 @@ module Krikri
     # (hosts, services, protocols, ...) splits on runs of whitespace.
     private COLON_DATABASES = ["passwd", "shadow", "group", "gshadow"]
 
-    # Real argument_spec (ansible-core 2.14 getent.py), insertion order -
+    # Ansible's argument_spec (ansible-core 2.14 getent.py), insertion order -
     # no aliases, so the unsupported-params message has no parenthetical.
     SPEC = {
       "database" => %w[],
@@ -188,7 +188,7 @@ module Krikri
       )
     end
 
-    # Real module's rc==0 parse: `record = line.split(split)` per line,
+    # Ansible module's rc==0 parse: `record = line.split(split)` per line,
     # keyed by record[0] with the remaining fields as the value. A key
     # appearing more than once (e.g. a service listed for both tcp and
     # udp in /etc/services) becomes a list of field-lists (Ansible 2.11+
@@ -228,7 +228,7 @@ module Krikri
     # results[] entry, then uses it to index
     # `ansible_facts.getent_passwd[...]`; without this block the key
     # resolved to None and `[2]` on it crashed with "None has no element
-    # 2". module_args mirrors the RAW param values exactly as real
+    # 2". module_args mirrors the RAW param values exactly as
     # Ansible reports them: `split:` stays null when the user didn't pass
     # it (the ':' colon-database default above is internal, not reported)
     # and `fail_key` is the boolean the user's value (or its default)

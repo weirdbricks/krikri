@@ -33,7 +33,7 @@ module Krikri
       # ONLY valid JSON, though - never a Python-repr repair pass: a
       # value that merely LOOKS like a container (a literal
       # `groups: "['a']"` string, or a `{% if %}...{% else %}['a']{%
-      # endif %}` block's rendered output) is a plain STRING in real
+      # endif %}` block's rendered output) is a plain STRING in
       # ansible-core - native typing requires the template's whole AST
       # to be one output node wrapping one expression, so block-tag
       # output is never re-parsed (live-verified vs ansible-playbook
@@ -87,7 +87,7 @@ module Krikri
         # would. Ansible's `groups:` argspec is `type: list`, and
         # `check_type_list` recognizes a string shaped like `[...]` and
         # parses it back into a real (here, empty) list via
-        # `ast.literal_eval` BEFORE ever reaching useradd - so real
+        # `ast.literal_eval` BEFORE ever reaching useradd - so
         # Ansible passes no `-G` at all. This codebase has no such
         # generic list-arg parsing, so `groups.presence` alone treats the
         # literal text "[]" as a real (single, malformed) group name,
@@ -133,7 +133,7 @@ module Krikri
       end
 
       # Supplementary-groups flag for useradd - `local: true` never uses
-      # -G: libuser's luseradd has no supplementary-group flag, real
+      # -G: libuser's luseradd has no supplementary-group flag,
       # Ansible adds each group with a separate
       # `lgroupmod -M <name> <group>` call after luseradd instead.
       private def self.append_group_args(args : Array(String), groups_val : String?, local : Bool) : Nil

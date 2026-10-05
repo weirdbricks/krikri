@@ -4,7 +4,7 @@ require "../minitest_helper"
 # around handlers and static imports: the strategy's "Notification for
 # handler ... has been saved.", the default callback's "NOTIFIED HANDLER
 # ... for ..." and the handler's own `task path:` line, plus the parser's
-# "statically imported: <path>" line. All captured from real
+# "statically imported: <path>" line. All captured from
 # ansible-core 2.19.11 runs (ANSIBLE_NOCOLOR=1).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

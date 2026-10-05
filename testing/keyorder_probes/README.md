@@ -2,8 +2,8 @@
 
 Probe roles for the `krikri-role-tester keyorder` subcommand (being added to
 `../krikri-role-tester`): they run against a real Atlantic.net Ubuntu 22.04
-VM with both real `ansible-core` (2.19.11) and krikri-playbook, and capture
-**the order of top-level keys in each module's registered result**. Real
+VM with both `ansible-core` (2.19.11) and krikri-playbook, and capture
+**the order of top-level keys in each module's registered result**.
 Ansible does not guarantee result dict key order, but whatever order each
 engine emits is a real observable difference, and this is what the
 `keyorder` comparer diffs.
@@ -57,9 +57,9 @@ five roles, Rocky Linux 9 for `kop_rocky` (see its row).
 | `kop_rocky` | `ansible.posix.selinux`, `ansible.posix.seboolean`, `community.general.sefcontext`, `community.general.seport`, `ansible.posix.firewalld` | Rocky Linux 9 only (needs a real SELinux/firewalld host; see `queue_rocky.txt`). SELinux is never set to `disabled` and never switched to `enforcing` from permissive - the `state: enforcing` probe and the cleanup restore only run when the host booted enforcing (`getenforce` guard via helper + `set_fact` + `when:`). firewalld is started first, the ssh service and the default zone are never touched, and every added rule (http service, 8789/tcp port, rich rule) is removed again; sefcontext/seport use throwaway paths (`/srv/kop_web(/.*)?`) and port 8789/tcp on `http_port_t` |
 | `kop_misc2` | `community.general.deploy_helper`, `community.general.easy_install`, `community.general.maven_artifact`, `community.docker.current_container_facts`, `community.libvirt.virt_net` | deploy_helper runs present/finalize/clean/absent plus check-mode and failure probes (a regular file blocking the `current` path) in `/var/tmp/kop_deploy`, with the unfinished-file (`DEPLOY_UNFINISHED`) handling probed via `state=clean`; easy_install installs `python3-setuptools` via apt first and probes `easy_install3` (easy_install is deprecated - whatever the host lets it do, including failures, is captured); maven_artifact installs `maven` + `python3-lxml` via apt and downloads `junit:junit:4.13.2` from Maven Central into `/var/tmp`; current_container_facts is read-only (on a bare VM it just reports not-in-container facts); virt_net installs `libvirt-daemon-system` + `python3-libvirt` + `python3-lxml`, starts libvirtd, then defines/starts/stops a tiny NAT network (`10.99.99.0/24`, `command: define` with inline XML) with idempotent/check/failure probes, and undefines everything in cleanup |
 | `kop_docker` | `community.docker.docker_container`, `docker_network`, `docker_image` | Ubuntu 22.04; installs `docker.io` + `python3-docker` via apt and pulls `alpine:3.19`. Probes check-mode `create_parameters`, list options with comma elements (`command`/`entrypoint`), stop/remove idempotency and the failure shapes (missing image, unsupported param, no image). Everything is `kop_`-prefixed and removed again |
-| `kop_ufw_active` | `community.general.ufw` with `state: enabled` combined with a rule / default / logging in one task | Ubuntu 22.04; ENABLES ufw (unlike `kop_firewall`), so it adds `allow 22/tcp` first and does `ufw --force reset` before and after. Found (round 999010/999020): krikri ran only `ufw -f enable` and dropped the rule/default/logging commands real runs after it |
+| `kop_ufw_active` | `community.general.ufw` with `state: enabled` combined with a rule / default / logging in one task | Ubuntu 22.04; ENABLES ufw (unlike `kop_firewall`), so it adds `allow 22/tcp` first and does `ufw --force reset` before and after. Found (round 999010/999020): krikri ran only `ufw -f enable` and dropped the rule/default/logging commands Ansible runs after it |
 | *(not probed)* | `community.general.snap` | **deliberately skipped**: installing snapd via apt is slow and flaky in a fresh-VM round. Not worth the round time for a key-order probe. |
-| *(not probed)* | krikri's `py_module` runner | **deliberately skipped**: `py_module` is not a real Ansible module - it is krikri's transport for role-private custom `library/*.py` modules. Real Ansible invokes such a module by its own name, so there is no matching `py_module` result shape to diff key order against. |
+| *(not probed)* | krikri's `py_module` runner | **deliberately skipped**: `py_module` is not a Ansible module - it is krikri's transport for role-private custom `library/*.py` modules. Ansible invokes such a module by its own name, so there is no matching `py_module` result shape to diff key order against. |
 
 Note that several of these modules live in collections
 (`ansible.posix`, `community.general`, `community.crypto`); the probed set
@@ -128,7 +128,7 @@ Validated locally on the dev laptop (no root, no real kernel):
 - `ansible-playbook --syntax-check` (2.19.11) over all seven roles via
   `syntax_check.yml` - pass.
 - krikri-playbook parse/syntax check (`--syntax-check` and `--list-tasks`)
-  over the same wrapper - pass, task list matches real ansible.
+  over the same wrapper - pass, task list matches Ansible.
 - `ansible-lint` over the roles (run from inside this directory so
   `.ansible-lint` applies; the deliberate per-probe `ignore_errors` is
   skipped there) - pass, only the intentional `ufw_fail` bogus-rule probe

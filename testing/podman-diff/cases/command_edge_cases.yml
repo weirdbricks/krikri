@@ -2,7 +2,7 @@
 # under test: the plain `command` module must NOT invoke a shell
 # (metacharacters stay literal argv), while `shell` must. Each case
 # registers its result and prints a "C<n> key=value" debug line so
-# run.sh's diff extraction compares real ansible-playbook vs
+# run.sh's diff extraction compares ansible-playbook vs
 # krikri-playbook field by field. failed=/changed=/rc values (and the
 # did-it-actually-run behavior checks) are what matter; error-message
 # WORDING may legitimately differ between engines and is not a bug.

@@ -14,7 +14,7 @@ describe "with_fileglob: templating a list variable" do
     # Real bug found benchmarking cloudalchemy.prometheus's own "copy
     # custom alerting rule files" task: `with_fileglob: "{{
     # prometheus_alert_rules_files }}"`, a templated variable whose
-    # value is a LIST of patterns (`[prometheus/rules/*.rules]`) - real
+    # value is a LIST of patterns (`[prometheus/rules/*.rules]`) -
     # Ansible's own idiom for this. #resolve_fileglob's plain string
     # substitution had no notion of the underlying value being a real
     # array, so it rendered the whole thing as the JSON-array TEXT

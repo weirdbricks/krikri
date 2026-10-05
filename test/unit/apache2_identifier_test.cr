@@ -11,7 +11,7 @@ describe Apache2Helper do
       Apache2Helper.create_identifier("mpm_event").must_equal("mpm_event_module")
     end
 
-    it "maps shib and shib2 to mod_shib (real module's text workaround)" do
+    it "maps shib and shib2 to mod_shib (Ansible module's text workaround)" do
       Apache2Helper.create_identifier("shib").must_equal("mod_shib")
       Apache2Helper.create_identifier("shib2").must_equal("mod_shib")
       Apache2Helper.create_identifier("shibboleth").must_equal("mod_shib")

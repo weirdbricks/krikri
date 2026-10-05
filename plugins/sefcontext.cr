@@ -10,7 +10,7 @@ module Krikri
   # sefcontext plugin (community.general.sefcontext) - manages SELinux
   # file context mapping definitions via the `semanage fcontext` CLI,
   # the same tool the Ansible module's libsemanage binding drives.
-  # Params (real module's argument spec, declaration order):
+  # Params (Ansible module's argument spec, declaration order):
   # - target: required (alias path). The path expression.
   # - ftype: one of a/b/c/d/f/l/p/s, default "a" (all files).
   # - setype: SELinux type. Required for state=present unless
@@ -39,7 +39,7 @@ module Krikri
   class SefcontextPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Real argument_spec, declaration order, with aliases.
+    # Ansible's argument_spec, declaration order, with aliases.
     SPEC = {
       "ignore_selinux_state" => %w[],
       "target"               => %w[path],

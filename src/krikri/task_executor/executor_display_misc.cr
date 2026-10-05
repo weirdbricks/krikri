@@ -10,8 +10,7 @@ module Krikri
       # fresh error to show and fall back to the connection host, which
       # is what this always printed before.
       #
-      # no_log redaction applies on the unreachable path too (real
-      # Ansible honors no_log there): the SSH transport error can echo
+      # no_log redaction applies on the unreachable path too (Ansible honors no_log there): the SSH transport error can echo
       # task context (a command line, a URL with embedded credentials)
       # the task asked to keep out of the output.
       detail = ssh_error.try(&.strip.lines.first?) || connection_host
@@ -584,7 +583,7 @@ module Krikri
           @ended_hosts.add(other.name)
         end
       when "end_role"
-        # Per-host role-scoped early return (ansible-core 2.18+). Real
+        # Per-host role-scoped early return (ansible-core 2.18+).
         # Ansible consumes the role's remaining tasks for this host
         # silently in the iterator - no banners, no recap counters - and
         # stops at the role's implicit `role_complete` boundary, so
@@ -646,7 +645,7 @@ module Krikri
         # PlaybookParser.parse_meta_task), so clear_facts is the only
         # other action to dispatch on here. Confirmed via cli_spec.cr's
         # own pre-existing "reflects a register:/set_fact:/meta:
-        # clear_facts... in another host's hostvars" spec: real
+        # clear_facts... in another host's hostvars" spec:
         # ansible-playbook's clear_facts drops a plain (non-cacheable)
         # set_fact value too, not just gathered facts - so @set_facts
         # is cleared right alongside @facts to keep the two stores

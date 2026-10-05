@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Round 188 (`buluma.forensics`, Rocky 9.6): a `delegate_to: localhost`
 # task in a SSH-routed play runs the delegated plugin via `connection:
-# local` on the controller rather than SSH-ing to `localhost:22`. Real
+# local` on the controller rather than SSH-ing to `localhost:22`.
 # ansible-core does this; krikri-playbook 0.9.623 went through the
 # SSH path and scp'd the plugin binary to `localhost:22`, which failed
 # with "Connection refused" on a cloud VPS whose controller has no

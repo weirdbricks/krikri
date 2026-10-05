@@ -18,7 +18,7 @@ module Krikri
     # at all - which real `ufw` rejects with "ERROR: Invalid syntax".
     #
     # Shared by the plugins that produce stdout/stderr (command, shell - each
-    # module that has stdout/stderr sets the *_lines keys itself in real
+    # module that has stdout/stderr sets the *_lines keys itself in
     # Ansible) AND TaskExecutor's register augmentation (which derives them
     # centrally for results that predate a plugin carrying its own).
     module AnsibleSplitlines

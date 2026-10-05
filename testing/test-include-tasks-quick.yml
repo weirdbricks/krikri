@@ -1,4 +1,4 @@
-# include_tasks smoke test - safe under --check and for real runs (debug
+# include_tasks smoke test - safe under --check and for Ansible runs (debug
 # only, no filesystem/system state touched).
 
 - name: include_tasks smoke test

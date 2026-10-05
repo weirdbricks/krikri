@@ -88,7 +88,7 @@ describe "getent plugin" do
   it "reports the same invocation.module_args (key null) on a no-key full-dump call" do
     # fail_json attaches invocation exactly like exit_json, and key is
     # simply absent (not defaulted) when the user didn't pass it - so a
-    # full-dump call reports key: null, matching live-verified real
+    # full-dump call reports key: null, matching live-verified
     # ansible-playbook 2.19 output.
     result = PluginSpecHelper.run("getent", {"database" => "passwd"})
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -152,7 +152,7 @@ describe "getent plugin" do
     # parser silently kept only the last line. /etc/services on any
     # normal system lists many services for both tcp and udp (e.g.
     # "domain 53/tcp" and "domain 53/udp"), so enumeration must produce
-    # at least one list-of-lists entry - live-verified against real
+    # at least one list-of-lists entry - live-verified against
     # ansible-playbook 2.19.4 (`getent_services["http"] == ["80/tcp",
     # "www"]` single, duplicated names -> [[...], [...]]).
     result = PluginSpecHelper.run("getent", {"database" => "services"})
@@ -174,7 +174,7 @@ describe "getent plugin" do
   end
 
   it "honors an explicit split: value for any database" do
-    # `split:` overrides the per-database default (real module: `split =
+    # `split:` overrides the per-database default (Ansible module: `split =
     # module.params.get('split')`, applied to every line regardless of
     # database). Passwd with an explicit ':' must match its own default
     # shape: root -> 6 colon fields.
@@ -187,7 +187,7 @@ describe "getent plugin" do
   it "returns only the FIRST matching line for a duplicated key (services tcp/udp)" do
     # Real `getent services domain` emits one line - "domain 53/tcp" -
     # so the Ansible module's keyed fact is getent_services["domain"] ==
-    # ["53/tcp"], a single field list (live-verified against real
+    # ["53/tcp"], a single field list (live-verified against
     # ansible-playbook 2.19.4). The tcp+udp list-of-lists merge happens
     # only on enumeration, never on a keyed lookup.
     result = PluginSpecHelper.run("getent", {"database" => "services", "key" => "domain"})

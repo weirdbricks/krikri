@@ -5,7 +5,7 @@ module Krikri
   # rendering: `Display._error` -> `_display_utils.format_message` ->
   # `_event_formatting.format_event`/`format_event_verbose_message`, over
   # an `Event` tree whose source context comes from
-  # `_error_utils.SourceContext.from_origin`. This is what real
+  # `_error_utils.SourceContext.from_origin`. This is what
   # ansible-playbook prints as
   #
   #   [ERROR]: Task failed: <message>

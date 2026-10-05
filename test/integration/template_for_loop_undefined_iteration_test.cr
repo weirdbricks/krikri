@@ -13,7 +13,7 @@ describe "a {% for %} loop over an undefined variable" do
     # Real bug found benchmarking ahuffman.resolv (round 159, crinja
     # crystal-play-0.9.15). Its own resolv.conf.j2 guards
     # resolv_search/resolv_domain/resolv_sortlist/resolv_options with
-    # `is defined` before use, but not resolv_nameservers - real
+    # `is defined` before use, but not resolv_nameservers -
     # ansible-playbook fails the whole render with
     # "'resolv_nameservers' is undefined" when that var is never set,
     # while crinja's plain (non-strict) Undefined used to iterate as

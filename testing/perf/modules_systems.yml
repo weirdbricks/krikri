@@ -1248,7 +1248,7 @@
     # ---------------------------------------------------------------
     # wait_for/wait_for_connection/fail: timeout semantics and the
     # deliberate-skip shape (a when: false fail: counts as a skip in
-    # real Ansible's recap - the negative control).
+    # Ansible's recap - the negative control).
     # ---------------------------------------------------------------
     - name: Wait for a file to exist
       ansible.builtin.wait_for:

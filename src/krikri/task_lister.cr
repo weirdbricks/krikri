@@ -2,7 +2,7 @@ require "./playbook_parser"
 require "./tag_filter"
 
 module Krikri
-  # `--list-tasks` and `--syntax-check`, reproducing real
+  # `--list-tasks` and `--syntax-check`, reproducing
   # ansible-playbook's own output shape. Every detail below was captured
   # from a ansible-core 2.19.4 run rather than invented:
   #

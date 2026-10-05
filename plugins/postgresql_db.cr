@@ -32,7 +32,7 @@ module Krikri
   #   DATABASE against `name` (PostgreSQL can't drop/create the database
   #   a connection is currently using) - default "postgres", matching
   #   Ansible's own default
-  # - login_host (default "localhost" - a simplification versus real
+  # - login_host (default "localhost" - a simplification versus
   #   Ansible, which defaults to "" and lets the driver fall back to a
   #   local unix socket; this codebase's other plugins default to a
   #   plain TCP localhost connection instead, so this matches that),
@@ -180,7 +180,7 @@ module Krikri
       # goes through quote_str - a SQL STRING literal, injection-safe via
       # its own quote-escaping - which also means real PostgreSQL's
       # encoding aliases are accepted, e.g. geerlingguy.postgresql's own
-      # default `encoding: 'UTF-8'` (confirmed against real
+      # default `encoding: 'UTF-8'` (confirmed against
       # ansible-playbook, which creates the database fine with this
       # exact value).
 
@@ -280,7 +280,7 @@ module Krikri
     end
 
     # pg_restore, not psql, handles .tar/.pgc/.dir - a genuinely different
-    # restore mechanism, not just another compression codec (matches real
+    # restore mechanism, not just another compression codec (matches
     # Ansible's own db_restore(): `cmd = module.get_bin_path('pg_restore',
     # True)` for exactly these three extensions). Takes the target
     # path/directory as a positional argument rather than stdin
@@ -296,7 +296,7 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: result[:stdout], rc: result[:exit_code])
     end
 
-    # psql/pg_dump/pg_restore take no password CLI flag at all - real
+    # psql/pg_dump/pg_restore take no password CLI flag at all -
     # Ansible passes the password via PGPASSWORD as a *process environment
     # variable*, which never appears in any process's argv. Shelling out
     # through remote_exec means a literal `PGPASSWORD=x ...` (or `export

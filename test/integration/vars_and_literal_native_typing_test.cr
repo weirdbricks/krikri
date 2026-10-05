@@ -170,7 +170,7 @@ describe "YAML literal and vars native typing (2.19 parity)" do
   it "recovers module behavior: file mode from a templated octal int ({{ 420 }})" do
     # With vars whole-span native typing, `mode: "{{ m_int }}"` where
     # m_int: "{{ 420 }}" now resolves to the int 420, and the executor's
-    # int-mode reformat ('%04o') turns it into "0644" - matching real
+    # int-mode reformat ('%04o') turns it into "0644" - matching
     # ansible-playbook 2.19.11 (stat reports 644). Before the fix the var
     # resolved to the string "420", which was applied as octal digits.
     path = "/tmp/krikri-vars-native-mode-#{Process.pid}"

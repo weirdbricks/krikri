@@ -46,7 +46,7 @@ describe "debug: argument-spec validation order" do
         hosts: localhost
         gather_facts: false
         tasks:
-          - name: bool verbosity skips like real
+          - name: bool verbosity skips like
             ansible.builtin.debug:
               msg: "should not print at default verbosity"
               verbosity: true

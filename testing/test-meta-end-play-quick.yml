@@ -1,6 +1,6 @@
-# meta: end_play - real Ansible's own doc: "causes the play to end
+# meta: end_play - Ansible's own doc: "causes the play to end
 # without failing the host(s). Note that this affects all hosts." Verified
-# live against real ansible-playbook: this is genuinely GLOBAL, not
+# live against ansible-playbook: this is genuinely GLOBAL, not
 # per-host - a SECOND host whose own when: skips this exact task entirely
 # (never itself executes it) still gets blocked from every later task the
 # moment ANY other host does. Requires

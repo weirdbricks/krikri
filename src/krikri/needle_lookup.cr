@@ -3,7 +3,7 @@ module Krikri
   # ._find_needle` -> `DataLoader.path_dwim_relative_stack`): the ordered
   # candidate list a missing file's "Could not find or access" error
   # reports, and the same list resolution searches. Behavior matched to
-  # ansible-core 2.19.11's dataloader.py, live-verified against real
+  # ansible-core 2.19.11's dataloader.py, live-verified against
   # ansible-playbook for template:/copy:/script:/unarchive: with a
   # missing relative src (playbook-dir task and in-role task):
   #

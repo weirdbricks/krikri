@@ -16,9 +16,9 @@ module Krikri
   #   behavior ("the default zone can be configured per system but
   #   public is default from upstream") rather than requiring it.
   # - state: enabled | disabled for every "thing" below. present/absent
-  #   are ONLY valid for zone-level operations - which in real
+  #   are ONLY valid for zone-level operations - which in
   #   ansible.posix.firewalld's own main() means exactly two things: a
-  #   bare zone: with no "thing" param at all (ZoneTransaction - real
+  #   bare zone: with no "thing" param at all (ZoneTransaction -
   #   Ansible accepts `zone: myzone state: present permanent: true`
   #   with nothing else as a zone create/delete; round900593
   #   Thulium-Drake.firewalld), or target: (ZoneTargetTransaction).
@@ -27,18 +27,18 @@ module Krikri
   #   operations" message (verified live against a ansible-playbook
   #   run - this plugin previously accepted present/absent everywhere as
   #   silent synonyms, more lenient than Ansible rather than
-  #   matching it). Those four are also the ONLY valid values - real
+  #   matching it). Those four are also the ONLY valid values -
   #   Ansible's argument spec rejects anything else up front (found by
   #   the podman-diff firewalld round: this plugin previously accepted
   #   any unrecognized state as a silent "disabled").
   # - permanent/immediate/offline: ported Ansible's own validation
   #   logic exactly (see #validate_permanent_immediate) rather than
-  #   requiring `offline: true, permanent: true` explicitly - real
+  #   requiring `offline: true, permanent: true` explicitly -
   #   Ansible defaults all three false, silently forces `immediate` true
   #   when neither permanent nor immediate is given, and only fails
   #   outright when an `immediate` (live-daemon) action is actually
   #   requested/defaulted against a firewalld that isn't reachable (auto-
-  #   detected via `firewall-cmd --state`, the CLI equivalent of real
+  #   detected via `firewall-cmd --state`, the CLI equivalent of
   #   Ansible's own D-Bus-connection-attempt probe).
   # - one of: service, port, rich_rule, source, masquerade, interface,
   #   icmp_block, protocol, icmp_block_inversion, forward, target -
@@ -59,7 +59,7 @@ module Krikri
   #   "Reset zone %s target to default" - NOT simply "remove", since a
   #   zone's target isn't optional the way a service/port/etc entry is).
   #
-  # The permanent/offline backend is NOT `firewall-offline-cmd` - real
+  # The permanent/offline backend is NOT `firewall-offline-cmd` -
   # ansible.posix.firewalld's offline mode never shells out to it; it
   # uses firewalld's own Python Firewall(offline=True), which loads the
   # /usr/lib/firewalld + /etc/firewalld zone XML and writes changes back
@@ -77,7 +77,7 @@ module Krikri
   # doesn't. A real `immediate:` runtime change against a *live*
   # firewalld goes through `firewall-cmd`/D-Bus and needs the daemon
   # actually running - validate_permanent_immediate fails that
-  # combination (immediate requested, daemon absent) with real
+  # combination (immediate requested, daemon absent) with
   # Ansible's own message.
   #
   # `firewall-offline-cmd`'s command shape and quirks (verified
@@ -97,7 +97,7 @@ module Krikri
   #   stores the same fields as a <forward-port> element.
   #
   # Not implemented: `timeout`, `immediate` (meaningless without a
-  # running daemon - offline always forces it false, matching real
+  # running daemon - offline always forces it false, matching
   # Ansible's own behavior).
   class FirewalldPlugin < BasePlugin
     ETC_ZONE_DIR = "/etc/firewalld/zones"
@@ -353,7 +353,7 @@ module Krikri
       root.attribute("target").try(&.value) || "default"
     end
 
-    # The bare `zone:` + `state: present/absent` operation - real
+    # The bare `zone:` + `state: present/absent` operation -
     # Ansible's own ZoneTransaction (permanent-only; every immediate
     # variant fails with the same tx_not_permanent_error_msg run_target
     # raises). present creates the zone when missing and is idempotent
@@ -592,8 +592,7 @@ module Krikri
 
     # `zone:` (Ansible's own doc: "the default zone can be
     # configured per system but public is default from upstream") -
-    # resolves the LIVE daemon's default zone when one is running (real
-    # Ansible resolves the default over its D-Bus connection), the
+    # resolves the LIVE daemon's default zone when one is running (Ansible resolves the default over its D-Bus connection), the
     # on-disk configured one (firewalld.conf's DefaultZone, the same
     # thing firewall's offline Python reads) otherwise.
     private def resolve_zone : String?

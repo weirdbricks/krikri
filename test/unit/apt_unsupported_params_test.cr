@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Regression spec for apt's module-arg validation, added in 0.9.1086.
 # Found via the podman-diff harness
-# (testing/podman-diff/cases/package_edge_cases.yml, case P2): real
+# (testing/podman-diff/cases/package_edge_cases.yml, case P2):
 # Ansible's apt module rejects any parameter outside its argument_spec
 # at module-arg validation - notably `use:`, which the `package` ACTION
 # PLUGIN consumes to pick a backend and never forwards to the apt

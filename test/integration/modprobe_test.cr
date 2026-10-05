@@ -37,7 +37,7 @@ describe "modprobe plugin" do
 
   # Real modprobe.py's module_loaded also scans
   # /lib/modules/$(uname -r)/modules.builtin (builtin modules count as
-  # loaded); on a host without that file - typical container - real
+  # loaded); on a host without that file - typical container -
   # Ansible fails with the raw Python OSError text instead, which the
   # plugin reproduces but only on such a host (verified live via
   # podman-diff modprobe_edge_cases M1/M10).

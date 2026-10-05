@@ -125,7 +125,7 @@
     - ansible.builtin.debug:
         msg: "Y9 failed={{ y9.failed | default('none') }} changed={{ y9.changed | default('none') }} exists={{ y9s.stat.exists | default('none') }}"
 
-    - name: prep Y10/Y11 dest dirs (copy does not create parents, real Ansible included)
+    - name: prep Y10/Y11 dest dirs (copy does not create parents, Ansible included)
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory

@@ -65,13 +65,13 @@ module Krikri
 
     def execute : PluginResult
       validate_bool_params!
-      # AnsibleModule argument-spec validation: any key outside real
+      # AnsibleModule argument-spec validation: any key outside
       # Ansible's argument_spec (the Ansible module: name/
       # service/unit, state, enabled, force, masked, daemon_reload/
       # daemon-reload, daemon_reexec/daemon-reexec, scope, no_block) aborts
       # the task BEFORE the module runs. Round 813233 (role
       # libre_ops.multi_redis) passes `systemd: {name: ..., status: ...}` -
-      # `status` is not a parameter of this module at all - and real
+      # `status` is not a parameter of this module at all - and
       # ansible-playbook rejects the task with the message below, while
       # this plugin silently ignored the unknown key and ran anyway.
       # check_mode/diff_mode/_verbosity/_environment are engine-internal
@@ -131,7 +131,7 @@ module Krikri
       # 'daemon_reexec']], required_by={state/enabled/masked: name}. The
       # daemon_reload/daemon_reexec aliases count because Ansible
       # resolves them onto the canonical params before the check. A name
-      # (or its service/unit aliases) alone also satisfies it: real
+      # (or its service/unit aliases) alone also satisfies it:
       # Ansible's module takes a name-only call as a QUERY - it runs
       # `systemctl show <name>` and populates result['status'] with the
       # unit's current properties (changed stays False, no management
@@ -142,7 +142,7 @@ module Krikri
       # with truly nothing - no name AND no action param - fails with
       # required_one_of's message. Replaces the previous ad-hoc guards
       # (different wording, truthiness-based, and daemon_reload: false
-      # alone failed instead of succeeding as a no-op the way real
+      # alone failed instead of succeeding as a no-op the way
       # Ansible does).
       unless name || @params["state"]? || @params["enabled"]? || @params["masked"]? ||
              @params["daemon_reload"]? || @params["daemon-reload"]? ||
@@ -496,7 +496,7 @@ module Krikri
           # mdsketch.teleport's own "Reload_Teleport" handler
           # (`ansible.builtin.systemd: {name: teleport, state: reloaded}`)
           # on a fresh install exposed it: the unit file was created in
-          # the same play and the service had never started, so real
+          # the same play and the service had never started, so
           # Ansible started it, while krikri failed the handler. Same
           # semantics plugins/service.cr already implements for the
           # `service` module's `state: reloaded` (its 0.9.x nginxinc.nginx

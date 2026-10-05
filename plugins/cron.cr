@@ -41,7 +41,7 @@ module Krikri
   #     save a copy to a "/tmp/crontabXXXXXXXX" file (real cron.py's
   #     tempfile.mkstemp(prefix='crontab') convention, 0600 perms) and
   #     report its path as `backup_file` in the result - only when
-  #     something actually changed (real module deletes the backup
+  #     something actually changed (Ansible module deletes the backup
   #     otherwise). Never taken in check mode.
   #   user (optional): included as a field in the entry line when
   #     cron_file: is given (cron.d style); when cron_file: is omitted,
@@ -50,7 +50,7 @@ module Krikri
   #     own personal crontab has no user column) - defaults to whatever
   #     user this plugin process is already running as.
   #   cron_file (optional): path to a crontab-style file under
-  #     /etc/cron.d to manage instead of a live user crontab - real
+  #     /etc/cron.d to manage instead of a live user crontab -
   #     Ansible's own default (this param omitted) edits the live
   #     crontab via the `crontab` command.
   #
@@ -129,7 +129,7 @@ module Krikri
       # Real cron.py's argument_spec gives `job` the alias `value`, and
       # env-mode tasks (infOpen.lynis, round 811204) use the alias
       # spelling - without this resolution `value:` fell through as nil
-      # and state=present failed with "job parameter required". Real
+      # and state=present failed with "job parameter required".
       # Ansible's _handle_aliases makes a present alias OVERWRITE the
       # canonical name, so `value:` wins when both spellings are given
       # (same convention yum_repository.cr already follows).

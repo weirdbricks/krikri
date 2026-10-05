@@ -10,7 +10,7 @@ require "file_utils"
 # storage_lsr/`. Ansible's AnsiballZ wrapper bundles that tree into
 # the zipapp alongside the module source; this engine used to upload
 # only the single module source file, so the import died with a plain
-# Python ModuleNotFoundError and the task hard-FAILED while real
+# Python ModuleNotFoundError and the task hard-FAILED while
 # ansible-playbook ran it.
 #
 # The bundled tree travels through the same plugin-config transport as

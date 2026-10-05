@@ -132,7 +132,7 @@ describe "facts plugin" do
     # facts parsed `ip -4 route get 1`'s "1.0.0.0 via 192.168.1.1 dev
     # eth0 src 192.168.1.50 uid 0" output for `address` and `interface`
     # (added for an earlier bug, see that fix's own comment) but never
-    # for `gateway` at all - the key genuinely didn't exist, so real
+    # for `gateway` at all - the key genuinely didn't exist, so
     # Ansible's `is defined` check (true - every routable host has a
     # default gateway) evaluated false here, and a `when:`-gated task
     # relying on it was silently skipped instead of run. This spec runs

@@ -11,7 +11,7 @@ require "../minitest_helper"
 # The strict-undefined machinery previously only covered BARE `{{ var }}`
 # references and `var | filter` chains whose source is a bare reference -
 # the moment the source itself carried parens (a method call), the
-# expression silently rendered to `[]` and the task succeeded where real
+# expression silently rendered to `[]` and the task succeeded where
 # Ansible fatally fails.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

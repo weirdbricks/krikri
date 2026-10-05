@@ -149,7 +149,7 @@ describe "docker_compose_v2 plugin (live docker)" do
       "state"        => "stopped",
     })
     falsey?(stopped_again["failed"]?.try(&.as_bool)).must_equal(true, stopped_again["msg"]?.try(&.raw).to_s)
-    stopped_again["changed"].as_bool.must_equal(false, "stopping an already-stopped project is a no-op (real module's _are_containers_stopped gate)")
+    stopped_again["changed"].as_bool.must_equal(false, "stopping an already-stopped project is a no-op (Ansible module's _are_containers_stopped gate)")
 
     down = PluginSpecHelper.run("docker_compose_v2", {
       "project_src"    => dir,

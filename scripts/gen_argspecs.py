@@ -9,7 +9,7 @@ argument validation (see src/krikri/argspec_validator.cr).
 
 Output: data/argspecs.json, keyed by the krikri plugin FQCN, plus
 data/argspec_print_names.json (the module name Ansible prints in
-"Unsupported parameters for (...) module" - probed empirically with a real
+"Unsupported parameters for (...) module" - probed empirically with a
 ansible-playbook run per name spelling, since action plugins may delegate
 under a different name, e.g. template -> ansible.legacy.copy).
 

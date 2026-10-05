@@ -860,7 +860,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # "skipping: [localhost]" line (command: never runs under --check).
     output.must_include("skipping: [localhost]")
     output.must_include("ok: [localhost]")
-    # shell.cr's check-mode skip now sets skipped: true (matching real
+    # shell.cr's check-mode skip now sets skipped: true (matching
     # Ansible's own recap - `skipped=1`, verified against ansible-core
     # 2.19.4's own `--check` output for this exact fixture) and populates
     # the full normal result shape (cmd/rc/stdout/stdout_lines/stderr/
@@ -996,7 +996,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # first so the src-resolution assertion has a real, deterministic
     # signal: a broken role-files/ resolution would fail the task with
     # "Could not find or access", and a resolved one reports changed and
-    # fires the notified handler (verified byte-identical against real
+    # fires the notified handler (verified byte-identical against
     # ansible-playbook 2.19.11 for both the missing-dest and existing-dest
     # shapes).
     File.delete("/tmp/krikri-playbook-role-greeting.txt") if File.exists?("/tmp/krikri-playbook-role-greeting.txt")
@@ -1165,7 +1165,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # credited a non-looped include_tasks: with its own `ok`, but the
     # equivalent fix was never mirrored onto include_role:'s
     # run_include_role_once - every include_role: call silently
-    # undercounted the recap's ok= tally by 1, verified against real
+    # undercounted the recap's ok= tally by 1, verified against
     # ansible-playbook (both give ok=5 changed=1 for this fixture: the
     # include_role: itself, its 2 tasks, the SUCCESS task, and the
     # notified handler).
@@ -1675,7 +1675,7 @@ describe "krikri-playbook CLI (--check mode)" do
       # can rely on a handler's side effect (e.g. an apt cache refresh)
       # having already happened - skipping it silently deferred every
       # notified handler to the very end of the play instead, which for
-      # zabbix_server caused a genuine functional divergence from real
+      # zabbix_server caused a genuine functional divergence from
       # ansible-playbook: a package install task failed "Unable to
       # locate package" because the repo-add handler's own cache refresh
       # hadn't run yet.
@@ -2373,7 +2373,7 @@ describe "krikri-playbook CLI (--check mode)" do
   end
 
   it "exposes an implicit hostvars['localhost'] even when the play targets another host" do
-    # Regression for round900712 gzm55.require_implicity_localhost: real
+    # Regression for round900712 gzm55.require_implicity_localhost:
     # ansible-core's InventoryManager ALWAYS synthesizes an implicit
     # localhost pseudo-host when no inventory defines one, and any play -
     # even one targeting entirely different machines - can read
@@ -2477,7 +2477,7 @@ describe "krikri-playbook CLI (--check mode)" do
   it "finds its plugins when invoked from a directory other than its own checkout" do
     # Regression test: PluginManager used to resolve plugins via the
     # cwd-relative path "./bin/plugins/<name>", which only worked if you
-    # first `cd`'d into the krikri-playbook checkout - unlike real
+    # first `cd`'d into the krikri-playbook checkout - unlike
     # ansible-playbook, which can be run from anywhere. Running with an
     # unrelated chdir (using absolute paths for everything else) is exactly
     # the scenario that broke.
@@ -2805,7 +2805,7 @@ describe "krikri-playbook CLI (--check mode)" do
     status, output = run_playbook(spec_tmp_path("invalid.yml"))
 
     status.success?.must_equal(false)
-    # Since 0.9.562 a YAML syntax error is reported in real
+    # Since 0.9.562 a YAML syntax error is reported in
     # ansible-playbook's own shape rather than this engine's old
     # "Error parsing playbook:" wording - see YamlSyntaxError#render and
     # yaml_syntax_error_spec.cr, which byte-compares the whole block.

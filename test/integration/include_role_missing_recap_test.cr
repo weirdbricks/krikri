@@ -16,7 +16,7 @@ describe "include_role: naming a role that doesn't exist" do
     # treats the failed dynamic role resolution as an ordinary fatal task
     # result - `ok=0 failed=1`, and the next task in the role never runs.
     # This engine counted the include_role: task as `ok` UNCONDITIONALLY
-    # before even attempting to load the named role (to match real
+    # before even attempting to load the named role (to match
     # Ansible's stats for the successful case - see run_include_role_once's
     # own comment), so a role that fails to load got double-counted:
     # `ok=1 failed=1` for the same single task.

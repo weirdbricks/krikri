@@ -1,4 +1,4 @@
-# cron / authorized_key smoke test - safe under --check and for real runs:
+# cron / authorized_key smoke test - safe under --check and for Ansible runs:
 # cron_file and authorized_key's path: override both point at throwaway
 # files under /tmp, never at a real crontab or a real user's SSH keys.
 
@@ -12,9 +12,9 @@
         name: "krikri-playbook smoke test"
         job: "/bin/true"
         hour: "3"
-        # real ansible requires user= alongside cron_file= (and always
+        # Ansible requires user= alongside cron_file= (and always
         # requires it for authorized_key) - this fixture used to omit both,
-        # which krikri tolerated but real ansible-playbook rejects
+        # which krikri tolerated but ansible-playbook rejects
         user: root
         cron_file: /tmp/krikri-playbook-cron-test
 

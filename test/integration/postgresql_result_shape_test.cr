@@ -415,7 +415,7 @@ describe "postgresql_user registered result shape (127.0.0.1:35432)" do
   # hence its position. No msg on success. A statement that produced no
   # rows renders as {} (not []) in both query_result and
   # query_all_results: the module's fetch loop leaves query_result == []
-  # and then explicitly replaces it with {}. Live-verified against real
+  # and then explicitly replaces it with {}. Live-verified against
   # ansible-core 2.19.11 + community.postgresql 4.2.0.
 
   private def query_result_for(sql : String) : JSON::Any

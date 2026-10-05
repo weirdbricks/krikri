@@ -22,7 +22,7 @@ end
 describe "loop:/with_items: single-element list holding a template that resolves to a scalar" do
   it "runs exactly one iteration with the scalar as item, matching ansible-playbook" do
     # Real bug found immediately after auditing (and fixing) 8 copies of
-    # the recursive-re-templating gap: `["{{ scalar_var }}"]` is real
+    # the recursive-re-templating gap: `["{{ scalar_var }}"]` is
     # Ansible's own "with_items: flattens one level" idiom - the parser
     # (find_loop_template) can only detect the SHAPE at parse time (one
     # bare {{ }} span as the array's sole element), not whether the

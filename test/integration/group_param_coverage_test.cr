@@ -247,7 +247,7 @@ describe "group plugin - parameter coverage" do
       end
     end
 
-    it "skips the gid-in-use check for gid 0 (real module's Python `if self.gid:` truthiness, live-verified)" do
+    it "skips the gid-in-use check for gid 0 (Ansible module's Python `if self.gid:` truthiness, live-verified)" do
       with_group_shims(EXISTING_GROUP) do |env, log|
         result = PluginSpecHelper.run("group", {
           "name" => "g1", "gid" => "0", "local" => "true", "_environment" => env,

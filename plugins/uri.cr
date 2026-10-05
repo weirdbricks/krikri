@@ -23,7 +23,7 @@ module Krikri
   # not support check mode.", verified against a ansible-playbook
   # --check run, not assumed) - so this doesn't special-case GET/HEAD the
   # way an initial reading of the docs might suggest; every method skips.
-  #  `changed:` is always false, EXCEPT for the one stateful case real
+  #  `changed:` is always false, EXCEPT for the one stateful case
   #  Ansible's own module has: `dest:` file writing - and there, live-
   #  verified against ansible-core 2.19.4 (see the dest: block below),
   #  Ansible reports `changed: true` on EVERY 200 run with a writable
@@ -424,7 +424,7 @@ module Krikri
       end
     end
 
-    # Returns the FINAL (post-redirect) URL as its 5th element - real
+    # Returns the FINAL (post-redirect) URL as its 5th element -
     # Ansible's own `uri:` result `url` field is this final URL, not the
     # originally-requested one (verified live against ansible-core
     # 2.19.12: `uri: {url: .../releases/latest}`'s own result.url comes

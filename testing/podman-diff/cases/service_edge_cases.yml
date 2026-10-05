@@ -20,7 +20,7 @@
     - ansible.builtin.debug:
         msg: "S1 failed={{ s1.failed }} changed={{ s1.changed }}"
 
-    - name: "S2 stop a service that does not exist (real ansible fails like S1)"
+    - name: "S2 stop a service that does not exist (Ansible fails like S1)"
       ansible.builtin.service:
         name: krikri-diff-nonexistent-zzz
         state: stopped

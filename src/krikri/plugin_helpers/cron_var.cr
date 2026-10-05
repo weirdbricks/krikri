@@ -30,7 +30,7 @@ module Krikri
       end
 
       # Every variable name currently assigned in the text, in file
-      # order (real module's get_var_names, returned as the `vars` field).
+      # order (Ansible module's get_var_names, returned as the `vars` field).
       def self.var_names(text : String) : Array(String)
         text.split("\n").compact_map do |line|
           parse_var_line(line).try(&.[0])

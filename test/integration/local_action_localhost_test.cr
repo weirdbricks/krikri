@@ -4,10 +4,10 @@ require "../minitest_helper"
 # templated-module-name form of both `action:` and `local_action:`, e.g.
 # jdauphant.intellij's `action: "{{ ansible_pkg_mgr }} state=present
 # name={{ item }}"`) previously made the literal directive key the module
-# name, so the task was skipped as an unimplemented plugin while real
+# name, so the task was skipped as an unimplemented plugin while
 # Ansible resolved and ran the Ansible module. This covers the end-to-end
 # path: parse-time rewrite, delegate-to-controller routing, and run-time
-# module-name resolution all funneling into real module dispatch.
+# module-name resolution all funneling into Ansible module dispatch.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")

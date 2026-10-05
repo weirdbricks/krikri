@@ -20,7 +20,7 @@ require "../../src/krikri/action_plugin_manager"
 #   approach test/integration/apache2_module_test.cr and the lvg/pv
 #   tests use), scripted to emit the captured real tool output bytes.
 #   The shim PATH reaches the plugin through the task's `environment:`
-#   keyword (per-command exports), except java_cert, whose real module
+#   keyword (per-command exports), except java_cert, whose Ansible module
 #   probes keytool with a bare execvpe-style lookup INSIDE the plugin
 #   process before any command runs - there the whole engine child gets
 #   the shim PATH (per-child Process.run env, parallel-safe).

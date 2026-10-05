@@ -5,7 +5,7 @@ module Krikri
     # StatFields - pure logic for turning a raw POSIX `stat`/`lstat` result
     # into the stat-shaped JSON hash both the `stat` and `find` plugins
     # return (`find`'s per-match dicts are documented as "see stat module
-    # for full output of each dictionary", verified against real
+    # for full output of each dictionary", verified against
     # ansible-playbook). No I/O here - the plugin itself calls
     # `LibC.stat`/`LibC.lstat`, resolves pw_name/gr_name via
     # `System::User`/`System::Group`, and merges in readable/writeable/

@@ -27,7 +27,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       ])
     end
 
-    it "puts -o after -j for out_interface (real module ordering)" do
+    it "puts -o after -j for out_interface (Ansible module ordering)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "out_interface" => "eth0",
         "jump"          => "MASQUERADE",
@@ -166,7 +166,7 @@ describe Krikri::PluginHelpers::IptablesCommand do
       rule.must_equal(["-j", "ACCEPT"])
     end
 
-    it "maps goto to -g after --to-source (real module ordering)" do
+    it "maps goto to -g after --to-source (Ansible module ordering)" do
       rule = Krikri::PluginHelpers::IptablesCommand.construct_rule({
         "to_source" => "192.0.2.1",
         "goto"      => "OTHER_CHAIN",

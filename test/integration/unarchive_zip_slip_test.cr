@@ -12,7 +12,7 @@ require "file_utils"
 # Everything here was live-verified against ansible-playbook 2.19.11
 # (same vectors, same archives): Ansible stays safe on every one of
 # them - GNU tar refuses `..` members at extraction (exit 2), Info-ZIP
-# unzip strips `../`/leading-`/` components and exits 1 (a warning real
+# unzip strips `../`/leading-`/` components and exits 1 (a warning
 # Ansible fails the task on, which is why extract_zip must not use -q:
 # -q suppresses the warning AND the nonzero exit), and Ansible's
 # attribute pass uses os.lchown / chmod-with-restore so it never follows

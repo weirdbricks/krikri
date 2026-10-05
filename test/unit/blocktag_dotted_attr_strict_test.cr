@@ -6,7 +6,7 @@ require "../../src/krikri/variable_substitutor"
 # vars/main.yml defines
 #   traefik_install_ver: '{% if traefik_ver.major | int >= 2 %}2{% else %}{{
 #     traefik_ver.major }}{% endif %}'
-# and a task uses `include_tasks: 'v{{ traefik_install_ver }}.yml'`. Real
+# and a task uses `include_tasks: 'v{{ traefik_install_ver }}.yml'`.
 # ansible-core 2.19.4 resolves the block-tag value fully and includes
 # v2.yml; this engine produced the literal path "vundefined.yml" and failed
 # with "Included tasks file not found".

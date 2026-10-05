@@ -4,7 +4,7 @@ require "file_utils"
 # Task-arg finalization failures on tasks WITHOUT a name: (the task origin is
 # the module key line itself, so Ansible prints two levels), free-form command
 # args reported as _raw_params, action-only modules without a `changed` key,
-# and Python-typed attribute errors. Live-compared byte for byte with real
+# and Python-typed attribute errors. Live-compared byte for byte with
 # ansible-playbook 2.19.11 via scripts/output_parity.sh on the same playbook.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -33,7 +33,7 @@ describe "task-arg finalization error block (nameless tasks)" do
     text.must_include("\nTask failed: Finalization of task args for 'ansible.builtin.debug' failed.\nOrigin: #{playbook}:6:7")
     text.must_include("<<< caused by >>>")
     text.must_include("Error while resolving value for 'msg': object of type 'int' has no attribute 'b'\nOrigin: #{playbook}:7:14")
-    # action-only module: no changed key; real module: changed false
+    # action-only module: no changed key; Ansible module: changed false
     text.must_include(%(fatal: [localhost]: FAILED! => {"msg": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed))
     text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: Finalization of task args for 'ansible.builtin.command' failed: Error while resolving value for '_raw_params': 'missing_var' is undefined"}))
     # only ONE block per failure (the result display no longer adds a second)

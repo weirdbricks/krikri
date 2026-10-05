@@ -15,8 +15,7 @@ module Krikri
   # MySQL database plugin - creates/removes a database.
   # Compatible with Ansible's community.mysql.mysql_db module.
   #
-  # Talks to the server directly over MySQL's own wire protocol (real
-  # Ansible's own community.mysql collection does the same, via PyMySQL)
+  # Talks to the server directly over MySQL's own wire protocol (Ansible's own community.mysql collection does the same, via PyMySQL)
   # using a fork of the official crystal-lang/crystal-mysql driver - see
   # https://github.com/weirdbricks/crystal-mysql for the caching_sha2_password
   # (MySQL 8+) and SSL fixes this plugin depends on; upstream, as of
@@ -30,10 +29,9 @@ module Krikri
   # - login_host (default "localhost"), login_port (default 3306),
   #   login_user, login_password, login_unix_socket (takes precedence
   #   over login_host/login_port when given)
-  # - state: dump / import: shells out to `mysqldump`/`mysql` (real
-  #   Ansible's own module does the same - dump/restore need the actual
+  # - state: dump / import: shells out to `mysqldump`/`mysql` (Ansible's own module does the same - dump/restore need the actual
   #   client binaries, there's no wire-protocol equivalent of "give me a
-  #   full logical SQL dump"). `target:` is required for both. Real
+  #   full logical SQL dump"). `target:` is required for both.
   #   Ansible pipes dump/import through `gzip`/`bzip2`/`xz`/`zstd` shell
   #   binaries for a compressed `target:`; this plugin instead reads/
   #   writes `.gz`/`.xz`/`.bz2` natively via `Compress::Gzip`

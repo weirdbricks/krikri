@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Side-by-side dnf5 option parity harness: runs a playbook with BOTH real
+# Side-by-side dnf5 option parity harness: runs a playbook with BOTH
 # ansible-playbook and krikri-playbook against an identical, freshly-started
 # Fedora 41 (dnf5) container each time (connection: local), so the two engines
 # never share package state. Each run writes a canonical per-task status report

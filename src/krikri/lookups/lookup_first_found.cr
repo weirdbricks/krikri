@@ -267,7 +267,7 @@ module Krikri
       #     included tasks file would need the actual including file's
       #     directory, not available to this evaluator - not chased
       #     further without a real repro needing it) - correct for
-      #     `paths: ['../vars']` (buluma.confluence's own style, real
+      #     `paths: ['../vars']` (buluma.confluence's own style,
       #     Ansible resolves this relative to tasks/, one level BELOW
       #     role_path, not relative to role_path itself). Found live
       #     benchmarking buluma.confluence (round 165): `paths: ['../

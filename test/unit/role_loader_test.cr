@@ -195,7 +195,7 @@ describe Krikri::RoleLoader do
     # Real bug found benchmarking linux-system-roles.timesync (round
     # 158): resolve_role_dir's own search dirs can be relative (a bare
     # "roles" search root, or a relative ANSIBLE_ROLES_PATH entry), and
-    # that relative-ness leaked straight into task.role_path - but real
+    # that relative-ness leaked straight into task.role_path - but
     # Ansible's own role_path magic var is documented as always
     # absolute. The role's own `paths: ["{{ role_path }}/vars"]`
     # first_found idiom (a Ansible convention, since role_path is

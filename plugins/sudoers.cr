@@ -28,7 +28,7 @@ module Krikri
 
     FILE_MODE = 0o440
 
-    # Real argument_spec (community.general sudoers.py) - no aliases.
+    # Ansible's argument_spec (community.general sudoers.py) - no aliases.
     SPEC = {
       "commands"     => %w[],
       "defaults"     => %w[],

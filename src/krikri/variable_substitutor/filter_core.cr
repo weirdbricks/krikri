@@ -75,7 +75,7 @@ module Krikri
       # nothing matches. With a group_ref the match's captured group text is
       # returned wrapped in a one-element LIST (Ansible wraps every
       # group reference; see the nginxinc.nginx `| first` repro in the
-      # jinja_filters.cr comment history). The group_ref grammar is real
+      # jinja_filters.cr comment history). The group_ref grammar is
       # Ansible's own: `\1`-style capture-group INDICES (only the first
       # `\d+` run counts, so `'\1\2'` resolves group 1 - live-verified
       # against ansible-core 2.19.11) and `\g<name>`-style named references;
@@ -84,7 +84,7 @@ module Krikri
       # group"). A group that exists but didn't participate yields nil in
       # the returned list (Python's match.group() -> None), NOT an empty
       # string. Empty/nil group_ref means "no group reference" -> the whole
-      # match. *options* carries the multiline/ignorecase kwargs real
+      # match. *options* carries the multiline/ignorecase kwargs
       # Ansible's regex_search accepts.
       def self.regex_search(s : String, pattern : String, group_ref : String? = nil, options : Regex::Options = Regex::Options::None) : String | Array(String?) | Nil
         match = s.match(cached_regex(pattern, options))
@@ -634,7 +634,7 @@ module Krikri
       # `ipaddress.IPv4Network(f"0.0.0.0/{value}")` and reads its
       # `.prefixlen` - equivalent to counting the netmask's leading set
       # bits, which is what this does directly rather than pulling in a
-      # full IP-address library for one filter. Raises (matching real
+      # full IP-address library for one filter. Raises (matching
       # Ansible's `AnsibleFilterError` on an invalid mask) rather than
       # silently returning a wrong prefix length for a non-contiguous
       # mask (e.g. "255.0.255.0") or a malformed string - found via

@@ -32,7 +32,7 @@ module Krikri
         "openrc-init" => "openrc",
       }
 
-      # Returns the fact value PID 1's comm yields, or nil when real
+      # Returns the fact value PID 1's comm yields, or nil when
       # Ansible would discard it and fall through to the Linux
       # fallback chain.
       def from_proc1(comm : String?) : String?

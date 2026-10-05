@@ -43,7 +43,7 @@ describe "find plugin" do
     # Ansible's find module declares `paths` with aliases `path`
     # and `name` - a single-directory search almost always uses the
     # singular form. Found via robertdebock.dovecot's own "Find users
-    # in /var/spool/mail" task (`path: /var/spool/mail`), which real
+    # in /var/spool/mail" task (`path: /var/spool/mail`), which
     # Ansible accepts transparently; this plugin only ever recognized
     # the plural `paths:`, failing outright.
     result = PluginSpecHelper.run("find", {"path" => tmp_dir, "patterns" => "*.txt"})
@@ -197,7 +197,7 @@ describe "find plugin" do
 
   describe "mode: / exact_mode:" do
     # Real bug found via a proactive scope-cut audit: mode:/exact_mode:
-    # were entirely unimplemented. Verified end-to-end against real
+    # were entirely unimplemented. Verified end-to-end against
     # ansible-playbook against the exact same fixture shape (0644/0755/
     # 0600) before writing these - see PluginHelpers::FindModeFilter's
     # own spec for the underlying logic's unit coverage.

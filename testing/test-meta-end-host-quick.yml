@@ -1,6 +1,6 @@
 # meta: end_host - per-host variation of end_play (added alongside it).
-# Real Ansible's own doc: "causes the play to end for the current host
-# without failing it." Verified live against real ansible-playbook: a
+# Ansible's own doc: "causes the play to end for the current host
+# without failing it." Verified live against ansible-playbook: a
 # SECOND host whose own when: skips this exact task entirely keeps
 # running normally afterward - unlike end_play, this does NOT affect
 # other hosts. Requires test/fixtures/inventory-two-local-hosts.ini

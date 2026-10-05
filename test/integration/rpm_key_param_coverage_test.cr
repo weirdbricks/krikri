@@ -115,7 +115,7 @@ describe "rpm_key plugin fingerprint param" do
     # substitute_task_params's whole-single-span comment), so the
     # single-quote "repair" this spec used to assert was only ever
     # reachable for values that are strings in Ansible - here the
-    # garbage fingerprint text then fails the match exactly like real
+    # garbage fingerprint text then fails the match exactly like
     # Ansible's own comma-split would.
     with_rpm_key_shims do
       with_key_file do |key_path|

@@ -149,7 +149,7 @@ describe "inventory sources" do
     output.must_include("RAN=[localhost]")
   end
 
-  # The implicit localhost deliberately does not match 'all' - real
+  # The implicit localhost deliberately does not match 'all' -
   # Ansible skips the play and exits 0.
   it "matches no hosts for `hosts: all` with an empty inventory" do
     status, output = run_playbook(<<-YAML, [] of String)

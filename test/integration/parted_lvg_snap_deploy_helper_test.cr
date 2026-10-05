@@ -107,7 +107,7 @@ describe "deploy_helper plugin" do
     result = PluginSpecHelper.run("deploy_helper", {"path" => "/tmp/krikri-deploy-test", "state" => "bogus"})
 
     result["failed"].as_bool.must_equal(true)
-    # Real argument_spec order (live-verified against 2.19.11).
+    # Ansible's argument_spec order (live-verified against 2.19.11).
     result["msg"].as_s.must_equal("value of state must be one of: present, absent, clean, finalize, query, got: bogus")
   end
 

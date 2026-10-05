@@ -1,6 +1,6 @@
-# debug module edge cases. Real Ansible semantics of interest:
+# debug module edge cases. Ansible semantics of interest:
 # - var: referencing an undefined variable (templating failure shape)
-# - msg: and var: both given (real Ansible: mutually exclusive)
+# - msg: and var: both given (Ansible: mutually exclusive)
 # - verbosity: higher than current -v level (should skip silently)
 # Label prefix: D.
 - hosts: all

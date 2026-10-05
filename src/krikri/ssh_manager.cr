@@ -22,7 +22,7 @@ module Krikri
     # - too short for entirely ordinary, legitimately slow real-world
     # tasks: found live re-benchmarking buluma.netdata (round 163
     # regression check) - its own installer genuinely compiles from
-    # source and took a confirmed 1536s (~25.6 minutes) on the real
+    # source and took a confirmed 1536s (~25.6 minutes) on the
     # ansible-playbook side; crystal's identical task was killed at
     # exactly 300s ("SSH command timed out... did not exit even after
     # being killed") despite the remote command still actively running
@@ -39,9 +39,9 @@ module Krikri
     DEFAULT_EXEC_TIMEOUT_SECONDS = 3600
 
     # Control socket directory - STABLE across processes (no pid suffix),
-    # with per-(user, host, port) socket names below it, mirroring real
+    # with per-(user, host, port) socket names below it, mirroring
     # Ansible's own ssh.py connection plugin (a fixed ~/.ansible/cp dir,
-    # one hashed socket per target). Cross-PROCESS master reuse is real
+    # one hashed socket per target). Cross-PROCESS master reuse is
     # Ansible behavior: a second `ansible-playbook` invocation minutes
     # after the first rides the first run's still-alive ControlPersist
     # master instead of dialing a fresh incoming TCP connection - which

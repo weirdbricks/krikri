@@ -1,10 +1,10 @@
 # docker_image_build edge cases. NO docker daemon OR docker CLI inside
 # either harness container (no docker-in-podman), so only the
-# argument-validation surface real Ansible performs BEFORE its
+# argument-validation surface Ansible performs BEFORE its
 # `docker buildx version` probe is byte-comparable (required args,
 # choice checks, bool conversion, secrets/outputs sub-spec validation -
 # all deterministic AnsibleModule text, rendered). Path/dockerfile
-# existence checks happen AFTER the buildx probe in the real module, so
+# existence checks happen AFTER the buildx probe in the Ansible module, so
 # those cases (and any valid-args build attempt) compare failed=/
 # changed= only - the probe failure wording is not deterministic across
 # engines. The real side needs community.docker installed (run.sh

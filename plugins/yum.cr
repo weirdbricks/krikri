@@ -92,7 +92,7 @@ module Krikri
     # shape is unverifiable on the Debian podman-diff harness and
     # mirrors dnf's live-verified one. check_mode/diff_mode/
     # _verbosity/_environment are engine-internal keys injected by
-    # the executor, not part of the real argument_spec, so they are
+    # the executor, not part of Ansible's argument_spec, so they are
     # not rejected.
     private def arg_spec_rejection : PluginResult?
       yum_supported = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
@@ -134,7 +134,7 @@ module Krikri
       # ansible-core 2.19.11 for each of yum's four `type: list` params
       # (`use_backend: yum4` forced on a Debian host to reach argspec
       # validation at all). Round 900905 officel.httpd found the gap:
-      # every loop item's `enablerepo: ~` default made real
+      # every loop item's `enablerepo: ~` default made
       # ansible-playbook fail the task while this engine silently
       # dropped the null and installed the packages anyway. The
       # explicit-null gate (not a plain empty-string check) is what

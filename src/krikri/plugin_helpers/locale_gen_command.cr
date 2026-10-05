@@ -7,7 +7,7 @@ module Krikri
     # Debian host (or a locales package). The plugin executes the
     # commands these build on (`locale -a`, `locale-gen`).
     module LocaleGenCommand
-      # Real module's LOCALE_NORMALIZATION: `locale -a` reports
+      # Ansible module's LOCALE_NORMALIZATION: `locale -a` reports
       # encodings in either case (en_US.utf8 vs en_US.UTF-8), so both
       # sides of every comparison pass through this table first.
       LOCALE_NORMALIZATION = {

@@ -40,7 +40,7 @@ module Krikri
     end
 
     # acl_changed: rerun the would-be command with `--test` inserted
-    # right after the binary name (real module's exact insertion point,
+    # right after the binary name (Ansible module's exact insertion point,
     # so `-d`-bearing commands become `setfacl --test -d -m ...`).
     private def acl_changed?(command : Array(String), entry : String, use_nfsv4_acls : Bool) : Bool
       test_cmd = command.dup.insert(1, "--test")

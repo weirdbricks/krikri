@@ -237,7 +237,7 @@ module Krikri
     end
 
     # The lowercased os-release ID (Ansible's get_distribution
-    # substrate), or nil when the file is absent or has no ID - which real
+    # substrate), or nil when the file is absent or has no ID - which
     # Ansible treats as an unknown distribution.
     private def detect_distribution : String?
       return nil unless File.file?("/etc/os-release")
@@ -556,7 +556,7 @@ module Krikri
       result[:stdout].strip
     end
 
-    # Format a File::Error the way Python's str(OSError) renders it - real
+    # Format a File::Error the way Python's str(OSError) renders it -
     # Ansible's file-write failure paths fail_json with
     # "failed to update hostname: %s" % to_native(e), where e is the raw
     # OSError, e.g. "[Errno 2] No such file or directory: '/etc/conf.d/hostname'"

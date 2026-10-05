@@ -7,9 +7,9 @@
 # - E2: krikri prefixes the controller-miss failure with "Task failed: "
 #   (live-verified against ansible-core 2.19, see executor_task_exec.cr);
 #   bookworm's 2.14 doesn't. A version difference, not a bug.
-# - E6: real 2.14's no-handler-found message embeds a per-run tmp path
+# - E6: Ansible 2.14's no-handler-found message embeds a per-run tmp path
 #   AND collects its per-handler probe reasons into a Python set, so the
-#   full msg shuffles run to run even against real Ansible itself. Only
+#   full msg shuffles run to run even against Ansible itself. Only
 #   the deterministic head is replicated (see unarchive.cr).
 - hosts: all
   gather_facts: false

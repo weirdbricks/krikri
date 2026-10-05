@@ -271,8 +271,7 @@ module Krikri
     # AnsibleModule.atomic_move: a temp file whose content is validated
     # (validate:) and then RENAMED into place - same shape lineinfile.cr's
     # merged implementation already uses here. unsafe_writes: swaps the
-    # rename for a direct in-place write when the rename fails (real
-    # Ansible's own escape hatch for paths a rename can't touch, e.g.
+    # rename for a direct in-place write when the rename fails (Ansible's own escape hatch for paths a rename can't touch, e.g.
     # /proc or container bind-mounts).
     #
     # Returns nil on success, or a failed PluginResult.
@@ -377,7 +376,7 @@ module Krikri
     end
 
     # Checks owner:/group:/mode:, then chattr-style attributes:/attr:
-    # flags, then the SELinux context parts - the same order real
+    # flags, then the SELinux context parts - the same order
     # Ansible's set_fs_attributes_if_different applies them (mirrors
     # lineinfile.cr's apply_file_attrs, which itself mirrors copy.cr's
     # apply_extended_attributes). Returns {changed, failure}: failure a
@@ -408,7 +407,7 @@ module Krikri
 
     # attributes:/attr: (chattr flags, e.g. "+i" for immutable) -
     # mirrors file.cr/copy.cr/template.cr's proven implementations
-    # exactly (same helper names, same semantics, including real
+    # exactly (same helper names, same semantics, including
     # Ansible's non-converging '-'-prefixed quirk,
     # ansible/ansible#33745).
     private def attr_args : {Char, String}?

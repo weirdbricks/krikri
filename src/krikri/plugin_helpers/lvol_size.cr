@@ -34,7 +34,7 @@ module Krikri
         # unit letter appended to the -L/-l value: "" for extents, the
         # (possibly implicit) unit letter otherwise
         value_unit : String,
-        # the --units flag value vgs/lvs are queried with: real module's
+        # the --units flag value vgs/lvs are queried with: Ansible module's
         # `unit` variable - always "m" for extents, else value_unit
         units_flag : String
 
@@ -79,7 +79,7 @@ module Krikri
             rest = rest[0..-2]
           end
 
-          # Real module: float(size) must succeed AND the first char must
+          # Ansible module: float(size) must succeed AND the first char must
           # be a digit (so ".5" is rejected even though Python's float()
           # would parse it; "1e3" IS accepted - first char is a digit and
           # float() handles the exponent).

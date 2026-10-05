@@ -1,6 +1,6 @@
 # iptables edge cases. Both containers get the real iptables(8) binary
 # (run.sh's iptables-gated install); krikri shells to the same binary as
-# real Ansible. Rootless-podman netfilter may or may not permit real
+# Ansible. Rootless-podman netfilter may or may not permit real
 # rule mutation - if the main path turns out to be blocked in this
 # environment, the argument-spec validations that fail BEFORE any real
 # iptables(8) call still fully apply, and failed=/changed= for the

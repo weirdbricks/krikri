@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Pins the hostvars entry of an add_host-created host against real
+# Pins the hostvars entry of an add_host-created host against
 # ansible-core 2.19.11 (live-verified via
 # `{{ hostvars['dyn1'] | dictsort | to_json }}`): the entry carries the
 # play magic variables real defines on every hostvars entry -

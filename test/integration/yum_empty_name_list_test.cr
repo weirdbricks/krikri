@@ -5,7 +5,7 @@ require "../minitest_helper"
 # the var defaulting to `[]` templates to the literal string "[]", which
 # parses down to an empty package list. A `name:`/`pkg:` KEY that IS
 # present (so the "no name: at all" branch never fires) but resolves to
-# nothing is exactly as "nothing to install" as no name: at all - real
+# nothing is exactly as "nothing to install" as no name: at all -
 # ansible-core's yum/dnf module reports ok/changed: false for it, not a
 # missing-parameter failure. Mirrors apt.cr's identical fix for the same
 # bug class (round 84000, see apt_cache_updated_spec.cr).

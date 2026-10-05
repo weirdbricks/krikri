@@ -280,7 +280,7 @@ module Krikri
       end
 
       # Unlike #load, an empty-string passphrase is a GIVEN password (the
-      # real module hands `cryptography` b"") - only nil means none.
+      # Ansible module hands `cryptography` b"") - only nil means none.
       private def read(data : Bytes | String, passphrase : String?) : Void*?
         slice = data.is_a?(String) ? data.to_slice : data
         bio = LibCryptoPkey.bio_new_mem_buf(slice.to_unsafe, slice.size)
@@ -322,7 +322,7 @@ module Krikri
       end
 
       # SubjectPublicKeyInfo PEM of *pkey*'s public half - the bytes the
-      # real module writes for `format: PEM`.
+      # Ansible module writes for `format: PEM`.
       def public_pem(pkey : Void*) : Bytes?
         bio = LibCrypto.BIO_new(LibCryptoPkey.bio_s_mem)
         return nil if bio.null?

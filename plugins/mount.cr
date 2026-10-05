@@ -26,7 +26,7 @@ module Krikri
   #   mounting/unmounting
   #
   # Fstab line format and idempotency logic (matched by `path`, comparing
-  # src/fstype/opts/dump/passno) verified by reading the real
+  # src/fstype/opts/dump/passno) verified by reading the
   # ansible.posix mount.py source directly, not assumed from docs -
   # updates the matching line in place (preserving every other line
   # byte-for-byte) rather than removing and re-appending.
@@ -113,7 +113,7 @@ module Krikri
       # live-verified against the Ansible module's own output for this exact
       # task. check_mode/diff_mode/_module_name/_verbosity/_environment
       # are engine-internal keys injected by the executor (see
-      # build_plugin_config), not part of the real argument_spec, so none
+      # build_plugin_config), not part of Ansible's argument_spec, so none
       # are rejected. The parenthesized alias list mirrors Ansible's msg (name).
       mount_supported = {"backup", "boot", "dump", "fstab", "fstype", "opts", "opts_no_log", "passno", "path", "src", "state", "name"}
       mount_internal = {"_ansible_check_mode", "_ansible_diff", "_module_name", "_verbosity", "_environment"}
@@ -385,7 +385,7 @@ module Krikri
     end
 
     # Reads `fstab`, updates (or appends) the line for `path`, and writes
-    # it back only if something actually changed - matching real
+    # it back only if something actually changed - matching
     # Ansible's field-by-field comparison (src/fstype/opts/dump/passno),
     # not a whole-line string comparison, so unrelated formatting in an
     # existing line (extra whitespace, a trailing comment) isn't churned.
@@ -517,7 +517,7 @@ module Krikri
     # apt_repository.cr) - the actual `mount`/`umount` command's exit
     # code used to be discarded entirely, so a genuinely failed mount
     # (wrong fstype, busy device, nonexistent src, ...) still reported
-    # `changed: true, failed: false` as if it had succeeded. Real
+    # `changed: true, failed: false` as if it had succeeded.
     # ansible.posix.mount fails the task with the mount/umount command's
     # own stderr when it fails - verified against its actual source
     # (`module.fail_json(msg="Error mounting %s: %s" % (name, out +
@@ -551,7 +551,7 @@ module Krikri
     end
 
     # `mount -o remount[,opts] [-T fstab] path` - always changed: true on
-    # success (a remount is inherently "did something," matching real
+    # success (a remount is inherently "did something," matching
     # Ansible's own documented RV(ignore:changed=true) here), verified
     # command shape and failure message against Ansible.posix
     # mount.py's own remount() source - see the class doc above for what

@@ -12,7 +12,7 @@ module Krikri
   # auto-creation, delete, add/set_children, count, print_match, content
   # get, pretty_print, insertbefore/after, backup,
   # check_mode, namespaced xpath + clark-notation attribute names).
-  # Real module runs on lxml (also libxml2 underneath), so XPath and
+  # Ansible module runs on lxml (also libxml2 underneath), so XPath and
   # serialization behavior match.
   class XmlPlugin < BasePlugin
     # Live-verified against ansible-core 2.19.11 (community.general
@@ -49,7 +49,7 @@ module Krikri
           msg: "one of the following is required: add_children, content, count, pretty_print, print_match, set_children, value")
       end
 
-      # Real module argument validation (AnsibleModule init), which runs
+      # Ansible module argument validation (AnsibleModule init), which runs
       # before any XML parsing. create_if_missing is NOT a real
       # community.general.xml parameter (live-verified 2026-09-24 against
       # ansible-core 2.19.11 + community.general: AnsibleModule rejects
@@ -59,7 +59,7 @@ module Krikri
           msg: "Unsupported parameters for (community.general.xml) module: create_if_missing. Supported parameters include: add_children, attribute, backup, content, count, input_type, insertafter, insertbefore, namespaces, path, pretty_print, print_match, set_children, state, strip_cdata_tags, value, xmlstring (dest, ensure, file).")
       end
 
-      # Real module argument validation (AnsibleModule init), which runs
+      # Ansible module argument validation (AnsibleModule init), which runs
       # before any XML parsing: mutually exclusive action params, choice
       # enums, and required_by/required_if relationships.
       action_count = ["add_children", "content", "count", "print_match", "set_children", "value"].count { |prop| raw[prop]? }
@@ -79,13 +79,13 @@ module Krikri
         return PluginResult.new(changed: false, failed: true,
           msg: "value of input_type must be one of: xml, yaml, got: #{input_type}")
       end
-      # Real module's required_by treats an explicitly-null value as
+      # Ansible module's required_by treats an explicitly-null value as
       # missing (observed: attribute + `value: null` fails "missing
       # parameter(s) required by 'attribute': value"), so check the raw
       # JSON payload, not just key presence. The engine's param pipeline
       # is Hash(String, String) and collapses a YAML null to an empty
       # string, so treat "" as missing too - the one shape this can't
-      # represent is a quoted `value: ""` with attribute:, which real
+      # represent is a quoted `value: ""` with attribute:, which
       # Ansible accepts and sets the attribute to empty.
       value_provided = !raw["value"]?.nil? && !raw["value"].not_nil!.raw.nil? && raw["value"].not_nil!.raw != ""
       if @params["attribute"]? && !value_provided
@@ -125,7 +125,7 @@ module Krikri
           msg: "missing parameter(s) required if insertafter is True: xpath")
       end
 
-      # Real module bool-typed args (type='bool') reject non-boolean
+      # Ansible module bool-typed args (type='bool') reject non-boolean
       # strings at AnsibleModule init - live-verified: `count:
       # krikri_bool` fails "The value 'krikri_bool' is not a valid
       # boolean". The engine's param pipeline carries these as strings,
@@ -290,7 +290,7 @@ module Krikri
       tree_changed = new_serial != orig_serial
 
       if xmlstring
-        # Real module computes changed from the mutated-vs-original tree
+        # Ansible module computes changed from the mutated-vs-original tree
         # comparison alone (has_changed), never from byte-differences
         # against the xmlstring INPUT - re-serialization always prepends
         # an XML declaration and trailing newline, so a byte comparison
@@ -319,7 +319,7 @@ module Krikri
       # only the pretty_print-only path (make_pretty, no xpath - real
       # main() never reaches it when xpath is set) compares file bytes;
       # with no op and no pretty_print there is nothing to do, so
-      # changed=false regardless of formatting differences (real module
+      # changed=false regardless of formatting differences (Ansible module
       # never writes).
       final_changed = if read_only
                         false
@@ -773,7 +773,7 @@ module Krikri
     end
 
     private def serialize(doc : KXML::Document, pretty_print : Bool) : String
-      # Real module writes with xml_declaration=True, encoding="UTF-8" via
+      # Ansible module writes with xml_declaration=True, encoding="UTF-8" via
       # lxml: the normalized single-quote declaration is always followed
       # by a newline (live-verified: both file and xmlstring outputs),
       # and there is no trailing newline after the root.

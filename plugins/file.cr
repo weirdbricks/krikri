@@ -173,7 +173,7 @@ module Krikri
         return result
       end
 
-      # A path that is PRESENT but resolves to '' must fail like real
+      # A path that is PRESENT but resolves to '' must fail like
       # Ansible, not silently "succeed" (round900912 rolehippie.storage:
       # storage_path defaults to '', so its "Create required path" task
       # has to fail the play - this engine used to create a directory at
@@ -241,7 +241,7 @@ module Krikri
       result.failed? && !result.extra.has_key?("path") && !result.extra.has_key?("dest")
     end
 
-    # A path that is PRESENT but resolves to '' must fail like real
+    # A path that is PRESENT but resolves to '' must fail like
     # Ansible, not silently "succeed" (round900912 rolehippie.storage:
     # storage_path defaults to '', so its "Create required path" task
     # has to fail the play - this engine used to create a directory at
@@ -369,7 +369,7 @@ module Krikri
         # ran - `recurse: true` was effectively a no-op unless the
         # directory's OWN attributes also happened to be stale, and the
         # stale file inside was silently left wrong forever while still
-        # reporting `ok`/"Directory attributes updated" every run. Real
+        # reporting `ok`/"Directory attributes updated" every run.
         # Ansible's own file module walks the whole tree to decide
         # `changed`, not just the top entry.
         if !changed && true?(@params["recurse"]?)
@@ -530,7 +530,7 @@ module Krikri
       end
 
       # Anything that exists and isn't a directory (socket, fifo, device
-      # node, ...) still gets its owner/group/mode managed here - real
+      # node, ...) still gets its owner/group/mode managed here -
       # Ansible's own `get_state()` defaults every non-directory,
       # non-symlink path to "file" for exactly this reason (its own comment:
       # "could be many other things, but defaulting to file"), which is why
@@ -1273,7 +1273,7 @@ module Krikri
       # immediately (before ever attempting the chown syscall). Real bug
       # found benchmarking robertdebock.openbao_agent on Rocky 9.6 (round
       # 162): `owner: openbao` on a directory-creation task, before any
-      # earlier task in the role creates that system user - real
+      # earlier task in the role creates that system user -
       # ansible-playbook correctly fails there; this previously left uid
       # at its -1 sentinel (never set, never looked at again) and simply
       # never called File.chown for the owner at all, silently leaving
@@ -1367,7 +1367,7 @@ module Krikri
       fields[0].delete('-').strip
     end
 
-    # Whether the attr:/attributes: param reports changed, mirroring real
+    # Whether the attr:/attributes: param reports changed, mirroring
     # Ansible's set_attributes_if_different exactly: changed when the
     # current lsattr flag string differs from the requested flag letters
     # OR the request is '-'-prefixed - in which case chattr is re-run and
@@ -1408,7 +1408,7 @@ module Krikri
       end
     end
 
-    # SELinux context params (seuser:/serole:/setype:/selevel:, real
+    # SELinux context params (seuser:/serole:/setype:/selevel:,
     # Ansible's file-common args). Ansible accepts these on every
     # host but only ACTS on them when SELinux is actually enabled - its
     # set_context_if_different opens with
@@ -1458,10 +1458,10 @@ module Krikri
     # set_context_if_different's iterate-over-current-context loop
     # (a provided part wins only when it differs; an unprovided part
     # keeps the current value). The documented "_default" value ("uses
-    # the matching portion of policy if available") is what real
+    # the matching portion of policy if available") is what
     # Ansible's load_file_common_arguments fills in from libselinux's
     # matchpathcon(); krikri shells to the same-named CLI tool for it,
-    # and a matchpathcon failure leaves the current part - real
+    # and a matchpathcon failure leaves the current part -
     # Ansible's selinux_default_context returns an all-None context on
     # matchpathcon failure, and a None part keeps the current value in
     # set_context_if_different's loop.
@@ -1471,8 +1471,7 @@ module Krikri
         next unless value = @params[param]?
         desired[index] = value == "_default" ? selinux_default_context_part(path, index, current) : value
       end
-      # selevel only participates on an MLS-enabled policy (real
-      # Ansible only appends it to the context list then), and only when
+      # selevel only participates on an MLS-enabled policy (Ansible only appends it to the context list then), and only when
       # the current context actually HAS a level part.
       if selevel = @params["selevel"]?
         if mls_enabled? && desired.size > 3

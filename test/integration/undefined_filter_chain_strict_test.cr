@@ -10,7 +10,7 @@ require "../minitest_helper"
 # produced zero loop items and the play went green where Ansible
 # reports failed=1.
 #
-# All expectations below were differentialed against the local real
+# All expectations below were differentialed against the local
 # ansible-core 2.19.4 with connection: local, including the tolerant
 # ones: only `default`/`d`/`type_debug` survive an undefined input.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)

@@ -159,7 +159,7 @@ module Krikri
       end
     end
 
-    # LooseVersion component parse for the `version` test - real
+    # LooseVersion component parse for the `version` test -
     # ansible-core's version comparison walks distutils LooseVersion's
     # component list: digit runs become ints, [a-z]+ runs stay strings,
     # literal dots are kept as components, and EVERYTHING else is

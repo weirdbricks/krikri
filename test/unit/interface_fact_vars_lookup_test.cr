@@ -14,7 +14,7 @@ require "../../src/krikri/krikri_jinja_filters"
 # The `vars` magic dict itself was fine - it is a self-view over the same
 # flat fact keys that `ansible_eth0` resolves through - the per-interface
 # `ansible_<iface>` facts were never GATHERED: FactsGatherer produced
-# ansible_interfaces (the name list) but no ansible_eth0 dict at all. Real
+# ansible_interfaces (the name list) but no ansible_eth0 dict at all.
 # Ansible's LinuxNetwork collector reports every interface as both, and
 # inject_facts_as_vars flattens the dict form into the variable namespace,
 # which is exactly what the `vars[...]` lookup reads.

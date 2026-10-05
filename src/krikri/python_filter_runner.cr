@@ -13,7 +13,7 @@ require "json"
 #
 # Unlike a module, a filter runs controller-side during Jinja2 template
 # rendering - there is nothing to upload to a target. The runner instead
-# delegates to the CONTROLLER's own python3 (the same interpreter real
+# delegates to the CONTROLLER's own python3 (the same interpreter
 # Ansible itself needs on the controller): a small wrapper script is fed
 # the plugin source paths plus the filter call as JSON on stdin, imports
 # the plugin files, instantiates `FilterModule`, calls `filters()`, and

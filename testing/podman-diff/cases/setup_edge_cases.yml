@@ -3,15 +3,15 @@
 # these compare failed=/changed= plus the SIZE of the returned
 # ansible_facts dict - a no-match filter must give the interpreter
 # stamp only (not a failure), exclusions must remove subsets, and an
-# invalid subset must fail like real Ansible does.
+# invalid subset must fail like Ansible does.
 #
 # setup_shape_exclusions: keys this engine surfaces inside the setup
-# result's ansible_facts that real Ansible only ever exposes as
+# result's ansible_facts that Ansible only ever exposes as
 # injected VARS, never inside the module result dict - the flat
 # ansible_python_interpreter (krikri defines it for local-connection
 # runs; real resolves it from config, see facts_gatherer.cr's
 # gather_python_facts) and the per-interface facts
-# (ansible_interfaces/ansible_<iface>, which real's
+# (ansible_interfaces/ansible_<iface>, which Ansible's
 # inject_facts_as_vars flattens into host vars; `ansible_facts['lo']`
 # templating works in both). Excluding them here keeps the comparison
 # on subset/filter behavior; the templating surface is identical.

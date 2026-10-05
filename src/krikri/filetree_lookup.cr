@@ -153,7 +153,7 @@ module Krikri::FiletreeLookup
 
   # behavior matched to filetree.py's own file_props(): lstat the entry, map
   # its type to state (+ src for file/link), and attach the stat
-  # properties. A failed stat yields nil (real module warns and skips).
+  # properties. A failed stat yields nil (Ansible module warns and skips).
   private def self.file_props(root : String, relpath : String, abspath : String) : Hash(String, JSON::Any)?
     stat = LibC::Stat.new
     return nil unless LibFT.ft_lstat(abspath, pointerof(stat)) == 0
@@ -170,7 +170,7 @@ module Krikri::FiletreeLookup
             elsif is_reg
               "file"
             else
-              # real module warns "file type is not supported" and skips
+              # Ansible module warns "file type is not supported" and skips
               return nil
             end
 

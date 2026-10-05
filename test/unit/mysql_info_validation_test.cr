@@ -2,7 +2,7 @@ require "../minitest_helper"
 
 # Pins plugins/mysql_info.cr's argument-validation surface against real
 # community.mysql.mysql_info's AnsibleModule setup (mysql_common_
-# argument_spec + mysql_info's own update; live-diffed vs real
+# argument_spec + mysql_info's own update; live-diffed vs
 # ansible-playbook via the podman-diff mysql_info_edge_cases harness).
 # Only validation failures are unit-tested - anything past validation
 # needs a live MariaDB (that path is covered by the podman-diff case

@@ -7,7 +7,7 @@ require "../../src/krikri/plugin_helpers/openssl_pkey"
 # what real community.crypto.openssl_privatekey produces (PEM headers,
 # encryption shape, curve names, bits) - the file-format specifics are
 # additionally covered by the integration suite, which diffs against the
-# real module's output.
+# Ansible module's output.
 describe "Krikri::PluginHelpers::Pkey" do
   describe "generate" do
     it "generates an RSA key of the requested size" do

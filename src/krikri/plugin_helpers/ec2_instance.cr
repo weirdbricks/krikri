@@ -37,7 +37,7 @@ module Krikri
     #   stopped matches, no-op when already running.
     # - state=stopped: StopInstances on matches not already stopped
     #   (running or still stopping); fails when no match exists (the
-    #   real module cannot stop what is not there).
+    #   Ansible module cannot stop what is not there).
     # - state=restarted/rebooted: Stop then Start.
     # - state=terminated/absent: TerminateInstances, no-op when no match.
     # - count: always launches that many new instances (never reconciles).

@@ -1,17 +1,17 @@
 # py_module (role-private library/<name>.py) edge cases. The fixture
 # modules are seeded into /work/library/ (the playbook-dir library/
 # search root BOTH engines share) by run.sh's py_module gated block -
-# BEFORE playbook load, because real Ansible resolves module names at
+# BEFORE playbook load, because Ansible resolves module names at
 # load time and cannot see modules written by earlier playbook tasks.
 # Scenarios: a trivially-succeeding module, a module that raises, a
 # module that prints no JSON (no result JSON -> MODULE FAILURE on
 # both engines), and a new-style AnsibleModule script exercising real
 # argument passing (krikri feeds args via the stdin JSON wrapper,
-# real Ansible via AnsiballZ - same failed=/changed= either way).
+# Ansible via AnsiballZ - same failed=/changed= either way).
 # Msg wording differs and is not compared; only failed=/changed=
 # matter. Prefix P.
 # (A missing library/ source is a separate case file,
-# py_module_missing.yml - real Ansible aborts at playbook LOAD on an
+# py_module_missing.yml - Ansible aborts at playbook LOAD on an
 # unresolvable name, so it cannot share a playbook with the
 # succeeding scenarios.)
 - hosts: all
@@ -48,9 +48,9 @@
         msg: "P4 failed={{ p4.failed | default('none') }} changed={{ p4.changed | default('none') }}"
 
     # Deliberately NO shebang on this fixture (krikri_noshebang.py):
-    # real Ansible fails it controller-side with "module (name) is
+    # Ansible fails it controller-side with "module (name) is
     # missing interpreter line" (a non-new-style module payload needs
-    # a #! first line). The debug prints failed= only - real's
+    # a #! first line). The debug prints failed= only - Ansible's
     # controller-side error result carries no changed key at all, so
     # printing changed= would diff changed=none (real) against
     # changed=False (krikri), a result-shape artifact of the same

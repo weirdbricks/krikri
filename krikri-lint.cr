@@ -199,7 +199,7 @@ module Krikri::Lint
       exit 3
     end
 
-    # Real ansible-lint walks each target's import graph before linting,
+    # ansible-lint walks each target's import graph before linting,
     # so imported task files and playbooks are linted too and counted in
     # the "on N files" summary.
     files = Imports.expand(FileDiscovery.discover(targets))
@@ -297,7 +297,7 @@ module Krikri::Lint
     # stdout whenever it is not a tty and only flushes it at exit, so the
     # stderr block lands *before* the matches in a redirected or piped
     # run - and after them on a terminal. Mirroring that buffering keeps
-    # `2>&1` comparisons against real ansible-lint byte-identical.
+    # `2>&1` comparisons against ansible-lint byte-identical.
     matches_out = IO::Memory.new
     case format
     when "json"

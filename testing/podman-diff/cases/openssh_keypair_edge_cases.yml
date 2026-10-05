@@ -1,5 +1,5 @@
 # openssh_keypair edge cases. Needs ssh-keygen (openssh-client) in BOTH
-# containers (run.sh's openssh_keypair gate installs it; the real module's
+# containers (run.sh's openssh_keypair gate installs it; the Ansible module's
 # opensshbin backend and krikri's plugin both drive it).
 # failed=/changed= and actual on-disk state (files exist, ssh-keygen -y
 # recovers the public key, observed key type/size) are what matter; error

@@ -26,13 +26,12 @@ module Krikri
   # wait, reusing SSHManager#exec's own process-timeout parameter -
   # the Ansible module has this as a distinct, smaller-than-timeout knob
   # specifically so one hung attempt can't eat the whole budget.
-  # Check mode short-circuits to skipped before any probe (real
-  # Ansible's own action plugin does the same), and every result
+  # Check mode short-circuits to skipped before any probe (Ansible's own action plugin does the same), and every result
   # carries elapsed: whole seconds since task start, success or
   # timeout alike - Ansible always sets it too.
   class WaitForConnectionPlugin < BasePlugin
     def execute : PluginResult
-      # Real module converts each arg with int() before anything else,
+      # Ansible module converts each arg with int() before anything else,
       # so a non-numeric value fails the task (even in check mode)
       # rather than silently falling back to the default.
       delay = int_arg("delay", 0)

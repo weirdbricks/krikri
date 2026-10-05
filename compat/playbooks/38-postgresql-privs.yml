@@ -11,7 +11,7 @@
 # 0.9.83 and are covered here too: one overload of an overloaded
 # function granted while the other is left alone (the case a bare name
 # could never express), a multi-argument signature written with the
-# colon separator real Ansible uses, a procedure, a revoke, and
+# colon separator Ansible uses, a procedure, a revoke, and
 # ALL_IN_SCHEMA over routines - with the resulting pg_proc ACLs read
 # back and diffed, so this proves the actual privilege state matches,
 # not just the changed flags. default_privs was added in 0.9.84 and is

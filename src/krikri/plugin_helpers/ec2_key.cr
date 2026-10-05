@@ -85,7 +85,7 @@ module Krikri
         end
 
         # Both the create and the import path report the same msg in the
-        # real module (create_new_key_pair covers both), unlike the
+        # Ansible module (create_new_key_pair covers both), unlike the
         # existing-key path which says "already exists".
         Plan.new(steps, true, current ? msg.to_s : "key pair created", nil)
       end
@@ -134,7 +134,7 @@ module Krikri
                end
 
         if check_mode
-          # Real module's check-mode paths return key: None even when the
+          # Ansible module's check-mode paths return key: None even when the
           # plan would create/import (create_new_key_pair short-circuits
           # with {"changed": True, "key": None, ...}).
           result = PluginResult.new(changed: plan.changed, failed: false, msg: "#{plan.msg} (check mode)")
@@ -145,7 +145,7 @@ module Krikri
         created = run_plan(region, credentials, plan)
 
         result = PluginResult.new(changed: plan.changed, failed: false, msg: plan.msg)
-        # Real module always exits with a `key` field - the extracted key
+        # Ansible module always exits with a `key` field - the extracted key
         # dict on state=present, null otherwise (delete_key_pair returns
         # {"key": None, ...} on every branch). Field set mirrors
         # extract_key_data + scrub_none_parameters: private_key only when

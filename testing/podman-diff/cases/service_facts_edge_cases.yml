@@ -1,6 +1,6 @@
 # service_facts edge cases. The podman containers are debian:bookworm-slim
 # with NO systemd (PID 1 is sleep, no systemctl binary) - which is exactly
-# the non-systemd-manager path: real Ansible runs its SysV scan (guard:
+# the non-systemd-manager path: Ansible runs its SysV scan (guard:
 # a `service` binary and neither chkconfig nor rc-status present), and the
 # systemd scan finds nothing. Both containers install cron explicitly, so
 # /etc/init.d/cron and its listing entry are comparable; the FULL service

@@ -52,7 +52,7 @@ describe "a handler's own register:/changed_when:/failed_when:" do
     # "restart gitlab" handler (`command: gitlab-ctl reconfigure`,
     # `failed_when: gitlab_restart_handler_failed_when | bool`) expects
     # a real (and, for a known upstream GitLab/role-version
-    # incompatibility, EXPECTED) nonzero exit to be suppressed - real
+    # incompatibility, EXPECTED) nonzero exit to be suppressed -
     # ansible-playbook's own run of the identical role reports this
     # handler as "changed", not failed. Previously always failed
     # outright here since failed_when: could never be applied.

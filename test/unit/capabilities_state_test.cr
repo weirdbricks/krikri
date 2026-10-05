@@ -4,7 +4,7 @@ require "file_utils"
 # Pins plugins/capabilities.cr's state validation against real
 # community.general.capabilities: the module's argument spec limits
 # state to [absent, present] (default present), and AnsibleModule fails
-# any other value before setcap ever runs. Confirmed against real
+# any other value before setcap ever runs. Confirmed against
 # ansible-playbook via testing/podman-diff/cases/capabilities_edge_cases.yml
 # case E10.
 describe "capabilities plugin state validation" do

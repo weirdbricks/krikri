@@ -31,7 +31,7 @@ require "./src/krikri/task_executor"
 require "./src/krikri/vault"
 require "./src/krikri/vault_cli"
 
-# Locates the active ansible.cfg the same way real ansible-playbook does:
+# Locates the active ansible.cfg the same way ansible-playbook does:
 # $ANSIBLE_CONFIG, ./ansible.cfg, ~/.ansible.cfg, /etc/ansible/ansible.cfg.
 def locate_ansible_config : String?
   from_env = ENV["ANSIBLE_CONFIG"]?
@@ -42,7 +42,7 @@ def locate_ansible_config : String?
   nil
 end
 
-# Real ansible-playbook warns once per unmatched host-pattern token in a
+# ansible-playbook warns once per unmatched host-pattern token in a
 # play's `hosts:` - "[WARNING]: Could not match supplied host pattern,
 # ignoring: <token>" - in execution AND in every listing mode. Verified
 # against 2.19.11: the warning fires for named patterns that match no
@@ -73,7 +73,7 @@ rescue
 end
 
 # One-shot probe of the system Python for the -vv banner's version lines
-# (python version, jinja version, pyyaml/libyaml). Real ansible-playbook
+# (python version, jinja version, pyyaml/libyaml). ansible-playbook
 # derives all of these from its own interpreter; the probe reproduces the
 # same values from the same sources instead of hardcoding them. Returns
 # an empty hash when no usable python3 exists.
@@ -116,7 +116,7 @@ rescue
   Hash(String, String).new
 end
 
-# Real ansible-playbook's -vv/-vvv startup banner block, mirroring
+# ansible-playbook's -vv/-vvv startup banner block, mirroring
 # ansible.cli.playbook's own banner: static/derivable parts are computed
 # the same way (config search order, default module/collection paths,
 # probed interpreter and library versions); nothing environment-specific
@@ -168,10 +168,10 @@ if ARGV[0]? == "__async_run"
   # added below, so a shallow copy is equivalent to the round trip, and
   # the round trip's cost scales with the module's whole output.
   result_hash = result.as_h.dup
-  # Real ansible-core 2.19.11's finished poll read renders as the JSON
+  # ansible-core 2.19.11's finished poll read renders as the JSON
   # boolean true, not the integer 1 (live-verified).
   #
-  # File layout mirrors real's async_wrapper: the module's own result dict
+  # File layout mirrors Ansible's async_wrapper: the module's own result dict
   # with ansible_job_id APPENDED (async_wrapper.py sets
   # result['ansible_job_id'] = jid after parsing the module output, so it
   # lands after the module's last key), and finished as the final key
@@ -201,7 +201,7 @@ end
 # Parse command line arguments
 playbook_file = ""
 inventory_file = "inventory.ini"
-# Whether -i was actually given. Real Ansible warns "Unable to parse X as
+# Whether -i was actually given. Ansible warns "Unable to parse X as
 # an inventory source" only for a source the USER named; with no -i at
 # all it simply reports that nothing was parsed.
 inventory_explicit = false
@@ -225,7 +225,7 @@ batching_enabled = true
 # functionality, only throughput. `become:` was on that fallback list
 # until item 1 gave privileged tasks a daemon of their own.
 persistent_daemon = true
-# Default matches real ansible-playbook's (5). A "fork" here is a Crystal fiber
+# Default matches ansible-playbook's (5). A "fork" here is a Crystal fiber
 # gated by a channel (see TaskExecutor's per-task host fan-out), doing pure SSH
 # I/O wait, not a forked Python interpreter - so a much larger value (e.g.
 # `--forks 25`) is safe and faster on big inventories; it is opt-in so the
@@ -234,18 +234,18 @@ forks = 5
 # "implicit" (default, matching ansible-playbook): every play re-gathers
 # facts. "smart": each host is gathered at most once per run, so a
 # multi-play playbook stops paying N_plays x N_hosts fact round trips.
-# Real Ansible's own config source for this is ANSIBLE_GATHERING (or
+# Ansible's own config source for this is ANSIBLE_GATHERING (or
 # ansible.cfg's [defaults] gathering, which this project doesn't parse -
 # see ssh_manager.cr's own note on that), not a CLI flag; --gathering
 # below is this project's own pragmatic addition on top of that, and
 # wins if both are given.
 gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]?) ? ENV["ANSIBLE_GATHERING"].not_nil! : "implicit"
-# Real ansible-playbook's -v/-vv/-vvv/... stack into a numeric
+# ansible-playbook's -v/-vv/-vvv/... stack into a numeric
 # verbosity level, exposed to task-param templating as the
 # ansible_verbosity magic var - found via marcinpraczko.goss-install's
 # own `when: ansible_verbosity is defined` style check, which raised
 # "'ansible_verbosity' is undefined" outright since this magic var
-# didn't exist anywhere in this engine before (real Ansible always
+# didn't exist anywhere in this engine before (Ansible always
 # defines it, defaulting to 0 with no -v at all).
 #
 # Computed here from a raw ARGV scan and then STRIPPED out of the args
@@ -255,7 +255,7 @@ gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]
 # "-v" prefix hit real, confirmed ambiguity bugs (a bare "-v" broke
 # positional-arg parsing entirely once any "-vv"-shaped flag was also
 # registered, and "-vv"/"-vvv"/"-vvvv" all triggered the
-# LAST-registered handler instead of their own). Real ansible-playbook
+# LAST-registered handler instead of their own). ansible-playbook
 # also accumulates repeated bare `-v -v -v` the same as one stacked
 # `-vvv`, so this sums every `-v+`-shaped token's own v-count rather
 # than taking the max of one.
@@ -301,10 +301,10 @@ begin
       Krikri::RunOptions.inventory_sources << (File.exists?(inv) ? File.expand_path(inv) : inv)
     end
 
-    # Real Ansible's own deprecated long spelling for -i/--inventory
+    # Ansible's own deprecated long spelling for -i/--inventory
     # (still listed in ansible-core 2.19.4's --help) - a command line
-    # copied from a real ansible-playbook invocation must parse here too.
-    parser.on("--inventory-file=INVENTORY", "Alias for --inventory (real Ansible's own deprecated spelling)") do |inv|
+    # copied from a ansible-playbook invocation must parse here too.
+    parser.on("--inventory-file=INVENTORY", "Alias for --inventory (Ansible's own deprecated spelling)") do |inv|
       inventory_file = inv
       inventory_explicit = true
     end
@@ -460,7 +460,7 @@ begin
       vault_password_file = file
     end
 
-    # Real Ansible's own alias for --vault-password-file (ansible-core
+    # Ansible's own alias for --vault-password-file (ansible-core
     # 2.19.4's --help lists both spellings together).
     parser.on("--vault-pass-file=FILE", "Alias for --vault-password-file") do |file|
       vault_password_file = file
@@ -532,14 +532,14 @@ if playbook_file.empty?
 end
 
 unless File.exists?(playbook_file)
-  # Real's own text and stream for a missing playbook (live-verified vs
+  # Ansible's own text and stream for a missing playbook (live-verified vs
   # 2.19.11): `[ERROR]: the playbook: <path> could not be found` on
   # STDERR, exit code 1.
   STDERR.puts "[ERROR]: the playbook: #{playbook_file} could not be found".colorize(:red)
   exit 1
 end
 
-# Real ansible-playbook runs everything relative to the PLAYBOOK's own
+# ansible-playbook runs everything relative to the PLAYBOOK's own
 # directory: it chdirs there at startup (a local-connection module's cwd,
 # a relative copy:/template: dest, a lookup('file', relative) - all
 # resolve against the playbook dir, live-verified vs 2.19.11 with the
@@ -583,7 +583,7 @@ elsif ask_vault_pass
 end
 
 # Kept for the listing modes (--syntax-check/--list-tasks/--list-hosts/
-# --list-tags): real ansible-playbook emits nothing but the listing
+# --list-tags): ansible-playbook emits nothing but the listing
 # itself in those modes, and that output is routinely machine-read in
 # CI, so warnings are suppressed there.
 quiet_listing_mode = syntax_check_only || list_tasks_only || list_hosts_only || list_tags_only
@@ -605,7 +605,7 @@ begin
     puts ""
   end
 
-  # Show inventory warnings (real ansible emits these on stderr as
+  # Show inventory warnings (Ansible emits these on stderr as
   # [WARNING]: lines) - in the listing modes too, verified against
   # 2.19.11: --syntax-check/--list-tasks print the same inventory
   # warnings before their listing.
@@ -616,7 +616,7 @@ begin
     end
   end
 rescue ex
-  # Real Ansible does NOT abort when an inventory source can't be read:
+  # Ansible does NOT abort when an inventory source can't be read:
   # INVENTORY_UNPARSED_IS_FAILED defaults to false, so it warns, carries
   # on with an empty inventory, and leaves the implicit localhost as the
   # only reachable host - which is why `ansible-playbook play.yml` with
@@ -625,7 +625,7 @@ rescue ex
   # no inventory file in the repo at all).
   #
   # Note what "empty inventory" does and does not match, exactly as in
-  # real Ansible: `hosts: localhost` runs (Inventory#single_pattern_hosts
+  # Ansible: `hosts: localhost` runs (Inventory#single_pattern_hosts
   # synthesizes the implicit localhost with a local connection), while
   # `hosts: all` matches nothing and the play is skipped.
   inventory = Krikri::Inventory.new
@@ -642,11 +642,11 @@ begin
 
   # Reaching here means the playbook parsed. A parse failure was already
   # reported and exited 4 by this block's own rescue - which is exactly
-  # what real ansible-playbook does for --syntax-check on a broken
+  # what ansible-playbook does for --syntax-check on a broken
   # playbook, so the failure path needs nothing extra here.
   #
   # The listing modes themselves dispatch AFTER the inventory is parsed:
-  # real ansible-playbook emits its inventory and unmatched-pattern
+  # ansible-playbook emits its inventory and unmatched-pattern
   # warnings in these modes too (verified against 2.19.11), before the
   # listing, so the dispatch sits below the inventory block.
   if verbose && verbose_extras
@@ -664,46 +664,46 @@ begin
   # scope cut, so a role leaning on its own library/*.py stays
   # benchmarkable). The `validate` warnings below already NAME it ("uses
   # unimplemented plugin: x"), but the run still ended "Playbook
-  # execution complete" with exit 0 - a green light to CI for what real
+  # execution complete" with exit 0 - a green light to CI for what
   # ansible-playbook refuses outright with rc=4. Accumulated from each
   # play's own executor (TaskExecutor#reachable_unavailable_modules)
   # after it runs, NOT a static whole-playbook scan - see that getter's
   # own comment for why: a module referenced only inside a branch
-  # that's unreached on every host must not count, matching real
+  # that's unreached on every host must not count, matching
   # Ansible's own lazy (only-if-about-to-run) module resolution. Acted
   # on at the end of the run, below.
   unavailable_modules_found = Set(String).new
 
-  # Show warnings. Suppressed in the listing modes: real ansible-playbook
+  # Show warnings. Suppressed in the listing modes: ansible-playbook
   # emits only the listing plus its inventory/pattern warnings there, and
   # this output is routinely machine-read in CI.
   warnings = quiet_listing_mode ? [] of String : Krikri::PlaybookParser.validate(playbook)
   if !warnings.empty?
     warnings.each do |warning|
-      # real ansible-playbook says nothing about a play without tasks
+      # ansible-playbook says nothing about a play without tasks
       next if warning.ends_with?(" has no tasks")
       STDERR.puts "[WARNING]: #{warning}"
     end
   end
 rescue ex : Krikri::InvalidStrategyError
-  # Real Ansible reports an unknown strategy and exits 1.
+  # Ansible reports an unknown strategy and exits 1.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
 rescue ex : Krikri::StaticImportRoleUndefinedError
-  # Real Ansible reports an unresolvable import_role: NAME as a plain
+  # Ansible reports an unresolvable import_role: NAME as a plain
   # undefined-variable error with exit code 1 - not the parser-error 4
   # it uses for an import_tasks: PATH.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
 rescue ex : Krikri::EndRoleOutsideRoleError
-  # meta: end_role outside any role is real Ansible's own parse-time
+  # meta: end_role outside any role is Ansible's own parse-time
   # rejection - parser-error exit code 4 (helpers.py's
   # load_list_of_tasks, verified against ansible-core 2.19.4).
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
 rescue ex : Krikri::UnresolvedModuleError
   # A module/action name that resolves to nothing this engine can run:
-  # a tombstoned-removed module (ec2_remote_facts and friends - real
+  # a tombstoned-removed module (ec2_remote_facts and friends -
   # Ansible's own playbook-load refusal, verified against
   # ansible-core 2.19.4, same "[ERROR]: couldn't resolve module/action
   # '...'" message), and since 0.9.903 ANY module krikri hasn't
@@ -712,12 +712,12 @@ rescue ex : Krikri::UnresolvedModuleError
   # real consequences (a firewall rule, a security config) is worse
   # than refusing to run. NOT the same exit code path as the
   # parser-error rescues below merely by
-  # accident - 4 is here because that's what real Ansible exits with
+  # accident - 4 is here because that's what Ansible exits with
   # for exactly this error. See UnresolvedModuleError's own comment.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
 rescue ex : Krikri::RemovedActionError
-  # A removed action plugin (`include:`) is real Ansible's own rc=1
+  # A removed action plugin (`include:`) is Ansible's own rc=1
   # (verified against ansible-core 2.19.4: same "[ERROR]: The 'ansible.
   # builtin.include' action plugin has been removed" message, exit 1) -
   # NOT the parser-error 4 this engine uses for a genuine YAML/syntax
@@ -729,10 +729,10 @@ rescue ex : Krikri::RemovedActionError
   exit 1
 rescue ex : Krikri::ConflictingActionStatementsError
   # A legacy top-level task attribute (sudo/su/always_run/etc.) beside a
-  # real module key is real Ansible's own ModuleArgsParser PARSER error -
+  # real module key is Ansible's own ModuleArgsParser PARSER error -
   # rc=4, not RemovedActionError's rc=1 (verified against ansible-core
   # 2.19.4: jdauphant.ssh-config's own `shell: ... always_run:` task).
-  # Real prints the "[ERROR]:" line on STDERR with the task's Origin
+  # Ansible prints the "[ERROR]:" line on STDERR with the task's Origin
   # block (live-verified vs 2.19.11), not a bare line on stdout.
   if render = ex.render
     STDERR.print render
@@ -742,7 +742,7 @@ rescue ex : Krikri::ConflictingActionStatementsError
   exit 4
 rescue ex : Krikri::RoleNotFoundError
   # A `roles:` entry (play-level or a role's own meta/main.yml
-  # dependency) naming a role not found on disk is real Ansible's own
+  # dependency) naming a role not found on disk is Ansible's own
   # "[ERROR]: the role '<name>' was not found in <search paths>" block
   # at rc=1, on STDERR, with an Origin block when the raise site had a
   # source position (live-verified vs 2.19.11) - not the parser-error 4
@@ -757,7 +757,7 @@ rescue ex : Krikri::RoleNotFoundError
   end
   exit 1
 rescue ex : Krikri::StaticImportMissingFileError
-  # import_tasks:' resolved file genuinely missing is real Ansible's
+  # import_tasks:' resolved file genuinely missing is Ansible's
   # own DataLoader AnsibleError - on STDERR, NO Origin block, and rc=1
   # rather than the parser-error 4 (live-verified vs 2.19.11; the
   # render carries the hint line, the chained OSError text and the
@@ -765,21 +765,21 @@ rescue ex : Krikri::StaticImportMissingFileError
   STDERR.print ex.render
   exit 1
 rescue ex : Krikri::YamlSyntaxError
-  # Rendered the way real ansible-playbook renders a YAML syntax error -
+  # Rendered the way ansible-playbook renders a YAML syntax error -
   # [ERROR]: line, Origin: path:line:col, then the offending source line
-  # with a caret. See YamlSyntaxError#render. Real prints it on STDERR
+  # with a caret. See YamlSyntaxError#render. Ansible prints it on STDERR
   # (live-verified vs 2.19.11).
   STDERR.print ex.render
   exit 4
 rescue ex : Krikri::PlaybookNotListError
   # A playbook document that is not a list of plays (a bare string, a
-  # mapping) is real Ansible's own playbook-load refusal - rendered at
+  # mapping) is Ansible's own playbook-load refusal - rendered at
   # the raise site with the document's 1:1 Origin block; on STDERR,
   # parser-error rc=4 (live-verified vs 2.19.11).
   STDERR.print ex.render
   exit 4
 rescue ex : Krikri::MetaActionTypeError
-  # A non-string free-form meta: value (`meta: 5`, `meta: [a]`) is real
+  # A non-string free-form meta: value (`meta: 5`, `meta: [a]`) is
   # Ansible's own playbook-load refusal - mod_args.py's AnsibleParserError,
   # "[ERROR]: unexpected parameter type in action: <class ...>" with the
   # task's Origin block, parser-error rc=4 on STDERR (live-verified vs
@@ -789,7 +789,7 @@ rescue ex : Krikri::MetaActionTypeError
   exit 4
 rescue ex : Krikri::IncludeDirectiveError
   # Bad arguments on an include/include-role directive (include_role:/
-  # import_role:/import_tasks:/include_tasks:) are real Ansible's own
+  # import_role:/import_tasks:/include_tasks:) are Ansible's own
   # playbook-load refusal - TaskInclude.check_options / IncludeRole.load
   # run at load time, so the "[ERROR]: ..." block (with the task's
   # Origin block except for the FROM_ARGS "Expected a string" raise,
@@ -801,18 +801,18 @@ rescue ex : Krikri::IncludeDirectiveError
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
-  # rc=4 is real Ansible's dedicated PARSER-ERROR exit code, distinct
+  # rc=4 is Ansible's dedicated PARSER-ERROR exit code, distinct
   # from 1 (generic error), 2 (failed hosts) and 3 (unreachable).
   # Verified against ansible-core 2.19.4: both an unparseable playbook
   # and a static import whose path references a fact (0.9.549's
   # StaticImportUndefinedError) exit 4, where this engine exited 1.
   # Note the separate "Playbook file not found" check earlier exits 1,
-  # matching real Ansible's own 1 for a missing playbook - that case
+  # matching Ansible's own 1 for a missing playbook - that case
   # deliberately does NOT come through here.
   exit 4
 end
 
-# The listing modes dispatch here, after the inventory warnings: real
+# The listing modes dispatch here, after the inventory warnings:
 # ansible-playbook prints the inventory and unmatched-pattern warnings
 # before their listing (verified against 2.19.11). The dedup set is
 # shared with the execution play loop below.
@@ -838,10 +838,10 @@ if quiet_listing_mode
   exit 0
 end
 
-# The connection/become flags are, in real Ansible, exactly "set this
+# The connection/become flags are, in Ansible, exactly "set this
 # connection variable for every host" - so that is how they are applied,
 # on top of whatever the inventory said. A play/task that sets the same
-# thing explicitly still wins for become:, matching real Ansible's own
+# thing explicitly still wins for become:, matching Ansible's own
 # precedence (the CLI only supplies the default).
 if user = remote_user
   inventory.hosts.each_value { |host| host.vars["ansible_user"] = JSON::Any.new(user) }
@@ -853,7 +853,7 @@ if conn = connection_override
   inventory.hosts.each_value { |host| host.vars["ansible_connection"] = JSON::Any.new(conn) }
 end
 # -b/--become and --become-user are deliberately NOT applied as
-# `ansible_become`/`ansible_become_user` host vars: real Ansible's -b
+# `ansible_become`/`ansible_become_user` host vars: Ansible's -b
 # sets an internal default, and leaves the VARIABLE unset (verified -
 # `{{ ansible_become | default(false) }}` still renders False under -b).
 # Setting the var would be visible to any playbook that reads it. They
@@ -914,7 +914,7 @@ end
 # Set verbose mode for plugin manager
 Krikri::PluginManager.verbose = verbose && verbose_extras
 Krikri::RunOptions.verbosity = verbosity_level
-# Real ansible-playbook -v opens with its config-file line; -vv and above
+# ansible-playbook -v opens with its config-file line; -vv and above
 # additionally print the startup banner block (before it) and the two
 # "Skipping callback" lines (after it).
 cfg_path = locate_ansible_config
@@ -955,7 +955,7 @@ Krikri::PluginManager.daemon_enabled = persistent_daemon
 unreachable_hosts = Set(String).new
 if playbook && inventory
   # A host that cannot be reached is reported and EXCLUDED, not fatal:
-  # real ansible-playbook carries on with every other host and exits 4.
+  # ansible-playbook carries on with every other host and exits 4.
   # This used to raise, uncaught, killing the run with a stack trace and
   # discarding the reachable hosts' results entirely.
   Krikri::TimingProfile.measure("upload.plugins") do
@@ -975,33 +975,33 @@ combined_results = Hash(String, Hash(String, Int32)).new
 # discard.
 _ = flush_cache
 # Run-scoped fact store, shared by every play's TaskExecutor in every
-# gathering mode: real Ansible keeps each host's facts in memory for the
+# gathering mode: Ansible keeps each host's facts in memory for the
 # WHOLE run, so a fact gathered (or set_fact'd) in play 1 is still visible
 # to play 2 - directly AND through hostvars - with no fact cache configured
 # (verified against ansible-core 2.19.11). This used to be nil under the
 # default implicit mode, so every play's executor built its own per-play
 # store and cross-play facts only survived via the fact-cache plugin path.
 # Under implicit gathering each play with gather_facts: true still
-# re-gathers and merges over this store (real Ansible's own re-gather
+# re-gathers and merges over this store (Ansible's own re-gather
 # merges, it does not discard what earlier plays collected), while
 # --gathering smart uses the same store to skip already-gathered hosts.
 run_fact_store = Hash(String, Hash(String, JSON::Any)).new
 # Run-scoped set_fact store, shared by every play's TaskExecutor in every
-# gathering mode: real Ansible ranks set_facts near the top of the
+# gathering mode: Ansible ranks set_facts near the top of the
 # precedence ladder and keeps them for the whole run, so a play-2 play
-# var must not shadow a play-1 set_fact (verified against real
+# var must not shadow a play-1 set_fact (verified against
 # ansible-core 2.19 with a two-play repro). Facts themselves stay
 # per-play under implicit gathering - only set_facts carry across.
 run_set_fact_store = Hash(String, Hash(String, JSON::Any)).new
 # Run-scoped registered-vars store, shared by every play's TaskExecutor:
-# real Ansible keeps a `register:` result on the host for the whole run,
+# Ansible keeps a `register:` result on the host for the whole run,
 # so play 2 can read play 1's registered var directly and through
 # hostvars[<host>] (verified against ansible-core 2.19.11). Used to be
 # per-play, so exactly those reads came back undefined.
 run_registered_store = Hash(String, Hash(String, JSON::Any)).new
 # Hosts that hard-failed (a task failed without ignore_errors:) in an
 # earlier play this run - excluded from every *remaining* play's host
-# list too, matching real Ansible's own behavior (a failure removes a
+# list too, matching Ansible's own behavior (a failure removes a
 # host from the rest of the whole run, not just the play it happened
 # in). TaskExecutor's own halted_hosts is scoped to one play/one
 # instance (krikri-playbook.cr constructs a fresh one per play); this set
@@ -1044,7 +1044,7 @@ playbook.plays.each_with_index do |play, _play_index|
   matched_hosts = inventory.get_hosts(play.hosts.to_s)
 
   # --limit further restricts the play's own hosts: pattern to the
-  # intersection with whatever it matches - real ansible-playbook's
+  # intersection with whatever it matches - ansible-playbook's
   # `-l`/`--limit`. Previously parsed into `limit_hosts` but never
   # actually applied anywhere, so it silently ran every play against
   # its full hosts: pattern regardless of --limit.
@@ -1079,7 +1079,7 @@ playbook.plays.each_with_index do |play, _play_index|
   # Get tasks for this play
   tasks_to_run = play.tasks
 
-  # meta: end_role outside any role is real Ansible's own parse-time
+  # meta: end_role outside any role is Ansible's own parse-time
   # rejection (helpers.py's load_list_of_tasks, where the role context
   # is known) - "[ERROR]: Cannot execute 'end_role' from outside of a
   # role", parser-error exit code 4. This engine attaches role
@@ -1107,7 +1107,7 @@ playbook.plays.each_with_index do |play, _play_index|
   end
 
   # -b/--become and --become-user supply a default for the play, exactly
-  # as real Ansible does; a play that sets become: itself still wins.
+  # as Ansible does; a play that sets become: itself still wins.
   play.become = true if become_flag
   if become_user_value = become_user_override
     play.become_user ||= become_user_value
@@ -1123,21 +1123,21 @@ playbook.plays.each_with_index do |play, _play_index|
     start_at_pending = false if start_at_found
 
     # A play with nothing left before the match contributes nothing and
-    # prints nothing - real ansible-playbook shows its PLAY banner and no
+    # prints nothing - ansible-playbook shows its PLAY banner and no
     # tasks; this engine simply moves on.
     next if tasks_to_run.empty?
   end
 
   if tasks_to_run.empty? && tasks_before_tag_filter > 0
-    # real prints nothing between the PLAY banner and the recap here
+    # Ansible prints nothing between the PLAY banner and the recap here
     next
   end
 
-  # A task-less play still isn't a full no-op in real Ansible: fact
-  # gathering is a synthetic step real ansible-playbook always runs
+  # A task-less play still isn't a full no-op in Ansible: fact
+  # gathering is a synthetic step ansible-playbook always runs
   # (unless gather_facts: false), independent of the play's own task
   # list - found benchmarking arubanetworks.aoscx_role/aos_wlan_role
-  # (round833/834, both entirely task-less placeholder roles): real
+  # (round833/834, both entirely task-less placeholder roles):
   # ansible-playbook's own recap still shows `ok=1` (just "Gathering
   # Facts"). This engine's own early "Skipping play" exit below used to
   # fire regardless of gather_facts:, skipping the TaskExecutor
@@ -1152,7 +1152,7 @@ playbook.plays.each_with_index do |play, _play_index|
   # serial: runs the WHOLE play against one batch of hosts at a time.
   # With no serial: this is a single batch of every host, exactly as
   # before.
-  # Real Ansible aborts the ENTIRE playbook run (all remaining plays, not
+  # Ansible aborts the ENTIRE playbook run (all remaining plays, not
   # just this one) once every host in a serial batch has newly failed or
   # gone unreachable - PlaybookExecutor.run's per-batch check
   # (failed_hosts_count == len(batch) -> break_play). A templating error
@@ -1160,15 +1160,15 @@ playbook.plays.each_with_index do |play, _play_index|
   # expression raises when read) fails every host that touches it; an
   # author relying on "a bad template value stops the run" must not see
   # krikri carry on into plays that don't depend on the broken var at all
-  # (found against real infra: krikri ran the second play where real
+  # (found against real infra: krikri ran the second play where
   # ansible-playbook 2.19 aborted before its PLAY banner). The rule is
-  # cause-agnostic in real Ansible - an ordinary module failure across
+  # cause-agnostic in Ansible - an ordinary module failure across
   # the whole batch aborts the run the same way - so it counts failures
   # and unreachables, not templating errors specifically; per-host
   # failures that leave part of the batch healthy (or none at all) keep
   # the run going exactly as before. end_host/end_play and
   # clear_host_errors hosts don't count as failures (see the concat
-  # above), matching real Ansible's TQM._failed_hosts bookkeeping.
+  # above), matching Ansible's TQM._failed_hosts bookkeeping.
   abort_entire_run = false
   Krikri::SerialBatches.split(Krikri::SerialBatches.order(hosts, play.order), play.serial).each do |batch_hosts|
     # Per-batch deltas, mirroring PlaybookExecutor's
@@ -1223,17 +1223,17 @@ playbook.plays.each_with_index do |play, _play_index|
     begin
       Krikri::TimingProfile.measure("execute", "execute") { executor.run }
     rescue ex : Krikri::HandlerNotFoundError
-      # Real Ansible aborts the whole run at the notifying task, prints
+      # Ansible aborts the whole run at the notifying task, prints
       # this one line, and exits 1 with NO play recap (verified against
       # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
       puts "[ERROR]: #{ex.message}".colorize(:red)
       exit 1
     rescue ex : Krikri::UnresolvedModuleError
-      # Same whole-run abort for a module name real Ansible can't
+      # Same whole-run abort for a module name Ansible can't
       # resolve anywhere, discovered while loading a role pulled in by
       # a runtime include_role:/include_tasks: (parse-time raises for
       # statically-present tasks never get this far - they exit in the
-      # parse rescue above). Real Ansible's playbook-load check gives
+      # parse rescue above). Ansible's playbook-load check gives
       # the identical message and rc=4 - see UnresolvedModuleError's
       # own comment.
       puts "[ERROR]: #{ex.message}".colorize(:red)
@@ -1246,7 +1246,7 @@ playbook.plays.each_with_index do |play, _play_index|
     # also includes clean meta: end_host/end_play stops (ended_hosts) and
     # failures since cleared via meta: clear_host_errors
     # (cleared_error_hosts) - neither is a real failure, so both are
-    # excluded here: real Ansible's own documented behavior for
+    # excluded here: Ansible's own documented behavior for
     #   clear_host_errors is explicitly "available for targeting in
     #   subsequent plays", and end_host/end_play's own docs are explicit
     #   that they don't fail the host either.
@@ -1263,7 +1263,7 @@ playbook.plays.each_with_index do |play, _play_index|
     end
 
     # Whole-run abort check. Unreachable hosts land in halted_hosts too
-    # (report_unreachable), so they are subtracted back out here - real
+    # (report_unreachable), so they are subtracted back out here -
     # Ansible's TQM keeps failed and unreachable in separate dicts and a
     # host newly unreachable must count once, not twice.
     batch_failures = (executor.halted_hosts - executor.ended_hosts - executor.cleared_error_hosts - unreachable_hosts).size +
@@ -1276,14 +1276,14 @@ playbook.plays.each_with_index do |play, _play_index|
     # any_errors_fatal:/max_fail_percentage: stop the whole play, so the
     # remaining serial: batches must not start either. (When those fire,
     # every batch host is halted, so the batch check above has already
-    # aborted the whole run - real Ansible's RUN_FAILED_BREAK_PLAY does
+    # aborted the whole run - Ansible's RUN_FAILED_BREAK_PLAY does
     # exactly that too - leaving this as the belt-and-braces path.)
     break if executor.play_aborted?
   end
 
   # The whole-run abort unwinds the plays loop itself, not just the
   # serial batches - the PLAY RECAP below still prints, which is what
-  # real ansible-playbook does on its way out with a non-zero rc.
+  # ansible-playbook does on its way out with a non-zero rc.
   break if abort_entire_run
 end
 
@@ -1291,7 +1291,7 @@ end
 Krikri::OutputBanner.banner("PLAY RECAP")
 
 # An unreachable host still gets a recap line - `unreachable=1`, all
-# other counters zero - exactly as real ansible-playbook reports it.
+# other counters zero - exactly as ansible-playbook reports it.
 unreachable_hosts.each do |name|
   next if combined_results.has_key?(name)
   combined_results[name] = {
@@ -1308,7 +1308,7 @@ Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results) unles
 
 puts ""
 
-# set_stats: custom stats block - real ansible-playbook only prints this
+# set_stats: custom stats block - ansible-playbook only prints this
 # when show_custom_stats is enabled (ansible.cfg [defaults] show_custom_stats,
 # or its ANSIBLE_SHOW_CUSTOM_STATS env var override) - off by default. This
 # codebase has no ansible.cfg INI parsing, so only the env var override is
@@ -1327,16 +1327,16 @@ end
 
 # Deliberately NOT `combined_results.values.any? { failed > 0 }` - the
 # recap's own "failed" stat is a historical count that never decreases
-# (matching real Ansible's own display stats), but the exit code follows
-# a SEPARATE, mutable signal real Ansible tracks (TaskQueueManager's own
+# (matching Ansible's own display stats), but the exit code follows
+# a SEPARATE, mutable signal Ansible tracks (TaskQueueManager's own
 # `_failed_hosts` set, which `meta: clear_host_errors` literally pops a
 # host out of - see ansible/plugins/strategy/__init__.py's own
-# `_execute_meta`). Verified live: real ansible-playbook exits 0 for a
+# `_execute_meta`). Verified live: ansible-playbook exits 0 for a
 # run whose recap shows `failed=1` on a host that was later cleared via
 # clear_host_errors. `permanently_failed_hosts` is exactly that same
 # "still failed" signal - it already excludes any host cleared via
 # clear_host_errors or cleanly ended via end_host/end_play, and
-# accumulates across every play the same way real Ansible's set does.
+# accumulates across every play the same way Ansible's set does.
 any_failed = !permanently_failed_hosts.empty?
 
 # Perf items 1-3: close any persistent
@@ -1358,14 +1358,14 @@ Krikri::PluginManager.flush_host_state
 # unreachable run still gets its profile.
 Krikri::TimingProfile.report
 
-# An unavailable module outranks a failed host: real ansible-playbook
+# An unavailable module outranks a failed host: ansible-playbook
 # would have refused the playbook at parse time with rc=4 and never run
 # anything, so 4 is the more fundamental signal. This engine still RUNS
 # the rest of the play (the scope cut's whole point - a role using its
 # own library/*.py stays benchmarkable), so the divergence that remains
 # is "which tasks ran", not the exit status a caller sees.
 # Any unreachable host makes the run exit 4, ahead of a failed host's 2 -
-# real ansible-playbook returns 4 whenever a host was unreachable,
+# ansible-playbook returns 4 whenever a host was unreachable,
 # whether or not other hosts also failed (verified against ansible-core
 # 2.19.4 for all-unreachable, mixed-with-ok, and mixed-with-failed).
 unless unreachable_hosts.empty?
@@ -1380,7 +1380,7 @@ if any_failed
   exit 2
 end
 
-# --start-at-task that never matched: real ansible-playbook reports it
+# --start-at-task that never matched: ansible-playbook reports it
 # after the recap and still exits 0 (verified against ansible-core
 # 2.19.4) - it is a "nothing to do" outcome, not an error code.
 if (start_at = start_at_task) && start_at_pending

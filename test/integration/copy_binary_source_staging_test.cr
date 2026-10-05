@@ -13,7 +13,7 @@ require "../../src/krikri/task_executor"
 # U+FFFD-substituted garbage), so the keyring installed on the target was
 # corrupt while every task-level checksum comparison against the
 # equally-corrupt destination still "passed". apt then failed the role's
-# final "Update cache" with NO_PUBKEY F7A37EB33D0B25D7, where real
+# final "Update cache" with NO_PUBKEY F7A37EB33D0B25D7, where
 # ansible-playbook's identical sequence succeeded.
 #
 # Fix: TaskExecutor#inline_copy_source_content never inlines a source whose

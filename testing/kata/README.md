@@ -101,7 +101,7 @@ should.** `dnf install` during the image build leaves NetworkManager's
 build-time resolver (a `192.168.122.x` libvirt-style bridge address)
 baked into `/etc/resolv.conf` - meaningless inside the kata guest's
 actual static 10.99.x.x network, so every dnf operation on a booted
-guest fails to resolve `mirrors.rockylinux.org`. Real Ansible's
+guest fails to resolve `mirrors.rockylinux.org`. Ansible's
 `until:`-guarded package installs fail fast (a handful of retries) on
 this; krikri-playbook's equivalent doesn't, which read exactly like a
 real engine divergence (`juju4.upgrade_pkgs` round 60163) until traced
@@ -205,7 +205,7 @@ is the record of *why*, so nobody re-derives it.
     krikri plugin died at load time on the rebuilt guests (exit 127,
     `error while loading shared libraries`) - surfacing as
     `Plugin execution failed on remote` on the first Gathering Facts
-    task of all 36 kata roles in the 2026-09-10 round, while real
+    task of all 36 kata roles in the 2026-09-10 round, while
     ansible-playbook (python-only) ran fine on the same hosts. The
     Containerfiles now install `libxml2` explicitly; if a future base
     refresh moves another library, the same signature (every plugin,
@@ -214,7 +214,7 @@ is the record of *why*, so nobody re-derives it.
 
 ## Verified
 
-A `sysctl:` differential across a Kata pair — real `ansible-playbook` on
+A `sysctl:` differential across a Kata pair — `ansible-playbook` on
 one host, `krikri-playbook` on the other — matched exactly: `ok=7
 changed=2` on both, identical `ansible_kernel` (6.18.35) and
 `ansible_service_mgr` (systemd) facts, `rp_filter` genuinely 1 in the

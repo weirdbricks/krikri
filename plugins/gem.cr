@@ -44,7 +44,7 @@ module Krikri
   # version string. `latest` resolves the latest remote version first
   # (Ansible's own remote listing) and then runs the same
   # exact-version check - so an already-latest gem is a no-op with
-  # changed=false, and `version` together with `latest` fails with real
+  # changed=false, and `version` together with `latest` fails with
   # Ansible's own validation message. `gem install` on an already-latest
   # gem is a real no-op at the `gem` CLI level, but this module doesn't
   # attempt to distinguish that from a real upgrade in its own changed:
@@ -106,7 +106,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "install_dir requires user_install=false")
       end
 
-      # Real gem.py's first COMMAND is always `<gem> --version`
+      # Ansible's gem module's first COMMAND is always `<gem> --version`
       # (get_rubygems_version via common_opts, run with check_rc=True) -
       # a missing/unexecutable binary fails here, after the pre-checks
       # above, before the state dispatch below.
@@ -123,7 +123,7 @@ module Krikri
         # so state=latest is idempotent for an already-latest gem (the
         # remote listing costs a network round-trip, and an unreachable
         # registry degrades to the "any version installed" check - both
-        # real behaviors, kept). Verified against real gem.py's exists():
+        # real behaviors, kept). Verified against Ansible's gem module's exists():
         # the version param is an exact-string membership test against
         # parsed `gem list` output - NOT `gem list -i -v` - which is why
         # version specifiers (">= 1.0") are deliberately non-idempotent
@@ -137,7 +137,7 @@ module Krikri
       end
     end
 
-    # Real gem.py's first command is always `<gem> --version`
+    # Ansible's gem module's first command is always `<gem> --version`
     # (get_rubygems_version via common_opts, run with check_rc=True) - so
     # a missing/unexecutable binary fails before anything else:
     #  - an `executable:` override is used VERBATIM (Ansible's

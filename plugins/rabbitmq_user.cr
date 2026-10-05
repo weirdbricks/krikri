@@ -86,7 +86,7 @@ module Krikri
       # shell_single_quote, not hand-rolled quoting - a password
       # containing an apostrophe used to break out of the naive quotes
       # here (both a quoting bug and a shell-injection vector), and the
-      # password still travels as argv either way (matching real
+      # password still travels as argv either way (matching
       # Ansible's community.rabbitmq module, which passes it the same
       # way) - tracked as a known upstream-shape limitation.
       r = remote_exec("rabbitmqctl add_user #{shell_single_quote(user)} #{password ? shell_single_quote(password) : ""}".strip)
@@ -99,10 +99,10 @@ module Krikri
       return nil if tags.nil? || tags.empty?
 
       # skip the call when the user's current tags already match the
-      # requested set (order-insensitive) - real module behavior
+      # requested set (order-insensitive) - Ansible module behavior
       return nil if current_tags && current_tags.sort == tags.sort
 
-      # real module: each tag as its own argv - `set_user_tags user
+      # Ansible module: each tag as its own argv - `set_user_tags user
       # tag1 tag2` - NOT a JSON array, which rabbitmqctl stores as the
       # literal tag string ["tag1"] and so never converges
       r = remote_exec("rabbitmqctl set_user_tags #{shell_single_quote(user)} #{tags.map { |tag| shell_single_quote(tag) }.join(" ")}")
@@ -112,7 +112,7 @@ module Krikri
     end
 
     private def apply_permissions(user : String) : Bool
-      # real module: compare the user's existing permissions against the
+      # Ansible module: compare the user's existing permissions against the
       # requested ones and only run set_permissions (or report changed)
       # on a difference - an unconditional apply made every warm pass
       # report changed (mrlesmithjr.rabbitmq round-196 re-run).

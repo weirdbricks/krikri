@@ -14,7 +14,7 @@ module Krikri
   # helper (see its comment for the field-by-field provenance against
   # the Ansible module's own get_info). Params: path (a PEM or DER request
   # file) or content (PEM text), exactly one of the two, matching the
-  # real module's required_one_of plus mutually_exclusive pair.
+  # Ansible module's required_one_of plus mutually_exclusive pair.
   #
   # Known divergence, deliberate: public_key_data's modulus/exponent
   # beyond Int64 go out as their decimal strings (this engine's result

@@ -14,7 +14,7 @@ module Krikri
   #
   # Backed by the `openssl` CLI, like `openssl_privatekey.cr` and
   # `openssl_dhparam.cr` next to it. Behavior differentialed against the
-  # real module (community.crypto 3.1.1 / ansible-core 2.19.4):
+  # Ansible module (community.crypto 3.1.1 / ansible-core 2.19.4):
   #
   #   * with no explicit subject_alt_name, a common_name becomes a
   #     `DNS:<CN>` SAN (use_common_name_for_san, default true) - roles

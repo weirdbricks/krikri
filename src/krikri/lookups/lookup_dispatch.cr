@@ -29,7 +29,7 @@ module Krikri
       #
       # Found via bodsch.tomcat's own `tomcat_checksums: '{{ lookup(
       # "file", "{{ tomcat_local_tmp_directory }}/apache-tomcat-{{
-      # tomcat_version }}.tar.gz.sha512").splitlines() | ... }}'` - real
+      # tomcat_version }}.tar.gz.sha512").splitlines() | ... }}'` -
       # ansible-core 2.19.4 downloads and reads the real checksum file;
       # this evaluator's `lookup_file` received the literal path text
       # WITH the unrendered `{{ }}` still in it, failed to find that
@@ -106,7 +106,7 @@ module Krikri
       end
 
       # A lookup type with no handler above falls back to role-local
-      # (and playbook-adjacent) custom `lookup_plugins/*.py` - real
+      # (and playbook-adjacent) custom `lookup_plugins/*.py` -
       # Ansible loads those on the controller (a lookup plugin's name
       # IS its file name) and runs `LookupModule.run(terms, variables,
       # **kwargs)` there. Delegated to the controller's own python3
@@ -121,7 +121,7 @@ module Krikri
         playbook_dir = @vars["playbook_dir"]?.try(&.as_s?)
         return nil unless source = PythonLookupRunner.find_source(lookup_type, role_path, playbook_dir)
 
-        # wantlist/errors are Templar's own generic options - real
+        # wantlist/errors are Templar's own generic options -
         # Ansible pops them before the plugin ever sees the kwargs.
         wantlist = kwargs.any? { |part| part.strip.downcase.starts_with?("wantlist=true") }
         options = Hash(String, JSON::Any).new
@@ -143,7 +143,7 @@ module Krikri
           result = PythonLookupRunner.call_lookup(lookup_type, source, terms, variables, options)
         rescue ex : PythonLookupRunner::LookupUnavailableError
           return nil if ex.unavailable?
-          # A dispatched plugin failure is a real task failure in real
+          # A dispatched plugin failure is a real task failure in
           # Ansible (the plugin's own error) - same hard-failure
           # convention as lookup_pipe's PipeLookupError; the generic
           # lookup errors='ignore' option keeps the empty-result

@@ -52,7 +52,7 @@ describe "ansible_play_hosts / ansible_play_hosts_all magic vars" do
   end
 
   it "resolves the deprecated play_hosts alias to the same host list" do
-    # Real bug found benchmarking wezhai.minio: `play_hosts` is real
+    # Real bug found benchmarking wezhai.minio: `play_hosts` is
     # Ansible's deprecated-but-still-supported alias for
     # ansible_play_hosts (deprecation warning only, removal slated for
     # ansible-core 2.23), and krikri-playbook never registered it, so

@@ -2,7 +2,7 @@
 # 0.9.40; .bz2/.xz compression added in 0.9.43): seed restore, plain +
 # gzip + bzip2 + xz dump, restoring each dump into a second database,
 # row-count round-trip verification, and the missing-target failure path.
-# Real Ansible's own keyword here is
+# Ansible's own keyword here is
 # `restore`, not `import` like mysql_db's equivalent - see git log.
 # The playbook starts its own throwaway PostgreSQL cluster inside the
 # container via the init.d script (no systemd in this image), the same
@@ -18,7 +18,7 @@
 # through `tr -d ' \n'`: psql pads a `-t` count with leading whitespace,
 # and krikri-playbook's `{{ }}` string interpolation strips it
 # (variable_lookup.cr's format_value - a pre-existing, unrelated gap, not
-# introduced by mysql_db/postgresql_db dump/restore) while real Ansible's
+# introduced by mysql_db/postgresql_db dump/restore) while Ansible's
 # Jinja2 preserves it verbatim. Stripping it ourselves here keeps the
 # comparison about the row count, not that divergence.
 

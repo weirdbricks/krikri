@@ -1,5 +1,5 @@
 # dpkg_selections edge cases. Fully testable here: the harness
-# containers are real Debian (dpkg + dpkg-query present), and real
+# containers are real Debian (dpkg + dpkg-query present), and
 # Ansible's own module shells out to the same binaries this plugin
 # drives - no gate needed. The two engines run in SEPARATE containers,
 # so the linear state-mutation sequence (hold -> verify -> back to

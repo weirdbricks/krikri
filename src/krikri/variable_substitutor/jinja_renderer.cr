@@ -116,7 +116,7 @@ module Krikri
         # named 'X'.", TemplateAssertionErrors), while the
         # swallow-to-original-text fallback below turned an unknown name
         # inside a `{% %}`-bearing value into silently-wrong downstream
-        # output (sunfoxcz.dkim's `dkim_domains is not list`, where real
+        # output (sunfoxcz.dkim's `dkim_domains is not list`, where
         # Ansible fails immediately with "No test named 'list'.").
         # Every other failure keeps the lenient give-back-the-text
         # behavior (a lenient-undefined `{% if %}` is deliberate here).
@@ -125,7 +125,7 @@ module Krikri
         end
         if filter_name = KrikriJinjaFilters.unknown_filter_name(e)
           # One last chance before the hard failure: a role-local (or
-          # playbook-adjacent) `filter_plugins/*.py` may define it - real
+          # playbook-adjacent) `filter_plugins/*.py` may define it -
           # Ansible loads those on the controller at template-compile
           # time. Registered on the shared engine, then rendered once
           # more; still unknown means registration did not take.
@@ -144,7 +144,7 @@ module Krikri
         # no-match failure is a hard task failure in Ansible, never the
         # lenient give-back-the-text fallback (which turned it into the
         # "undefined" sentinel string at whatever consumer came next).
-        # PipeLookupError likewise - a non-zero pipe-command exit is real
+        # PipeLookupError likewise - a non-zero pipe-command exit is
         # Ansible's hard task failure, never silent text passthrough.
         # PythonLookupRunner::LookupError likewise - a custom lookup plugin
         # that RAN and raised is Ansible's own task failure (only an
@@ -301,7 +301,7 @@ module Krikri
         # re_template_from_variable?/raise_if_strict_undefined apply):
         # a name published by build_vars_context as execution-resolved
         # (register:/set_fact:) holds VERBATIM content, not a template
-        # level - the re-render below re-scanned brace text that real
+        # level - the re-render below re-scanned brace text that
         # ansible-core never re-scans on a resolved fact/module result
         # (a set_fact value containing literal `{{ ... }}` rendered to
         # the "undefined" sentinel / an undefined value here instead of

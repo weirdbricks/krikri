@@ -44,7 +44,7 @@ module Krikri
   # so the Linux path is complete. The per-mount `timeout:`/`on_timeout:`
   # hang protection is applied to the external commands via a bounded
   # Process.run, but a genuine statvfs timeout is reported as "no size
-  # stats for that mount" rather than the error/warn distinction real
+  # stats for that mount" rather than the error/warn distinction
   # Ansible makes.
   #
   # Read-only, so it's safe under --check.
@@ -119,7 +119,7 @@ module Krikri
       sources = [] of String
       requested.each do |source|
         if source.empty?
-          # Real module fails before any gathering on an empty entry.
+          # Ansible module fails before any gathering on an empty entry.
           raise ArgumentError.new("sources contains an empty string")
         end
         if source == "dynamic" || source == "all"
@@ -188,7 +188,7 @@ module Krikri
     end
 
     # Parse one source file into raw field maps (before size/uuid
-    # enrichment). A missing or empty file yields nothing (real module
+    # enrichment). A missing or empty file yields nothing (Ansible module
     # skips it). Only the Linux fstab-column format is implemented (see
     # the class comment for why).
     private def read_source_file(file : String) : Array({fields: Hash(String, JSON::Any), line: String})

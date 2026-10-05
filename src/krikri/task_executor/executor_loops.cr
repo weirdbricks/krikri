@@ -203,7 +203,7 @@ module Krikri
         # check) assumed both directives shared the same strict-fail
         # rule for a non-array-wrapped scalar source.
         #
-        # Same one-level flatten as the filter-chain path above: real
+        # Same one-level flatten as the filter-chain path above:
         # Ansible's with_items: splices any nested-list ELEMENT of the
         # resolved list into the outer iteration (round 813350,
         # RedHatOfficial.rhel9_hipaa's `rpm --restore '{{ item }}'`).
@@ -226,7 +226,7 @@ module Krikri
         # resolver too and left the task with NO loop items at all -
         # not skipped, not looped, just run once with `item` whatever
         # (usually nothing) happened to already be in scope, silently
-        # "undefined" instead of the real value. Verified against real
+        # "undefined" instead of the real value. Verified against
         # ansible-playbook directly: `loop:` treats a resolved-to-scalar
         # single-element ARRAY-WRAPPED source as exactly one iteration
         # with that scalar as `item`.
@@ -518,7 +518,7 @@ module Krikri
           # but then the code falls through to the literal-source branch
           # below and pushes the substituted raw template as ONE loop
           # item, producing a single `item=undefined` iteration that
-          # then crashes downstream as `DROP USER undefined@%`. Real
+          # then crashes downstream as `DROP USER undefined@%`.
           # Ansible's with_community.general.flattened correctly yields
           # zero items for a missing-var source (skipping the whole
           # task when all sources are empty). The "undefined" sentinel
@@ -1008,7 +1008,7 @@ module Krikri
                        index_var = task.index_var
                        rendered_items.map_with_index do |item, idx|
                          vars_context = running_vars_context.dup
-                         # loop_control.loop_var REPLACES "item" - real
+                         # loop_control.loop_var REPLACES "item" -
                          # ansible-core binds the item ONLY under the custom
                          # name (`item | default('x')` reads unset alongside
                          # a loop_var; live-verified against 2.19.11), and
@@ -1425,12 +1425,11 @@ module Krikri
         # "skipping: [host] => (item=...)" line (cyan) and leaves it out
         # of the executed set entirely - only the items that actually
         # ran decide the task's ok=/changed= recap bucket. Found via
-        # jahrik.nerd_fonts round 813005 plus a live repro against real
+        # jahrik.nerd_fonts round 813005 plus a live repro against
         # ansible-playbook (ansible-core 2.19).
         if result["skipped"]?.try(&.as_bool) || false
           connection_host = host.name
-          # no_log censors the loop item on the skipping line too (real
-          # Ansible prints `(item=(censored due to no_log))` - the item
+          # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
           item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
           puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
@@ -1452,7 +1451,7 @@ module Krikri
 
         result_hash = result.as_h.dup
         # Same private-key strip register_result does - a looped task's
-        # per-item results land in the registered aggregate, and real
+        # per-item results land in the registered aggregate, and
         # Ansible never exposes `_ansible_*` keys there.
         result_hash.reject! { |key, _| key.starts_with?("_ansible_") }
         append_loop_item_bindings(task, result_hash, item, idx)
@@ -1466,7 +1465,7 @@ module Krikri
       # and a plugin-side per-item skip fall out of that single rule.
       all_items_skipped = results.all? { |entry| entry.as_h["skipped"]?.try(&.as_bool) == true }
 
-      # Aggregate the whole loop into ONE recap entry, matching real
+      # Aggregate the whole loop into ONE recap entry, matching
       # Ansible: a looped task counts once, not once per item.
       #   - 0 items executed (all skipped, or an empty loop) -> skipped=1
       #   - >=1 item executed -> ok=1 (plus changed=1 if any item changed),
@@ -1657,8 +1656,7 @@ module Krikri
     # Shared `until:` retry core - drives task.retries/task.delay attempts
     # of execute_task_once until the rendered condition passes. Used both
     # by execute_task_with_retries (single task, displays its final result)
-    # and, per item, by execute_looped_task's non-batched path (real
-    # Ansible retries each loop item independently).
+    # and, per item, by execute_looped_task's non-batched path (Ansible retries each loop item independently).
     private def run_until_retries(
       task : Task,
       host : Host,

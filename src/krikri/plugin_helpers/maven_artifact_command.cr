@@ -12,7 +12,7 @@ module Krikri
       # Artifact#path: group_id with dots -> slashes, then artifact_id,
       # then the version directory - except timestamped snapshot
       # versions ("1.2.3-20240101.123456-7" or "x-1.2.3-..."), whose
-      # directory keeps the "SNAPSHOT" spelling (real module's
+      # directory keeps the "SNAPSHOT" spelling (Ansible module's
       # timestamp_version_match rewrite).
       SNAPSHOT_TIMESTAMP_RE = /^(.*-)?([0-9]{8}\.[0-9]{6}-[0-9]+)$/
 

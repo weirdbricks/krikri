@@ -190,7 +190,7 @@ describe Krikri::PluginHelpers::FirewalldCommand do
     end
   end
 
-  # The ZoneXml (direct zone-config-file) offline backend - real
+  # The ZoneXml (direct zone-config-file) offline backend -
   # ansible.posix.firewalld's offline mode never runs
   # firewall-offline-cmd; it drives firewalld's Python Firewall(
   # offline=True) over the same zone XML files. Found by the

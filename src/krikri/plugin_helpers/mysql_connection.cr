@@ -16,7 +16,7 @@ module Krikri
       # pass explicitly.
       DEFAULT_OPTION_FILE = "~/.my.cnf"
 
-      # unix_socket, given, takes precedence over host/port (matches real
+      # unix_socket, given, takes precedence over host/port (matches
       # Ansible's mysql_db/mysql_user own login_unix_socket precedence).
       #
       # Option-file handling mirrors community.mysql:

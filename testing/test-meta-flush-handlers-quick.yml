@@ -3,7 +3,7 @@
 # roles (mysql, selinux, zabbix_repository, zabbix_server, core_dependencies)
 # rely on this mid-role, e.g. flushing an "update apt cache" handler BEFORE
 # a later task that needs the freshly-refreshed package list - round 18.
-# Safe under --check and for real runs: debug only, nothing touches disk.
+# Safe under --check and for Ansible runs: debug only, nothing touches disk.
 - name: meta flush_handlers smoke test
   hosts: localhost
   connection: local

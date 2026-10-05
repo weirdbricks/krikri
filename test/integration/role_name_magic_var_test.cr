@@ -5,7 +5,7 @@ require "../minitest_helper"
 # of the currently executing role. Only its `ansible_role_name` alias
 # was ever set (executor_vars_context.cr), so a role referencing the
 # unprefixed form directly (akkerman.docker's own "pin docker version"
-# template: `{{ role_name }}`) raised "undefined" here while real
+# template: `{{ role_name }}`) raised "undefined" here while
 # Ansible resolved it fine.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")

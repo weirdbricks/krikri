@@ -26,7 +26,7 @@ module Krikri
         "TIME_WAIT"   => "06",
       }
 
-      # active_connection_states:'s own default, verified against real
+      # active_connection_states:'s own default, verified against
       # Ansible's argument_spec (not every STATE_CODES entry is
       # necessarily in the default set, though in this case all six are).
       DEFAULT_ACTIVE_STATES = %w[ESTABLISHED FIN_WAIT1 FIN_WAIT2 SYN_RECV SYN_SENT TIME_WAIT]

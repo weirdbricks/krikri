@@ -1,4 +1,4 @@
-# yum_repository module edge cases. The module itself is (like real
+# yum_repository module edge cases. The module itself is (like
 # Ansible's) mostly pure file manipulation under /etc/yum.repos.d, so
 # these exercise REAL operations, not just validation: a valid baseurl
 # writes a .repo file and is idempotent on rerun, state=absent for a
@@ -39,7 +39,7 @@
     - ansible.builtin.debug:
         msg: "D3 failed={{ d3.failed | default('none') }} changed={{ d3.changed | default('none') }}"
 
-    - name: "D4 create the reposdir so the write lifecycle is exercisable (real refuses to mkdir it itself)"
+    - name: "D4 create the reposdir so the write lifecycle is exercisable (Ansible refuses to mkdir it itself)"
       ansible.builtin.file:
         path: /etc/yum.repos.d
         state: directory

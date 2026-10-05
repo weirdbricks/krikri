@@ -18,8 +18,7 @@ describe "import_role: with when: expands and propagates onto every one of the r
     # do. A false when: on the import must still show each inner task
     # as "TASK [...]" / "skipping:" under its own real name. This
     # engine instead returned early with nothing printed at all,
-    # undercounting `skipped` by the whole role's task count (real
-    # Ansible's recap: ok=8 skipped=40; this engine's: ok=9 skipped=21).
+    # undercounting `skipped` by the whole role's task count (Ansible's recap: ok=8 skipped=40; this engine's: ok=9 skipped=21).
     src_dir = File.tempname("import-role-when-expansion-role")
     Dir.mkdir_p(File.join(src_dir, "roles", "inner", "tasks"))
     Dir.mkdir_p(File.join(src_dir, "roles", "outer", "tasks"))

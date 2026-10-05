@@ -4,7 +4,7 @@ require "../minitest_helper"
 # collection module: the task silently SKIPPED at parse time, leaving a
 # registered result without `exists:`, so the next task's
 # `when: not result.exists` hard-errored with "object of type 'dict' has
-# no attribute 'exists'" (tigattack.frigate_docker, round 73280). Real
+# no attribute 'exists'" (tigattack.frigate_docker, round 73280).
 # Ansible's docker modules FAIL the task with a connection error when the
 # daemon is unreachable - they never skip.
 #

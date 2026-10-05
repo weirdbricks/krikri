@@ -160,7 +160,7 @@ module Krikri
       end
 
       # Maps a `line` value that may contain embedded newlines (typical
-      # of a YAML folded scalar, which always ends with one) onto real
+      # of a YAML folded scalar, which always ends with one) onto
       # Ansible's replace semantics. Ansible compares and writes
       # whole file lines WITH their separator, ensuring exactly one
       # trailing separator on the replacement. In this module's

@@ -51,7 +51,7 @@ module Krikri
   # message is not printed by the task-result display. A FAILING assert
   # reports msg/assertion/evaluated_to identically with or without
   # `quiet:`. Implemented by tagging a quiet success result with the
-  # private `_ansible_quiet: true` key (the same convention real
+  # private `_ansible_quiet: true` key (the same convention
   # Ansible's own `_ansible_verbose_always` inverse uses; private
   # `_ansible_*` keys are stripped before register, so the registered
   # var shape stays identical to Ansible's).

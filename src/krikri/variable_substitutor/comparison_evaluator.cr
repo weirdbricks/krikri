@@ -30,7 +30,7 @@ module Krikri
 
       # Audit pass (2026-08-11, following the ansible-vault/prometheus/
       # grafana rounds finding 5 independent copies of this exact bug):
-      # re-renders *value* if it's still a String containing `{{` - real
+      # re-renders *value* if it's still a String containing `{{` -
       # Ansible's recursive re-templating applied to whatever a plain-
       # lookup fallback already resolved. Now a thin delegate to the ONE
       # shared implementation (VariableSubstitutor::Rerender) - the

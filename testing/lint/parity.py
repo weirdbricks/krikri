@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parity harness: diff krikri-lint against real ansible-lint on a corpus.
+"""Parity harness: diff krikri-lint against ansible-lint on a corpus.
 
 Runs both tools with parseable output over the same targets, extracts
 (rule-id, line, column) triples per file, and reports:

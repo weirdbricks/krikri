@@ -426,7 +426,7 @@ describe Krikri::PythonModuleRunner do
     # (linux-system-roles.systemd's own library/systemd_units.py, whose
     # units() calls self.module.get_bin_path("systemctl",
     # opt_dirs=[...]) before anything can exit_json - so the module
-    # printed no result JSON and the task hard-FAILED while real
+    # printed no result JSON and the task hard-FAILED while
     # ansible-playbook succeeded).
     work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
     Dir.mkdir_p(work_dir)
@@ -464,7 +464,7 @@ describe Krikri::PythonModuleRunner do
     # library/nbde_server_tang.py, which does `from
     # ansible.module_utils._text import to_native` at module top level
     # - before AnsibleModule is ever constructed, so nothing could
-    # exit_json and the module printed no result JSON while real
+    # exit_json and the module printed no result JSON while
     # ansible-playbook succeeded).
     work_dir = File.join(Dir.tempdir, "krikri-shim-spec-#{Random.rand(1_000_000)}")
     Dir.mkdir_p(work_dir)

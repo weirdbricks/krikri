@@ -23,7 +23,7 @@ crystal run compat/run.cr
 
 Requires `docker` (or a `docker`-compatible CLI, e.g. podman with the
 docker shim). The first run builds `compat/Dockerfile` - an image with
-real `ansible-core` + `ansible.posix` (for `authorized_key`, which lives
+`ansible-core` + `ansible.posix` (for `authorized_key`, which lives
 outside ansible-core) installed via pip/ansible-galaxy, and a from-source
 build of krikri-playbook - which takes a few minutes. Subsequent runs
 reuse Docker's layer cache unless the source changed.
@@ -56,7 +56,7 @@ anyone was looking for them:
 
 2. **Plugins could only be found by `cd`-ing into the repo first.**
    `PluginManager` resolved plugin binaries via the cwd-relative path
-   `./bin/plugins/<name>`, unlike real `ansible-playbook`, which can be
+   `./bin/plugins/<name>`, unlike `ansible-playbook`, which can be
    invoked from anywhere. Fixed by resolving `plugins/` relative to the
    running binary's own location (`Process.executable_path`) instead of
    the working directory, with a cwd-relative fallback for `crystal run`
@@ -106,7 +106,7 @@ with `vars:`), `include_tasks:` (dynamic, with `vars:`/`loop:`/`when:`),
 file that is itself vault-encrypted (`16-vault.yml`, real
 `ansible-vault`-encrypted with `compat/vault_pass.txt` as the password),
 and an inline `!vault`-tagged variable value inside an otherwise-plaintext
-playbook (`17-vault-inline.yml`, generated with real `ansible-vault
+playbook (`17-vault-inline.yml`, generated with `Ansible-vault
 encrypt_string`). Both vault playbooks are run with
 `--vault-password-file` against `compat/vault_pass.txt`. `stat`
 (`18-stat.yml`) covers a regular file, a missing path, a directory, and a
@@ -134,7 +134,7 @@ since gzip/zip/tar embed timestamps and tool-specific metadata that make
 even logically-identical archives byte-different - the listing/content
 comparisons above already prove equivalence at the level that matters.
 `unarchive` (`21-unarchive.yml`) covers tar.gz extraction, an idempotent
-rerun (`tar --compare`-based - the same mechanism real Ansible's own
+rerun (`tar --compare`-based - the same mechanism Ansible's own
 `TgzArchive#is_unarchived` uses), zip extraction, `exclude:`, and
 `creates:` - compared via `changed`/`handler`, with the source archives
 deleted before the snapshot for the same non-byte-comparable-binary
@@ -163,7 +163,7 @@ permanent: true` throughout - see git log for why) covers enabling
 a service, an idempotent rerun, a rich rule, masquerade, disabling the
 service, and an idempotent disable rerun - compared via `changed` plus
 `firewall-offline-cmd --query-<thing>` state checks rather than a raw
-zone-file diff, since real Ansible's own module leaves the zone XML in a
+zone-file diff, since Ansible's own module leaves the zone XML in a
 very slightly different (but behaviorally identical) shape.
 `rabbitmq_plugin`/`rabbitmq_user` (`44-rabbitmq.yml`) starts its own
 throwaway rabbitmq node inside the container as the package's `rabbit`
@@ -181,11 +181,11 @@ output would otherwise embed one and make byte-diffing impossible.
 types, overwriting one, and deriving a second fact from the first via a
 filter (`| upper`) - a bare unquoted YAML `is_ready: true` is used
 deliberately rather than a quoted `"true"` string, since the two render
-differently (`True` vs `true`) and only the unquoted form matches real
+differently (`True` vs `true`) and only the unquoted form matches
 Ansible's own behavior once coerced through this codebase's params
 pipeline (every param is stringified before a plugin ever sees it, so a
 quoted string stays a literal string with no type coercion, exactly like
-real Ansible). `get_url` (`28-get-url.yml`) and `uri` (`30-uri.yml`) both
+Ansible). `get_url` (`28-get-url.yml`) and `uri` (`30-uri.yml`) both
 start a real local `python3 -m http.server` in the background (no real
 network access in this container) and hit it - `get_url`'s idempotent
 rerun uses a `checksum:` computed ahead of time via `stat:`, not
@@ -241,7 +241,7 @@ defaulting to root; a `copy:` task run under `become:` actually creating
 the file with the become user as owner (not just a command running as
 that user - proving the *whole plugin process* is escalated, not just a
 shell command inside it); and an invalid `become_user:` being rejected
-(both engines fail the task, though for different reasons - real
+(both engines fail the task, though for different reasons -
 Ansible's own become/privilege-setup machinery rejects it one way,
 krikri-playbook's username validation rejects it before ever reaching a
 shell another way; the compat comparison only checks the `failed:` result
@@ -282,7 +282,7 @@ suggested fix direction in git log, 0.9.33.
 `ufw` has no compat playbook, unusually for this repo - `ufw` itself
 refuses to run at all without root (even a bare `ufw status` fails), and
 the container lacks working netfilter access even running as root.
-Confirmed this isn't krikri-playbook-specific: real `ansible-playbook`'s
+Confirmed this isn't krikri-playbook-specific: `ansible-playbook`'s
 own `community.general.ufw` module fails identically in the same
 container, even in `--check` mode. See git log's `ufw` commits for
 what verification *was* possible (unit tests on the pure

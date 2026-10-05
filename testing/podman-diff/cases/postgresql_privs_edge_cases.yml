@@ -119,7 +119,7 @@
     - ansible.builtin.debug:
         msg: "P9 failed={{ p9.failed | default('none') }} changed={{ p9.changed | default('none') }}"
 
-    - name: "P10 missing database param (real fails on arg spec, krikri defaults it)"
+    - name: "P10 missing database param (Ansible fails on arg spec, krikri defaults it)"
       community.postgresql.postgresql_privs:
         roles: krikri_role
         type: table

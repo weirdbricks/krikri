@@ -2,7 +2,7 @@ require "json"
 require "base64"
 
 # Runner for role-private custom modules - a role's own `library/*.py`,
-# outside the plugin set this engine ships as native binaries. Real
+# outside the plugin set this engine ships as native binaries.
 # Ansible executes these as ordinary Python on the target; the previous
 # scope cut skipped them with a parse-time "uses unimplemented plugin"
 # warning (exit 4 via reachable_unavailable_modules since 0.9.558),
@@ -10,7 +10,7 @@ require "base64"
 # repeatedly benchmarking linux-system-roles (sr_fingerprint,
 # timesync_provider, kernel_settings_get_config, blivet).
 #
-# The runner delegates to the TARGET's own python3, the same way real
+# The runner delegates to the TARGET's own python3, the same way
 # Ansible does - no Python is embedded or reimplemented here. The
 # module source is uploaded and executed through the same plugin-binary
 # transport everything else uses (see plugins/py_module.cr), so local
@@ -152,7 +152,7 @@ module Krikri
     # New-style modules are exempt in practice - the AnsiballZ wrapper
     # embeds its own shebang. This engine runs the raw script with the
     # target's python3 instead of honoring the file's own line, so
-    # without this guard a shebangless old-style module - which real
+    # without this guard a shebangless old-style module - which
     # ansible-playbook FAILS - silently succeeded (found by the
     # py_module podman-diff edge cases: only the new-style fixture
     # survived the real side without a shebang).
@@ -163,7 +163,7 @@ module Krikri
     # The module's argument dict: the substituted task params (already
     # stringified by the parser) re-typed as JSON where they parse -
     # the parser JSON-encodes list/dict-valued params verbatim, so
-    # `"['a','b']"` becomes a real array for the module, the way real
+    # `"['a','b']"` becomes a real array for the module, the way
     # Ansible passes typed args. Plus Ansible's own reserved
     # `_ansible_*` keys a new-style module's AnsibleModule reads.
     def build_module_args(params : Hash(String, String), check_mode : Bool) : String
@@ -459,7 +459,7 @@ module Krikri
               sys.exit(1)
       PYTHON
 
-    # Writes the shim bundle above into *work_dir* as a real
+    # Writes the shim bundle above into *work_dir* as a
     # ansible/module_utils package tree. The module script itself sits in
     # work_dir too, and Python puts the script's own directory first on
     # sys.path - so the shim shadows any installed ansible-core exactly
@@ -575,7 +575,7 @@ module Krikri
           return to_text(value)
       PYTHON
 
-    # Parses the module's stdout into its result JSON: real modules
+    # Parses the module's stdout into its result JSON: Ansible modules
     # print a JSON object (pretty or single-line), possibly preceded by
     # other output (warnings, prints) that Ansible also strips.
     # Walks backwards from the end for the first offset where a JSON

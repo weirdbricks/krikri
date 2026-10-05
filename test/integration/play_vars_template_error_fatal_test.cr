@@ -71,7 +71,7 @@ describe "a play vars: templating error" do
     output.must_include("failed=1")
   end
 
-  # Same expression read through a task-arg template (the read path real
+  # Same expression read through a task-arg template (the read path
   # ansible-core 2.19.11 fails hard on locally: "Finalization of task
   # args ... failed") - same whole-run abort.
   it "aborts the whole run when the bad var is read through task args" do

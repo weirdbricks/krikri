@@ -299,7 +299,7 @@ module Krikri
       else
         # Non-password auth: diff the account's current plugin (and, when a
         # hash/auth string was given, its authentication_string) against the
-        # desired value, ALTERing only on a real change - matching real
+        # desired value, ALTERing only on a real change - matching
         # Ansible's own plugin idempotency. Bare `plugin: unix_socket`/`auth_socket`
         # (the auth_socket account pattern) compares the plugin column only.
         pl = plugin || return {nil, false, false}

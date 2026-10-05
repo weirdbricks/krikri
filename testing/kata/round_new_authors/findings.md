@@ -32,7 +32,7 @@ fixed on this branch after the round was recorded. Do not re-fix.**
 - **nginxinc.nginx** (already tested clean round159 on Rocky 9.6 - NEW divergence on
   Debian trixie): cold run only, handler `(Handler) Start/reload NGINX` -
   `ansible.builtin.service: state=reloaded` - fails on krikri ("nginx.service is not
-  active, cannot reload") where nginx was never started before. Real ansible's
+  active, cannot reload") where nginx was never started before. Ansible's
   `service` module treats `state: reloaded` as "start if not running, else reload";
   krikri's service plugin apparently errors instead of starting. Warm run (nginx
   already running) matches exactly on both engines - confirms it's specific to
@@ -72,12 +72,12 @@ fixed on this branch after the round was recorded. Do not re-fix.**
   "Create etcd directory structure" loops over dicts and accesses
   `item.data-dir` - real Jinja2/Python parses this as `item.data - dir`
   (subtraction, minus binds tighter than the dict has no such attribute),
-  which real ansible-core correctly raises as `AttributeError` on both cold
+  which ansible-core correctly raises as `AttributeError` on both cold
   AND warm ("object of type 'dict' has no attribute 'data-dir'" - a real
   upstream role bug, faithfully reproduced by ansible every run, non-idempotent
   failure baked into the role). krikri instead resolves the malformed
   expression to `undefined` for 2 of 3 loop items and silently continues,
-  completing the ENTIRE play successfully where real Ansible cannot get past
+  completing the ENTIRE play successfully where Ansible cannot get past
   this task on any run. This is the same "lazy dict-templating" bug class as
   prior fixes (git log: crinja keys-default flip, hyphen-in-key handling) -
   worth a proper fix: `item.data-dir` must raise the same

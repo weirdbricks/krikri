@@ -171,7 +171,7 @@ module Krikri
       # remotely, or run locally for a local connection) like every
       # other non-controller-only plugin, so a plain local Dir.glob
       # call here already checks the right (target) filesystem - no
-      # separate remote branch needed. Message wording matches real
+      # separate remote branch needed. Message wording matches
       # Ansible's own exactly (live-verified against ansible-core
       # 2.19.4), not just the functional result.
       # The skip result also carries the FULL command-module shape (rc: 0,
@@ -183,7 +183,7 @@ module Krikri
       # evaluates cleanly (konstruktoid.docker_rootless's warm run).
       # Read chdir here (pure parameter read, no side effect - the shell's
       # own `cd` still happens further down) so the creates:/removes:
-      # checks below resolve a RELATIVE path against it, matching real
+      # checks below resolve a RELATIVE path against it, matching
       # Ansible's command/shell action plugin. Same kyl191.openvpn-shaped
       # divergence as command.cr's copy of this fix - see that one.
       chdir = @params["chdir"]?
@@ -242,7 +242,7 @@ module Krikri
         end
       end
 
-      # Shell commands don't support check mode (Ansible behavior). Real
+      # Shell commands don't support check mode (Ansible behavior).
       # Ansible's own command/shell action plugin still populates the
       # FULL normal result shape (cmd/rc/stdout/stdout_lines/stderr/
       # stderr_lines/start/end/delta, all empty/zero/null) rather than a
@@ -350,7 +350,7 @@ module Krikri
 
       # Execute command
       # Note: the command is ALWAYS handed to the module's `executable:`
-      # shell (default /bin/sh) via `<executable> -c <string>` - real
+      # shell (default /bin/sh) via `<executable> -c <string>` -
       # Ansible's shell module (command.py with _uses_shell) runs
       # run_command with the argspec's executable as the shell BINARY,
       # so the default is /bin/sh (dash on Debian), NOT bash. This
@@ -456,7 +456,7 @@ module Krikri
     # arg arrives as the double-quoted JSON the wire serialized it to
     # (see substitute_task_params's whole-single-span comment); ONLY that
     # valid JSON is parsed - never a Python-repr repair pass, since a
-    # value that merely LOOKS like a container is a plain STRING in real
+    # value that merely LOOKS like a container is a plain STRING in
     # ansible-core (live-verified vs ansible-playbook 2.19.11, see
     # apt.cr's parse_package_names).
     private def parse_argv_list(raw : String) : Array(String)

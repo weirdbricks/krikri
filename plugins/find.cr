@@ -21,7 +21,7 @@ module Krikri
   # - recurse: descend into subdirectories (default: false)
   # - depth: max levels to descend when recurse: true (default: unlimited)
   # - hidden: include dotfiles/dotdirs (default: false) - a hidden
-  #   directory is skipped entirely (not descended into), matching real
+  #   directory is skipped entirely (not descended into), matching
   #   Ansible's os.walk-based behavior
   # - size: minimum size in bytes (or negative for "at most"); accepts a
   #   b/k/m/g/t unit suffix
@@ -50,13 +50,12 @@ module Krikri
   # - limit: stops once this many matches are found - this plugin's own
   #   directory walk is already a top-down, pre-order traversal (a
   #   parent directory's own direct matches are always found before
-  #   descending into any of its subdirectories), matching real
+  #   descending into any of its subdirectories), matching
   #   Ansible's own `os.walk()`-based "shallowest directory first"
   #   ordering, so no walk-order change was needed to support this.
   #
   # - follow: descend into symlinked directories when recursing (default:
-  #   false). Classification still uses lstat() regardless of follow (real
-  #   Ansible's own os.lstat() in its main loop), so a symlink-to-file
+  #   false). Classification still uses lstat() regardless of follow (Ansible's own os.lstat() in its main loop), so a symlink-to-file
   #   still only matches file_type: link/any even with follow: true -
   #   follow only changes which directories are walked into (os.walk's
   #   own followlinks flag).
@@ -288,7 +287,7 @@ module Krikri
           nil
         end
         # ONLY valid JSON - never a Python-repr repair pass: a value that
-        # merely LOOKS like a container is a plain STRING in real
+        # merely LOOKS like a container is a plain STRING in
         # ansible-core (live-verified vs ansible-playbook 2.19.11, see
         # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
         # container arg arrives as the double-quoted JSON the wire
@@ -364,7 +363,7 @@ module Krikri
         entries << child_path
 
         # File.directory? follows symlinks, so the follow gate keeps
-        # symlinked directories listed-but-unwalked by default - real
+        # symlinked directories listed-but-unwalked by default -
         # Ansible's file_type detection lstats every entry regardless of
         # follow, so follow only widens the walk, never re-classifies a
         # symlink as its target type.

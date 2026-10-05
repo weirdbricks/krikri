@@ -235,7 +235,7 @@ module Krikri::Lint
 
     it "renders an argumentless unnamed task with upstream's trailing space" do
       # Upstream joins f"{module} {' '.join(args)}", so the space after
-      # the module stays even with no arguments. Verified against real
+      # the module stays even with no arguments. Verified against
       # ansible-lint 25.2.1: "Task/Handler: ping ".
       path = File.tempname("lintspec", ".yml")
       File.write(path, "---\n- hosts: localhost\n  tasks:\n    - ping:\n")

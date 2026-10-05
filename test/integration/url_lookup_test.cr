@@ -4,7 +4,7 @@ require "../../src/krikri/variable_substitutor/expression_evaluator"
 require "../../src/krikri/krikri_jinja_filters"
 
 # A tiny local HTTP server (same pattern as get_url_spec.cr) serving a
-# small multi-line checksums-style file plus a redirect, since real
+# small multi-line checksums-style file plus a redirect, since
 # Ansible's own lookup('url', ...) usage (cloudalchemy.prometheus's
 # checksum-pinning idiom) is exercised against URLs that redirect in
 # practice (GitHub release assets 302 to a signed CDN URL).
@@ -88,7 +88,7 @@ describe "lookup('url', ...)" do
     # without live verification against Ansible), letting
     # execution continue into a `with_items:` loop over a single bogus
     # "undefined" item and only fail several tasks later for an
-    # unrelated reason - a real ok=/skipped= recap divergence from real
+    # unrelated reason - a real ok=/skipped= recap divergence from
     # Ansible even though both engines ultimately failed the
     # broken-upstream role overall.
     v = Hash(String, JSON::Any).new

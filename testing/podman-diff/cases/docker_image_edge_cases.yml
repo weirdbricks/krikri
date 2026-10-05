@@ -1,6 +1,6 @@
 # docker_image edge cases. Like the docker_container cases: NO docker
 # daemon inside either harness container (and no docker-in-podman), so
-# only the argument-validation surface real Ansible performs BEFORE any
+# only the argument-validation surface Ansible performs BEFORE any
 # daemon contact is exercisable (missing required params, choice
 # checks, required_if), plus "valid args but no daemon -> both engines
 # fail". The real side runs community.docker.docker_image with the

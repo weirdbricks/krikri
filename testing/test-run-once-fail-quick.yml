@@ -6,7 +6,7 @@
 # hosts and this play is skipped, same convention as the "testservers"
 # fixtures.
 #
-# Real ansible-playbook behavior (verified against core 2.19.11): the
+# ansible-playbook behavior (verified against core 2.19.11): the
 # failing run_once task recaps failed=1 (only hostone actually executed
 # it), and NO host - including hostone - reaches the second task's
 # banner or its debug output.

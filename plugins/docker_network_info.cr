@@ -19,7 +19,7 @@ module Krikri
   #
   # Supported parameters:
   # - name: network name (required) - a network name, or a long/short
-  #   network ID (matched by exact name or ID prefix, matching real
+  #   network ID (matched by exact name or ID prefix, matching
   #   Ansible's own `get_network()` lookup).
   # - docker_host: / tls: / validate_certs: (alias tls_verify:) / ca_path:
   #   (aliases cacert_path: etc.) / client_cert: / client_key: /

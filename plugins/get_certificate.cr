@@ -17,7 +17,7 @@ module Krikri
   #
   # Params (the Ansible module's argument_spec, no aliases): host, port
   # (both required), ca_cert (verifies the chain against a PEM file - the
-  # real module's caveat applies: this checks the chain, not that the
+  # Ansible module's caveat applies: this checks the chain, not that the
   # cert is valid for the host), server_name (SNI, defaults to host),
   # timeout, proxy_host/proxy_port (the TCP hop goes to the proxy pair,
   # proxy_port defaulting to 8080 like the Ansible module), starttls

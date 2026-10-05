@@ -2,7 +2,7 @@
 
 **A single-binary automation tool that runs Ansible playbooks - written in Crystal**
 
-[![Version](https://img.shields.io/badge/version-0.9.1488-blue)](https://github.com/weirdbricks/krikri)
+[![Version](https://img.shields.io/badge/version-0.9.1489-blue)](https://github.com/weirdbricks/krikri)
 [![Compatibility](https://img.shields.io/badge/ansible--core-2.19.11-brightgreen)](#-what-is-krikri)
 [![Language](https://img.shields.io/badge/language-Crystal-black)](https://crystal-lang.org)
 [![Homebrew](https://img.shields.io/badge/homebrew-tap-blue)](#install-via-homebrew-macoslinux-prebuilt-binaries)
@@ -167,8 +167,7 @@ krikri all -m copy -a 'src=foo.conf dest=/etc/foo.conf' -b
 krikri db -i inventory.ini -m service -a 'name=postgresql state=restarted' -b
 ```
 
-The `krikri` binary is the ad-hoc counterpart of `krikri-playbook` (real
-Ansible's own `ansible`/`ansible-playbook` split): one module, one run,
+The `krikri` binary is the ad-hoc counterpart of `krikri-playbook` (Ansible's own `ansible`/`ansible-playbook` split): one module, one run,
 against a pattern of inventory hosts. It supports
 `-i`, `-m`, `-a`, `-u`, `-b`/`--become`, `--become-user`, `-C`/`--check`,
 `-f`/`--forks`, `-l`/`--limit`, `-v`, and its output matches Ansible's
@@ -180,7 +179,7 @@ own minimal callback style (`host | SUCCESS => {...}` /
 ## 🔍 Linting (`krikri-lint`)
 
 `krikri-lint` is a from-scratch reimplementation of `ansible-lint` - same
-rules, same output format, same exit codes, verified against the real tool
+rules, same output format, same exit codes, verified against ansible-lint itself
 rather than against its documentation. It's static analysis only: no host
 connection, no execution, no SSH.
 
@@ -205,7 +204,7 @@ scripts/minitest.sh
 # Same suite on 4 parallel worker fibers (faster; tests are parallel-safe)
 scripts/minitest.sh -- -p 4
 
-# Ansible compatibility harness - runs the same playbooks through real
+# Ansible compatibility harness - runs the same playbooks through
 # ansible-playbook and krikri-playbook side by side and diffs the result
 crystal run compat/run.cr
 ```

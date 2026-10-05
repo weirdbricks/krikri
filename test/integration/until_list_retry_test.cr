@@ -22,7 +22,7 @@ end
 # every configured attempt. The final attempt's now-idempotent, changed:
 # false result then replaced attempt 1's real changed: true, both in the
 # registered var and on the displayed line/recap (found via round 979035,
-# buluma.moodle's "Download moodle archive" get_url task, where real
+# buluma.moodle's "Download moodle archive" get_url task, where
 # ansible-playbook reported changed and krikri reported ok on a fresh host).
 describe "until: list-form retry loop" do
   it "stops after the first successful attempt, keeping its changed status" do

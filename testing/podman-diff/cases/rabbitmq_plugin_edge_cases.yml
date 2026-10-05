@@ -6,7 +6,7 @@
 # invalid state/broker_state choice, non-boolean new_only) must fail
 # before any binary invocation on the real side; krikri must also
 # report failed=True and changed=False there. name: is a documented
-# alias of names: in the real module, so Q4 also covers the alias
+# alias of names: in the Ansible module, so Q4 also covers the alias
 # path. Msg wording differs and is not compared.
 # Prefix Q.
 - hosts: all

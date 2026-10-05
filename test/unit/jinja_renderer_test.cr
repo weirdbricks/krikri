@@ -244,8 +244,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
 
   it "resolves a fully-qualified collection filter name (ansible.builtin.X) to the same bare filter" do
     # Real bug found benchmarking robertdebock.vsftpd: `vsftpd.conf.j2`
-    # uses `| ansible.builtin.ternary('YES', 'NO')` throughout (real
-    # Ansible allows a filter to be referenced by its FQCN, exactly like
+    # uses `| ansible.builtin.ternary('YES', 'NO')` throughout (Ansible allows a filter to be referenced by its FQCN, exactly like
     # a module, resolving to the same filter registered under its bare
     # trailing name) - Crinja's own filter-name grammar only ever
     # expected a single bare IDENTIFIER after `|`, so any dotted filter
@@ -1014,7 +1013,7 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
   end
 
   it "extract walks into lists and strings and indexes negatively (shared core)" do
-    # Phase-3 slice 4 regression pins, live-verified against real
+    # Phase-3 slice 4 regression pins, live-verified against
     # ansible-core 2.19.11: the morekeys walk is the same getitem step
     # at every level (lists and strings int-index, negative indices
     # work) - the old Crinja copy only walked dicts.
@@ -1354,7 +1353,7 @@ describe "JinjaRenderer.rerender_nested_templates (round 170 - scalar-vs-contain
 
   it "exposes `environment` as a Jinja global mapped to the controller's OS env vars" do
     # Found via GROG.debug-variable's own `{{ environment | to_nice_json
-    # }}` (a common "dump everything" debug template idiom) - real
+    # }}` (a common "dump everything" debug template idiom) -
     # Ansible's Templar always exposes this global; krikri had no
     # concept of it at all and raised "'environment' is undefined".
     v = Hash(String, JSON::Any).new

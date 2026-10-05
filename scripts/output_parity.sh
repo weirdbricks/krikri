@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Output-parity harness: runs the same fixture playbook under real
+# Output-parity harness: runs the same fixture playbook under
 # ansible-playbook and krikri-playbook with identical arguments
 # (`-i localhost, -c local`, stdin from /dev/null) and compares the
 # captured RAW bytes of stdout and stderr separately, plus the exit
@@ -67,7 +67,7 @@ MASKS=(
   "/^\\[WARNING\\]: Host '[^']*' is using the discovered Python interpreter at '[^']*', but future installation of another Python interpreter could cause a different interpreter to be discovered\\. See .* for more information\\.$/d"
   "s/\"ansible_facts\": \\{\"discovered_interpreter_python\": \"[^\"]*\"\\}, //g"
   # Third entry: convert_bool's "Valid booleans include: ..." lists Python's
-  # BOOLEANS set in per-process hash-randomized iteration order (two real
+  # BOOLEANS set in per-process hash-randomized iteration order (two
   # ansible runs already disagree byte-for-byte); only the order is masked.
   "s/(Valid booleans include: )[^\"]*/\\1<BOOLEAN-SET-ORDER>/g"
   # Fourth/fifth entries: command/shell results carry the run's wall-clock

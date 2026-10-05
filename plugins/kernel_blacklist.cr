@@ -31,7 +31,7 @@ module Krikri
   class KernelBlacklistPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
 
-    # Real argument_spec (community.general kernel_blacklist.py) - no
+    # Ansible's argument_spec (community.general kernel_blacklist.py) - no
     # aliases, so the unsupported-params message has no parenthetical.
     # Note the choices declaration order (absent, present) - Ansible's
     # choices error lists them in that order.
@@ -117,7 +117,7 @@ module Krikri
     # Ansible's failure result carries the module's own state surface along
     # with the message: the resolved filename, the module name, the
     # requested state, and the output/vars dicts (StateModuleHelper's
-    # output_params under both keys) - live-captured from real
+    # output_params under both keys) - live-captured from
     # ansible-playbook 2.19.11 in a container where /etc/modprobe.d
     # doesn't exist yet.
     private def failed_result(name : String, state : String, file : String, msg : String) : PluginResult

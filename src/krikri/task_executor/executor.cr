@@ -71,7 +71,7 @@ module Krikri
     # Modules referenced by a task whose own when: (independent of the
     # forced-skip #when_passes? always takes for an unavailable module)
     # would have evaluated true for at least one host - i.e. genuinely
-    # REACHED, not merely present somewhere in the playbook text. Real
+    # REACHED, not merely present somewhere in the playbook text.
     # Ansible only ever attempts module resolution for a task it's about
     # to run, so a module referenced only inside a branch that's
     # unreached on every host (`when: ansible_os_family == "Suse"` on an
@@ -256,7 +256,7 @@ module Krikri
     # Variables loaded by include_vars:, per host. Kept separate from
     # @facts so they don't leak into the `ansible_facts` dict, and applied
     # after VariableContext.build but before facts, so a set_fact: still
-    # wins - matching include_vars sitting below set_fact in real
+    # wins - matching include_vars sitting below set_fact in
     # Ansible's precedence ladder.
     @included_vars : Hash(String, Hash(String, JSON::Any))
     # Per host, per task: the result already fetched via a batch's single
@@ -357,7 +357,7 @@ module Krikri
       @forks = 5,
       @smart_gathering = false,
       fact_store : Hash(String, Hash(String, JSON::Any))? = nil,
-      # Run-scoped store for `set_fact:`-produced high-tier vars. Real
+      # Run-scoped store for `set_fact:`-produced high-tier vars.
       # Ansible ranks set_facts near the very top of the precedence ladder
       # and keeps them for the WHOLE RUN - a play-2 play var must not
       # shadow a play-1 set_fact (verified against ansible-core
@@ -473,8 +473,7 @@ module Krikri
         # host's facts from an earlier play, and pre-seeding must not
         # wipe them. Registered vars carry across plays the same way.
         @facts[host.name] ||= {} of String => JSON::Any
-        # ||= for set_facts too - same reasoning, same run scope (real
-        # Ansible keeps a play-1 set_fact above play vars in play 2).
+        # ||= for set_facts too - same reasoning, same run scope (Ansible keeps a play-1 set_fact above play vars in play 2).
         @set_facts[host.name] ||= {} of String => JSON::Any
       end
 

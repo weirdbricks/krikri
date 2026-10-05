@@ -85,7 +85,7 @@
         content: "b"
         dest: /tmp/podman-diff-p5-src/b.txt
 
-    - name: "P6 copy a directory as src without recurse semantics (real ansible copies the dir tree - both engines must agree on what happened)"
+    - name: "P6 copy a directory as src without recurse semantics (Ansible copies the dir tree - both engines must agree on what happened)"
       ansible.builtin.copy:
         src: /tmp/podman-diff-p5-src
         dest: /tmp/podman-diff-p6-dest

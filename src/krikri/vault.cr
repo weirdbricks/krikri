@@ -42,7 +42,7 @@ module Krikri
     # --vault-id label@source: several passwords, each tagged with the
     # identity it belongs to. A 1.2-format header names the identity it
     # was encrypted with ("$ANSIBLE_VAULT;1.2;AES256;dev"), so that one
-    # is tried first; the rest are tried afterwards, which is what real
+    # is tried first; the rest are tried afterwards, which is what
     # Ansible does and what makes an unlabeled or mislabeled blob still
     # decrypt when any supplied identity fits.
     @@vault_ids = Hash(String, String).new

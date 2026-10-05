@@ -1,7 +1,7 @@
 # java_cert edge cases. Needs a real keytool (JRE) in BOTH containers
-# (run.sh's java_cert gate installs default-jre-headless; the real module
+# (run.sh's java_cert gate installs default-jre-headless; the Ansible module
 # and krikri's plugin both shell out to it), plus the openssl CLI for
-# fixture cert generation and the real module's own x509 parsing.
+# fixture cert generation and the Ansible module's own x509 parsing.
 # failed=/changed= and actual keystore state (keytool -list of aliases)
 # are what matter; error MESSAGE WORDING may differ.
 - hosts: all

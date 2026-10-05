@@ -12,7 +12,7 @@ module Krikri
   # nsupdate plugin - a native reimplementation of community.general.nsupdate:
   # create/update/remove DNS records via RFC2136 dynamic update,
   # speaking the DNS wire format directly (the pieces of dnspython the
-  # real module drives - see NsupdateMessage; the Ansible module shells
+  # Ansible module drives - see NsupdateMessage; the Ansible module shells
   # out to dnspython, this one doesn't).
   #
   # Follows the Ansible module's RecordManager control flow:

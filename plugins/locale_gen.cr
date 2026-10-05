@@ -148,7 +148,7 @@ module Krikri
       end
     end
 
-    # Real module's locale_get_not_present: a requested locale counts
+    # Ansible module's locale_get_not_present: a requested locale counts
     # as present when some `locale -a` line equals it after
     # LOCALE_NORMALIZATION folding.
     private def locale_get_not_present(names : Array(String), locale_a_output : String) : Array(String)

@@ -11,7 +11,7 @@ require "./variable_substitutor/hostvars_context"
 require "./timing_profile"
 
 module Krikri
-  # Sentinel a rendered param value is compared against to detect real
+  # Sentinel a rendered param value is compared against to detect
   # Ansible's `omit` magic variable (`{{ item.proto | default(omit) }}` -
   # konstruktoid-hardening's "Allow outgoing specified ports" task uses
   # exactly this to drop `proto:` for loop items that don't specify one).
@@ -260,7 +260,7 @@ module Krikri
 
   # Whether *expr* (a full `{{ }}` span's content, possibly a filter
   # chain) pipes its source through an undefined-TOLERANT filter first
-  # (`x | default(y)`, `x | d(y)`, `x | type_debug`) - the shape real
+  # (`x | default(y)`, `x | d(y)`, `x | type_debug`) - the shape
   # Ansible's own strict templating never fails, because the tolerant
   # filter consumes the undefined before anything can choke on it.
   # Shared by the strict-undefined checks that probe a chain's ROOT
@@ -342,7 +342,7 @@ module Krikri
   # SPECIAL_CONSTANTS maps the camelcase forms too). The strict-undefined
   # probes below match these against REGEX_BARE_VAR_REF as if they were
   # variable NAMES - `{{ true }}` and, one shape over, `{{ true | bool }}`
-  # both failed the task with "'true' is undefined" where real
+  # both failed the task with "'true' is undefined" where
   # ansible-playbook renders the literal (christiangda.amazon_
   # cloudwatch_agent's `cwa_need_credentials: "{{ true | bool if
   # cwa_agent_mode == 'onPremise' else cwa_use_credentials }}"` behind a
@@ -532,7 +532,7 @@ module Krikri
       end
       {nil, raw[key]}
     when Array
-      # An out-of-range list index raises with different wording in real
+      # An out-of-range list index raises with different wording in
       # Ansible ("list index out of range") - not live-verified, so stay
       # on the generic message rather than guess.
       if token.starts_with?('.')
@@ -866,7 +866,7 @@ module Krikri
             # native typing requires the template's whole parsed AST to be
             # exactly one output node wrapping one expression - a single
             # bare `{{ }}` - and the moment a `{%`/`{#` token exists,
-            # Template.render() returns a plain str. Found live vs real
+            # Template.render() returns a plain str. Found live vs
             # ansible-playbook via HanXHX.debian_bootstrap's
             # `dbs_repo_old: "{% if false %}{{ x }}{% else %}['dummy']{%
             # endif %}`: the output text `['dummy']` stayed the literal
@@ -1308,7 +1308,7 @@ module Krikri
     def substitute(text : String, strict : Bool = false, output : Bool = false, native : Bool = false) : String
       # Whole-span structured evaluations are memoized for the duration of
       # ONE top-level substitute() operation (per fiber - substitution never
-      # yields, see the re-templating guard's own reasoning). Real
+      # yields, see the re-templating guard's own reasoning).
       # ansible-core templates a variable lazily ONCE per templating
       # operation and reuses the result for every reference within it
       # (live-verified vs 2.19.11: `x: "{{ lookup('pipe', ...) }}"` referenced
@@ -1792,7 +1792,7 @@ module Krikri
     # (`d['k']`, `d.attr`, `groups[name].x`) whose ROOT is undefined, or
     # whose resolution bottoms out in a dict-subscript miss on a
     # resolvable dict ("object of type 'dict' has no attribute 'k'").
-    # Written for meta/argument_specs.yml `default:` templating - real
+    # Written for meta/argument_specs.yml `default:` templating -
     # Ansible templates the entire spec strictly, and its expressions are
     # arbitrary compound shapes (rke2's `'server' if inventory_hostname in
     # groups[rke2_servers_group_name] else ...` ternary) that the bare/
@@ -2130,11 +2130,11 @@ module Krikri
     private def raise_if_strict_undefined(inner : String) : Nil
       unless inner.matches?(REGEX_BARE_VAR_REF)
         # Not a bare reference - but a filter chain STARTING from an
-        # undefined bare reference is just as strictly fatal in real
+        # undefined bare reference is just as strictly fatal in
         # Ansible as the bare reference itself (see
         # Krikri.undefined_filter_chain_source).
         if undefined_name = Krikri.undefined_filter_chain_source(inner, @vars)
-          # `undefined | mandatory(...)` never reaches the filter in real
+          # `undefined | mandatory(...)` never reaches the filter in
           # Ansible either - but there the UNDEFINED value flows into the
           # mandatory FILTER PLUGIN, which fails the task with Ansible's own
           # wrapper ("The filter plugin 'ansible.builtin.mandatory'
@@ -2259,7 +2259,7 @@ module Krikri
       # in #re_template_from_variable?): for a name published as
       # execution-resolved, the stored text is verbatim content, not a
       # template level - probing it for an innermost undefined name
-      # ("strictness following the chain") is exactly the re-scan real
+      # ("strictness following the chain") is exactly the re-scan
       # ansible-core never does on a resolved fact/module result.
       return if VarSubstitutor.resolved_var_name?(@host_name, inner.split(/[\.\[]/, 2)[0])
       raise_if_nested_value_undefined(resolved)
@@ -2353,7 +2353,7 @@ module Krikri
 
     # The raising twin of #unresolvable_template?: renders *raw* (known to
     # contain Jinja markers) the way a strict caller - a task-level `when:`/
-    # `assert:` - needs it rendered, raising UndefinedVariableError with real
+    # `assert:` - needs it rendered, raising UndefinedVariableError with
     # Ansible's INNERMOST-missing-name message ("'system_user' is undefined",
     # not the outer variable that merely holds the template text) when the
     # value bottoms out at a name set nowhere. Everything

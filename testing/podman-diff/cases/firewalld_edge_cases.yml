@@ -2,7 +2,7 @@
 # firewalld daemon (podman container, no systemd), but the firewalld
 # PACKAGE is installed by run.sh's gated block (for ^firewalld cases)
 # in BOTH containers, which provides firewall-offline-cmd + the python
-# firewalld bindings - real ansible.posix.firewalld auto-detects "not
+# firewalld bindings - Ansible.posix.firewalld auto-detects "not
 # connected" and falls back to offline mode (firewall-offline-cmd),
 # exactly the backend this plugin drives. So permanent/offline-path
 # behavior IS testable here; a live-daemon `immediate:` change is not.

@@ -129,7 +129,7 @@ module Krikri
     # Records *text* when it is a DERIVED string - a render whose output
     # embedded a registered hostile text (an author template like
     # `loop: ["{{ r.stdout }}-suffix"]` pulls the hostile result value in
-    # as data; the concatenated output is itself unsafe exactly like real
+    # as data; the concatenated output is itself unsafe exactly like
     # ansible-core's taint-follows-the-data model). The exact-text
     # registry alone cannot see the derived string, so without this the
     # hostile braces embedded in it would be re-rendered as template text

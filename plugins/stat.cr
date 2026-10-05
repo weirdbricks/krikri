@@ -9,7 +9,7 @@ module Krikri
   # Stat plugin - retrieves file/filesystem status.
   # Compatible with Ansible's ansible.builtin.stat module.
   #
-  # - path: path to stat (required, aliases: dest, name - matches real
+  # - path: path to stat (required, aliases: dest, name - matches
   #   Ansible's own argument_spec)
   # - follow: follow symlinks (default: false)
   # - get_checksum: compute a checksum of the file (default: true)
@@ -43,7 +43,7 @@ module Krikri
   # per invocation than the previous shell-based implementation (5
   # subprocess spawns per call).
   #
-  # This is always a read-only, never-`changed` module - like real
+  # This is always a read-only, never-`changed` module - like
   # Ansible's stat, it exists to feed `register:` + `when:`, not to make
   # changes itself.
   class StatPlugin < BasePlugin

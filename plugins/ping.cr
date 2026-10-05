@@ -10,7 +10,7 @@ module Krikri
   # Entirely unimplemented before - robertdebock.test_connection's own
   # "Ping with become" task silently dropped instead of running.
   #
-  # Real module: returns {"ping": data} where data defaults to "pong",
+  # Ansible module: returns {"ping": data} where data defaults to "pong",
   # UNLESS data == "crash", which raises an exception (a real, deliberate
   # module-level failure path used to test error handling, not something
   # normal roles trigger). Never reports changed.

@@ -30,7 +30,7 @@ module Krikri
   #   building the GRANT/REVOKE statement, matching Ansible's own
   #   privilege-name spelling and its own `'_'` -> `' '` substitution) /
   #   `group` (role membership - `GRANT role TO role`, not an ACL grant
-  #   at all, so `privs:` isn't accepted for it at all, matching real
+  #   at all, so `privs:` isn't accepted for it at all, matching
   #   Ansible's own validation; idempotency and `grant_option:` here mean
   #   membership presence/`WITH ADMIN OPTION` respectively, checked
   #   directly against `pg_auth_members` rather than any ACL array -
@@ -75,7 +75,7 @@ module Krikri
   #   Note `objs: SCHEMAS` cannot be combined with `schema:`: PostgreSQL
   #   rejects "IN SCHEMA ... ON SCHEMAS" outright ("cannot use IN SCHEMA
   #   clause when using GRANT/REVOKE ON SCHEMAS"). Since `schema:`
-  #   defaults to "public", SCHEMAS is effectively unusable here - real
+  #   defaults to "public", SCHEMAS is effectively unusable here -
   #   Ansible has exactly the same limitation and fails with the same
   #   server error, verified side by side.
   # - target_roles: comma-separated roles whose future objects the
@@ -113,11 +113,11 @@ module Krikri
   #   behavior difference in what actually happens).
   # - fail_on_role: bool, default `true` - when a role in `roles:`
   #   doesn't exist (checked via `pg_roles`, `PUBLIC` always considered
-  #   to exist), `true` fails the whole task immediately (matching real
+  #   to exist), `true` fails the whole task immediately (matching
   #   Ansible's own default); `false` skips just that role and continues
   #   with whichever others do exist, same as Ansible's own
   #   `module.warn(...)` + continue behavior. If none of the requested
-  #   roles exist, `changed: false` with no error, matching real
+  #   roles exist, `changed: false` with no error, matching
   #   Ansible's own "nothing to do" exit.
   # - login_host (default "localhost"), login_port (default 5432),
   #   login_user (default "postgres"), login_password,
@@ -206,7 +206,7 @@ module Krikri
 
     # Ansible's exit_json(changed=..., queries=executed_queries):
     # `failed: false` is backfilled by the controller after the module's
-    # own kwargs, and there is no msg. Live-verified against real
+    # own kwargs, and there is no msg. Live-verified against
     # ansible-core 2.19.11 + community.postgresql 4.2.0.
     SUCCESS_KEY_ORDER = %w[changed queries failed]
 
@@ -289,7 +289,7 @@ module Krikri
     # Ansible's own QueryBuilder, reproduced verbatim: the single
     # GRANT/REVOKE statement (or ALTER DEFAULT PRIVILEGES pair) it builds
     # from the module params and appends to executed_queries, joined by
-    # newlines into ONE list entry. Live-verified against real
+    # newlines into ONE list entry. Live-verified against
     # ansible-core 2.19.11 + community.postgresql 4.2.0 for table,
     # sequence, schema, database, type, function, group, default_privs
     # and ALL_IN_SCHEMA, grant/revoke, with and without objs.
@@ -509,7 +509,7 @@ module Krikri
         target_roles, schema, login_db)
     end
 
-    # Real argument_spec wording and choices order (live-verified against
+    # Ansible's argument_spec wording and choices order (live-verified against
     # 2.19.11: "value of type must be one of: table, sequence, function,
     # procedure, database, schema, language, tablespace, group,
     # default_privs, foreign_data_wrapper, foreign_server, type,
@@ -594,7 +594,7 @@ module Krikri
     # see those two methods.)
     # Queries every table/sequence currently in schema, fresh each run -
     # Ansible's own ALL_IN_SCHEMA behavior (dynamic membership, not
-    # a fixed list captured once). relkind filter for tables matches real
+    # a fixed list captured once). relkind filter for tables matches
     # Ansible's own query exactly (r/v/m/p/f - ordinary/view/merialized
     # view/partitioned/foreign tables), not just 'r'.
     private def all_objs_in_schema(db : DB::Database, type : String, schema : String) : Array(String)
@@ -829,7 +829,7 @@ module Krikri
       in_schema = " IN SCHEMA #{quote_ident(p.schema)}"
 
       # REVOKE ALL first, so the end state is exactly `desired` rather
-      # than the union of desired and whatever was there before - real
+      # than the union of desired and whatever was there before -
       # Ansible pairs the same two statements for state: present.
       db.exec "ALTER DEFAULT PRIVILEGES#{for_role}#{in_schema} REVOKE ALL ON #{cls} FROM #{grantee}"
       return if desired.empty?

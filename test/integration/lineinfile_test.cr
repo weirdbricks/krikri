@@ -621,8 +621,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
   end
 
   describe "atomic write / unsafe_writes:" do
-    # The write path is now a same-directory temp file + rename (real
-    # Ansible's atomic_move), so an existing file's mode must survive
+    # The write path is now a same-directory temp file + rename (Ansible's atomic_move), so an existing file's mode must survive
     # the edit.
     it "preserves the file's mode through the atomic rename" do
       path = param_path("lineinfile-atomic-mode.txt")
@@ -705,7 +704,7 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
   end
 
   describe "attributes:/attr: (chattr flags)" do
-    # Mirrors copy_param_coverage_spec.cr's own attr: spec - real
+    # Mirrors copy_param_coverage_spec.cr's own attr: spec -
     # Ansible's set_attributes_if_different reports changed
     # unconditionally for '-'-prefixed requests
     # (ansible/ansible#33745).

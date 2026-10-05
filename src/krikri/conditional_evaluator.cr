@@ -221,11 +221,11 @@ module Krikri
       # TemplateAssertionError for the whole source up front). This
       # evaluator instead discovers filters lazily while evaluating
       # operands, so an invalid name inside a clause that short-circuit
-      # evaluation never reaches was silently skipped where real
+      # evaluation never reaches was silently skipped where
       # ansible-playbook hard-fails the task. jriguera.configdrive
       # (round 20014): `when: X is defined and not X is none and
       # Y|success and ...` with X undefined - the `|success` filter is
-      # Ansible 1.x-only (removed from modern ansible-core), real
+      # Ansible 1.x-only (removed from modern ansible-core),
       # Ansible fails with "Syntax error in expression: No filter named
       # 'success'.", here the first clause was already False so the
       # invalid filter was never touched and the task silently skipped.
@@ -412,7 +412,7 @@ module Krikri
       # recursed into the parens, which unwrap_outer_parens then
       # unwrapped), as did every paren/quote combination WITHOUT a
       # leading no-space `not(` - `not(x is none)`, `(x | trim == '')`,
-      # `((x | trim == ''))` all verified identical to real
+      # `((x | trim == ''))` all verified identical to
       # ansible-playbook before the fix. Deliberately NOT strict here,
       # same rationale as the `not ` branch below: Python/Jinja's `not`
       # always produces a real bool regardless of the operand's type.
@@ -513,7 +513,7 @@ module Krikri
       # literal, e.g. `("'x' in mylist" or false) is string` - and
       # evaluate_in's own quote-aware split then finds no depth-0
       # operator at all, returns false for "too few parts", and the
-      # condition silently evaluated false (the task skipped) where real
+      # condition silently evaluated false (the task skipped) where
       # ansible-core 2.19.11 evaluates the `is string` test on the
       # parenthesized or-result and RUNS the task (live-verified,
       # synthetic_batch_bench.yml's edge-case section, 0.9.1267). When
@@ -608,7 +608,7 @@ module Krikri
       # completely fresh host where "Check Vault installation" had
       # genuinely failed and left `.stdout` empty, producing a bogus
       # "-version" command with no vault binary in it at all.
-      # "succeeded"/"success"/"successful" are the same test - real
+      # "succeeded"/"success"/"successful" are the same test -
       # Ansible's own TestModule.tests maps all three (plus "failure",
       # "change", "skip" short aliases) to the same underlying checks.
       # "successful" specifically was missing here even though it's the
@@ -641,7 +641,7 @@ module Krikri
       end
 
       # Handle 'is exists' / 'is file' / 'is directory' / 'is link' /
-      # 'is link_exists' (plus each "is not ..." negation) - real
+      # 'is link_exists' (plus each "is not ..." negation) -
       # Ansible's own path-check tests. Like lookup('file', ...), these
       # always check the CONTROLLER's filesystem, never the target's -
       # matches Ansible's own behavior (these are plain os.path.*
@@ -660,7 +660,7 @@ module Krikri
         end
       end
 
-      # Handle 'is same_file(...)' (plus "is not ..." negation) - real
+      # Handle 'is same_file(...)' (plus "is not ..." negation) -
       # Ansible's own test, os.path.samefile (same device+inode, not
       # just equal path strings - true for two different paths to the
       # same hardlinked file).
@@ -1194,7 +1194,7 @@ module Krikri
       return nil unless base.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
 
       value = vars[base]?
-      # A base whose own raw value is unrendered Jinja needs real
+      # A base whose own raw value is unrendered Jinja needs
       # Ansible's recursive re-templating before its null-ness is
       # meaningful - the generic path already handles that strictly, so
       # hand the case back rather than answer from the raw template text.
@@ -1277,7 +1277,7 @@ module Krikri
     # variable literally named `{'a': 1, 'b': 2}` and raised
     # "'{'a': 1, 'b': 2}' is undefined" - found live via the
     # modules_data.yml benchmark's shapers assert
-    # (`({"a": 1} | combine({"b": 2})) == {"a": 1, "b": 2}`), which real
+    # (`({"a": 1} | combine({"b": 2})) == {"a": 1, "b": 2}`), which
     # ansible-core 2.19 passes.
     #
     # The comparison is done over canonical JSON: a side that IS a dict
@@ -2080,11 +2080,11 @@ module Krikri
     private def self.evaluate_version_test(left_expr : String, test_name : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       # A structured (Hash) left operand - the bare `ansible_version`
       # magic-var dict itself instead of its `ansible_version.string` /
-      # `.full` dotted field - is a task-failing templating error in real
+      # `.full` dotted field - is a task-failing templating error in
       # Ansible, not something to silently stringify and digit-scan.
       # Found via timorunge.pmm_client's own
       # `update_cache: "{{ omit if ((ansible_pkg_mgr == 'dnf') and
-      # (ansible_version is version('2.7', '<'))) else 'yes' }}"`: real
+      # (ansible_version is version('2.7', '<'))) else 'yes' }}"`:
       # ansible-core 2.19 str()-ifies the dict and hands it to the
       # version comparator, which raises "Version comparison failed:
       # '<' not supported between instances of 'str' and 'int'" -
@@ -2302,7 +2302,7 @@ module Krikri
       # is not itself a variable name - inverting `not in vars` to
       # false and leaving the service in the list instead of removing
       # it, so a later task's template referencing the (genuinely
-      # undefined) `apache_daemon` variable failed outright where real
+      # undefined) `apache_daemon` variable failed outright where
       # Ansible had already filtered it out.
       if (resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(container_expr)) && resolved.raw.is_a?(Hash)
         item = evaluate_value(item_expr, vars, raise_undefined)
@@ -2354,7 +2354,7 @@ module Krikri
       # membership always came back false. `failed_when: result.rc not
       # in [0, 3, 4]` (openstack.ansible-hardening's own kdump-service
       # check, "not in" is `!evaluate_in`) therefore always evaluated
-      # true regardless of the real rc, hard-failing a task real
+      # true regardless of the real rc, hard-failing a task
       # Ansible treats as a legitimate rc=3/4 success and halting the
       # rest of the play for that host.
       if container.is_a?(String)
@@ -2660,7 +2660,7 @@ module Krikri
 
         # The head is DEFINED but its own raw value is unrendered Jinja
         # bottoming out at a name set nowhere (`site_errorlog: "/home/{
-        # { system_user }}/..."` with no system_user anywhere) - real
+        # { system_user }}/..."` with no system_user anywhere) -
         # Ansible's recursive re-templating renders that value strictly
         # before the first filter applies, failing with the innermost
         # missing name, where the lenient re-render inside the
@@ -2708,7 +2708,7 @@ module Krikri
         # the render came back empty, so a defined None returns Nil
         # here - which #evaluate_truthiness's own strict check reports
         # as the NoneType it stands for - while a genuinely substituted
-        # empty string keeps failing as type 'str', exactly like real
+        # empty string keeps failing as type 'str', exactly like
         # Ansible.
         if rendered.empty?
           begin
@@ -2830,7 +2830,7 @@ module Krikri
           # lenient render below bakes the "undefined" sentinel into the
           # string, so a bare `when: site_errorlog` truthiness check
           # answered a non-boolean string (its own downstream strict
-          # check failing with the wrong message) instead of real
+          # check failing with the wrong message) instead of
           # Ansible's "'system_user' is undefined" (inmotionhosting.
           # php_fpm, round 82024).
           strict_probe_templated_value(vars, value, raise_undefined, expr)

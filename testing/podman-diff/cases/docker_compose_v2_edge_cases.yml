@@ -1,6 +1,6 @@
 # docker_compose_v2 edge cases. NO docker daemon OR docker CLI inside
 # either harness container (no docker-in-podman), so only the
-# argument-validation surface real Ansible performs BEFORE any CLI/daemon
+# argument-validation surface Ansible performs BEFORE any CLI/daemon
 # contact is fully comparable (required_one_of, choice checks, mutually
 # exclusive, required_by - all deterministic AnsibleModule/argspec text,
 # rendered). The real side needs community.docker installed (run.sh gates

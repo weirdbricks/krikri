@@ -90,7 +90,7 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ [1, v_omit, 3] }}"
       YAML
-    # A whole-span `{{ expr }}` module arg is natively typed like real
+    # A whole-span `{{ expr }}` module arg is natively typed like
     # Ansible's own module args (live-verified vs ansible-playbook
     # 2.19.11: `debug: msg: "{{ [1, omit, 3] }}"` prints msg as a real
     # LIST, pretty-printed by the callback - never a compact wire
@@ -104,7 +104,7 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 1, 'b': v_omit} }}"
       YAML
-    # Same whole-span native typing as above (live-verified: real
+    # Same whole-span native typing as above (live-verified:
     # Ansible prints msg as a real dict with only the omit key dropped,
     # pretty-printed).
     output.must_include("\"msg\": {\n        \"a\": 1\n    }")
@@ -122,7 +122,7 @@ describe "omit" do
           ansible.builtin.debug:
             msg: "{{ {'a': 0, 'b': false, 'c': '', 'd': v_omit} }}"
       YAML
-    # Same whole-span native typing as above (live-verified: real
+    # Same whole-span native typing as above (live-verified:
     # Ansible keeps "", 0 and False in the natively-typed containers,
     # pretty-printed).
     output.must_include("\"msg\": [\n        \"kept\",\n        \"\",\n        0,\n        false\n    ]")

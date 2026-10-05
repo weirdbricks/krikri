@@ -38,7 +38,7 @@ describe Krikri::PluginHelpers::PostgresqlQueryHeuristics do
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("DELETE", 2).must_equal(true)
     end
 
-    it "always reports changed for other statements (real module's else branch)" do
+    it "always reports changed for other statements (Ansible module's else branch)" do
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("CREATE", 0).must_equal(true)
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("TRUNCATE", 0).must_equal(true)
       Krikri::PluginHelpers::PostgresqlQueryHeuristics.changed?("ALTER", 0).must_equal(true)

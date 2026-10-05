@@ -3,7 +3,7 @@ require "file_utils"
 
 # Regression spec for `package:`'s apt install/remove commands missing
 # Ansible's default dpkg options (`-o Dpkg::Options::=--force-confdef
-# -o Dpkg::Options::=--force-confold`, apt.py's DPKG_OPTIONS). Real
+# -o Dpkg::Options::=--force-confold`, apt.py's DPKG_OPTIONS).
 # Ansible's apt module threads those options into every apt-get call it
 # builds; package.cr's own separate apt dispatch didn't, so an install
 # whose package ships a conffile that already exists on disk unowned made

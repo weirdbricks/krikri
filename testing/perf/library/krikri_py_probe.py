@@ -1,10 +1,10 @@
 #!/usr/bin/python3
-# (Shebang is a plain interpreter path, not /usr/bin/env - real Ansible
+# (Shebang is a plain interpreter path, not /usr/bin/env - Ansible
 # rewrites python-module shebangs to its discovered interpreter, and
 # 2.19's validation rejects env-style shebangs outright.)
 # krikri modules-misc2 py_module fixture (referenced as `krikri_py_probe:`
 # from modules_misc2.yml, resolved from this playbook-dir library/ by BOTH
-# real Ansible and krikri-playbook). Probes importability of a module
+# Ansible and krikri-playbook). Probes importability of a module
 # that is virtually always present (os, json) and one that is virtually
 # never present, exercising both the found and the not-found path - the
 # module itself always exits ok (failed is never set), so the probe can

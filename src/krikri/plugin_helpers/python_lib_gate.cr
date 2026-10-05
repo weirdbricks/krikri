@@ -3,7 +3,7 @@ require "json"
 module Krikri
   # Ansible's missing_required_lib(<library>) message, verbatim, for a target that cannot import <library>.
   #
-  # The shape of the parity problem this covers: several real modules
+  # The shape of the parity problem this covers: several Ansible modules
   # import a Python library at MODULE level, so a target without it
   # fails the task with this message before the module validates a
   # single one of its own arguments. krikri implements those modules

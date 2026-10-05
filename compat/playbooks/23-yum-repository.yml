@@ -54,7 +54,7 @@
         reposdir: /work/yum.repos.d
       register: remove_result
 
-    # baseurl:/gpgkey: are real Ansible's own type: list params - multiple
+    # baseurl:/gpgkey: are Ansible's own type: list params - multiple
     # values render as a tab-indented continuation line (real Python
     # configparser's own multi-line value format), not a space, unlike
     # exclude:/includepkgs: below.

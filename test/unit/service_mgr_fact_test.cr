@@ -13,7 +13,7 @@ require "../../src/krikri/plugin_helpers/service_mgr_fact"
 #
 # The two pure decision points of that chain are pinned here; the
 # filesystem-dependent fallbacks run live in FactsGatherer and in
-# ServicePlugin's probe, and were validated end-to-end against real
+# ServicePlugin's probe, and were validated end-to-end against
 # ansible in containers (bash PID 1 + /sbin/init -> systemd: both
 # engines report fact "systemd" and fail with "Service is in unknown
 # state"; `sleep infinity` PID 1: both engines report fact "sleep" and

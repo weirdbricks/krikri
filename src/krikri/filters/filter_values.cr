@@ -55,7 +55,7 @@ module Krikri
           # Same Python-parity class as the NoneType case above, found
           # via srsp.oracle-java (nested dep of wcm_io_devops.aem_cms):
           # `when: java_version > 8 and java_subversion | length == 0`
-          # where java_subversion holds a native YAML float (0.1). Real
+          # where java_subversion holds a native YAML float (0.1).
           # ansible-core fails the task outright ("object of type
           # '_AnsibleTaggedFloat' has no len()" on 2.19; plain 'float'
           # on <= 2.18), while the `else` coercion below happily took

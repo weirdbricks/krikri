@@ -18,7 +18,7 @@ module Krikri
   # Idempotency (changed: false on a no-op rsync run) comes from rsync's
   # own itemized output - see SynchronizeRsync's changed-detection comment.
   class SynchronizePlugin < BasePlugin
-    # Real module success shape: exit_json(changed=, msg=, rc=, cmd=,
+    # Ansible module success shape: exit_json(changed=, msg=, rc=, cmd=,
     # stdout_lines=) - the empty msg is included (the key is passed
     # explicitly), and the controller backfills failed: false last.
     SUCCESS_KEY_ORDER = ["changed", "msg", "rc", "cmd", "stdout_lines"]

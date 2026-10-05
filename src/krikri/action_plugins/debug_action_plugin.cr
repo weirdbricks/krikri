@@ -9,7 +9,7 @@ module Krikri
   # debug: (ansible.builtin.debug) as a controller-side action plugin -
   # ported verbatim from plugins/debug.cr (see PluginManager::
   # NEEDS_FULL_VARS's own comment for why this and assert: were the only
-  # two plugins reading the full vars context in the first place). Real
+  # two plugins reading the full vars context in the first place).
   # ansible-core's own debug module has always been action-plugin-only
   # (action/debug.py) - it never had a target-side module at all, so
   # running it as a real remote plugin binary here was itself a

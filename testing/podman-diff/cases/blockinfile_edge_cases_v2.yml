@@ -88,7 +88,7 @@
     - ansible.builtin.debug:
         msg: "B7 failed={{ b7.failed }} changed={{ b7.changed }}"
 
-    - name: "B8 no marker braces: {mark} missing (real ansible warns and appends raw)"
+    - name: "B8 no marker braces: {mark} missing (Ansible warns and appends raw)"
       ansible.builtin.blockinfile:
         path: /tmp/krikri-diff-blockfile
         block: |

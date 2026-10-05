@@ -5,7 +5,7 @@
 # shape test-block-skip-prefix.yml already covers - printed its
 # children's skipping banners without the "role : " prefix. The
 # multi-host block path printed the skip banners before propagating
-# role context into the block's children; real ansible-playbook keeps
+# role context into the block's children; ansible-playbook keeps
 # the prefix ("TASK [buluma.httpd : Modify selinux settings]").
 - name: skipped block child keeps role prefix
   hosts: localhost

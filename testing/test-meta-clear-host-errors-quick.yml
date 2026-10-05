@@ -1,7 +1,7 @@
-# meta: clear_host_errors - real Ansible's own doc: "clears the failed
+# meta: clear_host_errors - Ansible's own doc: "clears the failed
 # state (if any) from hosts specified in the play's list of hosts. This
 # will make them available for targeting in subsequent plays, but not
-# continue execution in the current play." Verified live against real
+# continue execution in the current play." Verified live against
 # ansible-playbook (community.general docs' own example shape: a failing
 # task immediately followed by clear_host_errors in the same task list) -
 # genuinely global like end_play, not scoped to whichever host(s) happen

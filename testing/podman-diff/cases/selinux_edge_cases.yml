@@ -1,11 +1,11 @@
 # selinux edge cases. The harness containers have NO SELinux (no
 # /sys/fs/selinux) and no /etc/selinux/config initially - the missing-
-# config path is exactly what the real module fails on unconditionally
+# config path is exactly what the Ansible module fails on unconditionally
 # (see plugins/selinux.cr's class docs; found live via buluma.selinux
 # on a Rocky 9.6 host missing the SELinux-policy package). Later cases
 # create a minimal /etc/selinux/config by hand so the config-rewrite
 # paths (policy-required, idempotency, nonexistent policy type) run
-# against a real file. Real ansible.posix.selinux needs
+# against a real file. Ansible.posix.selinux needs
 # python3-selinux + python3-semanage in the real container (run.sh's
 # ^selinux/^seboolean gated block) or the libselinux import check
 # fails first and masks all of it. Msg wording differs between engines

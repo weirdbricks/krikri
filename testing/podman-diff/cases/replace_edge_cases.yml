@@ -4,7 +4,7 @@
 # debug line, so the diff sees the actual on-disk result. failed=/
 # changed=/backup_file presence are what matter; error-message WORDING
 # may legitimately differ between engines. Task names carry no "=" so
-# real ansible's "TASK [...]" header lines can never match the
+# Ansible's "TASK [...]" header lines can never match the
 # harness's msg extractor.
 - hosts: all
   gather_facts: false
@@ -124,7 +124,7 @@
     - ansible.builtin.debug:
         msg: "R8 failed={{ r8.failed | default('none') }} changed={{ r8.changed | default('none') }}"
 
-    - name: "R9 unsupported parameter must fail like real Ansible"
+    - name: "R9 unsupported parameter must fail like Ansible"
       ansible.builtin.replace:
         path: /tmp/R1.txt
         regexp: 'hue'

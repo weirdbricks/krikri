@@ -104,7 +104,7 @@ describe "fat plugin binary --daemon mode" do
     # didn't). elan.monitoring_blackbox_exporter's sibling block then
     # evaluated `when: blackbox_exporter_remote_version["failed"] or ...`
     # against that shape and died with "object of type 'dict' has no
-    # attribute 'failed'" once per loop item on the warm run, where real
+    # attribute 'failed'" once per loop item on the warm run, where
     # ansible-playbook skips the whole block (its warm recap there:
     # ok=9 skipped=10; krikri's: ok=7 failed=1). This drives the REAL
     # compiled daemon over the same length-prefixed pipe

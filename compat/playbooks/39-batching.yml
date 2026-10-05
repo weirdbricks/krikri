@@ -17,7 +17,7 @@
 # static `localhost ansible_connection=local` - this playbook is never
 # run through the normal compare() path.
 #
-# The hard-failure play is deliberately LAST: real Ansible removes a host
+# The hard-failure play is deliberately LAST: Ansible removes a host
 # that fails without ignore_errors: from every *remaining* play in the
 # whole run, not just the rest of the play it failed in (a real,
 # pre-existing divergence from this codebase's own per-play

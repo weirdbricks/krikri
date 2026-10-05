@@ -76,7 +76,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
   it "fails a loop: source list referencing the alias (Ansible's scoping)" do
     # round900321 f500.bashrc, live-verified against ansible-playbook:
     # `loop: ["{{ ansible_ssh_user }}"]` with only ansible_user set is a
-    # HARD task failure ("'ansible_ssh_user' is undefined") - real
+    # HARD task failure ("'ansible_ssh_user' is undefined") -
     # Ansible's loop-source resolution renders against a vars snapshot
     # that never saw the legacy-alias synthesis (which only applies to
     # final task-arg templating). This engine used to synthesize the
@@ -113,7 +113,7 @@ describe "ansible_ssh_user/ansible_ssh_host/ansible_ssh_port legacy aliases" do
     #     - "{{ ansible_ssh_user }}"
     # fed to `with_items: "{{ bashrc_users }}"`. The role default itself
     # stays lazily unrendered, but the LOOP-SOURCE templating recursively
-    # renders its elements against the alias-free snapshot - real
+    # renders its elements against the alias-free snapshot -
     # ansible-playbook fails the task with "'ansible_ssh_user' is
     # undefined" (origin traced to defaults/main.yml's own entry;
     # live-verified), so the loop never runs.

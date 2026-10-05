@@ -1,7 +1,7 @@
 # Regression fixture for render_task_vars's per-key rescue
 # (executor.cr) - a task-level vars: entry that legitimately raises
 # (`| first` on a genuinely empty sequence) must not crash a task whose
-# own when: would have skipped it before real Ansible's lazy per-key
+# own when: would have skipped it before Ansible's lazy per-key
 # Jinja templating ever touched that expression. Real trigger: devsec.
 # hardening.os_hardening's own mount-hardening task.
 - name: "task-level vars: laziness test"

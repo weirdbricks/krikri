@@ -28,7 +28,7 @@ describe Krikri::PluginHelpers::GemCommand do
       cmd.must_equal(%(gem install --norc --user-install --no-document rake))
     end
 
-    it "matches real gem.py's own flag order: install, [--norc], [-v], [--source], [--ignore-dependencies], [user-install], [--bindir], --no-document, name" do
+    it "matches Ansible's gem module's own flag order: install, [--norc], [-v], [--source], [--ignore-dependencies], [user-install], [--bindir], --no-document, name" do
       cmd = Krikri::PluginHelpers::GemCommand.install_command(
         "gem", "rake", "13.0.6", false, "/opt/bin", "https://example.com", false, true
       )

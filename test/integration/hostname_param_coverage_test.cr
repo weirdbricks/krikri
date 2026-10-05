@@ -5,7 +5,7 @@ require "file_utils"
 # parameter (Ansible's STRATS dict: alpine/debian/freebsd/generic/
 # macos/macosx/darwin/openbsd/openrc/redhat/sles/solaris/systemd).
 #
-# Every asserted failure text was live-verified against real
+# Every asserted failure text was live-verified against
 # ansible-core 2.19.4's own
 # the Ansible module, run
 # directly inside a rockylinux:9 container via

@@ -67,7 +67,7 @@ module Krikri
 
     property? check_mode : Bool
 
-    # Which init system drives this service. Mirrors the branches of real
+    # Which init system drives this service. Mirrors the branches of
     # Ansible's `LinuxService.get_service_tools`, in its order.
     enum Manager
       Systemd
@@ -127,10 +127,10 @@ module Krikri
       @check_mode = true?(@params["_ansible_check_mode"]?)
     end
 
-    # Which params of #SYSTEMD_UNUSED_PARAMS were actually given, with real
+    # Which params of #SYSTEMD_UNUSED_PARAMS were actually given, with
     # Ansible's exact warning text per param, in its own UNUSED_PARAMS list
     # order. Emitted whenever the resolved manager is systemd - both
-    # auto-detected and `use: systemd` - because that is exactly when real
+    # auto-detected and `use: systemd` - because that is exactly when
     # Ansible's action plugin resolves the module name to "systemd" and
     # strips them. (An unresolvable `use:` value is this engine's auto-detect
     # fallback, so it warns too; Ansible would fall back to the generic

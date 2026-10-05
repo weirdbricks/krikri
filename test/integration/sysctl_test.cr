@@ -124,7 +124,7 @@ describe "sysctl plugin" do
     # unquoted - a space-separated value (net.ipv4.ip_local_port_range's
     # own real shape: "32768 65535") split into two shell words, so
     # sysctl set only the first token and then failed on the second as a
-    # bogus bare key, failing the whole task where real
+    # bogus bare key, failing the whole task where
     # ansible.posix.sysctl's own quoted write succeeds. Found via
     # juju4.harden_sysctl, round 60128. Re-applies the key's own CURRENT
     # live value (read directly from /proc/sys first) so this is a

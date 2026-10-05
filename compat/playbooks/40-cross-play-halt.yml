@@ -1,6 +1,6 @@
 # Regression coverage for a real, previously-shipped cross-cutting
 # engine bug (found while building 39-batching.yml, unrelated to
-# batching itself; fixed alongside this coverage): real Ansible removes
+# batching itself; fixed alongside this coverage): Ansible removes
 # a host that fails without ignore_errors: from *every remaining play in
 # the whole run*, not just the rest of the play it failed in.
 # TaskExecutor's own halted_hosts was scoped per-play (krikri-playbook.cr

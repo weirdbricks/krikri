@@ -1,7 +1,7 @@
 #!/usr/bin/env crystal
 
 # subversion module (ansible.builtin.subversion) - checks out/updates an
-# SVN working copy via the real `svn` binary, same approach real
+# SVN working copy via the real `svn` binary, same approach
 # Ansible's own module takes (it shells out to svn too, no pysvn/python
 # binding).
 #
@@ -129,7 +129,7 @@ module Krikri
       is_svn_repo = dest_exists && remote_dir_exists?(File.join(dest, ".svn"))
 
       if export || !dest_exists
-        # Real module reports check-mode changed before the checkout=no
+        # Ansible module reports check-mode changed before the checkout=no
         # no-op check, so checkout=no in check mode still reports changed.
         return PluginResult.new(changed: true, failed: false) if check_mode
 
@@ -382,7 +382,7 @@ module Krikri
       result = svn_exec("#{svn} checkout #{force_flag}#{rev_flag}#{auth} #{shell_quote(repo)} #{shell_quote(dest)}")
       return check_rc_result([svn] + auth_display_args + op, result[:exit_code], result[:stdout], result[:stderr]) unless result[:exit_code] == 0
 
-      # Real module: a checkout into a fresh dest reports before: null
+      # Ansible module: a checkout into a fresh dest reports before: null
       # plus the ["Revision: N", "URL: ..."] pair from svn info.
       info = svn_info(svn, dest, auth)
       PluginResult.new(changed: true, failed: false, before: nil, after: [info[:rev_line], info[:url_line]])
@@ -421,7 +421,7 @@ module Krikri
       target_rev = revision == "HEAD" ? head_revision(svn, dest, auth) : revision
 
       if check_mode
-        # Real module's check-mode path (needs_update) compares parsed
+        # Ansible module's check-mode path (needs_update) compares parsed
         # revision numbers and reports before/after as bare "Revision: N"
         # strings, not the [revision, URL] pair.
         if (b = before.to_i?) && (t = target_rev.to_i?)

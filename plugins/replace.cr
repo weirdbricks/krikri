@@ -62,7 +62,7 @@ module Krikri
       # verified against the Ansible module's own output for this exact
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
-      # not part of the real argument_spec, so none are rejected. The
+      # not part of Ansible's argument_spec, so none are rejected. The
       # parenthesized alias list mirrors Ansible's msg (attr, dest,
       # destfile, name).
       replace_supported = {"after", "attributes", "backup", "before", "encoding", "group", "mode", "owner", "path", "regexp", "replace", "selevel", "serole", "setype", "seuser", "unsafe_writes", "validate", "attr", "dest", "destfile", "name"}

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "json"
 
-# Regression for the podman-diff dnf_edge_cases N2/N6 findings: real
+# Regression for the podman-diff dnf_edge_cases N2/N6 findings:
 # ansible-core's dnf module rejects parameters outside its argument_spec
 # (message live-verified against bookworm's ansible-core 2.14) and
 # fails bool-typed params on non-boolean strings, before any module

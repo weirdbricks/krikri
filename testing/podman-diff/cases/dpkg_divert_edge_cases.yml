@@ -1,6 +1,6 @@
 # community.general.dpkg_divert edge cases. Fully testable here: the
 # harness containers are real Debian (dpkg-divert ships with dpkg) and
-# the plugin shells to the same binary the real module drives - no
+# the plugin shells to the same binary the Ansible module drives - no
 # gate needed. The two engines run in SEPARATE containers, so the
 # stateful sequence (create -> idempotent -> remove -> rename conflict
 # -> force) is independent per engine. Real-module specifics under

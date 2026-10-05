@@ -102,7 +102,7 @@
         msg: "W8 failed={{ w8.failed | default('none') }} changed={{ w8.changed | default('none') }} msg={{ w8.msg | default('none') }}"
 
     - name: "W9 mysql_user with a nonexistent socket"
-      # The Exception-message tail of real's connect failure is
+      # The Exception-message tail of Ansible's connect failure is
       # PyMySQL-specific ((errno, "...") reprs), so W9 compares the
       # failed=/changed= shape only; the deterministic wrapper part of
       # the message is asserted by the unit-level regression spec

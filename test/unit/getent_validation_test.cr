@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Pins plugins/getent.cr's AnsibleModule surface against real
+# Pins plugins/getent.cr's AnsibleModule surface against
 # ansible.builtin.getent (ansible-core 2.14 getent.py; live-diffed via
 # the podman-diff getent_edge_cases harness): required-args wording, the
 # fail_key bool conversion, unsupported params (no aliases -> no

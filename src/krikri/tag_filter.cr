@@ -5,7 +5,7 @@ module Krikri
   # special tag names and the two magic task tags. Previously this was a
   # single line in krikri-playbook.cr - `task.tags.any? { |t| tags.includes?(t) }`,
   # applied only when --tags was passed and only to TOP-LEVEL tasks -
-  # which got five distinct things wrong (all verified against a real
+  # which got five distinct things wrong (all verified against a
   # ansible-core 2.19.4):
   #
   #   * `tags: never` was ignored, so a task the author explicitly marked

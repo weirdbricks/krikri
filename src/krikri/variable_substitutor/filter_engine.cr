@@ -51,7 +51,7 @@ module Krikri
       # raised inside the filter). Subclasses UnknownFilterError so every
       # existing "rescue ex : UnknownFilterError" clean-task-failure site
       # catches it unchanged - but the message carries the filter's own
-      # failure rather than the misleading "No filter named 'X'.": real
+      # failure rather than the misleading "No filter named 'X'.":
       # Ansible fails the task with "The filter plugin 'xrt_latest'
       # failed: No XRT version found for this OS" (live-verified against
       # ansible-core 2.19, Accelize.aws_fpga round 83177), never with an

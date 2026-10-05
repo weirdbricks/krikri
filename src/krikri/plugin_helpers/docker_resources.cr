@@ -40,8 +40,7 @@ module Krikri
       end
 
       # `memory_swap:` alone among the byte-size params also accepts the
-      # literal strings `"unlimited"`/`"-1"` for unlimited swap (real
-      # Ansible's own documented convention, matching
+      # literal strings `"unlimited"`/`"-1"` for unlimited swap (Ansible's own documented convention, matching
       # `_preprocess_convert_to_bytes(..., unlimited_value=-1)`).
       def self.memory_swap_to_bytes(value : String) : Int64
         return -1_i64 if value == "unlimited" || value == "-1"

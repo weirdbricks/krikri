@@ -573,8 +573,7 @@ module Krikri
       paths
     end
 
-    # True when any of the six Jinja delimiter-string task params (real
-    # Ansible's block_start_string/...) is set to a non-default value.
+    # True when any of the six Jinja delimiter-string task params (Ansible's block_start_string/...) is set to a non-default value.
     # The text-level Jinja compat rewrites (#rewrite_inline_ternaries'
     # INLINE_TERNARY/TAG_IF_ELIF/FOR_TUPLE_PARENS regexes) hard-code the
     # classic delimiter shapes; with custom delimiters those byte

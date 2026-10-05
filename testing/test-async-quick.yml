@@ -12,7 +12,7 @@
   gather_facts: false
 
   tasks:
-    - name: async with poll > 0 blocks and returns the real module result
+    - name: async with poll > 0 blocks and returns the Ansible module result
       ansible.builtin.command: /bin/true
       async: 30
       poll: 1

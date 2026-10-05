@@ -62,7 +62,7 @@ module Krikri
       # re-serialized from its parsed keys, exactly like the Ansible module's
       # serialize() pass. With `exclusive` (state present only), every
       # existing key whose blob isn't among the new keys is deleted - the
-      # real module's "remove all other keys to honor exclusive".
+      # Ansible module's "remove all other keys to honor exclusive".
       def self.ensure_keys(text : String, key_lines : Array(String), present : Bool, exclusive : Bool = false) : {String, Bool}
         lines = text.split("\n").reject(&.empty?)
         requested = key_lines.map { |line| parse_key(line) }
@@ -117,7 +117,7 @@ module Krikri
         changed
       end
 
-      # Real module's exclusive pass: drop every parsed key line whose
+      # Ansible module's exclusive pass: drop every parsed key line whose
       # blob isn't among the requested keys. Returns the kept lines and
       # whether any line was dropped.
       private def self.apply_exclusive(result_lines : Array(String), requested : Array(ParsedKey?)) : {Array(String), Bool}
@@ -128,7 +128,7 @@ module Krikri
         {kept, kept.size != result_lines.size}
       end
 
-      # Real module's match: everything but the parse rank - blob (already
+      # Ansible module's match: everything but the parse rank - blob (already
       # equal by lookup), type, option dict (order-insensitive), comment.
       private def self.keys_match?(existing : ParsedKey, new_key : ParsedKey) : Bool
         existing.key_type == new_key.key_type &&
@@ -203,7 +203,7 @@ module Krikri
       # Mirrors the Ansible module's serialize: options comma-joined (bare
       # flags vs k=v) followed by a space, then "type blob comment". The
       # comment-less line really does end with a trailing space in the
-      # real module's output ("...%s %s %s\n" with an empty comment) -
+      # Ansible module's output ("...%s %s %s\n" with an empty comment) -
       # reproduced here byte-for-byte.
       private def self.serialize(key : ParsedKey) : String
         option_str = ""

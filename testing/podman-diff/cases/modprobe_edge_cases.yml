@@ -1,4 +1,4 @@
-# modprobe edge cases. Argument validation that real AnsibleModule does
+# modprobe edge cases. Argument validation that AnsibleModule does
 # BEFORE any real modprobe(8)/kernel call is what's testable here - a
 # container can't load or unload a real kernel module, so actual module
 # mutation is not exercised (state present on a never-loaded module
@@ -71,7 +71,7 @@
     - ansible.builtin.debug:
         msg: "M7 failed={{ m7.failed }} changed={{ m7.changed | default('none') }}"
 
-    # Real AnsibleModule validates the arg spec BEFORE
+    # AnsibleModule validates the arg spec BEFORE
     # get_bin_path('modprobe', required=True) runs, so hiding the binary
     # must not change the M2/M3 outcomes (invalid state / missing name
     # still win). M8 hides the binary only; M9 stacks invalid state on

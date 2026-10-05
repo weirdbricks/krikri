@@ -802,7 +802,7 @@ end
 # through filters, in `when:`, in `loop:`, in module args, in `template:`,
 # and through a set_fact copy. Every case gets its own canary file the
 # hostile lookup would create if the controller ever rendered the data as
-# template text; every expectation below was verified live against real
+# template text; every expectation below was verified live against
 # ansible-playbook (2.19) so the assertions pin parity, not just safety.
 # ---------------------------------------------------------------------------
 private MATRIX_SHAPES    = %w(scalar list dict list_of_dict dict_of_list)
@@ -937,8 +937,7 @@ end
 # - `when:` only proves the condition evaluated ("when-ran");
 # - a scalar/dict/dict-of-list `loop:` source FAILS in Ansible too
 #   ("must resolve to a 'list'") - assert the same failure message;
-# - a scalar through `| list` is split into single-char strings (real
-#   Ansible does the same to a string);
+# - a scalar through `| list` is split into single-char strings (Ansible does the same to a string);
 # - a dict through `| list`/`| join` yields only the KEY ("a") - the
 #   hostile VALUE must not even surface in the output.
 private def matrix_expectation(shape : String, consumer : String, canary : String) : {String, String}

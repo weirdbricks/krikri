@@ -1,7 +1,7 @@
 require "../minitest_helper"
 
 # Pins plugins/mysql_query.cr's argument-validation and check-mode
-# surface against real community.mysql.mysql_query (live-diffed vs real
+# surface against real community.mysql.mysql_query (live-diffed vs
 # ansible-playbook via the podman-diff mysql_query_edge_cases harness):
 # query required, positional_args|named_args mutually exclusive,
 # single_transaction a bool, unsupported params rejected with the full

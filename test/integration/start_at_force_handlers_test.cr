@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# --start-at-task and --force-handlers, both checked against a real
+# --start-at-task and --force-handlers, both checked against a
 # ansible-core 2.19.4 run of the same playbooks.
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
@@ -99,7 +99,7 @@ describe "--start-at-task" do
     markers(output).must_equal(["I2", "AFTER"])
   end
 
-  # A name matching nothing runs nothing and still exits 0 - real
+  # A name matching nothing runs nothing and still exits 0 -
   # Ansible treats it as "nothing to do", not an error.
   it "reports a name that matches nothing and exits 0" do
     status, output = run_with(["--start-at-task", "nonexistent"], TWO_PLAYS)

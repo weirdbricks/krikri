@@ -681,8 +681,7 @@ module Krikri
         return InventoryPlugins.parse_plugin(path, yaml, name)
       end
 
-      # YAML inventory structure: every top-level key is a group (real
-      # Ansible's yaml inventory plugin iterates them all) - not just
+      # YAML inventory structure: every top-level key is a group (Ansible's yaml inventory plugin iterates them all) - not just
       # `all:`, which silently produced an empty inventory for the legal
       # top-level `webservers:` group-file shape. Skip non-mapping values
       # (`plugin: yaml` markers and the like) and the plugin key itself.
@@ -928,7 +927,7 @@ module Krikri
       end
 
       # group_vars/<group>.yml must reach every host the group holds
-      # TRANSITIVELY, not just the ones declared directly under it: real
+      # TRANSITIVELY, not just the ones declared directly under it:
       # Ansible applies a group's vars file to the full :children tree, and
       # the common real-inventory shape - a role-targeting parent group
       # ([backend_nodes:children]) whose hosts all live in leaf groups -
@@ -946,7 +945,7 @@ module Krikri
       apply_vars_file(inventory.hosts.values, File.join(group_vars_dir, "all"), file_applied, override)
     end
 
-    # One tree's group_vars/<group>.yml pass, leaf groups first. Real
+    # One tree's group_vars/<group>.yml pass, leaf groups first.
     # Ansible's own precedence here (ansible-core's VariableManager merges
     # a host's groups deepest-first) makes the most-specific group's file
     # win a same-key collision, which set-if-absent reproduces by applying

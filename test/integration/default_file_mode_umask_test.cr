@@ -9,7 +9,7 @@ require "http/server"
 # 022 -> 0644, for copy (src: and content:), file state=touch, and get_url
 # alike). Crystal's own File.write/File.open default their creation perm to
 # 0644, which ignored the umask's group-write bit entirely - the divergence
-# these specs pin. Existing-dest overwrites are NOT covered here: real
+# these specs pin. Existing-dest overwrites are NOT covered here:
 # Ansible preserves an existing dest's mode across the move, which is a
 # separate behavior (copy.cr's stat-preservation).
 

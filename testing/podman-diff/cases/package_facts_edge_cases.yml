@@ -1,5 +1,5 @@
 # package_facts edge cases. Package LISTS legitimately differ between the
-# two containers (real's container installs ansible-core, krikri's installs
+# two containers (Ansible's container installs ansible-core, krikri's installs
 # its runtime libs), so no count/name-list comparisons - only failed=/changed=,
 # the returned fact STRUCTURE (packages is a dict keyed by package name whose
 # values are lists of {name, version, source} dicts), and failure paths.
@@ -74,7 +74,7 @@
     - ansible.builtin.debug:
         msg: "Q8 failed={{ q8.failed }} changed={{ q8.changed | default('none') }}"
 
-    - name: "Q9 dpkg is not a real manager name (real Ansible fails it as unsupported)"
+    - name: "Q9 dpkg is not a real manager name (Ansible fails it as unsupported)"
       ansible.builtin.package_facts:
         manager: dpkg
       register: q9
@@ -82,7 +82,7 @@
     - ansible.builtin.debug:
         msg: "Q9 failed={{ q9.failed }} changed={{ q9.changed | default('none') }}"
 
-    - name: "Q10 auto plus an unsupported name takes real's different auto-detect failure path"
+    - name: "Q10 auto plus an unsupported name takes Ansible's different auto-detect failure path"
       ansible.builtin.package_facts:
         manager: ["auto", "krikri-nope"]
       register: q10

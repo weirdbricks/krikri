@@ -64,7 +64,7 @@ describe "postgresql_query/postgresql_user against a real PostgreSQL server at 1
       select_result["rowcount"].as_i.must_equal(2)
       rows = select_result["query_result"].as_a
       rows.size.must_equal(2)
-      # Native JSON integers - not "1"/"2" strings (psycopg2 hands real
+      # Native JSON integers - not "1"/"2" strings (psycopg2 hands
       # Ansible native ints).
       rows[0]["id"].as_i.must_equal(1)
       rows[0]["name"].as_s.must_equal("alice")
@@ -93,7 +93,7 @@ describe "postgresql_query/postgresql_user against a real PostgreSQL server at 1
       row["i"].as_i.must_equal(7)
       row["b"].as_i.must_equal(8)
       row["f"].as_f.must_equal(2.5)
-      # Real module's convert_to_supported: Decimal -> float, i.e. a
+      # Ansible module's convert_to_supported: Decimal -> float, i.e. a
       # native JSON number (not the string "1.23").
       row["n"].as_f.must_equal(1.23)
     end

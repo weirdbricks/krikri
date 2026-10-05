@@ -29,8 +29,7 @@ describe "Krikri::PluginManager (plugin_manager_delegate_local_test.cr)" do
 
   it "the delegated host's OWN inventory ansible_connection wins" do
     origin_vars = {"ansible_connection" => JSON::Any.new("ssh")}
-    # an inventory-defined localhost that really does want SSH (real
-    # ansible honors an explicit host-level ansible_connection=ssh)
+    # an inventory-defined localhost that really does want SSH (ansible honors an explicit host-level ansible_connection=ssh)
     remote_localhost = Krikri::Host.new("localhost", "root", 22)
     remote_localhost.vars["ansible_connection"] = JSON::Any.new("ssh")
     Krikri::PluginManager.local_connection?(remote_localhost, origin_vars).must_equal(false)

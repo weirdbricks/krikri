@@ -453,7 +453,7 @@ module Krikri
     # walk, follows symlinks) trying to read it as a plain file - for a
     # symlink pointing at a DIRECTORY, that raises, and the single
     # top-level `rescue => false` around the whole archive build turned
-    # one bad member into a total build failure instead of real
+    # one bad member into a total build failure instead of
     # Ansible's own per-member error tolerance (community.general.
     # archive.py's `Archive#add` catches per-path exceptions and keeps
     # going). Emit a real SYMLINK tar entry instead (matching Python's
@@ -626,7 +626,7 @@ module Krikri
       # fallback yields an empty set, so the rewrite reports
       # changed=True) - but with format=tar the same fallback calls
       # _open_compressed_file with "tar", which fail_json's with
-      # "tar is not a valid format". Confirmed against real
+      # "tar is not a valid format". Confirmed against
       # ansible-playbook via the podman-diff archive cases (B6): an
       # existing plain-text dest + format=tar fails changed=False on
       # the real side, every other format overwrites changed=True.
@@ -698,7 +698,7 @@ module Krikri
 
     # `seuser:`/`serole:`/`setype:`/`selevel:` - SELinux file context,
     # applied to *dest* via `chcon`. Verified against AnsibleModule's
-    # own `set_context_if_different`/`selinux_enabled` source: real
+    # own `set_context_if_different`/`selinux_enabled` source:
     # Ansible skips this ENTIRELY (not even attempting it) when SELinux
     # isn't enabled on the target at all (`if not self.selinux_enabled():
     # return changed`) - matched here via the standard `/sys/fs/selinux/

@@ -6,7 +6,7 @@
 # artifact and service-directory modules that had no synthetic coverage
 # yet, each exercised with REAL side effects (not just parsing) so a
 # divergence is directly comparable by running the same playbook
-# through real ansible-playbook and krikri-playbook side by side:
+# through ansible-playbook and krikri-playbook side by side:
 #   mysql_user, mysql_variables, postgresql_user, postgresql_privs,
 #   maven_artifact, subversion, rabbitmq_plugin,
 #   rabbitmq_user, virt_net
@@ -49,7 +49,7 @@
 #   rabbitmq_user creates and removes a run-scoped throwaway user;
 #   virt_net DEFINES a run-scoped throwaway network but never activates
 #   or autostarts it, then undefines it.
-# - mysql_user's `name:` is `type: str` in the real module's
+# - mysql_user's `name:` is `type: str` in the Ansible module's
 #   argument_spec (no list form exists, unlike several other
 #   community.mysql modules), so there is no list-form call to
 #   exercise here - a single run-scoped account is used instead.
@@ -276,7 +276,7 @@
     # mysql_user: creates a run-scoped throwaway account with a real
     # password and limited privileges on the throwaway database above,
     # verifies idempotency, then removes it in the cleanup section.
-    # (No list-form call: the real module's name: is type: str.)
+    # (No list-form call: the Ansible module's name: is type: str.)
     # ---------------------------------------------------------------
     - name: Create throwaway mysql user with limited privileges
       community.mysql.mysql_user:
@@ -325,7 +325,7 @@
 
     # ---------------------------------------------------------------
     # mysql_variables: read-only global-variable queries (variable:
-    # with no value:). The real module has no read mode - mode: only
+    # with no value:). The Ansible module has no read mode - mode: only
     # applies to writes (global/persist/persist_only) - so mode: set
     # is deliberately NOT exercised (mutating server config is outside
     # this file's safety contract). version and max_connections are
@@ -507,7 +507,7 @@
     # run-scoped maven dir, verifies the file, re-asserts it
     # (checksum-idempotent, changed=false), cleans up in the cleanup
     # section. Gated on an actual connectivity probe plus the python
-    # lxml import the real module hard-requires.
+    # lxml import the Ansible module hard-requires.
     # ---------------------------------------------------------------
     - name: Download a small maven artifact
       community.general.maven_artifact:
@@ -694,7 +694,7 @@
 
     # ---------------------------------------------------------------
     # virt_net: libvirtd only. Gated on virsh, a working `virsh list`
-    # connection probe, and the python libvirt module the real module
+    # connection probe, and the python libvirt module the Ansible module
     # needs. DEFINES a run-scoped throwaway network (definition only -
     # never activated, never autostarted), re-asserts the definition
     # (idempotent no-op), verifies it via get_xml, and undefines it in

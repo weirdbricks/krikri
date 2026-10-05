@@ -42,7 +42,7 @@ module Krikri
   #   major/minor are the first two dot components, `release` is the third
   #   dot component up to its first `-`, and `suffix` is that same third
   #   component after the first `-` (empty when there is none). Note the
-  #   real module only ever looks inside that third component, so a
+  #   Ansible module only ever looks inside that third component, so a
   #   version like "10.11.14-MariaDB-0ubuntu0.24.04.1" gets suffix
   #   "MariaDB-0ubuntu0" (the ".24.04.1" tail lands in later dot
   #   components it never reads) - reproduced here for parity, verified

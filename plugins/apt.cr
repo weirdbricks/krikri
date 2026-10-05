@@ -153,7 +153,7 @@ module Krikri
     @policy_rc_d_restore_failed = false
 
     # Internal spec seam (same underscore-prefixed family as
-    # `_environment`): the policy-rc.d path is hardcoded to real
+    # `_environment`): the policy-rc.d path is hardcoded to
     # Ansible's own `/usr/sbin/policy-rc.d` for real playbooks, but the
     # lifecycle spec needs to run it against a writable temp path since
     # the spec process is unprivileged. Never set by real playbooks.
@@ -185,7 +185,7 @@ module Krikri
       # task. check_mode/diff_mode/_verbosity/_environment are engine-
       # internal keys injected by the executor (see build_plugin_config),
       # and _policy_rc_d_path is the spec seam above - none are part of
-      # the real argument_spec, so none are rejected. (_policy_rc_d_path
+      # Ansible's argument_spec, so none are rejected. (_policy_rc_d_path
       # needs an explicit exemption: it is not in the shared INTERNAL
       # list because it is this plugin's spec seam alone, and the
       # policy_rc_d lifecycle specs pass it on every call.)
@@ -240,7 +240,7 @@ module Krikri
       # 'install_recommends' is of type str and we were unable to convert
       # to bool: The value 'sometimes' is not a valid boolean. Valid
       # booleans include: ..."). Previously this plugin silently coerced
-      # anything non-"true" to false and happily proceeded where real
+      # anything non-"true" to false and happily proceeded where
       # Ansible never gets past argument validation.
       validate_bool_params!
 
@@ -371,7 +371,7 @@ module Krikri
       # unconditionally, so `apt: {update_cache: true, upgrade: dist}`
       # always reported `changed: true` merely from refreshing the
       # package lists, even when the subsequent dist-upgrade genuinely
-      # found "0 upgraded, 0 newly installed, 0 to remove" and real
+      # found "0 upgraded, 0 newly installed, 0 to remove" and
       # Ansible correctly reported `ok`. Found benchmarking robertdebock.
       # update's own "Update all software (apt)" task.
       # `name_or_pkg_param?` alone only tests whether the KEY is present -
@@ -432,7 +432,7 @@ module Krikri
             # mtime, Ansible fetched - /var/lib/apt/lists's mtime moved -
             # and still reported changed=False while python3-apt was absent,
             # and changed=True once it was present). Since this plugin shells
-            # out to the CLI and never installs python3-apt, emulate real
+            # out to the CLI and never installs python3-apt, emulate
             # Ansible's observable behavior: run the update for its side
             # effects, but keep changed=false for the sole-operation case
             # regardless of mtime movement.
@@ -527,7 +527,7 @@ module Krikri
         # the dpkg options apply to autoremove/autoclean too (`purge:
         # true` + `autoremove: true` is its own documented idiom: "Remove
         # dependencies that are no longer required and purge their
-        # configuration files"). `apt-get clean` is the exception: real
+        # configuration files"). `apt-get clean` is the exception:
         # Ansible's aptclean() runs the bare command with no options at
         # all, so it stays bare here.
         # Ansible's main() builds its `dpkg_options` ONCE - the
@@ -591,7 +591,7 @@ module Krikri
         end
       end
 
-      # `upgrade: safe|yes|dist|full` with no `name:` - real
+      # `upgrade: safe|yes|dist|full` with no `name:` -
       # Ansible's apt module maps safe/yes to a plain
       # `apt-get upgrade --with-new-pkgs` and dist/full to
       # `apt-get dist-upgrade`, with `--auto-remove` appended when
@@ -658,7 +658,7 @@ module Krikri
       end
 
       # `deb:` - install a local .deb file (or a URL, downloaded first),
-      # distinct from `name:` (a repository package name/version). Real
+      # distinct from `name:` (a repository package name/version).
       # Ansible's apt module derives the package's own name+version from
       # the .deb's control metadata (`dpkg-deb -f`) to decide idempotency,
       # then installs via `apt-get install` (not a bare `dpkg -i`) so apt
@@ -741,7 +741,7 @@ module Krikri
       # '{{ php_packages_extra }}'` with the var defaulting to `[]`
       # renders as the literal string "[]", so `name_param` itself is
       # truthy and the "no name: at all" branch above never fires, even
-      # though there is genuinely nothing to install/remove. Real
+      # though there is genuinely nothing to install/remove.
       # Ansible's apt module folds a cache update's own changed: into
       # this case too (an empty package list is exactly the same as no
       # name: given at all to its own install()/remove() no-ops) -
@@ -853,7 +853,7 @@ module Krikri
       end
     end
 
-    # `package:`/`pkg:` are documented aliases of `name:` for real
+    # `package:`/`pkg:` are documented aliases of `name:` for
     # Ansible's apt module (`aliases: [package, pkg]`).
     private def name_or_pkg_param? : String?
       @params["name"]? || @params["package"]? || @params["pkg"]?

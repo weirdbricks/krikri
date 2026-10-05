@@ -129,7 +129,7 @@ module Krikri
 
       # Explicit cacert_path:/cert_path:/key_path: params win outright;
       # only when *none* of the three is given does DOCKER_CERT_PATH's
-      # own ca.pem/cert.pem/key.pem convention kick in, matching real
+      # own ca.pem/cert.pem/key.pem convention kick in, matching
       # Ansible's own documented behavior (verified against its source).
       private def self.cert_paths(params : Hash(String, String)) : {String?, String?, String?}
         cacert_path = params["cacert_path"]?

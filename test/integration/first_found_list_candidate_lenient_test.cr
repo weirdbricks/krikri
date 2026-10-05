@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# with_first_found: LIST-form candidates are templated leniently by real
+# with_first_found: LIST-form candidates are templated leniently by
 # Ansible - the candidate strings go to the first_found lookup plugin, which
 # renders undefined references to nothing, so a candidate that references a
 # missing dict key (e.g. `{{ ansible_lsb.id }}` on a host without lsb_release,

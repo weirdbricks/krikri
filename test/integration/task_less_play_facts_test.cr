@@ -11,7 +11,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 describe "a play with an empty tasks: list" do
   it "still gathers facts and recaps ok=1 when gather_facts: is left at its default" do
     # Real bug found benchmarking arubanetworks.aoscx_role/aos_wlan_role
-    # (round833/834, both entirely task-less placeholder roles): real
+    # (round833/834, both entirely task-less placeholder roles):
     # ansible-playbook always runs "Gathering Facts" as a synthetic step
     # independent of the play's own task list (unless gather_facts:
     # false) - this engine's "Skipping play - no tasks defined" early

@@ -6,7 +6,7 @@ module Krikri
       # --gathering smart: a host whose facts this run already collected
       # (in an earlier play, via the shared run-scoped store) is not
       # queried again. Under the default `implicit` mode every play
-      # re-gathers (merging over the shared store), matching real
+      # re-gathers (merging over the shared store), matching
       # ansible-playbook's own default - a playbook that deliberately
       # re-gathers after a reboot or a package install must keep seeing
       # fresh facts, which is exactly why this is opt-in rather than a
@@ -112,7 +112,7 @@ module Krikri
         if @unreachable_hosts.includes?(host.name)
           # Same wording/shape as report_unreachable's own banner - this
           # IS that host's unreachable report, just booked from the
-          # Gathering Facts task instead of a later one, matching real
+          # Gathering Facts task instead of a later one, matching
           # Ansible's single-event recap for a host that never connects.
           puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
           @results[host.name]["unreachable"] += 1
@@ -222,7 +222,7 @@ module Krikri
       # wrong (always-defined-by-krikri) branch on a real remote host.
       params = Hash(String, String).new
       params["gather_subset"] = @gather_subset.join(",") unless @gather_subset.empty?
-      # gather_timeout/fact_path: the other two play keywords real
+      # gather_timeout/fact_path: the other two play keywords
       # Ansible forwards into its implicit setup call.
       params["gather_timeout"] = @gather_timeout.to_s if @gather_timeout
       if fact_path = @fact_path

@@ -4,7 +4,7 @@
 # "Failed to find required executable podman in paths: ..." wording),
 # so valid-args cases compare failed=/changed= only and are not
 # included. The byte-comparable surface is the AnsibleModule argument
-# validation real runs in module setup BEFORE the manager runs
+# validation Ansible runs in module setup BEFORE the manager runs
 # (required name, state/pull_policy choices in declaration order,
 # bool/int type conversion, username/password required-together,
 # auth_file/username etc. mutual exclusions, unsupported params).

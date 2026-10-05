@@ -7,7 +7,7 @@
 # The module's argument is `names` (list or comma-separated string) -
 # the `name` spelling is kept as a fallback for the historical param.
 #
-# Idempotency: real module checks `rabbitmq-plugins list -E -m` (all
+# Idempotency: Ansible module checks `rabbitmq-plugins list -E -m` (all
 # enabled plugins, minimal output - bare names, one per line) for the
 # plugin's name as an exact line match before doing anything.
 require "json"
@@ -28,7 +28,7 @@ module Krikri
       end
 
       bin = plugin_bin
-      # real module: `rabbitmq-plugins list -E -m` - ALL enabled plugins
+      # Ansible module: `rabbitmq-plugins list -E -m` - ALL enabled plugins
       # (explicit + implicit), minimal output (bare names, one per line),
       # membership checked as an exact line match. The older `list -e`
       # whole-text grep worked but the changed flag below never consulted
@@ -54,7 +54,7 @@ module Krikri
 
     private def apply_enabled_state(bin : String, plugins : Array(String), enabled_lines : Array(String), enabled : Array(String), disabled : Array(String)) : PluginResult?
       unless new_only?
-        # real module (state=enabled, new_only=false) disables every
+        # Ansible module (state=enabled, new_only=false) disables every
         # enabled plugin not in the requested names. Header lines
         # ("Listing plugins with pattern ...") contain spaces and are
         # skipped the same way the Ansible module skips them.

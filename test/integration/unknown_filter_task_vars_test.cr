@@ -50,7 +50,7 @@ end
 # The include dispatches to the include_tasks paths in executor_blocks_
 # includes.cr before execute_task's generic build_vars_context rescue
 # (0.9.885) is ever reached, so neither include path caught the raise and
-# the whole process crashed with an unhandled exception. Real
+# the whole process crashed with an unhandled exception.
 # ansible-playbook fails just the include task ("No filter named 'X'.")
 # and recaps failed=1.
 private def write_include_playbook(dir : String, extra_task_keys : String) : String

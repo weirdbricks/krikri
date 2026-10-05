@@ -165,7 +165,7 @@ module PluginSpecHelper
   # Same as #run, but the params keep their NATIVE JSON types (int, float,
   # bool, null, list, dict) instead of being stringified - needed by specs
   # that exercise type-aware plugin behavior (e.g. the strict bool-param
-  # validator's "of type int"/NoneType/list error branches, which real
+  # validator's "of type int"/NoneType/list error branches, which
   # Ansible derives from the value's own type).
   def self.run_raw(name : String, params : Hash(String, JSON::Any), vars : Hash(String, String) = {} of String => String, host_name : String = "localhost",
                    chdir : String? = nil, before_input : Proc(Nil)? = nil,

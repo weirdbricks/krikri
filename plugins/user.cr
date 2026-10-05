@@ -80,10 +80,9 @@ module Krikri
   #     idempotency comparison for it, so giving it re-issues `-f` (and
   #     reports changed) on every run - replicated.
   #   skeleton (optional): custom skeleton directory passed as useradd
-  #     `-k <dir>` at creation (only when create_home is on - real
+  #     `-k <dir>` at creation (only when create_home is on -
   #     Ansible ignores it silently otherwise), and used as the copy
-  #     source when the modify path has to create a relocated home (real
-  #     Ansible's own create_homedir: skeleton: if given, else
+  #     source when the modify path has to create a relocated home (Ansible's own create_homedir: skeleton: if given, else
   #     /etc/skel).
   #   move_home (optional, default no): with `home:` changing on an
   #     existing account, pass usermod's `-m` too (move the old home's
@@ -91,7 +90,7 @@ module Krikri
   #     `-m` alongside an actual `-d` change, never on its own.
   #   non_unique (optional, default no): allow a duplicate uid -
   #     useradd/usermod `-o`, only ever emitted together with a uid
-  #     that is being set (create) or changed (modify), matching real
+  #     that is being set (create) or changed (modify), matching
   #     Ansible's own nesting of `-o` inside its uid branch.
   #   local (optional, default no): operate on the local account files
   #     only, bypassing NSS - existence is checked by reading

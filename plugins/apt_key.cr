@@ -61,8 +61,7 @@ module Krikri
   #   a subkey)" (verified live against ansible-playbook on the
   #   round-83166 host: before == after, task failed). Previously the
   #   add path trusted apt-key's exit code alone and reported success -
-  #   diverging both in the task result and in what ran next (real
-  #   Ansible stops at the failed apt_key: task; krikri continued into
+  #   diverging both in the task result and in what ran next (Ansible stops at the failed apt_key: task; krikri continued into
   #   apt_repository: and failed later with a NO_PUBKEY apt-get update
   #   error instead). Fixed by mirroring Ansible's whole add flow:
   #   derive the key id from the staged material via `gpg --with-colons`
@@ -337,7 +336,7 @@ module Krikri
     # output (apt's own `pub   rsa4096/<ID> ...` format, code after the
     # slash) and plain `gpg --with-colons` output (field 4), skipping
     # every pub/sub line that mentions "expired" - deliberately, so an
-    # expired key never counts as installed (which is exactly why real
+    # expired key never counts as installed (which is exactly why
     # Ansible's post-add verification fails for one, see the class doc).
     private def parse_output_for_keys(output : String) : Array(String)
       found = [] of String

@@ -52,7 +52,7 @@ module Krikri
   # Validation (mirroring Ansible's own module-level argument
   # checks, which run before anything else - before pip discovery or
   # any venv creation):
-  # - required_one_of name/requirements: neither given fails with real
+  # - required_one_of name/requirements: neither given fails with
   #   Ansible's "one of the following is required: name, requirements"
   # - mutually_exclusive name/requirements and executable/virtualenv:
   #   both of a pair given fails with Ansible's "parameters are
@@ -95,7 +95,7 @@ module Krikri
     end
 
     # Set by #resolve_pip_binary when THIS task invocation itself created
-    # the target virtualenv (it didn't exist before the task ran). Real
+    # the target virtualenv (it didn't exist before the task ran).
     # Ansible's pip module counts creating a virtualenv as a change in
     # its own right, independent of whether the requested package then
     # needed installing - found benchmarking claranet.postgresql, whose
@@ -381,7 +381,7 @@ module Krikri
       return raw unless stripped.starts_with?('[') && stripped.ends_with?(']')
 
       # ONLY valid JSON - never a Python-repr repair pass: a value that
-      # merely LOOKS like a container is a plain STRING in real
+      # merely LOOKS like a container is a plain STRING in
       # ansible-core (live-verified vs ansible-playbook 2.19.11, see
       # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
       # container arg arrives as the double-quoted JSON the wire
@@ -778,7 +778,7 @@ module Krikri
     end
 
     # Each extra_args token is shell-quoted individually so an
-    # `extra_args:` value can't inject extra shell operations - real
+    # `extra_args:` value can't inject extra shell operations -
     # Ansible shlex-splits it into argv elements, and one quoted shell
     # word per token is the same argv.
     private def extra_tokens(extra : String) : String

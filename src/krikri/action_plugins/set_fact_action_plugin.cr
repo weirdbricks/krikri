@@ -208,7 +208,7 @@ module Krikri
     # a flat string that renders "undefined".
     #
     # ONLY valid JSON, though - never a Python-repr repair pass. A value
-    # that merely LOOKS like a container must stay a string: real
+    # that merely LOOKS like a container must stay a string:
     # ansible-core's native typing requires the template's whole parsed
     # AST to be exactly one output node wrapping one expression, so a
     # `{% if %}...{% else %}['dummy']{% endif %}` block (or a plain quoted
@@ -216,7 +216,7 @@ module Krikri
     # a string, period. Found live vs ansible-playbook via
     # HanXHX.debian_bootstrap: its `dbs_repo_old` block-tag default whose
     # output text happens to be `['dummy']` became a real ARRAY here, so
-    # a later `loop: "{{ dbs_repo_old }}"` silently iterated where real
+    # a later `loop: "{{ dbs_repo_old }}"` silently iterated where
     # Ansible hard-fails with "The `loop` value must resolve to a 'list',
     # not 'str'.". A genuine container never reaches this branch as
     # single-quoted repr text - the evaluator serializes containers to

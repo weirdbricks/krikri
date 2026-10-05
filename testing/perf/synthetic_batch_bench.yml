@@ -935,7 +935,7 @@
       changed_when: false
       failed_when: '"not an error" in edge_failed_reg.stdout'
 
-    # Legacy double-quoted string literal as an or-operand: real Ansible
+    # Legacy double-quoted string literal as an or-operand: Ansible
     # short-circuits to the literal's own truthiness (non-empty = truthy)
     # and never re-parses its text - the 0.9.859 recursive-templating
     # bug class. The or's result stays a string, so `is string` must be
@@ -1138,7 +1138,7 @@
         state: directory
         mode: "0755"
 
-    # Real Ansible convention: a .mount unit's name is the
+    # Ansible convention: a .mount unit's name is the
     # systemd-escaped (path-escaped) mountpoint, i.e. the static
     # bench_mnt1_unit var. Exercise systemd-escape itself and show
     # its output rather than hand-verifying the escaping.

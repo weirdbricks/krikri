@@ -225,7 +225,7 @@ module Krikri
       end
 
       # Module warnings (result["warnings"]) print as `[WARNING]: <text>` on
-      # stderr BEFORE the status line, each distinct text once per run - real
+      # stderr BEFORE the status line, each distinct text once per run -
       # ansible's Display.warning dedups on the message (live-verified vs
       # 2.19.11 with find's "Skipped '<path>' path due to this access issue").
       result["warnings"]?.try(&.as_a?).try &.each do |warning|
@@ -479,7 +479,7 @@ module Krikri
         # just absent) - Ansible's chdir-before-execution failure
         # fails the module with rc: null (its run_command never spawned
         # anything, live-verified against 2.19.4), and `.as_i` on a
-        # JSON null hard-crashed the whole engine here where real
+        # JSON null hard-crashed the whole engine here where
         # ansible-playbook simply omits the Exit code line.
         if rc_value = result["rc"]?
           unless rc_value.raw == nil
@@ -493,7 +493,7 @@ module Krikri
         # run. This was previously never printed at all for a normal
         # ignored failure (only added, narrowly, for the when:-raises-
         # an-exception case - see WhenEvaluationError's own history);
-        # fixed here so every ignored failure gets it, matching real
+        # fixed here so every ignored failure gets it, matching
         # Ansible regardless of why the task failed.
         puts "...ignoring".colorize(:red) if ignore_errors
       end
@@ -843,7 +843,7 @@ module Krikri
       end
     end
 
-    # Display an ad-hoc `ansible` command's result, matching real
+    # Display an ad-hoc `ansible` command's result, matching
     # ansible's own default ("minimal") callback: `host | STATUS | rc=N >>`
     # followed by raw stdout for command-shaped modules (rc + stdout
     # present - command/shell/script/raw), or `host | STATUS => {...}`

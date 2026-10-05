@@ -79,7 +79,7 @@ module Krikri
         "md5" + Digest::MD5.hexdigest(plaintext + user)
       end
 
-      # Real module's is_pg_passwd_md5: "md5" prefix + 32 hex digits.
+      # Ansible module's is_pg_passwd_md5: "md5" prefix + 32 hex digits.
       def self.md5_verifier_format?(value : String) : Bool
         value.size == 35 && value.starts_with?("md5") && value[3, 32].chars.all?(&.hex?)
       end

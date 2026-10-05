@@ -12,7 +12,7 @@ module Krikri
   # when:/changed_when: - there's no filesystem/network access or
   # controller-vs-target distinction to make, so this closes the gap
   # plugins/assert.cr's own comment already flagged ("Implemented as a
-  # plain module rather than the control-node-only action plugin real
+  # plain module rather than the control-node-only action plugin
   # Ansible uses ... there's nothing an action plugin buys here" - true
   # for correctness, but a real remote SSH round trip + upload for every
   # assert: task was a real, avoidable cost). plugins/assert.cr is kept
@@ -78,8 +78,7 @@ module Krikri
       # bool) - Ansible fails the whole play at this first task;
       # this plugin silently treated the nonzero int as truthy and let
       # the play continue for 5 more tasks before diverging elsewhere.
-      # Both conditional-error rescues carry changed=false (real
-      # ansible-core 2.19.11 registers changed=false+failed=true+msg for
+      # Both conditional-error rescues carry changed=false (ansible-core 2.19.11 registers changed=false+failed=true+msg for
       # a failed conditional, live-verified; see
       # ActionResult.conditional_error_result_json itself).
       current_index = 0

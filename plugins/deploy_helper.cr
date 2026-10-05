@@ -50,7 +50,7 @@ module Krikri
   # ignored, matching Ansible's behavior of treating it as always
   # "create".
   class DeployHelperPlugin < BasePlugin
-    # Real argument_spec order (live-verified: "value of state must be
+    # Ansible's argument_spec order (live-verified: "value of state must be
     # one of: present, absent, clean, finalize, query, got: X"). Real
     # has no "unfinished" state.
     private DEPLOY_STATES = %w[present absent clean finalize query]

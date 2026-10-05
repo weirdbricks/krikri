@@ -190,7 +190,7 @@ module Krikri
 
       # Ansible's argument-spec validation for this module,
       # message-for-message (the Ansible module wording),
-      # in its own evaluation order: mutually_exclusive (which real
+      # in its own evaluation order: mutually_exclusive (which
       # Ansible checks BEFORE applying defaults, so only an explicitly
       # passed flush: counts), then the per-parameter choices, then
       # required_if, then required_by. Returns the failure message, or

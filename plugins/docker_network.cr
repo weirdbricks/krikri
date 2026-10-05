@@ -101,7 +101,7 @@ module Krikri
       "scope" => %w[local global swarm],
     }
 
-    # Key order of Ansible's registered result, live-verified against real
+    # Key order of Ansible's registered result, live-verified against
     # ansible-core 2.19.11 + community.docker 5.2.1 over a Docker-API
     # socket: the module seeds its result dict with `{"changed": ...,
     # "actions": [...]}` (docker_network.py's __init__), then adds

@@ -2,7 +2,7 @@
 
 Exercises every `ansible.builtin.dnf5` option and diffs real
 `ansible-playbook` against `krikri-playbook`, so the new dnf5 plugin
-(`plugins/dnf5.cr`) can be validated against the real module's behavior.
+(`plugins/dnf5.cr`) can be validated against the Ansible module's behavior.
 
 ## Why a container
 
@@ -57,7 +57,7 @@ Three accepted divergences, none in the transaction logic:
   the dependency state accumulated across the whole matrix, which differs by a
   package or two between the two runs; the autoremove *operation* is equivalent.
 - **`name:` given an explicit null** - both engines FAIL the task (status
-  parity), but the message differs: real reports the argspec `NoneType`
+  parity), but the message differs: Ansible reports the argspec `NoneType`
   conversion error, krikri reaches `dnf5` and fails on the empty spec. This is
   the shared engine's null-vs-empty-string parameter handling, identical for
   `dnf`/`yum`, not dnf5-specific.

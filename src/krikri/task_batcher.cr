@@ -154,7 +154,7 @@ module Krikri
     end
 
     # A templated action:/local_action: (see Task#templated_action)
-    # resolves its real module name only at execution - the batch script
+    # resolves its Ansible module name only at execution - the batch script
     # path has no such resolution, and a module name that is still a raw
     # `{{ }}` template would fail plugin lookup there.
     private def self.resolves_module_at_runtime?(task : Task) : Bool
@@ -189,7 +189,7 @@ module Krikri
       PluginManager.controller_only?(task.module_name)
     end
 
-    # ufw: (community.general.ufw) applies live firewall rules - real
+    # ufw: (community.general.ufw) applies live firewall rules -
     # Ansible runs every task as its own separate SSH connection, so a
     # transient connectivity blip from one rule taking effect (a brief
     # conntrack table flush/reset, a rule that momentarily touches the

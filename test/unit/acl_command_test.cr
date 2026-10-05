@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/acl_command"
 
-# Command shapes and idempotency parsing verified against real
+# Command shapes and idempotency parsing verified against
 # ansible.posix acl.py source (build_command/split_entry/build_entry/
 # acl_changed/run_acl, read from ansible-collections/ansible.posix) AND
 # against the actual output of a real setfacl 2.3.2: `setfacl --test`
@@ -24,7 +24,7 @@ describe Krikri::PluginHelpers::AclCommand do
       Krikri::PluginHelpers::AclCommand.split_entry("o::r-x").must_equal({nil, "other", "", "r-x"})
     end
 
-    it "flips the default flag for a d/default prefix (real module's quirk: any leading-d etype counts)" do
+    it "flips the default flag for a d/default prefix (Ansible module's quirk: any leading-d etype counts)" do
       Krikri::PluginHelpers::AclCommand.split_entry("default:user:joe:rw-").must_equal({true, "user", "joe", "rw-"})
       Krikri::PluginHelpers::AclCommand.split_entry("d:u:joe:r--").must_equal({true, "user", "joe", "r--"})
     end

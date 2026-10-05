@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
 
-# Pins plugins/async_status.cr's result shapes against real
+# Pins plugins/async_status.cr's result shapes against
 # ansible.builtin.async_status's module source (async_status.py):
 # the AnsibleModule fixed wording "missing required arguments:" (plural,
 # even for one param), and the not-found fail_json call's exact kwargs

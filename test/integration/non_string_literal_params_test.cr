@@ -382,7 +382,7 @@ describe "non-string YAML literal module args (group_by/add_host)" do
   # AnsibleActionFail (with the failing param value's own Origin in the
   # [ERROR] block) and the executor's inventory.add_host name checks,
   # which abort the WHOLE run with a bare stderr [ERROR] line, rc 1 and
-  # no recap. Every expectation below was probed against real
+  # no recap. Every expectation below was probed against
   # ansible-playbook 2.19.11.
   it "group_by crashes on int/bool/float key like Ansible's group_name.replace" do
     output, _scratch = run_playbook(<<-YAML)
@@ -788,7 +788,7 @@ end
 
 # debconf's `value:` is its module's only `type: raw` option, so an int
 # literal reaches Ansible's `' '.join([pkg, question, vtype, value])`
-# (debconf.py:179) as itself and kills the module - probed against real
+# (debconf.py:179) as itself and kills the module - probed against
 # ansible-playbook 2.19.11, whose console rendering of that uncaught
 # exception is what the two must_include's below pin down. The debconf
 # binaries are PATH-shimmed through the task's own `environment:` so

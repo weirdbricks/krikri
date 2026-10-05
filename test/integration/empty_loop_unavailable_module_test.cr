@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "file_utils"
 
 # An unimplemented module behind a task whose loop resolves to ZERO items
-# is a plain skip, never an exit-4 "unavailable modules" report. Real
+# is a plain skip, never an exit-4 "unavailable modules" report.
 # Ansible resolves a looped task's module per-item inside
 # _execute_internal, so with zero items the module name is never resolved
 # (live-verified against ansible-core 2.19.11: looped missing-module task

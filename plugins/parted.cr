@@ -33,7 +33,7 @@ module Krikri
   #   - check mode: discovery runs for real, script runs are skipped
   #     (changed verdict still reported, script still reported)
   class PartedPlugin < BasePlugin
-    # Real argument_spec's deterministic orders (live-verified wording
+    # Ansible's argument_spec's deterministic orders (live-verified wording
     # against 2.19.11: "value of state must be one of: absent, info,
     # present, got: X"; "value of unit must be one of: B, KB, MB, GB, TB,
     # KiB, MiB, GiB, TiB, s, %, cyl, chs, compact, got: X" - Ansible's

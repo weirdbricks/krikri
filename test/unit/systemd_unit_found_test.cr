@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/systemd_unit_found"
 
 # Regression spec for konstruktoid.hardening's absent-unit tasks
 # (`systemd_service: {name: kdump.service, enabled: false, state: stopped,
-# masked: true}` on a unit no package installs) on Ubuntu 22.04: real
+# masked: true}` on a unit no package installs) on Ubuntu 22.04:
 # ansible-playbook refuses the enabled:/state: steps on a unit that doesn't
 # exist, so the task's own failed_when swallows "Could not find the
 # requested service" and the task reports `ok`. This engine never asked

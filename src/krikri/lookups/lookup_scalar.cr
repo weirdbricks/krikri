@@ -14,8 +14,7 @@ module Krikri
       private def ansible_config_value(name : String) : String
         name_up = name.upcase
         ansible_color_config_value(name_up) || ansible_default_config_value(name_up) ||
-          # Honour a matching ANSIBLE_<NAME> env var when present (real
-          # Ansible's own resolution order: env > cfg > default).
+          # Honour a matching ANSIBLE_<NAME> env var when present (Ansible's own resolution order: env > cfg > default).
           ENV["ANSIBLE_#{name_up}"]? || ""
       end
 
@@ -225,7 +224,7 @@ module Krikri
       # Real split_host_pattern: commas are the primary separator; a
       # colon-separated list is only the fallback (and bracketed
       # subscripts must not be split there - `web[0:2]` is one term).
-      # IPv6-literal terms are mis-split by the colon fallback in real
+      # IPv6-literal terms are mis-split by the colon fallback in
       # Ansible too ("retained only for backwards compatibility", its
       # own words), so that limitation is inherited, not introduced.
       private def split_host_pattern_terms(pattern : String) : Array(String)

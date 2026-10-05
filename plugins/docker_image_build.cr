@@ -34,7 +34,7 @@ module Krikri
   # and path checks.
   class DockerImageBuildPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
-    # Real module's argument_spec (community.docker docker_image_build.py
+    # Ansible module's argument_spec (community.docker docker_image_build.py
     # main()), in declaration order - validation iterates the MERGED spec
     # (common CLI-client args first, then the module's own) in this order,
     # so the first failing param names the surfaced error.
@@ -69,7 +69,7 @@ module Krikri
     # always strings).
     REAL_TRUE  = %w[y yes on 1 true t]
     REAL_FALSE = %w[n no off 0 false f]
-    # convert_bool.py's BOOLEANS (repr'd, TRUE set then FALSE set) - real
+    # convert_bool.py's BOOLEANS (repr'd, TRUE set then FALSE set) -
     # Ansible iterates a Python SET here, so the order differs between
     # processes (PYTHONHASHSEED); this fixed order is one of the orders
     # Ansible emits.
@@ -562,7 +562,7 @@ module Krikri
       return unless raw
 
       # ONLY valid JSON - never a Python-repr repair pass: a value that
-      # merely LOOKS like a container is a plain STRING in real
+      # merely LOOKS like a container is a plain STRING in
       # ansible-core (live-verified vs ansible-playbook 2.19.11, see
       # apt.cr's parse_package_names). A whole-value `{{ list_var }}`
       # container arg arrives as the double-quoted JSON the wire

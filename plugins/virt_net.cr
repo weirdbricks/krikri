@@ -7,7 +7,7 @@ require "../src/krikri/plugin_helpers/virsh_net"
 module Krikri
   # virt_net plugin (community.libvirt.virt_net) - manages libvirt
   # networks through the `virsh` CLI, mirroring the Ansible module's
-  # core() control flow exactly (real module source read, not assumed).
+  # core() control flow exactly (Ansible module source read, not assumed).
   #
   # Params: name (aliases network), state (active/inactive/present/
   # absent/undefined), command (define/create/start/stop/destroy/
@@ -71,7 +71,7 @@ module Krikri
       end
 
       # Ansible's HAS_VIRT probe - on a host with no libvirt the
-      # real module fails up front with this exact message (its python
+      # Ansible module fails up front with this exact message (its python
       # binding isn't importable), after argument validation.
       # The CLI equivalent is the virsh binary itself being absent.
       return fail("The `libvirt` module is not importable. Check the requirements.") unless executable_in_path?("virsh")

@@ -3,7 +3,7 @@ require "json"
 module Krikri
   module PluginHelpers
     # MysqlVariables - pure logic for the mysql_variables plugin: the
-    # real module's typedvalue conversion, its ON/OFF boolean
+    # Ansible module's typedvalue conversion, its ON/OFF boolean
     # normalization, the variable-name validation, and SET statement
     # construction (backtick-quoted identifier like the Ansible module's
     # mysql_quote_identifier(..., 'vars')). Split out so this logic is

@@ -8,7 +8,7 @@ require "file_utils"
 # fallback routes a non-tar dest through _open_compressed_file, which
 # fail_json's on "tar") but overwrites with changed=True for every other
 # format (gz/bz2/xz/zip fall back to an empty checksum set, and the new
-# archive's non-empty set always differs). Confirmed against real
+# archive's non-empty set always differs). Confirmed against
 # ansible-playbook via testing/podman-diff/cases/archive_edge_cases.yml
 # case B6. Runs the compiled plugin binary via PluginSpecHelper.
 private def make_src_dir : String

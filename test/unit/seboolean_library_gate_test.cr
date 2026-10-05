@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Pins plugins/seboolean.cr's library gate against real
+# Pins plugins/seboolean.cr's library gate against
 # ansible.posix.seboolean 2.19.11: the Ansible module binds libselinux and
 # libsemanage at import time and fails through missing_required_lib()
 # when either is absent - before the SELinux-enabled check and before

@@ -1,7 +1,7 @@
 module Krikri
   module PluginHelpers
     # AnsibleModule.run_command's two failure shapes, for plugins
-    # that shell out the way real modules do (module.run_command with
+    # that shell out the way Ansible modules do (module.run_command with
     # check_rc):
     #
     # 1. An exec that never started (missing or unexecutable binary)

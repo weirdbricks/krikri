@@ -71,7 +71,7 @@ module Krikri
       changed = !packages_list.empty?
       ensure_state(packages_list, state == "present" ? "add" : "delete") if changed && !check_mode
 
-      # Real module exit: exit_json(changed=changed, meta={"packages":
+      # Ansible module exit: exit_json(changed=changed, meta={"packages":
       # packages, "state": state}) - the REQUESTED specs (not just the
       # changed ones) and the resolved state come back under a top-level
       # "meta" key. (The module's own RETURN docs claim a top-level
@@ -147,7 +147,7 @@ module Krikri
       end
 
       # ONLY valid JSON - never a Python-repr repair pass: a value that
-      # merely LOOKS like a container is a plain STRING in real
+      # merely LOOKS like a container is a plain STRING in
       # ansible-core (live-verified, see dnf_versionlock.cr's parse_names
       # / apt.cr's parse_package_names). A whole-value `{{ list_var }}`
       # container arg arrives as the double-quoted JSON the wire

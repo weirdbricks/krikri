@@ -22,7 +22,7 @@ private def run_playbook(extra_args : Array(String)) : {Process::Status, String}
       connection: local
       gather_facts: false
       tasks:
-        - name: fails for real
+        - name: fails for
           ansible.builtin.fail:
             msg: real failure
           ignore_errors: "{{ ansible_check_mode }}"

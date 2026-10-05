@@ -22,7 +22,7 @@ module Krikri
   #   any `filename:` containing '/' as-is, verbatim + '.list' - see
   #   PluginHelpers::AptRepositoryLine.target_sources_path) -
   #   defaults to a name derived from the repo
-  #   URL via PluginHelpers::AptRepositoryLine, replicating real
+  #   URL via PluginHelpers::AptRepositoryLine, replicating
   #   Ansible's own `_suggest_filename` logic exactly (see that module
   #   for details, verified against Ansible's actual source)
   # - codename: overrides the distro codename `ppa:` lines resolve
@@ -63,12 +63,12 @@ module Krikri
   # by the shell command itself (`gpg ... --export ... > keyfile`) rather
   # than captured through this plugin's own `remote_exec` - a GPG key
   # blob is arbitrary binary data, and `remote_exec`'s stdout capture is
-  # a Crystal `String` (UTF-8), which isn't a safe carrier for it; real
+  # a Crystal `String` (UTF-8), which isn't a safe carrier for it;
   # Ansible's own Python implementation has the identical problem and
   # solves it the same way (`encoding=None` to keep raw bytes, written
   # directly to the keyfile). `apt-key` itself isn't implemented - it's
   # deprecated/removed on current Debian/Ubuntu (confirmed: this
-  # environment has `gpg` but no `apt-key` binary at all), and real
+  # environment has `gpg` but no `apt-key` binary at all), and
   # Ansible already prefers `gpg` when both exist. The already-has-this-key
   # check Ansible does before exporting (`_key_already_exists`,
   # itself shelling to `apt-key export`/scanning existing keyrings with
@@ -279,7 +279,7 @@ module Krikri
           # when a repo's signature can't be verified (apt only WARNs to
           # stderr, "GPG error ... NO_PUBKEY ...", and still exits
           # success using the previous cached index) - so the bare
-          # exit_code check above never even detected the failure real
+          # exit_code check above never even detected the failure
           # Ansible's own module DOES treat as fatal. Ansible
           # doesn't shell out to `apt-get` at all - it uses the
           # `python-apt` library's `Cache().update()`, which raises
@@ -344,7 +344,7 @@ module Krikri
     # by the remove in sources_removed). "Valid source line" here means
     # a non-blank, non-comment line - a real dump key skips files with
     # none. The cache-update failure paths keep the fields out entirely
-    # (real module's fail_json exit carries only msg).
+    # (Ansible module's fail_json exit carries only msg).
     private def file_has_sources?(file : String) : Bool
       return false unless File.exists?(file)
       File.each_line(file) { |line| return true if valid_source_line?(line) }
@@ -391,7 +391,7 @@ module Krikri
     # the block never saw a failure at all and the `rescue:` never ran,
     # so the broken (armored-not-dearmored) GPG key silently stuck
     # around and the LATER `apt-get install nomad` task failed instead
-    # ("Unable to locate package nomad") - a real divergence from real
+    # ("Unable to locate package nomad") - a real divergence from
     # Ansible, which recovers via the rescue: at the point it's supposed
     # to. Found benchmarking robertdebock.nomad.
     # ansible-playbook's own apt_repository module retries a failed
@@ -428,7 +428,7 @@ module Krikri
         combined.includes?("couldn't be verified")
     end
 
-    # Reads VERSION_CODENAME= from /etc/os-release - matches real
+    # Reads VERSION_CODENAME= from /etc/os-release - matches
     # Ansible's own `distro.codename` default for `ppa:` lines without an
     # explicit `codename:` (the `distro` library reads the same file;
     # verified against its actual behavior, not assumed).
@@ -454,15 +454,14 @@ module Krikri
     # Ansible breakdown.
     #
     # `apt-key adv --recv-keys` genuinely fetches-and-imports from the
-    # keyserver in one step; bare `gpg --export <fingerprint>` (real
-    # Ansible's own fallback command when `apt-key` is absent) does
+    # keyserver in one step; bare `gpg --export <fingerprint>` (Ansible's own fallback command when `apt-key` is absent) does
     # *not* - `--export` only ever reads a key already present in the
     # local keyring, `--keyserver` alongside it does nothing on modern
     # GnuPG (confirmed directly: gpg 2.4.4 exits 0 with "WARNING:
     # nothing exported" and empty output for a key never previously
     # imported). Ansible's own fallback command hits this identical
     # empty-output failure on any system without `apt-key` and a
-    # sufficiently modern `gpg` - a genuine, reproducible gap in real
+    # sufficiently modern `gpg` - a genuine, reproducible gap in
     # Ansible's own module, not something introduced here, and not
     # something to silently "fix" by deviating from what Ansible
     # actually runs (parity means matching real behavior, bugs

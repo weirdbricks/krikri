@@ -178,9 +178,9 @@ module Krikri
     # place, '%d line(s) removed' for state: absent, and an empty
     # msg when nothing changed - the previous single generic 'Line
     # modified' for every changed=true case came from an ad-hoc CLI
-    # comparison sweep against Ansible, 2026-09-13), plus real
+    # comparison sweep against Ansible, 2026-09-13), plus
     # Ansible's own check_file_attrs suffix when the file's
-    # owner/group/mode/SELinux attributes were what changed. Real
+    # owner/group/mode/SELinux attributes were what changed.
     # Ansible's state=absent exit also carries a `found` count of the
     # removed lines (its present-path exit does not); the backup path
     # goes out under the key `backup` ("" when none), not blockinfile's
@@ -282,8 +282,7 @@ module Krikri
     # AnsibleModule.atomic_move: a temp file whose content is validated
     # (validate:) and then RENAMED into place - same shape copy.cr's
     # merged implementation already uses here. unsafe_writes: swaps the
-    # rename for a direct in-place write when the rename fails (real
-    # Ansible's own escape hatch for paths a rename can't touch, e.g.
+    # rename for a direct in-place write when the rename fails (Ansible's own escape hatch for paths a rename can't touch, e.g.
     # /proc or container bind-mounts).
     #
     # Returns nil on success, or a failed PluginResult.
@@ -405,7 +404,7 @@ module Krikri
     end
 
     # Checks owner:/group:/mode:, then chattr-style attributes:/attr:
-    # flags, then the SELinux context parts - the same order real
+    # flags, then the SELinux context parts - the same order
     # Ansible's set_fs_attributes_if_different applies them (mirrors
     # copy.cr's apply_extended_attributes). Returns {changed, failure}:
     # failure a failed PluginResult when the chattr/chcon call itself
@@ -436,7 +435,7 @@ module Krikri
 
     # attributes:/attr: (chattr flags, e.g. "+i" for immutable) -
     # mirrors file.cr/copy.cr/template.cr's proven implementations
-    # exactly (same helper names, same semantics, including real
+    # exactly (same helper names, same semantics, including
     # Ansible's non-converging '-'-prefixed quirk,
     # ansible/ansible#33745).
     private def attr_args : {Char, String}?

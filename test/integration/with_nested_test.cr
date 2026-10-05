@@ -142,7 +142,7 @@ describe "with_nested: templated scalar sources" do
   end
 
   it "iterates a substituted embedded-template literal per character too" do
-    # The deferred-source path (a literal entry with embedded {{ }}): real
+    # The deferred-source path (a literal entry with embedded {{ }}):
     # Ansible templates the term and THEN iterates the resulting string
     # per character (live-verified: "a-{{ x }}-b" over x=12 iterates
     # a,-,1,2,-,b), so krikri's executor fallback must char-split the

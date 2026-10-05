@@ -49,7 +49,7 @@ module Krikri
 
   # Float-seconds variants matching Python's own os.stat_result
   # st_atime/st_mtime/st_ctime, which are tv_sec + tv_nsec / 1e9 computed
-  # as float64 (CPython combines the two halves the same way) - real
+  # as float64 (CPython combines the two halves the same way) -
   # Ansible's stat and find results carry that float straight through
   # (e.g. "atime": 1789308974.764945), so truncating to whole seconds
   # broke sub-second timestamp comparisons against real-Ansible output.
@@ -89,7 +89,7 @@ module Krikri
     property extra : Hash(String, JSON::Any)
     property? omit_changed : Bool
     property? include_empty_msg : Bool
-    # A NATIVE-typed msg override (JSON::Any): real modules that pass a
+    # A NATIVE-typed msg override (JSON::Any): Ansible modules that pass a
     # non-string value to fail_json/exit_json keep its Python type in the
     # wire result (fail's action puts the raw task arg in result['msg'],
     # so `fail: {msg: 50}` registers and dumps the INT 50, not "50") -
@@ -252,7 +252,7 @@ module Krikri
   end
 
   # Raised by the shared owner/group resolvers when a PRESENT owner:/
-  # group: value doesn't resolve to a real system user/group. Real
+  # group: value doesn't resolve to a real system user/group.
   # Ansible's basic.py set_owner_if_different/set_group_if_different
   # only skip the chown/chgrp when the param is None - an explicit empty
   # string is still looked up and fails the task with exactly
@@ -484,7 +484,7 @@ module Krikri
       # below.
       PluginResult.new(changed: false, failed: true, msg: ex.message || "invalid boolean parameter").to_json
     rescue ex : OwnerLookupFailure
-      # The message is already the exact user-facing failure real
+      # The message is already the exact user-facing failure
       # Ansible produces ("chown failed: failed to look up user <name>"
       # / "chgrp failed: failed to look up group <name>") - surface it
       # verbatim instead of under the generic "Plugin execution failed: "

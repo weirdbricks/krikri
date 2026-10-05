@@ -71,7 +71,7 @@ module Krikri
       end
 
       # Inserts the marker-delimited block at insert_index, honoring the
-      # append_newline/prepend_newline blank-line padding params with real
+      # append_newline/prepend_newline blank-line padding params with
       # Ansible's exact skip conditions (BOF/EOF and already-blank
       # neighbors - verified against ansible-core 2.19.4's module source).
       # The padding is NOT gated on there being a block to insert: real

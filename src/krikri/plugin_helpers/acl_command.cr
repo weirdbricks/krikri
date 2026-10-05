@@ -16,7 +16,7 @@ module Krikri
       # state: absent form, e.g. `user:joe`) gets a nil permissions
       # slot. The etype is normalized by its first letter, exactly like
       # the Ansible module - anything else becomes nil (which then flows
-      # through to setfacl as-is and fails there, matching real
+      # through to setfacl as-is and fails there, matching
       # Ansible's behavior for a garbage entry string).
       def self.split_entry(entry : String) : {Bool?, String?, String?, String?}
         parts = Array(String?).new

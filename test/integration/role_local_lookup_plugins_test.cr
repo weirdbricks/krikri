@@ -6,7 +6,7 @@ require "file_utils"
 # plugin's name IS its file name) and runs its LookupModule's
 # `run(terms, variables, **kwargs)`. Before this, any lookup()/query()
 # through such a name silently degraded to "undefined"/[] - which
-# collapses a `loop: "{{ query(...) }}"` to ZERO iterations where real
+# collapses a `loop: "{{ query(...) }}"` to ZERO iterations where
 # ansible-playbook executes once per result. Found via manala.environment
 # and manala.accounts. See PythonLookupRunner for the mechanism.
 #

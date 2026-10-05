@@ -22,7 +22,7 @@ module Krikri
       # description (which can contain any of these words innocently).
       BAD_STATES = {"not-found", "masked", "failed"}
 
-      # `systemctl list-units --type service --all --plain`, real
+      # `systemctl list-units --type service --all --plain`,
       # Ansible's `_list_from_units`. Returns {name => {state, status}}.
       # This listing is the one that carries units with NO unit file at
       # all - generated, transient and template-instance units - which
@@ -46,7 +46,7 @@ module Krikri
       # `systemctl list-unit-files --type service --all`, Ansible's
       # `_list_from_unit_files`: "UNIT_FILE STATE [VENDOR PRESET]".
       # Same as #parse_unit_files but filtered on ".service" the way the
-      # real module filters it, so a wrapped/odd line can't contribute a
+      # Ansible module filters it, so a wrapped/odd line can't contribute a
       # bogus key.
       def self.parse_unit_file_states(output : String) : Hash(String, String)
         result = Hash(String, String).new
@@ -97,7 +97,7 @@ module Krikri
       # in an argument list fails the entire call. Ansible asks per
       # unit, so it just gets a failed rc for these and leaves their
       # state "unknown" - verified live: `autovt@.service` and
-      # `getty@.service` both come back state "unknown" from real
+      # `getty@.service` both come back state "unknown" from
       # ansible-core 2.19. Filtering them keeps the single batched call
       # viable on a normal host, where they are otherwise guaranteed to
       # be present.

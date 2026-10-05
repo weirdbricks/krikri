@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 
 # Pins the two real-Ansible scoping rules krikri's setup facts were
 # missing, both found and live-verified via the podman-diff
-# setup_edge_cases_v2 harness (FS3/FS5 divergence) against real
+# setup_edge_cases_v2 harness (FS3/FS5 divergence) against
 # ansible-core 2.14 inside a debian:bookworm-slim podman container:
 #
 # - FS3 mounts: Ansible's hardware/linux.py get_mount_facts skips any

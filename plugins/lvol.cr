@@ -27,13 +27,13 @@ module Krikri
   #   - thin pools (-T), thin volumes (-V onto an existing pool) and
   #     snapshots (-s -n)
   #   - check mode: discovery runs for real, mutating commands are not
-  #     run (real module's --test no-ops, with the same changed verdict)
+  #     run (Ansible module's --test no-ops, with the same changed verdict)
   #
   # Deliberately out of scope (both mirror a real-module precondition
   # this environment can't satisfy, not a corner cut):
   #   - gss-tsig-style oddities: none - but the `lvm version >= 2.2.99`
   #     probe for --yes is skipped: every LVM2 release since 2012 has it,
-  #     so --yes is always passed (real module would otherwise only pass
+  #     so --yes is always passed (Ansible module would otherwise only pass
   #     it on modern LVM)
   #   - `opts:` is split on whitespace rather than full shlex (real
   #     roles pass flags like "--type cache-pool" / "-r 16"; quoted
@@ -142,7 +142,7 @@ module Krikri
       return absent_vg_result(vg, state, lvs_result) if lvs_result[:exit_code] != 0
       lvs = parse_lvs(lvs_result[:stdout])
 
-      # check_lv mirrors real module: the name looked up in lvs output
+      # check_lv mirrors Ansible module: the name looked up in lvs output
       check_lv = if snapshot
                    origin = lvs.find { |test| test[:name] == lv || test[:name] == thinpool }
                    if origin.nil?
@@ -173,7 +173,7 @@ module Krikri
             return failed("Bad size specification of '#{op}#{parsed_size.not_nil!.value}' for creating LV")
           end
           unless parsed_size
-            # Real module: size required when creating, except a snapshot
+            # Ansible module: size required when creating, except a snapshot
             # of a thin volume - which this port does not support either.
             return failed("No size given.")
           end
@@ -383,7 +383,7 @@ module Krikri
         return {changed_flag: false, failed: true, msg: unable,
                 rc: result[:exit_code], err: err, out: out, early: nil}
       elsif result[:exit_code] != 0
-        # Real module's own convergent-no-op exits: lvm sometimes refuses
+        # Ansible module's own convergent-no-op exits: lvm sometimes refuses
         # with these messages when the request lands on the current size
         # (common with --resizefs) - reported as changed: false, not a
         # failure.
@@ -476,7 +476,7 @@ module Krikri
 
     private def absent_vg_result(vg : String, state : String, probe : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
       if state == "absent"
-        # Real module: state=absent against a missing VG exits ok with
+        # Ansible module: state=absent against a missing VG exits ok with
         # changed=false and NO msg (live-verified via the podman-diff
         # lvol_edge_cases LV7 case - the "Volume group ... does not
         # exist." msg was this engine's own invention there).

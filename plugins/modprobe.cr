@@ -27,7 +27,7 @@ module Krikri
   # container without kmod). This plugin used to short-circuit on the
   # /sys/module check first and report "already unloaded" as success in
   # exactly that situation - a false success Ansible doesn't
-  # produce. Found via an ad-hoc CLI comparison sweep against real
+  # produce. Found via an ad-hoc CLI comparison sweep against
   # ansible, 2026-09-13.
   #
   # - params: extra modprobe arguments (e.g. "numdummies=2") passed
@@ -97,7 +97,7 @@ module Krikri
     # fixed-shape dict {"changed", "name", "params", "state"} (its
     # `result` property) - no msg key on any success exit, and the same
     # order whether the module was already loaded, loaded/unloaded for
-    # real, or would be in check mode. Live-verified against real
+    # real, or would be in check mode. Live-verified against
     # ansible-core 2.19.11 (already-loaded path).
     private def modprobe_result(changed : Bool, name : String, state : String) : PluginResult
       params = @params["params"]? || ""
@@ -160,7 +160,7 @@ module Krikri
       end
     end
 
-    # Directories searched beyond $PATH for the modprobe binary. Real
+    # Directories searched beyond $PATH for the modprobe binary.
     # Ansible's get_bin_path searches the module process's PATH only,
     # but a non-login shell's PATH routinely lacks /sbin//usr/sbin
     # (where modprobe lives) - the same reason ServicePlugin searches

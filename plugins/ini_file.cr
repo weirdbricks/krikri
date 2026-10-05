@@ -130,7 +130,7 @@ module Krikri
         path: path,
         key_order: SUCCESS_KEY_ORDER
       )
-      # Real module includes backup_file only when a backup was actually
+      # Ansible module includes backup_file only when a backup was actually
       # made (its None default is dropped by exit_json).
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?
       # Ansible's exit_json runs add_path_info over every result whose
@@ -158,7 +158,7 @@ module Krikri
       # created config always gets exactly one leading blank line before
       # its first `[section]` header. This plugin previously started from
       # a genuinely empty array in that case, producing no leading blank
-      # line at all - a real, silent byte-for-byte divergence from real
+      # line at all - a real, silent byte-for-byte divergence from
       # Ansible's output (not a crash) found benchmarking robertdebock.
       # python_pip's own `Configure pip proxy`/`Trust hosts` tasks writing
       # a brand-new `/etc/pip.conf`.
@@ -347,7 +347,7 @@ module Krikri
 
     # Locates (or appends, state=present only) the section header.
     # Returns {header_idx, section_added, abort} - abort true means the
-    # real module's absent-on-missing-section no-op and nothing further
+    # Ansible module's absent-on-missing-section no-op and nothing further
     # should run.
     private def prepare_section(new_lines : Array(String), section : String?, state : String) : {Int32?, Bool, Bool}
       header_idx = section ? find_section_header(new_lines, section) : nil

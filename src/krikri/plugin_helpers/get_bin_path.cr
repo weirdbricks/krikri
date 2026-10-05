@@ -9,7 +9,7 @@ module Krikri
     # to short-circuit on their own state checks first and report
     # "already in desired state" success on hosts where the underlying
     # binary was missing entirely - a false success Ansible never
-    # produces. Found via an ad-hoc CLI comparison sweep against real
+    # produces. Found via an ad-hoc CLI comparison sweep against
     # ansible, 2026-09-13.
     module GetBinPath
       extend self

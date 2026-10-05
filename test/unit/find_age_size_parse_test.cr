@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "json"
 
-# Regression for the podman-diff find_edge_cases O5c/O5e finding: real
+# Regression for the podman-diff find_edge_cases O5c/O5e finding:
 # ansible-core's find module fails the whole task when `age:` or `size:`
 # doesn't parse ("banana" etc. - message live-verified against bookworm's
 # ansible-core 2.14) instead of silently dropping the filter and

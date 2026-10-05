@@ -25,7 +25,7 @@
 #   cat/register/debug, so the captured output can be eyeballed
 #   byte-for-byte across engines.
 # - Modules with no reachable backend on the target OS are gated with
-#   fact/capability probes so they SKIP the way real Ansible does
+#   fact/capability probes so they SKIP the way Ansible does
 #   (skipped: in the recap), never faked: the rpm-family managers
 #   (dnf/yum/...) on this Debian-family host, snapd in an
 #   unprivileged container, kernel module loading without
@@ -434,7 +434,7 @@
 
     # ---------------------------------------------------------------
     # dpkg_selections: hold/unhold a real installed package (tree from
-    # the toolchain). Real Ansible errors on packages dpkg has never
+    # the toolchain). Ansible errors on packages dpkg has never
     # heard of, so the target must be a genuinely installed one.
     # ---------------------------------------------------------------
     - name: Hold probe package
@@ -497,7 +497,7 @@
     # host (no dnf/yum binary, no rpm db), so these tasks are gated on
     # the ansible_pkg_mgr fact and must SKIP - the standard multi-OS
     # role pattern (`when: ansible_pkg_mgr == 'yum'`), which also
-    # verifies krikri's conditional-skip accounting matches real
+    # verifies krikri's conditional-skip accounting matches
     # Ansible's recap. A skip here is the correct outcome, not a gap.
     # ---------------------------------------------------------------
     - name: Install package via dnf

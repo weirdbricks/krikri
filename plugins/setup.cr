@@ -11,7 +11,7 @@ module Krikri
   # the play's gather_facts / the engine's fact store), which is what
   # populates ansible_facts before tasks run. An EXPLICIT `setup:` task in
   # a playbook/role runs this plugin for real, though - roles re-gather
-  # after changes (`when: not ansible_facts` gates aside), and real
+  # after changes (`when: not ansible_facts` gates aside), and
   # Ansible's setup accepts four documented module params, all of which
   # now flow through to the shared gatherer:
   #

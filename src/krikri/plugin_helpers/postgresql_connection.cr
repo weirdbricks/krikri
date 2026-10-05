@@ -6,7 +6,7 @@ module Krikri
     # connection URI from Ansible-style login_* params. No I/O -
     # postgresql_db.cr/postgresql_user.cr do the actual DB.open.
     module PostgresqlConnection
-      # unix_socket, given, takes precedence over host/port (matches real
+      # unix_socket, given, takes precedence over host/port (matches
       # Ansible's postgresql_db/postgresql_user own login_unix_socket
       # precedence). crystal-pg expects a unix socket path via a "host"
       # query param, not the URI's own host component (verified against

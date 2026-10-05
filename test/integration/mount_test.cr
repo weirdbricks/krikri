@@ -264,7 +264,7 @@ describe "mount plugin" do
     # Real bug this closes: when opts: is absent/"defaults" and a bare
     # `mount -o remount` fails (the common case right after adding a
     # fstab entry in the same task/play, before the mount point is
-    # "really" mounted from fstab's point of view), real
+    # "really" mounted from fstab's point of view),
     # ansible.posix.mount doesn't fail outright - it falls back to a
     # full `umount` + `mount <path>` cycle (the second `mount` consults
     # fstab for the matching line). This plugin used to have no fallback

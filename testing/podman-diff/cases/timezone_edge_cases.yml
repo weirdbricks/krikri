@@ -1,7 +1,7 @@
 # timezone edge cases (community.general.timezone). Prefix T;
 # failed=/changed= booleans matter; error-message WORDING may legitimately
 # differ between engines. The harness containers have NO systemd/timedatectl,
-# so both engines take real's NosystemdTimezone branch (file edits + ln -sf +
+# so both engines take Ansible's NosystemdTimezone branch (file edits + ln -sf +
 # dpkg-reconfigure) - a working-timedatectl host exercises the same flow
 # through SystemdTimezone instead. hwclock's `hwclock --systohc` fails in
 # ANY container (no accessible RTC), which itself is a comparable failure.

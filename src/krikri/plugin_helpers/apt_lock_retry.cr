@@ -18,7 +18,7 @@ module Krikri
   # through this module by stubbing `remote_exec` on a test subclass
   # of AptPlugin.
   module AptLockRetry
-    # Default for install/remove/upgrade operations - matches real
+    # Default for install/remove/upgrade operations - matches
     # Ansible's `apt` module default.
     DEFAULT_LOCK_TIMEOUT = 60
 
@@ -155,7 +155,7 @@ module Krikri
     # this runs the same `apt-get update` prefetch (skipped only when the
     # task explicitly passed update_cache: false, per apt.py's own
     # `if module.params.get('update_cache') is False` guard), then
-    # `apt-get install -y python3-apt`, exactly the two commands real
+    # `apt-get install -y python3-apt`, exactly the two commands
     # Ansible runs before respawning itself. Returns nil when the
     # bindings were already present (a no-op) or the install succeeded;
     # returns the failed command result when either command failed,
@@ -257,7 +257,7 @@ module Krikri
     # is already installed. Returns nil when no refresh is needed
     # (check mode - apt.py's own `if not module.check_mode: cache.update()`
     # guard skips it; no relevant params; still-fresh cache), else runs
-    # `apt-get update` through `apt_get_update_with_retry` with real
+    # `apt-get update` through `apt_get_update_with_retry` with
     # Ansible's update_cache_retries/update_cache_retry_max_delay
     # semantics, returning the failed result so the caller can fail the
     # task BEFORE touching any package state.

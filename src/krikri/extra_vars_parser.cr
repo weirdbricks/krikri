@@ -4,7 +4,7 @@ require "yaml"
 
 module Krikri
   # `-e` / `--extra-vars`, Ansible's highest-precedence variable
-  # scope. Every accepted form below was checked against a real
+  # scope. Every accepted form below was checked against a
   # ansible-core 2.19.4 before being implemented here:
   #
   #   -e key=value            one or more whitespace-separated k=v pairs;

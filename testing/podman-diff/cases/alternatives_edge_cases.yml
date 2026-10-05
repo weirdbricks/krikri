@@ -1,5 +1,5 @@
 # community.general.alternatives edge cases. The harness containers
-# are real Debian (update-alternatives ships with dpkg) and real
+# are real Debian (update-alternatives ships with dpkg) and
 # Ansible's module shells out to the same binary this plugin drives -
 # no gate needed. Real-module specifics under test:
 # - required_one_of ("one of the following is required: path, family")

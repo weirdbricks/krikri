@@ -79,7 +79,7 @@ describe Krikri::FactsGatherer do
     # Ansible's Linux hardware collector always derives this fact
     # (siblings / cpu cores from /proc/cpuinfo) - marvel-nccr.slurm's
     # templates/slurm.conf references it directly, and with the fact
-    # never set the template died with "is undefined" while real
+    # never set the template died with "is undefined" while
     # ansible-playbook completes. Value varies by host, so only pin
     # presence and positivity.
     facts = JSON.parse(Krikri::FactsGatherer.run(nil))["ansible_facts"].as_h
@@ -218,7 +218,7 @@ describe Krikri::FactsGatherer do
     # oasis_roles.hostname sets a short hostname and colocates it on the
     # 127.0.0.1 line of /etc/hosts; reverse-resolving 127.0.0.1 there
     # yields "localhost localhost.localdomain", and Python skips the
-    # dotless "localhost" in favor of "localhost.localdomain" - so real
+    # dotless "localhost" in favor of "localhost.localdomain" - so
     # ansible-playbook reports ansible_fqdn as "localhost.localdomain"
     # (and keeps re-reporting changed on the role's hostname:/blockinfile:
     # tasks every run) while a `hostname -f`-based value stays at the
@@ -346,10 +346,10 @@ describe Krikri::FactsGatherer do
   end
 
   describe "min-bundle parity with Ansible (podman-diff setup case)" do
-    # Found adding the setup edge cases to the podman-diff harness: real
+    # Found adding the setup edge cases to the podman-diff harness:
     # ansible-core's min bundle (`gather_subset: "!all"`) reports several
     # facts this engine never gathered at all, and two families
-    # (virtualization, DMI) this engine reported UNDER MIN that real
+    # (virtualization, DMI) this engine reported UNDER MIN that
     # Ansible only reports under the virtual/hardware subsets.
     private def config
       JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":{"gather_subset":"!all"},"vars":{}}))

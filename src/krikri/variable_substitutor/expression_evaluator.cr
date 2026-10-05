@@ -386,8 +386,7 @@ module Krikri
           # value); falls back to the ORIGINAL hand-rolled path on ANY
           # failure, so a construct Crinja doesn't yet support degrades
           # to exactly today's behavior rather than a regression.
-          # `is failed`/`changed`/`skipped`/`succeeded`/`success` (real
-          # Ansible register-result tests) and the `omit` magic variable
+          # `is failed`/`changed`/`skipped`/`succeeded`/`success` (Ansible register-result tests) and the `omit` magic variable
           # both needed porting to Crinja's own registry/context first
           # (see jinja_filters.cr's `result_field` tests and
           # JinjaRenderer#prepare_crinja_vars's own `omit` binding) -
@@ -1313,8 +1312,7 @@ module Krikri
         #
         # The engine (krikri-jinja v0.4.20) now hard-fails an out-of-range
         # list/tuple subscript with Jinja2's "list object has no
-        # element N" strict undefined - that raise must propagate (real
-        # Ansible fails the task), not fall into the lenient plain-lookup
+        # element N" strict undefined - that raise must propagate (Ansible fails the task), not fall into the lenient plain-lookup
         # fallback below, which would render the "undefined" sentinel.
         # Anything else the engine raises on stays a fallback shape (an
         # engine-capability gap degrades leniently, never into a spurious
@@ -1713,7 +1711,7 @@ module Krikri
           # list*int, int*list (bool counts as its int-subclass value).
           # Previously any non-numeric pair silently produced JSON null
           # (rendered as ""), so even the VALID repeat shapes
-          # (`'-' * 40`, a Ansible idiom) rendered empty while real
+          # (`'-' * 40`, a Ansible idiom) rendered empty while
           # Ansible repeated the operand, and the invalid ones
           # (`str * list`) were silently answered where Jinja2
           # raises TypeError (found by bin/differential_fuzz).
@@ -1743,7 +1741,7 @@ module Krikri
 
         # Every non-numeric, non-repeatable operand pair is a strict
         # operand-class failure - real Python/Jinja2 raises TypeError
-        # (`unsupported operand type(s) for /: 'str' and 'float'`) and real
+        # (`unsupported operand type(s) for /: 'str' and 'float'`) and
         # Ansible fails the task; the old `JSON::Any.new(nil)` here
         # silently rendered "" instead.
         raise PlusMinusOperandError.new(
@@ -1930,7 +1928,7 @@ module Krikri
         # An out-of-range (or None-base) integer bracket index is a real
         # task failure in Ansible for EVERY construct, lenient or
         # strict - the engine (krikri-jinja v0.4.20) raises the same way,
-        # and bracket_index_failure_message diagnoses the shape with real
+        # and bracket_index_failure_message diagnoses the shape with
         # Ansible's own message. nil for every shape it can't pin down
         # (missing bare references stay on the strict/lenient gates
         # below; dict-key misses stay lenient by long-standing

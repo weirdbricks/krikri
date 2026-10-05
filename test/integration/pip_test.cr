@@ -148,8 +148,7 @@ describe "pip plugin" do
     # dependency specifier") - Ansible's pip.py re-merges such
     # pieces onto the preceding requirement before invoking pip.
     # pieces onto the preceding requirement before invoking pip.
-    # state: absent now runs the uninstall unconditionally (real
-    # Ansible semantics), so the fake pip shim keeps this hermetic.
+    # state: absent now runs the uninstall unconditionally (Ansible semantics), so the fake pip shim keeps this hermetic.
     with_absent_pip_shim do |fake_pip|
       result = PluginSpecHelper.run("pip", {
         "name"       => "definitely-not-a-real-package-xyz<3.5,>3",
@@ -169,7 +168,7 @@ describe "pip plugin" do
     # pip's own extras syntax, part of one PEP 508 requirement token,
     # not separators between packages. Real pip's requirement grammar
     # treats `pkg[e1,e2]` atomically (a truncated `horovod[keras` is
-    # rejected outright: "Expected matching RIGHT_BRACKET"), and real
+    # rejected outright: "Expected matching RIGHT_BRACKET"), and
     # Ansible's pip.py reassembles bracket-interior comma pieces
     # verbatim (`_recover_package_name`'s in-brackets state) - verified
     # against ansible-playbook -vvv: the whole bracketed string
@@ -565,14 +564,14 @@ describe "pip plugin" do
   end
 
   # geerlingguy.elasticsearch-curator (round 975000-975099): a repeat
-  # `pip: name: argparse` reported ok in krikri but changed in real
+  # `pip: name: argparse` reported ok in krikri but changed in
   # Ansible. Root cause: pip's own installed-distribution iteration
   # (pip._internal.metadata.base.stdlib_pkgs = {'argparse', 'python',
   # 'wsgiref'} in pip 25) SKIPS these stdlib-shadow names, so `pip
   # install argparse` never sees the previous install and reinstalls,
   # printing "Successfully installed" every run - while `pip show
   # argparse` (krikri's old pre-check) does NOT skip it, so the
-  # short-circuit reported "Package already installed" where real
+  # short-circuit reported "Package already installed" where
   # Ansible, which has no pre-check and decides purely on
   # 'Successfully installed' in the install output, reports changed.
   # The shim reproduces exactly that pip duality hermetically: `show`

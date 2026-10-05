@@ -1,7 +1,7 @@
-# community.general.nsupdate edge cases. The real module needs dnspython
+# community.general.nsupdate edge cases. The Ansible module needs dnspython
 # (run.sh gated block) - without it EVERY case fails on the import and
 # nothing else is reachable. No DNS server runs in either container, so
-# the network cases exercise the real module's failure wording for a
+# the network cases exercise the Ansible module's failure wording for a
 # refused connection (server 127.0.0.1, nothing listening on 53).
 #
 # Real nsupdate.py specifics under test:
@@ -19,7 +19,7 @@
 #   error: ..." BEFORE any network traffic (message-build time)
 # - value validation happens at moment-of-use: with no server, a
 #   malformed/missing value still fails with the CONNECTION error first
-#   (real only builds rdata inside create_record, after the
+#   (Ansible only builds rdata inside create_record, after the
 #   record-exists probe), and a refused connection fails with
 #   Python's own OSError class name and errno text
 - hosts: all

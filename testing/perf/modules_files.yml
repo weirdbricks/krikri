@@ -3,7 +3,7 @@
 # series. Theme: files & filesystem. Exercises every implemented krikri
 # module in that theme with real exercise (write, edit, read back,
 # byte-diff), not just parsing - a divergence here is meant to be
-# directly comparable against real ansible-playbook via the cat+register
+# directly comparable against ansible-playbook via the cat+register
 # debug pattern after anything that renders or writes content.
 #
 # Same safety contract as synthetic_batch_bench.yml: all mutations are
@@ -558,7 +558,7 @@
         msg: "{{ mf_bytediff_tight_ini.stdout }}"
 
     # ---------------------------------------------------------------
-    # xml: xpath edits on a small config document. Real Ansible's own
+    # xml: xpath edits on a small config document. Ansible's own
     # xml module hard-requires the python lxml library on the target
     # (krikri's is pure Crystal), so the section gates on an lxml
     # import probe and skips cleanly with a notice where it's absent -
@@ -1509,7 +1509,7 @@
     # htpasswd: apr1 entries via openssl (present on every stock
     # image). Salted hashes are random per run, so only the plaintext
     # scheme file is byte-diffed; the apr1 file is verified by shape.
-    # Real Ansible's own htpasswd needs the python passlib library on
+    # Ansible's own htpasswd needs the python passlib library on
     # the target, so gate on an import probe like the xml section.
     # ---------------------------------------------------------------
     - name: Probe passlib availability
@@ -1711,7 +1711,7 @@
     # ---------------------------------------------------------------
     # KNOWN KRIKRI DIVERGENCE (documented, deliberately not worked
     # around): lineinfile with backrefs: true must expand escape
-    # sequences in the replacement the way Python re.sub does - real
+    # sequences in the replacement the way Python re.sub does -
     # ansible turns a literal \n in `line:` into a real newline and
     # writes two lines. krikri (as of 0.9.1268) writes the two
     # characters backslash-n verbatim, so the file ends up with a
@@ -1762,7 +1762,7 @@
     # contains an escaped character (\\.) fails under krikri when the
     # operand is a registered module result, even though the identical
     # expression evaluates true when rendered by debug: in the same
-    # run (krikri 0.9.1268). Real ansible passes the assert. Kept at
+    # run (krikri 0.9.1268). Ansible passes the assert. Kept at
     # the end so it shows up in the recap without masking anything
     # ahead of it; remove once the assert evaluator handles this.
     # ---------------------------------------------------------------

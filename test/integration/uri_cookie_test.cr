@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "http/server"
 
-# Pins plugins/uri.cr's cookies/cookies_string result keys against real
+# Pins plugins/uri.cr's cookies/cookies_string result keys against
 # ansible-core 2.19.11 (live-verified via `{{ r | to_json }}` against a
 # local Set-Cookie server): fetch_url parses its cookie jar into
 # `cookies` (name -> value dict) and `cookies_string`

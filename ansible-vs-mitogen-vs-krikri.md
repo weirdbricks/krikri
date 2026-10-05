@@ -1,6 +1,6 @@
 # ansible vs. Mitogen vs. krikri-playbook
 
-A 3-way timing comparison: real `ansible-playbook`, `ansible-playbook` with
+A 3-way timing comparison: `ansible-playbook`, `ansible-playbook` with
 the [Mitogen](https://mitogen.networkgenomics.com/) strategy plugin
 (`strategy = mitogen_linear`), and `krikri-playbook`, run against the same
 playbooks on matched hosts.
@@ -12,7 +12,7 @@ playbooks on matched hosts.
   a dead Galaxy listing) from `ROLES_TESTED.md`'s "✅ Clean" list, so the
   sample isn't hand-picked.
 - Each role ran on a fresh 3-host triplet (Atlantic.net `G3.2GB`, Ubuntu
-  24.04): one host for real `ansible-playbook`, one for
+  24.04): one host for `ansible-playbook`, one for
   `ansible-playbook` + Mitogen, one for `krikri-playbook`, each isolated so
   no engine's run could affect another's timing.
 - Each engine ran the role playbook twice per triplet: a **cold** run
@@ -39,7 +39,7 @@ playbooks on matched hosts.
 
 ### 61-role clean set (identical successful outcome on all 3 engines)
 
-| Phase | real Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
+| Phase | Ansible | Ansible + Mitogen | krikri-playbook | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
 | Cold (total) | 2176.6s | 1246.2s | 920.6s | **2.36x faster** | **1.35x faster** |
 | Cold (median/role) | 22.04s | 11.54s | 5.32s | 3.43x faster | 1.82x faster |
@@ -51,7 +51,7 @@ krikri-playbook was the fastest of the three engines in **57 of 61 roles
 
 ### 78-role broader set (identical outcome, any `rc`)
 
-| Phase | real Ansible (total) | Ansible + Mitogen (total) | krikri-playbook (total) | krikri vs Ansible | krikri vs Mitogen |
+| Phase | Ansible (total) | Ansible + Mitogen (total) | krikri-playbook (total) | krikri vs Ansible | krikri vs Mitogen |
 |---|---|---|---|---|---|
 | Cold | 2726.2s | 1642.7s | 1191.1s | 2.29x faster | 1.38x faster |
 | Warm | 1570.3s | 760.0s | 423.3s | 3.71x faster | 1.80x faster |
@@ -60,7 +60,7 @@ krikri-playbook was the fastest of the three engines in **57 of 61 roles
 
 Cold runs still involve package installs, downloads, and other work whose
 cost is dominated by the task itself rather than the engine. Warm re-runs
-are where the engine's own overhead is most visible: real Ansible pays a
+are where the engine's own overhead is most visible: Ansible pays a
 fresh Python-interpreter-and-module cost per task on every run regardless
 of whether anything changes; Mitogen amortizes some of that with a
 persistent interpreter but still runs Python bytecode per task; krikri's

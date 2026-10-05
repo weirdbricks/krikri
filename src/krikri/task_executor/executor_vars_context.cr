@@ -34,7 +34,7 @@ module Krikri
       # spellings can be withheld from loop-source resolution - see
       # #synthesize_legacy_ssh_aliases and #loop_source_vars_context.
       synthesize_legacy_ssh_aliases(vars_context) if include_legacy_ssh_aliases
-      # vars_files: sit ABOVE play vars and below role/task vars - real
+      # vars_files: sit ABOVE play vars and below role/task vars -
       # Ansible's documented order, verified live: a name set in both
       # `vars:` and a vars_file resolves to the FILE's value, and a later
       # file beats an earlier one. Merged here, straight after the tier
@@ -205,7 +205,7 @@ module Krikri
       vars_context["play_hosts"] = JSON::Any.new(play_host_names)
       vars_context["ansible_version"] = ANSIBLE_VERSION_MAGIC_VAR
       # ansible_check_mode - Ansible magic var (true under --check,
-      # false on a real run), entirely unimplemented before. Real
+      # false on a real run), entirely unimplemented before.
       # ansible-role idioms reference it directly (`when: not ansible_
       # check_mode`, `changed_when: not ansible_check_mode` for a task
       # whose action can't run at all in check mode) - a bare dotted-
@@ -328,8 +328,7 @@ module Krikri
       # fact-sourced entries below can tell a genuinely fact-sourced value
       # from an author override: any name whose final context value differs
       # from the fact store's was overwritten by a higher-precedence
-      # author-defined template and stays safely re-renderable (real
-      # Ansible only marks what the MODULE returned). Covers:
+      # author-defined template and stays safely re-renderable (Ansible only marks what the MODULE returned). Covers:
       # - every `register:` write (@registered_vars keys)
       # - every `set_fact:` write (@set_facts keys)
       # - every gathered fact (@facts keys - ansible_os_family,
@@ -356,7 +355,7 @@ module Krikri
       # Skipping "vars" is not belt-and-braces: vars_context is layered
       # on cached base contexts (see base_context_a/b), so an earlier
       # task's `vars` key is genuinely present here and would nest one
-      # snapshot inside the next, growing per task. Verified against real
+      # snapshot inside the next, growing per task. Verified against
       # ansible-core 2.19.4, which reports `'vars' not in vars`.
       self_view = Hash(String, JSON::Any).new(initial_capacity: vars_context.size)
       vars_context.each do |key, value|
@@ -785,7 +784,7 @@ module Krikri
         # "object of type 'HostVarsVars' has no attribute 'ansible_host'"),
         # while `{{ ansible_host }}` on the current host still renders the
         # hostname. The synthesis used to feed exactly that extract shape
-        # a fabricated value, letting a bad-inventory playbook real
+        # a fabricated value, letting a bad-inventory playbook
         # Ansible aborts on task 1 run on with hostname garbage in place
         # of the IP list.
         result[other_host.name] = JSON::Any.new(entry)
@@ -1036,7 +1035,7 @@ module Krikri
       end
 
       # No candidate matched. `skip: true` (parsed into
-      # task.loop_first_found_skip) is the only thing that makes real
+      # task.loop_first_found_skip) is the only thing that makes
       # Ansible tolerate a miss - it returns [] so callers skip. Without
       # skip:, Ansible's first_found lookup RAISES and the task
       # FAILS ("The lookup plugin 'first_found' failed: No file was found
@@ -1060,7 +1059,7 @@ module Krikri
 
     # with_first_found: and include_vars: resolve relative paths against
     # *different* directories, verified against ansible-core 2.19.4 rather
-    # than assumed - conflating them would silently load files real
+    # than assumed - conflating them would silently load files
     # Ansible would not:
     #
     # - the first_found lookup searches the role's `files/` (a probe role
@@ -1088,8 +1087,7 @@ module Krikri
       # paths: [...]`) names the ONLY directories Ansible searches -
       # found via arillso.authorized_key's own `paths: ['distribution']`,
       # a custom, non-standard directory name outside the hardcoded roots
-      # below. A relative entry resolves against the role root (real
-      # Ansible's own behavior for with_first_found:'s paths:), an
+      # below. A relative entry resolves against the role root (Ansible's own behavior for with_first_found:'s paths:), an
       # absolute one passes through unchanged.
       #
       # Each custom path is templated first - `paths: ['{{ role_path }}/
@@ -1106,7 +1104,7 @@ module Krikri
       # apt-key/apt-repo setup Ansible attempts.
       if custom_paths = task.loop_first_found_paths
         # A relative custom path resolves against the directory of the
-        # FILE the with_first_found: task is itself written in - real
+        # FILE the with_first_found: task is itself written in -
         # Ansible's own actual behavior (verified live against
         # ansible-core 2.19.4/2.19.12: `paths: ["distribution"]` on a
         # with_first_found: task living in a role's tasks/main.yml
@@ -1122,7 +1120,7 @@ module Krikri
         # happened to be role-root-relative, not tasks-dir-relative -
         # the assumption that ALL custom paths: are role-root-relative
         # was never itself verified and turned out wrong. Tries the
-        # including file's own directory FIRST (matching what real
+        # including file's own directory FIRST (matching what
         # Ansible showed), then falls back to the role root and the
         # general per-task include_file_dir, so the earlier
         # role-root-relative case still resolves too.
@@ -1328,7 +1326,7 @@ module Krikri
         # text), so this whole re-render branch was skipped and the RAW
         # unrendered block-tag string was returned as the loop source,
         # failing downstream with "The `loop` value must resolve to a
-        # 'list', not 'str'" instead of the single-item list real
+        # 'list', not 'str'" instead of the single-item list
         # Ansible produces from with_items:'s own scalar-wrapping.
         if raw.includes?("{%") || raw.includes?("{#")
           rendered = VariableSubstitutor::JinjaRenderer.new(vars_context).render(raw)
@@ -1404,7 +1402,7 @@ module Krikri
     # true` result that flows through the exact same
     # `finish_single_task`/`finish_looped_task` aggregation a normal
     # task failure does (so a looped `when:` failure correctly shows
-    # `failed=1`, not `skipped=1`, in the recap - matching real
+    # `failed=1`, not `skipped=1`, in the recap - matching
     # Ansible's own "One or more items failed"); a bare `meta:`/
     # `include_vars:`/batch-group-member check that has no such result
     # pipeline falls back to `swallow_when_error`, which replicates
@@ -1541,7 +1539,7 @@ module Krikri
     # real typed evaluation) recovers the type at the one point it
     # is still known; the prefix marks the value on the wire so the
     # set_fact plugin decodes it instead of re-coercing (see
-    # NATIVE_TYPED_PREFIX). Guarded to exactly the shapes real
+    # NATIVE_TYPED_PREFIX). Guarded to exactly the shapes
     # Ansible native-types: a failed/unresolvable structured
     # evaluation (including a None result, which keeps the
     # NONE_SENTINEL flow in substitute_task_params) and the omit sentinel
@@ -2661,7 +2659,7 @@ module Krikri
       # controller's cwd. Running krikri-playbook from anywhere other
       # than the playbook's own directory left a playbook-relative
       # `files/...` src unresolvable ("the script files/m4-script.sh
-      # does not exist on the target (transfer failed?)") where real
+      # does not exist on the target (transfer failed?)") where
       # ansible-playbook found it (found live via modules_systems.yml).
       candidate = File.join(@playbook_dir, local_path)
       return File.expand_path(candidate) if File.exists?(candidate)

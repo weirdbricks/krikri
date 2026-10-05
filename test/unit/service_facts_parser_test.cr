@@ -51,7 +51,7 @@ describe Krikri::PluginHelpers::ServiceFactsParser do
       result["cron"].must_equal("running")
       result["nginx"].must_equal("running")
       result["apparmor"].must_equal("stopped")
-      # "?" means the init script has no status action at all - real
+      # "?" means the init script has no status action at all -
       # Ansible's regex matches only + and -, so it reports nothing
       # rather than guessing.
       result.has_key?("hwclock.sh").must_equal(false)

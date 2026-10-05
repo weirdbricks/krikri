@@ -40,7 +40,7 @@ module Krikri
     def execute : PluginResult
       run_execute
     rescue e : ModuleError
-      # Real module.fail_json - a failure result, not a crash
+      # Ansible module.fail_json - a failure result, not a crash
       PluginResult.new(changed: false, failed: true, msg: e.message || "apache2_module failed")
     end
 
@@ -50,7 +50,7 @@ module Krikri
 
       state = @params["state"]? || "present"
       unless state == "present" || state == "absent"
-        # Real argument_spec gives state its choices list, so
+        # Ansible's argument_spec gives state its choices list, so
         # AnsibleModule's choice check (parameters.py's exact wording)
         # fires before anything module-body-wise - previously a bogus
         # state got the plugin's own paraphrase.

@@ -1,10 +1,10 @@
 # docker_network edge cases. NO docker daemon inside either harness
-# container: real AnsibleDockerClient eagerly pings the daemon at module
+# container: AnsibleDockerClient eagerly pings the daemon at module
 # init, so every case past argument validation fails there (failed=True
 # changed=False) while krikri's plugin reaches the same failed=/changed=
 # via its own daemon connection attempt - those cases compare failed=/
 # changed= only. The byte-comparable surface is the AnsibleModule
-# argument validation real runs BEFORE the client init (required name,
+# argument validation Ansible runs BEFORE the client init (required name,
 # merged-spec type conversion over DOCKER_COMMON_ARGS + the module's
 # own params, state/scope choices, client_cert/client_key
 # required-together, ipam_config element shape, unsupported params).

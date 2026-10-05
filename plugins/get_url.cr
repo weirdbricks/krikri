@@ -185,7 +185,7 @@ module Krikri
     # present and a given checksum matches), nil to signal "proceed with
     # download".
     #
-    # With NO checksum given there is never a requestless skip here: real
+    # With NO checksum given there is never a requestless skip here:
     # ansible-core's get_url always performs the HTTP request when dest
     # exists (a conditional GET keyed on dest's mtime - #execute sets
     # last_mod_time for it, and a 304 answer short-circuits in
@@ -195,7 +195,7 @@ module Krikri
     # divergence: its "Add fish repository key" get_url task (no
     # checksum:, no force:, fetching the live keyserver.ubuntu.com
     # lookup) always short-circuited to ok on a warm rerun purely because
-    # the dest file existed, without making any request, where real
+    # the dest file existed, without making any request, where
     # Ansible re-requested and - since a dynamic endpoint's response can
     # differ run to run - sometimes reported changed: true. Falling
     # through to download_to_dest's fetch + SHA1 compare reproduces the
@@ -298,7 +298,7 @@ module Krikri
       end
 
       # Real bug found benchmarking geerlingguy.jenkins: its own "Add
-      # Jenkins apt repository key." task uses `force: true` - real
+      # Jenkins apt repository key." task uses `force: true` -
       # Ansible's own get_url module treats force: true as "always
       # re-download, bypassing freshness checks" (Last-Modified/ETag),
       # NOT "always report changed": it still compares the freshly
@@ -605,7 +605,7 @@ module Krikri
       tmp_path = "#{Dir.tempdir}/get_url_checksum_#{Process.pid}_#{Random.rand(1_000_000)}.tmp"
       begin
         # Route through #download (not the HTTP helper directly) so a
-        # file:// checksum file - also a valid fetch_url source for real
+        # file:// checksum file - also a valid fetch_url source for
         # Ansible - resolves the same way as an http(s) one. Ansible runs
         # the same url_get call for this file, so a failure here carries
         # the same shape as the main download's, naming the CHECKSUM url

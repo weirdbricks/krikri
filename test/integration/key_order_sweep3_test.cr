@@ -6,7 +6,7 @@ require "file_utils"
 # modprobe/mount/filesystem/pam_limits/pamd/seboolean/sefcontext/
 # seport/iptables/apt/apt_key/apt_repository/deb822_repository/package/
 # yum/dnf/dnf5/rpm_key/yum_repository/htpasswd/make/script/expect/npm/
-# gem plugins, pinned to the orders live-verified against real
+# gem plugins, pinned to the orders live-verified against
 # ansible-core 2.19.11 by registering each module's result and dumping
 # `{{ r | to_json }}` (see key_order_sweep_test.cr for the general
 # method; the -v dump sorts alphabetically, so the order is only

@@ -132,7 +132,7 @@ describe "strict-undefined when: - execute_block (single-host block:)" do
 
   # A block's when: is INHERITED by each child, so a condition that
   # raises is re-evaluated (and re-raised) once per child task rather
-  # than failing the block as a unit. Live-verified against real
+  # than failing the block as a unit. Live-verified against
   # ansible-core 2.19.12 on Rocky 9.6 (round173): the first task of
   # block: fails, the rest of that list is skipped by the halt, and
   # always: STILL runs and fails the same way => failed=2.

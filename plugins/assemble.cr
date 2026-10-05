@@ -25,7 +25,7 @@
 #     fails the task without touching dest (real assemble.py's own
 #     `validate % path` + module.run_command, matching copy.cr/replace.cr's
 #     established %s-template convention in this codebase)
-#   remote_src (optional bool, default true, accept-and-ignore): real
+#   remote_src (optional bool, default true, accept-and-ignore):
 #     Ansible's action plugin decides whether src needs transferring from
 #     the controller first - krikri's own TaskExecutor#stage_assemble_dir
 #     already handles the remote_src: false transfer case externally (see
@@ -228,7 +228,7 @@ module Krikri
 
     # apply_owner_group_mode doesn't report whether it changed anything -
     # compare dest's stat before/after so `changed:` reflects an
-    # attribute-only update on an otherwise-identical dest, matching real
+    # attribute-only update on an otherwise-identical dest, matching
     # Ansible's own set_fs_attributes_if_different contribution to changed.
     private def apply_owner_group_mode_changed(dest : String) : Bool
       before = File.info?(dest, follow_symlinks: false)

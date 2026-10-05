@@ -59,8 +59,7 @@ module Krikri
       # facts: - the binary exists (plugins/facts.cr, built and uploaded
       # by plugin_manager's own facts-gathering path) but had no entry
       # here, so a role writing `facts:` directly was silently dropped
-      # as "Plugin not available" even though setup: worked (real
-      # Ansible treats facts as setup's alias). Found by the registry
+      # as "Plugin not available" even though setup: worked (Ansible treats facts as setup's alias). Found by the registry
       # cross-check spec, not a live round.
       "ansible.builtin.facts",
       "ansible.builtin.package_facts",
@@ -97,7 +96,7 @@ module Krikri
       # travis" task (`community.general.gem: {name: travis, ...}`).
       "community.general.gem",
       "ansible.builtin.cron",
-      # cronvar lives in community.general, not ansible-core - real
+      # cronvar lives in community.general, not ansible-core -
       # ansible-core's own ansible_builtin_runtime.yml redirects the
       # legacy `ansible.builtin.cronvar` spelling to it (so the built-in
       # spelling below stays registered), but the CANONICAL FQCN every
@@ -151,7 +150,7 @@ module Krikri
       "ansible.builtin.deb822_repository",
       "ansible.posix.mount",
       # ansible.builtin.mount (round 601105, Appsilon.mount_efs): mount
-      # moved out of ansible-core into ansible.posix years ago, and real
+      # moved out of ansible-core into ansible.posix years ago, and
       # ansible-core's own ansible_builtin_runtime.yml transparently
       # redirects the old core FQCN to ansible.posix.mount on every
       # current controller - krikri had no equivalent alias, so a task
@@ -224,14 +223,14 @@ module Krikri
       "community.general.timezone",
       # ansible.builtin.timezone (round 601463, jtprogru.configure_timesyncd):
       # same legacy-core-FQCN redirect story as ansible.builtin.mount
-      # above - timezone moved to community.general years ago and real
+      # above - timezone moved to community.general years ago and
       # ansible-core still redirects the old core spelling to it.
       "ansible.builtin.timezone",
       "community.general.npm",
       "community.general.alternatives",
       # ansible.builtin.alternatives (round 601430, T2L.php): same
       # legacy-core-FQCN redirect story as ansible.builtin.mount above -
-      # alternatives moved to community.general years ago and real
+      # alternatives moved to community.general years ago and
       # ansible-core still redirects the old core spelling to it.
       "ansible.builtin.alternatives",
       "community.general.filesystem",
@@ -406,7 +405,7 @@ module Krikri
       "ec2_vpc_net_info",
       "ec2_ami_info",
       # round 196: native ports of the collection modules the corpus
-      # actually calls (previously rc=4 "unavailable modules" where real
+      # actually calls (previously rc=4 "unavailable modules" where
       # ansible ran them - mrlesmithjr.rabbitmq and linux-system-roles.rhc).
       "community.rabbitmq.rabbitmq_plugin",
       "community.rabbitmq.rabbitmq_user",
@@ -446,7 +445,7 @@ module Krikri
       # "uses unimplemented plugin" warning (the plugin source and
       # binary both exist - the lookup just didn't find them).
       # Verified against weareinteractive.openssl's own `openssl_privatekey:`
-      # / `openssl_csr:` / `openssl_certificate:` task names: real
+      # / `openssl_csr:` / `openssl_certificate:` task names:
       # ansible-core 2.19.4 resolves them; crystal 0.9.622 warned and
       # skipped.
       # community.rabbitmq (0.9.944): rabbitmq_plugin/rabbitmq_user are
@@ -556,7 +555,7 @@ module Krikri
 
     # community.docker's own removal text for docker_compose v1
     # (End-of-Life since July 2022; removed from community.docker in
-    # v4.0.0, docker_compose_v2 is the replacement) - real
+    # v4.0.0, docker_compose_v2 is the replacement) -
     # ansible-playbook's exact hard-stop wording, verified live against
     # ansible-core 2.19.11. Shared verbatim by all three tombstone
     # spellings (bare, community.general.- and community.docker.-

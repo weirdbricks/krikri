@@ -6,7 +6,7 @@ require "../../src/krikri/variable_substitutor"
 # default (a genuine missing-brace typo) used to be copied through verbatim
 # by the hand-rolled mustache scanner, which found no well-formed `{{ }}`
 # span, raised nothing, and let the play run 14 more tasks before failing on
-# an unrelated expression - masking the real divergence point. Real
+# an unrelated expression - masking the real divergence point.
 # ansible-core 2.19.4 hard-errors at first use (live-verified): a stray
 # single `}` inside the span is "Syntax error in template: unexpected '}'",
 # a span with no closer at all is "Syntax error in template: unexpected end

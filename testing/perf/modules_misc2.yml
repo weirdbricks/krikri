@@ -5,7 +5,7 @@
 # modules_files_storage.yml). Theme: the modules that had no synthetic
 # coverage yet, each exercised with REAL side effects (not just parsing)
 # so a divergence is directly comparable by running the same playbook
-# through real ansible-playbook and krikri-playbook side by side:
+# through ansible-playbook and krikri-playbook side by side:
 #   pause, mount_facts, current_container_facts, deploy_helper,
 #   py_module (via the playbook-dir library/ fixture krikri_py_probe.py
 #   next to this playbook), apache2_module, rpm_key, dnf5, mysql_db,
@@ -37,7 +37,7 @@
 #   (state=absent) at the end of the play. rpm_key deliberately gets
 #   no state=absent: removing a real distro trust key would be a real
 #   system mutation.
-# - pause exercises only the seconds: form, prompt-less. Real Ansible's
+# - pause exercises only the seconds: form, prompt-less. Ansible's
 #   pause with no duration blocks on interactive input (with closed
 #   stdin it warns and continues) - the interactive shape is never
 #   exercised here so neither engine can hang the run.

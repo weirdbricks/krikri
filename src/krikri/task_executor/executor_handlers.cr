@@ -74,8 +74,7 @@ module Krikri
       handlers.each do |handler|
         return false if handler.name.includes?("{{")
         answerable << handler.name
-        # A handler's listen: is itself single-string-or-list (real
-        # Ansible; CVi.thanos round 811339) - every topic it lists is
+        # A handler's listen: is itself single-string-or-list (Ansible; CVi.thanos round 811339) - every topic it lists is
         # answerable.
         (handler.listen || [] of String).each do |listen_topic|
           return false if listen_topic.includes?("{{")
@@ -259,8 +258,7 @@ module Krikri
       loop_items = nil
       when_error = nil
       begin
-        # Loop-source resolution sees the alias-free snapshot (real
-        # Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
+        # Loop-source resolution sees the alias-free snapshot (Ansible's own scoping - see #synthesize_legacy_ssh_aliases).
         loop_vars_context = loop_source_vars_context(handler, host, vars_context)
         loop_items = resolve_loop_items_or_raise(handler, host, loop_vars_context) do
           handler.loop_items ||
@@ -289,7 +287,7 @@ module Krikri
       # path merges them in #finish_single_task, but this handler path
       # never did, so a fact set by a handler was invisible to every
       # later task on the host (after a meta: flush_handlers, in the
-      # next play, and to handlers later in the same flush) - real
+      # next play, and to handlers later in the same flush) -
       # ansible-playbook keeps all of them visible. merge_ansible_facts
       # is a no-op for every non-set_fact module result (no
       # "ansible_facts" key), so this is safe unconditionally; looped
@@ -297,7 +295,7 @@ module Krikri
       merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"))
 
       # A handler can itself notify: further handlers (robertdebock.
-      # auditd's own "Run augenrules" -> notify: "Load rules" -> real
+      # auditd's own "Run augenrules" -> notify: "Load rules" ->
       # Ansible runs "Load rules" within the SAME flush_handlers pass,
       # since HandlerRunner#run's @handlers.each iterates in definition
       # order and "Load rules" is defined after "Run augenrules" - by
@@ -324,7 +322,7 @@ module Krikri
       # not installed - a real external role/environment gap, reproduces
       # on ansible-playbook too, which correctly stops right there)
       # - krikri-playbook instead kept running every task after the
-      # `meta: flush_handlers` that triggered it, diverging from real
+      # `meta: flush_handlers` that triggered it, diverging from
       # Ansible's own recap (extra ok:/changed:/failed: entries for
       # tasks Ansible never even attempted).
       halt_if_failed(handler, host, Krikri.result_failed_flag(result)) unless resolve_task_ignore_errors(handler)
@@ -547,7 +545,7 @@ module Krikri
       end
 
       # include_tasks: on a handler (Anthony25.unbound's own "restart
-      # unbound": `include_tasks: tasks/restart_unbound.yml`) - real
+      # unbound": `include_tasks: tasks/restart_unbound.yml`) -
       # Ansible lets a handler include a task file exactly like a regular
       # task can, splicing its tasks into the flush_handlers run. This
       # engine only special-cased include_tasks? on the regular-task path

@@ -1,6 +1,6 @@
 # Regression fixture: an ordinary fact-gathering module (package_facts,
 # service_facts, setup, etc) must NOT override a play var of the same
-# bare name - real Ansible's "host facts" precedence tier sits BELOW
+# bare name - Ansible's "host facts" precedence tier sits BELOW
 # play vars. Only set_fact's own high-precedence tier is allowed to
 # win unconditionally. Runs entirely on localhost.
 - name: fact precedence test

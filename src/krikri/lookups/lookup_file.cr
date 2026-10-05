@@ -43,8 +43,7 @@ module Krikri
       private def lookup_file(parts : Array(String)) : String
         # lookup('file', path) - reads a file's content from the
         # CONTROLLER (same controller-side rule as env/url/first_found
-        # above), stripped of a single trailing newline (real
-        # Ansible's own file lookup plugin behavior - it splits on
+        # above), stripped of a single trailing newline (Ansible's own file lookup plugin behavior - it splits on
         # newlines and rejoins with the requested separator, default
         # "\n", which drops exactly one trailing blank line same as a
         # plain `.rstrip()` would for the common no-embedded-blank-
@@ -225,7 +224,7 @@ module Krikri
         return "[]" unless pattern
         return lookup_fileglob_glob(pattern) if pattern.starts_with?('/')
 
-        # A RELATIVE pattern does not glob against the process CWD - real
+        # A RELATIVE pattern does not glob against the process CWD -
         # Ansible's fileglob lookup dwims it against the role/play search
         # stack (ansible.plugins.lookup.fileglob's find_file_in_search_
         # path, probed live against 2.19.4: from a role task, 'tasks/*.
@@ -268,7 +267,7 @@ module Krikri
           return "undefined" unless raw_arg
           evaluate_csvfile_lookup(raw_arg, kwargs)
         when "ini"
-          # lookup('ini', 'value section=section1 file=file.ini') - real
+          # lookup('ini', 'value section=section1 file=file.ini') -
           # Ansible's own ini lookup: reads `value` under `section=`
           # (default DEFAULT) from a controller-side INI file.
           raw_arg = parts[1]?.try { |part| evaluate(part.strip) }

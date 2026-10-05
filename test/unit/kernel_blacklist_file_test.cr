@@ -60,7 +60,7 @@ describe Krikri::PluginHelpers::KernelBlacklistFile do
       lines.must_equal(["# keep"])
     end
 
-    it "counts creating a missing file as a change (real module quirk)" do
+    it "counts creating a missing file as a change (Ansible module quirk)" do
       lines, changed = Krikri::PluginHelpers::KernelBlacklistFile.apply(nil, "nouveau", "present")
       changed.must_equal(true)
       lines.must_equal(["blacklist nouveau"])

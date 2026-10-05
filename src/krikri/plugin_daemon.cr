@@ -160,7 +160,7 @@ module Krikri
         # a dict with no "failed" key, and elan.monitoring_blackbox_
         # exporter's sibling block condition `when: registered["failed"]
         # or ...` then raised "object of type 'dict' has no attribute
-        # 'failed'" once per loop item on the warm run, where real
+        # 'failed'" once per loop item on the warm run, where
         # ansible-playbook skips the whole block. run_batch's own
         # transport-parity promise ("which transport ran a group is not
         # observable in the result") covers the result SHAPE too. Keep in

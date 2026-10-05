@@ -136,7 +136,7 @@ describe Krikri::PlaybookParser do
       # Real bug found benchmarking prometheus.prometheus.node_exporter's
       # own handlers/main.yml: `listen:` wasn't in the special_keys
       # exclusion list module detection scans, so a handler whose YAML
-      # happened to list `listen:` before its real module key (`listen:
+      # happened to list `listen:` before its Ansible module key (`listen:
       # "restart node_exporter"` above `ansible.builtin.systemd: ...`)
       # got "listen" itself picked as the module name - "Plugin not
       # available: listen" - instead of the Ansible.builtin.systemd
@@ -412,13 +412,13 @@ describe Krikri::PlaybookParser do
     end
 
     it "aborts the whole playbook parse for a removed ansible.builtin.include: task, not just skips it" do
-      # Real bug found benchmarking robertdebock.awx (round 162): real
+      # Real bug found benchmarking robertdebock.awx (round 162):
       # ansible-core removed the `include:` action entirely after
       # 2023-05-16 and refuses to even START the run when a playbook
       # uses it (rc=1, zero tasks execute) - this previously treated it
       # as merely "Plugin not available: include" (the same soft
       # per-task skip as any not-yet-implemented module) and kept
-      # executing every task after it. Verified live against real
+      # executing every task after it. Verified live against
       # ansible-playbook 2.19.4: byte-identical error message (the
       # "[ERROR]: " prefix comes from krikri-playbook.cr's own handler,
       # same as Ansible's tombstone display).
@@ -1186,7 +1186,7 @@ describe Krikri::PlaybookParser do
         YAML
 
       items = task.loop_items.as(Array(JSON::Any))
-      # Int index - Python enumerate() semantics, live-verified vs real
+      # Int index - Python enumerate() semantics, live-verified vs
       # ansible-core 2.19.11.
       items.map(&.as_a.map(&.raw)).must_equal([[0, "x"], [1, "y"]])
     end
@@ -1405,7 +1405,7 @@ describe Krikri::PlaybookParser do
     it "parses vars: listed before the module key without it being mistaken for the module name" do
       # special_keys (used to find "the first key that isn't a keyword,
       # that's the module") didn't include "vars" - a task listing vars:
-      # before its real module key would have had "vars" itself parsed
+      # before its Ansible module key would have had "vars" itself parsed
       # as the module name instead, failing with "Plugin not available:
       # vars" the moment key order didn't happen to put the module
       # first.
@@ -1610,7 +1610,7 @@ describe Krikri::PlaybookParser do
       # change than this fix, matching parse_become_value's own
       # documented trade-off just below this code). The old code fell
       # through to `false` for anything that wasn't a literal
-      # true/yes/on/false/no/off, so this Ansible task that real
+      # true/yes/on/false/no/off, so this Ansible task that
       # Ansible always ignores (ignored=1, failed=0) instead hard-failed
       # the whole play every single run.
       task = single_task(<<-YAML)
@@ -1761,7 +1761,7 @@ describe Krikri::PlaybookParser do
       # array - `unless imported_yaml.as_a?` (written for a genuinely
       # malformed file) treated `nil` the same way, raising "Imported
       # tasks file must be a YAML list" and crashing the whole run
-      # outright instead of just running zero tasks, matching real
+      # outright instead of just running zero tasks, matching
       # Ansible.
       root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_comment_only_spec")
       FileUtils.rm_rf(root) if Dir.exists?(root)
@@ -2103,7 +2103,7 @@ describe Krikri::PlaybookParser do
       # already propagated onto each inlined task (see the specs just
       # above), but notify: was not, so the handler never fired at all
       # even when several of install.yml's own inlined tasks (unarchive,
-      # deploy config) reported changed on the exact same run real
+      # deploy config) reported changed on the exact same run
       # Ansible fired it on.
       root = import_tasks_root("import_tasks_notify_spec")
       File.write(File.join(root, "common.yml"), <<-YAML)
@@ -2239,7 +2239,7 @@ describe Krikri::PlaybookParser do
     end
 
     it "hard-fails (not warns) when the imported file doesn't exist" do
-      # Updated from "warns and continues" to the fatal behavior real
+      # Updated from "warns and continues" to the fatal behavior
       # ansible-playbook itself has (ansible-core 2.19.11, verified live
       # with a minimal repro: "[ERROR]: Unable to retrieve file
       # contents. Could not find or access '...does_not_exist.yml' on
@@ -2737,7 +2737,7 @@ describe Krikri::PlaybookParser do
       parsed[0]["name"].as_s.must_equal("solo-net")
     end
 
-    # community.docker's env/labels are dict-typed options that real
+    # community.docker's env/labels are dict-typed options that
     # Ansible also accepts written as a list of KEY=VALUE strings, and
     # such an element may legitimately contain a comma (a JSON blob, a
     # shell snippet, a CSV value) - on the generic comma-joined wire that

@@ -30,14 +30,14 @@ module Krikri
     # the raw requested name, e.g. "sr_fingerprint", whose source
     # PythonModuleRunner will find at run time), OR a plain unimplemented
     # module (0.9.1050, reversing 0.9.903's parse-time hard-stop - round
-    # 811000: the unconditional raise aborted whole plays for tasks real
+    # 811000: the unconditional raise aborted whole plays for tasks
     # Ansible would simply skip, e.g. robertdebock.podman's
     # containers.podman.podman_container behind `when: podman_containers
     # is defined`, false on the role's own defaults). Either way the task
     # can't dispatch to a native plugin binary: with a library/ source it
     # RUNS through the py_module runner (see executor_run_loop.cr);
     # without one it takes the graceful per-task skip (task marked
-    # skipped, "skipping" line, play continued) - exactly what real
+    # skipped, "skipping" line, play continued) - exactly what
     # Ansible does when evaluating `when:` before resolving the action -
     # and the executor records the name into reachable_unavailable_
     # modules (after its own when: evaluates) for the final exit-code
@@ -361,7 +361,7 @@ module Krikri
     property? run_once : Bool
     # async: / poll: - run the module in the background (as a detached OS
     # process, not a Fiber, so it outlives the poll loop) up to async:
-    # seconds, checking every poll: seconds (default 10, matching real
+    # seconds, checking every poll: seconds (default 10, matching
     # Ansible) until it finishes or the async: timeout elapses; poll: 0
     # returns immediately with the job id instead of waiting at all.
     # Local connections only - see TaskExecutor#execute_async.
@@ -382,8 +382,7 @@ module Krikri
     # named `do tasks when "{{ service_name }}" state is "running"`
     # hard-failed Ansible when the role ran without grafana_podman's
     # `container_name` above it - this engine rendered the name leniently
-    # and kept executing). A TASK's own name stays lenient there (real
-    # Ansible banners it as "<< error 1 - 'nope' is undefined >>" and
+    # and kept executing). A TASK's own name stays lenient there (Ansible banners it as "<< error 1 - 'nope' is undefined >>" and
     # still runs/skips it normally), so only the enclosing-chain names
     # are tracked.
     property block_name_chain : Array(String)?
@@ -439,7 +438,7 @@ module Krikri
     # defined and ansible_parent_role_names | length > 0`.
     property role_parent_names : Array(String)?
     # The `role_path` (filesystem root) of each ancestor role, same
-    # ordering/population rules as role_parent_names above - real
+    # ordering/population rules as role_parent_names above -
     # Ansible searches a role task's ENTIRE parent-role chain (not just
     # the currently-executing role's own templates/files dir) for a
     # relative template:/copy: src:. Found via prometheus.prometheus._
@@ -813,7 +812,7 @@ module Krikri
     getter detail : String
 
     # libyaml's own wording for the single most common playbook YAML
-    # mistake (an unquoted value containing ": "), mapped to real
+    # mistake (an unquoted value containing ": "), mapped to
     # Ansible's phrasing and its worked-example hint. Any other error
     # keeps our YAML library's own message - Ansible's prose for
     # those comes from ITS parser and cannot be reproduced verbatim.
@@ -838,7 +837,7 @@ module Krikri
       if match = message.match(/\A(.+?) at line \d+, column \d+, (while .+)\z/)
         problem = match[1]
         # libyaml appends a position to the context half as well
-        # ("while parsing a flow sequence at line 2, column 10") - real
+        # ("while parsing a flow sequence at line 2, column 10") -
         # Ansible shows the context without it.
         context = match[2].sub(/ at line \d+, column \d+\z/, "")
         "#{context[0].upcase}#{context[1..]} #{problem}."
@@ -989,7 +988,7 @@ module Krikri
   # "Ansible itself refuses to even start the run" (a playbook
   # written for a version of ansible-core this role no longer supports).
   # Propagates all the way to krikri-playbook.cr's own top-level "Error
-  # parsing playbook:" handler (rc=1, nothing executes) - matching real
+  # parsing playbook:" handler (rc=1, nothing executes) - matching
   # Ansible's own behavior exactly instead of executing PART of the play
   # and failing partway through for an unrelated reason. Found live
   # benchmarking robertdebock.awx (round 162): its own tasks/main.yml
@@ -1036,7 +1035,7 @@ module Krikri
   end
 
   # A bad argument on an include/include-role directive (`include_role:`,
-  # `import_role:`, `import_tasks:`, `include_tasks:`), rejected by real
+  # `import_role:`, `import_tasks:`, `include_tasks:`), rejected by
   # ansible-core at PLAYBOOK-LOAD time - TaskInclude.check_options /
   # IncludeRole.load run while the playbook is being parsed, long before
   # any play banner. ansible-playbook 2.19.11 aborts the whole run
@@ -1184,7 +1183,7 @@ module Krikri
   # default (round 900914) previously sailed through parsing and
   # failed later with a confusing runtime error. Bypasses parse_tasks's
   # generic per-task rescue (same mechanism as StaticImportUndefinedError)
-  # so it propagates to the top-level parse-error handler like real
+  # so it propagates to the top-level parse-error handler like
   # Ansible's own hard stop.
   class InvalidRegisterError < Exception
   end
@@ -1466,7 +1465,7 @@ module Krikri
           rescue ex : StaticImportUndefinedError
             raise ex
           rescue ex : StaticImportMissingFileError
-            # Same bypass - a missing import target is fatal the way real
+            # Same bypass - a missing import target is fatal the way
             # Ansible is, not a soft warning. See that class's own comment.
             raise ex
           rescue ex : InvalidRegisterError
@@ -1528,7 +1527,7 @@ module Krikri
           # not a per-play soft-skip.
           raise ex
         rescue ex : InvalidIncludeAttributeError
-          # Same bypass as RoleNotFoundError above - real
+          # Same bypass as RoleNotFoundError above -
           # ansible-core's AnsibleParserError for an include_tasks:/
           # include_role: with a disallowed attribute (e.g. become:/
           # become_user:) aborts the whole playbook run (rc=4),
@@ -1573,7 +1572,7 @@ module Krikri
 
     # Parse a single play
     # Parses a `module_defaults:` mapping into {module name => {arg =>
-    # value}}. Keys are normalized to the bare module name, because real
+    # value}}. Keys are normalized to the bare module name, because
     # Ansible matches a short key against an FQCN task and vice versa -
     # verified against ansible-core 2.19.4: a `debug:` key supplies
     # defaults to an `ansible.builtin.debug:` task, and an
@@ -2061,7 +2060,7 @@ module Krikri
       # key: "'static' is not a valid attribute for a TaskInclude" (rc=4,
       # no PLAY RECAP) - ovirt.image-template's tasks/qcow2_image.yml:173
       # (`static: no` next to an `import_tasks:`) is the live specimen.
-      # Validated here, at parse time, so the blast radius matches real
+      # Validated here, at parse time, so the blast radius matches
       # Ansible's instead of silently ignoring the key and running on.
       if hash["static"]?
         raise InvalidIncludeAttributeError.new("static", "TaskInclude")
@@ -2090,10 +2089,10 @@ module Krikri
       # task-level `import_tasks:` in a plain play has no role context,
       # so known_vars is nil there - and gating on it meant the path kept
       # its literal "{{ ... }}", missed the file, and the task was
-      # silently DROPPED: no banner, no failure, exit 0, while real
+      # silently DROPPED: no banner, no failure, exit 0, while
       # ansible-playbook refuses the whole playbook (rc=4). An empty
       # context still resolves anything defined in vars/extra-vars, and
-      # still raises for a fact, which is exactly the distinction real
+      # still raises for a fact, which is exactly the distinction
       # Ansible draws.
       if file_rel.includes?("{{")
         original_file_rel = file_rel
@@ -2184,7 +2183,7 @@ module Krikri
       # {{ activemq_version }}" (`import_tasks: install.yml, notify:
       # restart activemq`) - the handler never fired at all here before,
       # even though several of install.yml's own inlined tasks (unarchive,
-      # deploy config) reported changed on the exact same run real
+      # deploy config) reported changed on the exact same run
       # Ansible fired it on.
       import_notify = hash["notify"]?.try { |v| v.as_s? ? [v.as_s] : v.as_a.map(&.as_s) } || [] of String
       import_vars = Hash(String, JSON::Any).new
@@ -2194,7 +2193,7 @@ module Krikri
 
       imported_tasks.each do |task|
         if import_when
-          # Parent `when:` PREPENDED, not appended (round 188): real
+          # Parent `when:` PREPENDED, not appended (round 188):
           # Ansible evaluates `and` left-to-right with short-circuit, and
           # a parent's `when:` is almost always the cheaper, more
           # gate-like operand — e.g. `when: openssl_generate_csr | bool`
@@ -2465,7 +2464,7 @@ module Krikri
           end
           raise IncludeDirectiveError.new(role_bool_keyword_render(bool_failure, source_file))
         end
-        # Like import_tasks:'s path, import_role:'s NAME is static - real
+        # Like import_tasks:'s path, import_role:'s NAME is static -
         # Ansible resolves it before the run and refuses the whole
         # playbook if it can only be known from a fact. This engine
         # reused include_role's runtime path for import_role (see the
@@ -2706,7 +2705,7 @@ module Krikri
       end
 
       # Check if plugin is available - resolving a bare (non-FQCN) name
-      # like `getent:` against ansible.builtin/etc first, same as real
+      # like `getent:` against ansible.builtin/etc first, same as
       # Ansible's own module search path. The fallback task name (for a
       # missing `name:`) uses the AS-WRITTEN action name, not the
       # FQCN-resolved one - Ansible's `TASK [debug]` banner echoes
@@ -2721,7 +2720,7 @@ module Krikri
         unavailable_module_name = resolved_module_name ? nil : module_name
         unless resolved_module_name
           # A tombstoned-removed module name (ec2_remote_facts and
-          # friends) hard-stops the whole run at parse time with real
+          # friends) hard-stops the whole run at parse time with
           # Ansible's own exact wording - the same playbook-load check
           # ansible-playbook runs, verified against 2.19.4. That
           # stays static because a tombstoned name is one Ansible
@@ -2840,7 +2839,7 @@ module Krikri
         # env-var dict at run time (see Task#environment_raw). A literal
         # non-hash here used to be silently DROPPED (as_h? returned nil),
         # so a role setting `environment: "{{ proxy_env }}"` never had
-        # the variable substituted - and never failed the way real
+        # the variable substituted - and never failed the way
         # Ansible fails when that variable is undefined.
         task.environment_raw = safe_yaml_to_string(env_raw)
       end
@@ -3316,7 +3315,7 @@ module Krikri
         # incompatible". Both checks previously ran HERE as
         # IncludeVarsArgumentError parse-time hard-stops, which diverges
         # in exactly the shapes Ansible's loop reaches: the generator's
-        # `free-form:` chaos shape and a file/dir-less task run on real
+        # `free-form:` chaos shape and a file/dir-less task run on
         # Ansible as ordinary failed tasks (`...ignoring` under
         # ignore_errors:, recap ignored=1), not playbook-load aborts.
         invalid_arg = nil
@@ -3516,7 +3515,7 @@ module Krikri
     # cache update handler ran at the very end of the play instead of
     # mid-role). `end_host`/`end_play`/`clear_host_errors`/`noop`/
     # `refresh_inventory` added after that - see TaskExecutor#execute_
-    # meta for the exact semantics (each verified against real
+    # meta for the exact semantics (each verified against
     # ansible-playbook, including the non-obvious ones: end_play affects
     # every currently-active host even if only ONE host's own `when:`
     # actually reaches it; clear_host_errors does NOT resume execution
@@ -3627,7 +3626,7 @@ module Krikri
     end
 
     # The include directive's name exactly as written in the task
-    # ("include_role", "ansible.builtin.import_tasks", ...) - real
+    # ("include_role", "ansible.builtin.import_tasks", ...) -
     # Ansible's validation messages use task.action, which is the
     # as-written spelling, not a canonical FQCN (live-verified vs
     # 2.19.11: a short-form `include_role: {}` errors as "... for
@@ -3988,8 +3987,7 @@ module Krikri
     # - become/ is not there either, same error class `'X' is not a
     # valid attribute for a IncludeRole`.
     #
-    # import_tasks:/import_role: are NOT validated this way (real
-    # ansible's own ImportPlaybook/ImportRole inherit the full Task
+    # import_tasks:/import_role: are NOT validated this way (ansible's own ImportPlaybook/ImportRole inherit the full Task
     # fattributes and accept become:/become_user:), so this set is
     # consulted only by parse_include_tasks and parse_include_role
     # below. Starts from Ansible's TaskInclude.VALID_INCLUDE_KEYWORDS
@@ -4047,7 +4045,7 @@ module Krikri
       # `include_tasks: with_subelements: [list, key]` is exactly as
       # valid on ansible-core's TaskInclude as the with_* variants
       # already above (same lookup-based loop syntax), but was rejected
-      # here with the same "not a valid attribute" parse-time error real
+      # here with the same "not a valid attribute" parse-time error
       # ansible reserves for genuinely-disallowed keys like become:.
       # Found via f5devcentral.bigiq_move_app_dashboard/.bigiq_pinning_
       # deploy_objects, both looping an `include_tasks:` over
@@ -4064,7 +4062,7 @@ module Krikri
 
     # Bypasses the per-task "Warning: Skipping task ... ParseError"
     # rescue in #parse_tasks, the same way RemovedActionError,
-    # StaticImportRoleUndefinedError, etc. do - matches real
+    # StaticImportRoleUndefinedError, etc. do - matches
     # ansible-core's own AnsibleParserError which aborts the whole
     # playbook rather than degrading gracefully. Without the typed
     # class, the bare-string raise above would land in the generic
@@ -4114,7 +4112,7 @@ module Krikri
         # allowlist anyway but the same skip-by-exception would
         # land here; the allowlist check below covers it.
         next if key_str == directive_key
-        # Any with_-prefixed key is a legacy loop keyword in real
+        # Any with_-prefixed key is a legacy loop keyword in
         # Ansible (with_url:, with_lines:, ...) - accepted on an
         # include the same way loop: is, and converted to a lookup
         # loop at execution time.
@@ -4137,8 +4135,7 @@ module Krikri
     # included task individually, and the executor evaluates it via
     # TaskExecutor#execute_include_tasks.
     # include_tasks:'s file path has already been validated and extracted
-    # by validate_task_include_options at the parse_task call site (real
-    # Ansible's TaskInclude.check_options runs at playbook-load time for
+    # by validate_task_include_options at the parse_task call site (Ansible's TaskInclude.check_options runs at playbook-load time for
     # include_tasks: too - a bad option, a missing file path or a bad
     # apply: aborts the whole run with rc=4 before any play banner,
     # live-verified vs 2.19.11 - even though the file itself is only read
@@ -4439,7 +4436,7 @@ module Krikri
     # that branch's own comment for the full rationale): command:/
     # shell:/script:/raw: get the whole string as a command line plus
     # any trailing key=value specials (creates=/removes=/chdir=/
-    # executable=) stripped off the end; every other module gets real
+    # executable=) stripped off the end; every other module gets
     # Ansible's free-form `key=value key2="quoted value"` inline syntax.
     # (verified live against ansible-core 2.19.11: a `-a` string that
     # starts with `{` but is not valid JSON, e.g. `{bad json`, is NOT
@@ -4448,7 +4445,7 @@ module Krikri
     # and whatever the module does with raw params (debug rejects it,
     # command tries to execute it) is the only "error" there is; the
     # fallback below reproduces exactly that). A parsed-but-not-object
-    # value (`[1,2]`, `"str"`) falls through the same way - real
+    # value (`[1,2]`, `"str"`) falls through the same way -
     # Ansible 2.19.11 also treated those as free-form raw params.
     #
     # The JSON-object path is why genuinely dict/list-shaped module
@@ -4468,7 +4465,7 @@ module Krikri
         end
       elsif RAW_COMMAND_MODULES.includes?(module_name)
         # Ad-hoc `-a` strings go through the same mod_args → parse_kv →
-        # split_args path as playbook task free-form strings in real
+        # split_args path as playbook task free-form strings in
         # Ansible, so the line-continuation strip applies here too.
         cmd, special = extract_command_special_params(strip_line_continuation_tokens(raw_args))
         params["cmd"] = cmd
@@ -4625,7 +4622,7 @@ module Krikri
             params[key.to_s] = statements.to_json
           elsif (module_name == "community.general.ini_file" || module_name == "ini_file") && key.to_s == "values" && value.as_a?
             # `values:` (community.general.ini_file's list form of
-            # `value:`, real module's do_ini) has the same comma-joining
+            # `value:`, Ansible module's do_ini) has the same comma-joining
             # hazard assert.that/mysql_query already work around - and a
             # worse one specific to this param: an EMPTY STRING element
             # (RedHatOfficial.rhel9_cui round900703's `values: ['', ...]`,
@@ -4683,7 +4680,7 @@ module Krikri
             # is available" - found live benchmarking
             # inverse_inc.gitlab_buildpkg_tools, whose `name: "{{
             # lookup('env', 'DEB_PACKAGES_NAME') }}"` renders to "" when
-            # the env var is unset, and silently no-op'd here where real
+            # the env var is unset, and silently no-op'd here where
             # Ansible fails the task. "[]" is the same wire text the
             # templated whole-span path already renders an empty
             # container to (VariableLookup#format_value_output /
@@ -4693,7 +4690,7 @@ module Krikri
             # JSON branch decodes both to no elements.
             params[key.to_s] = "[]"
           elsif (list = value.as_a?) && list.any? { |item| item.raw.is_a?(Hash) || item.raw.is_a?(Array) }
-            # A literal list carrying dict or nested-list members: real
+            # A literal list carrying dict or nested-list members:
             # Ansible keeps every member natively typed (group_by's
             # parents/add_host's groups crash on a non-string member with
             # '_AnsibleTaggedDict'/'_AnsibleTaggedList'), and a
@@ -4815,7 +4812,7 @@ module Krikri
         if RAW_COMMAND_MODULES.includes?(module_name)
           # Real bug found benchmarking geerlingguy.firewall's own
           # "Flush iptables the first time playbook runs." task:
-          # `command: > iptables -F creates=/etc/firewall.bash` - real
+          # `command: > iptables -F creates=/etc/firewall.bash` -
           # Ansible's command:/shell: modules recognize a handful of
           # trailing key=value params (creates:, removes:, chdir:,
           # executable:) written inline this way, same as any other
@@ -5171,7 +5168,7 @@ module Krikri
     # folded space and all - which bash itself REJECTS: the `\ ` starts a
     # command word " set" (escaped leading space) that is no builtin, so
     # bash dies with exit 127 and "line 1:  set: command not found" (the
-    # doubled space in the message is the word's own leading space). Real
+    # doubled space in the message is the word's own leading space).
     # Ansible never hands bash that string - split_args has already
     # removed every standalone backslash, so bash receives
     # "set -o errexit; set -o pipefail; cfssl gencert ..." and runs it.
@@ -5722,7 +5719,7 @@ module Krikri
 
     # Expands block: tasks into their nested tasks (recursively, through
     # block/rescue/always), dropping the "_block" pseudo-task entries
-    # themselves so callers only see real module invocations.
+    # themselves so callers only see Ansible module invocations.
     #
     # NOTE: this used to also back a `self.unavailable_modules(playbook)`
     # static whole-playbook scan that krikri-playbook.cr used to decide its

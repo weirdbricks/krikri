@@ -1,10 +1,10 @@
 # script (ansible.builtin.script) edge cases - fully testable here (no
 # backend needed; ansible_connection=local runs the script in the same
 # container on both engines). The fixture scripts are written at
-# runtime into /work by the playbook itself (real Ansible resolves the
+# runtime into /work by the playbook itself (Ansible resolves the
 # script source at task RUN time, not playbook-load time, so earlier
 # tasks' files are visible). Scenarios: a script source that does not
-# exist at all, a script exiting non-zero (real reports failed=True
+# exist at all, a script exiting non-zero (Ansible reports failed=True
 # but STILL changed=True - script has no idempotency concept), a
 # successful run, creates: with an already-existing marker (skip, ok),
 # and removes: with the marker missing (skip). Msg wording differs and

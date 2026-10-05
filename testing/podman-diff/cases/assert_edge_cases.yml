@@ -11,10 +11,10 @@
         that: "krikri_diff_undefined_var == 1"
       register: a1
       ignore_errors: true
-    # default() guards: real Ansible's registered var for a
+    # default() guards: Ansible's registered var for a
     # conditional-evaluation failure carries NO changed key (only
     # failed+msg), so a bare a1.changed would fail the debug task
-    # itself in real Ansible and abort the play there.
+    # itself in Ansible and abort the play there.
     - ansible.builtin.debug:
         msg: "A1 failed={{ a1.failed | default('undef') }} changed={{ a1.changed | default('undef') }}"
 

@@ -534,10 +534,9 @@ end
 # ansible-core 2.19.4 (2026-09-06, igor_nikiforov.etcd /
 # lablabs.rke2 investigation):
 # - `loop: ["{{ d['missing'] }}"]` on a dict missing that key fails the
-#   task with "object of type 'dict' has no attribute 'missing'" (real
-#   Ansible templates the loop list with module-arg strictness before any
+#   task with "object of type 'dict' has no attribute 'missing'" (Ansible templates the loop list with module-arg strictness before any
 #   iteration runs; krikri used to render the literal string "undefined"
-#   and mkdir directories named "undefined" - rc=0 warm where real
+#   and mkdir directories named "undefined" - rc=0 warm where
 #   Ansible can never get past the task).
 # - `when: false` + an undefined loop item is a plain SKIP (Ansible
 #   evaluates the task-level when: before ever templating the loop list).

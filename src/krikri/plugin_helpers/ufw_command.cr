@@ -117,7 +117,7 @@ module Krikri
       #     treats "" as truthy, so this emitted a dangling `on ` and
       #     real ufw rejected the whole command with "ERROR: Wrong
       #     number of arguments" - every rule in the role failed.
-      #   - The three interface forms are INDEPENDENT appends in real
+      #   - The three interface forms are INDEPENDENT appends in
       #     Ansible, not an if/elsif chain: a task setting both
       #     interface_in and interface_out emits both clauses there and
       #     only the first here.

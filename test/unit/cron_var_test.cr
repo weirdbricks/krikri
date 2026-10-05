@@ -34,7 +34,7 @@ describe CronVar do
       CronVar.parse_var_line("   ").must_be_nil
     end
 
-    it "preserves quoted spaces in the value but swallows unquoted ones (real module's shlex quirk)" do
+    it "preserves quoted spaces in the value but swallows unquoted ones (Ansible module's shlex quirk)" do
       CronVar.parse_var_line(%(FOO='bar baz')).must_equal({"FOO", "bar baz"})
       CronVar.parse_var_line(%(FOO="bar baz")).must_equal({"FOO", "bar baz"})
       CronVar.parse_var_line("FOO=bar baz").must_equal({"FOO", "barbaz"})
@@ -94,7 +94,7 @@ describe CronVar do
       text.must_equal("MAILTO=admin@example.com\nSHELL=/bin/sh\n")
     end
 
-    it "does not rewrite an assignment that already holds the value, even with spaces around the = (real module only rewrites when the parsed value differs)" do
+    it "does not rewrite an assignment that already holds the value, even with spaces around the = (Ansible module only rewrites when the parsed value differs)" do
       text, changed = CronVar.upsert("MAILTO = root\n", "MAILTO", "root")
       changed.must_equal(false)
       text.must_equal("MAILTO = root\n")

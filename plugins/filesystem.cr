@@ -12,7 +12,7 @@ module Krikri
   # file system" task (fstype: swap on a freshly dd'd swap file)
   # silently dropped while Ansible actually ran mkswap.
   #
-  # `resizefs:`/`uuid:` are not implemented (real module's own resize/
+  # `resizefs:`/`uuid:` are not implemented (Ansible module's own resize/
   # UUID-reset paths per fstype) - same class of documented, narrow
   # scope cut as this repo's other RHEL/FreeBSD-only module gaps.
   # `ufs` IS in the accepted choices (real filesystem.py's FILESYSTEMS
@@ -62,7 +62,7 @@ module Krikri
       end
 
       state = @params["state"]?.try { |str| str.empty? ? nil : str } || "present"
-      # Real argument_spec gives state/fstype choices lists, so
+      # Ansible's argument_spec gives state/fstype choices lists, so
       # AnsibleModule's choice check (parameters.py's exact wording)
       # fires before anything else param-wise - previously a bogus
       # state silently behaved as present and a bogus fstype fell
@@ -103,7 +103,7 @@ module Krikri
       present_result(dev, current_fs, state, fstype, force, opts, check_mode)
     end
 
-    # Real argument_spec gives state/fstype choices lists, so
+    # Ansible's argument_spec gives state/fstype choices lists, so
     # AnsibleModule's choice check (parameters.py's exact wording)
     # fires before anything else param-wise - previously a bogus
     # state silently behaved as present and a bogus fstype fell

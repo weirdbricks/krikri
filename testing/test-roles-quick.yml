@@ -1,4 +1,4 @@
-# Roles smoke test - safe under --check and for real runs: copy target is
+# Roles smoke test - safe under --check and for Ansible runs: copy target is
 # a throwaway /tmp file, everything else is debug.
 
 - name: roles smoke test

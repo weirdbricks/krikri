@@ -12,7 +12,7 @@ require "../../src/krikri/plugin_helpers/selinux_config"
 # has no policy store.
 describe Krikri::PluginHelpers::SelinuxConfig do
   describe ".state_validation_error" do
-    it "requires state (real argument_spec: required=True)" do
+    it "requires state (Ansible's argument_spec: required=True)" do
       Krikri::PluginHelpers::SelinuxConfig.state_validation_error(nil)
         .must_equal("missing required arguments: state")
     end

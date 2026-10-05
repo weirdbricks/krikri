@@ -1,6 +1,6 @@
 # file module failure-path edge cases - each task is independent
 # (ignore_errors so one failure doesn't hide the rest) and its
-# result is printed so cold-diff between real ansible-playbook and
+# result is printed so cold-diff between ansible-playbook and
 # krikri-playbook shows exact rc/msg divergence, not just recap counts.
 - hosts: all
   gather_facts: false

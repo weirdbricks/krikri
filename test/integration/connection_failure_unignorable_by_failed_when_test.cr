@@ -3,7 +3,7 @@ require "file_utils"
 
 # Real bug found benchmarking buluma.checkmk_agent's own "Download
 # check_mk_agent installer (deb)" task (`delegate_to: localhost,
-# failed_when: false`, inheriting the play's `become: true`): real
+# failed_when: false`, inheriting the play's `become: true`):
 # Ansible fails a task outright when `become:` itself can't succeed (no
 # module ever ran, so there's nothing for failed_when:/changed_when: to
 # reinterpret) - verified live against ansible-core 2.19.4, a `become:`

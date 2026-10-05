@@ -6,7 +6,7 @@ require "../src/krikri/plugin_helpers/service_facts_parser"
 
 module Krikri
   # ServiceFacts plugin - populates the ansible_facts.services dict,
-  # matching ansible.builtin.service_facts. The fact shape follows real
+  # matching ansible.builtin.service_facts. The fact shape follows
   # Ansible: a dict keyed by unit name (`"sshd.service"`) with
   # {name, source, state, status}.
   #

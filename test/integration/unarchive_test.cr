@@ -133,7 +133,7 @@ describe "unarchive plugin" do
     (File.info(File.join(dest, "sub", "b.txt")).permissions.value & 0o777).must_equal(0o700)
 
     # A warm rerun (nothing left to extract) must reapply the same
-    # attributes to dest and every member again, matching real
+    # attributes to dest and every member again, matching
     # Ansible's own "every run, not just an initial extraction" pass.
     result = PluginSpecHelper.run("unarchive", {
       "src"  => File.join(TMP_DIR, "archive.tar.gz"),
@@ -158,7 +158,7 @@ describe "unarchive plugin" do
     # unarchive: task later extracts into with mode: "0755" - the old
     # blanket find chmod'd the just-downloaded tarball from 0644 to
     # 0755 too, so get_url's own idempotency check saw a "corrupted"
-    # mode on the next run and reported changed: true where real
+    # mode on the next run and reported changed: true where
     # Ansible (which never touches anything outside the archive's own
     # member list) stayed unchanged.
     #
@@ -373,7 +373,7 @@ describe "unarchive plugin" do
     File.write(File.join(dest, "a.txt"), "tampered")
     # tar --compare only flags a real content change via its own "Mod
     # time differs" line - force a >1s mtime skew so the change reliably
-    # crosses tar's one-second mtime granularity, matching real
+    # crosses tar's one-second mtime granularity, matching
     # ansible-playbook's own TgzArchive#is_unarchived, which has the
     # identical granularity limit (no separate "size differs" signal).
     File.utime(Time.utc - 1.hour, Time.utc - 1.hour, File.join(dest, "a.txt"))
@@ -389,7 +389,7 @@ describe "unarchive plugin" do
     # to every extracted file, matching ansible-playbook's actual
     # behavior - see this file's header comment) - since the archive's
     # OWN embedded member mode is 0644, `tar --compare` legitimately
-    # reports "Mode differs" for those files on every single rerun. Real
+    # reports "Mode differs" for those files on every single rerun.
     # Ansible's own TgzArchive#is_unarchived (unarchive.py) explicitly
     # ignores a Mode-differs line whenever mode: was itself given on the
     # task (trusting set_fs_attributes_if_different() to have already

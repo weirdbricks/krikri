@@ -437,7 +437,7 @@ describe "apt plugin - parameter coverage" do
 
   describe "documented no-ops" do
     # krikri's apt plugin has always been apt-get-only (no aptitude
-    # anywhere in its code paths), so force_apt_get - which real
+    # anywhere in its code paths), so force_apt_get - which
     # Ansible uses to pick apt-get over aptitude - is already-true by
     # construction.
     it "force_apt_get is a no-op by construction (this plugin only ever runs apt-get)" do

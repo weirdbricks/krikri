@@ -119,7 +119,7 @@ module Krikri
         # and unchanged identical): vars, changed, failed.
         key_order: ["vars", "changed"]
       )
-      # Real module includes backup_file only when a backup was actually
+      # Ansible module includes backup_file only when a backup was actually
       # retained (changed && backup; its None default is dropped by
       # exit_json).
       result.extra["backup_file"] = JSON::Any.new(backup_file) unless backup_file.empty?

@@ -137,7 +137,7 @@ module Krikri
       end
       dest = expand_tilde(dest)
 
-      # `src` and `content` have DIFFERENT presence rules in real
+      # `src` and `content` have DIFFERENT presence rules in
       # Ansible - genuinely asymmetric, not a simplification either way
       # (all four live-verified against ansible-core 2.19.11):
       #
@@ -306,7 +306,7 @@ module Krikri
 
       # Check if file exists and compare
       if File.exists?(dest)
-        # force: false means "only create it if it is not there" - real
+        # force: false means "only create it if it is not there" -
         # Ansible leaves an existing file completely alone, content and
         # all, and never even computes the dest checksum for the
         # equal-content shortcut (the action's _execute_remote_stat
@@ -1282,7 +1282,7 @@ module Krikri
       fields[0].delete('-').strip
     end
 
-    # Whether the attributes: param reports changed, mirroring real
+    # Whether the attributes: param reports changed, mirroring
     # Ansible's set_attributes_if_different exactly: changed when the
     # current lsattr flag string differs from the requested flag letters
     # OR the request is '-'-prefixed - in which case chattr is re-run

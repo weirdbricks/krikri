@@ -4,7 +4,7 @@ require "file_utils"
 # community.general.maven_artifact's local (file://) repository surface:
 # MavenDownloader reads maven-metadata-local.xml (NOT maven-metadata.xml)
 # for file:// repositories - the plugin used to look for the remote name
-# and never resolve version=latest locally. Found against real
+# and never resolve version=latest locally. Found against
 # ansible-playbook via the podman-diff harness.
 private def with_local_repo(&)
   repo = File.tempname("maven-artifact-spec")

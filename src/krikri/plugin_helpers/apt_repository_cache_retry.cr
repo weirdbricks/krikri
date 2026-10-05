@@ -21,7 +21,7 @@ module Krikri
     DEFAULT_UPDATE_CACHE_RETRIES         =  5
     DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY = 12
 
-    # Backoff delay before retry number *retry* (0-based), matching real
+    # Backoff delay before retry number *retry* (0-based), matching
     # Ansible's `delay = 2 ** retry + randomize` capped at
     # `update_cache_retry_max_delay + randomize`. *jitter* is injectable
     # so the regression spec can pin the value; defaults to the same

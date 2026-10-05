@@ -20,7 +20,7 @@ module Krikri
   # reproduces the Ansible module's output exactly: the CSR's extensions
   # are carried over, a SubjectKeyIdentifier is added, and for `ownca`
   # an AuthorityKeyIdentifier derived from the CA key - verified
-  # extension-for-extension against real module output for both
+  # extension-for-extension against Ansible module output for both
   # providers.
   #
   # Idempotency mirrors the real backends rather than comparing files

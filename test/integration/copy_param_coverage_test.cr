@@ -136,7 +136,7 @@ describe "copy plugin - parameter coverage (checksum/attributes/SELinux/follow/l
   end
 
   describe "seuser:/serole:/setype:/selevel: (SELinux context)" do
-    # Same convention as archive_spec.cr's own SELinux spec: real
+    # Same convention as archive_spec.cr's own SELinux spec:
     # Ansible skips the whole chcon step when SELinux isn't enabled on
     # the target - this confirms copy: still succeeds cleanly (a true
     # no-op) rather than attempting (and failing) a chcon call.

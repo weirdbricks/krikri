@@ -44,7 +44,7 @@ module Krikri
   #   change into the persistent policy store (survives a reboot) rather
   #   than only the running kernel's active value.
   # - ignore_selinux_state: default false. Skips the "SELinux enabled"
-  #   pre-check (real module's own escape hatch for chrooted targets
+  #   pre-check (Ansible module's own escape hatch for chrooted targets
   #   where the real runtime state can't be queried).
   class SebooleanPlugin < BasePlugin
     def execute : PluginResult

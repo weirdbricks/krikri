@@ -26,7 +26,7 @@ module Krikri
   # connection details (host/user/port, ansible_ssh_private_key_file,
   # dest_port: override); both-ends-local sync (ansible_connection=local
   # or delegate_to: localhost on a localhost task); delegate_to: localhost
-  # (any local-transport delegate) on a NON-localhost task host - real
+  # (any local-transport delegate) on a NON-localhost task host -
   # Ansible then runs rsync on the controller with the TASK host as
   # rsync's own ssh remote (`target:/path`, no connection plugin in
   # between, verified live: a local-connection task host still gets
@@ -47,7 +47,7 @@ module Krikri
   # roles actually write apart from that one: no delegate_to:, delegate_to:
   # localhost, and delegate_to: the task's own host.
   class SynchronizeActionPlugin < ActionPlugin
-    # Real module success shape: exit_json(changed=, msg=, rc=, cmd=,
+    # Ansible module success shape: exit_json(changed=, msg=, rc=, cmd=,
     # stdout_lines=) then the controller backfills failed: false last.
     # The empty msg is kept (the Ansible module passes msg=out_clean
     # explicitly, and exit_json emits the key even as "").
@@ -59,7 +59,7 @@ module Krikri
     # via the _ansible_key_order marker - see
     # TaskExecutor#apply_failed_key_order).
     FAILURE_KEY_ORDER = ["rc", "cmd", "failed", "msg", "changed"]
-    # Real module fail_json(msg="...") with no other kwargs: failed/msg
+    # Ansible module fail_json(msg="...") with no other kwargs: failed/msg
     # lead (fail_json's dict(failed=True, msg=msg) update), then the
     # controller's changed/exception backfill.
     PARAM_FAILURE_KEY_ORDER = ["failed", "msg", "changed"]
@@ -168,7 +168,7 @@ module Krikri
     # module here too and registers ITS result: exit_json/fail_json's key
     # order plus the controller's failed/changed/exception backfill.
     private def finish(argv : Array(String)) : ActionResult
-      # Real module: `if '/' not in rsync: rsync = get_bin_path(rsync,
+      # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
       # required=True)` - the reported cmd carries the RESOLVED path
       # (/usr/bin/rsync), not the bare name, on success and failure alike.
       argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])

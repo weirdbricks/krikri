@@ -275,7 +275,7 @@ module Krikri
       "comment"            => %w[],
     }
 
-    # Real argument_spec choices, declaration order (NOT sorted).
+    # Ansible's argument_spec choices, declaration order (NOT sorted).
     CHOICES = {
       "state"              => %w[enabled disabled reloaded reset],
       "default"            => %w[allow deny reject],

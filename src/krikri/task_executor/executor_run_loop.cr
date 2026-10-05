@@ -311,7 +311,7 @@ module Krikri
     # mirrors execute_block's own single-host logic exactly, just driven
     # off host sets instead of one host.
     private def run_task_for_hosts_in_parallel(task : Task, hosts : Array(Host)) : Nil
-      # throttle: caps concurrency for this task BELOW --forks - real
+      # throttle: caps concurrency for this task BELOW --forks -
       # Ansible's own semantics (it never raises the limit, only lowers
       # it). A throttle of 1 makes the task effectively serial.
       max_parallel = Math.min(hosts.size, @forks)
@@ -514,8 +514,7 @@ module Krikri
       # apply_changed_failed_when still builds its own, and must: it
       # evaluates against a different context (see there).
       shared_sub = nil.as(VarSubstitutor?)
-      # Loop-SOURCE resolution runs against the alias-free snapshot (real
-      # Ansible's own scoping - see #synthesize_legacy_ssh_aliases), while
+      # Loop-SOURCE resolution runs against the alias-free snapshot (Ansible's own scoping - see #synthesize_legacy_ssh_aliases), while
       # delegate_to: and everything downstream of loop resolution keeps
       # the full task-arg context.
       loop_vars_context = loop_source_vars_context(task, host, vars_context)
@@ -926,8 +925,7 @@ module Krikri
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
-        # no_log censors the loop item on the skipping line too (real
-        # Ansible prints `(item=(censored due to no_log))` - the item
+        # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
         suffix = shown ? " => (item=#{shown}) " : ""
@@ -992,7 +990,7 @@ module Krikri
         suffix = item_label ? " => (item=#{item_label})" : ""
         # no_log is a task-level security control: the conditional's
         # error text embeds the rendered condition, which can quote
-        # variable values the task asked to keep out of the output. Real
+        # variable values the task asked to keep out of the output.
         # Ansible stamps _ansible_no_log onto these action failures and
         # shows the censored JSON - mirror that shape here.
         if resolve_task_no_log(task)
@@ -1064,7 +1062,7 @@ module Krikri
       # the batch script would silently SSH instead.
       return {false, nil} if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
                              PluginManager.connection_plugin_not_found?(conn_type)
-      # A templated action:/local_action: resolves its real module only
+      # A templated action:/local_action: resolves its Ansible module only
       # inside execute_task_once; the batch script path has no such
       # resolution (and breaks_run? below only keeps the task out of
       # NEIGHBORS' groups - it would still batch as its own size-1
@@ -1619,7 +1617,7 @@ module Krikri
       # Same "is this escalation a no-op?" test the script transport's own
       # target string already went through (PluginManager.become_needed?):
       # a `become: true` to the user we already are needs no daemon of its
-      # own, and asking for one would spawn it under a `sudo` that real
+      # own, and asking for one would spawn it under a `sudo` that
       # Ansible never runs - and that a minimal host may not even have.
       BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
@@ -2051,7 +2049,7 @@ module Krikri
       source_text = File.read(source_path)
       new_style = PythonModuleRunner.new_style?(source_text)
 
-      # See PythonModuleRunner.missing_interpreter_line? - real
+      # See PythonModuleRunner.missing_interpreter_line? -
       # Ansible's own "module (name) is missing interpreter line"
       # guard, which a shebangless old-style module fixture failed on
       # the real side while this engine ran it and succeeded.
@@ -2161,8 +2159,8 @@ module Krikri
     # use that path; REMOTE connections (round 189: mrlesmithjr.
     # change-hostname's own `shutdown -r now` + `async: 1`/`poll: 0`
     # reboot idiom) previously failed outright ("async: is only supported
-    # for local connections"), so the host never rebooted while real
-    # Ansible's fire-and-forget ran it. Remote async now mirrors real
+    # for local connections"), so the host never rebooted while
+    # Ansible's fire-and-forget ran it. Remote async now mirrors
     # Ansible's ~/.ansible_async model: the plugin binary is uploaded,
     # then nohup-launched detached on the target with its stdout (the
     # module's own JSON result) collected into ~/.ansible_async/<jid>
@@ -2234,7 +2232,7 @@ module Krikri
 
       # set_fact:'s own result carries the facts it just set under
       # "ansible_facts" (see SetFactActionPlugin), applied into the real
-      # vars_context by the caller only AFTER this returns - but real
+      # vars_context by the caller only AFTER this returns - but
       # Ansible evaluates changed_when:/failed_when: against the task's
       # OWN result, which for set_fact already has those facts merged in.
       # Found via smlloyd.authselect (RHEL-family round 60487): `set_fact:
@@ -2312,8 +2310,7 @@ module Krikri
     # Register / notify / display / update stats for a (non-looped) task result.
     # fact_host is where a set_fact:/fact-gathering module's ansible_facts
     # attach - normally `host` itself, but the delegate_to:/delegate_facts:
-    # combination redirects it to the delegate target instead (real
-    # Ansible's own documented meaning); register:/display/stats always
+    # combination redirects it to the delegate target instead (Ansible's own documented meaning); register:/display/stats always
     # stay attributed to `host` regardless.
     # Whether *task* on *host* should drop into the debugger, and the
     # loop that does. Returns the (possibly re-run) result.
@@ -2460,7 +2457,7 @@ module Krikri
         # block gets no "TASK [...]" banner of its own, only its members
         # do (execute_task already dispatches straight to execute_block,
         # which prints its own children's banners via this same
-        # run_task_list). include_tasks: is NOT transparent - real
+        # run_task_list). include_tasks: is NOT transparent -
         # Ansible (and execute_include_tasks below) still shows a banner
         # for the include statement itself, so it keeps the banner here.
         # Found benchmarking prometheus.prometheus.alertmanager round

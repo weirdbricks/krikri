@@ -369,8 +369,7 @@ describe Krikri::ConditionalEvaluator do
 
     it "checks real KEY membership against the `vars` magic dict, not a substring of its serialized dump" do
       # Real bug found via inmotionhosting.monit's own "Remove
-      # nonexistent services" task: `item.var_name not in vars` (real
-      # Ansible's `vars` magic variable, a dict of every variable
+      # nonexistent services" task: `item.var_name not in vars` (Ansible's `vars` magic variable, a dict of every variable
       # currently in scope). #evaluate_value's own return union has no
       # Hash case, so a Hash-valued container (like `vars` itself)
       # previously fell through to #json_any_to_value's `else ->
@@ -448,7 +447,7 @@ describe Krikri::ConditionalEvaluator do
       # requires its argument to itself be a `str`, and Jinja2 defers
       # the undefined raise to force time, so the Undefined marker
       # itself reaches __contains__ and Python raises "'in <string>'
-      # requires string as left operand, not UndefinedMarker" - real
+      # requires string as left operand, not UndefinedMarker" -
       # Ansible FAILS the task rather than treating the whole
       # conditional as falsy. (The strict raise previously surfaced
       # first with the generic "'node_1' is undefined" instead.)
@@ -751,7 +750,7 @@ describe Krikri::ConditionalEvaluator do
       # ExpressionEvaluator (unlike the parenthesized prometheus shape
       # above) and it fell through to the bare variable lookup, which
       # hard-failed the task ("Error while evaluating conditional:
-      # ''v' + consul_template_version' is undefined") where real
+      # ''v' + consul_template_version' is undefined") where
       # Ansible concatenates and evaluates the membership test cleanly.
       # The `{{ }}`-wrapped shape (`{{ 'v' + x }}`) always worked -
       # ExpressionEvaluator's own `+` handling - which is how the bug
@@ -1558,7 +1557,7 @@ describe Krikri::ConditionalEvaluator do
     # bare INT literals ("3") but none for a bare float literal ("5.1") -
     # it fell through to the plain variable-lookup branch, found no var
     # literally named "5.1", and raised "'5.1' is undefined" under
-    # raise_undefined (task-level when: strictness) even though real
+    # raise_undefined (task-level when: strictness) even though
     # Ansible evaluates the comparison fine.
     it "does not raise 'is undefined' for a bare float literal operand" do
       v = Hash(String, JSON::Any).new
@@ -1812,7 +1811,7 @@ describe Krikri::ConditionalEvaluator do
   # 0.9.1267: the type tests' operand resolver (`is string` and friends)
   # had no parenthesized-expression path at all - `(("'x' in mylist" or
   # false) is string` looked up a variable literally named
-  # "(...or false)", found none, and answered false, where real
+  # "(...or false)", found none, and answered false, where
   # ansible-core 2.19.11 short-circuits the parenthesized or to the
   # truthy string literal itself and `is string` sees that STRING
   # (live-verified). Found while building synthetic_batch_bench.yml's

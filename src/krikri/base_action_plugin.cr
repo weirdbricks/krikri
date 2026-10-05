@@ -175,7 +175,7 @@ module Krikri
       # include_empty_msg opt-out mirrors the module wire's
       # include_empty_msg (real fail_json/exit_json always emit the msg
       # key when the caller passed one, even as "") for the actions whose
-      # real module did exactly that (synchronize).
+      # Ansible module did exactly that (synchronize).
       h["failed"] = JSON::Any.new(failed)
       h["msg"] = JSON::Any.new(msg) unless msg.empty? && !include_empty_msg
       extra.each { |k, v| h[k] = v }
@@ -196,7 +196,7 @@ module Krikri
     end
 
     # The result shape for a CONDITIONAL-EVALUATION failure (assert:'s
-    # that: hitting an undefined reference or a non-bool result). Real
+    # that: hitting an undefined reference or a non-bool result).
     # ansible-core 2.19.11 (live-verified: `assert: that: undef_var == 1`
     # with register:) registers changed=false+failed=true+msg and dumps
     # the fatal line as {"changed": false, "msg": "Task failed: ..."} -

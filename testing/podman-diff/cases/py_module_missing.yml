@@ -1,4 +1,4 @@
-# py_module missing-script case, in its OWN playbook on purpose: real
+# py_module missing-script case, in its OWN playbook on purpose:
 # Ansible resolves a task's module name at playbook-LOAD time, so an
 # unresolvable name ("ERROR! couldn't resolve module/action", rc=4)
 # aborts before ANY task runs - it cannot coexist with the succeeding

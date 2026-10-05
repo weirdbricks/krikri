@@ -15,7 +15,7 @@ ensure
 end
 
 # A failure raised BEFORE any module runs (param templating, when:
-# evaluation, loop-source resolution) registers changed=false in real
+# evaluation, loop-source resolution) registers changed=false in
 # ansible-core 2.19.11: the fatal line dumps {"changed": false, "msg":
 # "Task failed: ..."} and the registered var reads back .changed as
 # False (live-verified against ansible-playbook 2.19.11 for all

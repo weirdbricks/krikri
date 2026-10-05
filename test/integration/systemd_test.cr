@@ -115,7 +115,7 @@ describe "systemd plugin" do
   end
 
   it "fails when state is given without a name, with Ansible's required_by message" do
-    # required_by={state: name, enabled: name, masked: name} - real
+    # required_by={state: name, enabled: name, masked: name} -
     # Ansible's check_required_by wording, per-parameter. Replaces the
     # previous "Must specify 'name' when using ..." wording.
     result = systemd_run({"state" => "started"})
@@ -158,7 +158,7 @@ describe "systemd plugin" do
   # Real bug found via round 813233 (role libre_ops.multi_redis): the
   # role passes `systemd: {name: ..., status: ...}` - `status` is not a
   # parameter of Ansible's systemd module at all
-  # so real
+  # so
   # ansible-playbook rejects the task outright at argument-spec
   # validation time, before the module runs. This plugin previously
   # silently accepted and ignored the unknown key and ran anyway.
@@ -210,7 +210,7 @@ describe "systemd plugin" do
     # daemon-reexec" handler: `ansible.builtin.systemd: {daemon_reexec:
     # true}`, no other params at all (round 18). `daemon_reexec` was
     # entirely unrecognized before - fell into the "no action" guard
-    # and failed outright instead of running the reexec real
+    # and failed outright instead of running the reexec
     # ansible-playbook performs (same "no changed signal" semantics as
     # daemon_reload above).
     result = systemd_run({"daemon_reexec" => "true", "_ansible_check_mode" => "true"})
@@ -226,7 +226,7 @@ describe "systemd plugin" do
     })
     # This is a unit that exists (LoadState=loaded) but has never been
     # started, so check mode predicts a change — and never actually runs
-    # systemctl. A unit that does NOT exist would fail outright with real
+    # systemctl. A unit that does NOT exist would fail outright with
     # Ansible's "Could not find the requested service ...: host" instead,
     # which the specs further down cover.
     falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
@@ -284,12 +284,12 @@ describe "systemd plugin" do
 
   # Real bug found via round 903000 (konstruktoid.hardening's own
   # tasks/timesyncd.yml): the role registers the systemd_service result and
-  # its changed_when reads the TOP-LEVEL `enabled`/`state` fields real
+  # its changed_when reads the TOP-LEVEL `enabled`/`state` fields
   # Ansible's module returns (systemd_service.py: `result['enabled'] = ...`
   # / `result['state'] = module.params['state']`, siblings of the nested
   # `status` dict). This plugin only ever returned the nested `status`,
   # so `not timesyncd_start.enabled == true` failed the task with
-  # "object of type 'dict' has no attribute 'enabled'" while real
+  # "object of type 'dict' has no attribute 'enabled'" while
   # ansible-playbook ran the same task fine.
   describe "top-level result fields (Ansible's systemd_service shape)" do
     it "exposes enabled as a top-level bool when the enabled param was given" do

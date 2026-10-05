@@ -1038,7 +1038,7 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     # hostvars, 'ansible_host')` with no host carrying `ansible_host`
     # must hard-fail (real: "object of type 'HostVarsVars' has no
     # attribute 'ansible_host'"), not silently return nil and let the
-    # playbook run on with bad data. The wording matches real
+    # playbook run on with bad data. The wording matches
     # ansible-core 2.19.11's own two shapes, live-verified: a hostvars
     # container says HostVarsVars, any other dict says dict.
     v = Hash(String, JSON::Any).new

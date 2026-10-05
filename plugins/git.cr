@@ -646,8 +646,7 @@ module Krikri
         if remote_branch?(d, @remote, @version)
           if (dep = @depth) && !local_branch?(d, @version)
             # git clone --depth implies --single-branch; fetch the requested
-            # branch explicitly so the checkout below can succeed (real
-            # Ansible's set_remote_branch).
+            # branch explicitly so the checkout below can succeed (Ansible's set_remote_branch).
             r = run_git("fetch --depth=#{Shell.quote_arg(dep)} #{sq(@remote)} " \
                         "+refs/heads/#{sq(@version)}:refs/heads/#{sq(@version)} " \
                         "+refs/heads/#{sq(@version)}:refs/remotes/#{sq(@remote)}/#{sq(@version)}", d)

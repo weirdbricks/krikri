@@ -47,7 +47,7 @@ describe "command plugin" do
     # Real bug found benchmarking buluma.influxdb2 (round 155): the
     # role's own task is `command: influx ping \ --host "{{ influxdb_host
     # }}"` - a documented, intentional Ansible authoring convention for
-    # writing a long command: as if it were multiple lines. Real
+    # writing a long command: as if it were multiple lines.
     # Ansible's task-arg parser (ansible.parsing.splitter.split_args,
     # which runs BEFORE Jinja templating) treats a bare `\` token
     # (delimited by whitespace/string-boundaries on both sides) as a
@@ -57,7 +57,7 @@ describe "command plugin" do
     # "escape the next character", so `\ ` became "escape this space
     # into the current token", producing a malformed ` --host` argv
     # element (stray leading space) that real influx's cobra-based CLI
-    # parser rejected as an unknown subcommand - while real
+    # parser rejected as an unknown subcommand - while
     # ansible-playbook succeeded, a genuine engine divergence live on
     # Rocky Linux 9.6.
     result = PluginSpecHelper.run("command", {"cmd" => %q(printf '[%s]' hi \ --world there)})
@@ -273,7 +273,7 @@ describe "command plugin" do
     FileUtils.rm_rf(dir) if dir
   end
 
-  # Regression (kyl191.openvpn, 120-author kata round): `argv:` is real
+  # Regression (kyl191.openvpn, 120-author kata round): `argv:` is
   # Ansible's own alternative to `cmd:`/free-form for avoiding shell
   # quoting entirely - the plugin never recognized it at all, so every
   # argv:-only task failed "Missing required parameter: cmd" before this
@@ -311,10 +311,9 @@ describe "command plugin" do
     warnings.must_equal(["As of Ansible 2.4, the parameter 'executable' is no longer supported with the 'command' module. Not using '/bin/bash'."])
   end
 
-  it "carries the executable: warning on skip results too, like real module.warn()" do
+  it "carries the executable: warning on skip results too, like Ansible module.warn()" do
     # module.warn accumulates into whatever exit_json comes next, so a
-    # creates:-skip on the same task also carries the warning (real
-    # Ansible behavior - the warn happens at the top of the module's
+    # creates:-skip on the same task also carries the warning (Ansible behavior - the warn happens at the top of the module's
     # main(), long before the creates: check).
     marker = File.tempname("command-executable-warn-skip")
     File.write(marker, "")

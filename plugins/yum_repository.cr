@@ -12,7 +12,7 @@ module Krikri
   # - description: human-readable text - written as the `name =` key
   #   INSIDE the file (a real, confirmed quirk: the module's own `name`
   #   param is the id/section, `description` is what ends up as the
-  #   `name=` field in yum.conf terms - verified against real
+  #   `name=` field in yum.conf terms - verified against
   #   ansible-playbook's actual file output, not assumed)
   # - baseurl / mirrorlist / metalink: at least one required when
   #   state=present (matches Ansible's own validation). `baseurl`/
@@ -89,7 +89,7 @@ module Krikri
   # forever.
   #
   # Not implemented: `async` (a legacy, Python-reserved-word-workaround
-  # param, essentially unused in real playbooks - and removed from real
+  # param, essentially unused in real playbooks - and removed from
   # Ansible's own argument_spec entirely on devel), SELinux options,
   # `attributes`, `unsafe_writes`.
   # `no_log` redaction of `password:`/`proxy_password:` was investigated
@@ -148,7 +148,7 @@ module Krikri
       proxy proxy_password proxy_username retries sslcacert sslclientcert
       sslclientkey throttle timeout ui_repoid_vars username
     ]
-    # Real argument_spec aliases. Resolution happens in initialize: a
+    # Ansible's argument_spec aliases. Resolution happens in initialize: a
     # present alias OVERWRITES the canonical name (ansible-core's
     # _handle_aliases order, same convention stat.cr verified), and the
     # alias key itself is removed so it can never render as its own

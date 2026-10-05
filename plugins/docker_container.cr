@@ -23,7 +23,7 @@ module Krikri
   # Supported parameters:
   # - name: container name (required)
   # - image: image reference - required only when a container actually
-  #   needs to be created or recreated (verified against real
+  #   needs to be created or recreated (verified against
   #   ansible-playbook: state: stopped/absent on an already-existing
   #   container needs no image: at all, same as here)
   # - state: started (default) / stopped / present / absent / healthy
@@ -72,7 +72,7 @@ module Krikri
   #   strings ("512M", "1G", ...) - see PluginHelpers::DockerResources's
   #   own doc comment, behavior matched to Ansible's own `human_to_bytes`
   #   (binary/1024-based units despite the non-"i" K/M/G/T/P spelling).
-  #   `memory_swap: "unlimited"` (or the literal string `"-1"`) is real
+  #   `memory_swap: "unlimited"` (or the literal string `"-1"`) is
   #   Ansible's own documented unlimited-swap convention.
   # - memory_swappiness / cpu_shares / oom_score_adj / pids_limit: int
   # - cpus: float number of CPUs, converted to Docker's own `NanoCpus`
@@ -143,7 +143,7 @@ module Krikri
   # default comparison mode is NOT uniformly strict - verified against
   # Ansible's own module_utils source (`Option.__init__`): scalar
   # options (restart_policy, network_mode, privileged, auto_remove, and
-  # every resource-limit param above - all `int`/`str`/`bool`-typed, real
+  # every resource-limit param above - all `int`/`str`/`bool`-typed,
   # Ansible's own "value" comparison_type) and the plain ordered
   # entrypoint list default to `strict` (exact equality), but every
   # set/dict-typed option (env, labels, volumes, ports, healthcheck)
@@ -218,7 +218,7 @@ module Krikri
     # payload) whenever a container is present afterwards - so a normal
     # create/rerun registers changed + container + failed, a removal
     # registers changed + failed only, and only a check_mode run keeps
-    # the structured `actions` list. Live-verified against real
+    # the structured `actions` list. Live-verified against
     # ansible-core 2.19.11 + community.docker 5.2.1.
     KEY_ORDER = %w[changed actions container failed]
 
@@ -541,7 +541,7 @@ module Krikri
     end
 
     # Parses healthy_wait_timeout (float, default 300; <= 0 means wait
-    # forever - real module.py's own convention). Non-numeric values
+    # forever - Ansible module.py's own convention). Non-numeric values
     # fail with Ansible's argspec conversion wording (live-verified).
     # Returns Float64? on success or a failed PluginResult on invalid input.
     private def parse_healthy_wait_timeout : Float64? | PluginResult
@@ -735,7 +735,7 @@ module Krikri
       rescue ex : Docr::Errors::DockerAPIError
         # HTTP 304 Not Modified - the container was started between the
         # state read above and the start call (or is already running
-        # under a different state spelling like "restarting"). Real
+        # under a different state spelling like "restarting").
         # Ansible's docker_container treats a 304 on start as a no-op
         # success, not an error (grycap.chronos' warm rerun: "Docker API
         # error: Code: 304 Message: No response body" failed the task
@@ -780,7 +780,7 @@ module Krikri
     # Idempotency scope cut - see the class doc comment. Only compares
     # whichever of image_ref/command/entrypoint/env/labels/volumes/
     # restart_policy/network_mode/privileged/auto_remove was actually
-    # given ("only compare what you told me about" - matches real
+    # given ("only compare what you told me about" - matches
     # Ansible's own general behavior for any option not mentioned at
     # all). ports/healthcheck/resource-limits/etc remain a real,
     # documented scope cut (see the class doc comment) - ports in
@@ -1028,7 +1028,7 @@ module Krikri
     # (`allow_more_present`) only compares the sub-fields the task itself
     # set, so Docker's own default-filled `timeout:`/`retries:` (when the
     # task didn't specify them) don't count as drift; `strict` compares
-    # every sub-field including ones the task left unset (matching real
+    # every sub-field including ones the task left unset (matching
     # Ansible's own literal dict-equality behavior under an explicit
     # `strict` override).
     private def healthcheck_matches?(actual : Docr::Types::HealthConfig?, healthcheck_json : String, strict : Bool) : Bool
@@ -1173,7 +1173,7 @@ module Krikri
       {connected, disconnected}
     end
 
-    # `comparisons:` is a dict (e.g. `{"networks": "strict"}`) real
+    # `comparisons:` is a dict (e.g. `{"networks": "strict"}`)
     # Ansible uses to override per-field idempotency strictness across
     # ~40 possible keys - only `networks` is meaningfully implementable
     # here, since it's the one field this plugin actually tracks/syncs
@@ -1406,7 +1406,7 @@ module Krikri
     end
 
     # See `PluginHelpers::DockerHealthcheck`'s own doc comment for the
-    # duration-parsing/test-normalization rules this mirrors from real
+    # duration-parsing/test-normalization rules this mirrors from
     # Ansible's own `parse_healthcheck`/`normalize_healthcheck`.
     # `start_interval:` (Ansible's own newer addition) is NOT
     # implemented - the underlying `docr` library's `HealthConfig` type
@@ -1456,7 +1456,7 @@ module Krikri
       items.map { |item| item.as_s? || item.raw.to_s }
     end
 
-    # Ansible's `env:`/`labels:` are dict-typed options, which real
+    # Ansible's `env:`/`labels:` are dict-typed options, which
     # Ansible also accepts written as a list of `KEY=VALUE` strings (its
     # own dict type conversion) - and a `KEY=VALUE` element may contain a
     # comma, so that list form travels on the same JSON wire the other

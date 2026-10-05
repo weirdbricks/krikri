@@ -508,7 +508,7 @@ describe "template plugin param coverage" do
     end
 
     it "still creates a brand-new dest with force: false (round 811059/812xxx, cchurch.uwsgi)" do
-      # force: false only guards an OVERWRITE of an EXISTING file - real
+      # force: false only guards an OVERWRITE of an EXISTING file -
       # Ansible's copy.py only takes the force-skip branch inside its own
       # `if os.path.exists(dest)` check, so a dest that doesn't exist yet
       # is always created regardless of force:. This engine's own
@@ -600,7 +600,7 @@ describe "template plugin param coverage" do
   describe "seuser:/serole:/setype:/selevel: (SELinux context params)" do
     # Identical semantics to file.cr's merged implementation (see
     # test/integration/file_test.cr's matching section, and the full
-    # the Ansible module grounding in file.cr's comments): real
+    # the Ansible module grounding in file.cr's comments):
     # Ansible accepts the params on every host but only acts when
     # SELinux is actually enabled - a graceful no-op here (this spec
     # machine is non-SELinux).

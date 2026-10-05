@@ -3,7 +3,7 @@ require "../minitest_helper"
 # Pins plugins/timezone.cr's argument-validation surface against real
 # community.general.timezone's AnsibleModule setup (required_one_of
 # hwclock/name, hwclock choices local/UTC with the rtc alias, unsupported
-# params with the all-aliases parenthetical), live-diffed vs real
+# params with the all-aliases parenthetical), live-diffed vs
 # ansible-playbook via the podman-diff timezone_edge_cases harness.
 # Only the validation failures are pinned here - the backend paths touch
 # the SPEC-RUNNING HOST's /etc/timezone, so they're covered by the

@@ -5,7 +5,7 @@
 # what matter. Real community.general.gem's idempotency check is an
 # exact-string membership test of the version param against parsed
 # `gem list` output - NOT `gem list -i -v` - so version SPECIFIERS are
-# deliberately included (real is documented-non-idempotent there).
+# deliberately included (Ansible is documented-non-idempotent there).
 - hosts: all
   gather_facts: false
 

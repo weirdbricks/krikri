@@ -1,8 +1,7 @@
 require "json"
 
 module Krikri
-  # A JMESPath query engine backing the `json_query` filter (real
-  # Ansible's own filter from `community.general`, commonly reachable as
+  # A JMESPath query engine backing the `json_query` filter (Ansible's own filter from `community.general`, commonly reachable as
   # a bare name). Implemented here rather than vendored: the Crystal
   # ecosystem has no maintained JMESPath shard, so this is a from-scratch
   # recursive-descent parser + evaluator over JSON::Any.

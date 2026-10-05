@@ -228,7 +228,7 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
   included on every row. Also owns the 10-role benchmark comparison table (moved here from
   `README.md` - detailed per-role numbers belong here, not in the README).
 - `README.md` - version badge only for round history; no "Recent changes" section (removed - round
-  history lives in `git log`, not here). The README leads with "How this differs from real
+  history lives in `git log`, not here). The README leads with "How this differs from
   Ansible"/"What's missing"/"Performance" rather than round history - those sections should stay
   current-state-focused, not accumulate a changelog.
 
