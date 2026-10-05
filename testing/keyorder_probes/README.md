@@ -58,13 +58,15 @@ five roles, Rocky Linux 9 for `kop_rocky` (see its row).
 | `kop_misc2` | `community.general.deploy_helper`, `community.general.easy_install`, `community.general.maven_artifact`, `community.docker.current_container_facts`, `community.libvirt.virt_net` | deploy_helper runs present/finalize/clean/absent plus check-mode and failure probes (a regular file blocking the `current` path) in `/var/tmp/kop_deploy`, with the unfinished-file (`DEPLOY_UNFINISHED`) handling probed via `state=clean`; easy_install installs `python3-setuptools` via apt first and probes `easy_install3` (easy_install is deprecated - whatever the host lets it do, including failures, is captured); maven_artifact installs `maven` + `python3-lxml` via apt and downloads `junit:junit:4.13.2` from Maven Central into `/var/tmp`; current_container_facts is read-only (on a bare VM it just reports not-in-container facts); virt_net installs `libvirt-daemon-system` + `python3-libvirt` + `python3-lxml`, starts libvirtd, then defines/starts/stops a tiny NAT network (`10.99.99.0/24`, `command: define` with inline XML) with idempotent/check/failure probes, and undefines everything in cleanup |
 | `kop_docker` | `community.docker.docker_container`, `docker_network`, `docker_image` | Ubuntu 22.04; installs `docker.io` + `python3-docker` via apt and pulls `alpine:3.19`. Probes check-mode `create_parameters`, list options with comma elements (`command`/`entrypoint`), stop/remove idempotency and the failure shapes (missing image, unsupported param, no image). Everything is `kop_`-prefixed and removed again |
 | `kop_ufw_active` | `community.general.ufw` with `state: enabled` combined with a rule / default / logging in one task | Ubuntu 22.04; ENABLES ufw (unlike `kop_firewall`), so it adds `allow 22/tcp` first and does `ufw --force reset` before and after. Found (round 999010/999020): krikri ran only `ufw -f enable` and dropped the rule/default/logging commands Ansible runs after it |
-| *(not probed)* | `community.general.snap` | **deliberately skipped**: installing snapd via apt is slow and flaky in a fresh-VM round. Not worth the round time for a key-order probe. |
+| `kop_snap` | `community.general.snap` | Ubuntu 22.04; snapd is not assumed preinstalled - the role checks for the `snap` binary and, when missing, apt-installs snapd and waits for seeding (`snap wait system seed.loaded`). hello-world install/install-again/`channel: stable` re-probe/remove/remove-again, check-mode install of core20 (check mode never actually installs), and a nonexistent-snap-name failure; `classic:` variant skipped (a real classic snap is a big download, not cheap) |
+| `kop_iptables` | `ansible.builtin.iptables` with real mutation | Ubuntu 22.04; every rule lives in a custom chain `KOP_TEST` created/deleted via `chain_management`; INPUT/OUTPUT/FORWARD and all policies are never touched and no rule involves port 22, so SSH cannot be locked out; flush + chain delete also run in `always:` teardown. Probes chain create/create-again/append/append-again (with `comment:`)/`tcp_flags`+`match` rule/check-mode append/delete/nonexistent-jump-target failure/flush/chain delete. First iptables coverage in the keyorder probes - earlier roles only touch the firewall stack indirectly through ufw |
+| `kop_apt_fail` | `ansible.builtin.apt` mutating failure paths | Ubuntu 22.04; install of a nonexistent package, `bash=0.0.0` pinned nonexistent version, remove of a nonexistent package (ok/no change), `deb:` at a nonexistent path, `state: fixed` on a healthy system (ok), and `update_cache` against a bogus `/etc/apt/sources.list.d/kop-bogus.list` entry dropped by the role and removed again in `always:`. Captures apt's failure-result shapes (KNOWN_MISSING: matched to Ansible's command construction but never verified end-to-end) |
 | *(not probed)* | krikri's `py_module` runner | **deliberately skipped**: `py_module` is not a Ansible module - it is krikri's transport for role-private custom `library/*.py` modules. Ansible invokes such a module by its own name, so there is no matching `py_module` result shape to diff key order against. |
 
 Note that several of these modules live in collections
 (`ansible.posix`, `community.general`, `community.crypto`); the probed set
 still matches krikri's supported-module list (`plugins/*.cr` has all of
-them except the two deliberately skipped ones).
+them except the deliberately skipped `py_module` runner).
 
 ## Queueing a round
 
@@ -121,18 +123,31 @@ local:$KRIKRI_ROOT/testing/keyorder_probes/kop_misc2
 Run it the same way as `queue.txt` above (`bin/krikri-role-tester run
 testing/keyorder_probes/queue_misc2.txt --backend atlantic ...`).
 
+`queue_ufw_active.txt`, `queue_docker.txt`, `queue_snap.txt`,
+`queue_iptables.txt` and `queue_apt_fail.txt` follow the same one-role-per-file
+pattern for `kop_ufw_active`, `kop_docker`, `kop_snap`, `kop_iptables` and
+`kop_apt_fail` respectively (one `local:$KRIKRI_ROOT/...` line each, same
+run command shape).
+
 ## Local validation status
 
 Validated locally on the dev laptop (no root, no real kernel):
 
-- `ansible-playbook --syntax-check` (2.19.11) over all seven roles via
+- `ansible-playbook --syntax-check` (2.19.11) over all roles via
   `syntax_check.yml` - pass.
 - krikri-playbook parse/syntax check (`--syntax-check` and `--list-tasks`)
-  over the same wrapper - pass, task list matches Ansible.
+  over the same wrapper - pass, task list matches Ansible. (krikri's
+  `--list-tasks` output omits the `role : ` prefix on block-nested task
+  names - a display quirk, pre-existing via `kop_storage`; modulo that
+  prefix the 429 task lines are identical.)
 - `ansible-lint` over the roles (run from inside this directory so
   `.ansible-lint` applies; the deliberate per-probe `ignore_errors` is
-  skipped there) - pass, only the intentional `ufw_fail` bogus-rule probe
-  warns.
+  skipped there) - pass, including `kop_snap`, `kop_iptables` and
+  `kop_apt_fail`.
+- `kop_snap`, `kop_iptables` and `kop_apt_fail` are validated by the same
+  three static checks only (no smoke coverage; snapd, iptables mutation and
+  apt failure paths all need a real root VM - exactly what the Atlantic.net
+  round provides).
 
 `kop_rocky` (Rocky-only) was validated with the same three static checks
 (`--syntax-check`/`--list-tasks` over `syntax_check.yml` on both engines,
@@ -189,12 +204,13 @@ what the Atlantic.net round provides):
 ## Files
 
 - `kop_*/tasks/main.yml` - the probe roles.
-- `roles/` - symlinks to the six roles (both ansible-playbook and
 - `roles/` - symlinks to the roles (both ansible-playbook and
   krikri-playbook resolve roles next to the playbook, so the wrapper
   playbooks need no `ANSIBLE_ROLES_PATH`).
 - `syntax_check.yml` - wrapper for `--syntax-check`/`--list-tasks` over all
-  seven roles.
+  roles (currently the ten Ubuntu/Rocky probe roles; `kop_docker` and
+  `kop_ufw_active` are not listed yet - pre-existing gap, noted here so it
+  does not look like a new omission).
 - `smoke_wrapper.yml` + `smoke_inside.sh` - rootless-podman smoke test for
   the container-safe roles (containers named `km-probes-*`, removed after
   the run).

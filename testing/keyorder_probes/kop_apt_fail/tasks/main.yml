@@ -1,0 +1,98 @@
+---
+# Key-order probes for ansible.builtin.apt MUTATING failure paths: install of
+# a nonexistent package, install pinned to a nonexistent version, remove of a
+# nonexistent package, deb: pointing at a nonexistent path, state: fixed on a
+# healthy system, and update_cache against a bogus sources entry. Nothing
+# here should ever actually install or remove a real package; the only real
+# mutation is a throwaway sources.list.d entry that is removed again in the
+# always: teardown (KNOWN_MISSING notes apt's failure results are matched to
+# Ansible's command construction but never verified end-to-end - these probes
+# capture the real shapes). Convention: every probed task registers r and is
+# followed by a debug emitting
+# "KEYORDER|<module>_<case>|<registered result as json>"; ignore_errors
+# everywhere so failure shapes are captured without aborting the remaining
+# probes. Safe to run twice (cold + warm): every case is deterministic.
+
+- name: Apt failure-path probes, bogus sources entry torn down in always
+  block:
+    - name: Install a nonexistent package (failure)
+      ansible.builtin.apt:
+        name: kop-nonexistent-pkg-keyorder
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_fail_missing
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_fail_missing|{{ r | to_json }}"
+
+    - name: Install bash pinned to a nonexistent version (failure)
+      ansible.builtin.apt:
+        name: bash=0.0.0
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_fail_pinned
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_fail_pinned|{{ r | to_json }}"
+
+    - name: Remove a nonexistent package (ok, no change)
+      ansible.builtin.apt:
+        name: kop-nonexistent-pkg-keyorder
+        state: absent
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_remove_missing
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_remove_missing|{{ r | to_json }}"
+
+    - name: Install a nonexistent local deb (failure)
+      ansible.builtin.apt:
+        deb: /var/tmp/kop-nonexistent-keyorder.deb
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_fail_deb
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_fail_deb|{{ r | to_json }}"
+
+    - name: Fix broken dependencies on a healthy system (ok)
+      ansible.builtin.apt:
+        state: fixed
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_fixed
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_fixed|{{ r | to_json }}"
+
+    - name: Drop a bogus sources entry under /etc/apt/sources.list.d
+      ansible.builtin.copy:
+        content: "deb https://kop-bogus.invalid/apt jammy main\n"
+        dest: /etc/apt/sources.list.d/kop-bogus.list
+        mode: "0644"
+      register: apt_bogus
+      ignore_errors: true
+
+    - name: Report apt_helper_bogus_source
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_helper_bogus_source|{{ apt_bogus | to_json }}"
+
+    - name: Update the cache against the bogus sources entry (failure)
+      ansible.builtin.apt:
+        update_cache: true
+      register: r
+      ignore_errors: true
+
+    - name: Report apt_fail_bogus_source
+      ansible.builtin.debug:
+        msg: "KEYORDER|apt_fail_bogus_source|{{ r | to_json }}"
+  always:
+    - name: Remove the bogus sources entry again (teardown)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/kop-bogus.list
+        state: absent
+      ignore_errors: true

@@ -1,0 +1,132 @@
+---
+# Key-order probes for community.general.snap. snapd is NOT guaranteed to be
+# preinstalled on the Atlantic.net Ubuntu 22.04 image (not verified either
+# way, and some jammy cloud images ship without it), so the role first probes
+# for the `snap` binary and, only when it is missing, apt-installs snapd and
+# waits for the initial seeding with `snap wait system seed.loaded` before
+# any snap probe. Tiny, stable snaps only: hello-world for the real
+# install/remove cycle (channel: stable re-probe is free), core20 for the
+# check-mode probe (check mode never actually installs anything). Convention:
+# every probed task registers r and is followed by a debug emitting
+# "KEYORDER|<module>_<case>|<registered result as json>"; ignore_errors
+# everywhere so failure shapes are captured without aborting the remaining
+# probes. Helper tasks registered along the way emit
+# "KEYORDER|snap_helper_*|..." lines. Safe to run twice (cold + warm):
+# hello-world is removed again at the end, so the next run reinstalls it.
+
+- name: Check whether the snap binary is already available
+  ansible.builtin.command: snap version
+  register: snapbin
+  changed_when: false
+  failed_when: false
+
+- name: Report snap_helper_probe
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_helper_probe|{{ snapbin | to_json }}"
+
+- name: Ensure snapd is installed when the snap binary is missing
+  ansible.builtin.apt:
+    name: snapd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: snapd_install
+  when: snapbin.rc != 0
+  ignore_errors: true
+
+- name: Report snap_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_helper_install|{{ snapd_install | to_json }}"
+
+- name: Wait for snapd to finish initial seeding when freshly installed
+  ansible.builtin.command: snap wait system seed.loaded
+  register: snap_wait
+  until: snap_wait.rc == 0
+  retries: 30
+  delay: 10
+  changed_when: false
+  when: snapbin.rc != 0
+  ignore_errors: true
+
+- name: Report snap_helper_wait
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_helper_wait|{{ snap_wait | to_json }}"
+
+- name: Install hello-world snap (changed)
+  community.general.snap:
+    name: hello-world
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report snap_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_install|{{ r | to_json }}"
+
+- name: Install hello-world snap again (ok)
+  community.general.snap:
+    name: hello-world
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report snap_install_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_install_again|{{ r | to_json }}"
+
+- name: Install hello-world snap with an explicit channel (ok)
+  community.general.snap:
+    name: hello-world
+    state: present
+    channel: stable
+  register: r
+  ignore_errors: true
+
+- name: Report snap_channel
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_channel|{{ r | to_json }}"
+
+- name: Install core20 snap in check mode (changed, nothing installed)
+  community.general.snap:
+    name: core20
+    state: present
+  register: r
+  check_mode: true
+  ignore_errors: true
+
+- name: Report snap_check
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_check|{{ r | to_json }}"
+
+- name: Remove hello-world snap (changed)
+  community.general.snap:
+    name: hello-world
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report snap_remove
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_remove|{{ r | to_json }}"
+
+- name: Remove hello-world snap again (ok)
+  community.general.snap:
+    name: hello-world
+    state: absent
+  register: r
+  ignore_errors: true
+
+- name: Report snap_remove_again
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_remove_again|{{ r | to_json }}"
+
+- name: Install a nonexistent snap name (failure)
+  community.general.snap:
+    name: kop-nonexistent-snap-keyorder
+    state: present
+  register: r
+  ignore_errors: true
+
+- name: Report snap_fail
+  ansible.builtin.debug:
+    msg: "KEYORDER|snap_fail|{{ r | to_json }}"

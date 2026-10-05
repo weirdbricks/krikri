@@ -1,0 +1,182 @@
+---
+# Key-order probes for ansible.builtin.iptables with REAL mutation. There was
+# no iptables coverage at all in the keyorder probes before this role (grep
+# over testing/keyorder_probes finds nothing; kop_firewall/kop_ufw_active
+# only touch the firewall stack indirectly through ufw), so nothing here
+# duplicates an existing case. Everything happens inside a dedicated custom
+# chain KOP_TEST created and deleted by the role itself via
+# chain_management; the built-in INPUT/OUTPUT/FORWARD chains and all policies
+# are never touched and no rule involves port 22, so SSH cannot be locked
+# out. Convention: every probed task registers r and is followed by a debug
+# emitting "KEYORDER|<module>_<case>|<registered result as json>";
+# ignore_errors everywhere so failure shapes are captured without aborting
+# the remaining probes. The mutating probes run inside a block: whose
+# always: teardown flushes and deletes KOP_TEST, so a mid-role failure still
+# leaves the firewall clean and the role is safe to run twice (cold + warm).
+
+- name: Ensure iptables is installed
+  ansible.builtin.apt:
+    name: iptables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  register: ipt_install
+  ignore_errors: true
+
+- name: Report iptables_helper_install
+  ansible.builtin.debug:
+    msg: "KEYORDER|iptables_helper_install|{{ ipt_install | to_json }}"
+
+- name: Iptables probes, all inside the KOP_TEST custom chain
+  block:
+    - name: Create custom chain KOP_TEST (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        chain_management: true
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_chain_create
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_chain_create|{{ r | to_json }}"
+
+    - name: Create custom chain KOP_TEST again (ok)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        chain_management: true
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_chain_create_again
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_chain_create_again|{{ r | to_json }}"
+
+    - name: Append ACCEPT rule for 8080/tcp with a comment (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8080"
+        jump: ACCEPT
+        comment: kop keyorder probe
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_append
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_append|{{ r | to_json }}"
+
+    - name: Append the same 8080/tcp rule again (ok)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8080"
+        jump: ACCEPT
+        comment: kop keyorder probe
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_append_again
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_append_again|{{ r | to_json }}"
+
+    - name: Append SYN-flag tcp rule for 8081/tcp (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8081"
+        match: tcp
+        tcp_flags: "SYN,RST SYN"
+        jump: ACCEPT
+        comment: kop keyorder probe flags
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_tcp_flags
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_tcp_flags|{{ r | to_json }}"
+
+    - name: Append rule for 8082/tcp in check mode (changed, not applied)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8082"
+        jump: ACCEPT
+        comment: kop keyorder probe check
+        state: present
+      register: r
+      check_mode: true
+      ignore_errors: true
+
+    - name: Report iptables_check
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_check|{{ r | to_json }}"
+
+    - name: Delete the 8080/tcp rule again (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8080"
+        jump: ACCEPT
+        comment: kop keyorder probe
+        state: absent
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_delete
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_delete|{{ r | to_json }}"
+
+    - name: Append a rule with a nonexistent jump target (failure)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        protocol: tcp
+        destination_port: "8083"
+        jump: KOP_NO_SUCH_TARGET
+        state: present
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_fail
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_fail|{{ r | to_json }}"
+
+    - name: Flush custom chain KOP_TEST (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        flush: true
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_flush
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_flush|{{ r | to_json }}"
+
+    - name: Delete custom chain KOP_TEST (changed)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        chain_management: true
+        state: absent
+      register: r
+      ignore_errors: true
+
+    - name: Report iptables_chain_delete
+      ansible.builtin.debug:
+        msg: "KEYORDER|iptables_chain_delete|{{ r | to_json }}"
+  always:
+    - name: Flush custom chain KOP_TEST (teardown)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        flush: true
+      ignore_errors: true
+
+    - name: Delete custom chain KOP_TEST (teardown)
+      ansible.builtin.iptables:
+        chain: KOP_TEST
+        chain_management: true
+        state: absent
+      ignore_errors: true

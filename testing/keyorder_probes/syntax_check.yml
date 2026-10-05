@@ -16,3 +16,6 @@
     - role: kop_pkg_misc
     - role: kop_rocky
     - role: kop_misc2
+    - role: kop_snap
+    - role: kop_iptables
+    - role: kop_apt_fail
