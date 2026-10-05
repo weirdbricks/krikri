@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1486"
+  VERSION = "0.9.1487"
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the
@@ -112,6 +112,10 @@ module Krikri
   # libraries (identified by the weirdbricks GitHub owner in shard.yml,
   # which carries real behavioral changes, not just version pins); a
   # deployed binary should say which repo it was actually built from.
+  # krikri-jinja and krikri-xml are krikri's own libraries, not forks, so
+  # they are annotated with their repo and pin but not labeled "fork".
+  OWN_SHARDS = %w[krikri-jinja krikri-xml]
+
   RUNTIME_DEPENDENCY_FORK_NOTES = begin
     notes = {} of String => String
     parse_shard_yml_dependency_pins(SHARD_YML_TEXT, "dependencies").each do |name, pin|
@@ -124,7 +128,7 @@ module Krikri
       elsif commit = pin[:commit]
         suffix = ", commit #{commit[0, 7]}"
       end
-      notes[name] = " (#{github} fork#{suffix})"
+      notes[name] = " (#{github}#{OWN_SHARDS.includes?(name) ? "" : " fork"}#{suffix})"
     end
     notes
   end

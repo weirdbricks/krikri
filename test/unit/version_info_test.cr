@@ -151,7 +151,8 @@ describe "Krikri::RUNTIME_DEPENDENCY_FORK_NOTES" do
   it "annotates only weirdbricks-owned dependencies, with their pin" do
     notes = Krikri::RUNTIME_DEPENDENCY_FORK_NOTES
 
-    expect(str_starts_with?(notes["krikri-jinja"], " (weirdbricks/krikri-jinja fork, tag v")).must_equal(true)
+    expect(str_starts_with?(notes["krikri-jinja"], " (weirdbricks/krikri-jinja, tag v"))
+    expect(str_starts_with?(notes["krikri-xml"], " (weirdbricks/krikri-xml, tag v")).must_equal(true).must_equal(true)
     notes["mysql"].must_equal(" (weirdbricks/crystal-mysql fork, tag crystal-ansible-0.9.341)")
     notes["docr"].must_equal(" (weirdbricks/docr fork, commit c90ea8d)")
     notes["awscr-signer"].must_equal(" (weirdbricks/awscr-signer fork, commit 2a8cc09)")
