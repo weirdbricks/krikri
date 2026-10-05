@@ -394,6 +394,18 @@ if ask_become_pass
   hosts.each { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
 end
 
+# Same connection-password registration as krikri-playbook.cr: hand every
+# host's ansible_password/ansible_ssh_pass to SSHManager (keyed on the
+# (host, user, port) triple its ssh/scp/rsync calls resolve) so password
+# auth actually happens, and fail up front when sshpass is missing.
+hosts.each do |reg_host|
+  conn_pw = Krikri::Passwords.connection(reg_host.vars, reg_host)
+  next unless conn_pw
+  ssh_user = reg_host.user || "root"
+  Krikri::SSHManager.register_connection_password(reg_host.connection_host, ssh_user, reg_host.port, conn_pw)
+  Krikri::SSHManager.register_connection_password(reg_host.name, ssh_user, reg_host.port, conn_pw) if reg_host.name != reg_host.connection_host
+end
+
 extra_vars = {} of String => JSON::Any
 unless extra_vars_args.empty?
   begin

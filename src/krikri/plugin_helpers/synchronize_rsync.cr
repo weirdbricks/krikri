@@ -50,9 +50,13 @@ module Krikri
     # with the Ansible module's own defaults. *private_key*/*dest_port* are
     # the caller-resolved connection values (param override, then
     # inventory vars) that feed the `--rsh=` ssh command when either path
-    # is remote (contains ':').
+    # is remote (contains ':'). *password* (the caller-resolved
+    # ansible_password/ansible_ssh_pass - controller-side rsync only) wraps
+    # that rsh ssh in `sshpass -e`; the password itself travels in
+    # SSHPASS (see #run's *env*), never in the argv or the rsh string.
     def self.build_argv(src : String, dest : String, params : Hash(String, String),
-                        private_key : String? = nil, dest_port : Int32? = nil) : Array(String)
+                        private_key : String? = nil, dest_port : Int32? = nil,
+                        password : String? = nil) : Array(String)
       argv = ["rsync"]
 
       # delay_updates defaults true, compress defaults true (Ansible module
@@ -100,7 +104,7 @@ module Krikri
         # private key, the port, and - unless verify_host: - the same
         # no-host-key-check pair its own non-interactive runs use.
         unless has_rsh_opt
-          ssh_cmd = "ssh -S none"
+          ssh_cmd = password ? "sshpass -e ssh -S none" : "ssh -S none"
           ssh_cmd += " -i #{private_key}" if private_key
           ssh_cmd += " -o Port=#{dest_port}" if dest_port
           unless bool(params["verify_host"]?)
@@ -169,10 +173,10 @@ module Krikri
       name
     end
 
-    def self.run(argv : Array(String)) : RsyncResult
+    def self.run(argv : Array(String), env : Hash(String, String)? = nil) : RsyncResult
       out_io = IO::Memory.new
       err_io = IO::Memory.new
-      process = Process.new(argv[0], argv[1..], output: out_io, error: err_io)
+      process = Process.new(argv[0], argv[1..], env: env, output: out_io, error: err_io)
       status = process.wait
       RsyncResult.new(
         rc: status.exit_code || 1,

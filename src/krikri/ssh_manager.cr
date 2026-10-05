@@ -114,6 +114,88 @@ module Krikri
       @@stats
     end
 
+    # --- connection password (sshpass) support ---------------------------
+    #
+    # `-k`/`--ask-pass`/`--connection-password-file` and an inventory
+    # `ansible_password`/`ansible_ssh_pass` land as host vars; the entry
+    # points register them here against the exact (host, user, port)
+    # triple every ssh/scp/rsync call in this file is keyed on, so all of
+    # them pick the password up without threading it through ~15 call
+    # sites. The password itself is handed to sshpass ONLY through the
+    # SSHPASS environment variable (`sshpass -e`) - never on argv, where
+    # any local user's `ps` could read it.
+    @@connection_passwords = Hash({String, String, Int32?}, String).new
+
+    # sshpass presence, resolved once per process (same reasoning as
+    # @@rsync_available - availability cannot change mid-run).
+    @@sshpass_available : Bool? = nil
+
+    def self.sshpass_available? : Bool
+      cached = @@sshpass_available
+      return cached unless cached.nil?
+
+      result = Process.run("which", ["sshpass"],
+        output: Process::Redirect::Close,
+        error: Process::Redirect::Close
+      )
+      @@sshpass_available = result.exit_code? == 0
+    end
+
+    # Spec seam - the availability probe shells out to `which`, so tests
+    # that need the "sshpass missing" path (or need it NOT to fire on a
+    # machine that happens to lack sshpass) pin the result directly.
+    def self.sshpass_available_for_spec=(available : Bool?)
+      @@sshpass_available = available
+    end
+
+    # The loud failure for a password without sshpass: raised as soon as
+    # a password is registered (i.e. before the first connection is even
+    # attempted) so the run aborts with one clear message instead of
+    # reporting every host unreachable. Mirrors ansible-core's own
+    # "to use the password_mechanism=sshpass, you must install the
+    # sshpass program".
+    def self.ensure_sshpass! : Nil
+      return if sshpass_available?
+      raise "a connection password is set (ansible_password/ansible_ssh_pass, -k/--ask-pass or --connection-password-file) but the sshpass program is not installed - install sshpass to use SSH password authentication"
+    end
+
+    # Idempotent; a nil password is a no-op (never erases a password
+    # registered elsewhere for the same triple). Raises via
+    # #ensure_sshpass! when a real password is registered without sshpass.
+    def self.register_connection_password(host : String, user : String, port : Int32?, password : String?) : Nil
+      return unless password
+      ensure_sshpass!
+      @@connection_passwords[{host, user, port}] = password
+    end
+
+    # Resolves the connection password for one target. A found password
+    # re-checks sshpass (memoized), so any spawn path that never went
+    # through registration still fails loudly rather than silently
+    # falling back to key-only auth.
+    def self.password_for(host : String, user : String, port : Int32?) : String?
+      password = @@connection_passwords[{host, user, port}]?
+      ensure_sshpass! if password
+      password
+    end
+
+    # Spec seam - the registry is process-global, so tests clear it
+    # rather than leaking passwords (or the triple keys) between specs.
+    def self.clear_connection_passwords_for_spec : Nil
+      @@connection_passwords.clear
+    end
+
+    # argv prefix for ssh/scp when a password is set. The password itself
+    # travels only in SSHPASS (see #sshpass_env) - `sshpass -e` reads it
+    # from its own environment, so it is visible neither on argv nor on
+    # disk.
+    def self.sshpass_prefix(password : String?) : Array(String)
+      password ? ["sshpass", "-e"] : [] of String
+    end
+
+    def self.sshpass_env(password : String?) : Hash(String, String)?
+      password ? {"SSHPASS" => password} : nil
+    end
+
     # Runs *block* (given the just-spawned *process*) on a separate fiber
     # and bounds it to *timeout_seconds* wall-clock time - both `exec`
     # and `exec_script` accepted a `timeout:` parameter that was never
@@ -283,6 +365,7 @@ module Krikri
 
       # Build SSH command with ControlMaster for connection pooling
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
       # Important: We pass the command through bash -c to ensure proper shell
       # interpretation on the remote side. This prevents the local shell from
@@ -290,19 +373,7 @@ module Krikri
       # We use /bin/bash instead of /bin/sh for better compatibility
       wrapped_command = "/bin/bash -c #{shell_quote(command)}"
 
-      ssh_cmd = [
-        "ssh",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600", # Keep connection alive for 10 minutes
-        "-o", "ConnectTimeout=#{CliOptions.timeout}",
-        "-o", "ServerAliveInterval=60",
-        "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
-        "#{user}@#{host}",
-        wrapped_command,
-      ]
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -313,6 +384,7 @@ module Krikri
             Process.new(
               ssh_cmd[0],
               ssh_cmd[1..],
+              env: sshpass_env(password),
               output: stdout,
               error: stderr
             )
@@ -358,20 +430,9 @@ module Krikri
       @@stats["commands_executed"] += 1
 
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
-      ssh_cmd = [
-        "ssh",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600",
-        "-o", "ConnectTimeout=#{CliOptions.timeout}",
-        "-o", "ServerAliveInterval=60",
-        "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
-        "#{user}@#{host}",
-        "bash", "-s",
-      ]
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -382,6 +443,7 @@ module Krikri
             Process.new(
               ssh_cmd[0],
               ssh_cmd[1..],
+              env: sshpass_env(password),
               input: Process::Redirect::Pipe,
               output: stdout,
               error: stderr
@@ -531,6 +593,7 @@ module Krikri
       identity_file : String? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       become_user : String? = nil,
+      become_password : String? = nil,
     ) : JSON::Any
       init
       key = {host, user, port, become_user}
@@ -538,7 +601,7 @@ module Krikri
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password)
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -601,11 +664,12 @@ module Krikri
       identity_file : String? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       become_user : String? = nil,
+      become_password : String? = nil,
     ) : Hash(Int32, JSON::Any)
       init
       key = {host, user, port, become_user}
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password)
 
       payload = steps.map do |step|
         {
@@ -642,31 +706,52 @@ module Krikri
     # escalation, so a host where the one-shot become path works has a
     # daemon that works too, and one where it doesn't fails the same
     # way (loudly, at spawn, then falls back).
-    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil) : Process
+    #
+    # With *become_password* set the one thing that must NOT change is
+    # the framed stdin protocol: the password can only be prepended to
+    # that stream when sudo will actually consume it (a `sudo -S` that
+    # never prompts - NOOPASSWD - would leave the password line sitting
+    # in front of the first frame and desynchronize every read). So the
+    # decision is probed ONCE here, over a throwaway `sudo -n ... true`
+    # round trip on the same connection (never with a wrong password -
+    # that would feed PAM failure counters): `-n` succeeding means
+    # NOOPASSWD and the daemon stays `sudo -n` with a clean stream;
+    # otherwise it spawns `sudo -S -p ''` and the password line is
+    # written into this process's stdin pipe BEFORE any frame, where
+    # sudo reads it and nothing else ever sees it.
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil) : Process
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
-      ssh_cmd = [
-        "ssh",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600",
-        "-o", "ConnectTimeout=#{CliOptions.timeout}",
-        "-o", "ServerAliveInterval=60",
-        "-o", "ServerAliveCountMax=3",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
-        "#{user}@#{host}",
-        daemon_remote_command(remote_binary_path, become_user),
-      ]
+      sudo_needs_password = false
+      if become_user && become_password
+        probe = exec(
+          host, user,
+          "sudo -n -u #{shell_quote(become_user)} -- true",
+          port,
+          timeout: 60,
+          identity_file: identity_file
+        )
+        sudo_needs_password = probe[:exit_code] != 0
+      end
+
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password)], password)
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
           ssh_cmd[0],
           ssh_cmd[1..],
+          env: sshpass_env(password),
           input: Process::Redirect::Pipe,
           output: Process::Redirect::Pipe,
           error: Process::Redirect::Close
         )
+      end
+      if sudo_needs_password && become_password
+        process.input.print(become_password)
+        process.input.print('\n')
+        process.input.flush
       end
       @@daemon_processes[{host, user, port, become_user}] = process
       process
@@ -679,9 +764,20 @@ module Krikri
     # Quoting here is defense in depth: if the allow-list is ever
     # relaxed or bypassed, the shell still sees one argument, not
     # injected command text.
-    private def self.daemon_remote_command(remote_binary_path : String, become_user : String?) : String
+    #
+    # *sudo_needs_password* is the probe result from #spawn_daemon (and
+    # deliberately NOT the password itself - a password must never land
+    # in this string, which travels as an argv element of the local ssh
+    # process AND of the remote shell's own `bash -c`). With it set,
+    # sudo runs `sudo -S -p ''` (read the password from stdin, empty
+    # prompt so nothing is written to the daemon channel's stderr) and
+    # #spawn_daemon has already put the password line on the stdin pipe
+    # ahead of the frames. Public as a spec seam: the -n/-S command
+    # construction is pinned directly in the unit tests.
+    def self.daemon_remote_command(remote_binary_path : String, become_user : String?, sudo_needs_password : Bool = false) : String
       return "#{shell_quote(remote_binary_path)} --daemon" unless become_user
-      "sudo -n -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
+      flags = sudo_needs_password ? "-S -p ''" : "-n"
+      "sudo #{flags} -u #{shell_quote(become_user)} -- #{shell_quote(remote_binary_path)} --daemon"
     end
 
     private def self.write_daemon_frame(io : IO, payload : String) : Nil
@@ -849,21 +945,11 @@ module Krikri
       end
 
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
-      scp_cmd = [
-        "scp",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600",
-        "-o", "ConnectTimeout=#{CliOptions.timeout}",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
-                (port ? ["-P", port.to_s] : [] of String) +
-                CliOptions.extra_scp_args + [
-        local_path,
-        "#{user}@#{host}:#{remote_path}",
-      ]
+      scp_cmd = scp_argv(control_path, identity_file, port, user, host,
+        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -871,6 +957,7 @@ module Krikri
         Process.run(
           scp_cmd[0],
           scp_cmd[1..],
+          env: sshpass_env(password),
           output: out_io,
           error: err_io
         )
@@ -904,19 +991,11 @@ module Krikri
       @@stats["files_downloaded"] += 1
 
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
-      scp_cmd = [
-        "scp",
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPath=#{control_path}",
-        "-o", "ControlPersist=600",
-        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + (port ? ["-P", port.to_s] : [] of String) +
-                CliOptions.extra_scp_args + [
-        "#{user}@#{host}:#{remote_path}",
-        local_path,
-      ]
+      scp_cmd = scp_argv(control_path, identity_file, port, user, host,
+        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -924,6 +1003,7 @@ module Krikri
         Process.run(
           scp_cmd[0],
           scp_cmd[1..],
+          env: sshpass_env(password),
           output: out_io,
           error: err_io
         )
@@ -968,13 +1048,14 @@ module Krikri
       return false unless rsync_available?
 
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
       # Use rsync with SSH control master
       rsync_cmd = [
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", rsync_ssh_command(control_path, identity_file, port),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password),
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -985,6 +1066,7 @@ module Krikri
         Process.run(
           rsync_cmd[0],
           rsync_cmd[1..],
+          env: sshpass_env(password),
           output: out_io,
           error: err_io
         )
@@ -1015,6 +1097,7 @@ module Krikri
       return false unless rsync_available?
 
       control_path = get_control_path(host, user, port)
+      password = password_for(host, user, port)
 
       # rsync accepts multiple sources for one destination directory
       # natively - one process spawn (and one SSH session) for the whole
@@ -1023,13 +1106,14 @@ module Krikri
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", rsync_ssh_command(control_path, identity_file, port),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password),
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = TimingProfile.measure("transport.rsync", "transport") do
         Process.run(
           rsync_cmd[0],
           rsync_cmd[1..],
+          env: sshpass_env(password),
           output: Process::Redirect::Close,
           error: Process::Redirect::Close
         )
@@ -1141,13 +1225,77 @@ module Krikri
       parts.join
     end
 
+    # The full argv every `ssh` invocation in this file spawns (exec,
+    # exec_script and spawn_daemon all share the exact same option set) -
+    # extracted so the construction is one definition instead of three,
+    # and so the unit tests can pin it (including the sshpass prefix)
+    # without ever spawning a real ssh. *remote_args* is what follows
+    # `user@host`: the wrapped command, `bash -s`, or the daemon command.
+    # Public as a spec seam.
+    def self.ssh_argv(
+      control_path : String,
+      identity_file : String?,
+      port : Int32?,
+      user : String,
+      host : String,
+      remote_args : Array(String),
+      password : String? = nil,
+    ) : Array(String)
+      sshpass_prefix(password) + [
+        "ssh",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=#{control_path}",
+        "-o", "ControlPersist=600", # Keep connection alive for 10 minutes
+        "-o", "ConnectTimeout=#{CliOptions.timeout}",
+        "-o", "ServerAliveInterval=60",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
+      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
+        "#{user}@#{host}",
+      ] + remote_args
+    end
+
+    # Same extraction for the scp argv (upload and download share every
+    # option; they differ only in the `-r` flag, the ConnectTimeout
+    # option - download has never carried it - and their trailing path
+    # pair, hence *recursive*/*connect_timeout*/*local_args*).
+    # Public as a spec seam.
+    def self.scp_argv(
+      control_path : String,
+      identity_file : String?,
+      port : Int32?,
+      user : String,
+      host : String,
+      local_args : Array(String),
+      recursive : Bool = false,
+      connect_timeout : Bool = true,
+      password : String? = nil,
+    ) : Array(String)
+      sshpass_prefix(password) + [
+        "scp",
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=#{control_path}",
+        "-o", "ControlPersist=600",
+      ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) + [
+        "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
+      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+        (port ? ["-P", port.to_s] : [] of String) +
+        CliOptions.extra_scp_args + local_args
+    end
+
     # The `-e` value both rsync paths in this file build - shared so the
     # nil-port omission (no -p; ssh's own config resolution applies)
-    # stays identical in both.
-    private def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?) : String
+    # stays identical in both. With a password the ssh it names is
+    # itself wrapped in `sshpass -e` (rsync word-splits this string into
+    # argv itself, so no shell quoting is involved and the password
+    # still only ever travels in SSHPASS - which rsync passes down to
+    # the sshpass child from the env this file's Process.run spawned
+    # rsync with). Public as a spec seam.
+    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil) : String
       base = "ssh -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
              " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}" \
              "#{identity_ssh_opt(identity_file)}"
+      base = "sshpass -e #{base}" if password
       port ? "#{base} -p #{port}" : base
     end
 

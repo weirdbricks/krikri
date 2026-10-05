@@ -1,0 +1,130 @@
+require "../minitest_helper"
+require "../../src/krikri/ssh_manager"
+require "../../src/krikri/passwords"
+
+# -k/--ask-pass/--connection-password-file (and an inventory
+# ansible_password/ansible_ssh_pass) must reach every ssh/scp/rsync
+# spawn as `sshpass -e`, with the password itself NEVER on any argv -
+# only in the child's SSHPASS environment. All of this is pure command
+# construction: no ssh, scp or rsync process is ever started here.
+describe "SSHManager sshpass wrapping (sshpass_wrapping_test.cr)" do
+  serial! # mutates process-global sshpass-availability/password-registry state
+
+  describe ".ssh_argv" do
+    it "runs plain ssh with no sshpass when no password is set" do
+      argv = Krikri::SSHManager.ssh_argv("/tmp/.krikri-playbook-ssh/cp", nil, 22, "root", "192.0.2.1", ["/bin/bash -c 'true'"])
+      argv.first.must_equal("ssh")
+      argv.includes?("sshpass").must_equal(false)
+      argv.includes?("root@192.0.2.1").must_equal(true)
+      argv.includes?("-p").must_equal(true)
+      argv.last.must_equal("/bin/bash -c 'true'")
+    end
+
+    it "prefixes sshpass -e when a password is set, without the password itself" do
+      password = "s3cr3t-value"
+      argv = Krikri::SSHManager.ssh_argv("/tmp/cp", nil, nil, "root", "192.0.2.1", ["bash", "-s"], password)
+      argv[0].must_equal("sshpass")
+      argv[1].must_equal("-e")
+      argv[2].must_equal("ssh")
+      argv.includes?("-p").must_equal(false) # nil port still omits -p
+      argv.any? { |arg| arg.includes?(password) }.must_equal(false)
+    end
+  end
+
+  describe ".scp_argv" do
+    it "wraps scp the same way, keeping the upload/download shapes intact" do
+      upload = Krikri::SSHManager.scp_argv("/tmp/cp", nil, 22, "root", "h", ["/l", "h:/r"], recursive: true, connect_timeout: true, password: "pw")
+      upload[0].must_equal("sshpass")
+      upload.includes?("-e").must_equal(true)
+      upload.includes?("scp").must_equal(true)
+      upload.includes?("-r").must_equal(true)
+      upload.includes?("ConnectTimeout=#{Krikri::CliOptions.timeout}").must_equal(true)
+      upload.any? { |arg| arg.includes?("pw") }.must_equal(false)
+
+      download = Krikri::SSHManager.scp_argv("/tmp/cp", nil, nil, "root", "h", ["h:/r", "/l"], recursive: false, connect_timeout: false)
+      download.first.must_equal("scp")
+      download.includes?("-r").must_equal(false)
+      download.includes?("ConnectTimeout=#{Krikri::CliOptions.timeout}").must_equal(false)
+    end
+  end
+
+  describe ".rsync_ssh_command" do
+    it "wraps the -e ssh command in sshpass -e when a password is set" do
+      plain = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil)
+      plain.starts_with?("ssh -o ControlMaster=auto").must_equal(true)
+      plain.includes?("sshpass").must_equal(false)
+
+      wrapped = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil, "pw123")
+      wrapped.starts_with?("sshpass -e ssh -o ControlMaster=auto").must_equal(true)
+      wrapped.includes?("pw123").must_equal(false)
+    end
+  end
+
+  describe "sshpass plumbing" do
+    it "hands the password to sshpass only via SSHPASS" do
+      Krikri::SSHManager.sshpass_env(nil).must_be_nil
+      env = Krikri::SSHManager.sshpass_env("hunter2")
+      env.nil?.must_equal(false)
+      (env || {} of String => String)["SSHPASS"].must_equal("hunter2")
+      Krikri::SSHManager.sshpass_prefix(nil).must_equal([] of String)
+      Krikri::SSHManager.sshpass_prefix("x").must_equal(["sshpass", "-e"])
+    end
+
+    it "refuses to register a connection password when sshpass is missing" do
+      Krikri::SSHManager.sshpass_available_for_spec = false
+      begin
+        ex = assert_raises(Exception) do
+          Krikri::SSHManager.register_connection_password("192.0.2.1", "root", 22, "pw")
+        end
+        ex.message.to_s.includes?("sshpass").must_equal(true)
+        Krikri::SSHManager.password_for("192.0.2.1", "root", 22).must_be_nil
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = true
+      end
+    end
+
+    it "round-trips a registered password and treats nil as a no-op" do
+      # Pinned true: this machine may not have sshpass installed, and
+      # this test is about the registry, not the availability probe.
+      Krikri::SSHManager.sshpass_available_for_spec = true
+      begin
+        Krikri::SSHManager.register_connection_password("192.0.2.1", "root", 22, "pw-a")
+        Krikri::SSHManager.register_connection_password("192.0.2.1", "root", 22, nil) # must not erase
+        Krikri::SSHManager.password_for("192.0.2.1", "root", 22).must_equal("pw-a")
+        Krikri::SSHManager.password_for("192.0.2.1", "root", 2222).must_be_nil # port keys separately
+        Krikri::SSHManager.password_for("other", "root", 22).must_be_nil
+      ensure
+        Krikri::SSHManager.clear_connection_passwords_for_spec
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
+    end
+  end
+end
+
+# The shared key resolution both entry points and every dispatch site
+# use, so -k/-K/--*-password-file and the inventory spellings all land
+# on the same variable names ansible-core itself reads.
+describe "Krikri::Passwords resolution (sshpass_wrapping_test.cr)" do
+  it "reads the connection password from every ansible ssh spelling" do
+    Krikri::Passwords.connection({"ansible_password" => JSON::Any.new("a")}).must_equal("a")
+    Krikri::Passwords.connection({"ansible_ssh_pass" => JSON::Any.new("b")}).must_equal("b")
+    Krikri::Passwords.connection({"ansible_ssh_password" => JSON::Any.new("c")}).must_equal("c")
+  end
+
+  it "prefers task vars over inventory vars and skips empty/null values" do
+    host = Krikri::Host.new("web1")
+    host.vars["ansible_password"] = JSON::Any.new("inventory-pw")
+    Krikri::Passwords.connection(nil, host).must_equal("inventory-pw")
+    Krikri::Passwords.connection({"ansible_password" => JSON::Any.new("task-pw")}, host).must_equal("task-pw")
+    Krikri::Passwords.connection({"ansible_password" => JSON::Any.new("")}, host).must_equal("inventory-pw")
+    Krikri::Passwords.connection({"ansible_password" => JSON::Any.new(nil)}, host).must_equal("inventory-pw")
+    Krikri::Passwords.connection(nil, nil).must_be_nil
+  end
+
+  it "reads the become password from every ansible sudo spelling" do
+    Krikri::Passwords.become({"ansible_become_password" => JSON::Any.new("a")}).must_equal("a")
+    Krikri::Passwords.become({"ansible_become_pass" => JSON::Any.new("b")}).must_equal("b")
+    Krikri::Passwords.become({"ansible_sudo_pass" => JSON::Any.new("c")}).must_equal("c")
+    Krikri::Passwords.become(nil).must_be_nil
+  end
+end

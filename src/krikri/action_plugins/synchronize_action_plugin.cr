@@ -1,6 +1,7 @@
 require "json"
 require "../base_action_plugin"
 require "../plugin_helpers/synchronize_rsync"
+require "../passwords"
 
 module Krikri
   # ansible.posix.synchronize as a controller-side action plugin that
@@ -93,6 +94,7 @@ module Krikri
       dest = dest_param.to_s
 
       private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      conn_password = Passwords.connection(@vars, @host)
 
       # delegate_to: a local-transport host (localhost) while the task's
       # own host is a different, non-localhost host: Ansible runs
@@ -106,7 +108,7 @@ module Krikri
       # vars) and rsync fails with its own hostname-resolution error
       # when the name doesn't resolve - the munging decision reads only
       # the task host's inventory address, never its connection.
-      if result = delegate_to_local_controller_path(src, dest, mode, private_key)
+      if result = delegate_to_local_controller_path(src, dest, mode, private_key, conn_password)
         return result
       end
 
@@ -140,11 +142,11 @@ module Krikri
 
       dest_port = resolve_dest_port
 
-      argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
-      finish(argv)
+      argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password)
+      finish(argv, conn_password)
     end
 
-    private def delegate_to_local_controller_path(src : String, dest : String, mode : String, private_key : String?) : ActionResult?
+    private def delegate_to_local_controller_path(src : String, dest : String, mode : String, private_key : String?, conn_password : String?) : ActionResult?
       if task_host = @task_host
         if task_host.name != @host.name && local_connection? && !localhost_addr?(task_host.connection_host)
           user = SynchronizeRsync.bool(@params["set_remote_user"]?, default: true) ? @vars["ansible_user"]?.try(&.as_s?) : nil
@@ -154,8 +156,8 @@ module Krikri
             dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
           end
           dest_port = resolve_dest_port(task_host)
-          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port)
-          return finish(argv)
+          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password)
+          return finish(argv, conn_password)
         end
       end
       nil
@@ -167,12 +169,12 @@ module Krikri
     # binary produces (plugins/synchronize.cr), because Ansible runs the
     # module here too and registers ITS result: exit_json/fail_json's key
     # order plus the controller's failed/changed/exception backfill.
-    private def finish(argv : Array(String)) : ActionResult
+    private def finish(argv : Array(String), conn_password : String? = nil) : ActionResult
       # Ansible module: `if '/' not in rsync: rsync = get_bin_path(rsync,
       # required=True)` - the reported cmd carries the RESOLVED path
       # (/usr/bin/rsync), not the bare name, on success and failure alike.
       argv[0] = SynchronizeRsync.resolve_bin_path(argv[0])
-      result = SynchronizeRsync.run(argv)
+      result = SynchronizeRsync.run(argv, env: SSHManager.sshpass_env(conn_password))
       cmd_str = SynchronizeRsync.cmd_string(argv)
 
       unless result.rc == 0

@@ -6,6 +6,7 @@ require "colorize"
 require "file_utils"
 require "./ssh_manager"
 require "./local_executor"
+require "./passwords"
 require "./playbook_parser"
 require "./shell"
 require "./inventory_parser"
@@ -919,7 +920,7 @@ module Krikri
         # configured for itself - unrelated to the actual remote target).
         execute_local_plugin(plugin_name, config, false, nil)
       else
-        execute_local_plugin(plugin_name, config, become, become_user)
+        execute_local_plugin(plugin_name, config, become, become_user, Passwords.become(vars, host))
       end
     end
 
@@ -942,7 +943,7 @@ module Krikri
         # See the other execute_plugin overload's own comment.
         execute_local_plugin(plugin_name, config.to_json, false, nil)
       else
-        execute_local_plugin(plugin_name, config.to_json, become, become_user)
+        execute_local_plugin(plugin_name, config.to_json, become, become_user, Passwords.become(vars, host))
       end
     end
 
@@ -960,13 +961,47 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, become : Bool, become_user : String?) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
       TimingProfile.measure("transport.local_exec", "transport") do
-        execute_local_plugin_impl(plugin_name, config, become, become_user)
+        execute_local_plugin_impl(plugin_name, config, become, become_user, become_password)
       end
     end
 
-    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?) : JSON::Any
+    # `sudo` argv for the local (ansible_connection=local) become path.
+    # *interactive* is the probe result (a password is set AND sudo says
+    # one is required): `sudo -S -p ''` reads it off the very stdin pipe
+    # that carries the plugin's config, prefixed by
+    # #local_plugin_stdin - the password itself never appears in this
+    # argv. NOOPASSWD keeps the historical `sudo -n` with an untouched
+    # stdin, so -K with passwordless sudo behaves exactly as before.
+    # Public as a spec seam: pinned directly in the unit tests.
+    def self.local_sudo_argv(sudo_user : String, plugin_path : String, interactive : Bool) : Array(String)
+      interactive ? ["-S", "-p", "", "-u", sudo_user, "--", plugin_path] : ["-n", "-u", sudo_user, "--", plugin_path]
+    end
+
+    # What goes into the local plugin process's stdin: the config, or
+    # `<password>\n<config>` when sudo will actually consume that first
+    # line. Public as a spec seam.
+    def self.local_plugin_stdin(config : String, become_password : String?, interactive : Bool) : String
+      interactive && become_password ? "#{become_password}\n#{config}" : config
+    end
+
+    # `sudo -n -u <user> -- true`: does sudo accept this escalation with
+    # no password right now? Exit status only - `sudo -n` never prompts
+    # and never reads stdin, and a probe must NOT submit a wrong
+    # password (PAM failure counters/lockout). Failure to run sudo at
+    # all answers "needs a password" conservatively: the -S path then
+    # either works or fails the same way `sudo -n` would have.
+    def self.sudo_noninteractive?(sudo_user : String) : Bool
+      Process.run("sudo", ["-n", "-u", sudo_user, "--", "true"],
+        output: Process::Redirect::Close,
+        error: Process::Redirect::Close
+      ).exit_code? == 0
+    rescue
+      false
+    end
+
+    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
 
@@ -974,15 +1009,25 @@ module Krikri
       stdout = IO::Memory.new
       stderr = IO::Memory.new
 
+      # Same "does this escalation need sudo at all?" gate as before
+      # (become_needed? plus a real become_user), plus - only when a
+      # become password is actually set - the one-time NOOPASSWD probe
+      # that picks `sudo -n` over `sudo -S`.
+      sudo_user = become_needed?(become, become_user, local_username) ? become_user : nil
+      interactive = false
+      if sudo_user && become_password
+        interactive = !sudo_noninteractive?(sudo_user)
+      end
+
       begin
-        process = if become_needed?(become, become_user, local_username) && (sudo_user = become_user)
+        process = if sudo_user
                     # No shell involved (args passed as a real argv array,
                     # not interpolated into a command string), so
                     # become_user doesn't need shell-escaping here - unlike
                     # the remote/SSH path below, where it does.
                     Process.new(
                       "sudo",
-                      ["-n", "-u", sudo_user, "--", plugin_path],
+                      local_sudo_argv(sudo_user, plugin_path, interactive),
                       input: Process::Redirect::Pipe,
                       output: stdout,
                       error: stderr
@@ -996,8 +1041,9 @@ module Krikri
                     )
                   end
 
-        # Write config to stdin
-        process.input.print(config)
+        # Write config to stdin (password line first when sudo -S will
+        # read it - see #local_plugin_stdin)
+        process.input.print(local_plugin_stdin(config, become_password, interactive))
         process.input.close
 
         process.wait
@@ -1152,7 +1198,8 @@ module Krikri
             simple_plugin_name(plugin_name),
             JSON.parse(config),
             identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
-            become_user: daemon_user
+            become_user: daemon_user,
+            become_password: Passwords.become(vars, host)
           )
         rescue ex : SSHManager::DaemonDispatchUnknownError
           # The request reached the daemon but its response did not come
@@ -1168,7 +1215,7 @@ module Krikri
         end
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user, host.user || "root")
+      target = remote_plugin_target(plugin_name, become, become_user, host.user || "root", Passwords.become(vars, host))
 
       # Execute plugin remotely with config via stdin.
       #
@@ -1338,6 +1385,15 @@ module Krikri
       connection_host = get_connection_host(host, vars)
       host_key = "#{host.user}@#{connection_host}:#{host.port}"
 
+      # Belt-and-braces against the entry points' own registration pass:
+      # every remote dispatch path funnels through here, so a host that
+      # only acquires a connection password at RUNTIME (add_host:, a
+      # set_fact) still gets it keyed for the SSH calls below. No-op
+      # when no password is set - the overwhelmingly common case.
+      if conn_password = Passwords.connection(vars, host)
+        SSHManager.register_connection_password(connection_host, host.user || "root", host.port, conn_password)
+      end
+
       return if @@uploaded_plugins[host_key]?.try(&.includes?(simple_name))
 
       upload_plugins_to_host(host, [simple_name])
@@ -1363,10 +1419,51 @@ module Krikri
       Shell.single_quote(str)
     end
 
-    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil) : String
+    def self.remote_plugin_target(plugin_name : String, become : Bool, become_user : String?, remote_user : String? = nil, become_password : String? = nil) : String
       simple_name = simple_plugin_name(plugin_name)
       remote_plugin_path = "#{remote_plugin_dir(remote_user)}/#{simple_name}"
-      become_needed?(become, become_user, remote_user) ? "sudo -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" : remote_plugin_path
+      return remote_plugin_path unless become_needed?(become, become_user, remote_user)
+      return "sudo -n -u #{Shell.quote_arg(become_user.to_s)} -- #{remote_plugin_path}" unless become_password
+      sudo_password_become_wrapper(remote_plugin_path, become_user.to_s, become_password)
+    end
+
+    # The become-password variant of the `sudo -n -u <user> -- <path>`
+    # wrapper, for when `ansible_become_password`/`ansible_become_pass`
+    # is set (-K/--ask-become-pass, --become-password-file, or the
+    # inventory var). It is ONE stdin-transparent command fragment, so
+    # every caller keeps piping the plugin's config into it exactly as
+    # before (`echo <b64> | base64 -d | <target>`, the batch script's
+    # per-step line, async's `< <job>.cfg` redirect) with no structural
+    # change anywhere.
+    #
+    # How the password reaches sudo without ever touching argv:
+    #   - The `if` condition probes with `sudo -n ... true` (never with
+    #     a wrong password - that would feed PAM/faillock counters).
+    #     Exit 0 means sudo needs no password here (NOOPASSWD - the -K
+    #     with passwordless-sudo case), and the then-branch runs plain
+    #     `sudo -n` with stdin passed straight through, so the config
+    #     payload is byte-identical to a run without -K.
+    #   - Otherwise the else-branch runs `sudo -S -p ''` and prepends
+    #     `<password>\n` to the same stdin stream: sudo reads exactly
+    #     that one line as the password and hands the rest (the config)
+    #     on to the plugin. The password text lives in the script over
+    #     SSH's stdin - never in any local or remote argv (printf is a
+    #     shell builtin, single-quoted so no metacharacter in the
+    #     password can escape).
+    # Known residual edge (accepted): if sudoers grants NOPASSWD only
+    # for this exact plugin path while REQUIRING a password for
+    # `true`, the probe answers "password needed", sudo then never
+    # prompts, and the password line would reach the plugin instead of
+    # the config - a contradictory sudoers setup, and it fails the task
+    # rather than mis-executing anything.
+    # Public as a spec seam: the command construction is pinned
+    # directly in the unit tests.
+    def self.sudo_password_become_wrapper(plugin_path : String, become_user : String, become_password : String) : String
+      q_user = Shell.quote_arg(become_user)
+      "if sudo -n -u #{q_user} -- true 2>/dev/null; " \
+      "then sudo -n -u #{q_user} -- #{plugin_path}; " \
+      "else { printf '%s\\n' #{Shell.single_quote(become_password)}; cat; } | " \
+      "sudo -S -p '' -u #{q_user} -- #{plugin_path}; fi"
     end
 
     # `ANSIBLE_BECOME_ALLOW_SAME_USER` - Ansible's own config knob,
@@ -1522,12 +1619,12 @@ module Krikri
     # "root" when become: is set but become_user: wasn't given, matching
     # Ansible's own default.
     #
-    # No become password support (`ansible_become_pass`/
-    # `--ask-become-pass`) - sudo always runs with `-n` (non-interactive),
-    # so a become_user that needs a password to sudo to fails clearly
-    # rather than hanging on a prompt nothing can ever answer. A
-    # documented scope cut, not an oversight - matches how `pause:` also
-    # has no real interactive-prompt model in this codebase.
+    # No become password HERE - `ansible_become_password`/
+    # `ansible_become_pass` are resolved from the dispatch site's vars by
+    # Krikri::Passwords and handed to #remote_plugin_target (remote) or
+    # #execute_local_plugin (local), which turn `sudo -n` into the
+    # probe+`sudo -S -p ''` wrapper that feeds it on stdin. This method
+    # still only answers become:/become_user:/validation.
     private def self.resolve_become(config : JSON::Any) : {Bool, String?, JSON::Any?}
       become = config["become"]?.try(&.as_s?) == "true"
       return {false, nil, nil} unless become

@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1490`.**
+**Currently at `0.9.1491`.**
 
 ## Open gaps
 
@@ -38,11 +38,6 @@ defect moves down or gets deleted.
 - **Docker plugins:** Ansible's Python-SDK error wording (`500 Server Error for http+docker://...`) is
   reproduced only for `docker_container`'s image pull; the other Docker modules still wrap `docr`'s own
   `Code: 500 Message: ...` after Ansible's prefixes.
-- **`-k`/`-K`/`--connection-password-file`/`--become-password-file` are accepted but inert.** The value
-  lands in `ansible_password`/`ansible_become_password` but nothing consumes it: SSH goes through the
-  system `ssh` client (key/`~/.ssh/config` auth only) and become is `sudo -n` only. A user can believe
-  password auth is active when it isn't. Fixing it means real support (e.g. sshpass, `sudo -S`); failing
-  loudly would break the common `-K` with passwordless sudo, and a warning breaks stderr parity.
 - **Performance, profile first** (`--timing-profile`, warm run, `--forks 1`): not yet done and not worth
   starting without a profile showing the bucket - `ip` forks per interface in `gather_network_facts`
   (`ip -j` shape must be pinned against real output) and the Python-interpreter spawn in

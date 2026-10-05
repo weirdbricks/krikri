@@ -1284,7 +1284,7 @@ module Krikri
       return item_results if steps.empty?
 
       connection_host = PluginManager.get_connection_host(host, item_contexts[step_indices.first])
-      step_results = run_batch_steps(host, connection_host, steps)
+      step_results = run_batch_steps(host, connection_host, steps, vars: item_contexts[step_indices.first])
 
       steps.each_index do |i|
         next unless interpreted = step_results[i]?

@@ -885,6 +885,23 @@ if ask_become_pass
   inventory.hosts.each_value { |host| host.vars["ansible_become_password"] = JSON::Any.new(password) }
 end
 
+# Register every host's connection password with the SSH layer, keyed on
+# the same (host, user, port) triple all of its ssh/scp/rsync calls
+# resolve - this is what turns -k/--connection-password-file (and an
+# inventory ansible_password/ansible_ssh_pass) into real sshpass-backed
+# password auth instead of an inert var. Registration also fails HERE,
+# before the first connection, when a password is set but sshpass is not
+# installed, rather than letting every host come back unreachable.
+inventory.hosts.each_value do |reg_host|
+  conn_pw = Krikri::Passwords.connection(reg_host.vars, reg_host)
+  next unless conn_pw
+  ssh_user = reg_host.user || "root"
+  Krikri::SSHManager.register_connection_password(reg_host.connection_host, ssh_user, reg_host.port, conn_pw)
+  # get_connection_host falls back to the inventory NAME when the task's
+  # vars carry no ansible_host - key both spellings so either resolves.
+  Krikri::SSHManager.register_connection_password(reg_host.name, ssh_user, reg_host.port, conn_pw) if reg_host.name != reg_host.connection_host
+end
+
 start_at_pending = !start_at_task.nil?
 
 # At this point inventory is guaranteed to be set

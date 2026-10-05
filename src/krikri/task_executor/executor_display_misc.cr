@@ -285,7 +285,16 @@ module Krikri
           "unreachable" => true,
         }.to_json)
       end
-      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, exec_host.user || "root")
+      become_pw = Passwords.become(vars, exec_host)
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, exec_host.user || "root", become_pw)
+      # With a become password the target is the probe+sudo -S wrapper,
+      # which is full of single quotes - it cannot live inside the
+      # `sh -c '<...>'` argv string below (the quotes would terminate
+      # it, and argv is exactly where a password must never appear
+      # anyway). That shape writes the inner command to its own base64'd
+      # file instead; without a password the launch bytes stay exactly
+      # as they always were.
+      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, exec_host.user || "root")
       connection_host = PluginManager.get_connection_host(exec_host, vars)
       user = exec_host.user || "root"
       identity_file = vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
@@ -309,12 +318,24 @@ module Krikri
       # probe - flaky, older runs won the race). The stub also means a
       # worker killed mid-flight shows as started-but-not-finished
       # instead of not-found, which is what Ansible reports too.
-      launch = <<-SCRIPT
-        mkdir -p #{dir}
-        echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
-        echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
-        nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
-      SCRIPT
+      launch = if pw_wrapped
+                 inner = "#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}"
+                 inner_encoded = Base64.strict_encode(inner)
+                 <<-SCRIPT
+                   mkdir -p #{dir}
+                   echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
+                   echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
+                   echo '#{inner_encoded}' | base64 -d > #{dir}/#{jid}.run
+                   nohup sh #{dir}/#{jid}.run >/dev/null 2>&1 &
+                 SCRIPT
+               else
+                 <<-SCRIPT
+                   mkdir -p #{dir}
+                   echo '{"started": 1, "finished": 0, "ansible_job_id": "#{jid}"}' > #{dir}/#{jid}
+                   echo '#{encoded}' | base64 -d > #{dir}/#{jid}.cfg
+                   nohup sh -c '#{target} < #{dir}/#{jid}.cfg > #{dir}/#{jid}.tmp 2>&1; mv #{dir}/#{jid}.tmp #{dir}/#{jid}' >/dev/null 2>&1 &
+                 SCRIPT
+               end
 
       launched = SSHManager.exec_script(connection_host, user, launch, exec_host.port, identity_file: identity_file)
       if launched[:exit_code] != 0

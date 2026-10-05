@@ -1198,7 +1198,7 @@ module Krikri
       return if steps.empty?
 
       connection_host = PluginManager.get_connection_host(host, step_vars.first)
-      step_results = run_batch_steps(host, connection_host, steps)
+      step_results = run_batch_steps(host, connection_host, steps, vars: step_vars.first)
 
       steps.each_index do |idx|
         next unless interpreted = step_results[idx]?
@@ -1225,8 +1225,8 @@ module Krikri
     # served only solo tasks, so every task took one optimization and
     # forfeited the other. The daemon transport is preferred now, and
     # the script remains the fallback for the cases it cannot serve.
-    private def run_batch_steps(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)
-      if result = try_daemon_batch(host, connection_host, steps)
+    private def run_batch_steps(host : Host, connection_host : String, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)
+      if result = try_daemon_batch(host, connection_host, steps, vars)
         return result
       end
 
@@ -1311,7 +1311,7 @@ module Krikri
     # running tasks the playbook asked for. A wrongly-repeated
     # idempotent module is a far better failure than a silently dropped
     # one.
-    private def try_daemon_batch(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)?
+    private def try_daemon_batch(host : Host, connection_host : String, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)?
       return nil unless PluginManager.daemon_enabled?
       return nil if steps.empty?
 
@@ -1338,7 +1338,8 @@ module Krikri
           "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}",
           payload,
           identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
-          become_user: become_user
+          become_user: become_user,
+          become_password: Passwords.become(vars, host)
         )
         # Same normalization the script transport applies one frame up in
         # interpret_batch_script: the daemon's parsed response is a raw
@@ -1605,7 +1606,7 @@ module Krikri
           "unreachable" => true,
         }.to_json)
       end
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, host.user || "root")
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, host.user || "root", Passwords.become(vars_context, host))
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
