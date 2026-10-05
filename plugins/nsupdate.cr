@@ -6,6 +6,7 @@ require "base64"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/nsupdate_message"
 require "../src/krikri/plugin_helpers/socket_connect"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # nsupdate plugin - a native port of community.general.nsupdate:
@@ -156,11 +157,7 @@ module Krikri
         # case, where this used to be a made-up "not supported by this
         # implementation" message).
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to import the required Python library (gssapi) on #{System.hostname}'s Python /usr/bin/python3. " \
-               "This is required for gss-tsig keys. See https://github.com/pythongssapi/python-gssapi for more info. " \
-               "Please read the module documentation and install it in the appropriate location. " \
-               "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-               "please consult the documentation on ansible_python_interpreter")
+          msg: Krikri.missing_required_lib_message("gssapi", "/usr/bin/python3", "This is required for gss-tsig keys. See https://github.com/pythongssapi/python-gssapi for more info."))
       end
 
       key_name = @params["key_name"]?

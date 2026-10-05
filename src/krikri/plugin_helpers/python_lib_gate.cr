@@ -16,8 +16,12 @@ module Krikri
   # same ordering, same point in the flow. Same precedent as the
   # python3-debian gate in deb822_repository, the gssapi gate in
   # nsupdate/url_preflight and the boto3 gate in the aws modules.
-  def self.missing_required_lib_message(library : String, python : String) : String
+  #
+  # Callers whose library has a reason line (gssapi, ...) pass it as
+  # `reason`; it sits between the first sentence and the generic advice.
+  def self.missing_required_lib_message(library : String, python : String, reason : String? = nil) : String
     "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
+    "#{reason ? reason + " " : ""}" \
     "Please read the module documentation and install it in the appropriate location. " \
     "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
     "please consult the documentation on ansible_python_interpreter"

@@ -31,8 +31,8 @@ module Krikri
         ansible_python_interpreter ansible_user ansible_remote_tmp
       ]
 
-      # ansiblelint.constants.PLAYBOOK_ROLE_KEYWORDS - keys of a play's
-      # `roles:` entry that are not role variables.
+      # Keys of a play's `roles:` entry that are not role variables
+      # (compatibility surface: the documented play keywords).
       ROLE_KEYWORDS = %w[
         any_errors_fatal become become_exe become_flags become_method
         become_user check_mode collections connection debugger
@@ -41,7 +41,7 @@ module Krikri
         remote_user run_once tags throttle timeout vars when
       ]
 
-      # ansiblelint.text.is_fqcn_or_name: ^\w+(\.\w+){2,100}$|^\w+$
+      # A bare name, or a fully-qualified collection name (compatibility surface).
       private FQCN_OR_NAME = /^\w+$|^\w+(\.\w+){2,100}$/
 
       def id : String

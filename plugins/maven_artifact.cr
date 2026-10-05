@@ -10,6 +10,7 @@ require "digest/sha1"
 require "file_utils"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/maven_artifact_command"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # maven_artifact plugin - a native port of
@@ -63,12 +64,9 @@ module Krikri
       Process.run(python, {"-c", "import #{module_name}"}, output: io, error: Process::Redirect::Close).success?
     end
 
-    # ansible.module_utils.basic.missing_required_lib's exact boilerplate.
+    # The shared missing_required_lib message (python_lib_gate.cr).
     private def missing_required_lib_msg(library : String, python : String) : String
-      "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
-      "Please read the module documentation and install it in the appropriate location. " \
-      "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-      "please consult the documentation on ansible_python_interpreter"
+      Krikri.missing_required_lib_message("#{library}", python)
     end
 
     def execute : PluginResult

@@ -6,6 +6,7 @@ require "uri"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/http_download"
 require "../src/krikri/plugin_helpers/deb822_repository_content"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Deb822_repository plugin - adds/removes a DEB822-format (`.sources`)
@@ -185,10 +186,7 @@ module Krikri
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: "Failed to import the required Python library (python3-debian) on #{System.hostname}'s Python #{python}. " \
-             "Please read the module documentation and install it in the appropriate location. " \
-             "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-             "please consult the documentation on ansible_python_interpreter",
+        msg: Krikri.missing_required_lib_message("python3-debian", python),
       )
     end
 

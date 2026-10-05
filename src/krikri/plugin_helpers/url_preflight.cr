@@ -1,4 +1,5 @@
 require "openssl"
+require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
@@ -180,11 +181,7 @@ module Krikri
       # reason and the doc URL.
       private def self.missing_library_failure(python : String) : Failure
         Failure.new(Kind::MissingLibrary,
-          "Failed to import the required Python library (gssapi) on #{System.hostname}'s Python #{python}. " \
-          "This is required for use_gssapi=True. See https://pypi.org/project/gssapi/ for more info. " \
-          "Please read the module documentation and install it in the appropriate location. " \
-          "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-          "please consult the documentation on ansible_python_interpreter")
+          Krikri.missing_required_lib_message("gssapi", python, "This is required for use_gssapi=True. See https://pypi.org/project/gssapi/ for more info."))
       end
 
       private def self.connection_failure(error : String) : Failure

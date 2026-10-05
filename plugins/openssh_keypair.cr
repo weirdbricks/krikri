@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # openssh_keypair plugin (community.crypto.openssh_keypair) - (re)
@@ -193,10 +194,7 @@ module Krikri
 
       unless can_use_cryptography
         return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to import the required Python library (cryptography >= #{COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION}) on #{System.hostname}'s Python #{python_interpreter}. " \
-               "Please read the module documentation and install it in the appropriate location. " \
-               "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-               "please consult the documentation on ansible_python_interpreter")
+          msg: Krikri.missing_required_lib_message("cryptography >= #{COLLECTION_MINIMUM_CRYPTOGRAPHY_VERSION}", python_interpreter))
       end
       if type == "rsa1"
         return PluginResult.new(changed: false, failed: true,

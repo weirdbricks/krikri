@@ -4,6 +4,7 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/x509_cert_info"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # get_certificate plugin (community.crypto.get_certificate) - connects
@@ -198,12 +199,9 @@ module Krikri
       status.success? && io.to_s.strip == "yes"
     end
 
-    # ansible.module_utils.basic.missing_required_lib's exact boilerplate.
+    # The shared missing_required_lib message (python_lib_gate.cr).
     private def missing_required_lib_msg(library : String, python : String) : String
-      "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
-      "Please read the module documentation and install it in the appropriate location. " \
-      "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-      "please consult the documentation on ansible_python_interpreter"
+      Krikri.missing_required_lib_message("#{library}", python)
     end
 
     # The connection attempt, real-shaped: a native TCP connect (through

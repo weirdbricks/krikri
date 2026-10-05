@@ -1,6 +1,7 @@
 require "json"
 require "../base_plugin"
 require "./ansible_arg_validation"
+require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
@@ -128,10 +129,7 @@ module Krikri
         PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to import the required Python library (botocore and boto3) on #{System.hostname}'s Python #{python}. " \
-               "Please read the module documentation and install it in the appropriate location. " \
-               "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-               "please consult the documentation on ansible_python_interpreter",
+          msg: Krikri.missing_required_lib_message("botocore and boto3", python),
         )
       end
 

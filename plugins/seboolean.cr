@@ -2,6 +2,7 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/python_lib_gate"
 
 module Krikri
   # Seboolean plugin - toggles an SELinux boolean via `getsebool`/
@@ -161,10 +162,7 @@ module Krikri
     private def missing_library(library : String, python : String) : PluginResult
       PluginResult.new(
         changed: false, failed: true,
-        msg: "Failed to import the required Python library (#{library}) on #{System.hostname}'s Python #{python}. " \
-             "Please read the module documentation and install it in the appropriate location. " \
-             "If the required library is installed, but Ansible is using the wrong Python interpreter, " \
-             "please consult the documentation on ansible_python_interpreter",
+        msg: Krikri.missing_required_lib_message("#{library}", python),
       )
     end
 
