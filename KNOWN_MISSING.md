@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1491`.**
+**Currently at `0.9.1492`.**
 
 ## Open gaps
 

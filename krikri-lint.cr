@@ -296,8 +296,11 @@ module Krikri::Lint
     # Matches go to stdout, the summary to stderr. CPython block-buffers
     # stdout whenever it is not a tty and only flushes it at exit, so the
     # stderr block lands *before* the matches in a redirected or piped
-    # run - and after them on a terminal. Mirroring that buffering keeps
-    # `2>&1` comparisons against ansible-lint byte-identical.
+    # run. On a terminal stdout is line-buffered, so the matches appear
+    # right after the "Listing N violation(s)" warning and the
+    # documentation/summary block comes last (see the tty branch below).
+    # Mirroring both keeps `2>&1` comparisons against ansible-lint
+    # byte-identical.
     matches_out = IO::Memory.new
     case format
     when "json"
@@ -319,6 +322,11 @@ module Krikri::Lint
     unless quiet || format == "json"
       unless violations.empty?
         warning("Listing #{violations.size} violation(s) that are fatal", colored)
+      end
+      if STDOUT.tty?
+        STDOUT.print(matches_out.to_s)
+        STDOUT.flush
+        matches_out.clear
       end
       STDERR.puts "Read #{Console.link(Report::IGNORE_DOC_URL, "documentation", colored)} for instructions on how to ignore specific rule violations." if Outcome.skippable?(violations, registry)
       report.lines(colored).each { |line| STDERR.puts line }
