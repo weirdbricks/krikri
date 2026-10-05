@@ -76,8 +76,12 @@ Your prompt to Crush needs, self-contained:
   mid-fix, breaking control flow in a way that still happened to compile —
   you MUST read Crush's diff line by line yourself afterward, not just
   trust that it builds.
-- This repo's comment convention: explain WHY (real Ansible's behavior, the
-  round that found it), never WHAT the code does.
+- This repo's comment convention: explain WHY (real Ansible's observed
+  behavior, the round that found it), never WHAT the code does.
+- **Source-reading policy** (AGENTS.md): do not read, copy or cite Ansible,
+  ansible-lint or yamllint source (GPLv3+). Work from docs, observed
+  behavior and real `ansible-playbook` output only; never name upstream
+  source files in comments or commit messages.
 - Explicit instruction: **do not touch `src/krikri/version.cr`**. Version
   bumps happen once, centrally, at merge time (step 5) - if you're working
   2 roles interleaved, both worktrees start from the same `main`, so

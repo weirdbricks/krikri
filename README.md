@@ -260,7 +260,8 @@ Jinja2-based templating that this project spends so much effort matching
 are Ansible's design - the product of more than a decade of real-world use
 and the work of the Ansible community and Red Hat behind it. This project
 is a tribute to that design as much as it is a reimplementation of it: we
-admire it enough to have rebuilt it, line by line, in another language.
+admire it enough to have rebuilt its behavior, byte for byte where it
+shows, in another language.
 
 Where krikri-playbook is faster, that's simply a different execution model
 (compiled binaries vs. a Python interpreter per task) - not a knock on

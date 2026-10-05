@@ -43,6 +43,24 @@ uploaded to and executed on the target host (or run locally for
 handles upload/dispatch; `src/krikri/task_batcher.cr` groups
 sequential tasks into one SSH round trip where safe.
 
+## Source-reading policy (licensing)
+
+krikri is MIT; ansible-core, ansible-lint and yamllint are GPLv3+. We follow
+the uutils-vs-GNU-coreutils model: match behavior (even byte-for-byte output)
+without reading or copying the GPL source. See `CONTRIBUTING.md` and
+`../LICENSE_REVIEW.md`.
+
+- **Do not read, copy, paraphrase or cite** Ansible / ansible-lint / yamllint
+  source (`lib/ansible/...`, `module_utils/...`, collection `.py` files).
+- **Allowed:** public docs, observed behavior, real `ansible-playbook` output
+  as an oracle (comparison rounds, `scripts/gen_argspecs.py`), and Galaxy
+  role content under its own license.
+- **Agents (Claude, Crush, subagents):** never reproduce GPL source, and do not
+  name upstream source files in comments or commit messages; describe the
+  observed behavior instead ("matches real ansible's output for X").
+- Short parity-critical messages and constant lists stay verbatim; they are
+  compatibility surface, not copied source.
+
 ## Build & test
 
 ```bash
