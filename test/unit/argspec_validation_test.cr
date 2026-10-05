@@ -173,6 +173,59 @@ describe Krikri::ArgspecValidator do
     failure.must_be_nil
   end
 
+  it "skips the copy scratch-cleanup markers the large-source staging injects" do
+    # TaskExecutor#stage_large_copy_source / #stage_directory_copy_source
+    # point src: at a remote scratch path and mark the copy plugin to
+    # clean it up with these two wire keys; they are engine-internal
+    # bookkeeping Ansible's copy module never sees as task args, so they
+    # must not trip copy's Unsupported-parameters validation (found via
+    # KAMI911.java_open_jdk11 / cloudalchemy.memcached_exporter /
+    # ecgalaxy.aws_workspace_tweaks, round 1200xxx: every large
+    # controller->remote copy: failed with "Unsupported parameters for
+    # (ansible.legacy.copy) module: __cleanup_after_copy").
+    failure = Krikri::ArgspecValidator.validate(
+      "copy", "ansible.builtin.copy",
+      {"src" => "/tmp/.krikri-playbook-copy-scratch", "dest" => "/tmp/x",
+       "__cleanup_after_copy" => "true", "__cleanup_after_copy_dir" => "true"}, vars)
+    failure.must_be_nil
+  end
+
+  it "consumes package's use: instead of forwarding it to the backend module" do
+    # Ansible's package action plugin deletes `use` from the args it
+    # forwards (package.py:89-91) - it names the backend module, it is
+    # not in apt's argument_spec, and brucellino.docker's
+    # `package: {state: present, name: ..., use: auto}` tasks must run
+    # through apt's spec cleanly (round 1200467: krikri failed
+    # "Unsupported parameters for (ansible.legacy.apt) module: use"
+    # while ansible-playbook ran on to its own later apt-cache failure).
+    Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "curl", "state" => "present", "use" => "auto"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("apt")})).must_be_nil
+    Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "curl", "state" => "present", "use" => "apt"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("apt")})).must_be_nil
+  end
+
+  it "still reports a typo'd package option under the backend's ansible.legacy name" do
+    failure = Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "curl", "state" => "present", "use" => "auto", "gropu" => "x"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("apt")}))
+    failure.as(Failure).msg.starts_with?(
+      "Unsupported parameters for (ansible.legacy.apt) module: gropu.").must_equal(true)
+  end
+
+  it "fails an unknown package use: manager before the backend validates anything" do
+    failure = Krikri::ArgspecValidator.validate(
+      "package", "ansible.builtin.package",
+      {"name" => "curl", "use" => "no-such-mgr"},
+      vars({"ansible_pkg_mgr" => JSON::Any.new("apt")}))
+    failure.as(Failure).msg.must_equal(
+      %(Could not find a matching action for the "no-such-mgr" package manager.))
+  end
+
   it "validates action-only directives with Ansible's action-level wording" do
     failure = Krikri::ArgspecValidator.validate(
       "debug", "ansible.builtin.debug", {"zz" => "1"}, vars)

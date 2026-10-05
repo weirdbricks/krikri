@@ -421,7 +421,44 @@ module Krikri
 
     private def remove_key : PluginResult
       key_id = @params["id"]?
-      return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: id") unless key_id
+      key_id = nil if key_id.try(&.empty?)
+
+      # Real apt_key.py's main() derives the key id from url:/data:/file:
+      # material BEFORE the state branches (`if not key_id: if keyserver:
+      # fail "Missing key_id, required with keyserver."; if url: data =
+      # download_key(...); if filename: get_key_id_from_file elif data:
+      # get_key_id_from_data`), so `apt_key: {url: ..., state: absent}`
+      # resolves the id from the material the url points at and removes
+      # that key without any id: at all - mircomasa.filebeat's temporary
+      # elasticsearch-key task is exactly that shape (live-verified vs
+      # 2.19.11: it runs ok, changed=false when the key isn't in the
+      # keyring). The derivation reuses the add path's staging + parsing
+      # helpers on the same temporary file.
+      keyserver = @params["keyserver"]?
+      if key_id.nil? && keyserver
+        return PluginResult.new(changed: false, failed: true, msg: "Missing key_id, required with keyserver.")
+      end
+
+      unless key_id
+        url = @params["url"]?
+        data = @params["data"]?
+        file_path = @params["file"]?
+        return PluginResult.new(changed: false, failed: true, msg: "Missing required parameter: id") unless url || data || file_path
+
+        tmp = File.tempfile(".krikri-playbook-apt-key-", nil)
+        tmp_path = tmp.path
+        tmp.close
+        begin
+          staged_result = stage_key_material(url, data, file_path, tmp_path)
+          return staged_result if staged_result
+          derived = get_key_id_from_file(tmp_path)
+          return PluginResult.new(changed: false, failed: true, msg: "Unable to extract key from #{tmp_path}") if derived[:exit_code] != 0
+          return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless derived_key = derived[:key_id]
+          key_id = derived_key
+        ensure
+          File.delete(tmp_path) rescue nil
+        end
+      end
 
       parsed = parse_key_id(key_id)
       return PluginResult.new(changed: false, failed: true, msg: "Invalid key_id") unless parsed

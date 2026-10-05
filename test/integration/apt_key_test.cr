@@ -166,6 +166,39 @@ describe "apt_key plugin" do
     File.delete(state) rescue nil
   end
 
+  it "derives the key id from data: material for state: absent without id: (mircomasa.filebeat shape)" do
+    # Real apt_key.py's main() derives the id from url:/data:/file:
+    # material BEFORE the state branches, so
+    # `apt_key: {url: ..., state: absent}` (mircomasa.filebeat's
+    # temporary elasticsearch-key task, round 1200473) removes the key
+    # the url points at without any id: - krikri used to fail with
+    # "Missing required parameter: id" instead. With the derived id not
+    # in the (empty) listing the task is ok, changed=false, exactly like
+    # ansible-playbook's own run.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "data" => VALID_KEY_ASC})
+
+      falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["id"].as_s.must_equal("E07A3F141278AEBD")
+    end
+    File.delete(state) rescue nil
+  end
+
+  it "fails state: absent + keyserver: without id:, matching Ansible's keyserver message" do
+    # main()'s keyserver check runs before the state branches, for
+    # state: present and state: absent alike.
+    state = apt_key_spec_state_file
+    with_apt_key_shim(state) do
+      result = PluginSpecHelper.run("apt_key", {"state" => "absent", "keyserver" => "hkp://keys.example.com"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("Missing key_id, required with keyserver.")
+    end
+    File.delete(state) rescue nil
+  end
+
   it "reports already-absent as unchanged for a key id that was never added" do
     state = apt_key_spec_state_file
     with_apt_key_shim(state) do

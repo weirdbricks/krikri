@@ -40,6 +40,7 @@ module Krikri
       "_module_name", "_first_gather", "_environment", "_verbosity",
       "_rendered_from_template", "_content_checksum",
       "__original_src_basename",
+      "__cleanup_after_copy", "__cleanup_after_copy_dir",
     ]
 
     # The assemble-only options Ansible's action plugin consumes itself and
@@ -269,6 +270,19 @@ module Krikri
 
       if failure = action_plugin_option_failures(module_name, params, non_string_natives, non_string_lists)
         return SpecOutcome.new(failure, false)
+      end
+
+      # package's action plugin consumes `use:` itself (it names the
+      # backend module to delegate to, defaulting to the ansible_pkg_mgr
+      # fact) and deletes it from the args it forwards (package.py:89-91),
+      # so the backend module's spec never sees it - `use` is not in
+      # apt/dnf/yum's argument_spec and a `package: {use: auto}` task
+      # must not fail the backend's Unsupported-parameters check
+      # (live-verified vs 2.19.11: brucellino.docker's
+      # `package: {use: auto}` tasks run through apt fine). The use:
+      # backend-name check above already ran on the unstripped params.
+      if module_name == "ansible.builtin.package"
+        params = params.reject { |key, _| key == "use" }
       end
 
       # unarchive's action plugin checks that dest is an existing directory
