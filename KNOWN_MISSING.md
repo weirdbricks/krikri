@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1499`.**
+**Currently at `0.9.1500`.**
 
 ## Open gaps
 
@@ -50,16 +50,16 @@ defect moves down or gets deleted.
   buildx, real fails at its own probe first), so that wording is aligned but unverified live.
 - **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
-  the daemon, ~10% playbook+role parse, <1% templating/conditions. A **local plugin daemon** now serves
+  the daemon, <1% templating/conditions. Done from that profile: a **local plugin daemon** serves
   `ansible_connection=local` (0.837 s -> 0.348 s on the 30-exec local probe; `--no-persistent-daemon`
-  turns it off). Worth doing next: a **parse-phase profile** (288-308 ms, ~1 ms
-  per task, paid on every run). Measured and **not worth starting** (each <= ~1% of warm wall): `ip` forks
-  in `gather_network_facts` (~11 ms/gather), the interpreter spawn in `gather_python_facts` (~20 ms), the
-  vars-hash dup / second substitutor (~4% on local template-heavy runs only), `ConditionalEvaluator`
-  re-parsing (5-7 us/call), ENV re-conversion (never hit), daemon config re-serialization (3.6 us). A
-  `{{ var }}` -> `{{ var }}` chain costs ~40 ms/call - the recursive re-templating bug class, not
-  steady-state. Container targets need the static build (`./build.sh --release --static-podman`); a glibc
-  build fails on the Ubuntu 22.04 perfbench image.
+  turns it off), and the **parse phase** lost its one hotspot (the reserved-var warning re-read the whole
+  playbook per task; `--syntax-check` of the 304-task bench 30 ms -> 9 ms). Measured and **not worth
+  starting** (each <= ~1% of warm wall): `ip` forks in `gather_network_facts` (~11 ms/gather), the
+  interpreter spawn in `gather_python_facts` (~20 ms), the vars-hash dup / second substitutor (~4% on
+  local template-heavy runs only), `ConditionalEvaluator` re-parsing (5-7 us/call), ENV re-conversion
+  (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
+  ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
+  build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
 
 ## Deliberate limits (decided, not defects)
 

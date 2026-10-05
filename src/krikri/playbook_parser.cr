@@ -3205,10 +3205,36 @@ module Krikri
       source_map.try(&.at?(index.to_s)).try(&.[0]) || 1
     end
 
+    record SourceLines, mtime : Time, size : Int64, lines : Array(String)
+    @@source_lines = Hash(String, SourceLines).new
+    SOURCE_LINES_MUTEX = Mutex.new
+
+    # The reserved-var warning scan used to re-read and re-split the whole
+    # playbook file once per parsed task (83% of the parse phase on a
+    # 300-task playbook, 2026-10-05 profile). Cached per file, validated by
+    # mtime and size so a tasks file rewritten mid-run (a template: that
+    # generates one before an include_tasks:) is re-read; the mutex covers
+    # the runtime include_tasks parse path, which can run inside concurrent
+    # per-host fibers.
+    private def self.source_lines(path : String) : Array(String)?
+      info = File.info(path) rescue return nil
+      SOURCE_LINES_MUTEX.synchronize do
+        cached = @@source_lines[path]?
+        return cached.lines if cached && cached.mtime == info.modification_time && cached.size == info.size
+        lines = File.read_lines(path) rescue return nil
+        @@source_lines[path] = SourceLines.new(info.modification_time, info.size, lines)
+        lines
+      end
+    end
+
     private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32) : Nil
       return unless sf = source_file
+      # Runs once per parsed task: the key check comes before any
+      # filesystem work, so tasks without a reserved-name var (the
+      # overwhelming majority) never touch the playbook file.
+      return unless keys.any? { |key| RESERVED_VAR_NAMES.includes?(key) }
       return unless File.file?(sf)
-      lines = File.read_lines(sf) rescue return
+      lines = source_lines(sf) || return
       keys.each do |key|
         next unless RESERVED_VAR_NAMES.includes?(key)
         found = locate_reserved_key(lines, key, from_line)
