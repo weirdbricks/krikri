@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1497`.**
+**Currently at `0.9.1498`.**
 
 ## Open gaps
 
@@ -21,14 +21,15 @@ defect moves down or gets deleted.
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
   `testing/keyorder_probes/kop_*` roles, run through `krikri-role-tester run` with `local:` queue
   entries and compared by `krikri-role-tester keyorder` (`--values` for values, not just shapes).
-  - Not verified: `snap` (snapd too heavy for a probe round); `iptables`'s real-mutation variants.
+  - Verified by the `kop_snap`, `kop_iptables` and `kop_apt_fail` probes (rounds 1100100+): `snap`, `iptables`
+    real mutations and `apt`'s failure/no-op shapes. The one difference left there is host noise: `apt`'s
+    `update_cache` retry warnings ("Sleeping for N seconds ...") carry random jitter in Ansible itself, so
+    their numbers differ between any two Ansible runs.
   - Not a gap to close: `homebrew*` and `ovirt_auth`/`redhat_subscription`/`rhsm_*` (macOS-first, or
     needing a live oVirt engine / Red Hat entitlement, together well under 2% of roles) and `ec2_*`,
     `iam_user_info`, `nsupdate`, `rabbitmq_*` (need an external account or appliance neither engine
     can reach).
-  - One known value difference left as is: `apt`'s failure results on the mutating paths, matched to
-    Ansible's command construction and wording but never verified end-to-end on a real host. Host noise
-    (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is
+  - Host noise (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is
     not a krikri difference.
 - **PostgreSQL:** the deprecated aliases (`port`, `host`, `login`, `unix_socket`, `db`) register
   Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
