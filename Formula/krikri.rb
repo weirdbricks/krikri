@@ -2,7 +2,7 @@ class Krikri < Formula
   desc "Ansible-compatible automation tool, written in Crystal"
   homepage "https://github.com/weirdbricks/krikri"
   version "0.9.1476"
-  license "MIT"
+  license "GPL-3.0-or-later"
 
   on_macos do
     if Hardware::CPU.arm?

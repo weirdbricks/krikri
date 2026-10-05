@@ -238,7 +238,9 @@ Contributions welcome! Please:
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+GNU General Public License v3.0 or later (GPL-3.0-or-later) - see [LICENSE](LICENSE) and
+[NOTICE](NOTICE) for details. krikri-playbook targets compatibility with Ansible, which is
+also GPLv3+.
 
 ---
 
