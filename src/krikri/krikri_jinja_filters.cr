@@ -366,6 +366,21 @@ module Krikri
 
     def self.register : Nil
       KrikriJinja.default_engine.finalize = ->(value : KrikriJinja::AnyValue) { ansible_finalize(value) }
+      # ansible-core exposes `omit` as a Jinja GLOBAL in every templating
+      # context (_jinja_bits.py passes `omit=Omit` into the Jinja globals),
+      # so a `.j2` template file's `val != omit` / `x | default(omit)`
+      # resolves - live-verified against 2.19.11. The expression and
+      # task-param paths already resolve the name themselves
+      # (JinjaVarResolver, ExpressionEvaluator, JinjaHostContext), but the
+      # template ACTION plugin renders through `Engine#render_string` with
+      # no resolver, so the name was simply undefined there:
+      # "Failed to render template: line 0: 'omit' is undefined"
+      # (Turgon37.sudoers' templates/_macros.j2, galaxyproject.slurm's
+      # slurm.conf.j2/generic.conf.j2). Registered as the same sentinel
+      # every other path compares against, so `val != omit` behaves the
+      # same everywhere; derive_engine copies it into the template
+      # plugin's own derived engine.
+      KrikriJinja.default_engine.register_global("omit", Krikri::OMIT_SENTINEL)
       # ansible-core fails `{% for k, v in some_dict %}`, but roles that
       # pass on it in practice (jtyr.motd, jtyr.nsswitch) reach this form
       # with values Ansible keeps as pairs; keep it working.

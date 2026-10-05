@@ -93,7 +93,7 @@ module Krikri
         to_uuid symmetric_difference combinations permutations
         rekey_on_member extract from_yaml_all vault unvault ternary
         intersect difference lists_mergeby list_mergeby random map_format
-        strftime
+        strftime format
         ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
         previous_nth_usable network_in_network network_in_usable
         ip4_hex

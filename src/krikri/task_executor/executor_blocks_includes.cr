@@ -173,10 +173,10 @@ module Krikri
             next
           end
 
-          inherited = Play.new("", "")
-          inherited.become = task.become?
-          inherited.become_user = task.become_user
+          inherited = include_inherited_play(task)
           included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
+
+          apply_include_attrs(task, included_tasks)
 
           if include_vars = task.include_vars
             included_tasks.each do |included_task|
@@ -1791,10 +1791,10 @@ module Krikri
         return :ok
       end
 
-      inherited = Play.new("", "")
-      inherited.become = task.become?
-      inherited.become_user = task.become_user
+      inherited = include_inherited_play(task)
       included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: task.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
+
+      apply_include_attrs(task, included_tasks)
 
       # Role context (role_name/defaults/vars/dirs) must reach the
       # included tasks on THIS path too: an include_tasks: inside a role
@@ -2201,9 +2201,7 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       role_name = substitutor.substitute(task.include_role_name.as(String))
 
-      inherited = Play.new("", "")
-      inherited.become = task.become?
-      inherited.become_user = task.become_user
+      inherited = include_inherited_play(task)
 
       # ansible_parent_role_names: the ancestor role-name chain leading to
       # THIS include_role: call - if this include_role task itself
@@ -2259,6 +2257,8 @@ module Krikri
         fail_include(task, host, "Failed to load role '#{role_name}': #{ex.message}")
         return
       end
+
+      apply_include_attrs(task, included_tasks)
 
       # Same parent-when-PREPENDED propagation import_tasks: already
       # applies to its own flattened tasks (playbook_parser.cr's

@@ -451,14 +451,28 @@ module Krikri
       # `start=[]`-style non-string literals survive; a bareword that
       # misses every variable resolves to null, exactly like
       # #resolve_expression's own miss.
-      private def split_positional_and_kwargs(filter_args : String, kwarg_names : Array(String) = [] of String)
+      private def split_positional_and_kwargs(filter_args : String, kwarg_names : Array(String) = [] of String, any_kwarg : Bool = false)
         positional = [] of JSON::Any
         kwargs = Hash(String, JSON::Any).new
         split_top_level_args(filter_args).each do |arg|
           part = arg.strip
-          name = kwarg_names.find { |candidate| part.starts_with?("#{candidate}=") }
+          value_start : Int32? = nil
+          name = if any_kwarg
+                   # A keyword argument whose NAME isn't fixed up front -
+                   # jinja2's own `|format(version=...)` shape, where the
+                   # keywords are the format string's keys. An `==` stays a
+                   # positional expression (comparison, never an argument
+                   # name), as does anything that isn't an identifier.
+                   match = part.match(/^([A-Za-z_]\w*)\s*=(?!=)/)
+                   if match
+                     value_start = match.end(0)
+                     match[1]
+                   end
+                 else
+                   kwarg_names.find { |candidate| part.starts_with?("#{candidate}=") }
+                 end
           if name
-            kwargs[name] = resolve_default_expression(part[(name.size + 1)..])
+            kwargs[name] = resolve_default_expression(part[value_start || (name.size + 1)..])
           else
             positional << resolve_expression(part)
           end

@@ -283,6 +283,12 @@ module Krikri
         content,
         template_vars.transform_values { |value| KrikriJinja.from_json_any(value) }
       )
+      # Ansible drops an `omit` value out of a rendered string entirely -
+      # a template whose body is `A{{ omit }}B` writes "AB" (live-verified
+      # against 2.19.11), the same drop its finalize pass applies inside
+      # dict/list values. Without this the sentinel string every other path
+      # compares against would leak into the written file verbatim.
+      rendered = rendered.gsub(Krikri::OMIT_SENTINEL, "") if rendered.includes?(Krikri::OMIT_SENTINEL)
       rendered += "\n" unless rendered.ends_with?("\n")
       rendered
     end

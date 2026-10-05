@@ -525,6 +525,38 @@ module Krikri
     # carried on the Task and propagated at execution time, same as loop:'s
     # item).
     property include_vars : Hash(String, JSON::Any)?
+    # apply: on an include_tasks:/include_role: statement - Ansible builds an
+    # implicit parent BLOCK from that mapping (task_include.py's
+    # build_parent_block), so every task the include loads inherits these as
+    # block-level defaults, with each task's own keyword still winning. The
+    # mapping is shape-validated at load time; these fields hold the parsed
+    # values, which the executor's include paths merge into the tasks once
+    # the included file (or role) has actually been loaded - the include's
+    # own become/check_mode resolve into `inherited` there, its vars/when
+    # are applied per loaded task.
+    #
+    # Deliberately narrow scope: become, become_user, check_mode, vars and
+    # when - the block keywords this engine's include path can already
+    # carry. tags: is NOT carried, because tag selection runs once over the
+    # play's own task list (TagFilter) and never re-filters tasks that only
+    # exist at run time. A templated become:/check_mode: inside apply: is
+    # taken at its parse-time value, the same approximation parse_block_task
+    # makes for a block's own templated become:.
+    #
+    # Found via pandemonium1986.ohmyzsh: `include_tasks: {apply: {become:
+    # true, become_user: "{{ loop_ohmyzsh_users.user_name }}"}}` validated
+    # cleanly and was then dropped on the floor, so the included tasks ran
+    # with the play's own become_user (root) - the oh-my-zsh installer wrote
+    # /root/.zshrc instead of the user's, and lineinfile failed with
+    # "Destination /home/pandemonium//.zshrc does not exist !" on a host
+    # where ansible-playbook succeeded.
+    property include_apply_become : Bool?
+    property include_apply_become_user : String?
+    property include_apply_check_mode : Bool?
+    property include_apply_check_mode_expr : String?
+    property include_apply_vars : Hash(String, JSON::Any)?
+    property include_apply_when : String?
+    property include_apply_when_list : Array(String)?
     # include_role: - only set when module_name == "_include_role". The
     # dynamic counterpart to a roles: list entry: resolved at execution
     # time (role name may be templated), via RoleLoader, same as roles:.
@@ -4265,6 +4297,32 @@ module Krikri
     # apply: aborts the whole run with rc=4 before any play banner,
     # live-verified vs 2.19.11 - even though the file itself is only read
     # at run time).
+    # Parses an include directive's `apply:` mapping into the include
+    # statement's include_apply_* fields. The mapping's own shape (a dict,
+    # valid keys, include_tasks-only) has already been validated by
+    # validate_task_include_options/validate_include_role_args, so what
+    # happens here is exactly what parse_block_task does for a block's own
+    # keyword list: resolve the values once, ready for the executor to
+    # merge into the tasks the include loads.
+    private def self.parse_include_apply(task : Task, apply_yaml : YAML::Any?) : Nil
+      return unless apply_yaml
+      args = apply_yaml.as_h? || return
+
+      if given = parse_become_value(args["become"]?)
+        task.include_apply_become = given
+      end
+      task.include_apply_become_user = args["become_user"]?.try { |v| safe_yaml_to_string(v) }
+      task.include_apply_check_mode = parse_optional_bool_or_template(args["check_mode"]?)
+      task.include_apply_check_mode_expr = template_expression(args["check_mode"]?)
+      if vars_yaml = args["vars"]?.try(&.as_h?)
+        vars = Hash(String, JSON::Any).new
+        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
+        task.include_apply_vars = vars
+      end
+      task.include_apply_when = args["when"]?.try { |v| condition_to_string(v) }
+      task.include_apply_when_list = args["when"]?.try { |v| condition_to_list(v) }
+    end
+
     private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil) : Task
       validate_include_keys(task_hash, "TaskInclude", "include_tasks")
 
@@ -4272,6 +4330,7 @@ module Krikri
       task.include_file = file_rel
       task.include_file_native = include_file_native
       task.include_file_dir = file_dir
+      parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?))
 
       parse_common_task_attributes(task, task_hash)
       task.become = resolve_become(task_hash, play)
@@ -4517,6 +4576,7 @@ module Krikri
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.include_role_vars = vars
       end
+      parse_include_apply(task, role_args["apply"]?)
 
       parse_common_task_attributes(task, task_hash)
       task.become = resolve_become(task_hash, play)

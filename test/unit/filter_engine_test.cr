@@ -1268,6 +1268,36 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(s(text), %(regex_findall('^compat', multiline=True))).as_a.must_be_empty
   end
 
+  it "formats positionally and against keyword arguments as a mapping" do
+    # jinja2's own `format` (the name Ansible exposes it under): the
+    # plain-{{ }} evaluator never had it, so manala.ngrok's unarchive
+    # `src: "...ngrok-%(version)s..." | format(version=...)` failed with
+    # "No filter named 'format'." while ansible-playbook 2.19.11
+    # rendered the URL (live-verified).
+    engine.apply(s("ngrok-%(version)s-linux-amd64.tar.gz"), %(format(version='2.6.0')))
+      .as_s.must_equal("ngrok-2.6.0-linux-amd64.tar.gz")
+    engine.apply(s("%s-%s"), %(format('a', 'b'))).as_s.must_equal("a-b")
+    engine.apply(s("%05d|%-5s|%%"), %(format(7, 'x'))).as_s.must_equal("00007|x    |%")
+    engine.apply(s("literal"), %(format(version='1.2.3'))).as_s.must_equal("literal")
+  end
+
+  it "reports a format mapping miss as ansible's filter-plugin failure" do
+    assert_raises_message(Krikri::FilterPluginError,
+      "The filter plugin 'ansible.builtin.format' failed: 'missing'") do
+      engine.apply(s("%(missing)s"), %(format(version='1.2.3')))
+    end
+    # ...and mixing the two operand forms is jinja2's own
+    # FilterArgumentError, wrapped the same way.
+    assert_raises_message(Krikri::FilterPluginError,
+      "The filter plugin 'ansible.builtin.format' failed: can't handle positional and keyword arguments at the same time") do
+      engine.apply(s("%s"), %(format('x', y='z')))
+    end
+  end
+
+  it "knows format by name, so a when: pre-pass accepts it" do
+    Krikri::VariableSubstitutor::FilterEngine.known_filter_name?("format").must_equal(true)
+  end
+
   it "regex_replace honors the ignorecase/multiline kwargs Ansible accepts" do
     # Ansible's regex_replace(value, pattern, replacement,
     # ignorecase, multiline) - the flags were previously dropped entirely.

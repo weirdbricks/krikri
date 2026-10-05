@@ -2390,6 +2390,43 @@ module Krikri
       end
     end
 
+    # The ambient Play an include directive's loaded tasks are parsed
+    # against: the include statement's own become/become_user (what this
+    # engine has always propagated to the tasks it loads) with the
+    # statement's `apply:` mapping overriding, the way Ansible's implicit
+    # apply-Block (task_include.py's build_parent_block) would give its
+    # children block-level defaults that the task's own keyword beats.
+    private def include_inherited_play(task : Task) : Play
+      inherited = Play.new("", "")
+      if apply_become = task.include_apply_become
+        inherited.become = apply_become
+      else
+        inherited.become = task.become?
+      end
+      inherited.become_user = task.include_apply_become_user || task.become_user
+      inherited.check_mode = task.include_apply_check_mode
+      inherited.check_mode_expr = task.include_apply_check_mode_expr
+      inherited
+    end
+
+    # The per-task half of that merge, applied once the include has
+    # actually loaded its tasks: the apply-Block's vars (only as a default -
+    # an included task's own vars: still wins) and its when: (prepended to
+    # each task's own, the same short-circuit order inherit_when_condition
+    # already gives a real block's children). become/become_user/check_mode
+    # never reach this method - the parser resolved them through
+    # #include_inherited_play while the tasks were being parsed.
+    private def apply_include_attrs(task : Task, loaded : Array(Task)) : Nil
+      if apply_vars = task.include_apply_vars
+        loaded.each do |loaded_task|
+          apply_vars.each { |key, value| loaded_task.vars[key] = value unless loaded_task.vars.has_key?(key) }
+        end
+      end
+      if apply_when = task.include_apply_when
+        inherit_when_condition(apply_when, task.include_apply_when_list, loaded)
+      end
+    end
+
     # Expands a block:-wrapped handlers/main.yml entry into its own
     # block_tasks, so a task's `notify:` naming the INNER task's name
     # (not the outer block's) resolves correctly - Ansible flattens

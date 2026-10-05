@@ -1369,6 +1369,31 @@ module Krikri
           args = split_top_level_args(filter_args)
           secret = args[0]?.try { |arg| as_string(resolve_expression(arg)) } || ""
           JSON::Any.new(Vault.decrypt(as_string(value), secret))
+        when "format"
+          # format(*args, **kwargs) - jinja2's own printf-style filter
+          # (the name Ansible exposes it under too): `'%s-%s' | format(a, b)`
+          # and `'%(v)s' | format(v=x)`. This plain `{{ }}` evaluator never
+          # had it, so a task-arg like manala.ngrok's unarchive
+          # `src: "...ngrok-%(version)s..." | format(version=...)` hard-failed
+          # with "No filter named 'format'." while ansible-playbook rendered
+          # the URL. Delegates to the ONE implementation (krikri-jinja's
+          # py_format), which owns the positional-tuple and keyword-mapping
+          # operands and CPython's error wording for both.
+          positional, kwargs = split_positional_and_kwargs(filter_args, any_kwarg: true)
+          begin
+            delegate_to_jinja_filter("format", value, kwargs, positional)
+          rescue ex : KrikriJinja::TemplateError
+            # A filter that RAN and raised is Ansible's own filter-plugin
+            # failure, not a syntax/unknown-filter error: 2.19.11 reports
+            # `Error while resolving value for 'msg': The filter plugin
+            # 'ansible.builtin.format' failed: 'missing'` (live-verified),
+            # which is the FilterPluginError finalization chain below -
+            # raw_message drops the engine's own "line N: " prefix, which
+            # Ansible's wording never carries.
+            cause = ex.raw_message
+            raise Krikri::FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.format' failed: #{cause}", cause)
+          end
         when "ternary"
           # ternary(true_val, false_val) - Ansible's own filter
           # (ansible.builtin, not standard Jinja2): `true_val` if value
