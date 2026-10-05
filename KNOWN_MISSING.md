@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1498`.**
+**Currently at `0.9.1499`.**
 
 ## Open gaps
 
@@ -50,9 +50,9 @@ defect moves down or gets deleted.
   buildx, real fails at its own probe first), so that wording is aligned but unverified live.
 - **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
-  the daemon, ~10% playbook+role parse, <1% templating/conditions. Worth doing: a **local daemon for
-  `ansible_connection=local`** (one ~20 ms fat-plugin fork per task today, ~80% of local-connection wall;
-  `plugin_daemon.cr`'s framed protocol already exists) and a **parse-phase profile** (288-308 ms, ~1 ms
+  the daemon, ~10% playbook+role parse, <1% templating/conditions. A **local plugin daemon** now serves
+  `ansible_connection=local` (0.837 s -> 0.348 s on the 30-exec local probe; `--no-persistent-daemon`
+  turns it off). Worth doing next: a **parse-phase profile** (288-308 ms, ~1 ms
   per task, paid on every run). Measured and **not worth starting** (each <= ~1% of warm wall): `ip` forks
   in `gather_network_facts` (~11 ms/gather), the interpreter spawn in `gather_python_facts` (~20 ms), the
   vars-hash dup / second substitutor (~4% on local template-heavy runs only), `ConditionalEvaluator`

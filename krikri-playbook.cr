@@ -329,11 +329,11 @@ begin
       batching_enabled = false
     end
 
-    parser.on("--persistent-daemon", "On by default since 0.9.501: keep one persistent ssh+plugin-daemon connection per remote host and become_user instead of forking ssh+exec per task, for solo (non-batched) remote tasks. Batched task groups and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
+    parser.on("--persistent-daemon", "On by default since 0.9.501: keep one persistent ssh+plugin-daemon connection per remote host and become_user instead of forking ssh+exec per task, for solo (non-batched) remote tasks. The same switch also covers the local-connection daemon (one resident plugin process for ansible_connection=local tasks instead of one fork per task). Batched task groups and remote fact-gathering always use the existing per-task path regardless of this flag. Equivalent to the default; accepted for backward compatibility with playbooks/aliases that set it explicitly.") do
       persistent_daemon = true
     end
 
-    parser.on("--no-persistent-daemon", "Opt out of the default persistent-daemon mode and use the per-task ssh-fork path instead. Provided for parity benchmarking against the pre-0.9.501 architecture and for hitting specific edge-case scenarios where the per-task path is actually wanted. The per-task path remains in place as the fallback for gather_facts:, batched task groups, remote async, and any daemon that could not be started, regardless of this flag.") do
+    parser.on("--no-persistent-daemon", "Opt out of the default persistent-daemon mode and use the per-task fork path instead - per-task ssh-fork for remote tasks, one plugin fork per task for local ones. Provided for parity benchmarking against the pre-daemon architecture and for hitting specific edge-case scenarios where the per-task path is actually wanted. The per-task path remains in place as the fallback for gather_facts:, batched task groups, remote async, and any daemon that could not be started, regardless of this flag.") do
       persistent_daemon = false
     end
 
@@ -1361,6 +1361,11 @@ any_failed = !permanently_failed_hosts.empty?
 # --persistent-daemon was never passed (the Hash it iterates is simply
 # empty), so this is safe to call unconditionally.
 Krikri::SSHManager.close_all_daemons
+
+# The local-connection analogue: same EOF-then-poll shutdown for the
+# resident local plugin daemons (ansible_connection=local). Also a no-op
+# when no local task ever used the daemon path.
+Krikri::LocalPluginDaemon.close_all_daemons
 
 # Perf item 6a: persist which plugin
 # binaries were verified present on which hosts, so the next run can

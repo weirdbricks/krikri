@@ -147,6 +147,8 @@ module Krikri
       Row.new("transport.scp_download", "scp download"),
       Row.new("transport.rsync", "rsync upload"),
       Row.new("transport.local_exec", "local plugin exec (no ssh)"),
+      Row.new("transport.local_daemon_send", "local daemon request (pipe round trip)"),
+      Row.new("transport.local_daemon_spawn", "local daemon start (plugin exec)", 1),
     ]
 
     CONTROLLER_ROWS = [

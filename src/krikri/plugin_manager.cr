@@ -5,6 +5,7 @@ require "digest/md5"
 require "colorize"
 require "file_utils"
 require "./ssh_manager"
+require "./local_plugin_daemon"
 require "./local_executor"
 require "./passwords"
 require "./playbook_parser"
@@ -918,9 +919,9 @@ module Krikri
         # root --`, which fails outright with "sudo: a password is
         # required" on any controller account without passwordless sudo
         # configured for itself - unrelated to the actual remote target).
-        execute_local_plugin(plugin_name, config, false, nil)
+        execute_local_plugin(plugin_name, config, host, false, nil)
       else
-        execute_local_plugin(plugin_name, config, become, become_user, Passwords.become(vars, host))
+        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host))
       end
     end
 
@@ -941,9 +942,9 @@ module Krikri
         execute_remote_plugin(plugin_name, with_local_connection(config), host, vars, become, become_user)
       elsif controller_only?(plugin_name)
         # See the other execute_plugin overload's own comment.
-        execute_local_plugin(plugin_name, config.to_json, false, nil)
+        execute_local_plugin(plugin_name, config.to_json, host, false, nil)
       else
-        execute_local_plugin(plugin_name, config.to_json, become, become_user, Passwords.become(vars, host))
+        execute_local_plugin(plugin_name, config.to_json, host, become, become_user, Passwords.become(vars, host))
       end
     end
 
@@ -961,10 +962,122 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
+      # The local persistent daemon (the ansible_connection=local analogue
+      # of the ssh daemon - see LocalPluginDaemon's own header) is tried
+      # first when enabled and eligible; on any failure that means the
+      # request never went out this falls through to the one-fork-per-task
+      # path below for THIS task, byte-for-byte unchanged. A dispatched
+      # request whose response was lost is turned into a failed task
+      # instead of a re-execution, exactly like the ssh daemon path.
+      # Outside the transport.local_exec measure below deliberately: a
+      # nested measure in the same "transport" group is not recorded at
+      # all (see TimingProfile.measure's group rule), and the daemon round
+      # trip is its own transport bucket the way the ssh daemon's is.
+      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password)
+        return result
+      end
       TimingProfile.measure("transport.local_exec", "transport") do
         execute_local_plugin_impl(plugin_name, config, become, become_user, become_password)
       end
+    end
+
+    # Returns nil when the local daemon must not be used for this task, so
+    # the caller falls through to the one-shot local exec. Mirrors
+    # #execute_remote_plugin_transport's daemon gate: same
+    # daemon_eligible?/daemon_enabled? switch (the --persistent-daemon
+    # flag's semantic covers BOTH transports), same per-key
+    # daemon_unavailable? circuit breaker, and the same
+    # DaemonDispatchUnknownError -> failed-task / other-failure ->
+    # fallback split. One additional local-only gate: the daemon binary
+    # must be the fat plugin (one binary serves every module by name),
+    # because the standalone builds (debug/assert/fail/set_fact/pause -
+    # reachable here only via async:/manual invocation) have no --daemon
+    # mode; a daemon attempt on one would fail three times, trip the
+    # breaker and never fall back transparently, so it is skipped up front
+    # instead.
+    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?) : JSON::Any?
+      return nil unless @@daemon_enabled
+      return nil unless daemon_eligible?(plugin_name, become)
+
+      plugin_path = get_local_plugin_path(plugin_name)
+      return nil unless local_daemon_capable?(plugin_path)
+
+      # The exact same escalation decision the one-shot path below makes:
+      # a become_user equal to the invoking user (or become not needed at
+      # all) runs the daemon unprivileged, everything else spawns it under
+      # the same sudo wrapper - and the staged binary copy the one-shot
+      # path uses for become execs is what the become daemon launches
+      # from, so a krikri-playbook install dir the become_user cannot
+      # traverse is handled identically on both paths.
+      sudo_user = become_needed?(become, become_user, local_username) ? become_user : nil
+      # Same per-key circuit breaker the ssh daemon path checks before
+      # building a request: after MAX_DAEMON_FAILURES consecutive failures
+      # a key stops being attempted at all, so a host where the daemon can
+      # never come up doesn't pay a wasted spawn attempt on every
+      # remaining task.
+      return nil if LocalPluginDaemon.daemon_unavailable?(host.name, sudo_user)
+      plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if sudo_user
+
+      result = begin
+        LocalPluginDaemon.send(
+          host.name,
+          simple_plugin_name(plugin_name),
+          JSON.parse(config),
+          plugin_path,
+          become_user: sudo_user,
+          become_password: become_password,
+        )
+      rescue ex : SSHManager::DaemonDispatchUnknownError
+        # The request reached the daemon but its response did not come
+        # back intact - the module may have executed, and its result is
+        # unknown. Silently re-running it over the one-shot path below
+        # would double-apply a possibly non-idempotent action, so fail
+        # the task instead. Same result shape the ssh daemon path returns
+        # (see daemon_dispatch_unknown_result).
+        return daemon_dispatch_unknown_result(ex)
+      rescue
+        # Spawn/write/read failure - the request never went out in full
+        # (or the daemon never came up). Fall through to the one-shot
+        # local path below, unchanged, for this one task.
+        return nil
+      end
+
+      # Same failed/changed backfill + warnings/deprecations reordering
+      # every OTHER module-wire parse goes through (the one-shot local
+      # spawn, the remote one-shot/batch interpretation, and the ssh
+      # daemon's response via execute_remote_plugin's transport wrap) -
+      # the daemon response is the plugin's raw wire JSON, which omits
+      # both keys on success, exactly like every other transport's.
+      normalize_module_result(result)
+    end
+
+    # Whether *plugin_path* is (a hardlink of) the fat plugin binary - the
+    # only local build shape that implements `--daemon`. Detected by inode
+    # identity with the build's .fat-plugin artifact (hardlinks share one
+    # inode, so every per-module name matches without caring which name
+    # launched the daemon - the dispatch table is compiled in, same
+    # reasoning as the ssh daemon's remote path), and by path when the
+    # resolved plugin IS the fat binary itself.
+    private def self.local_daemon_capable?(plugin_path : String) : Bool
+      fat_path = fat_plugin_path || return false
+      begin
+        File.same?(plugin_path, fat_path)
+      rescue
+        false
+      end
+    end
+
+    private def self.fat_plugin_path : String?
+      if executable = (@@executable_path ||= Process.executable_path)
+        compiled = File.join(File.dirname(executable), "plugins", ".fat-plugin")
+        return compiled if File.exists?(compiled)
+      end
+
+      cwd_fat = "./bin/plugins/.fat-plugin"
+      return cwd_fat if File.exists?(cwd_fat)
+
+      nil
     end
 
     # `sudo` argv for the local (ansible_connection=local) become path.
