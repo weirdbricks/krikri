@@ -48,15 +48,18 @@ defect moves down or gets deleted.
   connecting: Error while fetching server API version: ...`) differs in every module; `docker_network`
   has no `ipam_config`. `docker_image_build`'s SDK-error path could not be provoked (podman has no
   buildx, real fails at its own probe first), so that wording is aligned but unverified live.
-- **Performance, profile first** (`--timing-profile`, warm run, `--forks 1`): not yet done and not worth
-  starting without a profile showing the bucket - `ip` forks per interface in `gather_network_facts`
-  (`ip -j` shape must be pinned against real output) and the Python-interpreter spawn in
-  `gather_python_facts` (`type`/`has_sslcontext` need it); the vars-hash dup in
-  `VarSubstitutor#ensure_owned!` and the second substitutor in `JinjaRenderer#jinja_resolver`;
-  `ConditionalEvaluator` re-parsing and fully converting the vars hash per call instead of caching a
-  compiled condition; `ENV` re-converted on every jinja render; the daemon path parsing then
-  re-serializing the plugin config; a local daemon for `ansible_connection=local` (one fork per task
-  today). Short-circuit `and`/`or`, unknown-test failure and strict-undefined must survive any change.
+- **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
+  `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
+  the daemon, ~10% playbook+role parse, <1% templating/conditions. Worth doing: a **local daemon for
+  `ansible_connection=local`** (one ~20 ms fat-plugin fork per task today, ~80% of local-connection wall;
+  `plugin_daemon.cr`'s framed protocol already exists) and a **parse-phase profile** (288-308 ms, ~1 ms
+  per task, paid on every run). Measured and **not worth starting** (each <= ~1% of warm wall): `ip` forks
+  in `gather_network_facts` (~11 ms/gather), the interpreter spawn in `gather_python_facts` (~20 ms), the
+  vars-hash dup / second substitutor (~4% on local template-heavy runs only), `ConditionalEvaluator`
+  re-parsing (5-7 us/call), ENV re-conversion (never hit), daemon config re-serialization (3.6 us). A
+  `{{ var }}` -> `{{ var }}` chain costs ~40 ms/call - the recursive re-templating bug class, not
+  steady-state. Container targets need the static build (`./build.sh --release --static-podman`); a glibc
+  build fails on the Ubuntu 22.04 perfbench image.
 
 ## Deliberate limits (decided, not defects)
 
