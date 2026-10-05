@@ -1536,3 +1536,46 @@ describe "lazy generator stringification (differential-fuzz follow-up, krikri-ji
     renderer.render("{{ list_strs | unique }}").must_equal("['b', 'a']")
   end
 end
+
+# ansible-core 2.19 materializes the iterator/generator result of every
+# filter invocation at the call boundary (`_wrap_plugin_output`), so a
+# `select`/`map`/`reject` generator reaches the next operation as a real
+# list. Found via xolyu.mariadb's dynamic.cnf.j2:
+# `{% set present_keys = option_keys | select('match', ...) %}` then
+# `present_keys | length` and `ns.handled_options + present_keys` both
+# failed with "object of type KrikriJinja::GeneratorValue has no length" /
+# "unsupported operands for +" while real Ansible rendered the template
+# (all expectations below live-verified against ansible-core 2.19.11).
+describe "filter call boundaries materialize lazy generators (xolyu.mariadb)" do
+  it "takes the length of a select() generator" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["a", "b", "c"]))} of String => JSON::Any)
+    renderer.evaluate_value!("list_strs | select('match', '^[ab]$') | length").must_equal(JSON::Any.new(2_i64))
+  end
+
+  it "takes the length of a reject() generator" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["a", "b", "c"]))} of String => JSON::Any)
+    renderer.evaluate_value!("list_strs | reject('match', '^[ab]$') | length").must_equal(JSON::Any.new(1_i64))
+  end
+
+  it "adds a select() generator to a plain list" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["a", "b", "c"])), "handled" => JSON.parse(%(["z"]))} of String => JSON::Any)
+    renderer.evaluate_value!("handled + (list_strs | select('match', '^[ab]$'))").must_equal(JSON.parse(%(["z", "a", "b"])))
+  end
+
+  it "takes the length of a map() generator" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["a", "b", "c"]))} of String => JSON::Any)
+    renderer.evaluate_value!("list_strs | map('upper') | length").must_equal(JSON::Any.new(3_i64))
+  end
+
+  it "still raises a deferred generator error, now at the consuming boundary" do
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(
+      {"list_strs" => JSON.parse(%(["a", "b", "c"]))} of String => JSON::Any)
+    assert_raises(KrikriJinja::TemplateError) do
+      renderer.evaluate_value!("list_strs | slice(0) | length")
+    end
+  end
+end
