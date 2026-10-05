@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_resources"
 
 # Byte-size parsing verified against real Ansible's own `human_to_bytes`
-# (`ansible/module_utils/common/text/formatters.py`'s `SIZE_RANGES`) -
+# (`the real module`'s `SIZE_RANGES`) -
 # binary (1024-based) units despite the non-"i" K/M/G/T/P spelling.
 describe Krikri::PluginHelpers::DockerResources do
   include RaisesAssertion

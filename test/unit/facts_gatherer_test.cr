@@ -118,7 +118,7 @@ describe Krikri::FactsGatherer do
     # checks (dockerenv/cgroup substring/systemd-detect-virt/DMI) all
     # fell through to "None" while real ansible-playbook (whose primary
     # signal is PID 1's own `container=` environment variable, per
-    # module_utils/facts/virtual/linux.py) correctly reported "podman".
+    # the real module) correctly reported "podman".
     # `/proc/1/environ` is NUL-separated, not newline-separated.
     it "detects podman from a NUL-separated container=podman entry" do
       environ = "PATH=/usr/bin\x00container=podman\x00HOME=/root\x00"

@@ -600,7 +600,7 @@ describe "template plugin param coverage" do
   describe "seuser:/serole:/setype:/selevel: (SELinux context params)" do
     # Identical semantics to file.cr's merged implementation (see
     # test/integration/file_test.cr's matching section, and the full
-    # module_utils/basic.py grounding in file.cr's comments): real
+    # the real module grounding in file.cr's comments): real
     # Ansible accepts the params on every host but only acts when
     # SELinux is actually enabled - a graceful no-op here (this spec
     # machine is non-SELinux).

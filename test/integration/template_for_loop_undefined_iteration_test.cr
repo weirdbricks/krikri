@@ -20,7 +20,7 @@ describe "a {% for %} loop over an undefined variable" do
     # an empty sequence and quietly succeed. Real Jinja2's own vanilla
     # default Undefined does NOT raise here (Ansible's environment is
     # stricter than vanilla Jinja2 for this specific operation), so
-    # crinja's own for-tag specs (ported from pallets/jinja) were
+    # crinja's own for-tag specs (behavior matched to pallets/jinja) were
     # updated rather than left as the target behavior - see crinja's
     # spec/tags/for_spec.cr and spec/runtime/value_spec.cr.
     src = File.tempname("for-loop-undefined-src", ".j2")

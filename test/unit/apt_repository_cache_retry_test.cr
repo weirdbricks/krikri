@@ -6,7 +6,7 @@ require "../minitest_helper"
 # support. The delay formula mirrors real ansible-core's own
 # apt_repository.py (`delay = 2 ** retry + randomize`, capped at
 # `update_cache_retry_max_delay + randomize`, verified against
-# /usr/lib/python3/dist-packages/ansible/modules/apt_repository.py);
+# the real module);
 # the retry loop mirrors its `for retry in range(update_cache_retries)`
 # attempt bound. The exec endpoint is injected so nothing here touches a
 # real apt-get; max_delay is kept tiny so the between-attempt sleeps

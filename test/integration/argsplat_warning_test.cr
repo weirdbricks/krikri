@@ -5,8 +5,8 @@ require "../minitest_helper"
 # live-verified against 2.19.11 - every expectation below is real's own
 # output with tmp paths masked.
 #
-# Real's trigger (ansible/playbook/task.py post_validate +
-# ansible/_internal/_task.py TaskArgsFinalizer) is NOT "renders to a dict":
+# Real's trigger (the real module post_validate +
+# the real module TaskArgsFinalizer) is NOT "renders to a dict":
 # it is "the module does not take free-form params AND the string args
 # STARTS AND ENDS with a Jinja delimiter". So:
 #   - `copy: "{{ d }}"`, a `vars:`-defined dict, a loop item, a block or

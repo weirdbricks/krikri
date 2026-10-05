@@ -2,8 +2,8 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/synchronize_rsync"
 
 # Unit specs for the synchronize (ansible.posix) rsync-invocation core:
-# argv construction ported from real ansible.posix's
-# plugins/modules/synchronize.py, and the itemize-changes protocol its
+# argv construction behavior matched to real ansible.posix's
+# the real module, and the itemize-changes protocol its
 # changed detection rides on. The integration specs
 # (test/integration/synchronize_test.cr) exercise the same code against a
 # real rsync; these pin the flag algebra without needing the binary.

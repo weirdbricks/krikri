@@ -1,8 +1,7 @@
 require "file_utils"
 require "../minitest_helper"
 
-# include_vars: with dir: - real Ansible's directory form
-# (lib/ansible/plugins/action/include_vars.py). Verified live against
+# include_vars: with dir: - real Ansible's directory form. Verified live against
 # ansible-core 2.19.4 with a minimal role: every vars file under the
 # directory loads recursively (sorted, later files overriding earlier),
 # depth: 0 means unlimited / depth: 1 means top-level files only,

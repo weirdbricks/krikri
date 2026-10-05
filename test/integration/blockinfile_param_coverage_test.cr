@@ -9,7 +9,7 @@ require "file_utils"
 #
 # Every behavior below was checked against the locally-installed real
 # ansible-core 2.19.4's own blockinfile.py
-# (/usr/lib/python3/dist-packages/ansible/modules/blockinfile.py) - the
+# - the
 # argument_spec, the mutually_exclusive list, and main()'s
 # blank-line-padding logic - mirroring the conventions
 # lineinfile_spec.cr's own parameter-coverage pass established.

@@ -74,8 +74,7 @@ module Krikri
       }
     end
 
-    # Real Ansible's alias resolution (_handle_aliases in module_utils/
-    # common/parameters.py) iterates the argument_spec's aliases list in
+    # Real Ansible's alias resolution iterates the argument_spec's aliases list in
     # order and each present alias OVERWRITES the canonical name, so any
     # present alias beats the canonical name, and among aliases the LAST
     # one in the spec's list wins. Live-verified against ansible-core

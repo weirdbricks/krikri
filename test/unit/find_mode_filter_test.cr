@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/find_mode_filter"
 
 # Real bug found via a proactive scope-cut audit: find:'s mode:/
 # exact_mode: were entirely unimplemented. Verified against real
-# ansible/modules/find.py's own mode_filter source directly.
+# the real module's own mode_filter source directly.
 describe Krikri::PluginHelpers::FindModeFilter do
   describe ".parse_mode" do
     it "parses an octal string" do

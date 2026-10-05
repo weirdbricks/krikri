@@ -64,7 +64,7 @@ end
 
 describe "Krikri::SystemdUnitFound.missing_service_message" do
   it "matches real's fail_if_missing wording, including the trailing ': host'" do
-    # module_utils/service.py: "'Could not find the requested service %s: %s'"
+    # the real module: "'Could not find the requested service %s: %s'"
     # with msg='host' passed by systemd_service.py's enabled:/state: blocks -
     # konstruktoid.hardening's failed_when matches on the
     # "Could not find the requested service" substring, but the whole string

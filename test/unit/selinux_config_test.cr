@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/selinux_config"
 
-# ansible.posix.selinux's argument rules, ported from the real module's
+# ansible.posix.selinux's argument rules, behavior matched to the real module's
 # main() - see PluginHelpers::SelinuxConfig's class docs for the order
 # (arg-spec state check, then the /etc/selinux/config existence failure,
 # then policy-required-unless-disabled, then the policy-store existence

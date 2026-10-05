@@ -318,8 +318,7 @@ module Krikri
       # outcomes (get_url.py's tail): checksum_dest is sha1(dest) when the
       # content matched (changed: false) and unset when the fresh download
       # replaced it (changed: true); msg and status_code are the same on
-      # both paths - msg = fetch_url's info['msg'], which module_utils/
-      # urls.py builds as "OK (%s bytes)" % the final response's
+      # both paths - msg = fetch_url's info['msg'], which real builds as "OK (%s bytes)" % the final response's
       # Content-Length header ("unknown" when the server sent none), and
       # status_code = info['status'] = 200. Live-verified against
       # ansible-core 2.19.11: both a fresh download and a force: true

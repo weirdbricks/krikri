@@ -9,7 +9,7 @@ require "file_utils"
 # a given fingerprint: string shape.
 #
 # Real ansible.builtin.rpm_key's own argument_spec types fingerprint: as
-# LIST (ansible/modules/rpm_key.py), so after task-param substitution a
+# LIST, so after task-param substitution a
 # real YAML list arrives at the plugin as a JSON-array-shaped STRING -
 # the same wire-format situation unarchive.cr's parse_list_param
 # documents (a naive comma-split produced one garbage element still

@@ -4,7 +4,7 @@ require "../../src/krikri/plugin_helpers/docker_healthcheck"
 # Duration parsing and test normalization verified against real Ansible's
 # own community.docker module_utils source (`convert_duration_to_nanosecond`,
 # `normalize_healthcheck_test`, `parse_healthcheck` in
-# plugins/module_utils/_util.py) - see plugins/docker_container.cr's own
+# plugins/the real module) - see plugins/docker_container.cr's own
 # doc comment.
 describe Krikri::PluginHelpers::DockerHealthcheck do
   include RaisesAssertion

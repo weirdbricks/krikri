@@ -711,7 +711,7 @@ describe Krikri::ArgspecValidator do
     end
   end
 
-  # uri's controller-side action plugin (plugins/action/uri.py) runs
+  # uri's controller-side action plugin runs
   # BEFORE the module, so both of its checks surface as action-level
   # failures here - ahead of the module's own mutually_exclusive check.
   # Messages live-verified against ansible-core 2.19.11.

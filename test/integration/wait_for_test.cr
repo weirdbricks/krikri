@@ -84,7 +84,7 @@ describe "wait_for plugin" do
   describe "search_regex against an open socket (not just a file)" do
     # Real bug found via a proactive scope-cut audit: search_regex was
     # only ever matched against a file's content, never against data
-    # read from an open port - real ansible/modules/wait_for.py's own
+    # read from an open port - the real module's own
     # source connects, then reads (accumulating bytes) until the regex
     # matches, the connection closes, or the overall timeout passes.
     it "succeeds once the server sends data matching the regex" do

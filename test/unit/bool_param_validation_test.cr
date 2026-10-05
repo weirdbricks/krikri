@@ -5,8 +5,8 @@ require "json"
 # Pins the shared strict `type: bool` param validation
 # (PluginHelpers::StrictBoolValidation, applied through
 # BasePlugin#validate_bool_params!) against real ansible-core's
-# check_type_bool (module_utils/common/validation.py) + boolean()
-# (module_utils/parsing/convert_bool.py) + the parameters.py failure
+# check_type_bool + boolean()
+# + the parameters.py failure
 # wrapper, live-verified against ansible-core 2.19.11.
 #
 # Two layers:

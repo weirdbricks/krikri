@@ -488,7 +488,7 @@ describe "get_url plugin" do
   end
 
   # Every failure shape below is real Ansible's own url_get branch
-  # (get_url.py) driven by the status module_utils/urls.py's fetch_url
+  # (get_url.py) driven by the status the real module's fetch_url
   # folds its exceptions into - `info['status'] == -1` fails with
   # msg=info['msg'] and NO status_code, anything else that is not 200
   # fails with msg="Request failed", status_code=info['status'] and
@@ -1336,7 +1336,7 @@ describe "get_url plugin" do
   end
 
   # Real Ansible builds the request's SSL context BEFORE urllib parses the
-  # URL (module_utils/urls.py's Request.open: _configure_auth ->
+  # URL (the real module's Request.open: _configure_auth ->
   # make_context -> urllib.request.Request), so these failures happen with
   # no request at all - over a plain http:// URL, not only a broken one.
   # Every expectation here live-verified against ansible-core 2.19.11.

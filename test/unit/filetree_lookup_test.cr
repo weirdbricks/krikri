@@ -6,8 +6,8 @@ require "../../src/krikri/filetree_lookup"
 # with `with_community.general.filetree:` - the community.general.filetree
 # lookup plugin had no native implementation at all, so the task key fell
 # through unrecognized and `item` was never bound. These specs pin the
-# real plugin's semantics (translated from
-# community.general/plugins/lookup/filetree.py, not guessed) on a real
+# real plugin's semantics (behavior matched to
+# the real module, not guessed) on a real
 # temp tree.
 private def ft_s(props : Hash(String, JSON::Any), key : String) : String
   props[key]?.try(&.as_s) || ""

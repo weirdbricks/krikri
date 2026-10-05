@@ -46,7 +46,7 @@ describe Krikri::PluginHelpers::SqlQuoting do
   # Every expected string below was produced by the REAL implementation:
   # community.postgresql's pg_quote_identifier (which delegates to
   # Ansible's _identifier_parse), imported directly from
-  # ~/.ansible/collections/.../module_utils/database.py under python3 -
+  # ~/.the real module under python3 -
   # not hand-derived. This is what pins parity with real Ansible.
   describe ".pg_quote_identifier" do
     include RaisesAssertion

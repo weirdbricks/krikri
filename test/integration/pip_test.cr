@@ -330,7 +330,7 @@ describe "pip plugin" do
   describe "umask:" do
     # Real bug found via a proactive scope-cut audit: umask: was
     # entirely unimplemented. Verified against real
-    # ansible/modules/pip.py's own source, including its exact "umask
+    # the real module's observed behavior, including its exact "umask
     # must be an octal integer" validation message - matched verbatim.
     # Live-verified separately (not in this spec, to avoid real pip
     # mutation/network access, matching this file's own established

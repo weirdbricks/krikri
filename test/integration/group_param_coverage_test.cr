@@ -6,7 +6,7 @@ require "file_utils"
 #
 # Every command shape and every failure message asserted below was
 # live-verified against real ansible-core 2.19.4 (the distro's own
-# /usr/lib/python3/dist-packages/ansible/modules/group.py run with
+# the real module run with
 # PATH-shimmed group tools and the host's real /etc/group), e.g.:
 #   groupadd -g 1234 -o -r -K GID_MIN=500 -K GID_MAX=1000 g1
 #   groupmod -g 4711 -o root

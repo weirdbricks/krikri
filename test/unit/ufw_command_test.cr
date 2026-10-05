@@ -108,7 +108,7 @@ describe Krikri::PluginHelpers::UfwCommand do
   end
 
   # Real ufw.py's check-mode rule decision and its ufw_version() parse,
-  # ported from community.general's actual ufw.py source (including its
+  # behavior matched to community.general's actual ufw.py source (including its
   # inverted-named filter_line_that_not_start_with, which KEEPS the
   # lines that start with the pattern - the module's own bug, and the
   # behavior the pre/post tuple diff silently depends on).

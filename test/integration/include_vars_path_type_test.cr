@@ -1,6 +1,6 @@
 require "../minitest_helper"
 
-# Real's include_vars action plugin (plugins/action/include_vars.py) uses
+# Real's include_vars action plugin uses
 # the `file:`/`dir:` value AS a path in two places, before it ever copies it
 # to text: `os.path.join(current_dir, self.source_dir)` for dir: and
 # `_find_needle('vars', self.source_file)`'s `source.startswith('~')` for

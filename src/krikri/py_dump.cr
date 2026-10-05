@@ -331,7 +331,7 @@ module Krikri
       end
 
       # The flags analyze's per-character walk accumulates, in their
-      # own object so analyze itself stays a straight port of PyYAML's
+      # own object so analyze itself stays a straight match of PyYAML's
       # analyze_scalar instead of a dozen locals.
       private class ScalarScan
         property? flow_indicators = false

@@ -1,7 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/postgresql_password_verifier"
 
-# Unit-tests postgresql_user's password-idempotency decision (the port of
+# Unit-tests postgresql_user's password-idempotency decision (the match of
 # real community.postgresql.postgresql_user's
 # user_should_we_change_password) against known SCRAM/MD5 verifier
 # fixtures - no live server needed. The fixtures below were generated

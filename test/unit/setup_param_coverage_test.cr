@@ -7,7 +7,7 @@ require "file_utils"
 # fact_path), pinned against live ansible-core 2.19.4 behavior - every
 # expected value below was either observed directly (`ansible localhost
 # -m setup -a '...'`) or read out of the real module's source
-# (modules/setup.py, plugins/action/gather_facts.py,
+# (modules/setup.py, the real module,
 # module_utils/facts/{collector,timeout,system/local}.py).
 private def config_with(params : String)
   JSON.parse(%({"host":{"name":"localhost","user":"root","port":22},"params":#{params},"vars":{}}))

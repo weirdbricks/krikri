@@ -3,7 +3,7 @@ require "../../src/krikri/plugin_helpers/modprobe_command"
 
 # Real bug found via a proactive scope-cut audit: params: (extra
 # modprobe arguments, e.g. "numdummies=2") was entirely unimplemented.
-# Verified against real community.general modprobe.py's own source:
+# Verified against real community.general the real module's observed behavior:
 # only ever applied at initial load time (`load_module` is only called
 # from `not modprobe.module_loaded()`), never re-checked against an
 # already-loaded module.

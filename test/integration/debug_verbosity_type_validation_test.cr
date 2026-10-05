@@ -7,7 +7,7 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 
 # Real's debug action plugin validates its own three options through the
 # shared ArgumentSpecValidator BEFORE it does anything else
-# (plugins/action/debug.py:40), and real reports only errors[0] out of
+# and real reports only errors[0] out of
 # mutually_exclusive -> types in declaration order (msg, var, verbosity) ->
 # unsupported parameters LAST (live-verified vs 2.19.11). This engine
 # used to run no check at all for a non-integer verbosity: it accepted

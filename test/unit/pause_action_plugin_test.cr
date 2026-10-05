@@ -7,7 +7,7 @@ require "../../src/krikri/action_plugin_manager"
 # pin the param surface against real ansible.builtin.pause's
 # argument_spec: echo (bool, default true), minutes (int, mutually
 # exclusive with seconds), seconds (int), prompt (str). Real semantics
-# ported from ansible-core 2.14's action/pause.py: type-int validation
+# behavior matched to ansible-core 2.14's action/pause.py: type-int validation
 # (floats truncate, non-numerics fail), a 1-second minimum duration,
 # and stdout always "Paused for X <unit>" from elapsed wall-clock.
 private def run_pause(params : Hash(String, String)) : Krikri::ActionResult

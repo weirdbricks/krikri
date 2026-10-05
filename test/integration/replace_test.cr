@@ -235,7 +235,7 @@ describe "replace plugin" do
 
     result["changed"].as_bool.must_equal(true)
     # Real's replace only ever sets backup_file when backup: yes was
-    # given (module_utils/replace.py backs up conditionally, then
+    # given (the real module backs up conditionally, then
     # exit_json(backup_file=...) only inside that branch) - without it
     # the key is absent entirely, not empty
     # (live-verified vs 2.19.11 at -v).

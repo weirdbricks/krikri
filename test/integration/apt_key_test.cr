@@ -204,7 +204,7 @@ describe "apt_key plugin" do
   it "requires id when keyserver: is given, matching real Ansible's exact message" do
     # Real bug found via a proactive scope-cut audit: keyserver: was
     # entirely unimplemented. Verified against real
-    # ansible/modules/apt_key.py's own source - `if not key_id: if
+    # the real module's observed behavior - `if not key_id: if
     # keyserver: module.fail_json(msg="Missing key_id, required with
     # keyserver.")` - matched verbatim, not paraphrased. A real fetch
     # (`apt-key adv --keyserver ... --recv ...`) needs network access

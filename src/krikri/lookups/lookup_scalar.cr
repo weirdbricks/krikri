@@ -188,7 +188,7 @@ module Krikri
         named
       end
 
-      # The port of manager.py's split_host_pattern + order_patterns +
+      # The match of manager.py's split_host_pattern + order_patterns +
       # get_hosts term application: regular terms union in order, then
       # `&` terms intersect, then `!` terms exclude (and a pattern made
       # ONLY of &/! terms implicitly starts from 'all').

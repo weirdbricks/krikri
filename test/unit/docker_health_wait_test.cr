@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/docker_health_wait"
 
 # The wait loop of community.docker docker_container state=healthy,
-# ported from real's module_utils/module_container/module.py
+# behavior matched to real's the real module
 # wait_for_state (called there with wait_states=['starting',
 # 'unhealthy'], complete_states=['healthy', None],
 # max_wait=healthy_wait_timeout, health_state=True). The failure

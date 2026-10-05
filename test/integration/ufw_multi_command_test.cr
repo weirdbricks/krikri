@@ -132,7 +132,7 @@ end
 # `post` mirrors real ufw.py's tail: :both = the post status snapshot plus
 # the post rule-tuple read (taken only while nothing has counted as
 # changed), :status = the status snapshot alone (something already did),
-# :none = check mode, which exits before any post probe.
+# Observed behavior: none = check mode, which exits before any post probe.
 private def ufw_trace(ufw_bin : String, grep_bin : String, middle : Array(String), post : Symbol = :both) : Array(String)
   trace = [ufw_status_cmd(ufw_bin), ufw_grep_cmd(grep_bin)]
   middle.each { |cmd| trace << cmd }

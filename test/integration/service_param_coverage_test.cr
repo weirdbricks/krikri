@@ -7,7 +7,7 @@ require "file_utils"
 #
 # All three are documented `service:` options, but on a systemd-managed
 # host real Ansible's service ACTION plugin
-# (ansible/plugins/action/service.py, UNUSED_PARAMS['systemd']) strips
+# (the real module, UNUSED_PARAMS['systemd']) strips
 # each one that was given and warns `Ignoring "<param>" as it is not
 # used in "systemd"` before the systemd module ever sees it.
 # Live-verified against ansible-core 2.19.4 on this systemd machine:

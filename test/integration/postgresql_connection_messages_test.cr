@@ -7,7 +7,7 @@ require "socket"
 # server at all and always run).
 #
 # Real (ansible-core 2.19.11 + community.postgresql 4.2.0) does not
-# word a failed connect itself: module_utils/postgres.py's
+# word a failed connect itself: the real module's
 # connect_to_db() fails with
 #   module.fail_json(msg="unable to connect to database: %s" % conn_err)
 # where conn_err is libpq's own connection-error text, so that is

@@ -755,8 +755,7 @@ module Krikri
       apparmor_facts["status"] = Dir.exists?("/sys/kernel/security/apparmor") ? "enabled" : "disabled"
       facts["ansible_apparmor"] = apparmor_facts
 
-      # ansible_fips - real Ansible's FipsFactCollector (module_utils/
-      # facts/system/fips.py) ALWAYS populates this, as a genuine
+      # ansible_fips - real Ansible ALWAYS populates this, as a genuine
       # boolean: true only when /proc/sys/crypto/fips_enabled reads
       # exactly "1", false otherwise (file missing, unreadable, any
       # other content). Entirely missing before - found via

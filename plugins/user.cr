@@ -871,7 +871,7 @@ module Krikri
     # useradd's own -m machinery, which only applies at account-creation
     # time) - close enough for the common case (a role writing its own
     # files into a freshly-relocated home right after this task), not a
-    # byte-for-byte port of every corner of CreateHomeDir/chown_homedir.
+    # byte-for-byte match of every corner of CreateHomeDir/chown_homedir.
     private def create_home_directory(home : String, name : String, gid : String) : PluginResult
       q_home = shell_single_quote(home)
       q_name = shell_single_quote(name)

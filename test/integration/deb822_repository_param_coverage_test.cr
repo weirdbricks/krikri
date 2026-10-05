@@ -1,8 +1,7 @@
 require "../minitest_helper"
 
 # Proactive parameter-coverage pass for the deb822_repository plugin,
-# verified field-by-field against the real module's own source
-# (ansible/modules/deb822_repository.py):
+# verified field-by-field against the real module's observed behavior.
 #
 # - format_field_name maps name → X-Repolib-Name, uris → URIs, and every
 #   other param via param.replace('_', '-').title() (types → Types,

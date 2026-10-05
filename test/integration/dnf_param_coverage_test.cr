@@ -11,7 +11,7 @@ require "file_utils"
 # constructed command line correct" rather than "does dnf behave this
 # way". Every expected flag was cross-checked against the locally
 # installed real ansible-core's own dnf.py module source
-# (/usr/lib/python3/dist-packages/ansible/modules/dnf.py), not against
+# not against
 # a live dnf run - see the per-example comments for which claims come
 # from that source vs. dnf's documented CLI surface (general dnf
 # knowledge, not live-verified on this machine).

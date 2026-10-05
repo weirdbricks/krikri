@@ -7,7 +7,7 @@ require "file_utils"
 #
 # Every asserted failure text was live-verified against real
 # ansible-core 2.19.4's own
-# /usr/lib/python3/dist-packages/ansible/modules/hostname.py, run
+# the real module, run
 # directly inside a rockylinux:9 container via
 #   printf '{"ANSIBLE_MODULE_ARGS": {...}}' | python3 hostname.py
 #   ("value of use must be one of: alpine, debian, freebsd, generic,

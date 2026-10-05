@@ -3,7 +3,7 @@ require "file_utils"
 
 # meta/argument_specs.yml required-ness: real ansible-core applies spec
 # defaults with set_default=False before check_required_arguments
-# (module_utils/common/parameters.py _set_defaults), so only a default
+# (the real module _set_defaults), so only a default
 # whose value is not None stands in for a missing option - `default: null`
 # alongside `required: true` still fails. Found via round 979000
 # (robertdebock.vault_agent): its vault_agent_address is `required: true,

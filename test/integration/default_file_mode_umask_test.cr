@@ -4,7 +4,7 @@ require "http/server"
 
 # The default mode real Ansible gives a NEWLY CREATED file when no explicit
 # mode: is passed: 0666 & ~umask of the creating process (ansible-core's
-# module_utils/basic.py atomic_move chmods a non-existing dest to exactly
+# the real module atomic_move chmods a non-existing dest to exactly
 # that; live-verified against ansible-core 2.19.4: umask 002 -> 0664, umask
 # 022 -> 0644, for copy (src: and content:), file state=touch, and get_url
 # alike). Crystal's own File.write/File.open default their creation perm to

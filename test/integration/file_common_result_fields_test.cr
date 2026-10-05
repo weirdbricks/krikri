@@ -6,7 +6,7 @@ require "digest/sha1"
 require "digest/md5"
 
 # The file-common result fields real Ansible's AnsibleModule.add_path_info
-# (module_utils/basic.py) merges into EVERY file-touching module's result -
+# merges into EVERY file-touching module's result -
 # uid/gid/owner/group/mode/state/size for any result path that still exists
 # at module exit time (so a state=absent --check reports the file's
 # PRE-removal stats with state "file", while the same task for real reports

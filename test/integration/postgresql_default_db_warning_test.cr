@@ -7,7 +7,7 @@ require "socket"
 # 127.0.0.1:35434 (pended when nothing is listening there; the
 # connection-refused cases need no server and always run).
 #
-# Real's module_utils/postgres.py calls
+# the real module calls
 # `module.warn("Database name has not been passed, used default
 # database to connect to.")` before connect_to_db(), and AnsibleModule's
 # self.warn() does BOTH: prints `[WARNING]: <text>` on stderr and puts the

@@ -108,7 +108,7 @@ describe "group magic variables" do
   end
 
   # groups[...] had the same parent-group bug as host resolution: a
-  # :children group reported an empty host list.
+  # Observed behavior: children group reported an empty host list.
   it "resolves a parent group in the groups magic var" do
     out = run_inventory(NESTED_INVENTORY, <<-YAML)
       - hosts: all

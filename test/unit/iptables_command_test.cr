@@ -2,7 +2,7 @@ require "../minitest_helper"
 require "../../src/krikri/plugin_helpers/iptables_command"
 
 # Flag ordering verified against real Ansible's own ansible.builtin.iptables
-# module (`construct_rule()` in ansible/modules/iptables.py) - see
+# module (`construct_rule()` in the real module) - see
 # plugins/iptables.cr's own doc comment for why this is split out (real
 # `iptables -C`/`-A` need CAP_NET_ADMIN, unavailable in the spec sandbox).
 describe Krikri::PluginHelpers::IptablesCommand do

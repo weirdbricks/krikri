@@ -9,8 +9,7 @@ require "json"
 #   echoed the CLI tool's empty stdout as the msg while the actual error
 #   text goes to stderr, and because the result carried a `zone` key real
 #   never emits. Real wraps the error in
-#   "ERROR: Exception caught: <dbus exception> <joined context msgs>"
-#   (module_utils/firewalld.py's action_handler).
+#   "ERROR: Exception caught: <dbus exception> <joined context msgs>".
 # - success results need real's msg composition ("Permanent and
 #   Non-Permanent(immediate) operation[, Changed <thing> <value> to
 #   <state>]") instead of an empty msg, and check-mode changes register

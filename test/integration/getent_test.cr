@@ -68,7 +68,7 @@ describe "getent plugin" do
     # `item.invocation.module_args.key` off a looped+registered getent
     # task to recover the ORIGINAL key that produced each results[]
     # entry, then indexes `ansible_facts.getent_passwd[...][2]` with it.
-    # Real Ansible's module protocol (module_utils/basic.py's
+    # Real Ansible's module protocol (the real module's
     # _return_formatted) always attaches this block; without it the
     # expression resolved to None and crashed with "None has no element
     # 2". module_args carries the raw param values: `split` stays null
@@ -113,7 +113,7 @@ describe "getent plugin" do
   end
 
   it "splits non-colon databases on whitespace runs, not ':' (hosts)" do
-    # Real ansible.builtin.getent (ansible/modules/getent.py) colon-splits
+    # Real ansible.builtin.getent colon-splits
     # by default ONLY for passwd/shadow/group/gshadow (its own `colon`
     # list); every other database splits on runs of whitespace - live
     # verified against real ansible-playbook 2.19.4 on this machine
@@ -148,7 +148,7 @@ describe "getent plugin" do
   it "stores duplicate keys as a list of field-lists (services tcp/udp pairs)" do
     # Real Ansible 2.11+ keeps every result for the same key: a second
     # line with an already-seen key turns the value into a list of field
-    # lists (ansible/modules/getent.py's `seen` bookkeeping). The old
+    # lists (the real module's `seen` bookkeeping). The old
     # parser silently kept only the last line. /etc/services on any
     # normal system lists many services for both tcp and udp (e.g.
     # "domain 53/tcp" and "domain 53/udp"), so enumeration must produce

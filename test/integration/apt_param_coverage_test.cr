@@ -12,7 +12,7 @@ require "file_utils"
 # apt 3.0.3 (`apt-get -s` simulate runs accepting every constructed
 # flag combination, --force-yes included, deprecated-warning-only) and
 # against the locally installed ansible-core 2.19.4's own apt.py module
-# source (/usr/lib/python3/dist-packages/ansible/modules/apt.py) for
+# source for
 # each param's command construction - per-example comments say which
 # claim comes from where. The policy_rc_d file lifecycle runs against
 # the REAL filesystem via the plugin's `_policy_rc_d_path` spec seam

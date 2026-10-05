@@ -5,7 +5,7 @@ require "file_utils"
 # and verb selection, added in 0.9.x after the fix-systemd-restart
 # investigation. Found live in a systemd-repro podman container (a
 # Type=oneshot unit whose ExecStart fails): real Ansible's
-# systemd module (ansible/modules/systemd_service.py) picks the
+# systemd module picks the
 # state-change VERB by the unit's CURRENT state - for `state: restarted`
 # on an inactive unit it runs `systemctl start`, never `restart` - and
 # words every state-change failure "Unable to <action> service <name>:

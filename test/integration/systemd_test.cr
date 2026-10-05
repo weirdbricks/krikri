@@ -72,7 +72,7 @@ end
 # here; that would actually start/stop/mask a unit on the dev machine.
 describe "systemd plugin" do
   it "fails when no action parameter is given, with real Ansible's required_one_of message" do
-    # Real AnsibleModule validation (ansible/modules/systemd.py):
+    # Real AnsibleModule validation:
     # required_one_of=[['state', 'enabled', 'masked', 'daemon_reload',
     # 'daemon_reexec']]. Replaces the previous ad-hoc guard's own
     # "Must specify at least one of ..." wording.
@@ -82,7 +82,7 @@ describe "systemd plugin" do
       "one of the following is required: state, enabled, masked, daemon_reload, daemon_reexec")
   end
 
-  # Real Ansible's name-only query semantics (ansible/modules/systemd_service.py):
+  # Real Ansible's name-only query semantics:
   # required_one_of is satisfied by a name alone - the module runs
   # `systemctl show <name>` and populates result['status'] with the unit's
   # current properties, changed stays False, and no management action runs.
@@ -158,7 +158,7 @@ describe "systemd plugin" do
   # Real bug found via round 813233 (role libre_ops.multi_redis): the
   # role passes `systemd: {name: ..., status: ...}` - `status` is not a
   # parameter of real Ansible's systemd module at all
-  # (ansible/modules/systemd_service.py's argument_spec), so real
+  # so real
   # ansible-playbook rejects the task outright at argument-spec
   # validation time, before the module runs. This plugin previously
   # silently accepted and ignored the unknown key and ran anyway.
@@ -475,7 +475,7 @@ end
 # ONCE, before it acts on the unit, and calls fail_if_missing(module, found,
 # unit, msg='host') at the top of both the `enabled:` and the `state:`
 # block (systemd_service.py; the message itself is
-# module_utils/service.py:117-118). It never did that here, so a task
+# the real module). It never did that here, so a task
 # naming a unit no package installs came back `changed` where real's own
 # failed_when - konstruktoid.hardening's kdump.service / kdump-tools.service
 # / systemd-journal-remote.* / atd tasks, all of which swallow exactly this

@@ -580,7 +580,7 @@ describe "file plugin" do
     # real Ansible's "Resolv.conf is ino longer immutable." task
     # (file: {path: /etc/resolv.conf, attr: '-i'}) reports changed on
     # EVERY run - real Ansible's set_attributes_if_different
-    # (module_utils/basic.py) re-runs chattr and reports changed
+    # re-runs chattr and reports changed
     # unconditionally for '-'-prefixed requests, whether or not the flag
     # is actually set (ansible/ansible#33745). Krikri previously ignored
     # the attr: param entirely, so the warm rerun under-reported
@@ -745,7 +745,7 @@ describe "file plugin" do
 
   describe "unsafe_writes:" do
     # Real Ansible's file module accepts unsafe_writes: via the file-common
-    # args (module_utils/basic.py adds it with default False), but for
+    # args (the real module adds it with default False), but for
     # file: specifically it has no observable effect - file.py never calls
     # atomic_move (the only place unsafe_writes actually changes behavior,
     # a fallback when the atomic temp-file+rename fails). Live-verified
