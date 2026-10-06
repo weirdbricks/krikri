@@ -398,19 +398,37 @@ module Krikri
         end)
       end
 
-      KrikriJinja.register_default_json_filter("ternary") do |value, args, _kwargs|
+      # ternary is a PASS-THROUGH filter in real Jinja2/Ansible: the filter
+      # receives its arguments as Python objects and returns one of them
+      # verbatim, so an argument that is a strict Undefined (a registered
+      # skipped task's missing `.stdout`, say) flows through UNCONSUMED and
+      # only raises if the selection actually lands on it - verified against
+      # ansible-core 2.19.11: `{{ false | ternary(skipped.stdout, 'hello') }}`
+      # renders "hello", `{{ true | ternary(skipped.stdout, 'hi') }}` fails
+      # with "object of type 'dict' has no attribute 'stdout'" (the same
+      # laziness the `X if COND else Y` expression already has). The JSON
+      # wrapper raised the moment the undefined argument crossed into the
+      # filter, failing the taken-branch case (adfinis-sygroup.motd's own
+      # `{{ motd_cowsay | ternary(motd_cowsay_message.stdout, motd_message) }}`
+      # with motd_cowsay false). Registered as a NATIVE filter so the
+      # AnyValue arguments (undefined ones included) pass through untouched;
+      # only the CONDITION is consumed, exactly like real's bool(value).
+      KrikriJinja.register_default_filter("ternary") do |value, args, _kwargs, _ctx|
         if args.size < 2
           raise KrikriJinja::TemplateError.new(
             "ternary() missing #{2 - args.size} required positional " \
             "#{(2 - args.size) == 1 ? "argument" : "arguments"}", 0
           )
         end
+        # A LENIENT undefined condition keeps the old JSON-wrapper behavior
+        # (it crossed into the filter as JSON null: the none_val branch won
+        # when one was given); a STRICT one raises right here, matching
+        # real's bool(undefined) inside the filter.
+        lenient_undefined = value.raw.is_a?(KrikriJinja::Undefined) &&
+                            !value.raw.as(KrikriJinja::Undefined).strict?
         none_arg = args[2]?
-        if value.raw.nil? && none_arg
-          none_arg
-        else
-          py_truthy(value) ? args[0] : args[1]
-        end
+        next none_arg if (value.raw.nil? || lenient_undefined) && none_arg
+        KrikriJinja.truthy?(value) ? args[0] : args[1]
       end
 
       # Ansible's own `comment` filter: renders a shell/config comment block

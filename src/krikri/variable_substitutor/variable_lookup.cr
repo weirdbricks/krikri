@@ -965,7 +965,7 @@ module Krikri
       # full `resolve` entry point, which already dispatches indexed/
       # nested/simple correctly based on what *index_expr* contains -
       # `resolve_simple`/`resolve_nested` have no notion of `[...]` at all.
-      private def resolve_bracket_index_key(index_expr : String) : String | Int32 | Nil
+      private def resolve_bracket_index_key(index_expr : String) : String | Int32 | Float64 | Nil
         return nil unless top_level_char_index(index_expr, '[')
 
         resolved = resolve(index_expr).try { |value| unsafe_root?(index_expr) ? value : rerender_if_templated(value) }
@@ -974,10 +974,19 @@ module Krikri
         case raw = resolved.raw
         when String       then raw
         when Int64, Int32 then raw.to_i
+          # A FLOAT index value (a YAML `percona_server_version: 5.7` default
+          # subscripting a float-keyed map, Oefenweb.percona_server's
+          # `percona_server_libmysqlclient_map[percona_server_version]`) - the
+          # JSON engine stores the YAML float key under its string form ("5.7"),
+          # so the lookup needs the same numeric-string coercion ints already
+          # get. Real Python matches float keys by value (d[5.7] hits key 5.7);
+          # krikri cannot represent a non-string YAML key, so the stringified
+          # float is the only way to answer the lookup at all.
+        when Float64 then raw
         end
       end
 
-      private def resolve_index_key(index_expr : String) : String | Int32
+      private def resolve_index_key(index_expr : String) : String | Int32 | Float64
         if quoted = quoted_index_literal(index_expr)
           return quoted
         end
@@ -1032,7 +1041,16 @@ module Krikri
         case raw = resolved.try(&.raw)
         when String       then raw
         when Int64, Int32 then raw.to_i
-        else                   index_expr
+          # A FLOAT index value (a YAML `percona_server_version: 5.7` default
+          # subscripting a float-keyed map, Oefenweb.percona_server's
+          # `percona_server_libmysqlclient_map[percona_server_version]`) - the
+          # JSON engine stores the YAML float key under its string form ("5.7"),
+          # so the lookup needs the same numeric-string coercion ints already
+          # get. Real Python matches float keys by value (d[5.7] hits key 5.7);
+          # krikri cannot represent a non-string YAML key, so the stringified
+          # float is the only way to answer the lookup at all.
+        when Float64 then raw
+        else              index_expr
         end
       end
 
@@ -1042,10 +1060,10 @@ module Krikri
         index_expr[1..-2]
       end
 
-      private def index_into(current : JSON::Any, key : String | Int32) : JSON::Any?
+      private def index_into(current : JSON::Any, key : String | Int32 | Float64) : JSON::Any?
         case current.raw
         when Array
-          idx = key.is_a?(Int32) ? key : key.to_i?
+          idx = key.is_a?(Int32) ? key : key.to_s.to_i?
           idx ? current[idx]? : nil
         when Hash
           fetched = current[key.to_s]?
@@ -1067,7 +1085,7 @@ module Krikri
           # - Elasticsearch then failed to start outright against the
           # mismatched config. Negative indices supported too, matching
           # Python string indexing (and the Array branch just above).
-          idx = key.is_a?(Int32) ? key : key.to_i?
+          idx = key.is_a?(Int32) ? key : key.to_s.to_i?
           return nil unless idx
           char = current.as_s[idx]?
           char ? JSON::Any.new(char.to_s) : nil

@@ -119,9 +119,16 @@ module Krikri
       # fixed user, so only steps agreeing on this value can share one
       # daemon batch request - see TaskExecutor#run_batch_steps.
       getter become_user : String?
+      # The step's fully-substituted module params, carried so the batch
+      # consumers can attach the same `invocation.module_args` block to the
+      # interpreted result the non-batched path does (attach_invocation
+      # builds it from exactly these params). nil for the loops path's
+      # forced-ignore_errors reconstruction before forwarding.
+      getter params : Hash(String, String)?
 
       def initialize(@plugin_target : String, @config_json : String, @ignore_errors : Bool,
-                     @module_name : String = "", @become_user : String? = nil)
+                     @module_name : String = "", @become_user : String? = nil,
+                     @params : Hash(String, String)? = nil)
       end
     end
 

@@ -205,4 +205,48 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
     # Lenient use renders the historical "undefined" sentinel text.
     Krikri::VarSubstitutor.new(vars: vars).substitute("{{ v }}").must_equal("undefined")
   end
+
+  it "keeps a ternary filter argument lazy: only the SELECTED undefined branch raises" do
+    # Round 2100084 (adfinis-sygroup.motd): the role's etc/motd.j2 renders
+    # `{{ motd_cowsay | ternary(motd_cowsay_message.stdout, motd_message) }}`
+    # where the cowsay command is SKIPPED (motd_cowsay: false), so the
+    # registered result is the skip dict without `stdout`. Real Jinja2/Ansible
+    # passes the undefined ARGUMENT into the filter unconsumed and only the
+    # selected branch matters - verified against ansible-core 2.19.11:
+    # the false-branch case renders "hello", the selected-undefined case
+    # fails with the attribute error, and an undefined CONDITION (real's
+    # bool() inside the filter) fails with the condition's own miss.
+    vars = matrix_vars_hash
+    vars["reg"] = JSON.parse(%({"changed": false, "skipped": true}))
+    stdout_miss = "object of type 'dict' has no attribute 'stdout'"
+    dict_miss = "object of type 'dict' has no attribute 'missing'"
+
+    # Tolerated (live-verified: renders "hello").
+    Krikri::VarSubstitutor.new(vars: vars).substitute(
+      "{{ false | ternary(reg.stdout, 'hello') }}", strict: true).must_equal("hello")
+
+    # Selected undefined branch raises at finalization (live-verified).
+    {
+      "true | ternary(reg.stdout, 'hi')"   => stdout_miss,
+      "false | ternary('a', reg.stdout)"   => stdout_miss,
+      "d.missing | ternary('a', 'b')"      => dict_miss,
+      "d.missing | ternary('a', 'b', 'c')" => dict_miss,
+    }.each do |expr, message|
+      error = assert_raises(Krikri::UndefinedVariableError) do
+        Krikri::VarSubstitutor.new(vars: vars).substitute("{{ #{expr} }}", strict: true)
+      end
+      error.message.must_equal(message)
+    end
+
+    # Same laziness in a real .j2 template render (the motd.j2 shape,
+    # live-verified vs 2.19.11: real's template module renders the file
+    # successfully on motd_cowsay false).
+    Krikri::VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(
+      "{{ false | ternary(reg.stdout, 'hello') }}", vars).must_equal(
+      nil, "expected the template render of the motd.j2 ternary to tolerate the miss")
+    Krikri::VariableSubstitutor::JinjaRenderer.new(vars).render(
+      "{{ false | ternary(reg.stdout, 'hello') }}").must_equal("hello")
+    Krikri::VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(
+      "{{ true | ternary(reg.stdout, 'hi') }}", vars).must_equal(stdout_miss)
+  end
 end

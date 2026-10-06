@@ -246,6 +246,14 @@ module Krikri
           raise UndefinedVariableError.new(
             "The `loop` value must resolve to a 'list', not '#{python_type_name(resolved)}'.")
         end
+        # with_items: scalar-wraps a non-list filter-chain resolution exactly
+        # like the direct path above (`with_items: "{{ myscalar }}"` iterates
+        # ONCE with the scalar as item, live-verified vs 2.19.11) - a
+        # filter-chain source (`{{ xclip_packages | default('xclip') }}`,
+        # nephelaiio.xclip) used to fall through to `return nil` and run the
+        # task ONCE with `item` unbound ("'item' is undefined") instead of
+        # looping once with the scalar.
+        return [JSON::Any.new(result)] if kind == "with_items"
         return nil
       end
 
@@ -1343,7 +1351,7 @@ module Krikri
           # silently changing that continue-after-failure behavior as a
           # side effect of batching it.
           steps << BatchScript::Step.new(outcome.plugin_target, outcome.config_json, true,
-            outcome.module_name, outcome.become_user)
+            outcome.module_name, outcome.become_user, outcome.params)
           step_indices << idx
         end
       end
@@ -1358,6 +1366,13 @@ module Krikri
 
         idx = step_indices[i]
         vars_context = item_contexts[idx]
+        # Same invocation.module_args attach the one-at-a-time path does
+        # inside execute_task_once - the batched path's per-item results
+        # silently lacked it (pre-strict templates read `item.invocation`
+        # as undefined, 2.19-parity strictness fails the task: Turgon37.
+        # ssh_server's own `{{ ... | union([item.invocation.module_args.
+        # creates]) }}` set_fact over the registered results).
+        interpreted = attach_batch_step_invocation(task, steps[i], interpreted)
         item_results[idx] = apply_changed_failed_when(task, interpreted, vars_context, host)
       end
 

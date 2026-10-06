@@ -1228,6 +1228,13 @@ module Krikri
 
         task = step_tasks[idx]
         vars_context = step_vars[idx]
+        # Same invocation.module_args attach the non-batched path does inside
+        # execute_task_once - a batched task's REGISTERED result needs the
+        # block exactly as much as a solo one (Turgon37.ssh_server reads
+        # `item.invocation.module_args.creates` out of registered results),
+        # and it silently didn't exist here: pre-strict templates read it as
+        # an undefined value, 2.19-parity strictness fails the task on it.
+        interpreted = attach_batch_step_invocation(task, steps[idx], interpreted)
         cache[task] = {apply_changed_failed_when(task, interpreted, vars_context, host), vars_context}
       end
     end
@@ -1648,7 +1655,8 @@ module Krikri
       # Ansible never runs - and that a minimal host may not even have.
       BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
-        PluginManager.become_needed?(become, become_user, host.user || "root") ? become_user : nil)
+        PluginManager.become_needed?(become, become_user, host.user || "root") ? become_user : nil,
+        substituted_params)
     end
 
     # Run one attempt of a task (when: check + param substitution + action
@@ -2065,6 +2073,16 @@ module Krikri
       copy = hash.dup
       copy["invocation"] = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
       JSON::Any.new(copy)
+    end
+
+    # The batch transports' shared entry to attach_invocation: the step
+    # carries its fully-substituted params, and a step whose params are
+    # unknown (older construction sites, a plugin the argspec table can't
+    # reproduce) keeps its result untouched - the same no-args no-attach
+    # rule attach_invocation itself applies.
+    private def attach_batch_step_invocation(task : Task, step : BatchScript::Step, result : JSON::Any) : JSON::Any
+      return result unless (params = step.params)
+      attach_invocation(task, params, result)
     end
 
     # Dispatches an unavailable-module task that has a role-private

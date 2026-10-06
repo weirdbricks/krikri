@@ -467,4 +467,28 @@ describe Krikri::VariableSubstitutor::VariableLookup do
     result.wont_be_nil
     (result || raise "unexpected nil").as_s.must_equal("riscv64")
   end
+
+  it "resolves a FLOAT-keyed dict lookup by the float's string form, matching Python's by-value key match" do
+    # Real bug found in round 2100118 (Oefenweb.percona_server): YAML parses
+    # both the map keys (`5.7:`) and the role default
+    # `percona_server_version: 5.7` as floats; real Python matches the float
+    # dict key by value (d[5.7] hits key 5.7, d[8.0] hits a YAML `8.0:` key
+    # - live-verified vs ansible-core 2.19.11), while krikri's JSON engine
+    # stores the YAML float key as the plain string "5.7" and the float
+    # index resolved to nothing - the whole lookup rendered "undefined" and
+    # the strict probe reported "'percona_server_libmysqlclient_map' is
+    # undefined" where real renders "libperconaserverclient20".
+    v = Hash(String, JSON::Any).new
+    v["m"] = JSON.parse(%({"5.1": "lib16", "5.7": "lib20", "8.0": "lib21"}))
+    v["ver"] = JSON::Any.new(5.7)
+    lookup = Krikri::VariableSubstitutor::VariableLookup.new(v)
+
+    lookup.indexed("m[ver]").must_equal("lib20")
+    lookup.indexed("m[8.0]").must_equal("lib21")
+
+    # The same float-index key reaches the ENGINE's own dict lookup (the
+    # path a .j2 render and the strict-undefined probe take).
+    Krikri::VariableSubstitutor::JinjaRenderer.new(v).render(
+      "{{ m[ver] }}|{{ m[8.0] }}").must_equal("lib20|lib21")
+  end
 end
