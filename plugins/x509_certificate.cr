@@ -229,8 +229,21 @@ module Krikri
       end
 
       # The real backends run every not_before/not_after through
-      # get_relative_time_option before touching any file.
-      %w[ownca_not_before ownca_not_after selfsigned_not_before selfsigned_not_after].each do |param|
+      # get_relative_time_option before touching any file - but only the
+      # SELECTED provider's pair: the selfsigned backend never reads
+      # ownca_not_*, and the ownca backend never reads selfsigned_not_*
+      # (certificate_selfsigned.py / certificate_ownca.py read their params
+      # in __init__, invoked only for the chosen provider). Real ansible
+      # with provider=selfsigned therefore reports "The time spec ... for
+      # selfsigned_not_before is invalid" even when ownca_not_* params are
+      # also present (found by the kpg43 fuzz round).
+      provider = @params["provider"]?
+      time_params = case provider
+                    when "selfsigned" then %w[selfsigned_not_before selfsigned_not_after]
+                    when "ownca"      then %w[ownca_not_before ownca_not_after]
+                    else                   [] of String # acme / nil (state=absent): no backend reads them
+                    end
+      time_params.each do |param|
         if value = @params[param]?
           unless crypto_time_spec_valid?(value)
             return failure("The time spec \"#{value}\" for #{param} is invalid")

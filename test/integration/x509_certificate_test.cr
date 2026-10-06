@@ -243,4 +243,37 @@ describe "x509_certificate plugin" do
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("not supported")
   end
+
+  # Only the SELECTED provider's not_before/not_after pair is validated -
+  # live-verified against ansible-core 2.19.11 + community.crypto 3.1.1:
+  # provider=selfsigned issues the certificate while ownca_not_before is
+  # garbage (certificate_selfsigned.py never reads ownca_not_*), and
+  # fails with the time-spec message for its OWN selfsigned_not_before.
+  it "ignores an invalid ownca time spec when the provider is selfsigned" do
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
+    path = path_for("self-ignores-ownca.crt")
+
+    result = PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned",
+       "ownca_not_before" => "garbage-time", "ownca_not_after" => "also-garbage"})
+
+    expect(falsey?(result["failed"]?.try(&.as_bool))).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(path).must_equal(true)
+  end
+
+  it "fails on an invalid time spec for the selected provider before writing the file" do
+    key = make_key("a.key")
+    csr = make_csr("a.csr", key, "self.example.com")
+    path = path_for("self-bad-time.crt")
+
+    result = PluginSpecHelper.run("x509_certificate",
+      {"path" => path, "privatekey_path" => key, "csr_path" => csr, "provider" => "selfsigned",
+       "selfsigned_not_before" => "garbage-time"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal(%(The time spec "garbage-time" for selfsigned_not_before is invalid))
+    File.exists?(path).must_equal(false)
+  end
 end
