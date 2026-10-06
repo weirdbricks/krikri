@@ -1,6 +1,7 @@
 require "json"
 require "../base_action_plugin"
 require "../plugin_helpers/synchronize_rsync"
+require "../plugin_helpers/strict_bool_params"
 require "../passwords"
 
 module Krikri
@@ -48,6 +49,21 @@ module Krikri
   # roles actually write apart from that one: no delegate_to:, delegate_to:
   # localhost, and delegate_to: the task's own host.
   class SynchronizeActionPlugin < ActionPlugin
+    # synchronize's `type: bool` options (ansible.posix.synchronize spec,
+    # declaration order minus the engine-internal _substitute_controller).
+    # AnsibleModule converts every provided bool param at module setup -
+    # declaration order, first violation wins - and synchronize's module
+    # body never runs on a conversion failure. Found by the kpg43 fuzz
+    # round: a chaos-mutated `dirs: ylazyy` ran the whole rsync on this
+    # engine while real ansible failed the task in module setup.
+    include PluginHelpers::StrictBoolValidation
+
+    protected def bool_params : Array(String)
+      %w[delete archive checksum compress existing_only dirs recursive links
+        copy_links perms times owner group set_remote_user use_ssh_args
+        ssh_connection_multiplexing partial verify_host delay_updates]
+    end
+
     # Ansible module success shape: exit_json(changed=, msg=, rc=, cmd=,
     # stdout_lines=) then the controller backfills failed: false last.
     # The empty msg is kept (the Ansible module passes msg=out_clean
@@ -65,31 +81,67 @@ module Krikri
     # controller's changed/exception backfill.
     PARAM_FAILURE_KEY_ORDER = ["failed", "msg", "changed"]
 
-    # Ansible's up-front parameter checks (both ends set, mode push|pull), as
-    # a final failed result; nil when the params are valid.
-    private def invalid_params_result(src_param, dest_param, mode : String) : ActionResult?
+    # Ansible's up-front parameter check (both ends set, `is None` in the
+    # action plugin), as a final failed result; nil when the params are
+    # valid. AnsibleModule setup (bool conversion, then mode's choices)
+    # validation follows in execute, matching real's
+    # action-plugin-before-module ordering.
+    private def invalid_params_result(src_param, dest_param) : ActionResult?
       if !src_param || !dest_param || src_param.empty? || dest_param.empty?
         return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
           false, true, "synchronize requires both src and dest parameters are set",
           key_order: PARAM_FAILURE_KEY_ORDER
         ), PARAM_FAILURE_KEY_ORDER))
       end
-      return if ["push", "pull"].includes?(mode)
+      nil
+    end
 
-      ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
-        false, true, "mode must be 'push' or 'pull', got '#{mode}'",
-        key_order: PARAM_FAILURE_KEY_ORDER
-      ), PARAM_FAILURE_KEY_ORDER))
+    # AnsibleModule setup validation (bool type conversion in declaration
+    # order, then mode's choices - types before choices in
+    # parameters.py), as a final failed result; nil when valid. The
+    # string-view params are what the plugin binaries'
+    # validate_bool_params! also sees. Live-verified against
+    # ansible-core 2.19.11 + ansible.posix 2.1.0.
+    private def module_setup_validation_result : ActionResult?
+      begin
+        validate_bool_params_in!(@params.map { |key, value| {key, JSON::Any.new(value)} }.to_h)
+      rescue e : BoolParamError
+        return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+          false, true, e.message || "invalid boolean parameter",
+          key_order: PARAM_FAILURE_KEY_ORDER
+        ), PARAM_FAILURE_KEY_ORDER))
+      end
+
+      # mode's choices validation (parameters.py _validate_argument_values)
+      # is case-sensitive and reports the RAW value; the downcase for the
+      # actual transport behavior happens only after it passes.
+      raw_mode = @params["mode"]?
+      if raw_mode && !%w[pull push].includes?(raw_mode)
+        return ActionResult.final(Krikri.mark_failed_key_order(ActionResult.plugin_result_json(
+          false, true, "value of mode must be one of: pull, push, got: #{raw_mode}",
+          key_order: PARAM_FAILURE_KEY_ORDER
+        ), PARAM_FAILURE_KEY_ORDER))
+      end
+      nil
     end
 
     def execute : ActionResult
+      # Real's ordering, live-verified against ansible-core 2.19.11 +
+      # ansible.posix 2.1.0: the ACTION plugin's src/dest check runs
+      # first (synchronize.py's `src is None or dest is None` return,
+      # before the module is ever invoked), then AnsibleModule setup
+      # (bool conversion, then mode's choices).
       src_param = @params["src"]?
       dest_param = @params["dest"]?
-      mode = (@params["mode"]? || "push").downcase
-      if invalid = invalid_params_result(src_param, dest_param, mode)
+      if invalid = invalid_params_result(src_param, dest_param)
+        return invalid
+      end
+      if invalid = module_setup_validation_result
         return invalid
       end
 
+      raw_mode = @params["mode"]?
+      mode = (raw_mode || "push").downcase
       src = src_param.to_s
       dest = dest_param.to_s
 

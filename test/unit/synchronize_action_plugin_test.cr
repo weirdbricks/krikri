@@ -2,6 +2,10 @@ require "../minitest_helper"
 require "file_utils"
 require "../../src/krikri/inventory_parser"
 require "../../src/krikri/action_plugin_manager"
+# The action plugin calls SSHManager.sshpass_env; in a single-file run
+# nothing else in the graph requires it (the whole-suite entrypoint gets
+# it transitively from other tests).
+require "../../src/krikri/ssh_manager"
 
 # SynchronizeActionPlugin's delegate_to: localhost munging: Ansible
 # runs rsync on the controller (the delegate's connection is local) and
@@ -24,6 +28,59 @@ end
 
 private def cleanup_sync_dirs(paths : Array(String?)) : Nil
   paths.each { |path| FileUtils.rm_rf(path) if path }
+end
+
+describe "SynchronizeActionPlugin argument validation" do
+  # Real's ordering, live-verified against ansible-core 2.19.11 +
+  # ansible.posix 2.1.0: the action plugin's src/dest check first, then
+  # AnsibleModule's bool conversion, then mode's choices validation. The
+  # fixed "Valid booleans include:" tail is this engine's deterministic
+  # order (real serializes a Python SET there - same wording, shuffled
+  # order between runs; see bool_param_validation_test.cr).
+  it "fails a non-boolean dirs before any rsync runs, with the parameters.py message" do
+    result = run_delegate_sync("localhost", {
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "/tmp/sync-spec-dest/",
+      "dirs" => "ylazyy",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["changed"].as_bool.must_equal(false)
+    json.as_h["msg"].as_s.must_equal(
+      "argument 'dirs' is of type str and we were unable to convert to bool: " \
+      "The value 'ylazyy' is not a valid boolean. Valid booleans include: " \
+      "'1', 'on', 1, '0', 0, 'n', 'f', 'false', 'true', 'y', 't', 'yes', 'no', 'off'")
+    json.as_h.has_key?("cmd").must_equal(false)
+    json.as_h.keys.first(3).must_equal(["failed", "msg", "changed"])
+  end
+
+  it "rejects mode: PUSH (choices validation is case-sensitive and reports the raw value)" do
+    result = run_delegate_sync("localhost", {
+      "src"  => "/tmp/sync-spec-src/",
+      "dest" => "/tmp/sync-spec-dest/",
+      "mode" => "PUSH",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["changed"].as_bool.must_equal(false)
+    json.as_h["msg"].as_s.must_equal("value of mode must be one of: pull, push, got: PUSH")
+    json.as_h.has_key?("cmd").must_equal(false)
+    json.as_h.keys.first(3).must_equal(["failed", "msg", "changed"])
+  end
+
+  it "reports the src/dest check ahead of the bool and mode checks, like the real action plugin" do
+    result = run_delegate_sync("localhost", {
+      "mode" => "PUSH",
+      "dirs" => "ylazyy",
+    })
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["failed"].as_bool.must_equal(true)
+    json.as_h["msg"].as_s.must_equal("synchronize requires both src and dest parameters are set")
+    json.as_h.has_key?("cmd").must_equal(false)
+  end
 end
 
 describe "SynchronizeActionPlugin delegate_to localhost munging" do
