@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1516`.**
+**Currently at `0.9.1517`.**
 
 ## Open gaps
 
@@ -34,11 +34,7 @@ defect moves down or gets deleted.
 - **PostgreSQL:** the deprecated aliases (`port`, `host`, `login`, `unix_socket`, `db`) register
   Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
   every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
-  Still different: a server that accepts and immediately closes the connection. Real prints `server
-  closed the connection unexpectedly ...`; krikri flaps between `Connection refused ...` (RST lands on
-  `connect()`; `connect_strerror` hardcodes that text for every `Socket::ConnectError`, masking
-  ECONNRESET/EHOSTUNREACH/ENETUNREACH) and Crystal's raw `read (#<TCPSocket:0x...>): Connection reset by
-  peer`. crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
+  crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
   on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures (`docker_container`/`docker_image` pulls, `docker_network`,
   `docker_login`, `docker_image_build`) render Ansible's Python-SDK wording, verified byte-for-byte

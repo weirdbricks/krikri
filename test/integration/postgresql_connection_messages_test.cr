@@ -141,6 +141,123 @@ describe "community.postgresql.* connection-failure messages (127.0.0.1:35433)" 
   end
 end
 
+# ACCEPT-THEN-CLOSE / ACCEPT-THEN-RST parity, against a bounded python
+# listener (spawned per test, killed in ensure) that accepts a TCP
+# connection and immediately drops it - the shape libpq words with
+# "server closed the connection unexpectedly\n\tThis probably means the
+# server terminated abnormally\n\tbefore or while processing the
+# request.\n" (no "Is the server running..." hint line, identical for a
+# clean close and an SO_LINGER-0 RST). Live-verified against real
+# ansible-core 2.19.11 + community.postgresql 4.2.0:
+#
+#   fatal: [localhost]: FAILED! => {"changed": false, "msg": "unable to
+#   connect to database: connection to server at \"127.0.0.1\", port
+#   15987 failed: server closed the connection unexpectedly\n\tThis
+#   probably means the server terminated abnormally\n\tbefore or while
+#   processing the request.\n"}
+#
+# The old krikri text flapped on the raw exception message here ("read
+# (#<TCPSocket:0x...>): Connection reset by peer\n\tIs the server
+# running on that host and accepting TCP/IP connections?\n").
+private CLOSE_LISTENER = <<-PYTHON
+  import socket, struct, sys
+  s = socket.socket()
+  s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+  s.bind(("127.0.0.1", 0))
+  s.listen(16)
+  mode = sys.argv[1]
+  with open(sys.argv[2], "w") as f:
+      f.write(str(s.getsockname()[1]))
+  while True:
+      c, _ = s.accept()
+      if mode == "rst":
+          c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+      c.close()
+  PYTHON
+
+private def with_close_listener(mode : String, & : String ->)
+  script = PluginSpecHelper.tmp_path("close_on_accept.py")
+  portfile = PluginSpecHelper.tmp_path("listener_port")
+  File.write(script, CLOSE_LISTENER)
+  process = Process.new("python3", [script, mode, portfile],
+    input: Process::Redirect::Close, output: Process::Redirect::Close, error: Process::Redirect::Close)
+  port : String? = nil
+  100.times do
+    port = File.read(portfile) if File.exists?(portfile)
+    break if port
+    sleep 0.1.seconds
+  end
+  raise "python close listener never reported its port" unless port
+  begin
+    yield port.not_nil!
+  ensure
+    begin
+      process.signal(Signal::KILL) unless process.terminated?
+    rescue
+    end
+    process.wait
+  end
+end
+
+describe "community.postgresql.* connection-failure messages (accept-then-close listener)" do
+  serial!
+
+  it "postgresql_query behind an accept-then-close listener reports libpq's server-closed text" do
+    with_close_listener("close") do |port|
+      result = PluginSpecHelper.run("postgresql_query",
+        CONN_LOGIN.merge({"login_port" => port, "query" => "SELECT 1"}))
+      assert_conn_failure(result,
+        "unable to connect to database: connection to server at \"127.0.0.1\", port #{port} failed: " \
+        "server closed the connection unexpectedly\n" \
+        "\tThis probably means the server terminated abnormally\n" \
+        "\tbefore or while processing the request.\n", with_db_warning: true)
+    end
+  end
+
+  it "postgresql_query behind an accept-then-RST listener reports the same server-closed text" do
+    with_close_listener("rst") do |port|
+      result = PluginSpecHelper.run("postgresql_query",
+        CONN_LOGIN.merge({"login_port" => port, "query" => "SELECT 1"}))
+      assert_conn_failure(result,
+        "unable to connect to database: connection to server at \"127.0.0.1\", port #{port} failed: " \
+        "server closed the connection unexpectedly\n" \
+        "\tThis probably means the server terminated abnormally\n" \
+        "\tbefore or while processing the request.\n", with_db_warning: true)
+    end
+  end
+
+  it "postgresql_query in an unroutable netns reports ENETUNREACH's strerror text" do
+    # `unshare -rn` (loopback down): real reports
+    # "connection to server at \"127.0.0.1\", port N failed: Network is
+    # unreachable\n\tIs the server running on that host and accepting
+    # TCP/IP connections?\n" - live-verified. krikri used to collapse
+    # this into "Connection refused" because the old code hardcoded
+    # that text for every Socket::ConnectError; the errno is now
+    # re-derived with a direct probe connect at error-report time.
+    skip "no `unshare` on this host" unless Process.find_executable("unshare")
+    binary = File.join(PluginSpecHelper::PLUGINS_DIR, "postgresql_query")
+    config = {
+      "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},
+      "params" => CONN_LOGIN.merge({"login_port" => "59999", "query" => "SELECT 1"}),
+      "vars"   => {} of String => String,
+    }
+    output = IO::Memory.new
+    process = Process.new("unshare", ["-rn", binary],
+      input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
+    # Drain to EOF BEFORE #wait: #wait closes the process's pipes, so a
+    # drain fiber still reading dies on "Closed stream" (see
+    # test/minitest_helper.cr).
+    spawn { IO.copy(process.output, output) }
+    process.input.print(config.to_json)
+    process.input.close
+    process.wait
+    result = JSON.parse(output.to_s)
+    assert_conn_failure(result,
+      "unable to connect to database: connection to server at \"127.0.0.1\", port 59999 failed: Network is unreachable\n" \
+      "\tIs the server running on that host and accepting TCP/IP connections?\n", with_db_warning: true)
+  end
+end
+
 # DEPRECATED-ALIAS deprecations for the same four modules. Real
 # (ansible-core 2.19.11 + community.postgresql 4.2.0) still ACCEPTS the
 # shared connection spec's deprecated aliases and warns about each one

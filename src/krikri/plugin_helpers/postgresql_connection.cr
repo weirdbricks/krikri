@@ -1,4 +1,25 @@
 require "uri"
+require "socket"
+
+{% if flag?(:linux) && !LibC.has_constant?("Pollfd") && !LibC.has_method?(:poll) %}
+  # poll(2) is not in Crystal's Linux LibC bindings (the event loop uses
+  # epoll) - bound here just for the bounded probe connect below, guarded
+  # so it never clashes with another declaration of the same C symbol in
+  # the same compilation unit (plugins/expect.cr already declares both in
+  # the fat plugin build). Declared at top level, like expect.cr's - a
+  # module-scoped lib would shadow top-level LibC inside this module and
+  # hide every constant the netdb bindings add. nfds_t is unsigned long
+  # on Linux.
+  lib LibC
+    struct Pollfd
+      fd : Int32
+      events : Int16
+      revents : Int16
+    end
+
+    fun poll(fds : Pollfd*, nfds : UInt64, timeout : Int32) : Int32
+  end
+{% end %}
 
 module Krikri
   module PluginHelpers
@@ -6,6 +27,18 @@ module Krikri
     # connection URI from Ansible-style login_* params. No I/O -
     # postgresql_db.cr/postgresql_user.cr do the actual DB.open.
     module PostgresqlConnection
+      # libpq's wording for a connection the server accepted and then
+      # dropped before/during startup packet exchange (both a clean
+      # close and an RST - live-verified against ansible-core 2.19.11 +
+      # community.postgresql 4.2.0: SO_LINGER-0 RST on the accepted
+      # socket reports this same text, no "Is the server running..."
+      # hint line either). Ends with its own newline, like libpq's
+      # PQerrorMessage buffer always does.
+      SERVER_CLOSED_TEXT =
+        "server closed the connection unexpectedly\n" \
+        "\tThis probably means the server terminated abnormally\n" \
+        "\tbefore or while processing the request.\n"
+
       # unix_socket, given, takes precedence over host/port (matches
       # Ansible's postgresql_db/postgresql_user own login_unix_socket
       # precedence). crystal-pg expects a unix socket path via a "host"
@@ -97,6 +130,21 @@ module Krikri
       # - TCP, nothing listening (ECONNREFUSED):
       #     connection to server at "127.0.0.1", port 59999 failed: Connection refused\n
       #     \tIs the server running on that host and accepting TCP/IP connections?\n
+      # - TCP, unroutable netns (ENETUNREACH, `unshare -rn`):
+      #     connection to server at "127.0.0.1", port 59999 failed: Network is unreachable\n
+      #     \tIs the server running on that host and accepting TCP/IP connections?\n
+      # - TCP, blackhole address, natural (unbounded) connect timeout:
+      #     connection to server at "192.0.2.1", port 5432 failed: Connection timed out\n
+      #     \tIs the server running on that host and accepting TCP/IP connections?\n
+      #   (real words a *libpq connect_timeout* expiry differently -
+      #   "timeout expired", no hint - when PGCONNECT_TIMEOUT is set;
+      #   krikri models no connect timeout, so that wording does not
+      #   apply.)
+      # - TCP, server accepted the connection and then dropped it (both
+      #   a clean close and an SO_LINGER-0 RST on the accepted socket):
+      #     connection to server at "127.0.0.1", port 59999 failed: server closed the connection unexpectedly\n
+      #     \tThis probably means the server terminated abnormally\n
+      #     \tbefore or while processing the request.\n
       # - Unix socket, socket file/dir missing (ENOENT):
       #     connection to server on socket "/nonexistent/sockdir/.s.PGSQL.5432" failed: No such file or directory\n
       #     \tIs the server running locally and accepting connections on that socket?\n
@@ -108,18 +156,19 @@ module Krikri
       # - unresolvable host (libpq's own DNS wording, no hint line):
       #     could not translate host name "nosuchhost.invalid" to address: Name or service not known\n
       #
-      # Reproducible vs not: the strerror text above is derived from
-      # the exception CLASS Crystal raises (Socket::ConnectError is
-      # raised only for ECONNREFUSED, Socket::Addrinfo::Error only for
-      # a failed lookup) rather than from its message, because
-      # Crystal's message for a refused connect misreports the errno
-      # ("Resource temporarily unavailable"). What krikri CANNOT
-      # reproduce: a temporary resolver failure, which libpq renders
-      # with gai_strerror's "Temporary failure in name resolution"
-      # (Crystal's Socket::Addrinfo::Error carries no gai code, so
-      # krikri prints the EAI_NONAME wording instead), and any
+      # Reproducible vs not: the errno behind a TCP connect failure is
+      # re-derived with a direct non-blocking probe connect at
+      # error-report time (see #io_error_detail), because Crystal's
+      # Socket::ConnectError misreports the errno ("Resource
+      # temporarily unavailable" for a refused connect) and collapses
+      # ECONNRESET/ENETUNREACH/ETIMEDOUT into the same exception class.
+      # What krikri CANNOT reproduce: a temporary resolver failure,
+      # which libpq renders with gai_strerror's "Temporary failure in
+      # name resolution" (Crystal's Socket::Addrinfo::Error carries no
+      # gai code, so krikri prints the EAI_NONAME wording instead), any
       # strerror string from a non-glibc libc (libpq prints the
-      # system's own, locale-dependent strings).
+      # system's own, locale-dependent strings), and libpq's
+      # connect_timeout wording ("timeout expired").
       def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}) : String
         case cause = unwrap(ex.cause)
         when PQ::PQError
@@ -132,9 +181,133 @@ module Krikri
         when Socket::Addrinfo::Error
           libpq_dns_error(target[:host], target[:port])
         when IO::Error
-          "#{target_prefix(target)} failed: #{connect_strerror(cause, target)}\n\t#{hint(target)}\n"
+          io_error_detail(cause, target)
         else
-          "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
+          io_error_detail(nil, target)
+        end
+      end
+
+      # The socket-layer failure text for everything that is not a
+      # server-side ErrorResponse or a failed lookup.
+      #
+      # For TCP, Crystal's Socket::ConnectError cannot be trusted to
+      # carry the real errno (its message/os_error have been observed
+      # misreporting ECONNREFUSED as "Resource temporarily unavailable"
+      # and collapsing ECONNRESET/ENETUNREACH/ETIMEDOUT into the same
+      # class), so the errno is re-derived at error-report time with a
+      # direct non-blocking probe connect to the same host:port:
+      #
+      # - probe connects (errno 0): the server accepts connections, so
+      #   the original failure happened after connect - the server
+      #   dropped the connection during startup, which is libpq's
+      #   "server closed the connection unexpectedly" wording (no
+      #   "Is the server running..." hint line, live-verified).
+      # - probe fails with an errno: that errno's own strerror text,
+      #   plus libpq's "Is the server running..." hint line (matches
+      #   real for ECONNREFUSED/ENETUNREACH/ETIMEDOUT and any other
+      #   errno).
+      # - probe itself times out: worded as ETIMEDOUT ("Connection
+      #   timed out"), which is what a natural (unbounded) connect to
+      #   such a target ends up reporting too - live-verified against
+      #   real with a blackhole address (192.0.2.1, ~2min system
+      #   timeout): "Connection timed out". Note real words a *libpq
+      #   connect_timeout* expiry differently ("timeout expired", when
+      #   PGCONNECT_TIMEOUT is set); krikri models no connect timeout,
+      #   so that wording does not apply.
+      # - probe impossible (no fd, resolution failing now): falls back
+      #   to the wording the old code printed for every TCP failure.
+      #
+      # For a Unix socket the connect-phase errno is decided by the
+      # socket directory's existence, as before (ENOENT for a missing
+      # directory, ECONNREFUSED for a present one with no listener).
+      private def self.io_error_detail(cause : IO::Error?, target : {host: String?, port: String, unix_socket: String?}) : String
+        if unix_socket = target[:unix_socket]
+          "#{target_prefix(target)} failed: #{unix_connect_strerror(unix_socket)}\n\t#{hint(target)}\n"
+        else
+          errno = probe_tcp_connect_errno(target[:host] || "", target[:port])
+          if errno.nil?
+            "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
+          elsif errno.zero?
+            "#{target_prefix(target)} failed: #{SERVER_CLOSED_TEXT}"
+          else
+            "#{target_prefix(target)} failed: #{Errno.new(errno).message}\n\t#{hint(target)}\n"
+          end
+        end
+      end
+
+      # errno of a fresh non-blocking connect to host:port, or nil when
+      # the probe cannot even be attempted (socket()/fcntl() failure,
+      # or the host no longer resolving). 0 means connected.
+      private PROBE_TIMEOUT_MS = 3000
+
+      # poll(2)'s POLLOUT event bit (Linux poll.h: 0x004) - named locally
+      # so the probe never depends on which compilation unit happened to
+      # declare LibC's poll(2) bindings (plugins/expect.cr does in the
+      # fat plugin build).
+      private PROBE_POLLOUT = 0x004
+
+      private def self.probe_tcp_connect_errno(host : String, port : String) : Int32?
+        address : Socket::IPAddress? = begin
+          # A literal IP (the overwhelmingly common login_host:) is
+          # probed verbatim - resolving it could in principle return a
+          # different address than the one the failed connect used.
+          Socket::IPAddress.new(host, port.to_i)
+        rescue
+          # Not a literal: resolve. A lookup failing NOW means the
+          # probe cannot be attempted (nil).
+          begin
+            Socket::Addrinfo.tcp(host, port.to_i).first?.try(&.ip_address)
+          rescue
+            nil
+          end
+        end
+        return nil unless address
+        fd = LibC.socket(address.family.value, LibC::SOCK_STREAM, LibC::IPPROTO_TCP)
+        return nil if fd < 0
+        errno : Int32? = nil
+        begin
+          flags = LibC.fcntl(fd, LibC::F_GETFL, 0)
+          if flags >= 0
+            LibC.fcntl(fd, LibC::F_SETFL, flags | LibC::O_NONBLOCK)
+          end
+          rc = LibC.connect(fd, address.to_unsafe, address.size)
+          if rc.zero?
+            errno = 0
+          elsif (e = Errno.value) == Errno::EINPROGRESS
+            {% if flag?(:linux) %}
+              pfd = LibC::Pollfd.new(fd: fd, events: PROBE_POLLOUT.to_i16, revents: 0i16)
+              rc = LibC.poll(pointerof(pfd), 1, PROBE_TIMEOUT_MS)
+              if rc <= 0
+                errno = Errno::ETIMEDOUT.value
+              else
+                so_err = 0
+                len = LibC::SocklenT.new(sizeof(Int32))
+                if LibC.getsockopt(fd, LibC::SOL_SOCKET, LibC::SO_ERROR, pointerof(so_err), pointerof(len)).zero?
+                  errno = so_err
+                else
+                  errno = Errno.value.value
+                end
+              end
+            {% else %}
+              errno = Errno::ETIMEDOUT.value
+            {% end %}
+          else
+            errno = e.value
+          end
+        ensure
+          LibC.close(fd)
+        end
+        errno
+      end
+
+      # The Unix-socket variant of the old connect() failure text: a
+      # missing socket directory is ENOENT; a present one with no
+      # listening socket is ECONNREFUSED.
+      private def self.unix_connect_strerror(unix_socket : String) : String
+        if Dir.exists?(unix_socket)
+          "Connection refused"
+        else
+          "No such file or directory"
         end
       end
 
@@ -202,28 +375,6 @@ module Krikri
           "Is the server running locally and accepting connections on that socket?"
         else
           "Is the server running on that host and accepting TCP/IP connections?"
-        end
-      end
-
-      # strerror(3) text for the socket-layer failure Crystal reports,
-      # as a plain string (libpq prints strerror's output verbatim).
-      private def self.connect_strerror(cause : IO::Error, target : {host: String?, port: String, unix_socket: String?}) : String
-        if cause.is_a?(Socket::ConnectError)
-          if unix_socket = target[:unix_socket]
-            # A missing socket directory is ENOENT; a present one with
-            # no listening socket is ECONNREFUSED. Crystal raises
-            # Socket::ConnectError for both, so the directory's
-            # existence decides which one this was.
-            if Dir.exists?(unix_socket)
-              "Connection refused"
-            else
-              "No such file or directory"
-            end
-          else
-            "Connection refused"
-          end
-        else
-          cause.message || "Connection refused"
         end
       end
 

@@ -1,5 +1,6 @@
 require "../minitest_helper"
 require "socket"
+require "pg"
 require "../../src/krikri/plugin_helpers/postgresql_connection"
 
 describe Krikri::PluginHelpers::PostgresqlConnection do
@@ -93,8 +94,7 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
     end
   end
 
-  # libpq words a failed getaddrinfo with the code's own gai_strerror
-  # text (its connectDBStart branch: "could not translate host name
+  # libpq words a failed getaddrinfo with the code's own gai_strerror  # text (its connectDBStart branch: "could not translate host name
   # \"%s\" to address: %s", %s = strerror(errno) for EAI_SYSTEM,
   # gai_strerror(code) otherwise). Crystal's Socket::Addrinfo::Error
   # carries no gai code, so the plugin re-derives the code with a
@@ -104,6 +104,7 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
   # against psql 16.14 and real ansible-core 2.19.11 +
   # community.postgresql 4.2.0 (no network needed here: these tests
   # exercise the code->message mapping directly).
+
   describe ".gai_strerror_text" do
     it "maps every glibc EAI_* code to its gai_strerror text" do
       map = {
@@ -141,6 +142,116 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       text = Krikri::PluginHelpers::PostgresqlConnection.gai_error_text("host", LibC::EAI_SYSTEM)
       text.must_equal("could not translate host name \"host\" to address: #{Errno.value.message}\n")
       text.wont_equal("could not translate host name \"host\" to address: System error\n")
+    end
+  end
+
+  # The socket-layer connect-error wording. Crystal's
+  # Socket::ConnectError cannot be trusted to carry the real errno (its
+  # message has been observed misreporting a refused connect as
+  # "Resource temporarily unavailable", and it collapses every connect
+  # errno into one class), so the errno is re-derived with a direct
+  # non-blocking probe connect at error-report time - hence the real
+  # listening/closed sockets below, not just fake exceptions.
+  describe ".libpq_connect_error socket-layer detail" do
+    def self.refused_chain(message : String)
+      DB::ConnectionRefused.new(message, cause: PQ::ConnectionError.new("Cannot establish connection", cause: Socket::ConnectError.new(message)))
+    end
+
+    it "words an accept-then-close TCP failure like real libpq (no hint line)" do
+      # Live-verified against real ansible-core 2.19.11 +
+      # community.postgresql 4.2.0 behind a python accept-then-close
+      # listener: "unable to connect to database: connection to server
+      # at \"127.0.0.1\", port N failed: server closed the connection
+      # unexpectedly\n\tThis probably means the server terminated
+      # abnormally\n\tbefore or while processing the request.\n"
+      server = TCPServer.new("127.0.0.1", 0)
+      port = server.local_address.port
+      begin
+        # Never accepted on purpose: the probe connect only needs the
+        # listen backlog to complete, mirroring what the error-report
+        # path sees after the real failure.
+        ex = DB::ConnectionRefused.new("Cannot establish connection", cause: PQ::ConnectionError.new("Cannot establish connection", cause: IO::EOFError.new("EOF")))
+        Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+          ex, {host: "127.0.0.1", port: port.to_s, unix_socket: nil}
+        ).must_equal(
+          "connection to server at \"127.0.0.1\", port #{port} failed: " \
+          "server closed the connection unexpectedly\n" \
+          "\tThis probably means the server terminated abnormally\n" \
+          "\tbefore or while processing the request.\n"
+        )
+      ensure
+        server.close
+      end
+    end
+
+    it "words an accept-then-RST TCP failure the same as accept-then-close" do
+      # The old code printed the exception's own message here (the
+      # flapping "read (#<TCPSocket:0x...>): Connection reset by peer"
+      # text); real libpq reports the deterministic "server closed"
+      # wording for an RST on the accepted socket too.
+      server = TCPServer.new("127.0.0.1", 0)
+      port = server.local_address.port
+      begin
+        cause = IO::Error.new("read (#<TCPSocket:0xdeadbeef>): Connection reset by peer")
+        ex = DB::ConnectionRefused.new("Cannot establish connection", cause: PQ::ConnectionError.new("Cannot establish connection", cause: cause))
+        text = Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+          ex, {host: "127.0.0.1", port: port.to_s, unix_socket: nil}
+        )
+        text.must_equal(
+          "connection to server at \"127.0.0.1\", port #{port} failed: " \
+          "server closed the connection unexpectedly\n" \
+          "\tThis probably means the server terminated abnormally\n" \
+          "\tbefore or while processing the request.\n"
+        )
+        text.includes?("TCPSocket").must_equal(false)
+      ensure
+        server.close
+      end
+    end
+
+    it "keeps the Connection refused wording plus hint for a closed port" do
+      # Port 1 (tcpmux) has nothing listening on any test host.
+      ex = self.class.refused_chain("Cannot establish connection")
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: "127.0.0.1", port: "1", unix_socket: nil}
+      ).must_equal(
+        "connection to server at \"127.0.0.1\", port 1 failed: Connection refused\n" \
+        "\tIs the server running on that host and accepting TCP/IP connections?\n"
+      )
+    end
+
+    it "falls back to the refused wording when the probe cannot be attempted" do
+      # An unresolvable host can't be probed; the resolution failure is
+      # normally caught earlier (Socket::Addrinfo::Error branch), so a
+      # host that stopped resolving between connect and report lands
+      # here. The probe's nil must not crash or invent an errno.
+      cause = IO::Error.new("read (#<TCPSocket:0xdeadbeef>): Connection reset by peer")
+      ex = DB::ConnectionRefused.new("Cannot establish connection", cause: PQ::ConnectionError.new("Cannot establish connection", cause: cause))
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: "nosuchhost.invalid", port: "5432", unix_socket: nil}
+      ).must_equal(
+        "connection to server at \"nosuchhost.invalid\", port 5432 failed: Connection refused\n" \
+        "\tIs the server running on that host and accepting TCP/IP connections?\n"
+      )
+    end
+
+    it "keeps the unix-socket ENOENT vs refused distinction" do
+      ex = self.class.refused_chain("Cannot establish connection")
+      missing = PluginSpecHelper.tmp_path("nosuch-sockdir")
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: nil, port: "5432", unix_socket: missing}
+      ).must_equal(
+        "connection to server on socket \"#{missing}/.s.PGSQL.5432\" failed: No such file or directory\n" \
+        "\tIs the server running locally and accepting connections on that socket?\n"
+      )
+      present = PluginSpecHelper.tmp_path("empty-sockdir")
+      Dir.mkdir_p(present)
+      Krikri::PluginHelpers::PostgresqlConnection.libpq_connect_error(
+        ex, {host: nil, port: "5432", unix_socket: present}
+      ).must_equal(
+        "connection to server on socket \"#{present}/.s.PGSQL.5432\" failed: Connection refused\n" \
+        "\tIs the server running locally and accepting connections on that socket?\n"
+      )
     end
   end
 end
