@@ -46,6 +46,8 @@
 #     to the Ansible module's safe_dump output
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/docker_client"
+require "../src/krikri/plugin_helpers/docker_cli_probe"
 
 module Krikri
   class DockerComposeV2Plugin < BasePlugin
@@ -72,7 +74,8 @@ module Krikri
     # against 2.19.11 + community.docker 5.2.1.
     SUCCESS_KEY_ORDER = %w[changed actions stdout stderr containers images failed]
     # update_failed adds these on top of the update_result keys.
-    FAILED_KEY_ORDER = %w[changed actions stdout stderr failed msg cmd rc]
+    FAILED_KEY_ORDER       = %w[changed actions stdout stderr failed msg cmd rc]
+    PROBE_FAILED_KEY_ORDER = %w[cmd rc stdout stderr failed msg stdout_lines stderr_lines]
 
     # The Ansible module's DOCKER_PULL_PROGRESS_WORKING - image-layer
     # progress lines that count as changes.
@@ -104,6 +107,17 @@ module Krikri
 
       if err = resolve_project
         return err
+      end
+
+      # Real constructs its DockerCLIClient (common_cli.py) after the
+      # module's own argspec validation but BEFORE any manager logic -
+      # get_bin_path('docker'), then `docker --host ... version --format
+      # '{{ json . }}'` through run_command(check_rc=True). A daemon that
+      # cannot be reached fails right there (even a missing compose file
+      # never gets that far), with the CLI's own stderr as the message
+      # and the run_command failure shape.
+      if failure = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+        return probe_failure_result(failure)
       end
 
       if err = validate_compose_version
@@ -295,6 +309,26 @@ module Krikri
       return nil if raw.nil?
       parsed = JSON.parse(raw) rescue return nil
       parsed.as_h? ? parsed : nil
+    end
+
+    # The run_command(check_rc=True) failure shape real's CLI probe fails
+    # with - see DockerCliProbe and docker_image_build.cr's
+    # probe_failure_result for the shape rationale.
+    private def probe_failure_result(failure : PluginHelpers::DockerCliProbe::Failure) : PluginResult
+      cmd = failure.cmd
+      unless cmd
+        return PluginResult.new(changed: false, failed: true, msg: failure.msg)
+      end
+
+      result = PluginResult.new(changed: false, failed: true, msg: failure.msg,
+        cmd: JSON::Any.new(cmd),
+        rc: JSON::Any.new(failure.rc.to_i64),
+        stdout: JSON::Any.new(failure.stdout),
+        stderr: JSON::Any.new(failure.stderr),
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(failure.stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(failure.stderr))
+      result.key_order = PROBE_FAILED_KEY_ORDER
+      result
     end
 
     # Ansible module's minimum Compose version gate (same failure message).

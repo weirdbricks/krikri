@@ -71,7 +71,7 @@ module Krikri
 
       name = @params["name"]?.to_s
 
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
 
       matched = api.networks.list.find { |net| net.name == name || net.id.starts_with?(name) }
@@ -89,7 +89,7 @@ module Krikri
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Error connecting: Cannot connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     private def raw_get(client : Docr::Client, path : String) : String

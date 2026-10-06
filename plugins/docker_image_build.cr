@@ -6,6 +6,7 @@ require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_ref"
 require "../src/krikri/plugin_helpers/docker_client"
+require "../src/krikri/plugin_helpers/docker_cli_probe"
 
 module Krikri
   # docker_image_build plugin - builds a Docker image via the `docker
@@ -95,9 +96,10 @@ module Krikri
     #   first - fail_json appends failed/msg AFTER the kwargs it was
     #   handed - then the controller's *_lines, then the executor's
     #   changed: false and exception.
-    SUCCESS_KEY_ORDER  = %w[changed actions image stdout stderr command stdout_lines stderr_lines failed]
-    NO_BUILD_KEY_ORDER = %w[changed actions image failed]
-    FAILED_KEY_ORDER   = %w[stdout stderr command failed msg stdout_lines stderr_lines changed exception]
+    SUCCESS_KEY_ORDER      = %w[changed actions image stdout stderr command stdout_lines stderr_lines failed]
+    NO_BUILD_KEY_ORDER     = %w[changed actions image failed]
+    FAILED_KEY_ORDER       = %w[stdout stderr command failed msg stdout_lines stderr_lines changed exception]
+    PROBE_FAILED_KEY_ORDER = %w[cmd rc stdout stderr failed msg stdout_lines stderr_lines]
 
     def execute : PluginResult
       result = execute_validated
@@ -112,6 +114,16 @@ module Krikri
     private def execute_validated : PluginResult
       if err = validate_arguments
         return err
+      end
+
+      # Real constructs its DockerCLIClient (common_cli.py) before any
+      # module logic - get_bin_path('docker'), then
+      # `docker --host ... version --format '{{ json . }}'` through
+      # run_command(check_rc=True). A daemon that cannot be reached fails
+      # right there, with the CLI's own stderr as the message and the
+      # run_command failure shape, NOT the API client's SDK wording.
+      if failure = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+        return probe_failure_result(failure)
       end
 
       path = @params["path"]?.to_s
@@ -130,7 +142,7 @@ module Krikri
       rebuild = @params["rebuild"]? || "never"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       full_ref = PluginHelpers::DockerRef.join(ref_name, tag)
       existing_image = image_inspect(client, full_ref)
 
@@ -176,7 +188,30 @@ module Krikri
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
+    end
+
+    # The run_command(check_rc=True) failure shape real's CLI probe fails
+    # with: fail_json(cmd=..., rc=..., stdout=..., stderr=..., msg=...) -
+    # kwargs in that order, then _return_formatted's stdout_lines/
+    # stderr_lines, with changed/exception appended by the module
+    # protocol. A missing CLI binary fails as a plain fail_json(msg=...)
+    # (common_cli.py's get_bin_path failure - no cmd/rc at all).
+    private def probe_failure_result(failure : PluginHelpers::DockerCliProbe::Failure) : PluginResult
+      cmd = failure.cmd
+      unless cmd
+        return PluginResult.new(changed: false, failed: true, msg: failure.msg)
+      end
+
+      result = PluginResult.new(changed: false, failed: true, msg: failure.msg,
+        cmd: JSON::Any.new(cmd),
+        rc: JSON::Any.new(failure.rc.to_i64),
+        stdout: JSON::Any.new(failure.stdout),
+        stderr: JSON::Any.new(failure.stderr),
+        stdout_lines: PluginHelpers::AnsibleSplitlines.split(failure.stdout),
+        stderr_lines: PluginHelpers::AnsibleSplitlines.split(failure.stderr))
+      result.key_order = PROBE_FAILED_KEY_ORDER
+      result
     end
 
     # The no-build module dict shape: Ansible's results = {"changed": ...,

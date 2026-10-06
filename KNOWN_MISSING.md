@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1518`.**
+**Currently at `0.9.1520`.**
 
 ## Open gaps
 
@@ -36,14 +36,13 @@ defect moves down or gets deleted.
   every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
   crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
   on port 15432 need a **postgres:16** server.
-- **Docker plugins:** API failures (`docker_container`/`docker_image` pulls, `docker_network`,
-  `docker_login`, `docker_image_build`) render Ansible's Python-SDK wording, verified byte-for-byte
-  against community.docker 5.2.1 on a podman socket for pull, network-create and login failures. Still
-  different: `docker_container` does not report container *start* failures (real: `Error starting
-  container <id>: <SDK text>` on e.g. a port conflict); daemon-unreachable wording (real: `Error
-  connecting: Error while fetching server API version: ...`) differs in every module; `docker_network`
-  has no `ipam_config`. `docker_image_build`'s SDK-error path could not be provoked (podman has no
-  buildx, real fails at its own probe first), so that wording is aligned but unverified live.
+- **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
+  modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
+  socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real);
+  an `ipam_config` element without `subnet` registers real's odd exception-path key order; `docker_container`
+  implements `ports:` but not real's `published_ports:` alias; `docker buildx build`/`docker compose`
+  calls do not pass `--host` (only the version probe does). `docker_image_build`'s SDK-error path could
+  not be provoked on podman (no buildx), so that wording is aligned but unverified live.
 - **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
   the daemon, <1% templating/conditions. Done from that profile: a **local plugin daemon** serves

@@ -91,7 +91,7 @@ module Krikri
       ref_tag = @params["tag"]? || default_tag
       full_ref = PluginHelpers::DockerRef.join(ref_name, ref_tag)
 
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
 
       pre_pull_id = image_id(client, full_ref)
@@ -108,7 +108,7 @@ module Krikri
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     private def validate_state_and_source(state : String, source : String?) : PluginResult?

@@ -129,11 +129,23 @@ module Krikri
       # UNIX-socket adapter under, or scheme://host:port for a TCP(+TLS)
       # daemon.
       def self.sdk_base_url(params : Hash(String, String), client : Docr::Client) : String
-        docker_host = params["docker_host"]? || ENV["DOCKER_HOST"]?
+        # Same docker_host resolution DockerClient.build uses, kept
+        # self-contained here (this helper is also required standalone by
+        # its unit test): param, then the task environment: overlay's
+        # DOCKER_HOST, then the plugin process's own DOCKER_HOST.
+        docker_host = params["docker_host"]? || env_fallback(params, "DOCKER_HOST") || ENV["DOCKER_HOST"]?
         tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
         return "http+docker://localhost" unless tcp
 
         "#{client.tls? ? "https" : "http"}://#{client.host}:#{client.port}"
+      end
+
+      private def self.env_fallback(params : Hash(String, String), key : String) : String?
+        raw = params["_environment"]?
+        return nil unless raw
+        Hash(String, String).from_json(raw)[key]?
+      rescue
+        nil
       end
 
       # Real (both docker_container and docker_image pull through
@@ -199,6 +211,69 @@ module Krikri
       # ("Code: 500 Message: <daemon message>" - docr's errors.cr).
       private def self.docr_daemon_message(ex : Docr::Errors::DockerAPIError) : String
         (ex.message || "").sub(/\ACode: \d+ Message: /, "")
+      end
+
+      # Real's AnsibleDockerClientBase (module_utils/common_api.py) wraps
+      # every exception escaping the SDK Client's __init__ in
+      # "Error connecting: %s" - and that __init__'s api_version property
+      # is the daemon's first round trip (GET /version), which is why the
+      # text always carries the SDK's own "Error while fetching server
+      # API version: ..." middle. The transport error after it is
+      # requests' own rendering: a one-element tuple of the wrapped
+      # exception's repr for a UNIX-socket connect
+      # ("('Connection aborted.', FileNotFoundError(2, 'No such file or
+      # directory'))"), or urllib3's pool-retry prose for a TCP one.
+      # docker_host is the resolved docker_host (param or environment) -
+      # only needed to pick the TCP branch's pool spelling.
+      def self.connect_error_text(ex : Exception, docker_host : String? = nil) : String
+        "Error connecting: Error while fetching server API version: #{transport_error_text(ex, docker_host)}"
+      end
+
+      def self.transport_error_text(ex : Exception, docker_host : String?) : String
+        tcp = docker_host.try { |host| {"tcp://", "http://", "https://"}.any? { |scheme| host.starts_with?(scheme) } } || false
+        if tcp
+          uri = URI.parse(docker_host || "")
+          https = docker_host.try(&.starts_with?("https://")) || false
+          port = uri.port || (https ? 2376 : 2375)
+          pool = "#{https ? "HTTPS" : "HTTP"}ConnectionPool(host='#{uri.host || ""}', port=#{port})"
+          cause = errno_cause_text(ex)
+          # urllib3 renders the failed connection attempt's own object
+          # address in the cause ("...HTTPConnection object at 0x7fa5..."),
+          # which is the Python process's live heap pointer - real's own
+          # text is not stable across runs there, so this quotes THIS
+          # process's exception object id in the same shape.
+          "#{pool}: Max retries exceeded with url: /version " \
+          "(Caused by NewConnectionError('<urllib3.connection.#{https ? "HTTPS" : "HTTP"}Connection " \
+          "object at 0x#{ex.object_id.to_s(16).rjust(12, '0')}>: Failed to establish a new connection: #{cause}'))"
+        else
+          "('Connection aborted.', #{wrapped_exception_text(ex)})"
+        end
+      end
+
+      private def self.errno_cause_text(ex : Exception) : String
+        errno = ex.os_error.as?(Errno)
+        errno ? "[Errno #{errno.value}] #{errno.message}" : (ex.message || "connection error")
+      end
+
+      # Python's repr of the exception requests wraps for a UNIX-socket
+      # connect failure, byte-verified against community.docker 5.2.1
+      # driving podman's docker-compatible socket: the tuples real's
+      # "Error connecting: ..." messages quote are exactly
+      #     FileNotFoundError(2, 'No such file or directory')
+      #     ConnectionRefusedError(111, 'Connection refused')
+      #     PermissionError(13, 'Permission denied')
+      # (each itself wrapped in ('Connection aborted.', ...) by requests).
+      private def self.wrapped_exception_text(ex : Exception) : String
+        errno = ex.os_error.as?(Errno)
+        return "OSError('#{ex.message}')" unless errno
+
+        case errno
+        when .enoent?       then "FileNotFoundError(2, 'No such file or directory')"
+        when .econnrefused? then "ConnectionRefusedError(111, 'Connection refused')"
+        when .eacces?       then "PermissionError(13, 'Permission denied')"
+        when .econnreset?   then "ConnectionResetError(104, 'Connection reset by peer')"
+        else                     "OSError(#{errno.value}, '#{errno.message}')"
+        end
       end
     end
   end

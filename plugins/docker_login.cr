@@ -105,7 +105,7 @@ module Krikri
       # _login) and fails with the SDK's own APIError wording - the CLI
       # below only runs once the daemon accepted them, so a wrong password
       # never produces the CLI's own error text.
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       if err = PluginHelpers::DockerSdkError.registry_auth_error(client, @params, registry_url, username, password)
         return censor(PluginResult.new(changed: false, failed: true,
           msg: "Logging into #{registry_url} for user #{username} failed - #{err}"), password)
@@ -120,7 +120,7 @@ module Krikri
 
       censor(success_result(changed: true, login_result: login_result(registry_url, username)), password)
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     # A successful login/logout carries no msg: Ansible's `actions` list

@@ -225,6 +225,16 @@ module Krikri
     # Ansible's own wrapper for a DockerException escaping the module body.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
+    # Raised by the start paths below with the already-formatted failure
+    # message. Real's container_start (module_utils/module_container/
+    # module.py) catches ANY exception from the start call and fails with
+    # "Error starting container <id>: <SDK text>" - for a fresh
+    # create-and-start exactly as much as for starting an existing
+    # stopped container - so the SDK's APIError rendering must NOT get
+    # the generic "An unexpected Docker error occurred:" prefix here.
+    class StartFailure < Exception
+    end
+
     def execute : PluginResult
       name = @params["name"]?
       unless name
@@ -241,7 +251,7 @@ module Krikri
       return healthy_timeout if healthy_timeout.is_a?(PluginResult)
       healthy_max_wait = healthy_timeout.as(Float64?)
 
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
       existing = find_container(api, name)
 
@@ -263,10 +273,12 @@ module Krikri
         needs_recreate, parsed_networks, healthy_max_wait, check_mode)
     rescue ex : PluginHelpers::DockerSdkError::ImagePullError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
+    rescue ex : StartFailure
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     # The per-state dispatch, kept out of #execute so both stay readable.
@@ -701,7 +713,7 @@ module Krikri
       config = build_container_config(image_ref || raise "image is required to create a new container")
       ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
       resp = api.containers.create(name, config)
-      api.containers.start(resp.id) if start
+      start_container!(api, resp.id) if start
       connected, disconnected = sync_networks!(api, resp.id, requested_networks)
       {resp.id, connected, disconnected}
     end
@@ -719,9 +731,18 @@ module Krikri
       api.containers.delete(existing.id, force: true)
       ensure_image_pulled(api, image_ref || raise "image is required to create a new container") if pull
       resp = api.containers.create(name, config)
-      api.containers.start(resp.id) if start
+      start_container!(api, resp.id) if start
       connected, disconnected = sync_networks!(api, resp.id, requested_networks)
       {resp.id, connected, disconnected}
+    end
+
+    # The one start call every state=started flow funnels through, so the
+    # failure wording matches real's container_start exactly (see
+    # StartFailure above).
+    private def start_container!(api : Docr::API, container_id : String) : Nil
+      api.containers.start(container_id)
+    rescue ex : Docr::Errors::DockerAPIError
+      raise StartFailure.new("Error starting container #{container_id}: #{PluginHelpers::DockerSdkError.api_error_text(api.client, @params, ex)}")
     end
 
     private def start_existing(
@@ -740,7 +761,9 @@ module Krikri
         # success, not an error (grycap.chronos' warm rerun: "Docker API
         # error: Code: 304 Message: No response body" failed the task
         # where ansible-playbook's warm run reported ok).
-        raise ex unless ex.message.try(&.includes?("Code: 304"))
+        unless ex.message.try(&.includes?("Code: 304"))
+          raise StartFailure.new("Error starting container #{existing.id}: #{PluginHelpers::DockerSdkError.api_error_text(api.client, @params, ex)}")
+        end
         connected, disconnected = sync_networks!(api, existing.id, requested_networks)
         return PluginResult.new(changed: false, failed: false, msg: "Container #{name} already started#{network_suffix(connected, disconnected)}")
       end

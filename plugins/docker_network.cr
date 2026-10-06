@@ -40,15 +40,20 @@ module Krikri
   # - check_mode
   #
   # Idempotency is by name; if a network with that name already exists
-  # but its driver differs from the requested one, it's removed and
-  # recreated (Docker has no "change a network's driver in place" API) -
-  # everything else about an existing network (IPAM, labels, etc.) is left
+  # but its driver differs from the requested one, or its IPAM config
+  # differs from a given ipam_config:/ipam_driver:/ipam_driver_options:
+  # (real's has_different_config, IPAM part), it's removed and recreated
+  # (Docker has no "change a network's driver/IPAM in place" API) -
+  # everything else about an existing network (labels, etc.) is left
   # untouched even if it differs from what was requested, a documented
   # simplification versus Ansible's much more thorough comparison.
   # connected: is checked/applied on every run regardless, including when
   # the network itself needed no change - silently ignoring it after the
   # network already exists would make it useless on every run after the
   # first, the same reasoning docker_container.cr's own networks: uses.
+  # A task that gives no connected: list inherits the network's current
+  # containers (real's own defaulting), which is what keeps a recreate
+  # from disconnecting everything.
   #
   # - force: unconditionally deletes and recreates the network even when
   #   its config already matches (distinct from the driver-mismatch
@@ -59,12 +64,24 @@ module Krikri
   #   any container still attached), matching the driver-mismatch path's
   #   own delete exactly - live-verified against a real Docker daemon.
   #
-  # ipam_config: is accepted and validated (sub-spec element shape,
-  # matching real _list_no_log_values' string-to-dict conversion) but not
-  # applied - Docker has no "change a network's IPAM in place" API, so a
-  # differing ipam_config needs the force:-style recreate path, which
-  # real gates behind has_different_config's much more thorough
-  # comparison; `api_version:` is likewise unimplemented (see
+  # ipam_config: (list of {subnet, iprange, gateway, aux_addresses}) is
+  # applied on create exactly like real's create_network payload (Subnet/
+  # IPRange/Gateway/AuxiliaryAddresses, every key present, null when the
+  # task left it out), and its comparison against the daemon's readback
+  # drives the recreate path above: real normalizes the readback keys
+  # (AuxiliaryAddresses -> aux_addresses, the rest lower-cased), finds
+  # the readback entry that covers every non-null requested key, and
+  # counts a per-key difference ("ipam_config[<idx>].<key>") when none
+  # does. On podman's docker-compatible socket the readback echoes only
+  # Gateway/Subnet, so a fully-specified pool re-creates on every run -
+  # real does the same there; a subnet-only pool is idempotent on both.
+  # The subnets are CIDR-validated after the daemon connection (real's
+  # TaskParameters order): '"<subnet>" is not a valid CIDR'. The
+  # comparison entries also feed the check_mode/debug `diff` (legacy
+  # `differences` name list, plus before/after with --diff), `exists`
+  # leading both maps like real's diff tracker. ipam_driver:/
+  # ipam_driver_options: ride the same IPAM create payload and comparison.
+  # `api_version:` is likewise unimplemented (see
   # PluginHelpers::DockerClient).
   class DockerNetworkPlugin < BasePlugin
     include PluginHelpers::AnsibleArgValidation
@@ -132,22 +149,33 @@ module Krikri
       appends = true?(@params["appends"]?)
       state = @params["state"]? || "present"
       check_mode = true?(@params["_ansible_check_mode"]?)
+      ipam_driver = @params["ipam_driver"]?
+      ipam_driver_options = @params["ipam_driver_options"]?.try { |json| Hash(String, String).from_json(json) }
 
-      client, docker_host_description = PluginHelpers::DockerClient.build(@params)
+      client, _ = PluginHelpers::DockerClient.build(@params)
       api = Docr::API.new(client)
+
+      # Real validates the ipam_config subnets AFTER the daemon connection
+      # (TaskParameters.__init__ runs once the client already exists), so
+      # a dead daemon fails with the connect wording even with a bad CIDR.
+      if err = validate_ipam_cidrs
+        return err
+      end
 
       existing = find_network(api, name)
 
       # state is choices-validated to exactly present/absent above.
       if state == "present"
-        ensure_present(api, name, driver, internal, attachable, labels, connected, appends, existing, check_mode, true?(@params["debug"]?))
+        ensure_present(api, name, driver, internal, attachable, labels, connected, appends,
+          ipam_driver, ipam_driver_options, existing, check_mode, true?(@params["debug"]?),
+          true?(@params["_ansible_diff"]?))
       else
         ensure_absent(api, name, existing, check_mode)
       end
     rescue ex : Docr::Errors::DockerAPIError
       PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
     rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: "Could not connect to the Docker daemon (#{docker_host_description}): #{ex.message}")
+      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     private def ensure_present(
@@ -159,34 +187,41 @@ module Krikri
       labels : Hash(String, String)?,
       connected : Array(String),
       appends : Bool,
+      ipam_driver : String?,
+      ipam_driver_options : Hash(String, String)?,
       existing : Docr::Types::Network?,
       check_mode : Bool,
       debug_mode : Bool,
+      diff_mode : Bool,
     ) : PluginResult
       force = true?(@params["force"]?)
       actions = [] of String
       changed = false
+      existed_before = !existing.nil?
 
-      # Ansible's remove-then-create recreate path (`force:` or a driver
-      # mismatch) records the removal in `actions` exactly like a plain
-      # absent run does.
-      if existing && (force || existing.driver != driver)
+      # Ansible's own defaulting (DockerNetworkManager.__init__): a task
+      # that gives no connected: list inherits the network's CURRENT
+      # containers - which is what makes a recreate (and a plain no-drift
+      # rerun) leave the connected set alone instead of disconnecting
+      # everything.
+      if connected.empty? && existing
+        connected = container_names_in_network(api, name)
+      end
+
+      # Real's present(): has_different_config runs on the existing
+      # network, and force: OR any difference (driver or IPAM) takes the
+      # remove-then-create recreate path, recording the removal in
+      # `actions` exactly like a plain absent run does.
+      drift = ipam_drift(api, name, existing, ipam_driver, ipam_driver_options)
+      if existing && (force || existing.driver != driver || drift)
         remove_network!(api, name, existing, check_mode, actions)
         changed = true
         existing = nil
       end
 
       unless existing
-        unless check_mode
-          config = Docr::Types::NetworkConfig.new(
-            name: name,
-            driver: driver,
-            internal: internal,
-            attachable: attachable,
-            labels: labels,
-          )
-          existing = api.networks.create(config)
-        end
+        create_network!(api, name, driver, internal, attachable, labels,
+          ipam_driver, ipam_driver_options, check_mode)
         actions << "Created network #{name} with driver #{driver}"
         changed = true
       end
@@ -200,7 +235,323 @@ module Krikri
         changed = true if sync_connected!(api, name, connected, appends, check_mode, actions)
       end
 
-      present_result(api, name, actions, changed, check_mode || debug_mode, check_mode)
+      present_result(api, name, actions, changed, check_mode || debug_mode, check_mode,
+        diff_mode, existed_before, drift)
+    end
+
+    # The create half of present(): the raw IPAM-bearing payload when any
+    # IPAM param was given, the docr-typed create otherwise (both skipped
+    # in check mode, where only the action gets recorded).
+    private def create_network!(
+      api : Docr::API, name : String, driver : String, internal : Bool,
+      attachable : Bool, labels : Hash(String, String)?,
+      ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
+      check_mode : Bool,
+    ) : Nil
+      return if check_mode
+
+      if ipam_driver || ipam_driver_options || !ipam_pools.empty?
+        create_network_with_ipam!(api, name, driver, internal, attachable, labels,
+          ipam_driver, ipam_driver_options)
+        return
+      end
+
+      config = Docr::Types::NetworkConfig.new(
+        name: name,
+        driver: driver,
+        internal: internal,
+        attachable: attachable,
+        labels: labels,
+      )
+      api.networks.create(config)
+    end
+
+    # Ansible's has_different_config, IPAM part only (the other fields
+    # keep this plugin's documented compare-nothing-but-driver behavior).
+    # Returns nil when there is nothing to compare (no ipam params given,
+    # or no existing network); otherwise the DifferenceTracker-style
+    # entries: the legacy `differences` name list plus the before/after
+    # maps the `diff` result carries (each keyed "ipam_config[<idx>.]<key>"
+    # etc., `exists` added by the caller).
+    private def ipam_drift(
+      api : Docr::API, name : String, existing : Docr::Types::Network?,
+      ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
+    ) : Drift?
+      return nil if existing.nil?
+      return nil if ipam_driver.nil? && ipam_driver_options.nil? && ipam_pools.empty?
+
+      net = docker_raw_get(api.client, "/networks/#{name}")
+      return nil unless net
+
+      drift = Drift.new
+      net_ipam = net["IPAM"]?.try(&.as_h?)
+      drift_driver(drift, net_ipam, ipam_driver)
+      drift_driver_options(drift, net_ipam, ipam_driver_options)
+      drift_pools(drift, net_ipam)
+      drift.empty? ? nil : drift
+    end
+
+    # ipam_driver: given - the readback must carry the same IPAM driver
+    # (the whole IPAM dict is the active side of the difference entry,
+    # like real's differences.add).
+    private def drift_driver(drift : Drift, net_ipam : Hash(String, JSON::Any)?, ipam_driver : String?) : Nil
+      return unless ipam_driver
+      return if net_ipam && net_ipam["Driver"]?.try(&.as_s?) == ipam_driver
+
+      drift.add("ipam_driver", JSON::Any.new(ipam_driver), net_ipam.try { |ipam| JSON::Any.new(ipam) })
+    end
+
+    private def drift_driver_options(drift : Drift, net_ipam : Hash(String, JSON::Any)?, ipam_driver_options : Hash(String, String)?) : Nil
+      return unless ipam_driver_options
+
+      net_opts = net_ipam.try(&.["Options"]?.try(&.as_h?)) || {} of String => JSON::Any
+      requested = ipam_driver_options.map { |key, value| {key, JSON::Any.new(value)} }.to_h
+      return if net_opts == requested
+
+      drift.add("ipam_driver_options", JSON::Any.new(requested), JSON::Any.new(net_opts))
+    end
+
+    private def drift_pools(drift : Drift, net_ipam : Hash(String, JSON::Any)?) : Nil
+      pools = ipam_pools
+      return if pools.empty?
+
+      # Put the network's IPAM config entries into the same format as the
+      # module's (real's normalize_ipam_config_key pass).
+      net_configs = (net_ipam.try(&.["Config"]?.try(&.as_a?)) || [] of JSON::Any).map do |entry|
+        normalized = {} of String => JSON::Any
+        entry.as_h.each do |key, value|
+          normalized[normalize_ipam_config_key(key)] = value
+        end
+        normalized
+      end
+
+      if net_configs.empty?
+        drift.add("ipam_config", requested_ipam_json(pools), net_ipam.try(&.["Config"]?))
+        return
+      end
+
+      pools.each_with_index do |pool, idx|
+        # dicts_are_essentially_equal: the first readback entry whose
+        # values cover every non-null requested key wins; when none
+        # does, every requested key counts as a difference against an
+        # empty readback entry (active=None) - which is exactly what
+        # podman's readback (no IPRange/AuxiliaryAddresses echo)
+        # produces for a fully-specified pool, matching real's
+        # recreate-on-every-run there.
+        net_config = net_configs.find { |entry| essentially_equal?(pool, entry) } || {} of String => JSON::Any
+        drift_pool_keys(drift, idx, pool, net_config)
+      end
+    end
+
+    private def drift_pool_keys(drift : Drift, idx : Int32, pool : RequestedIpamPool, net_config : Hash(String, JSON::Any)) : Nil
+      pool.each_present_field do |key, value|
+        active = net_config[key]?
+        next if active == value
+        drift.add("ipam_config[#{idx}].#{key}", value, active)
+      end
+    end
+
+    # Ansible's dicts_are_essentially_equal(a, b): every non-null entry of
+    # *pool* must be present and equal in the readback entry *net_config*
+    # (extra readback keys are ignored).
+    private def essentially_equal?(pool : RequestedIpamPool, net_config : Hash(String, JSON::Any)) : Bool
+      pool.each_present_field do |key, value|
+        return false unless net_config[key]? == value
+      end
+      true
+    end
+
+    # normalize_ipam_config_key: the Docker API's IPAM config keys
+    # lower-cased, with its one special spelling folded to the Ansible key.
+    private def normalize_ipam_config_key(key : String) : String
+      key == "AuxiliaryAddresses" ? "aux_addresses" : key.downcase
+    end
+
+    private def requested_ipam_json(pools : Array(RequestedIpamPool)) : JSON::Any
+      JSON::Any.new(pools.map do |pool|
+        fields = {} of String => JSON::Any
+        pool.each_field do |key, value|
+          fields[key] = value || JSON::Any.new(nil)
+        end
+        JSON::Any.new(fields)
+      end)
+    end
+
+    # One requested ipam_config entry: the four Ansible keys (each nil
+    # when the task left it out, matching real's recursive-argspec
+    # None-default behavior) as JSON::Any values so the comparison can
+    # talk to the daemon's raw readback directly.
+    record RequestedIpamPool,
+      subnet : JSON::Any?,
+      iprange : JSON::Any?,
+      gateway : JSON::Any?,
+      aux_addresses : JSON::Any? do
+      # Iterates the Ansible-side keys in argspec order with their values;
+      # aux_addresses stays the raw JSON (a dict) for equality comparison.
+      def each_field(&) : Nil
+        yield "subnet", @subnet
+        yield "iprange", @iprange
+        yield "gateway", @gateway
+        yield "aux_addresses", @aux_addresses
+      end
+
+      # each_field restricted to the keys the task actually gave - the
+      # comparison skips null entries the way real's
+      # dicts_are_essentially_equal does.
+      def each_present_field(&) : Nil
+        subnet = @subnet
+        yield "subnet", subnet unless subnet.nil?
+        iprange = @iprange
+        yield "iprange", iprange unless iprange.nil?
+        gateway = @gateway
+        yield "gateway", gateway unless gateway.nil?
+        aux_addresses = @aux_addresses
+        yield "aux_addresses", aux_addresses unless aux_addresses.nil?
+      end
+    end
+
+    # The task's ipam_config entries, parsed once per call. The str-typed
+    # keys go through Ansible's own str() conversion for non-string
+    # scalars (its recursive argspec converts subnet: 123 to "123");
+    # aux_addresses is a plain untyped dict and stays raw.
+    private def ipam_pools : Array(RequestedIpamPool)
+      raw = @params["ipam_config"]?
+      return [] of RequestedIpamPool unless raw
+
+      parse_sub_list(raw).compact_map do |element|
+        next nil unless fields = element.as_h?
+        RequestedIpamPool.new(
+          subnet: pool_str_field(fields, "subnet"),
+          iprange: pool_str_field(fields, "iprange"),
+          gateway: pool_str_field(fields, "gateway"),
+          aux_addresses: pool_dict_field(fields, "aux_addresses"),
+        )
+      end
+    end
+
+    private def pool_str_field(fields : Hash(String, JSON::Any), key : String) : JSON::Any?
+      raw = fields[key]?
+      return nil unless raw
+
+      case raw_value = raw.raw
+      when String  then JSON::Any.new(raw_value)
+      when Int64   then JSON::Any.new(raw_value.to_s)
+      when Float64 then JSON::Any.new(raw_value.to_s)
+      when Bool    then JSON::Any.new(raw_value ? "True" : "False")
+      end
+    end
+
+    private def pool_dict_field(fields : Hash(String, JSON::Any), key : String) : JSON::Any?
+      raw = fields[key]?
+      return nil unless raw
+      return nil unless raw.as_h?
+
+      raw
+    end
+
+    # Real's validate_cidr (docker_network.py): IPv4 first, then IPv6,
+    # else '"<subnet>" is not a valid CIDR'. A pool without a subnet
+    # fails the same way real's re.match(None) TypeError does. Runs after
+    # the daemon connection (real validates in TaskParameters.__init__,
+    # which the already-created client precedes).
+    private def validate_ipam_cidrs : PluginResult?
+      ipam_pools.each do |pool|
+        subnet = pool.subnet
+        unless subnet
+          return PluginResult.new(changed: false, failed: true, msg: "expected string or bytes-like object, got 'NoneType'")
+        end
+        next if subnet.as_s.matches?(CIDR_IPV4) || subnet.as_s.matches?(CIDR_IPV6)
+        return PluginResult.new(changed: false, failed: true, msg: "\"#{subnet.as_s}\" is not a valid CIDR")
+      end
+      nil
+    end
+
+    CIDR_IPV4 = /\A([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])\Z/
+    CIDR_IPV6 = /\A[0-9a-fA-F:]+\/([0-9]|[1-9][0-9]|1[0-2][0-9])\Z/
+
+    # The DifferenceTracker-shaped outcome of the IPAM comparison: the
+    # legacy `differences` name list plus the before/after entries.
+    private class Drift
+      property names : Array(String)
+      property before : Hash(String, JSON::Any)
+      property after : Hash(String, JSON::Any)
+
+      def initialize
+        @names = [] of String
+        @before = {} of String => JSON::Any
+        @after = {} of String => JSON::Any
+      end
+
+      def add(name : String, parameter : JSON::Any, active : JSON::Any?) : Nil
+        @names << name
+        @before[name] = active || JSON::Any.new(nil)
+        @after[name] = parameter
+      end
+
+      def empty? : Bool
+        @names.empty?
+      end
+    end
+
+    # Real's create_network() payload for the IPAM-bearing path: the
+    # daemon's POST /networks/create body exactly as real builds it
+    # (Name/Driver/Options/IPAM/CheckDuplicate, then the conditional
+    # fields, then the IPAM dict when any IPAM param was given). The
+    # non-IPAM path keeps the docr-typed create above.
+    private def create_network_with_ipam!(
+      api : Docr::API, name : String, driver : String, internal : Bool,
+      attachable : Bool, labels : Hash(String, String)?,
+      ipam_driver : String?, ipam_driver_options : Hash(String, String)?,
+    ) : Nil
+      data = {
+        "Name"           => JSON::Any.new(name),
+        "Driver"         => JSON::Any.new(driver),
+        "Options"        => driver_options_json,
+        "IPAM"           => JSON::Any.new(nil),
+        "CheckDuplicate" => JSON::Any.new(nil),
+      } of String => JSON::Any
+
+      data["Internal"] = JSON::Any.new(true) if internal
+      data["Attachable"] = JSON::Any.new(attachable) if @params["attachable"]?
+      data["Labels"] = JSON::Any.new(labels.map { |k, v| {k, JSON::Any.new(v)} }.to_h) if labels
+
+      if ipam_driver || ipam_driver_options || !ipam_pools.empty?
+        data["IPAM"] = JSON::Any.new({
+          "Driver"  => ipam_driver ? JSON::Any.new(ipam_driver) : JSON::Any.new(nil),
+          "Config"  => JSON::Any.new(ipam_pools.map { |pool| pool_create_json(pool) }),
+          "Options" => ipam_driver_options ? JSON::Any.new(ipam_driver_options.map { |k, v| {k, JSON::Any.new(v)} }.to_h) : JSON::Any.new(nil),
+        } of String => JSON::Any)
+      end
+
+      docker_raw_call(api.client, "POST", "/networks/create", JSON::Any.new(data))
+    end
+
+    private def driver_options_json : JSON::Any
+      raw = @params["driver_options"]?
+      return JSON::Any.new(nil) unless raw
+      JSON.parse(raw)
+    end
+
+    # The create payload's Config entry: all four Docker-API keys, each
+    # the requested value or null (real sends every key unconditionally).
+    private def pool_create_json(pool : RequestedIpamPool) : JSON::Any
+      aux = pool.aux_addresses
+      JSON::Any.new({
+        "Subnet"             => pool.subnet || JSON::Any.new(nil),
+        "IPRange"            => pool.iprange || JSON::Any.new(nil),
+        "Gateway"            => pool.gateway || JSON::Any.new(nil),
+        "AuxiliaryAddresses" => aux || JSON::Any.new(nil),
+      } of String => JSON::Any)
+    end
+
+    # Ansible's container_names_in_network, for the connected: defaulting
+    # above.
+    private def container_names_in_network(api : Docr::API, name : String) : Array(String)
+      net = docker_raw_get(api.client, "/networks/#{name}")
+      containers = net.try(&.["Containers"]?.try(&.as_h?)) || {} of String => JSON::Any
+      containers.values.compact_map do |container|
+        container.as_h?.try(&.["Name"]?.try(&.as_s?))
+      end
     end
 
     # Ansible's `remove_network()`: disconnect everything first (Docker
@@ -219,16 +570,33 @@ module Krikri
     # only survives into the wire in check_mode/debug (real pops it
     # otherwise), `network` is the raw inspect payload (`null` when a
     # check_mode create did not actually create anything), and `diff` is
-    # only filled in check_mode/debug.
+    # only filled in check_mode/debug - {"differences": [...]} always,
+    # plus the diff tracker's before/after when the task ran with --diff.
+    # `exists` leads the before/after maps (present() adds it first),
+    # then the IPAM comparison entries.
     private def present_result(
       api : Docr::API, name : String, actions : Array(String),
       changed : Bool, keep_actions : Bool, with_diff : Bool,
+      diff_mode : Bool, existed_before : Bool, drift : Drift?,
     ) : PluginResult
       result = PluginResult.new(changed: changed, failed: false, failed_flag: false)
       result.key_order = KEY_ORDER
       result.extra["actions"] = json_string_array(actions) if keep_actions
       result.extra["network"] = inspect_network_json(api, name)
-      result.extra["diff"] = JSON.parse(%({"differences": []})) if with_diff
+      if with_diff
+        diff = {"differences" => json_string_array(drift.try(&.names) || [] of String)} of String => JSON::Any
+        if diff_mode
+          before = {"exists" => JSON::Any.new(existed_before)} of String => JSON::Any
+          after = {"exists" => JSON::Any.new(true)} of String => JSON::Any
+          if drift
+            drift.before.each { |key, value| before[key] = value }
+            drift.after.each { |key, value| after[key] = value }
+          end
+          diff["before"] = JSON::Any.new(before)
+          diff["after"] = JSON::Any.new(after)
+        end
+        result.extra["diff"] = JSON::Any.new(diff)
+      end
       result
     end
 

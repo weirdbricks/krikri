@@ -89,7 +89,7 @@ module Krikri
       COMMON_REQUIRED_TOGETHER = %w[client_cert client_key]
 
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
-        docker_host = params["docker_host"]? || ENV["DOCKER_HOST"]?
+        docker_host = resolved_docker_host(params)
 
         if docker_host && (docker_host.starts_with?("tcp://") || docker_host.starts_with?("https://") || docker_host.starts_with?("http://"))
           build_tcp(params, docker_host)
@@ -100,11 +100,35 @@ module Krikri
         end
       end
 
+      # The docker_host the plugin will actually talk to: the docker_host:
+      # param, then the task's own environment: overlay's DOCKER_HOST
+      # (forwarded under the _environment param key), then the plugin
+      # process's own DOCKER_HOST. Real's env_fallback reads the module
+      # process's os.environ, and Ansible applies the task environment:
+      # to that process - which the local plugin daemon deliberately does
+      # not do (see LocalPluginDaemon's doc comment), so the overlay has
+      # to be consulted explicitly.
+      def self.resolved_docker_host(params : Hash(String, String)) : String?
+        params["docker_host"]? || env_overlay(params)["DOCKER_HOST"]? || ENV["DOCKER_HOST"]?
+      end
+
+      # The task's environment: overlay as a plain hash (empty when the
+      # task set none or the blob is malformed - the overlay is only ever
+      # READ here for specific keys, so unlike BasePlugin#task_environment
+      # no key validation is needed).
+      def self.env_overlay(params : Hash(String, String)) : Hash(String, String)
+        raw = params["_environment"]?
+        return {} of String => String unless raw
+        Hash(String, String).from_json(raw)
+      rescue
+        {} of String => String
+      end
+
       private def self.build_tcp(params : Hash(String, String), docker_host : String) : {Docr::Client, String}
         uri = URI.parse(docker_host)
         host = uri.host || raise "docker_host: '#{docker_host}' is missing a hostname"
         port = uri.port || 2376
-        tls_hostname = params["tls_hostname"]? || ENV["DOCKER_TLS_HOSTNAME"]?
+        tls_hostname = params["tls_hostname"]? || env_overlay(params)["DOCKER_TLS_HOSTNAME"]? || ENV["DOCKER_TLS_HOSTNAME"]?
 
         tls = build_tls_context(params, docker_host)
         client = Docr::Client.new(host, port, tls, tls_hostname)
@@ -116,8 +140,9 @@ module Krikri
       # DOCKER_TLS/DOCKER_TLS_VERIFY) - see the class doc comment above
       # for why cert paths alone deliberately do NOT trigger this.
       private def self.build_tls_context(params : Hash(String, String), docker_host : String) : OpenSSL::SSL::Context::Client?
-        validate = flag?(params["validate_certs"]? || params["tls_verify"]? || ENV["DOCKER_TLS_VERIFY"]?)
-        return nil unless docker_host.starts_with?("https://") || validate || flag?(params["tls"]? || ENV["DOCKER_TLS"]?)
+        overlay = env_overlay(params)
+        return nil unless tls_requested?(params, docker_host, overlay)
+        validate = flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
 
         cacert_path, cert_path, key_path = cert_paths(params)
         context = OpenSSL::SSL::Context::Client.new
@@ -126,6 +151,17 @@ module Krikri
         context.private_key = key_path if key_path
         context.verify_mode = validate ? OpenSSL::SSL::VerifyMode::PEER : OpenSSL::SSL::VerifyMode::NONE
         context
+      end
+
+      # https:// implies TLS on its own; otherwise an explicit tls:/
+      # validate_certs: param or their DOCKER_TLS/DOCKER_TLS_VERIFY env
+      # fallbacks (task environment: overlay first) turn it on - see the
+      # class doc comment for why cert paths alone do not.
+      private def self.tls_requested?(params : Hash(String, String), docker_host : String, overlay : Hash(String, String)) : Bool
+        return true if docker_host.starts_with?("https://")
+        return true if flag?(params["tls"]? || overlay["DOCKER_TLS"]? || ENV["DOCKER_TLS"]?)
+
+        flag?(params["validate_certs"]? || params["tls_verify"]? || overlay["DOCKER_TLS_VERIFY"]? || ENV["DOCKER_TLS_VERIFY"]?)
       end
 
       # Explicit cacert_path:/cert_path:/key_path: params win outright;
@@ -138,7 +174,7 @@ module Krikri
         key_path = params["key_path"]?
         return {cacert_path, cert_path, key_path} if cacert_path || cert_path || key_path
 
-        cert_dir = ENV["DOCKER_CERT_PATH"]?
+        cert_dir = env_overlay(params)["DOCKER_CERT_PATH"]? || ENV["DOCKER_CERT_PATH"]?
         return {nil, nil, nil} unless cert_dir
 
         {File.join(cert_dir, "ca.pem"), File.join(cert_dir, "cert.pem"), File.join(cert_dir, "key.pem")}

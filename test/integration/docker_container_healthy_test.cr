@@ -12,7 +12,7 @@ describe "docker_container state=healthy" do
       "state" => "absent",
       "image" => "busybox:latest",
     })
-    !(probe["msg"]?.try(&.as_s).to_s.includes?("Could not connect to the Docker daemon"))
+    !(probe["msg"]?.try(&.as_s).to_s.includes?("Error connecting: Error while fetching server API version"))
   end
 
   it "fails when name is missing" do

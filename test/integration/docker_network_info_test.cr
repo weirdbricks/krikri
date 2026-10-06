@@ -25,7 +25,7 @@ describe "docker_network_info plugin" do
     })
     result["failed"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("Error connecting")
-    result["msg"].as_s.must_include("Cannot connect to the Docker daemon")
+    result["msg"].as_s.must_include("Error while fetching server API version")
   end
 
   it "returns exists: false (not failed) when the daemon is reachable but the network is absent" do

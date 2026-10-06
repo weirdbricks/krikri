@@ -296,9 +296,8 @@ describe "docker result shape: docker_login" do
   end
 
   # Real fails a login when the daemon is unreachable before any
-  # registry contact (the module's client connects first); the failure
-  # message wording for THAT case is a separate known gap - this spec
-  # only pins the failure shape.
+  # registry contact (the module's client connects first), with the SDK
+  # version-fetch wording every API-client module shares.
   it "fails when the daemon is unreachable, before any registry contact" do
     result = PluginSpecHelper.run("docker_login", {
       "registry_url" => "https://registry-1.docker.io/v1/",
@@ -306,7 +305,8 @@ describe "docker result shape: docker_login" do
       "docker_host" => "unix:///nonexistent/krikri-kp-dk-no-such-#{Process.pid}.sock",
     })
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("Could not connect to the Docker daemon")
+    result["msg"].as_s.must_equal("Error connecting: Error while fetching server API version: " \
+                                  "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))")
   end
 
   # Real validates the credentials with the daemon's POST /auth and
