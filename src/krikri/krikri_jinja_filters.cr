@@ -909,36 +909,8 @@ module Krikri
         yaml_to_json(YAML.parse(text))
       end
     end
-
-    # ansible-core 2.19 materializes the iterator/generator result of every
-    # filter invocation at the call boundary (`_wrap_plugin_output` in
-    # ansible/_internal/_templating/_jinja_bits.py + _jinja_plugins.py:
-    # "ensure that iterators/generators returned from plugins are consumed"),
-    # so `select`/`map`/`reject`/`unique` results reach the next operation as
-    # real lists: `x | select(...) | length` and `list + (x | select(...))`
-    # work in real Ansible but raised "object of type GeneratorValue has no
-    # length" / "unsupported operands for +" here (xolyu.mariadb's
-    # dynamic.cnf.j2). Wrap the shared engine's filters so a lazy
-    # GeneratorValue result is materialized to a list at the same boundary.
-    def self.materialize_generator_outputs : Nil
-      engine = KrikriJinja.default_engine
-      wrapped = {} of String => KrikriJinja::FilterFn
-      engine.filters.each do |name, filter|
-        wrapped[name] = ->(value : KrikriJinja::AnyValue, args : Array(KrikriJinja::AnyValue), kwargs : Hash(String, KrikriJinja::AnyValue), ctx : KrikriJinja::Context) do
-          result = filter.call(value, args, kwargs, ctx)
-          raw = result.raw
-          raw.is_a?(KrikriJinja::GeneratorValue) ? KrikriJinja::AnyValue.new(raw.materialize) : result
-        end
-      end
-      wrapped.each do |name, filter|
-        engine.register_filter(name) do |value, args, kwargs, ctx|
-          filter.call(value, args, kwargs, ctx)
-        end
-      end
-    end
   end
 end
 
 Krikri::KrikriJinjaFilters.register
 Krikri::KrikriJinjaFilters.register_tests
-Krikri::KrikriJinjaFilters.materialize_generator_outputs
