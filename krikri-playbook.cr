@@ -1142,7 +1142,10 @@ playbook.plays.each_with_index do |play, _play_index|
   end
 
   tasks_before_tag_filter = tasks_to_run.size
-  tasks_to_run = Krikri::TagFilter.apply(tasks_to_run, tags, skip_tags, play.tags)
+  # keep_static_imports: a static import_role: statement is transparent
+  # when running (real Ansible selects its loaded tasks individually) -
+  # see TagFilter's own comment.
+  tasks_to_run = Krikri::TagFilter.apply(tasks_to_run, tags, skip_tags, play.tags, keep_static_imports: true)
 
   # --start-at-task: playbook-wide, so the "still looking" state carries
   # across plays and this stops filtering once the match is found.

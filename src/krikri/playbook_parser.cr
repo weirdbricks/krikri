@@ -173,6 +173,27 @@ module Krikri
     property become_expr : String?
     property become_user : String?
     property tags : Array(String)
+    # Context tags this task carries from OUTSIDE itself - the play's own
+    # tags, every enclosing block's tags, a roles:/import_ * invocation's
+    # tags - but never the task's own declared `tags:`. Written by
+    # TagFilter at every selection point (play task list, block children,
+    # and each run-time-loaded include), it is what an
+    # include_tasks:/include_role: passes down to the tasks it loads at
+    # run time: those inherit these plus `apply:` tags, while the include
+    # statement's OWN tags stay with the statement (Ansible gives dynamic
+    # includes' children the parent-chain tags only - live-verified vs
+    # 2.19.11: a `tags:`-bearing include_tasks: does not tag its
+    # children, but an enclosing block's, a play's, a roles: entry's and
+    # an import_role:'s tags all do).
+    property inherited_tags : Array(String)
+    # True for tasks loaded from a HANDLER (and for everything such a
+    # load nests further down): Ansible never tag-filters handlers or
+    # anything a handler includes - a `never`-tagged handler runs when
+    # notified under a plain invocation, and an inner `never` task in a
+    # handler's include_tasks: file ran under --tags zzz (live-verified
+    # vs 2.19.11). Set at the handler include path and propagated by the
+    # executor's runtime filter so nested includes stay exempt.
+    property? tag_exempt : Bool = false
     property loop : Array(JSON::Any)?
     # Loop items already resolved at parse time (loop:, with_items:,
     # with_dict:, with_nested:, with_sequence:, with_indexed_items:).
@@ -533,13 +554,11 @@ module Krikri
     # values, which the executor's include paths merge into the tasks once
     # the included file (or role) has actually been loaded - the include's
     # own become/check_mode resolve into `inherited` there, its vars/when
-    # are applied per loaded task.
-    #
-    # Deliberately narrow scope: become, become_user, check_mode, vars and
-    # when - the block keywords this engine's include path can already
-    # carry. tags: is NOT carried, because tag selection runs once over the
-    # play's own task list (TagFilter) and never re-filters tasks that only
-    # exist at run time. A templated become:/check_mode: inside apply: is
+    # are applied per loaded task. tags: IS carried (include_apply_tags):
+    # tag selection runs over the play's own task list once (TagFilter)
+    # AND again over every run-time-loaded include's tasks, and the
+    # apply: tags join the inherited context of that second pass.
+    # A templated become:/check_mode: inside apply: is
     # taken at its parse-time value, the same approximation parse_block_task
     # makes for a block's own templated become:.
     #
@@ -557,6 +576,14 @@ module Krikri
     property include_apply_vars : Hash(String, JSON::Any)?
     property include_apply_when : String?
     property include_apply_when_list : Array(String)?
+    # `apply: {tags: [...]}` on an include_tasks:/include_role: - unlike
+    # the statement's own tags:, these ARE given to every task the include
+    # loads (Ansible's implicit apply-Block carries them), so the
+    # executor's runtime tag filter merges them into the inherited
+    # context (live-verified vs 2.19.11: apply tags change
+    # --tags/--skip-tags/never selection of the loaded tasks exactly like
+    # an enclosing block's tags would). nil when no apply: was given.
+    property include_apply_tags : Array(String)?
     # include_role: - only set when module_name == "_include_role". The
     # dynamic counterpart to a roles: list entry: resolved at execution
     # time (role name may be templated), via RoleLoader, same as roles:.
@@ -604,6 +631,7 @@ module Krikri
       @become = false
       @become_user = nil
       @tags = [] of String
+      @inherited_tags = [] of String
       @loop = nil
       @loop_items = nil
       @loop_fileglob = nil
@@ -2319,6 +2347,16 @@ module Krikri
           end
         end
         task.tags = (task.tags + import_tags).uniq
+        # The import's tags are a STATIC context push (Ansible gives them
+        # to every imported task and, via the import's implicit block, to
+        # anything those tasks include at run time) - so they go into the
+        # inherited context too, not just the task's own tags. Without
+        # this, an import_tasks: nested include_tasks:'d file's inner
+        # tasks would lose the import's tags at the second selection pass
+        # (live-verified vs 2.19.11: `import_tasks: x, tags: [it]` where
+        # x include_tasks:'s an untagged inner file - `--tags it` runs the
+        # inner task in real Ansible).
+        task.inherited_tags = (task.inherited_tags + import_tags).uniq
         unless import_notify.empty?
           task.notify = ((task.notify || [] of String) + import_notify).uniq
         end
@@ -4337,6 +4375,9 @@ module Krikri
       end
       task.include_apply_when = args["when"]?.try { |v| condition_to_string(v) }
       task.include_apply_when_list = args["when"]?.try { |v| condition_to_list(v) }
+      if tags_yaml = args["tags"]?
+        task.include_apply_tags = tags_yaml.as_a?.try(&.map(&.as_s)) || [safe_yaml_to_string(tags_yaml)]
+      end
     end
 
     private def self.parse_include_tasks(name : String, task_hash : Hash(YAML::Any, YAML::Any), file_rel : String, play : Play, file_dir : String, include_file_native : JSON::Any? = nil) : Task

@@ -194,6 +194,10 @@ module Krikri
 
           propagate_role_context(task, included_tasks)
 
+          # Tag selection over the run-time-loaded tasks - see
+          # #filter_runtime_loaded.
+          included_tasks = filter_runtime_loaded(included_tasks, task)
+
           # The include_tasks: task itself counts as one `ok` per host in
           # the recap, matching Ansible and the single-host
           # execute_include_tasks path - but only once the file has
@@ -1888,6 +1892,10 @@ module Krikri
       # included file shares the enclosing role's defaults/vars.
       propagate_role_context(task, included_tasks)
 
+      # Tag selection over the run-time-loaded tasks - see
+      # #filter_runtime_loaded.
+      included_tasks = filter_runtime_loaded(included_tasks, task)
+
       # The include itself counts as one `ok` in the recap, matching
       # Ansible and the non-looped branch's history (robertdebock.
       # openvpn undercounted by exactly 1) - but only now that parsing
@@ -2225,7 +2233,14 @@ module Krikri
         included_tasks, included_handlers = RoleLoader.load_single_role(
           role_name,
           rendered_include_vars,
-          task.tags,
+          # Only a STATIC import_role: pushes its own tags down onto the
+          # loaded tasks (Ansible's static-inheritance rule, same as a
+          # roles: entry); an include_role:'s declared tags stay with the
+          # statement - live-verified vs 2.19.11: `include_role:
+          # {name: r}, tags: [debug]` under `--tags debug` does NOT run
+          # r's untagged tasks, while the same directive on import_role:
+          # does.
+          task.is_static_import? ? task.tags : [] of String,
           inherited,
           task.include_role_dir.as(String),
           task.include_role_tasks_from,
@@ -2368,6 +2383,14 @@ module Krikri
       # other (and only other) place a block-type Task can enter
       # @handler_runner's flat handler list.
       @handler_runner.handlers.concat(flatten_handler_blocks(included_handlers)) unless included_handlers.empty?
+
+      # Tag selection over the run-time-loaded tasks - see
+      # #filter_runtime_loaded. For a static import_role: the statement's
+      # own tags already travelled with the loaded tasks (RoleLoader
+      # merges them, exactly like a roles: entry's); for a dynamic
+      # include_role: they deliberately did not - real Ansible gives the
+      # children only the parent-chain context.
+      included_tasks = filter_runtime_loaded(included_tasks, task)
 
       run_task_list(included_tasks, host)
     end

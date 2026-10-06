@@ -593,6 +593,13 @@ module Krikri
         inherited.become = handler.become?
         inherited.become_user = handler.become_user
         included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
+        # Handlers - and everything a handler pulls in - are exempt from
+        # tag selection (Ansible runs a notified `never`-tagged handler
+        # under a plain invocation, and a never task inside a handler's
+        # own include_tasks: file ran under --tags zzz - live-verified vs
+        # 2.19.11). Stamped here so #filter_runtime_loaded skips selection
+        # for this list AND for any further include below it.
+        mark_tag_exempt(included_tasks)
         propagate_role_context(handler, included_tasks)
 
         run_task_list(included_tasks, host)

@@ -411,6 +411,16 @@ module Krikri
         task.role_parent_paths = parent_paths
         task.ansible_collection_name = collection_name
         task.tags = (task.tags + invocation_tags).uniq
+        # ...and into the inherited context as well: a roles: entry's
+        # tags (and an import_role:'s, passed through the same path) are
+        # a block-level push in Ansible, so they reach not just these
+        # tasks but anything THEY include at run time - an
+        # include_tasks: statement inside the role passes its inherited
+        # context down to the file it loads (live-verified vs 2.19.11:
+        # `roles: [{role: r, tags: [rtag]}]` where r include_tasks:'s an
+        # untagged file - `--tags rtag` runs the inner task in real
+        # Ansible; same for an import_role: with `tags: [itag]`).
+        task.inherited_tags = (task.inherited_tags + invocation_tags).uniq
       end
 
       tasks.concat(role_tasks)

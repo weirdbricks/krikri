@@ -2510,6 +2510,50 @@ module Krikri
     # supported") - this recurses through such a case instead of
     # replicating that error, a deliberately more lenient (never a worse
     # divergence) simplification.
+    # Re-applies --tags/--skip-tags/never selection to a task list that
+    # only exists at RUN time - the file or role an
+    # include_tasks:/include_role: just loaded. The play's own list was
+    # filtered once before the executor started; Ansible applies the
+    # identical rules to every dynamically loaded task too (a `never`
+    # task in an included file stays out, `--skip-tags` reaches it, and
+    # `tagged`/`untagged` see its tags), with the include statement's
+    # inherited context (play/block/roles:-entry/import tags - NOT its
+    # own declared tags: real Ansible gives dynamic includes' children
+    # only the parent-chain tags) plus its `apply: {tags:}` mapping as
+    # the inherited set. Loading the included file also stamps each
+    # loaded statement's own context, so a nested include inside it
+    # propagates correctly on the next pass.
+    #
+    # A HANDLER's load (statement.tag_exempt?) skips selection entirely:
+    # Ansible never tag-filters handlers - a `never`-tagged handler runs
+    # when notified under a plain invocation, and tasks a handler
+    # include_tasks:'s keep running under `--tags zzz` (live-verified vs
+    # 2.19.11). The exemption is stamped onto everything that load pulled
+    # in so a nested include below a handler stays exempt as well.
+    private def filter_runtime_loaded(loaded : Array(Task), statement : Task) : Array(Task)
+      if statement.tag_exempt?
+        mark_tag_exempt(loaded)
+        return loaded
+      end
+
+      inherited = statement.inherited_tags.dup
+      if apply_tags = statement.include_apply_tags
+        inherited.concat(apply_tags)
+      end
+      Krikri::TagFilter.apply(loaded, Krikri::RunOptions.run_tags, Krikri::RunOptions.skip_tags, inherited, keep_static_imports: true)
+    end
+
+    # Recursive tag-exemption stamp - see filter_runtime_loaded.
+    private def mark_tag_exempt(tasks : Array(Task)) : Nil
+      tasks.each do |task|
+        next if task.tag_exempt?
+        task.tag_exempt = true
+        mark_tag_exempt(task.block_tasks || [] of Task)
+        mark_tag_exempt(task.rescue_tasks || [] of Task)
+        mark_tag_exempt(task.always_tasks || [] of Task)
+      end
+    end
+
     private def run_task_list(tasks : Array(Task), host : Host) : Nil
       ensure_grouped(tasks)
 

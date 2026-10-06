@@ -35,10 +35,10 @@ module Krikri
     #
     # --skip-tags is applied AFTER the above and wins, including over
     # `always` (Ansible lets `--skip-tags always` drop those too).
-    def self.apply(tasks : Array(Task), only : Array(String), skip : Array(String), play_tags : Array(String) = [] of String) : Array(Task)
+    def self.apply(tasks : Array(Task), only : Array(String), skip : Array(String), play_tags : Array(String) = [] of String, keep_static_imports : Bool = false) : Array(Task)
       kept = Array(Task).new
       tasks.each do |task|
-        if selected = filter(task, only, skip, play_tags)
+        if selected = filter(task, only, skip, play_tags, keep_static_imports)
           kept << selected
         end
       end
@@ -50,13 +50,32 @@ module Krikri
     # union of the play's own tags and every enclosing block's tags -
     # Ansible pushes a play's tags and a block's tags down onto
     # their children rather than treating the block as an atomic unit.
-    private def self.filter(task : Task, only : Array(String), skip : Array(String), inherited : Array(String)) : Task?
-      effective = (task.tags + inherited).uniq
+    private def self.filter(task : Task, only : Array(String), skip : Array(String), inherited : Array(String), keep_static_imports : Bool) : Task?
+      # The task's own context for anything IT loads at run time
+      # (include_tasks:/include_role: statements): everything outside the
+      # task, never its own declared tags. Merged with whatever a previous
+      # pass already recorded (a roles:/import_ * invocation's tags are
+      # stamped onto its tasks before the play list is filtered), and
+      # recomputed identically on every pass - the union is idempotent.
+      context = (inherited + task.inherited_tags).uniq
+      task.inherited_tags = context
+      effective = (task.tags + context).uniq
+
+      # A static import_role: is transparent when RUNNING: real Ansible
+      # has no statement to select at all (its tags are pushed down onto
+      # each role task at load time instead), so the statement itself
+      # must never be dropped by --tags/--skip-tags - doing so used to
+      # skip the ENTIRE role under any --tags the bare statement didn't
+      # carry. The loaded role tasks are re-filtered at run time with
+      # this context as their inherited set. --list-tasks keeps its old
+      # statement-level selection (it cannot expand the role anyway), so
+      # only the execution paths pass keep_static_imports: true.
+      return task if keep_static_imports && task.include_role? && task.is_static_import?
 
       if task.block?
-        block_tasks = filter_list(task.block_tasks, only, skip, effective)
-        rescue_tasks = filter_list(task.rescue_tasks, only, skip, effective)
-        always_tasks = filter_list(task.always_tasks, only, skip, effective)
+        block_tasks = filter_list(task.block_tasks, only, skip, effective, keep_static_imports)
+        rescue_tasks = filter_list(task.rescue_tasks, only, skip, effective, keep_static_imports)
+        always_tasks = filter_list(task.always_tasks, only, skip, effective, keep_static_imports)
 
         # A block with nothing left to run disappears entirely - keeping
         # it would print a banner for an empty block.
@@ -71,12 +90,12 @@ module Krikri
       selected?(effective, only, skip) ? task : nil
     end
 
-    private def self.filter_list(tasks : Array(Task)?, only : Array(String), skip : Array(String), inherited : Array(String)) : Array(Task)?
+    private def self.filter_list(tasks : Array(Task)?, only : Array(String), skip : Array(String), inherited : Array(String), keep_static_imports : Bool) : Array(Task)?
       return nil unless tasks
 
       kept = Array(Task).new
       tasks.each do |task|
-        if selected = filter(task, only, skip, inherited)
+        if selected = filter(task, only, skip, inherited, keep_static_imports)
           kept << selected
         end
       end
