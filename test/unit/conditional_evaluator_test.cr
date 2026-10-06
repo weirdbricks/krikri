@@ -1517,7 +1517,10 @@ describe Krikri::ConditionalEvaluator do
       ex = assert_raises(Krikri::ConditionalEvaluator::UndefinedVariableError) do
         Krikri::ConditionalEvaluator.evaluate("res.diff", v, strict: true, raise_undefined: true)
       end
-      ex.message.must_equal("'res.diff' is undefined")
+      # Real ansible-core 2.19.11 names the chain's ROOT variable
+      # ("'nope' is undefined" for a bare `nope.x` condition, live-verified
+      # strict-undefined matrix) - never the whole dotted expression.
+      ex.message.must_equal("'res' is undefined")
     end
 
     it "does NOT raise when the undefined operand goes through a filter/default() - still lenient by design" do

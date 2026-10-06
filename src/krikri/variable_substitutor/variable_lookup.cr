@@ -314,6 +314,35 @@ module Krikri
         end
       end
 
+      # The mixed/block-tag re-render path: block tags/comments, or a
+      # `{{ }}`-bearing value that is NOT one whole-string span (literal
+      # text around the span, or more than one span) needs the FULL
+      # template renderer, which understands arbitrary mixed literal-
+      # text-plus-`{{ }}` content the way a real `.j2` file does.
+      # Inside a strict templating operation (see
+      # VarSubstitutor.strict_span_active?) the re-render of a templated
+      # variable value is itself a strict templating operation in real
+      # ansible-core - a `vars:`/defaults value of `{{ d.missing }}` is
+      # rendered lazily AT ITS USE SITE, and the use site's strictness
+      # must reach this inner render (the vars cell of the strict-
+      # undefined matrix, live-verified vs 2.19.11). substitute(strict:
+      # true) is the full strict pipeline: span probes plus block-tag
+      # handling.
+      private def rerender_full_template(render_vars : Hash(String, JSON::Any), raw : String) : JSON::Any
+        strict_span_substitute(render_vars, raw) ||
+          parse_rendered_or_wrap(JinjaRenderer.new(render_vars).render(raw))
+      end
+
+      # The strict-span half of the re-render paths: when the OUTER
+      # templating operation is strict, re-render *raw* through the full
+      # strict pipeline (span probes + block-tag handling) so a consumed
+      # missing attribute inside the value raises at the use site. nil
+      # when no strict span is active - the caller keeps its lenient path.
+      private def strict_span_substitute(render_vars : Hash(String, JSON::Any), raw : String) : JSON::Any?
+        return nil unless VarSubstitutor.strict_span_active?
+        parse_rendered_or_wrap(VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true))
+      end
+
       private def rerender_if_templated_inner(raw : String, render_vars : Hash(String, JSON::Any)) : JSON::Any
         # A raw value containing `{%`/`{#` (block tags/comments, not just
         # a plain `{{ }}` expression) needs the FULL Crinja renderer -
@@ -364,9 +393,11 @@ module Krikri
         # that still has literal `{`/`}` characters in it - collapsing a
         # real "/etc/nginx/nginx.conf" (and everything derived from it,
         # here `.lstrip('/')` chained onto it) to an empty string.
-        if !whole_span && (raw.includes?("{%") || raw.includes?("{#") || raw.includes?("{{"))
-          rendered = JinjaRenderer.new(render_vars).render(raw)
-          return parse_rendered_or_wrap(rendered)
+        # The caller only gets here for values that DO carry Jinja markers
+        # (templated_value? gated), so a non-whole-span value is always
+        # the mixed/block-tag shape the full renderer owns.
+        unless whole_span
+          return rerender_full_template(render_vars, raw)
         end
 
         inner = inner[2..-3].strip if whole_span
@@ -381,6 +412,11 @@ module Krikri
         # pre-existing render path below, unchanged.
         structured = Rerender.whole_span_structured(render_vars, raw) if whole_span
         return structured if structured
+        # Same strict-span propagation as the mixed path above: when the
+        # OUTER templating operation is strict, re-render the whole-span
+        # value through the strict pipeline so a consumed missing
+        # attribute inside the value raises at the use site.
+        strict_span_substitute(render_vars, raw).try { |value| return value }
         rendered = ExpressionEvaluator.new(render_vars).evaluate(inner)
         parse_rendered_or_wrap(rendered)
       end
@@ -451,54 +487,71 @@ module Krikri
 
       private def apply_dotted_parts(current : JSON::Any, parts : Array(String)) : JSON::Any?
         parts.each do |part|
-          dict_method = hash_method_call(current, part)
-          if dict_method
-            current = dict_method
-            next
-          end
-
-          string_method = string_method_call(current, part)
-          if string_method
-            current = string_method
-            next
-          end
-
-          case raw = current.raw
-          when Hash
-            fetched = current[part]?
-            return nil unless fetched
-            enter_hostvars_origin(current, part)
-            current = fetched
-          when Array
-            # Numeric dot-indexing into a list (`item.1` meaning
-            # `item[1]`) - Jinja2 attribute access falls back to
-            # item access, which for a list means an integer index.
-            # `with_indexed_items`/`with_together`/`zip()` all yield
-            # each item as a plain `[index_or_a, b]` pair, and the
-            # idiomatic way to pull the second element back out in a
-            # `when:`/`{{ }}` is exactly this dotted form (buluma.
-            # dotfiles' own "Remove existing dotfiles file" task gates
-            # on `when: "'@' not in item.1.stdout"` over `with_indexed_
-            # items: existing_dotfile_info.results`) - previously only
-            # Hash key lookup was implemented here, so any numeric part
-            # against an Array fell through to the generic `else return
-            # nil`, and the `when:` itself then raised "item.1.stdout is
-            # undefined" instead of resolving the pair's second element.
-            if (pair = groupby_pair_attr(raw, part))
-              current = pair
-              next
-            end
-            index = part.to_i?
-            return nil unless index
-            index += raw.size if index < 0
-            return nil unless index >= 0 && index < raw.size
-            current = raw[index]
-          else
-            return nil
-          end
+          current = apply_one_dotted_part(current, part)
+          return nil unless current
         end
 
         current
+      end
+
+      # The Array branch of #apply_one_dotted_part: numeric dot-indexing
+      # into a list (`item.1` meaning `item[1]`) - Jinja2 attribute access
+      # falls back to item access, which for a list means an integer
+      # index. `with_indexed_items`/`with_together`/`zip()` all yield
+      # each item as a plain `[index_or_a, b]` pair, and the idiomatic
+      # way to pull the second element back out in a `when:`/`{{ }}` is
+      # exactly this dotted form (buluma.dotfiles' own "Remove existing
+      # dotfiles file" task gates on `when: "'@' not in item.1.stdout"`
+      # over `with_indexed_items: existing_dotfile_info.results`) -
+      # previously only Hash key lookup was implemented here, so any
+      # numeric part against an Array fell through to the generic `else
+      # return nil`, and the `when:` itself then raised "item.1.stdout is
+      # undefined" instead of resolving the pair's second element.
+      private def apply_list_dotted_part(raw : Array(JSON::Any), part : String) : JSON::Any?
+        if (pair = groupby_pair_attr(raw, part))
+          return pair
+        end
+        index = part.to_i?
+        # A non-numeric dot part against a list is Python's "object of
+        # type 'list' has no attribute 'x'" miss - signal it for the
+        # strict probe. A NUMERIC index is owned by the bracket-index
+        # wording machinery and stays unsignaled.
+        KrikriJinja.note_miss unless index
+        return nil unless index
+        index += raw.size if index < 0
+        return nil unless index >= 0 && index < raw.size
+        raw[index]
+      end
+
+      # One dotted step of #apply_dotted_parts: the next value, or nil on
+      # a miss (split out to keep both methods under ameba's cyclomatic-
+      # complexity ceiling).
+      private def apply_one_dotted_part(current : JSON::Any, part : String) : JSON::Any?
+        dict_method = hash_method_call(current, part)
+        return dict_method if dict_method
+
+        string_method = string_method_call(current, part)
+        return string_method if string_method
+
+        case raw = current.raw
+        when Hash
+          fetched = current[part]?
+          # A missing key on a RESOLVED dict is a strict-undefined miss
+          # signal (see Krikri.strict_undefined_probe_message) - the
+          # probe, not this lookup, decides whether the miss was
+          # consumed or tolerated.
+          KrikriJinja.note_miss unless fetched
+          return nil unless fetched
+          enter_hostvars_origin(current, part)
+          fetched
+        when Array
+          apply_list_dotted_part(raw, part)
+        else
+          # `.attr` on a scalar (str/int/bool/None) - Python's "object of
+          # type 'str' has no attribute 'x'" - same miss signal.
+          KrikriJinja.note_miss
+          nil
+        end
       end
 
       # Applies a dotted/method-call SUFFIX (e.g. "splitlines()", the
@@ -996,6 +1049,10 @@ module Krikri
           idx ? current[idx]? : nil
         when Hash
           fetched = current[key.to_s]?
+          # Missing dict key via bracket subscript - same strict-undefined
+          # miss signal as the dotted form (real raises the identical
+          # "object of type 'dict' has no attribute ..." message).
+          KrikriJinja.note_miss unless fetched
           enter_hostvars_origin(current, key.to_s) if fetched && key.is_a?(String)
           fetched
         when String

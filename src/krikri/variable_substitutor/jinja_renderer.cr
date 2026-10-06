@@ -106,6 +106,41 @@ module Krikri
         )
       end
 
+      # The strict-undefined TEMPLATE probe: renders *text* once on the
+      # krikri-jinja engine with Ansible's strict-undefined environment and
+      # returns ansible-core 2.19's error message when the render CONSUMED
+      # an undefined value (a missing attribute/key on a native dict/list/
+      # scalar, an undefined name) - nil when the render succeeded or
+      # failed for a non-undefined reason (unknown construct, syntax gap:
+      # the probe must never turn an evaluator capability gap into a task
+      # failure). Same message conversion and out-of-scope declines as
+      # Krikri.strict_undefined_probe_message, which this complements for
+      # MIXED-text/container values an expression probe cannot parse.
+      def self.strict_render_undefined_message(text : String, vars : Hash(String, JSON::Any)) : String?
+        new(vars).render_strict_probe(text)
+        nil
+      rescue e : KrikriJinja::TemplateError
+        return nil unless e.kind == KrikriJinja::ErrorKind::Undefined
+        msg = e.raw_message
+        return nil if msg.includes?("has no element")
+        return nil if msg.matches?(/has no attribute '\d+'\z/)
+        msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+      rescue
+        nil
+      end
+
+      # The instance half of .strict_render_undefined_message: one strict
+      # render of *text*; raises on undefined consumption (caught by the
+      # class method above), propagates nothing else.
+      protected def render_strict_probe(text : String) : String
+        environment = ENV.to_h.transform_values { |value| KrikriJinja::AnyValue.new(value) }
+        KrikriJinja.default_engine.render_parsed(
+          cached_template(text), {"environment" => KrikriJinja::AnyValue.new(environment)},
+          resolver: jinja_resolver, undefined: KrikriJinja.ansible_strict_undefined,
+          host_context: jinja_host_context
+        )
+      end
+
       # Render a template containing Jinja2 control structures
       def render(text : String) : String
         render!(text)
@@ -401,7 +436,12 @@ module Krikri
         value = KrikriJinja.default_engine.evaluate_parsed(
           KrikriJinja.parse_expression(source),
           resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars)),
-          undefined: strict ? KrikriJinja::StrictUndefined.new : KrikriJinja::Undefined.new(nil, chainable: true),
+          # ansible_strict_undefined (CHAINABLE, like ansible-core's own
+          # StrictUndefined): a missing attribute on an undefined value
+          # stays undefined until CONSUMED - `nope.x is defined` answers
+          # False (live-verified vs 2.19.11) instead of raising at the
+          # access.
+          undefined: strict ? KrikriJinja.ansible_strict_undefined : KrikriJinja::Undefined.new(nil, chainable: true),
           host_context: JinjaHostContext.new(vars)
         )
         return nil if value.raw.is_a?(KrikriJinja::Undefined)

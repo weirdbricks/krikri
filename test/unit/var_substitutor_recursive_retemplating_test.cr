@@ -25,12 +25,18 @@ describe "Krikri::VarSubstitutor (var_substitutor_recursive_retemplating_test.cr
     end
 
     it "still re-templates a variable whose own value is a template" do
-      sub = Krikri::VarSubstitutor.new(vars: jvars({
-        "mount"      => "{\"mode\": \"{{ os_mode }}\"}",
+      # mount must be a real OBJECT whose mode value is itself a template:
+      # a JSON-STRING mount is a str in real ansible-core 2.19 too, and
+      # `mount.mode` on it fails the task with real's own "object of type
+      # 'str' has no attribute 'mode'" (live-verified) - which the strict
+      # attribute probe now reproduces (see strict_attribute_matrix_test).
+      vars = jvars({
         "os_mode"    => "0755",
         "inner_task" => "{{ inner_path }}/run.sh",
         "inner_path" => "/opt/bin",
-      }))
+      })
+      vars["mount"] = JSON.parse("{\"mode\": \"{{ os_mode }}\"}")
+      sub = Krikri::VarSubstitutor.new(vars: vars)
       # variable-origin: mount.mode's VALUE is itself a template
       sub.substitute("mode={{ mount.mode }}", strict: true, output: true).must_equal("mode=0755")
       # and a two-level chain: task ref -> var whose value is another task-shaped ref
@@ -103,11 +109,14 @@ describe "Krikri::VarSubstitutor (var_substitutor_recursive_retemplating_test.cr
     end
 
     it "still re-templates a YAML-defined vars: default whose value is a template" do
+      # mount as a real mapping (YAML `mount: {mode: "{{ dir_mode }}"}`),
+      # not a JSON string: a string mount is a str for real ansible-core
+      # 2.19 and `mount.mode` on it fails the task (live-verified) - the
+      # strict attribute probe now matches that raise.
+      vars = jvars({"dir_mode" => "2750"})
+      vars["mount"] = JSON.parse("{\"mode\": \"{{ dir_mode }}\"}")
       sub = Krikri::VarSubstitutor.new(
-        vars: jvars({
-          "mount"    => "{\"mode\": \"{{ dir_mode }}\"}",
-          "dir_mode" => "2750",
-        }),
+        vars: vars,
         host_name: "yaml-host",
       )
       sub.substitute("mode={{ mount.mode }}", strict: true, output: true).must_equal("mode=2750")

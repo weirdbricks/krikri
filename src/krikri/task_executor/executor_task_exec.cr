@@ -310,6 +310,22 @@ module Krikri
       end
     end
 
+    # Python's own str() of a resolved value, for the lookup-plugin and
+    # loop type error wordings ("got 'False' of type <class 'bool'>)",
+    # live-verified matrix vs 2.19.11). Containers render via the same
+    # compact JSON the engine's stringification produces - the matrix
+    # only exercised scalars.
+    private def python_str(value : JSON::Any) : String
+      case raw = value.raw
+      when Nil     then "None"
+      when Bool    then raw ? "True" : "False"
+      when Int64   then raw.to_s
+      when Float64 then raw.to_s
+      when String  then raw
+      else              value.to_json
+      end
+    end
+
     # Parse *result* (the string output of evaluating a loop template) into a
     # list of JSON items. The evaluator stringifies, so an already-JSON
     # encoded list comes back as JSON text and is parsed back here; any other

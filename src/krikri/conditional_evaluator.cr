@@ -207,6 +207,23 @@ module Krikri
     end
 
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
+      # The strict-undefined PROBE (see Krikri.strict_undefined_probe_
+      # message): when undefined references must raise, give the whole
+      # condition one strict-engine evaluation first. This closes the
+      # shapes this hand-rolled evaluator's own grammar leaves lenient -
+      # a missing dict/list attribute consumed by a filter (`x.missing |
+      # length`), an `is none`/`is match(...)` test on a missing
+      # attribute, a ternary whose condition reads one, an `in`/`not in`
+      # against one - each of which ansible-core 2.19 fails the task on
+      # (live-verified matrix vs 2.19.11). The probe is strictly
+      # additive: it only ever RAISES with ansible's own message; when it
+      # declines (tolerated shape, short-circuited arm, engine syntax
+      # gap, side-effecting lookup) the hand-rolled evaluation below
+      # proceeds exactly as before.
+      if raise_undefined && !Krikri.probe_has_side_effecting_call?(condition) &&
+         (msg = Krikri.strict_undefined_probe_message(condition, vars))
+        raise UndefinedVariableError.new(msg)
+      end
       TimingProfile.measure("controller.conditionals", "controller") do
         evaluate_measured(condition, vars, strict, raise_undefined)
       end
@@ -1777,6 +1794,22 @@ module Krikri
       end
     end
 
+    # Compile-time-invalid filter/test name check for the strict-undefined
+    # PROBE (Krikri.strict_undefined_probe_message): true when the condition
+    # carries a name the evaluators cannot resolve. ansible-core COMPILES the
+    # whole template before evaluating any operand, so real fails such an
+    # expression with the Syntax error wording no matter which clause would
+    # have been reached first - the probe must decline (not raise an
+    # undefined-value message over it) so #evaluate_measured's own
+    # validate_filter_names/validate_test_names wording surfaces unchanged.
+    def self.compile_time_name_error?(condition : String, vars : Hash(String, JSON::Any)) : Bool
+      validate_filter_names(condition, vars)
+      validate_test_names(condition)
+      false
+    rescue VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
+      true
+    end
+
     # Quote-aware compile-time scan for `| filtername` references - see
     # the call site in #evaluate_measured for the full motivation. Runs
     # over the condition's BYTES rather than chars: every byte this
@@ -2546,7 +2579,8 @@ module Krikri
           # strict conditional-boolean requirement) and always raised,
           # even for the common bare-variable idiom, not just the `and`
           # case found benchmarking jdauphant.dns.
-          unless raw_value == "undefined" || raw_value == "True" || raw_value == "False"
+          unless raw_value == "undefined" || raw_value == "True" || raw_value == "False" ||
+                 raw_value == Krikri::OMIT_SENTINEL
             raise ConditionalBooleanError.new(
               "Conditional result (#{raw_value.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
               "Conditionals must have a boolean result.")
@@ -2566,6 +2600,16 @@ module Krikri
       when Bool
         value
       when String
+        # An Omit result can never legitimately truthify a conditional:
+        # ansible-core 2.19 fails the task with "A template was resolved
+        # to an Omit scalar." when a when:/changed_when:/failed_when:
+        # condition resolves to the omit sentinel (live-verified matrix
+        # vs 2.19.11, `d.missing | default(omit)` in both contexts).
+        # Checked before the strict boolean-type gate so the Omit error -
+        # not a generic type error - is what the task reports.
+        if value == Krikri::OMIT_SENTINEL
+          raise ConditionalBooleanError.new("A template was resolved to an Omit scalar.")
+        end
         # "undefined" - this codebase's own sentinel for an unresolved
         # lookup/filter result (e.g. `regex_search()`'s own "no match"
         # return, per its own doc comment) - must be FALSY here, matching

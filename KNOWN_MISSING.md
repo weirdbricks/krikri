@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1512`.**
+**Currently at `0.9.1513`.**
 
 ## Open gaps
 
@@ -140,16 +140,6 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   `x | default(other.thing.y)`). These live as tight predicates in
   `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`); the fixed-seed CI slice is
   `test/unit/differential_fuzz_test.cr`.
-
-### Missing-attribute access on native dict/list values is tolerated (lenient by design)
-
-- Krikri tolerates attribute access on missing keys of native dict/list values
-  (`{{ list.version }}` on a plain list, `{{ dict.missing }}`) where real raises
-  `Error while resolving value for ...: object of type 'list' has no attribute 'version'`
-  (found via `itigoag.packages`, round 1600022). Lenient on purpose: making the evaluators raise
-  on every missing-attribute access is a strictness change with blast radius across the whole
-  corpus, and `is defined`/`default()` shapes rely on the tolerance. Revisit only with new
-  evidence of a role breaking because of the leniency itself.
 
 ### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
 

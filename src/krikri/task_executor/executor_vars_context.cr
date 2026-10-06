@@ -887,6 +887,17 @@ module Krikri
         raw = vars_context[key]?
         next unless raw
 
+        # Miss signal for the strict-undefined keep-raw decision below:
+        # a task-level `vars:` value whose render consumed a missing
+        # attribute stays RAW, so real ansible-core 2.19's LAZY semantics
+        # are preserved - the value renders at its USE site, and a strict
+        # use (module-arg finalization) fails there with the attribute-
+        # shaped error while a lenient use (task name, an `is defined`
+        # guard, a skip) never renders it at all (live-verified matrix
+        # vs 2.19.11). Deleting or pre-rendering "undefined" text would
+        # both erase the distinction.
+        signal_before = KrikriJinja.miss_count
+
         # Walk nested Hash/Array values too - a task-level `vars:` dict
         # like buluma.ara_api's `reconciled_configuration: { DEBUG:
         # "{{ ara_api_debug }}", DATABASE_CONN_MAX_AGE: "{{ ara_api_
@@ -921,6 +932,40 @@ module Krikri
           # whole task when when: would have skipped it.
           vars_context.delete(key)
         end
+        if KrikriJinja.miss_count > signal_before && strict_var_value_miss(raw, vars_context)
+          vars_context[key] = raw
+        end
+      end
+    end
+
+    # The strict-undefined probe for a task-level `vars:` VALUE (see
+    # render_task_vars): returns ansible's error message when rendering
+    # this value would CONSUME a missing attribute/undefined name, nil
+    # otherwise. Whole-single-span strings probe as expressions; mixed
+    # text probes as a strict template render; containers probe each
+    # template-string leaf.
+    private def strict_var_value_miss(raw : JSON::Any, vars_context : Hash(String, JSON::Any)) : String?
+      r = raw.raw
+      if r.is_a?(String)
+        return nil unless r.includes?("{{") || r.includes?("{%") || r.includes?("{#")
+        stripped = r.strip
+        if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
+          Krikri.strict_undefined_probe_message(stripped[2..-3].strip, vars_context)
+        else
+          VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(r, vars_context)
+        end
+      elsif r.is_a?(Array)
+        raw.as_a.each do |entry|
+          miss = strict_var_value_miss(entry, vars_context)
+          return miss if miss
+        end
+        nil
+      elsif r.is_a?(Hash)
+        raw.as_h.each_value do |entry|
+          miss = strict_var_value_miss(entry, vars_context)
+          return miss if miss
+        end
+        nil
       end
     end
 
@@ -1553,8 +1598,13 @@ module Krikri
       # #substitute would have run happens here first - and raises.
       substitutor.check_strict_undefined(expr)
       native_value = begin
-        VariableSubstitutor::ExpressionEvaluator.new(substitutor.vars)
-          .evaluate_structured(expr)
+        # Strict-undefined-aware structured evaluation (see
+        # VarSubstitutor#evaluate_structured_strict): a whole-span bool/
+        # scalar result computed from a CONSUMED missing attribute
+        # (`{{ d.missing == 'x' }}`, `{{ not d.missing }}`,
+        # `{{ d.missing is none }}`, a ternary over one) must fail the
+        # task like ansible-core 2.19, not finalize natively.
+        substitutor.evaluate_structured_strict(expr)
       rescue
         nil
       end

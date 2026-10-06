@@ -45,7 +45,14 @@ describe "in <string> with an undefined left operand in a real .j2 template" do
     File.delete(src) if src && File.exists?(src)
   end
 
-  it "still treats undefined in a LIST leniently as False, matching Python's list.__contains__" do
+  it "raises the undefined error for a LIST container too (strict undefined is consumed by the membership check)" do
+    # Real ansible-core 2.19.11 (live-verified): `{% if node_1 in
+    # ['a', 'b'] %}` with node_1 undefined FAILS the template task with
+    # "'node_1' is undefined" - Python's list.__contains__ compares
+    # elements with __eq__, and StrictUndefined raises on __eq__. The
+    # old lenient "membership reports False" behavior only holds for the
+    # LENIENT undefined (the hand-rolled {{ }} path's sentinel), not for
+    # the strict-undefined environment real template rendering uses.
     src = File.tempname("crinja-in-list-src", ".j2")
     dest = File.tempname("crinja-in-list-dest")
     playbook = File.tempname("crinja-in-list", ".yml")
@@ -65,8 +72,8 @@ describe "in <string> with an undefined left operand in a real .j2 template" do
     output = IO::Memory.new
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
-    status.success?.must_equal(true)
-    File.read(dest).must_equal("no\n")
+    status.success?.must_equal(false)
+    output.to_s.must_include("'node_1' is undefined")
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     File.delete(src) if src && File.exists?(src)

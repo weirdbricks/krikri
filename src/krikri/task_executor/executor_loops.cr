@@ -87,6 +87,18 @@ module Krikri
     # given as "{{ some_var }}" against the runtime variable context, then
     # feed it through the same conversion each keyword uses for a literal
     # value at parse time (see PlaybookParser#parse_task).
+    # The STRUCTURED value of a complex loop source, for the type names
+    # the loop/with_dict error messages report - the rendered text loses
+    # Python's None (renders ""), which misreported `d.get('missing')` as
+    # a 'str' loop source where ansible-core 2.19 says 'NoneType'
+    # (live-verified matrix). nil when the structured evaluation itself
+    # fails (the caller falls back to parsing the rendered text).
+    private def structured_loop_source_value(bare : String, vars_context : Hash(String, JSON::Any)) : JSON::Any?
+      expression_evaluator_for(vars_context).evaluate_structured(bare)
+    rescue
+      nil
+    end
+
     private def resolve_loop_template(task : Task, vars_context : Hash(String, JSON::Any)) : Array(JSON::Any)?
       kind = task.loop_template_kind
       template = task.loop_template
@@ -123,7 +135,28 @@ module Krikri
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, vars_context))
         end
 
+        signal_before = KrikriJinja.miss_count
         result = expression_evaluator_for(vars_context).evaluate(bare)
+
+        # The strict-undefined probe (see Krikri.strict_undefined_probe_
+        # message): a loop source whose expression CONSUMED a missing
+        # attribute (`d.missing == 'x'`, `(d | default({})).y`, a ternary
+        # over one) fails the task in ansible-core 2.19 with the
+        # attribute-shaped error, before any loop typing is considered
+        # (live-verified matrix vs 2.19.11).
+        if KrikriJinja.miss_count > signal_before &&
+           !Krikri.probe_has_side_effecting_call?(bare) &&
+           (probe_msg = Krikri.strict_undefined_probe_message(bare, vars_context))
+          raise UndefinedVariableError.new(probe_msg)
+        end
+
+        # A whole-source omit resolution fails the loop before any typing
+        # is considered - ansible-core 2.19: "A template was resolved to
+        # an Omit scalar." (live-verified matrix vs 2.19.11,
+        # `loop: "{{ d.missing | default(omit) }}"`).
+        if result == Krikri::OMIT_SENTINEL
+          raise UndefinedVariableError.new("A template was resolved to an Omit scalar.")
+        end
 
         # A whole-source template whose expression ultimately renders to the
         # "undefined" sentinel is strictly fatal for loop:/with_items: (the
@@ -147,7 +180,29 @@ module Krikri
           # (a plain filter-chain gap here used to make the whole loop
           # resolve to nil, running the task once with `item` undefined).
           hash_result = (JSON.parse(result).as_h? rescue nil)
-          return hash_result ? LoopResolver.with_dict(hash_result.transform_keys(&.to_s)) : nil
+          unless hash_result
+            # A with_dict: source that resolves to a NON-dictionary fails
+            # in ansible-core with the dict LOOKUP plugin's own type
+            # error (live-verified matrix vs 2.19.11: `with_dict: "{{
+            # d.missing is defined }}"` → "The lookup plugin 'dict'
+            # failed: the 'dict' lookup plugin expects a dictionary, got
+            # 'False' of type <class 'bool'>)"). Same raise-and-get-
+            # rescued channel as the loop type error below.
+            # The rendered TEXT loses Python's type for a None result
+            # (`d.get('missing')` renders ""), so type the STRUCTURED
+            # value when one is available and fall back to the parsed
+            # text only when it isn't.
+            resolved = structured_loop_source_value(bare, vars_context) ||
+                       Krikri.parse_json_or_python_literal(result)
+            # ansible-core 2.19 words the type of a TEMPLATE-resolved
+            # string as its internal tagged-string class, and there is no
+            # trailing period (live-verified matrix vs 2.19.11).
+            dict_type = resolved.raw.is_a?(String) ? "ansible.module_utils._internal._datatag._AnsibleTaggedStr" : python_type_name(resolved)
+            raise UndefinedVariableError.new(
+              "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
+              "got '#{python_str(resolved)}' of type <class '#{dict_type}'>)")
+          end
+          return LoopResolver.with_dict(hash_result.transform_keys(&.to_s))
         end
 
         parsed = parse_list_result(result, vars_context)
@@ -179,6 +234,18 @@ module Krikri
         # one level and iterates ONCE with the scalar as `item`. Same
         # array-wrapped fallback the direct-resolution path below applies.
         return [JSON::Any.new(result)] if task.loop_template_array_wrapped?
+        # A complex `loop:`/`with_list:` source that resolved to a
+        # non-list scalar gets the same hard type error the direct
+        # scalar form already raises (live-verified matrix vs 2.19.11:
+        # `loop: "{{ d.missing is defined }}"` → "The `loop` value must
+        # resolve to a 'list', not 'bool'."). with_items: keeps its own
+        # scalar-wrapping convention (see the direct path's comment).
+        if kind == "loop" || kind == "with_list"
+          resolved = structured_loop_source_value(bare, vars_context) ||
+                     Krikri.parse_json_or_python_literal(result)
+          raise UndefinedVariableError.new(
+            "The `loop` value must resolve to a 'list', not '#{python_type_name(resolved)}'.")
+        end
         return nil
       end
 
@@ -301,7 +368,7 @@ module Krikri
             # "list" is the direct `dict()` equivalent.
             raise UndefinedVariableError.new(
               "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
-              "got '#{value}' of type <class '#{python_type_name(value)}'>).")
+              "got '#{value}' of type <class '#{python_type_name(value)}'>)")
           end
         end
         return nil unless hash

@@ -685,6 +685,69 @@ module Krikri
     open
   end
 
+  # The strict-undefined PROBE for missing-attribute access on NATIVE
+  # dict/list/scalar values (ansible-core 2.19 StrictUndefined semantics,
+  # live-verified against 2.19.11): re-evaluates *expr* ONCE on the
+  # krikri-jinja engine with the strict-undefined environment and returns
+  # Ansible's error message when a defined-but-missing attribute/key read
+  # was actually CONSUMED (comparison operand, interpolation, filter
+  # input/argument, arithmetic operand, boolean coercion, ternary
+  # condition, any `is <test>` other than defined/undefined) - nil when
+  # the expression only tolerated the miss the way real Ansible does
+  # (`is defined`/`is undefined`, `| default(...)`, `.get(...)`, a
+  # short-circuited and/or arm, `default(omit)` flowing into a task arg).
+  #
+  # The caller gates this on a cheap miss SIGNAL (KrikriJinja.miss_count
+  # delta across the lenient evaluation - a signal means some lookup
+  # produced an undefined value somewhere in the span), so spans that
+  # resolve cleanly never pay the second evaluation, and the lenient
+  # pipeline's output is untouched whenever the probe declines to raise.
+  # A signal is only a hint: the probe's own strict evaluation is the sole
+  # authority, with real Jinja's short-circuit and tolerate shapes, so a
+  # false-positive signal costs one wasted evaluation and nothing else.
+  #
+  # Deliberately declines to raise for shapes whose strict handling is
+  # owned elsewhere with (possibly different) real-Ansible wording: an
+  # out-of-range list index ("has no element N" / "... no attribute 5" -
+  # bracket_index_failure_message's machinery) - those keep the existing
+  # behavior rather than risk a wording regression. Also returns nil for
+  # every non-undefined engine failure (unknown construct, syntax gap):
+  # the probe must never turn an evaluator capability gap into a task
+  # failure - the lenient pipeline stays the fallback for those.
+  def self.strict_undefined_probe_message(expr : String, vars : Hash(String, JSON::Any)) : String?
+    # A compile-time-invalid filter/test name declines the probe: ansible-core
+    # COMPILES the whole template before evaluating any operand, so real fails
+    # such an expression with the Syntax error wording no matter which clause
+    # would have been evaluated first - the probe must not preempt that
+    # wording with an undefined-value message raised off an earlier operand
+    # (`when: ansible_os_family == 'Debian' and release | version_compare(...)`
+    # with gather_facts: false raised "'ansible_os_family' is undefined" where
+    # real raises "No filter named 'version_compare'.").
+    return nil if ConditionalEvaluator.compile_time_name_error?(expr, vars)
+    VariableSubstitutor::JinjaRenderer.evaluate_structured(expr, vars, strict: true)
+    nil
+  rescue e : KrikriJinja::TemplateError
+    return nil unless e.kind == KrikriJinja::ErrorKind::Undefined
+    msg = e.raw_message
+    return nil if msg.includes?("has no element")
+    return nil if msg.matches?(/has no attribute '\d+'\z/)
+    # The engine reports a missing attribute in Jinja2's own wording
+    # ("'dict object' has no attribute 'x'"); ansible-core 2.19's
+    # templar words the same failure "object of type 'dict' has no
+    # attribute 'x'" (live-verified matrix, all of arg/when/loop/
+    # template contexts).
+    msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+  rescue
+    nil
+  end
+
+  # Whether *expr* must NOT be probed because a second evaluation would
+  # run side-effecting lookups twice (the same convention
+  # bracket_index_failure_message applies to its own probe).
+  def self.probe_has_side_effecting_call?(expr : String) : Bool
+    expr.includes?("lookup(") || expr.includes?("query(")
+  end
+
   # The ONE shared "recursive re-templating" helper: re-renders *value*
   # when its raw form is still a String containing Jinja markers. This
   # used to exist as four independently-maintained copies
@@ -829,12 +892,36 @@ module Krikri
           return cached
         end
         value = with_depth_guard do
-          ExpressionEvaluator.new(vars).evaluate_structured(inner[2..-3].strip)
+          signal_before = KrikriJinja.miss_count
+          inner_expr = inner[2..-3].strip
+          structured = ExpressionEvaluator.new(vars).evaluate_structured(inner_expr)
+          # Strict-span propagation (see VarSubstitutor.strict_span_active?):
+          # a templated variable VALUE re-rendered inside a strict
+          # templating operation is rendered strictly in real ansible-core
+          # - a `vars:`/defaults value of `{{ d.missing == 'x' }}` used in
+          # a module arg fails the task there, not silently (live-verified
+          # matrix vs 2.19.11). The probe runs BEFORE the memo write so a
+          # raising evaluation is never cached as a value.
+          if VarSubstitutor.strict_span_active? && value_has_no_probe_side_effect?(inner_expr) &&
+             KrikriJinja.miss_count > signal_before &&
+             (msg = Krikri.strict_undefined_probe_message(inner_expr, vars))
+            raise UndefinedVariableError.new(msg)
+          end
+          structured
         end
         memo[memo_key] = value if memo && memoizable && value
         value
+      rescue e : UndefinedVariableError
+        raise e
       rescue
         nil
+      end
+
+      # Side-effect gate for whole_span_structured's strict probe - the
+      # same convention bracket_index_failure_message applies (a second
+      # evaluation of a pipe lookup must never run the command twice).
+      private def self.value_has_no_probe_side_effect?(expr : String) : Bool
+        !expr.includes?("lookup(") && !expr.includes?("query(")
       end
 
       # *source_expr*: the expression the value was resolved FROM (its
@@ -909,6 +996,12 @@ module Krikri
       # rebuild itself needlessly).
       def self.render_raw_vars(render_vars : Hash(String, JSON::Any), raw : String) : String
         inner = raw.strip
+        # Strict-span propagation (see VariableLookup#rerender_if_templated_
+        # inner): a value re-rendered inside a strict templating operation
+        # is rendered strictly in real ansible-core too.
+        if VarSubstitutor.strict_span_active?
+          return Krikri::VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true)
+        end
         if (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 && inner.starts_with?("{{") && inner.ends_with?("}}")
           ExpressionEvaluator.new(render_vars).evaluate(inner[2..-3].strip)
         else
@@ -954,6 +1047,29 @@ module Krikri
 
     def self.span_memo : Hash(String, JSON::Any)?
       @@span_memo[Fiber.current]?
+    end
+
+    # Depth of strict (strict: true) `{{ }}`-span evaluation on the current
+    # fiber - the flag nested re-renders consult to know that the OUTER
+    # templating operation they are serving is a strict one (a `vars:`/
+    # role-default value whose own text is `{{ d.missing }}`, re-rendered
+    # while finalizing a module arg). Monotonic-free stack discipline like
+    # #enter_span_memo_scope: entered around exactly one strict span's
+    # lenient evaluation, exited in an ensure.
+    @@strict_span_depth = {} of Fiber => Int32
+
+    def self.enter_strict_span : Nil
+      fiber = Fiber.current
+      @@strict_span_depth[fiber] = (@@strict_span_depth[fiber]? || 0) + 1
+    end
+
+    def self.exit_strict_span : Nil
+      fiber = Fiber.current
+      @@strict_span_depth[fiber] = (@@strict_span_depth[fiber]? || 1) - 1
+    end
+
+    def self.strict_span_active? : Bool
+      (@@strict_span_depth[Fiber.current]? || 0) > 0
     end
 
     # Per-host registry of UNSAFE variable names - names whose current
@@ -1234,6 +1350,34 @@ module Krikri
     # case for every templated substitute() call - but explicitly NOT
     # the case for a substitute() that returns on the no-placeholder
     # early-exit, which is the win #20 targets.
+    # Structured (typed) evaluation of a whole-single-span expression with
+    # the strict-undefined probe applied - the native-typed task-arg /
+    # set_fact path's strictness seam. evaluate_structured is LENIENT
+    # about undefined values (a consumed missing attribute silently
+    # becomes nil/"undefined"), which let `{{ d.missing == 'x' }}`,
+    # `{{ 'a' if d.missing else 'b' }}`, `{{ not d.missing }}`,
+    # `{{ d.missing is none }}` etc. finalize natively to a bool where
+    # ansible-core 2.19 fails the task with the attribute-shaped error
+    # (live-verified matrix vs 2.19.11). Same signal-gated probe as
+    # #evaluate_stripped_span: the lenient evaluation runs first,
+    # unchanged; the strict probe re-evaluates only when a miss signal
+    # appeared, and only its verdict can raise.
+    def evaluate_structured_strict(expr : String) : JSON::Any?
+      signal_before = KrikriJinja.miss_count
+      self.class.enter_strict_span
+      value = begin
+        VariableSubstitutor::ExpressionEvaluator.new(@vars).evaluate_structured(expr)
+      ensure
+        self.class.exit_strict_span
+      end
+      if KrikriJinja.miss_count > signal_before &&
+         !Krikri.probe_has_side_effecting_call?(expr) &&
+         (msg = Krikri.strict_undefined_probe_message(expr, @vars))
+        raise UndefinedVariableError.new(msg)
+      end
+      value
+    end
+
     private def evaluator : VariableSubstitutor::ExpressionEvaluator
       @evaluator ||= begin
         ensure_magic_vars!
@@ -1374,6 +1518,30 @@ module Krikri
       raise_if_strict_undefined(stripped) if strict
       if native && (nv = native_scalar(stripped, evaluator))
         nv
+      elsif strict
+        # Strict span (module-arg finalization, `when:`, set_fact, loop
+        # sources, ...): the lenient evaluation below is UNCHANGED - its
+        # output, its fallbacks, all of it. What is new is the strict-
+        # undefined PROBE afterwards, run only when the evaluation
+        # actually produced an undefined value somewhere (the miss-signal
+        # delta), so clean spans pay nothing. See
+        # Krikri.strict_undefined_probe_message for why the probe itself -
+        # not the lenient pipeline - decides whether a missing-attribute
+        # read was consumed (and therefore raises, like ansible-core
+        # 2.19) or tolerated.
+        signal_before = KrikriJinja.miss_count
+        self.class.enter_strict_span
+        rendered = begin
+          output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
+        ensure
+          self.class.exit_strict_span
+        end
+        if KrikriJinja.miss_count > signal_before &&
+           !Krikri.probe_has_side_effecting_call?(stripped) &&
+           (msg = Krikri.strict_undefined_probe_message(stripped, @vars))
+          raise UndefinedVariableError.new(msg)
+        end
+        rendered
       else
         output ? evaluator.evaluate_output(stripped) : evaluator.evaluate(stripped)
       end
@@ -1433,7 +1601,24 @@ module Krikri
       # clean task failure, matching ansible-core's own "Recursive
       # loop detected in template".
       VariableSubstitutor::Rerender.enter_retemplating
-      substitute_impl_guarded(text, strict, output, native)
+      if strict
+        # The strict flag must cover the WHOLE substitution, not just each
+        # span's own evaluation: the span-level recursive re-render of a
+        # resolved variable value (re_template_resolved_value ->
+        # Rerender.if_templated -> render_raw_vars) runs AFTER
+        # evaluate_stripped_span returns, and a `vars:`/defaults value of
+        # `{{ d.missing == 'x' }}` re-rendered there under a strict
+        # module-arg finalization must fail the task like ansible-core
+        # 2.19's lazy render at the same site (live-verified matrix).
+        self.class.enter_strict_span
+        begin
+          substitute_impl_guarded(text, strict, output, native)
+        ensure
+          self.class.exit_strict_span
+        end
+      else
+        substitute_impl_guarded(text, strict, output, native)
+      end
     ensure
       VariableSubstitutor::Rerender.exit_retemplating
     end
@@ -2347,7 +2532,15 @@ module Krikri
       end
       substitute_impl(raw, true)
       false
-    rescue UndefinedVariableError
+    rescue e : UndefinedVariableError
+      # Inside a strict templating operation the SPECIFIC failure must
+      # propagate: a consumed missing attribute (`{{ d.missing == 'x' }}`
+      # as a task-var value, read from a module arg) raises ansible's
+      # attribute-shaped error at the use site - not a demoted "'v' is
+      # undefined" for the variable that merely holds the template text
+      # (live-verified matrix vs 2.19.11). Outside a strict span the
+      # historical lenient verdict (var reads as undefined) stands.
+      raise e if VarSubstitutor.strict_span_active? && e.message.try(&.includes?("has no attribute"))
       true
     end
 
