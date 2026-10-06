@@ -458,11 +458,15 @@ module Krikri
       # mysql.user's plugin/authentication_string columns are types this
       # vendored driver has no `read` for (the same "not supported read"
       # limitation password_already_matches? documents for the LONGTEXT
-      # authentication_string). An integer result is a type every driver
-      # here already reads fine.
+      # authentication_string). The comparison result itself must be read
+      # as Int64, though: MySQL reports a LONGLONG column type for any
+      # `=` expression, the vendored driver has no read(Int32) at all, and
+      # an `as: Int32` cast raises ColumnTypeMismatchError - which the
+      # rescue below used to swallow as "doesn't match", making every
+      # warm run re-issue the ALTER (wiggels.snipeit, round 1700000).
       matches = db.query_all(
         "SELECT plugin = ? FROM mysql.user WHERE User = ? AND Host = ?",
-        plugin, name, host, as: Int32
+        plugin, name, host, as: Int64
       ).first?
       return false unless matches == 1
 
@@ -486,7 +490,7 @@ module Krikri
              end
       auth_matches = db.query_all(
         "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
-        want, name, host, as: Int32
+        want, name, host, as: Int64
       ).first?
       auth_matches == 1
     rescue
@@ -548,13 +552,18 @@ module Krikri
       # as a value - that column is LONGTEXT on the wire, a MySQL
       # protocol type this vendored driver's type table has no `read`
       # for at all (`MySql::Type::LongBlob` has no override, only the
-      # base `raise "not supported read"`). An integer result is a type
-      # every driver here already reads fine. A NULL authentication
+      # base `raise "not supported read"`). The comparison result itself
+      # must be read as Int64: MySQL reports LONGLONG for any `=`
+      # expression and the vendored driver has no read(Int32), so an
+      # `as: Int32` cast raised ColumnTypeMismatchError that the rescue
+      # below swallowed as "doesn't match" - every warm run re-issued the
+      # ALTER (robertdebock.mysql's warm idempotency, round 1700000
+      # investigation). A NULL authentication
       # string compares as NULL (never equal), matching Ansible's
       # current_pass_hash != encrypted_password on an unset password.
       matches = db.query_all(
         "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
-        hash, name, host, as: Int32
+        hash, name, host, as: Int64
       ).first?
       matches == 1
     rescue
