@@ -64,6 +64,10 @@ defect moves down or gets deleted.
   engine's own `eval_filter` instead of by the host-side wrapper in
   `src/krikri/krikri_jinja_filters.cr` - lives in the sibling `weirdbricks/krikri-jinja` repo
   (bump/tag there, then the `tag:` in this repo's `shard.yml`).
+- **`--list-tasks` under `import_role` lists only the statement.** Real resolves the role and lists
+  the role's child tasks in place; krikri prints the `import_role` statement line only.
+- **Handler-included task headers.** Tasks reached through a handler's `include_tasks` print krikri's
+  `TASK [...]` header where real prints `RUNNING HANDLER [...]`, with no `included:` line.
 
 ## Deliberate limits (decided, not defects)
 
@@ -136,6 +140,16 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   `x | default(other.thing.y)`). These live as tight predicates in
   `src/krikri/differential_fuzz/runner.cr` (`KNOWN_DIFFERENCES`); the fixed-seed CI slice is
   `test/unit/differential_fuzz_test.cr`.
+
+### Missing-attribute access on native dict/list values is tolerated (lenient by design)
+
+- Krikri tolerates attribute access on missing keys of native dict/list values
+  (`{{ list.version }}` on a plain list, `{{ dict.missing }}`) where real raises
+  `Error while resolving value for ...: object of type 'list' has no attribute 'version'`
+  (found via `itigoag.packages`, round 1600022). Lenient on purpose: making the evaluators raise
+  on every missing-attribute access is a strictness change with blast radius across the whole
+  corpus, and `is defined`/`default()` shapes rely on the tolerance. Revisit only with new
+  evidence of a role breaking because of the leniency itself.
 
 ### Unsafe-data taint is a provenance-closed registry, not an AnsibleUnsafe type
 
