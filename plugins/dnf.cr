@@ -185,6 +185,10 @@ module Krikri
         )
       end
 
+      if rejection = yumdnf_mutual_exclusion_rejection
+        return rejection
+      end
+
       # AnsibleModule type-converts every bool-typed argument_spec
       # param and fails the task on a non-boolean value at module setup -
       # now via the shared BasePlugin#validate_bool_params! (message
@@ -192,6 +196,8 @@ module Krikri
       # double-space wording this check used to pin came from 2.14).
       # Without it this engine accepted e.g. `disable_gpg_check:
       # sometimes` as a truthy value and ran the transaction anyway.
+      # NOTE: mutually_exclusive validation fires BEFORE this (and before
+      # list coercion) - see yumdnf_mutual_exclusion_rejection.
       validate_bool_params!
 
       # AnsibleModule's `type: list` argspec coercion fails an
@@ -228,6 +234,28 @@ module Krikri
         return failure
       end
 
+      # Argspec-choices validation (state, then use_backend - argument_spec
+      # dict order decides, and yumdnf.py appends use_backend last) precedes
+      # ALL module-body work, including list queries and yumdnf.py's own
+      # autoremove sanity check. An explicit state must be checked before
+      # anything else can return first: real ansible reports
+      # "value of state must be one of: ..." even when `list:` would also
+      # have produced a result. state's choice check only runs for an
+      # explicit STRING value (an omitted state defaults to None, which
+      # skips choices validation entirely; a non-string value keeps
+      # reaching the type-shaped check below, preserving this plugin's
+      # pre-existing behavior there).
+      if explicit_state = @params["state"]?
+        if explicit_state.is_a?(String) &&
+           !["absent", "installed", "latest", "present", "removed"].includes?(explicit_state)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "value of state must be one of: absent, installed, latest, present, removed, got: #{explicit_state}"
+          )
+        end
+      end
+
       # use_backend: Ansible's argument spec (dnf.py:
       # choices=['auto', 'dnf', 'yum', 'yum4', 'dnf4', 'dnf5']) rejects
       # anything else with the standard choices-validation message
@@ -248,11 +276,27 @@ module Krikri
         end
       end
 
+      # yumdnf.py's YumDnf.__init__ sanity check runs after the whole
+      # argument-spec validation and before any module body - so even a
+      # nameless autoremove task fails with this message on real ansible
+      # instead of reaching the empty-name/autoremove handling below.
+      if rejection = yumdnf_autoremove_rejection
+        return rejection
+      end
+
       if list_result = list_query_result
         return list_result
       end
 
       names = parse_package_names
+
+      # `autoremove: true` with no `name:` is dnf's own documented usage
+      # ("Autoremove unneeded packages installed as dependencies", dnf.py
+      # EXAMPLES) - the yumdnf init check above already rejected a
+      # contradicting explicit state, so state here is absent-or-omitted
+      # and the transaction is `dnf autoremove`, not a missing-name error.
+      # Same shape dnf5.cr already implements.
+      return handle_autoremove if true?(@params["autoremove"]?) && names.empty?
 
       if early = early_result_for_empty_names(names)
         return early

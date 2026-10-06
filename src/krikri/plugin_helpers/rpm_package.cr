@@ -243,6 +243,53 @@ module Krikri
         nil
       end
 
+      # yumdnf_argument_spec's mutually_exclusive groups (ansible/module_utils/
+      # yumdnf.py), shared by dnf, dnf5 and yum. AnsibleModule validates
+      # mutually_exclusive groups right after the unsupported-parameter check
+      # and BEFORE defaults are applied and type conversion runs
+      # (module_utils/common/arg_spec.py: check_mutually_exclusive sits ahead
+      # of _set_defaults and _validate_argument_types), so a collision needs
+      # both keys EXPLICITLY passed - the `name: []` and `update_cache: False`
+      # defaults do not count, which is also why the spec's required_one_of
+      # (name, list, update_cache) can never fire. Presence is key presence
+      # only: `best: false` + `nobest: false`, `list: ""` and even
+      # `list: null` all collide (all live-verified against ansible-core
+      # 2.19.11), and the `pkg` alias counts as `name`. Every colliding
+      # group is reported in one message, groups joined by ", ", members by
+      # "|": "parameters are mutually exclusive: name|list, best|nobest".
+      private def yumdnf_mutual_exclusion_rejection : PluginResult?
+        groups = [["name", "list"], ["best", "nobest"]]
+        collisions = groups.select do |group|
+          group.count { |key| @params.has_key?(key) || (key == "name" && @params.has_key?("pkg")) } > 1
+        end
+        return nil if collisions.empty?
+
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "parameters are mutually exclusive: #{collisions.map { |group| group.join("|") }.join(", ")}"
+        )
+      end
+
+      # yumdnf.py's YumDnf.__init__ sanity check, which runs after the whole
+      # argument-spec validation (choices included) and before any module
+      # body (the dnf5 backend's libdnf5 import probe included): an omitted
+      # state defaults to "absent" when autoremove is set, and an explicit
+      # state other than the literal "absent" fails - the "removed" alias
+      # does NOT satisfy it because the check compares the raw parameter.
+      # Live-verified against ansible-core 2.19.11 (msg + results: [] shape).
+      private def yumdnf_autoremove_rejection : PluginResult?
+        return nil unless true?(@params["autoremove"]?)
+        state = @params["state"]?
+        return nil if state.nil? || state == "absent"
+
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Autoremove should be used alone or with state=absent"
+        )
+      end
+
       private def parse_package_names : Array(String)
         names = names_from_name_param || [] of String
 

@@ -142,3 +142,67 @@ describe "yum: argument-spec validation" do
     result["msg"].as_s.wont_include("NoneType")
   end
 end
+
+describe "dnf: yumdnf mutual exclusion + autoremove sanity" do
+  it "rejects name together with list (presence-based, even for empty-string list)" do
+    result = run_dnf({"name" => "gzip", "list" => ""})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: name|list")
+  end
+
+  it "counts the pkg alias as name for the name|list collision" do
+    result = run_dnf({"pkg" => "gzip", "list" => "installed"})
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: name|list")
+  end
+
+  it "collides on best:false + nobest:false (presence, not truthiness)" do
+    result = run_dnf({"name" => "gzip", "best" => "false", "nobest" => "false"})
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: best|nobest")
+  end
+
+  it "reports every colliding group in one message" do
+    result = run_dnf({"name" => "gzip", "list" => "installed", "best" => "true", "nobest" => "true"})
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: name|list, best|nobest")
+  end
+
+  it "fires mutual exclusion before bool conversion (live-verified 2.19 order)" do
+    result = run_dnf({"name" => "gzip", "list" => "installed", "disable_gpg_check" => "notabool"})
+    result["msg"].as_s.must_equal("parameters are mutually exclusive: name|list")
+  end
+
+  it "does not collide when only one member of each group is present" do
+    result = run_dnf({"name" => "gzip", "state" => "present"})
+    # the plugin proceeds past validation into the (failing, dnf-less test
+    # host) transaction - the assertion is that argspec never rejected it
+    refute(result["msg"]?.try(&.as_s).try(&.includes?("mutually exclusive")))
+  end
+
+  it "fails autoremove with an explicit contradicting state" do
+    result = run_dnf({"autoremove" => "true", "state" => "present"})
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Autoremove should be used alone or with state=absent")
+  end
+
+  it "fails autoremove with an explicit contradicting state even without name" do
+    result = run_dnf({"autoremove" => "true", "state" => "present"})
+    result["msg"].as_s.must_equal("Autoremove should be used alone or with state=absent")
+  end
+
+  it "runs the autoremove transaction instead of a missing-name error (state absent)" do
+    result = run_dnf({"autoremove" => "true", "state" => "absent"})
+    msg = result["msg"]?.try(&.as_s) || ""
+    refute(msg.includes?("Missing required parameter: name"))
+    refute(msg.includes?("Autoremove should be used alone"))
+  end
+
+  it "runs the autoremove transaction instead of a missing-name error (state omitted)" do
+    result = run_dnf({"autoremove" => "true"})
+    msg = result["msg"]?.try(&.as_s) || ""
+    refute(msg.includes?("Missing required parameter: name"))
+  end
+
+  it "reports a bad explicit state before list queries run" do
+    result = run_dnf({"name" => "gzip", "state" => "bogusstate"})
+    result["msg"].as_s.must_equal("value of state must be one of: absent, installed, latest, present, removed, got: bogusstate")
+  end
+end

@@ -99,6 +99,30 @@ module Krikri
       normalize_best_param
       normalize_expire_cache_alias
 
+      # argspec choices validation precedes ALL module-body work: an
+      # explicit bad state must be reported before list queries or the
+      # autoremove sanity check can return first (same live-verified shape
+      # as dnf.cr; non-string values keep the later type-shaped check).
+      if explicit_state = @params["state"]?
+        if explicit_state.is_a?(String) &&
+           !["absent", "installed", "latest", "present", "removed"].includes?(explicit_state)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "value of state must be one of: absent, installed, latest, present, removed, got: #{explicit_state}"
+          )
+        end
+      end
+
+      # yumdnf.py's YumDnf.__init__ sanity check runs after the whole
+      # argument-spec validation and before any module body - so even a
+      # nameless autoremove task fails with this message on real ansible
+      # instead of reaching the handle_autoremove short-circuit below
+      # (which stays correct for the state-absent/omitted case).
+      if rejection = yumdnf_autoremove_rejection
+        return rejection
+      end
+
       if list_result = list_query_result
         return list_result
       end
@@ -135,7 +159,7 @@ module Krikri
     # ----- argument-spec validation (split for readability) -----
 
     private def arg_spec_rejection : PluginResult?
-      unsupported_rejection || bool_rejection || null_list_rejection || mutual_exclusion_rejection
+      unsupported_rejection || mutual_exclusion_rejection || bool_rejection || null_list_rejection
     end
 
     # Real dnf5's supported set = shared yumdnf_argument_spec + auto_install_module_deps
@@ -195,21 +219,14 @@ module Krikri
       )
     end
 
-    # AnsibleModule enforces the shared yumdnf `mutually_exclusive`
-    # pairs after coercion: name|list and best|nobest, each firing with the
-    # standard message only when BOTH members are non-empty.
+    # AnsibleModule enforces the shared yumdnf `mutually_exclusive` pairs
+    # (name|list, best|nobest) by plain key PRESENCE - `best: false` +
+    # `nobest: false`, `list: ""` and even `list: null` all collide, and
+    # every colliding group is reported in one message
+    # (live-verified against ansible-core 2.19.11; see
+    # RpmPackage#yumdnf_mutual_exclusion_rejection for the full provenance).
     private def mutual_exclusion_rejection : PluginResult?
-      name = @params["name"]?
-      list = @params["list"]?
-      if name && !name.strip.empty? && list && !list.strip.empty?
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: name|list")
-      end
-      best = @params["best"]?
-      nobest = @params["nobest"]?
-      if best && !best.strip.empty? && nobest && !nobest.strip.empty?
-        return PluginResult.new(changed: false, failed: true, msg: "parameters are mutually exclusive: best|nobest")
-      end
-      nil
+      yumdnf_mutual_exclusion_rejection
     end
 
     # ----- dnf5-specific parameter normalization -----
