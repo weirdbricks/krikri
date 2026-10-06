@@ -321,6 +321,11 @@ because anyone intends to fix them.
   both engines (the role is broken against 2.19 either way), only the wording differs -
   Ansible's `No filter named 'version_compare' found.` vs krikri's
   `unknown filter "version_compare"`.
+- **An erroring task NAME prints an inline marker instead of Ansible's warning.** When a task's
+  `name:` itself fails to template (e.g. it reads an undefined `_latest_release.json`), Ansible emits
+  `[WARNING]: Encountered 1 template error` and the task runs on; krikri runs it too but renders an
+  inline `<< error ... >>` banner marker in the task header instead of the warning line. No outcome or
+  recap changes (found via `coopdevs.backups_role`).
 
 ### Everything else
 
