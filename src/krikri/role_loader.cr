@@ -72,6 +72,19 @@ module Krikri
       !resolve_role_dir(name, playbook_dir).nil?
     end
 
+    # Whether a role's tasks/<tasks_from> file does not exist - public so
+    # PlaybookParser can reproduce real's parse-time refusal of a STATIC
+    # import_role: whose tasks_from: points nowhere (see
+    # RoleTasksFromFileError's own comment). *tasks_from* is taken
+    # literally, exactly as real builds the path (an explicit extension
+    # is honored, a bare name gets ".yml"/".yaml"/".json" tried in that
+    # order by #resolve_role_tasks_path).
+    def self.role_tasks_file_missing?(name : String, playbook_dir : String, tasks_from : String) : Bool
+      role_dir = resolve_role_dir(name, playbook_dir)
+      return true unless role_dir
+      !File.file?(resolve_role_tasks_path(role_dir, tasks_from))
+    end
+
     # The role search path list exactly as ansible-core's
     # RoleDefinition._load_role_path builds and REPORTS it
     # (definition.py: "the role '<name>' was not found in <paths>"):
@@ -423,12 +436,48 @@ module Krikri
         task.inherited_tags = (task.inherited_tags + invocation_tags).uniq
       end
 
+      # A task inside a role's block:/rescue:/always: belongs to that role
+      # just as much as a top-level one - real's get_name() shows
+      # "role : name" for a NAMED block child in --list-tasks (and the
+      # runtime executor's propagate_role_context stamps the same fields
+      # on its way through blocks, so this parse-time stamping only makes
+      # the listing-time view agree with what run time already produced).
+      (role_tasks + role_handlers).each { |task| stamp_role_into_blocks(task, name, role_dir, parent_names, parent_paths, collection_name) }
+
       tasks.concat(role_tasks)
       handlers.concat(role_handlers)
 
       # Returned so a DECLARING role can pick these up as its own
       # dependency defaults (see the `dependency_defaults` merge above).
       defaults
+    end
+
+    # Copies the role binding into a task's nested block/rescue/always
+    # children, recursively - the per-task stamp loop above only reaches
+    # each role file's TOP-LEVEL tasks, so a named task inside a role's
+    # block listed without its "role : " prefix in --list-tasks (real
+    # flattens blocks in the listing and prefixes the children).
+    private def self.stamp_role_into_blocks(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?) : Nil
+      task.block_tasks.try &.each do |nested|
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+      end
+      task.rescue_tasks.try &.each do |nested|
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+      end
+      task.always_tasks.try &.each do |nested|
+        stamp_role_task(nested, name, role_dir, parent_names, parent_paths, collection_name)
+        stamp_role_into_blocks(nested, name, role_dir, parent_names, parent_paths, collection_name)
+      end
+    end
+
+    private def self.stamp_role_task(task : Task, name : String, role_dir : String, parent_names : Array(String), parent_paths : Array(String), collection_name : String?) : Nil
+      task.role_name = name
+      task.role_path = role_dir
+      task.role_parent_names = parent_names
+      task.role_parent_paths = parent_paths
+      task.ansible_collection_name = collection_name
     end
 
     # tasks_from: loads tasks/<name>.yml instead of tasks/main.yml -

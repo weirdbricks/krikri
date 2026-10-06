@@ -695,6 +695,15 @@ rescue ex : Krikri::StaticImportRoleUndefinedError
   # it uses for an import_tasks: PATH.
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 1
+rescue ex : Krikri::RoleTasksFromFileError
+  # A STATIC import_role: whose tasks_from: names a file the role does
+  # not have is ansible-core's own playbook-load refusal
+  # (role/__init__.py, AnsibleParserError): a plain [ERROR]: line on
+  # STDERR, parser-error rc=4, NO Origin block (live-verified vs
+  # 2.19.11 - unlike the import_tasks: missing-file case, which is
+  # rc=1 with an Origin).
+  STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 4
 rescue ex : Krikri::EndRoleOutsideRoleError
   # meta: end_role outside any role is Ansible's own parse-time
   # rejection - parser-error exit code 4 (helpers.py's

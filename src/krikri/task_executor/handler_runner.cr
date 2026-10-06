@@ -251,6 +251,16 @@ module Krikri
     # ordinary one that still needs displaying.
     private def record_handler_result(result : JSON::Any, stats : Hash(String, Int32),
                                       host : Host, handler : Task, diff_mode : Bool) : Nil
+      if result["handler_include_failure"]?.try(&.as_bool) || result["handler_include_counted"]?.try(&.as_bool)
+        # A handler include_tasks: whose file is missing already printed
+        # its own fatal shape AND counted the failure (and halted the
+        # host) inside TaskExecutor#fail_include_tasks_file_not_found -
+        # this step must neither display a second line nor recount it.
+        # handler_include_counted is the looped include's twin: every
+        # iteration's ok/skip/failure was booked inside
+        # #execute_handler_include_loop itself.
+        return
+      end
       if result["skipped"]?.try(&.as_bool)
         stats["skipped"] = (stats["skipped"]? || 0) + 1
       elsif result["already_displayed"]?.try(&.as_bool)

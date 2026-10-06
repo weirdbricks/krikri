@@ -600,6 +600,22 @@ module Krikri
     # source - the runtime role-not-found failure's Origin block points
     # there, not at the task's first key (live-verified vs 2.19.11).
     property include_role_name_origin : {Int32, Int32}?
+    # --list-tasks/--list-tags display (TaskLister): the include-family
+    # directive key AS WRITTEN (`include_role:`,
+    # `ansible.builtin.include_tasks:`, ...). Real's listtasks CLI prints
+    # the bare action for a task with no `name:` of its own - for the
+    # include statements that is this key, not the synthesized
+    # "<action> : <role>" display name Task#name carries for runtime
+    # banners. nil for plain module tasks, whose AS-WRITTEN action is
+    # already what Task#name holds when unnamed.
+    property written_action : String?
+    # Whether the task had its own `name:` key in the YAML. Real's
+    # --list-tasks prints `task.action` (no role prefix) when task.name
+    # is unset and `task.get_name()` ("role : name") otherwise; krikri
+    # names unnamed tasks with their as-written action, so without this
+    # flag the two are indistinguishable and an unnamed task inside a
+    # role wrongly gained the "role : " prefix in the listing.
+    property? has_explicit_name : Bool = false
     # An include_role:'s own boolean keyword (public/allow_duplicates/
     # rolespec_validate) whose value real cannot convert to a Python bool
     # - Ansible reports that before it resolves the role at all, as a normal
@@ -1212,6 +1228,20 @@ module Krikri
   class StaticImportRoleUndefinedError < Exception
   end
 
+  # Raised at PARSE time when a STATIC import_role:'s tasks_from: points
+  # at a file that does not exist in the role. ansible-core's own
+  # playbook-load refusal: role/__init__.py's
+  # "Could not find specified file in role: tasks/<from>"
+  # (AnsibleParserError, plain [ERROR]: line on STDERR with NO Origin
+  # block, parser-error rc=4 - live-verified vs 2.19.11 with
+  # `import_role: {name: r, tasks_from: nested}` where tasks/nested.yml
+  # does not exist; the same role with no tasks_from: at all does NOT
+  # error, matching real's `elif main is not None` guard). Distinct
+  # class so krikri-playbook.cr can render the plain no-Origin shape
+  # instead of an Origin block or the import_tasks:-path rc=1 render.
+  class RoleTasksFromFileError < Exception
+  end
+
   class StaticImportUndefinedError < Exception
   end
 
@@ -1554,6 +1584,12 @@ module Krikri
             # Same bypass - a missing import target is fatal the way
             # Ansible is, not a soft warning. See that class's own comment.
             raise ex
+          rescue ex : RoleTasksFromFileError
+            # Same bypass - a static import_role: whose tasks_from: points
+            # at a file the role does not have refuses the WHOLE playbook
+            # (role/__init__.py, rc=4), not a soft warning. See that
+            # class's own comment.
+            raise ex
           rescue ex : InvalidRegisterError
             # Same bypass - Ansible refuses the whole run for an
             # invalid register: at load time. See that class's own comment.
@@ -1605,6 +1641,11 @@ module Krikri
           raise ex
         rescue ex : StaticImportMissingFileError
           # Same bypass, same reason - see that class's own comment.
+          raise ex
+        rescue ex : RoleTasksFromFileError
+          # Same bypass, same reason - a static import_role:'s missing
+          # tasks_from: target is ansible-core's own playbook-load refusal
+          # (rc=4), not a per-play soft-skip. See that class's own comment.
           raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
@@ -1996,6 +2037,11 @@ module Krikri
           raise ex
         rescue ex : StaticImportMissingFileError
           # Same bypass - see that class's own comment.
+          raise ex
+        rescue ex : RoleTasksFromFileError
+          # Same bypass - a static import_role:'s missing tasks_from:
+          # target is ansible-core's own playbook-load refusal (rc=4),
+          # not a per-task degradation. See that class's own comment.
           raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
@@ -2535,17 +2581,22 @@ module Krikri
       # any play banner, live-verified vs 2.19.11), even though the file
       # itself is only read at run time.
       if include_tasks_value = directive(task_hash, "include_tasks")
+        include_tasks_written = written_directive_key(task_hash, "include_tasks")
         include_tasks_file = validate_task_include_options(
-          written_directive_key(task_hash, "include_tasks"), include_tasks_value,
+          include_tasks_written, include_tasks_value,
           source_file, source_map, source_prefix, index)
         raise "include_tasks: missing a file path" unless include_tasks_file
-        return parse_include_tasks(name || "include_tasks", task_hash, include_tasks_file, play, file_dir,
+        include_tasks_task = parse_include_tasks(name || include_tasks_written, task_hash, include_tasks_file, play, file_dir,
           include_file_native_value(include_tasks_value))
+        include_tasks_task.has_explicit_name = !name.nil?
+        include_tasks_task.written_action = include_tasks_written
+        return include_tasks_task
       end
 
       if include_role_value = directive(task_hash, "include_role")
         include_role_args = normalize_include_role_args(include_role_value, source_file, source_map, source_prefix, index)
-        return parse_include_role(name, task_hash, written_directive_key(task_hash, "include_role"), include_role_args, play, file_dir, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index)
+        include_role_task = parse_include_role(name, task_hash, written_directive_key(task_hash, "include_role"), include_role_args, play, file_dir, source_file: source_file, source_map: source_map, source_prefix: source_prefix, source_index: index)
+        return include_role_task
       end
 
       # import_role: - Ansible resolves this statically at parse
@@ -2652,13 +2703,17 @@ module Krikri
       end
 
       if meta_yaml = directive(task_hash, "meta")
-        return parse_meta_task(name || "meta", task_hash, meta_yaml, source_file, source_map, source_prefix, index)
+        meta_task = parse_meta_task(name || "meta", task_hash, meta_yaml, source_file, source_map, source_prefix, index)
+        meta_task.has_explicit_name = !name.nil?
+        return meta_task
       end
 
       if include_vars_yaml = directive(task_hash, "include_vars")
         # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
         written = ["include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"].find { |key| task_hash.has_key?(key) } || "include_vars"
-        return parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index)
+        include_vars_task = parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index)
+        include_vars_task.has_explicit_name = !name.nil?
+        return include_vars_task
       end
 
       # Find the module (first key that's not a special keyword). Built
@@ -2924,6 +2979,7 @@ module Krikri
 
       task = Task.new(name || as_written_module_name, module_name)
       task.action_name = as_written_module_name
+      task.has_explicit_name = !name.nil?
       if templated_action_string
         task.templated_action = templated_action_string
         # A dict-form directive's args: payload is static (only the module
@@ -3011,23 +3067,6 @@ module Krikri
         # the variable substituted - and never failed the way
         # Ansible fails when that variable is undefined.
         task.environment_raw = safe_yaml_to_string(env_raw)
-      end
-
-      # Parse notify (can be string or array)
-      if notify_yaml = task_hash["notify"]?
-        if notify_yaml.as_s?
-          task.notify = [notify_yaml.as_s]
-        elsif notify_yaml.as_a?
-          task.notify = notify_yaml.as_a.map(&.as_s)
-        end
-      end
-
-      # Parse listen (can be string or array of topics) - same shape rule
-      # as notify: directly above. `safe_yaml_to_string` used to stringify
-      # a YAML sequence here (round 811339, CVi.thanos's three-topic
-      # listen: list), so no notify: naming a single topic ever matched.
-      if listen_yaml = task_hash["listen"]?
-        task.listen = listen_yaml.as_s? ? [listen_yaml.as_s] : listen_yaml.as_a.map(&.as_s)
       end
 
       # Parse tags
@@ -3483,6 +3522,29 @@ module Krikri
         vars = Hash(String, JSON::Any).new
         vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
         task.vars = vars
+      end
+
+      # Parse notify (can be string or array)
+      if notify_yaml = task_hash["notify"]?
+        if notify_yaml.as_s?
+          task.notify = [notify_yaml.as_s]
+        elsif notify_yaml.as_a?
+          task.notify = notify_yaml.as_a.map(&.as_s)
+        end
+      end
+
+      # Parse listen (can be string or array of topics) - same shape rule
+      # as notify: directly above. `safe_yaml_to_string` used to stringify
+      # a YAML sequence here (round 811339, CVi.thanos's three-topic
+      # listen: list), so no notify: naming a single topic ever matched.
+      # Lives here rather than in #parse_task's tail because the include
+      # family parsers (include_tasks/include_role/import_role) all funnel
+      # through this method AFTER their own early-return dispatch - an
+      # UNNAMED include_tasks: handler reached only via its listen: topic
+      # used to lose the listen entirely (real runs it; live-verified vs
+      # 2.19.11) and the notify-time existence check then refused the run.
+      if listen_yaml = task_hash["listen"]?
+        task.listen = listen_yaml.as_s? ? [listen_yaml.as_s] : listen_yaml.as_a.map(&.as_s)
       end
     end
 
@@ -4632,6 +4694,20 @@ module Krikri
       role_name = validate_include_role_args(action, role_args, source_file, source_map, source_prefix, source_index)
       raise "include_role: missing required 'name'" unless role_name
 
+      # A STATIC import_role:'s tasks_from: is resolved at parse time -
+      # a file that does not exist refuses the WHOLE playbook the way
+      # real does (see RoleTasksFromFileError's own comment for the
+      # exact shape). Only when tasks_from: is actually written: a role
+      # with no tasks/main.yml at all loads as an empty task list, both
+      # here and in real. A templated tasks_from: is left for the
+      # runtime load (real resolves it against the import's static vars;
+      # a value that templates to nothing fails there, not here).
+      if is_static && (static_tasks_from = role_args["tasks_from"]?.try(&.as_s)) && !static_tasks_from.includes?("{{")
+        if RoleLoader.role_tasks_file_missing?(role_name, file_dir, static_tasks_from)
+          raise RoleTasksFromFileError.new("Could not find specified file in role: tasks/#{static_tasks_from}")
+        end
+      end
+
       # Real converts include_role:'s own boolean keywords (public,
       # allow_duplicates, rolespec_validate) before it resolves the role,
       # in that order, and a value that is not a bool fails the task
@@ -4650,6 +4726,8 @@ module Krikri
       display_name = name || "#{is_static ? "import_role" : "include_role"} : #{role_name}"
       task = Task.new(display_name, "_include_role")
       task.is_static_import = is_static
+      task.has_explicit_name = !name.nil?
+      task.written_action = action
       task.include_role_bool_failure = bool_failure
       task.include_role_name = role_name
       task.include_role_dir = file_dir

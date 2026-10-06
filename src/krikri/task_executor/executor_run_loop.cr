@@ -2608,10 +2608,19 @@ module Krikri
           next
         end
 
-        Krikri::OutputBanner.banner("TASK [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
+        Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
         print_task_path(nested_task)
         execute_task(nested_task, host)
       end
+    end
+
+    # "TASK" or, while a HANDLER's own include_tasks: subtree runs,
+    # "RUNNING HANDLER" - real's callback prints every banner inside a
+    # handler flush as "RUNNING HANDLER [...]", including tasks pulled
+    # in by the include and anything THEY in turn include (live-verified
+    # vs 2.19.11); outside that subtree it is always "TASK".
+    private def task_banner_kind : String
+      @in_handler_flush ? "RUNNING HANDLER" : "TASK"
     end
 
     # Runs an include_tasks: task. Unlike import_tasks (spliced into the

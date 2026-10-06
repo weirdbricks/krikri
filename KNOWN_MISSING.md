@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1515`.**
+**Currently at `0.9.1516`.**
 
 ## Open gaps
 
@@ -60,14 +60,13 @@ defect moves down or gets deleted.
   (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
   build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
+- **`ansible_facts` is undefined (not an empty dict) with `gather_facts: false`.** Real pre-seeds an empty
+  `ansible_facts`, so `when: ansible_facts['os_family'] == 'X'` fails with `object of type 'dict' has no attribute
+  'os_family'`; krikri fails with `'ansible_facts' is undefined`. Same outcome (the task fails), different text.
 - **krikri-jinja follow-up:** filter results that are generators should be materialized inside the
   engine's own `eval_filter` instead of by the host-side wrapper in
   `src/krikri/krikri_jinja_filters.cr` - lives in the sibling `weirdbricks/krikri-jinja` repo
   (bump/tag there, then the `tag:` in this repo's `shard.yml`).
-- **`--list-tasks` under `import_role` lists only the statement.** Real resolves the role and lists
-  the role's child tasks in place; krikri prints the `import_role` statement line only.
-- **Handler-included task headers.** Tasks reached through a handler's `include_tasks` print krikri's
-  `TASK [...]` header where real prints `RUNNING HANDLER [...]`, with no `included:` line.
 
 ## Deliberate limits (decided, not defects)
 

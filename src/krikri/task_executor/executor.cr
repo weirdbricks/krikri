@@ -91,6 +91,14 @@ module Krikri
     @registered_vars : Hash(String, Hash(String, JSON::Any))
     # Handler runner
     @handler_runner : HandlerRunner
+    # True while tasks pulled in by a HANDLER's own include_tasks: run.
+    # Real's callback prints every banner inside a handler flush as
+    # "RUNNING HANDLER [...]" - including the tasks of a file a handler
+    # include_tasks:'d and anything THEY in turn include - never
+    # "TASK [...]" (live-verified vs 2.19.11). Set only around the
+    # handler-include run_task_list call in #execute_handler_plugin_once
+    # and restored after, so banners outside that subtree stay "TASK".
+    @in_handler_flush = false
     # Facts per host
     @facts : Hash(String, Hash(String, JSON::Any))
     # The subset of @facts[host.name] that came from `set_fact`/

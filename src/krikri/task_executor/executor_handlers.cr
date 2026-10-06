@@ -276,7 +276,11 @@ module Krikri
       result = if ex = when_error
                  when_error_result(ex, handler)
                elsif items = loop_items
-                 execute_handler_loop(handler, host, vars_context, items)
+                 if handler.include_tasks?
+                   execute_handler_include_loop(handler, host, vars_context, items)
+                 else
+                   execute_handler_loop(handler, host, vars_context, items)
+                 end
                else
                  execute_handler_plugin_once(handler, host, vars_context)
                end
@@ -431,6 +435,194 @@ module Krikri
       }.to_json)
     end
 
+    # Resolves *handler*'s include_tasks: file against *vars_context*,
+    # reads and parses it. Returns {resolved_path, tasks, failed}: on a
+    # missing file or a non-list file the fatal shape real prints is
+    # emitted, the failure counted and the host halted INSIDE here (the
+    # caller only marks its result so HandlerRunner's own recording step
+    # stands down - see the include branch's comment), with *failed*
+    # true and *tasks* empty.
+    #
+    # The two fatal shapes are live-verified vs 2.19.11 for a HANDLER's
+    # include_tasks: and are byte-identical to the regular-task path's:
+    #   missing file  -> the "[ERROR]: Could not find or access ..."
+    #                    block plus {"changed": false, "include": ...,
+    #                    "reason": ...} (fail_include_tasks_file_not_found)
+    #   non-list file -> plain "[ERROR]: included task files must contain
+    #                    a list of tasks" plus the same include/reason
+    #                    fatal line
+    private def load_handler_include_file(handler : Task, host : Host, vars_context : Hash(String, JSON::Any)) : {String, Array(Task), Bool}
+      path_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
+      file_rel = path_substitutor.substitute(handler.include_file.as(String))
+      resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String))
+
+      unless File.exists?(resolved_path)
+        fail_include_tasks_file_not_found(handler, host, resolved_path)
+        return {resolved_path, [] of Task, true}
+      end
+
+      text = Vault.maybe_decrypt(File.read(resolved_path))
+      UnsafeValues.mark_yaml_text(text)
+      yaml = YAML.parse(text)
+      # A comment-only (or entirely blank) tasks file is a valid include
+      # whose task list is empty - the include statement itself still
+      # displays its `included:` line (live-verified vs 2.19.11). Only a
+      # file that parses to a non-list VALUE is real's
+      # "included task files must contain a list of tasks" refusal.
+      return {resolved_path, [] of Task, false} if yaml.raw.nil?
+      unless yaml.as_a?
+        message = "included task files must contain a list of tasks"
+        ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
+        include_json = handler.include_file_native.try(&.to_json) || handler.include_file.to_s.to_json
+        puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+        @results[host.name]["failed"] += 1
+        halt_if_failed(handler, host, true, force_halt: true)
+        return {resolved_path, [] of Task, true}
+      end
+
+      inherited = Play.new("", "")
+      inherited.become = handler.become?
+      inherited.become_user = handler.become_user
+      # A comment-only (or entirely blank) tasks file parses to an empty
+      # task list - the include statement itself still displays its
+      # `included:` line (live-verified vs 2.19.11), only its task list
+      # is empty.
+      included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
+      # Handlers - and everything a handler pulls in - are exempt from
+      # tag selection (Ansible runs a notified `never`-tagged handler
+      # under a plain invocation, and a never task inside a handler's
+      # own include_tasks: file ran under --tags zzz - live-verified vs
+      # 2.19.11). Stamped here so #filter_runtime_loaded skips selection
+      # for this list AND for any further include below it.
+      mark_tag_exempt(included_tasks)
+      propagate_role_context(handler, included_tasks)
+
+      {resolved_path, included_tasks, false}
+    end
+
+    # A LOOPED handler include_tasks: (`include_tasks: "{{ item }}"` +
+    # `loop:`). Real's shape (live-verified vs 2.19.11): the RUNNING
+    # HANDLER banner prints ONCE, then EVERY iteration's
+    # `included: <path> for <host> => (item=...)` line prints, and only
+    # then do the iterations' included tasks run in order - the same
+    # two-phase shape the regular-task looped include implements in
+    # #execute_include_tasks (the old per-item interleave printed each
+    # iteration's tasks before the next iteration's included: line).
+    # Each iteration counts as one `ok` in the recap.
+    private def execute_handler_include_loop(
+      handler : Task,
+      host : Host,
+      base_vars_context : Hash(String, JSON::Any),
+      loop_items : Array(JSON::Any),
+    ) : JSON::Any
+      if handler.loop_items_needs_flatten?
+        # Item rendering is loop-source-grade templating - the alias-free
+        # snapshot (see #synthesize_legacy_ssh_aliases), not the full
+        # per-iteration context below.
+        unsafe_items = loop_items_derive_from_unsafe_data?(handler, host.name)
+        # Unsafe-derived items are already rendered data - their render
+        # pass would be a second render, so it is skipped.
+        loop_items = flatten_with_items_one_level(
+          unsafe_items ? loop_items : loop_items.map { |item| deep_render_item(item, loop_source_vars_context(handler, host, base_vars_context), host.name, strict: false) }
+        )
+        mark_unsafe_loop_items(loop_items) if unsafe_items
+      end
+      loop_var = handler.loop_var
+      index_var = handler.index_var
+
+      if loop_items.empty?
+        puts "skipping: [#{host.name}]".colorize(:cyan)
+        return JSON.parse({
+          "changed" => false,
+          "failed"  => false,
+          "skipped" => true,
+        }.to_json)
+      end
+
+      looped_when_failed = false
+      any_iteration_ran = false
+      deferred_iterations = [] of Array(Task)
+
+      loop_items.each_with_index do |item, idx|
+        vars_context = base_vars_context.dup
+        # loop_control.loop_var REPLACES "item" - ansible-core binds
+        # the item ONLY under the custom name (see the task-loop sites in
+        # executor_loops.cr).
+        if loop_var
+          vars_context[loop_var] = item
+        else
+          vars_context["item"] = item
+        end
+        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+
+        # The include statement's own when: is evaluated PER ITEM with
+        # `item` bound (the non-looped path gets the same check inside
+        # #execute_handler_plugin_once, which this loop path bypasses).
+        if handler.when_condition
+          begin
+            when_result = evaluate_when_items(handler, vars_context, host)
+          rescue WhenEvaluationError
+            looped_when_failed = true
+            next
+          end
+          unless when_result
+            suffix = " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) "
+            puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
+            next
+          end
+        end
+
+        resolved_path, included_tasks, load_failed = load_handler_include_file(handler, host, vars_context)
+        if load_failed
+          return JSON.parse({"changed" => false, "failed" => true, "handler_include_failure" => true}.to_json)
+        end
+
+        puts "included: #{resolved_path} for #{host.name} => (item=#{item_display(item)})".colorize(:cyan)
+        @results[host.name]["ok"] += 1
+        any_iteration_ran = true
+        deferred_iterations << included_tasks
+      end
+
+      if looped_when_failed
+        # One aggregate failure for the whole looped include, not one per
+        # raising item (same rule #execute_include_tasks' loop branch
+        # applies; that path's comment carries the byte-verification).
+        if resolve_task_ignore_errors(handler)
+          @results[host.name]["ok"] += 1
+          @results[host.name]["ignored"] += 1
+        else
+          @results[host.name]["failed"] += 1
+        end
+      elsif !any_iteration_ran
+        puts "skipping: [#{host.name}]".colorize(:cyan)
+        @results[host.name]["skipped"] += 1
+      end
+
+      # The two-phase run: every iteration's included: line printed above,
+      # now the iterations' task lists run in order - all inside the
+      # handler flush, so their banners are "RUNNING HANDLER [...]" (see
+      # @in_handler_flush's own comment).
+      previous_flush_banner = @in_handler_flush
+      @in_handler_flush = true
+      begin
+        deferred_iterations.each do |included_tasks|
+          run_task_list(included_tasks, host)
+        end
+      ensure
+        @in_handler_flush = previous_flush_banner
+      end
+
+      # Every iteration's ok/skip/failure was booked into @results
+      # directly above - handler_include_counted makes HandlerRunner's
+      # recording step stand down entirely (a second update_stats pass
+      # would double-count the include iterations).
+      JSON.parse({
+        "changed"                 => JSON::Any.new(false),
+        "failed"                  => JSON::Any.new(looped_when_failed),
+        "handler_include_counted" => JSON::Any.new(true),
+      }.to_json)
+    end
+
     # The actual single-execution body every handler run (looped or not)
     # goes through - unchanged from before loop: support was added, just
     # extracted so execute_handler_loop can call it once per item.
@@ -563,48 +755,44 @@ module Krikri
       # a handler's own include_tasks: has no separate loop of its own
       # beyond the handler's).
       if handler.include_tasks?
-        path_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        file_rel = path_substitutor.substitute(handler.include_file.as(String))
-        resolved_path = PlaybookParser.resolve_include_path(file_rel, handler.include_file_dir.as(String))
-
-        unless File.exists?(resolved_path)
-          return JSON.parse({
-            "changed" => false,
-            "failed"  => true,
-            "msg"     => "Included tasks file not found: #{resolved_path}",
-          }.to_json)
+        resolved_path, included_tasks, load_failed = load_handler_include_file(handler, host, vars_context)
+        if load_failed
+          # The missing-file / not-a-list fatal shape (and its failure
+          # count + host halt) already happened inside the loader - see
+          # its own comment. The marker only tells HandlerRunner's own
+          # result-recording step to stand down.
+          return JSON.parse({"changed" => false, "failed" => true, "handler_include_failure" => true}.to_json)
         end
 
-        text = Vault.maybe_decrypt(File.read(resolved_path))
-        UnsafeValues.mark_yaml_text(text)
-        yaml = YAML.parse(text)
-        # A comment-only (or entirely blank) tasks file - see the
-        # regular-task include_tasks: path's identical check for why.
-        return JSON.parse({"changed" => false, "failed" => false}.to_json) if yaml.raw.nil?
-        unless yaml.as_a?
-          return JSON.parse({
-            "changed" => false,
-            "failed"  => true,
-            "msg"     => "Included tasks file must be a YAML list: #{resolved_path}",
-          }.to_json)
+        # Real's callback prints the include statement's own result line
+        # as `included: <path> for <host>` right under the RUNNING
+        # HANDLER banner - NOT the `ok: [host]` line an ordinary handler
+        # result gets (live-verified vs 2.19.11; the flush still counts
+        # the include as one `ok` in the PLAY RECAP). Same cyan shape the
+        # regular-task include path prints (run_include_tasks_once).
+        # Prints even for a comment-only (empty) file - real still shows
+        # the included: line for one (live-verified vs 2.19.11).
+        puts "included: #{resolved_path} for #{host.name}".colorize(:cyan)
+
+        # Everything this file pulls in runs INSIDE the handler flush:
+        # every banner under it - these tasks', nested include_tasks:'
+        # and blocks' - is "RUNNING HANDLER [...]", not "TASK [...]"
+        # (see @in_handler_flush's own comment). Restored so later
+        # handlers in the same flush banner normally.
+        previous_flush_banner = @in_handler_flush
+        @in_handler_flush = true
+        begin
+          run_task_list(included_tasks, host)
+        ensure
+          @in_handler_flush = previous_flush_banner
         end
 
-        inherited = Play.new("", "")
-        inherited.become = handler.become?
-        inherited.become_user = handler.become_user
-        included_tasks = PlaybookParser.parse_tasks(yaml.as_a, inherited, "task in included #{resolved_path}", File.dirname(resolved_path), role_path: handler.role_path, playbook_dir: @playbook_dir, source_file: File.expand_path(resolved_path), source_map: YamlSourceMap.scan(text))
-        # Handlers - and everything a handler pulls in - are exempt from
-        # tag selection (Ansible runs a notified `never`-tagged handler
-        # under a plain invocation, and a never task inside a handler's
-        # own include_tasks: file ran under --tags zzz - live-verified vs
-        # 2.19.11). Stamped here so #filter_runtime_loaded skips selection
-        # for this list AND for any further include below it.
-        mark_tag_exempt(included_tasks)
-        propagate_role_context(handler, included_tasks)
-
-        run_task_list(included_tasks, host)
-
-        return JSON.parse({"changed" => false, "failed" => false}.to_json)
+        # The `included:` line above IS the include statement's display -
+        # already_displayed suppresses HandlerRunner's own result display
+        # (an `ok: [host]` line real never prints here) while
+        # update_stats still records the include's one `ok` in the recap,
+        # exactly like the looped-handler path's marker.
+        return JSON.parse({"changed" => false, "failed" => false, "already_displayed" => true}.to_json)
       end
 
       substitutor = VarSubstitutor.new(
