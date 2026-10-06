@@ -451,31 +451,49 @@ module Krikri
 
       # Validate if requested
       if validate_cmd = @params["validate"]?
-        validation = validate_file(temp_file, validate_cmd)
-        unless validation[:ok]
-          # Left in place (not deleted) deliberately - a validation
-          # failure means the rendered content itself is almost always
-          # what's actually wrong, and there's no other way to inspect
-          # what got rendered (the real destination file was never
-          # touched). The path is in the message specifically so it's
-          # not just silently orphaned.
-          #
-          # Also inlines a few lines of context around whatever line
-          # number the validator's own output cites (`sshd -T`/`nginx
-          # -t`-style tools report "line N: ..."), read directly from
-          # this plugin's own filesystem (it's already running ON the
-          # target host) - a second SSH round trip to fetch the file
-          # separately isn't guaranteed to still be possible by the time
-          # anyone looks (the whole play keeps running past this one
-          # failed task, and can reach a task that drops the control
-          # connection - e.g. this exact template's own role locking out
-          # SSH access later in the same play - well before a human gets
-          # a chance to inspect it).
-          context = extract_error_context(temp_file, validation[:output])
+        # copy.py's own gate before anything runs:
+        # fail_json(msg="validate must contain %s: <cmd>") when the
+        # command has no %s to substitute the temp path into (same
+        # wording this engine's assemble/blockinfile/lineinfile/replace
+        # plugins already carry).
+        unless validate_cmd.includes?("%s")
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Validation failed: #{validation[:output]} (rendered content left at #{temp_file} for inspection)#{context}"
+            msg: "validate must contain %s: #{validate_cmd}"
+          )
+        end
+        validation = validate_file(temp_file, validate_cmd)
+        unless validation[:ok]
+          # Real copy.py's validate site (the template module runs
+          # through it): fail_json(msg="failed to validate",
+          # exit_status=rc, stdout=out, stderr=err) - the raw streams
+          # and the exit status ride in the result, checksum is the
+          # rendered content's sha1 the action plugin already computed,
+          # and stdout_lines/stderr_lines come from _return_formatted's
+          # own splitter (live-verified vs ansible-playbook 2.19.11 on
+          # `template: ... validate: /bin/false %s`: {"changed": false,
+          # "checksum": "<sha1>", "exit_status": 1, "msg": "failed to
+          # validate", "stderr": "", "stderr_lines": [], "stdout": "",
+          # "stdout_lines": []}). The previous "Validation failed:
+          # <merged output> (rendered content left at ...)" wording is
+          # this plugin's own borrow - found via robertdebock.cups's
+          # own "Configure cups" task (round 1500129). The staged temp
+          # is still left on disk (only the message differs from real;
+          # real's own tmpdir is cleaned up by do_cleanup_files, which
+          # has no observable result here).
+          stdout = validation[:stdout]
+          stderr = validation[:stderr]
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "failed to validate",
+            checksum: content_sha1,
+            exit_status: validation[:rc],
+            stdout: stdout,
+            stdout_lines: stdout.empty? ? [] of String : stdout.chomp.split("\n"),
+            stderr: stderr,
+            stderr_lines: stderr.empty? ? [] of String : stderr.chomp.split("\n")
           )
         end
       end
@@ -588,49 +606,25 @@ module Krikri
       end
     end
 
-    # Reads a few lines of context out of *path* around whatever line
-    # number *validator_output* cites (`"...: line 34: ..."`, the shape
-    # `sshd -T`/most other line-oriented config validators use). Returns
-    # "" (not an error) if the output doesn't cite a line number, or the
-    # file can't be read - this is best-effort diagnostic content, never
-    # something a caller should treat as required.
-    private def extract_error_context(path : String, validator_output : String) : String
-      # `sshd -T`'s own line-citing format varies by which check failed -
-      # sometimes "path: line N: message", sometimes "path line N:
-      # message" (no colon before "line") - matched loosely enough to
-      # catch both rather than assuming one specific validator's exact
-      # phrasing.
-      return "" unless match = validator_output.match(/line\s+(\d+):/)
-      line_num = match[1].to_i
-
-      lines = File.read_lines(path)
-      from = Math.max(0, line_num - 3)
-      to = Math.min(lines.size - 1, line_num + 1)
-      return "" if from > to
-
-      context_lines = (from..to).map { |i| "#{i + 1}: #{lines[i]}" }.join("\n")
-      "\n--- context around line #{line_num} ---\n#{context_lines}"
-    rescue
-      ""
-    end
-
-    # Validate file with command. Captures stdout+stderr (not discarded,
-    # as this used to) so a validation failure - Ansible's own
-    # `validate:` commands are typically `sshd -T -f %s`/`nginx -t -c
-    # %s`-style syntax checkers whose whole purpose is to explain exactly
-    # what's wrong - reports *what* failed, not just that it did.
-    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, output: String)
+    # Validate file with command. Keeps stdout and stderr SEPARATE and
+    # unstripped - real copy.py's run_command result feeds them straight
+    # into fail_json(stdout=out, stderr=err), so a validator that writes
+    # its explanation to stderr (sshd -T, nginx -t, cupsd -t, ...) must
+    # land in the result's stderr key with an empty stdout, not merged
+    # into one blob.
+    private def validate_file(path : String, validate_cmd : String) : NamedTuple(ok: Bool, rc: Int32, stdout: String, stderr: String)
       cmd = validate_cmd.gsub("%s", shell_single_quote(path))
-      output = IO::Memory.new
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
 
       result = Process.run(
         "/bin/sh",
         ["-c", cmd],
-        output: output,
-        error: output
+        output: out_io,
+        error: err_io
       )
 
-      {ok: result.exit_code == 0, output: output.to_s.strip}
+      {ok: result.exit_code == 0, rc: result.exit_code, stdout: out_io.to_s, stderr: err_io.to_s}
     end
 
     # Apply file attributes (owner, group, mode). Returns true if anything

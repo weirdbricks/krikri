@@ -175,7 +175,7 @@ describe "template plugin param coverage" do
       # same precedence trim_blocks: already had.
       src = tmp_path("lstrip_directive.j2")
       dest = tmp_path("lstrip_directive.out")
-      File.write(src, "#jinja2: lstrip_blocks: false\nA\n    {% if true %}\nB\n    {% endif %}\nC\n")
+      File.write(src, "#jinja2: lstrip_blocks: False\nA\n    {% if true %}\nB\n    {% endif %}\nC\n")
 
       playbook = File.tempname("template-param-spec", ".yml")
       File.write(playbook, <<-YAML)

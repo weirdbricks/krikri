@@ -118,6 +118,94 @@ module Krikri
     class UndefinedVariableError < Exception
     end
 
+    # Raised (before any substitution) when a conditional expression
+    # carries template delimiters - Ansible's own failure class for an
+    # expression Jinja cannot parse (see #template_delimiter_error). The
+    # message is the fully composed "Syntax error in expression. ..." text.
+    class TemplateDelimiterError < Exception
+    end
+
+    # Ansible never pre-renders `{{ }}` out of a conditional: both
+    # `when:` and assert's `that:` items are compiled as raw Jinja
+    # EXPRESSIONS (Templar.evaluate_expression -> Parser(state="variable")),
+    # so a balanced `{{ ... }}` anywhere outside a string literal is a
+    # TemplateSyntaxError and create_template_error(is_expression=True)
+    # composes "Syntax error in expression." + " Template delimiters are
+    # not supported in expressions." + ": " + Jinja's own parse message
+    # (the message property drops the trailing period when joining the
+    # cause - live-verified byte for byte vs ansible-playbook 2.19.11:
+    # `when: 1 >= {{ 1 }}` and `assert: that: [a.b >= {{ x }}]` both fatal
+    # "Syntax error in expression. Template delimiters are not supported
+    # in expressions: expected token ':', got '}'", found via
+    # chriswayg.mailcow's and rockandska.rabbitmq's own assert preflight
+    # tasks, rounds 1500413/1500208, where this engine rendered the
+    # delimiters away and PASSED the task).
+    #
+    # Returns the composed message, or nil when the conditional is fine:
+    #
+    #   * whole-template conditionals (`{{ x }}` and nothing else) take
+    #     Ansible's legacy all-template path instead - deprecation
+    #     warning, then render (live-verified: `when: "{{ 1 == 1 }}"`
+    #     warns and passes), so they are excluded here exactly the way
+    #     the caller's maybe_conditional_delimiters_deprecation detects
+    #     them;
+    #   * a `{{ }}` inside a string literal (`that: name == '{{ x }}'`)
+    #     is a CONST template Jinja parses fine - quoted spans are
+    #     skipped;
+    #   * the parse message is Jinja's for this shape: a balanced `{{ }}`
+    #     misparses as a nested dict literal, so the parse dies at the
+    #     inner `}` expecting the dict's `:`; an unclosed `{{` runs off
+    #     the end of the template. `{% %}`/`{# #}` in a conditional is
+    #     likewise a Jinja parse error in real, but its message is
+    #     position/content-dependent and not emulated here yet.
+    def self.template_delimiter_error(condition : String) : String?
+      stripped = condition.strip
+      return nil if all_template_conditional?(stripped)
+      start = outside_quotes_open_braces_index(stripped)
+      return nil unless start
+
+      suffix = stripped.index("}}", start) ? "expected token ':', got '}'" : "unexpected end of template, expected ':'."
+      "Syntax error in expression. Template delimiters are not supported in expressions: #{suffix}"
+    end
+
+    # Ansible's own all-template detection shape (the same condition the
+    # conditional-as-template deprecation in executor_vars_context.cr
+    # uses): delimiters wrap the WHOLE conditional and no inner `{{`
+    # breaks the span.
+    private def self.all_template_conditional?(conditional : String) : Bool
+      conditional.size > 4 &&
+        conditional.starts_with?("{{") && conditional.ends_with?("}}") &&
+        !conditional[2...-2].includes?("{{")
+    end
+
+    # Index of the first `{{` outside any single- or double-quoted span,
+    # or nil. Quote-aware because a `{{ }}` inside a string literal is a
+    # const template Jinja parses without complaint.
+    private def self.outside_quotes_open_braces_index(str : String) : Int32?
+      quote : Char? = nil
+      escaped = false
+      chars = str.chars
+      i = 0
+      while i < chars.size
+        char = chars[i]
+        if q = quote
+          if escaped
+            escaped = false
+          elsif char == '\\' && q == '"'
+            escaped = true
+          elsif char == q
+            quote = nil
+          end
+        elsif char == '\'' || char == '"'
+          quote = char
+        elsif char == '{' && chars[i + 1]? == '{'
+          return i
+        end
+        i += 1
+      end
+      nil
+    end
+
     def self.evaluate(condition : String, vars : Hash(String, JSON::Any), strict : Bool = false, raise_undefined : Bool = false) : Bool
       TimingProfile.measure("controller.conditionals", "controller") do
         evaluate_measured(condition, vars, strict, raise_undefined)

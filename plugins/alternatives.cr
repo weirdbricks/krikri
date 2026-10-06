@@ -15,9 +15,11 @@ module Krikri
   # and not supported (no RHEL host available to verify against).
   class AlternativesPlugin < BasePlugin
     # One alternative as `update-alternatives --display` reports it
-    # (alternatives.py's parse(): the regex's family group is None on
-    # Debian, where --display never prints one, and a real family name
-    # on RHEL - the module compares it verbatim against `family:`).
+    # (alternatives.py's parse(): the regex's family group is the empty
+    # string on Debian, where --display never prints one - Python's
+    # findall yields "" for a group that never participated - and a real
+    # family name on RHEL - the module compares it verbatim against
+    # `family:`).
     alias Alternative = NamedTuple(priority: Int32, family: String?)
 
     # Ansible's `module.get_bin_path("update-alternatives", True)`, resolved
@@ -209,7 +211,19 @@ module Krikri
       end
 
       output.scan(/^(\/\S*)\s-\s(?:family\s(\S+)\s)?priority\s(\d+)/m) do |am_blk|
-        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i, family: am_blk[2]?}
+        # Real stores Python's findall group verbatim: on Debian the
+        # optional family group never participates, findall yields "" -
+        # NOT None. That distinction is load-bearing: is_same_family
+        # compares it against the task's `family:` param (None when the
+        # task gives none), and `"" == None` is False, so a Debian
+        # `alternatives: {name: editor, path: /usr/bin/vim.basic}` whose
+        # current link points elsewhere DOES run `--set` (changed).
+        # Storing nil made nil == nil true and silently skipped the
+        # select - reported ok where Ansible reported changed (found via
+        # do1jlr.base's own "vim is our editor" task and
+        # chusiang.vim-and-vi-mode's "switch default editor to vim",
+        # rounds 1500247/1500533).
+        current_alternatives[am_blk[1]] = {priority: am_blk[3].to_i, family: am_blk[2]? || ""}
       end
 
       {current_mode, current_path, current_link, current_alternatives}

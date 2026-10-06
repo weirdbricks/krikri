@@ -86,11 +86,31 @@ module Krikri
         failing = nil.as(String?)
         conditions.each_with_index do |condition, idx|
           current_index = idx
+          # Ansible compiles the RAW `that:` item as an expression -
+          # no `{{ }}` pre-render - so a delimiter-bearing condition is
+          # its "Template delimiters are not supported in expressions"
+          # syntax error, not something to render away and then evaluate
+          # (chriswayg.mailcow / rockandska.rabbitmq's own assert
+          # preflights, rounds 1500413/1500208). Checked before
+          # substitution, on the raw text, while the delimiters are
+          # still visible.
+          if delimiter = ConditionalEvaluator.template_delimiter_error(condition)
+            raise ConditionalEvaluator::TemplateDelimiterError.new(delimiter)
+          end
           substituted = substitutor.substitute(condition)
           next if ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
           failing = condition
           break
         end
+      rescue ex : ConditionalEvaluator::TemplateDelimiterError
+        # Same shape as the filter-name failure below: ansible-core
+        # 2.19.11 prefixes assert:'s own syntax failure "Task failed: ",
+        # registers changed=false+failed=true+msg, and the [ERROR]
+        # chain's second Origin points at the failing that: item
+        # (_ansible_that_index).
+        result = ActionResult.conditional_error_result_json("Task failed: #{ex.message}")
+        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+        return ActionResult.final(result)
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         # ansible-core 2.19.11 prefixes assert:'s undefined-
         # conditional failure with "Task failed: " exactly like its

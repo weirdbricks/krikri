@@ -3004,16 +3004,18 @@ describe Krikri::PlaybookParser do
       task.params["creates"].must_equal("/path with spaces/marker")
     end
 
-    it "leaves a creates= inside a whole-command {% if %} block alone at parse time, and strips it from the RENDERED text (kamaln7.swapfile shape)" do
+    it "extracts creates= from inside a whole-command {% if %} block at parse time, leaving the block in cmd (kamaln7.swapfile shape)" do
       # Found live via kamaln7.swapfile: the whole free-form string is a
-      # `{% if %}...{% endif %}` block, so the RAW text's last token is
-      # the literal `{% endif %}` tag and the parse-time strip (which
-      # only ever looks at the trailing end) never fires - `creates=...`
-      # legitimately stays inside cmd at parse time. Ansible strips
-      # it AFTER templating, from the rendered one-branch command line
-      # where `creates=` genuinely IS last - the executor now does the
-      # same post-render pass (see substitute_task_params), and this
-      # spec pins both halves of that behavior.
+      # `{% if %}...{% endif %}` block. Ansible's parse_kv runs at
+      # TASK-PARSE time over every whitespace-delimited token, so each
+      # branch's `creates={{ swapfile_location }}` becomes the module's
+      # `creates` param BEFORE any templating (live-verified vs
+      # 2.19.11: the module args carry `creates` and a `_raw_params`
+      # with no `creates=` text left in it) while the block itself stays
+      # in cmd and renders down to one branch afterwards. The
+      # post-render half below stays pinned too - a key=value that only
+      # exists AFTER templating still has to be caught from the
+      # rendered text the executor really hands the module.
       task = single_task(<<-YAML)
         - name: t
           ansible.builtin.command: >
@@ -3024,17 +3026,67 @@ describe Krikri::PlaybookParser do
             {% endif %}
         YAML
 
-      # Parse time: nothing stripped, cmd still carries the whole block.
+      # Parse time: the block survives in cmd, both creates= params are
+      # extracted (last occurrence wins, as parse_kv's dict assignment
+      # does).
       task.params["cmd"].includes?("{% endif %}").must_equal(true)
-      task.params.has_key?("creates").must_equal(false)
+      task.params["cmd"].includes?("creates=").must_equal(false)
+      task.params.has_key?("creates").must_equal(true)
+      task.params["creates"].must_equal("{{ swapfile_location }}")
 
-      # Render time: the {% if %} resolves to one flat command line whose
-      # last token IS `creates=...` - the post-render extraction now
-      # catches it (this is the exact call the executor makes).
+      # Render time: the executor's own call on a flat command line
+      # whose last token IS `creates=...` (this is the exact call the
+      # executor makes).
       rendered = "fallocate -l 1024 /swapfile creates=/swapfile"
       cmd, special = Krikri::PlaybookParser.extract_command_special_params(rendered)
       cmd.must_equal("fallocate -l 1024 /swapfile")
       special["creates"].must_equal("/swapfile")
+    end
+
+    it "extracts a leading special param, keeping the rest of the command byte-for-byte (rzfeeser shape)" do
+      # Real bug found benchmarking rzfeeser.ansible_role_minecraft's
+      # own `command: "chdir=~/minecraft/ screen -S minecraft -d -m
+      # run.sh"` (round 1500301): parse_kv strips key=value tokens from
+      # ANY position, so real runs `screen` inside ~/minecraft/, while
+      # the old trailing-only strip left `chdir=~/minecraft/` glued to
+      # the front and the spawn died with a bogus
+      # `No such file or directory: b'chdir=~/minecraft/'`.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: "chdir=~/minecraft/ screen -S minecraft -d -m /root/minecraft/run.sh"
+        YAML
+
+      task.params["cmd"].must_equal("screen -S minecraft -d -m /root/minecraft/run.sh")
+      task.params["chdir"].must_equal("~/minecraft/")
+    end
+
+    it "extracts a special param from the middle of a command" do
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.command: echo hi creates=/tmp/marker bye
+        YAML
+
+      task.params["cmd"].must_equal("echo hi bye")
+      task.params["creates"].must_equal("/tmp/marker")
+    end
+
+    it "keeps the newline between the last command token and a trailing stripped special" do
+      cmd, special = Krikri::PlaybookParser.extract_command_special_params("echo a\nchdir=/tmp")
+      cmd.must_equal("echo a\n")
+      special["chdir"].must_equal("/tmp")
+    end
+
+    it "strips stdin/warn/strip_empty_ends like parse_kv's own whitelist" do
+      cmd, special = Krikri::PlaybookParser.extract_command_special_params("warn=False strip_empty_ends=False echo hi")
+      cmd.must_equal("echo hi")
+      special["warn"].must_equal("False")
+      special["strip_empty_ends"].must_equal("False")
+    end
+
+    it "keeps the last value when a special key appears twice" do
+      cmd, special = Krikri::PlaybookParser.extract_command_special_params("chdir=/tmp chdir=/var echo hi")
+      cmd.must_equal("echo hi")
+      special["chdir"].must_equal("/var")
     end
   end
 

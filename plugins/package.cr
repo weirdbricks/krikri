@@ -57,6 +57,9 @@ module Krikri
 
     include AptLockRetry
     property? check_mode : Bool
+    # Resolved remote path of apt-get (see #apt_get_bin), nil until first
+    # needed.
+    @apt_get_bin : String? = nil
 
     # The backend modules this engine actually ships - what a `use:`
     # name can resolve to. Ansible's package action plugin checks
@@ -944,6 +947,37 @@ module Krikri
           end
         end
       when "latest"
+        # `name: "*"` + `state: latest` - Ansible's apt.py (the backend
+        # this module dispatches to on apt hosts) takes its OWN
+        # `if latest and all_installed:` branch here and calls
+        # upgrade(module, 'yes', ...): the same command `upgrade: yes`
+        # builds, NEVER a per-package `apt-get install *`. apt-get
+        # treats a bare `*` as a glob over EVERY package in the archive,
+        # so on a host with a held/conflicting package pair it drags in
+        # packages a real `apt-get upgrade` never touches (upgrade only
+        # touches packages that need no install/remove) and fails
+        # outright with "E: Unable to correct problems, you have held
+        # broken packages" where Ansible reports a clean upgrade. Found
+        # via MindPointGroup.ubuntu22_cis's own "1.2.2.1 | PATCH | Ensure
+        # updates, patches, and additional security software are
+        # installed" task (round 1500409) - the same defect this
+        # engine's separate apt.cr already fixed for `apt:`
+        # (handle_wildcard_latest); the two dispatches are independent
+        # plugin binaries, so the handler is duplicated rather than
+        # shared.
+        if names.includes?("*")
+          # apt.py's own fail_json message verbatim - Ansible refuses
+          # to mix "*" with real package names rather than guessing
+          # which one the caller meant.
+          if names.size > 1
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "unable to install additional packages when upgrading all installed packages"
+            )
+          end
+          return handle_apt_wildcard_latest(dpkg_opts, lock_timeout)
+        end
         if @check_mode
           check_upgrade = remote_exec("apt-get install --simulate #{shell_pkg} 2>&1 | grep -i upgrade")
           if check_upgrade[:exit_code] == 0
@@ -1029,6 +1063,69 @@ module Krikri
           failed: true,
           msg: "Invalid state: #{state}. Must be present, absent, or latest"
         )
+      end
+    end
+
+    # apt.py's upgrade(module, 'yes', ...) - what `name: "*"` +
+    # `state: latest` resolves to (see the gate in handle_apt). Command
+    # shape is apt.py's own format string:
+    # `apt-get -y <dpkg_options> <force> <fail_on_autoremove>
+    # <allow_unauthenticated> <allow_downgrade> [<--simulate>]
+    # upgrade --with-new-pkgs [<--auto-remove>] [< -t '<release>'>]`,
+    # inside DEBIAN_FRONTEND=noninteractive like this module's other
+    # apt-get calls. Result shape is apt.py's upgrade() exit:
+    # exit_json(changed, msg=out, stdout=out, stderr=err, diff={}) or
+    # its APT_GET_ZERO exit without diff, and fail_json(msg="'<cmd>'
+    # failed: <err>", stdout=out, rc=rc) on a non-zero rc (mirrors
+    # apt.cr's own handle_wildcard_latest - live-verified there).
+    private def handle_apt_wildcard_latest(dpkg_opts : String, lock_timeout : Int32) : PluginResult
+      autoremove = true?(@params["autoremove"]?) ? "--auto-remove" : ""
+      upgrade_command = "upgrade --with-new-pkgs #{autoremove}"
+      flags = [
+        dpkg_opts,
+        true?(@params["force"]?) ? "--force-yes" : "",
+        true?(@params["fail_on_autoremove"]?) ? "--no-remove" : "",
+        true?(@params["allow_unauthenticated"]?) ? "--allow-unauthenticated" : "",
+        true?(@params["allow_downgrade"]?) ? "--allow-downgrades" : "",
+        @check_mode ? "--simulate" : "",
+      ].reject(&.empty?).join(" ")
+      cmd = "#{apt_get_bin} -y #{flags} #{upgrade_command}"
+      cmd += " -t '#{@params["default_release"]?}'" if @params["default_release"]?
+
+      result = apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{cmd}".squeeze(' '), lock_timeout, ->remote_exec(String))
+      if result[:exit_code] != 0
+        return PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "'#{apt_get_bin} #{upgrade_command}' failed: #{result[:stderr]}",
+          stdout: result[:stdout],
+          rc: result[:exit_code],
+          key_order: ["stdout", "rc", "failed", "msg"]
+        )
+      end
+
+      # apt.py's APT_GET_ZERO, leading-newline match so a summary whose
+      # upgraded count ends in 0 doesn't false-match at an inner offset.
+      zero_effect = result[:stdout].includes?("\n0 upgraded, 0 newly installed, 0 to remove")
+      PluginResult.new(
+        changed: !zero_effect,
+        failed: false,
+        msg: result[:stdout],
+        stdout: result[:stdout],
+        stderr: result[:stderr],
+        diff: JSON.parse("{}"),
+        key_order: zero_effect ? ["changed", "msg", "stdout", "stderr", "stdout_lines", "stderr_lines"] : ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines"]
+      )
+    end
+
+    # Real apt.py resolves apt-get through get_bin_path, so the absolute
+    # path is what its "'<cmd>' failed" messages quote (mirrors apt.cr's
+    # own resolver; falls back to the bare name when not found).
+    private def apt_get_bin : String
+      @apt_get_bin ||= begin
+        probe = remote_exec("command -v apt-get")
+        path = probe[:stdout].strip
+        path.empty? ? "apt-get" : path
       end
     end
 

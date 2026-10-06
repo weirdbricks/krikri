@@ -109,10 +109,19 @@ module Krikri
     # AnsibleActionFail has no prefix in either place, so it stays nil.
     property? error_detail : String?
 
+    # The file whose Origin the [ERROR] block's CAUSE segment carries when
+    # the crash happened while parsing/rendering THAT file rather than in
+    # the task's own YAML - ansible's event source context comes from the
+    # offending value's own origin tag, so template:'s `#jinja2:`
+    # directive TypeError is reported against the TEMPLATE file (round
+    # 1500121, apolloclark.packetbeat). nil = the cause carries no
+    # Origin, the shape every other crash_failure has today.
+    property? error_origin : String?
+
     def initialize(@success : Bool, @modified_params : Hash(String, String)? = nil,
                    @error_message : String? = nil, @changed : Bool = false,
                    @final_result : JSON::Any? = nil, @action_level : Bool = false,
-                   @error_detail : String? = nil)
+                   @error_detail : String? = nil, @error_origin : String? = nil)
     end
 
     # Create success result
@@ -136,15 +145,16 @@ module Krikri
     # Create a failure raised by an UNCAUGHT Python exception inside the
     # action plugin - the codec-stack crash Ansible's template action plugin
     # dies with on a non-string output_encoding ("encode() argument
-    # 'encoding' must be str, not _AnsibleTaggedInt") and its
-    # unknown-codec LookupError. Ansible's task executor wraps such an
-    # exception itself, so the fatal dump's msg keeps the "Task failed: "
-    # prefix while the [ERROR] block shows the bare message (see
-    # #error_detail).
-    def self.crash_failure(error_message : String) : ActionResult
+    # 'encoding' must be str, not _AnsibleTaggedInt"), its
+    # unknown-codec LookupError, and the `#jinja2:` directive TypeError
+    # (whose crash *origin* is the template file - see #error_origin).
+    # Ansible's task executor wraps such an exception itself, so the
+    # fatal dump's msg keeps the "Task failed: " prefix while the [ERROR]
+    # block shows the bare message (see #error_detail).
+    def self.crash_failure(error_message : String, origin : String? = nil) : ActionResult
       new(success: false,
         error_message: "Task failed: #{error_message}",
-        action_level: true, error_detail: error_message)
+        action_level: true, error_detail: error_message, error_origin: origin)
     end
 
     # Create pass-through result (no modifications)

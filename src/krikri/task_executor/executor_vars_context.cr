@@ -1641,6 +1641,23 @@ module Krikri
       result = Hash(String, String).new
 
       params.each do |key, value|
+        # assert's `that:` is the one module argument Ansible does NOT
+        # pre-render: its action plugin compiles each item as a raw
+        # EXPRESSION (that's why `that: [a.b >= {{ x }}]` reaches
+        # Ansible's "Template delimiters are not supported in
+        # expressions" error instead of being rendered away first -
+        # chriswayg.mailcow / rockandska.rabbitmq, rounds 1500413/
+        # 1500208). Leaving it raw lets AssertActionPlugin run its own
+        # delimiter rejection (ConditionalEvaluator.
+        # template_delimiter_error) on text where the delimiters still
+        # exist, then substitute per-item exactly as before - a bare
+        # reference (no `{{ }}`) is untouched by this branch either way,
+        # so the verified "Error while evaluating conditional: 'x' is
+        # undefined" shape is unaffected.
+        if module_name == "ansible.builtin.assert" && key == "that"
+          result[key] = value
+          next
+        end
         # Dynamic variable names - `set_fact: "{{ item.key }}": "{{ item.value }}"`
         # - carry a template in the *key*, not just the value. Ansible
         # (and dev-sec os_hardening's "Set OS dependent variables", which
@@ -2457,8 +2474,20 @@ module Krikri
 
       lines = File.read_lines(path)
       located = locate_name_line(lines, task)
-      return "" unless located
-      name_idx, _ = located
+      if located
+        name_idx, _ = located
+      elsif task.source_line > 0 && task.source_line <= lines.size
+        # A NAMELESS task (`- debug: msg="x"` with no `name:`) still gets
+        # its deprecation in real - the warning's Origin comes from the
+        # task's own YAML position, not from a name. Same source-line
+        # fallback emit_when_error_chain already uses; without it every
+        # unnamed whole-template conditional silently skipped the warning
+        # (real prints it: live-verified against ansible-playbook
+        # 2.19.11).
+        name_idx = task.source_line - 1
+      else
+        return ""
+      end
 
       located_key = locate_conditional_origin(lines, name_idx, key, raw)
       return "" unless located_key
@@ -2562,7 +2591,14 @@ module Krikri
     # task vars") keep their pre-existing display shape.
     private def conditional_evaluation_failure?(msg : String) : Bool
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
-      inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (") || inner.starts_with?("Syntax error in expression:")
+      inner.starts_with?("Error while evaluating conditional:") || inner.starts_with?("Conditional result (") ||
+        inner.starts_with?("Syntax error in expression:") ||
+        # The delimiter class composes its message with the PERIOD form
+        # ("Syntax error in expression. Template delimiters are not
+        # supported in expressions: ..." - create_template_error's own
+        # sentence, joined to the parser's cause), not the colon form
+        # the filter/test-name class uses.
+        inner.starts_with?("Syntax error in expression.")
     end
 
     # The two-level [ERROR] chain Ansible prints on stdout BEFORE the fatal
@@ -2624,7 +2660,8 @@ module Krikri
         # filter/test-name failure both end the block at the Origin; the
         # non-bool "Conditional result" failure carries the hint).
         unless inner.starts_with?("Error while evaluating conditional:") ||
-               inner.starts_with?("Syntax error in expression:")
+               inner.starts_with?("Syntax error in expression:") ||
+               inner.starts_with?("Syntax error in expression.")
           io << "Broken conditionals can be temporarily allowed with the `ALLOW_BROKEN_CONDITIONALS` configuration option.\n"
           io << "\n"
         end

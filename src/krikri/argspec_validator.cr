@@ -649,7 +649,29 @@ module Krikri
     private def defers_to_unarchive_action?(module_name : String, params : Hash(String, String)) : Bool
       return false unless module_name == "ansible.builtin.unarchive"
       dest = params["dest"]?
-      !dest.nil? && !Dir.exists?(dest)
+      return false if dest.nil?
+      # A controller-side stand-in for real's `_execute_remote_stat(dest)`
+      # (unarchive's action plugin stats the TARGET, then fails the task
+      # before the module ever validates its arguments - so "dest is not
+      # a dir here" must skip the spec check rather than precede it). The
+      # probe must NEVER RAISE: Crystal's Dir.exists? reports an
+      # unreadable controller path (a dest like /root/... read by a
+      # non-root controller user, or any EACCES up the path) as an
+      # exception instead of `false`, and an exception here escaped as a
+      # controller-side crash - the whole included task file died with
+      # "Failed to load included tasks: Unable to get file info:
+      # '/root/awscli': Permission denied" instead of the unarchive task
+      # running on the target, where root CAN see that dir (found via
+      # geometrylabs.polkadot_library's own "unarchive awscli" task, round
+      # 1500139). An unreadable dest defers just like an absent one: the
+      # target-side check (plugins/unarchive.cr's "dest '...' must be an
+      # existing dir") is the real decider either way.
+      exists = begin
+        Dir.exists?(dest)
+      rescue File::Error
+        false
+      end
+      !exists
     end
 
     # The spec-check tail shared by the direct path and the assemble ->

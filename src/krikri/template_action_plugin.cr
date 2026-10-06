@@ -14,6 +14,22 @@ module Krikri
   class TemplateActionPlugin < ActionPlugin
     @render_error : String? = nil
 
+    # Set when the template's own leading `#jinja2:` directive line
+    # failed Ansible's literal_eval/type validation (see
+    # #extract_jinja2_directive): the crash's Origin is the TEMPLATE
+    # file, not the task's YAML, so it travels separately from
+    # @render_error (crash_failure's #error_origin).
+    @directive_error : String? = nil
+
+    # Raised for an invalid `#jinja2:` directive value - Ansible's
+    # TemplateOverrides dataclass post-init validation (or ast.
+    # literal_eval) dying inside the template ACTION plugin. The message
+    # is the BARE "Syntax error in template: ..." text; ActionResult.
+    # crash_failure adds the "Task failed: " prefix the fatal dump
+    # carries while the [ERROR] block stays bare.
+    class Jinja2DirectiveError < Exception
+    end
+
     def execute : ActionResult
       # The parser's non-string-literal markers (NON_STRING_PARAM_PREFIX)
       # arrive intact here (execute_action deliberately exempts template:)
@@ -108,6 +124,16 @@ module Krikri
       # Render template on CONTROLLER
       rendered_content = render_template(template_content, src)
       unless rendered_content
+        # An invalid `#jinja2:` directive line is an UNCAUGHT Python
+        # exception inside Ansible's template action plugin: the fatal
+        # dump's msg keeps the "Task failed: " wrapper while the [ERROR]
+        # block's cause stays bare and points at the TEMPLATE file's
+        # Origin (round 1500121, apolloclark.packetbeat's
+        # `#jinja2: trim_blocks: "true"` - a quoted string where the
+        # dataclass demands a bool).
+        if directive = @directive_error
+          return ActionResult.crash_failure(directive, src)
+        end
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
       end
@@ -267,6 +293,14 @@ module Krikri
           raise ex
         end
       end
+    rescue ex : Jinja2DirectiveError
+      # The template's own `#jinja2:` directive line failed validation
+      # (see #extract_jinja2_directive) - carried separately from
+      # @render_error so execute can give it the crash shape (fatal
+      # "Task failed: ..." wrapper, template-file Origin) instead of the
+      # generic "Failed to render template: ..." wording.
+      @directive_error = ex.message
+      nil
     rescue ex : KrikriJinja::TemplateError
       @render_error = jinja_error_message(ex)
       nil
@@ -611,6 +645,23 @@ module Krikri
     # (the delimiter strings are honored as TASK params instead, see
     # #delimiter_param). No directive line at all returns an empty
     # overrides hash and the template unchanged.
+    #
+    # The VALUE goes through Ansible's own pipeline: ast.literal_eval on
+    # the raw text, then TemplateOverrides' dataclass post-init type
+    # validation - so a quoted string where a bool is required dies with
+    # "Syntax error in template: TemplateOverrides.trim_blocks must be
+    # <class 'bool'> instead of <class 'str'>" (the quoted-`"true"` header
+    # apolloclark.packetbeat's packetbeat-6.6.yml carries, round 1500121:
+    # this engine coerced it leniently and PASSED where ansible-playbook
+    # failed the task). True/False pass; None/int/float/str/dict/list are
+    # each reported with their own Python type name, exactly like the
+    # dataclass validator's f-string. A value literal_eval cannot parse
+    # at all (bare lowercase `true`, an identifier, ...) is real's
+    # "malformed node or string" ValueError - whose message embeds a
+    # per-process <ast.Name object at 0x...> address real itself can never
+    # reproduce across runs (same unmatchable-nondeterminism class as
+    # apt's retry-jitter output), so the address here is a stable
+    # placeholder and only the wording/class is matched.
     private def extract_jinja2_directive(template : String) : {Hash(String, Bool), String}
       overrides = Hash(String, Bool).new
       lines = template.split('\n', 2)
@@ -623,10 +674,51 @@ module Krikri
         next if sep.empty?
         key = key.strip
         next unless key == "trim_blocks" || key == "lstrip_blocks"
-        overrides[key] = value.strip.downcase == "true"
+        overrides[key] = directive_bool!(key, value.strip)
       end
 
       {overrides, lines[1]? || ""}
+    end
+
+    # literal_eval + the dataclass type check for a bool-typed directive
+    # field: returns the bool for True/False, raises Jinja2DirectiveError
+    # (real's message verbatim) for a parsed-but-wrong-typed value or an
+    # unparseable one.
+    private def directive_bool!(key : String, raw : String) : Bool
+      kind = python_literal_kind(raw)
+      case kind
+      when "bool"
+        raw == "True"
+      when nil
+        raise Jinja2DirectiveError.new("Syntax error in template: malformed node or string on line 1: <ast.Name object at 0x000000000000>")
+      else
+        raise Jinja2DirectiveError.new("Syntax error in template: TemplateOverrides.#{key} must be <class 'bool'> instead of <class '#{kind}'>")
+      end
+    end
+
+    # ast.literal_eval's accepted scalar shapes, by the Python TYPE NAME
+    # the dataclass validator would report (dict/list/tuple included for
+    # completeness - a container value fails the bool check the same way).
+    private def python_literal_kind(raw : String) : String?
+      case raw
+      when "True", "False" then "bool"
+      when "None"          then "NoneType"
+      else
+        if (raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2) ||
+           (raw.starts_with?('\'') && raw.ends_with?('\'') && raw.size >= 2)
+          "str"
+        elsif raw.starts_with?('{') && raw.ends_with?('}')
+          "dict"
+        elsif raw.starts_with?('[') && raw.ends_with?(']')
+          "list"
+        elsif raw.starts_with?('(') && raw.ends_with?(')')
+          "tuple"
+        elsif raw.matches?(/\A[+-]?\d+\z/)
+          "int"
+        elsif raw.matches?(/\A[+-]?(\d+\.\d*|\.\d+)([eE][+-]?\d+)?\z/) || raw.matches?(/\A[+-]?\d+[eE][+-]?\d+\z/)
+          "float"
+        end
+      end
     end
 
     # `rewrite_in:` is false on the krikri-jinja path: that engine evaluates

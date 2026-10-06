@@ -1,11 +1,13 @@
 #!/usr/bin/env crystal
 
+require "digest/sha256"
 require "json"
 require "mysql"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/db_errors"
 require "../src/krikri/plugin_helpers/mysql_connection"
 require "../src/krikri/plugin_helpers/mysql_privileges"
+require "../src/krikri/plugin_helpers/mysql_salted_hash"
 require "../src/krikri/plugin_helpers/sql_quoting"
 
 module Krikri
@@ -81,6 +83,13 @@ module Krikri
     # tracked through the run and attached to the result in #with_shape.
     @password_changed : JSON::Any? = JSON::Any.new(false)
 
+    # `salt:` - carried as an ivar instead of another parameter threaded
+    # through the whole ensure_present/create-or-update chain (those
+    # helpers already carry five auth params each). Real reads it in
+    # exactly two places: the auth-string idempotency comparison and the
+    # CREATE/ALTER statement shape (see #salted_auth_hash).
+    @salt : String? = nil
+
     def execute : PluginResult
       # Ansible's `name:` param has NO `user:` alias (verified against the
       # installed ansible.mysql 5.2.0 module source, which
@@ -120,6 +129,7 @@ module Krikri
       plugin = @params["plugin"]?
       plugin_hash_string = @params["plugin_hash_string"]?
       plugin_auth_string = @params["plugin_auth_string"]?
+      @salt = @params["salt"]?
 
       if err = validate_inputs(update_password, password, plugin, plugin_hash_string, plugin_auth_string)
         return err
@@ -200,6 +210,30 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "plugin is required when plugin_hash_string or plugin_auth_string is given")
       end
 
+      validate_salt
+    end
+
+    # ansible.mysql 5.2.0's salt validation, in its own order (module
+    # main(), before any connection attempt): salt is a 20-character
+    # prefix that makes the generated caching_sha2/sha256 storage hash
+    # DETERMINISTIC - the whole reason an idempotent warm run reports
+    # ok: instead of re-issuing the ALTER on every run (found via
+    # wiggels.snipeit's own "Create snipeit user" task, round 1500042:
+    # without salt support the auth comparison never matched the
+    # server's random-salt hash, so every warm run said changed where
+    # ansible-playbook said ok).
+    private def validate_salt : PluginResult?
+      salt = @salt
+      return nil unless salt
+      unless @params["plugin_auth_string"]?
+        return PluginResult.new(changed: false, failed: true, msg: "salt requires plugin_auth_string")
+      end
+      if salt.size != 20
+        return PluginResult.new(changed: false, failed: true, msg: "salt must be 20 characters long")
+      end
+      unless ["caching_sha2_password", "sha256_password"].includes?(@params["plugin"]?)
+        return PluginResult.new(changed: false, failed: true, msg: "salt requires caching_sha2_password or sha256_password plugin")
+      end
       nil
     end
 
@@ -382,6 +416,13 @@ module Krikri
           " IDENTIFIED WITH #{quote_str(plugin)} USING #{quote_str(plugin_auth_string)}"
         elsif plugin == "ed25519"
           " IDENTIFIED WITH #{quote_str(plugin)} USING PASSWORD(#{quote_str(plugin_auth_string)})"
+        elsif (hex = salted_auth_hash(plugin, plugin_auth_string))
+          # With a salt, real never hands the server the plaintext: it
+          # pre-computes the deterministic storage hash and stores it
+          # verbatim with `AS 0x<HEX>` (user.py's salt branch - CREATE
+          # and ALTER share the shape), so the account's
+          # authentication_string is reproducible on the next run.
+          " IDENTIFIED WITH #{quote_str(plugin)} AS 0x#{hex}"
         else
           " IDENTIFIED WITH #{quote_str(plugin)} BY #{quote_str(plugin_auth_string)}"
         end
@@ -390,6 +431,19 @@ module Krikri
       else
         ""
       end
+    end
+
+    # The salted storage-hash form to compare against (and to issue with
+    # `AS 0x...`), or nil when no salt was given / the plugin isn't one
+    # of the two salt supports (validation already failed those) - real's
+    # user.py guards the same way. The hash itself lives in
+    # PluginHelpers::MysqlSaltedHash (pinned against ansible.mysql's own
+    # Python implementation).
+    private def salted_auth_hash(plugin : String, plugin_auth_string : String) : String?
+      salt = @salt
+      return nil unless salt
+      return nil unless ["caching_sha2_password", "sha256_password"].includes?(plugin)
+      PluginHelpers::MysqlSaltedHash.hash_hex(plugin_auth_string, salt)
     end
 
     # True when the account's current plugin (and authentication_string,
@@ -417,8 +471,19 @@ module Krikri
       return true unless plugin_hash_string || plugin_auth_string
 
       # With a hash/auth string, verify the account's authentication_string
-      # matches server-side as well.
-      want = plugin_hash_string || plugin_auth_string
+      # matches server-side as well. With a salt, the stored value is the
+      # pre-computed deterministic hash (user.py's own order:
+      # plugin_hash_string, then salt, then the raw auth string), not the
+      # plaintext the task asked for - comparing the plaintext against a
+      # server-hashed authentication_string never matched, so every warm
+      # run re-issued the ALTER (wiggels.snipeit, round 1500042).
+      want = if plugin_hash_string
+               plugin_hash_string
+             elsif (salt_val = @salt) && plugin_auth_string
+               PluginHelpers::MysqlSaltedHash.hash(plugin_auth_string, salt_val)
+             else
+               plugin_auth_string
+             end
       auth_matches = db.query_all(
         "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
         want, name, host, as: Int32

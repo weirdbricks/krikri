@@ -2252,6 +2252,17 @@ module Krikri
       # deploy config) reported changed on the exact same run
       # Ansible fired it on.
       import_notify = hash["notify"]?.try { |v| v.as_s? ? [v.as_s] : v.as_a.map(&.as_s) } || [] of String
+      # `delegate_to:` on the import_tasks: line applies to every task the
+      # import statically inlines, exactly like when:/tags:/notify:/vars:/
+      # become: above (Ansible applies import-line keywords to all inlined
+      # tasks) - a child task's OWN delegate_to: wins, this only fills the
+      # gap. Missing before: the inlined tasks ran UNdelegated, so their
+      # results printed `ok: [host]` instead of `ok: [host -> target]`
+      # and the module itself executed against the wrong host for any
+      # non-controller target (found via robertdebock.cups's own
+      # `import_tasks: assert.yml` with `delegate_to: localhost`, round
+      # 1500129 - ansible-playbook printed `ok: [pyhost -> localhost]`).
+      import_delegate = hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
       import_vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
         vars_yaml.each { |key, value| import_vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json)) }
@@ -2312,6 +2323,11 @@ module Krikri
           task.notify = ((task.notify || [] of String) + import_notify).uniq
         end
         import_vars.each { |key, value| task.vars[key] = value }
+        # The import line's delegate_to: fills the gap only - a child
+        # task that sets its own keeps it (see import_delegate above).
+        if import_delegate && task.delegate_to.nil?
+          task.delegate_to = import_delegate
+        end
       end
 
       imported_tasks
@@ -5236,12 +5252,20 @@ module Krikri
       end
     end
 
-    # Repeatedly strips a trailing " key=value" token (key one of
-    # command:/shell:'s own recognized special params) off the end of
+    # parse_kv's own whitelist: a free-form command:/shell: token whose
+    # key is one of these becomes a module option instead of command
+    # text (ansible.parsing.splitter.parse_kv with check_raw=True - the
+    # exact set mod_args.py's parsing hands to the module).
+    SPECIAL_COMMAND_PARAM_RE = /\A(creates|removes|chdir|executable|warn|stdin|stdin_add_newline|strip_empty_ends)=(.*)\z/m
+
+    # Strips " key=value" tokens (key one of command:/shell:'s own
+    # recognized special params - SPECIAL_COMMAND_PARAM_RE, any position
+    # in the string, matching Ansible's parse_kv which examines EVERY
+    # whitespace-delimited token, not just the trailing ones) off
     # *raw*, returning the remaining command text and the extracted
-    # params. Only ever touches the trailing end - the command body
-    # itself, including any "=" it legitimately contains
-    # (`VAR=1 somecommand`), is never re-tokenized or rewritten.
+    # params. The command body itself, including any "=" it legitimately
+    # contains (`VAR=1 somecommand`), is never re-tokenized or
+    # rewritten.
     #
     # Tokenizes via #split_shell_like (the same brace-depth-aware
     # scanner #parse_inline_kv_params already uses) rather than a
@@ -5274,63 +5298,91 @@ module Krikri
     # boundary is exactly right regardless of how many template blocks
     # appear anywhere else in the string.
     # Public (not private): the task executor ALSO needs this, at
-    # RUNTIME - Ansible parses a command:/shell:'s trailing
-    # key=value specials from the module args AFTER templating, not
-    # before. This parse-time pass alone misses the shape where the
-    # whole command is a `{% if %}...{% endif %}` block (found live via
-    # kamaln7.swapfile): the raw text's last token is then the literal
-    # `{% endif %}` tag, so a `creates=...` sitting inside one of the
-    # branches never gets stripped here - but it IS last in the RENDERED
-    # text, where the executor's post-render pass correctly catches it.
+    # RUNTIME - a `key=value` whose key only appears after templating
+    # (the value side of a `{% if %}` branch, found live via
+    # kamaln7.swapfile) is not a token at parse time at all, so the
+    # executor's post-render pass over the RENDERED command line has to
+    # keep running too - it is the same function, applied to the text
+    # the module will really be handed.
     def self.extract_command_special_params(raw : String) : {String, Hash(String, String)}
       special = Hash(String, String).new
       tokens = split_shell_like(raw)
-      # End offset (exclusive) of the last token still kept as part of
-      # the command, or 0 if every token gets stripped as a special
-      # param - used to slice the ORIGINAL string below instead of
-      # `tokens.map(&.first).join(" ")`, which would collapse any real
-      # newlines a multi-line `shell:`/`command:` string had between
-      # statements into single spaces. Real bug found benchmarking
-      # buluma.consul_ca's own multi-statement `shell: "set -euo
-      # pipefail\n{{ cfssl_bin_directory }}/cfssl gencert ... | ...\n"`
-      # - collapsed onto one line, `set -euo pipefail <path>/cfssl
-      # gencert ...` became a single `set` invocation (which just
-      # assigns its trailing words as positional parameters and does
-      # NOT run them as a command), so the actual `cfssl gencert |
-      # cfssljson` pipeline never ran at all; `cfssljson` then read
-      # empty stdin and failed with "unexpected end of JSON input" -
-      # while ansible-playbook, which never rejoins/re-tokenizes
-      # the command string this way, ran it correctly.
-      keep_end = raw.size
-      stripped_any = false
 
-      while pair = tokens.last?
-        token, end_offset = pair
-        match = token.match(/\A(creates|removes|chdir|executable)=(.*)\z/m)
-        break unless match
-
-        tokens.pop
-        keep_end = end_offset - token.size
-        stripped_any = true
-        key = match[1]
-        special[key] ||= unquote_inline_value(match[2])
+      # Classify every token: one of command:/shell:'s own recognized
+      # special params (ANY position - Ansible's parse_kv examines each
+      # whitespace-delimited token, leading, middle or trailing) or part
+      # of the command itself. The full whitelist is parse_kv's own
+      # (creates/removes/chdir/executable/warn/stdin/stdin_add_newline/
+      # strip_empty_ends); `env VAR=1 somecommand` keeps VAR=1 because
+      # VAR is not on it, exactly like real.
+      kept_flags = tokens.map do |(token, _end_offset)|
+        if (match = token.match(SPECIAL_COMMAND_PARAM_RE))
+          # parse_kv's dict assignment - a duplicated key keeps its LAST
+          # occurrence, not the first.
+          special[match[1]] = unquote_inline_value(match[2])
+          false
+        else
+          true
+        end
       end
 
-      # Only rstrip when something was actually stripped (removing the
-      # single separator run right before the first stripped trailing
-      # token - any internal newlines are further left in the string,
-      # untouched either way). When nothing matched, `raw` is returned
-      # completely untouched, byte-for-byte - Ansible never trims
-      # a `command:`/`shell:` string that has no trailing key=value
-      # params at all.
-      cmd = if tokens.empty?
-              ""
-            elsif stripped_any
-              raw[0...keep_end].rstrip
-            else
-              raw
-            end
-      {cmd, special}
+      return {raw, special} if kept_flags.all?
+      return {"", special} if kept_flags.none?
+
+      first_idx = -1
+      last_idx = -1
+      kept_flags.each_with_index do |kept, idx|
+        next unless kept
+        first_idx = idx if first_idx < 0
+        last_idx = idx
+      end
+      return {raw, special} if first_idx < 0
+      first_start = tokens[first_idx][1] - tokens[first_idx][0].size
+      last_end = tokens[last_idx][1]
+
+      # Whitespace between the last kept token and a TRAILING stripped
+      # special: its newlines stay (split_args attached a line's "\n" to
+      # the last param of that line, so `echo a\nchdir=/tmp` leaves
+      # `_raw_params` "echo a\n"), its spaces do not (they collapsed
+      # into the empty-token/join machinery around the stripped param).
+      suffix = ""
+      if last_idx + 1 < tokens.size
+        gap_end = tokens[last_idx + 1][1] - tokens[last_idx + 1][0].size
+        suffix = raw[last_end...gap_end].rstrip(' ')
+      end
+
+      # Copy the original bytes verbatim from the first kept token to
+      # the last - leading stripped specials (and their whitespace) fall
+      # outside that span and vanish with the slice, internal newlines
+      # in a multi-statement `shell:` string are preserved byte-for-byte
+      # (rejoining tokens with a fixed single space collapsed them, which
+      # broke buluma.consul_ca's own `set -euo pipefail\ncfssl gencert |
+      # cfssljson` into a single no-op `set` invocation - the pipeline
+      # never ran and cfssljson read empty stdin) - except that an
+      # internal stripped special's own span plus the whitespace run
+      # right after it are removed. That whitespace rule is what
+      # reproduces split_args+join_args: the run BEFORE a stripped token
+      # stays (A's own attached spaces / the join separator), the run
+      # AFTER it goes with the stripped token.
+      result = String::Builder.new
+      prev_end = first_start
+      dropping_ws = false
+      (first_idx..last_idx).each do |idx|
+        token, end_offset = tokens[idx]
+        start = end_offset - token.size
+        unless dropping_ws
+          result << raw[prev_end...start]
+        end
+        if kept_flags[idx]
+          result << token
+          dropping_ws = false
+        else
+          dropping_ws = true
+        end
+        prev_end = end_offset
+      end
+      result << suffix
+      {result.to_s, special}
     end
 
     # Strips standalone line-continuation backslashes from a free-form

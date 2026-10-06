@@ -330,11 +330,26 @@ module Krikri
       # code with changed: true. This engine's remote_exec would have
       # reported exactly that (changed=true, rc=1) - live-verified
       # divergence via the podman-diff command_edge_cases C5 harness case.
+      #
+      # A directory-less name is NOT checked against the CWD: Python's
+      # _execute_child builds its exec candidate list from
+      # os.get_exec_path(env) when os.path.dirname(executable) is empty,
+      # so `executable: bash` runs wherever bash lives in the target's
+      # PATH (live-verified vs 2.19.11: the same task succeeds there).
+      # Checking File.file?("bash") instead rejected every bare shell
+      # name with a bogus ENOENT - found via stafwag.libvirt's own
+      # `shell: ... args: {executable: bash}` "Get the debian code name"
+      # task (round 1500184), which failed under this engine while
+      # ansible-playbook ran it clean on the paired host.
+      checked_executable = executable
+      if !executable.includes?('/') && (resolved = resolve_executable_in_path(executable))
+        checked_executable = resolved
+      end
       if executable != "/bin/sh"
-        unless File.file?(executable)
+        unless File.file?(checked_executable)
           return spawn_failure_result(2, "No such file or directory", executable, command_string)
         end
-        unless File::Info.executable?(executable)
+        unless File::Info.executable?(checked_executable)
           return spawn_failure_result(13, "Permission denied", executable, command_string)
         end
       end
@@ -486,6 +501,30 @@ module Krikri
       )
       result.extra["exception"] = JSON::Any.new("[Errno #{errno}] #{reason}: b'#{executable}'")
       result
+    end
+
+    # First executable file named *name* under the PATH Python's own
+    # _execute_child would search for a directory-less executable: the
+    # task's `environment: PATH` when it sets one (the task env reaches
+    # the spawned command as the child environment, so the module-side
+    # lookup sees it), otherwise this process's own PATH. nil when nothing
+    # matches - the caller then keeps the bare name and fails with the
+    # same ENOENT shape real Python raises for an unresolvable name.
+    private def resolve_executable_in_path(name : String) : String?
+      path = (task_environment.try(&.["PATH"]?)) || ENV["PATH"]?
+      return nil unless path
+
+      path.split(':').each do |dir|
+        next if dir.empty?
+        candidate = File.join(dir, name)
+        begin
+          return candidate if File.file?(candidate) && File::Info.executable?(candidate)
+        rescue File::Error
+          # An unreadable directory entry just isn't a candidate - Python
+          # skips past OSError candidates it cannot exec too.
+        end
+      end
+      nil
     end
 
     # Python shlex.quote: bare only when every char is in

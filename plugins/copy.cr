@@ -949,6 +949,15 @@ module Krikri
         return atomic_write(content, dest)
       end
 
+      # copy.py's own gate before anything runs: fail_json(msg="validate
+      # must contain %s: <cmd>") when the command has no %s to
+      # substitute the temp path into (same wording this engine's
+      # assemble/blockinfile/lineinfile/replace plugins already carry;
+      # template.cr's copy-module path carries the same check).
+      unless validate_cmd.includes?("%s")
+        return {failure: PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}"), staged: nil}
+      end
+
       temp_file = File.join("/tmp", ".krikri-playbook-copy-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY 0600 and settled to its final mode

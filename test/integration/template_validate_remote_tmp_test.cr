@@ -75,12 +75,56 @@ describe "template: with validate:" do
     status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
 
     status.success?.must_equal(false)
-    output.to_s.must_include("Validation failed")
-    output.to_s.must_include("/tmp/.krikri-playbook-template-")
+    # Real copy.py's validate site (the template module runs through it)
+    # fails with fail_json(msg="failed to validate", exit_status=rc,
+    # stdout=out, stderr=err) - the wording is "failed to validate",
+    # never "Validation failed" (live-verified vs 2.19.11: the fatal
+    # dump is {"changed": false, "checksum": ..., "exit_status": 1,
+    # "msg": "failed to validate", "stderr": "", "stderr_lines": [],
+    # "stdout": "", "stdout_lines": []}).
+    output.to_s.must_include("\"msg\": \"failed to validate\"")
+    output.to_s.must_include("\"exit_status\": 1")
+    # The rejected render is still staged under /tmp (not next to dest)
+    # instead of deleted, so it can be inspected. Dir.children, not
+    # Dir.glob: the name is dot-prefixed and glob skips hidden entries
+    # unless asked.
+    (Dir.children("/tmp").count { |entry| entry.starts_with?(".krikri-playbook-template-") } > 0).must_equal(true)
     File.exists?(dest).must_equal(false)
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
     File.delete(src) if src && File.exists?(src)
     FileUtils.rm_rf(dest_dir) if dest_dir
+  end
+
+  it "fails before running anything when validate: has no %s, with copy.py's message" do
+    src = File.tempname("template-validate-src", ".j2")
+    dest = File.tempname("template-validate-dest")
+    playbook = File.tempname("template-validate-nos", ".yml")
+    File.write(src, "hello {{ msg }}\n")
+
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          msg: world
+        tasks:
+          - name: render
+            ansible.builtin.template:
+              src: #{src}
+              dest: #{dest}
+              validate: "false"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include("validate must contain %s")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
   end
 end

@@ -97,4 +97,64 @@ describe "unknown filter/test in conditionals: Syntax error in expression" do
     output.must_include("Conditional result (True) was derived from value of type 'list'")
     output.must_include("ALLOW_BROKEN_CONDITIONALS")
   end
+
+  # Ansible compiles conditionals as raw expressions - it never renders
+  # `{{ }}` out of them - so a delimiter-bearing conditional outside any
+  # string literal is its "Template delimiters are not supported in
+  # expressions" syntax error (found via chriswayg.mailcow /
+  # rockandska.rabbitmq's own assert preflights, rounds 1500413/1500208,
+  # where this engine rendered the delimiters away and PASSED the task).
+  it "fails a when: with embedded template delimiters, real wording" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - debug: msg="x"
+            when: 1 >= {{ 1 }}
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'\"}")
+    output.wont_include("Unhandled exception")
+  end
+
+  it "fails an assert: whose that: item carries template delimiters, real chain and changed=false" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Preflight
+            assert:
+              that:
+                - 1 >= {{ 1 }}
+      YAML
+    status.exit_code.must_equal(2)
+    output.must_include("[ERROR]: Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'")
+    # two-level chain: task origin, then the failing that: item
+    output.must_include("<<< caused by >>>")
+    output.must_include("- 1 >= {{ 1 }}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Syntax error in expression. Template delimiters are not supported in expressions: expected token ':', got '}'\"}")
+    output.wont_include("Unhandled exception")
+  end
+
+  it "still accepts a whole-template conditional (deprecation only) and a quoted delimiter" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          some_flag: true
+          expected: x
+        tasks:
+          - debug: msg="whole"
+            when: "{{ some_flag }}"
+          - debug: msg="quoted"
+            when: "expected == '{{ expected }}'"
+      YAML
+    status.exit_code.must_equal(0)
+    output.must_include("[DEPRECATION WARNING]: Conditionals should not be surrounded by templating delimiters")
+    output.wont_include("Template delimiters are not supported")
+  end
 end

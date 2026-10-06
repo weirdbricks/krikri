@@ -760,6 +760,19 @@ module Krikri
     # affect what actually runs), so best-effort: on any substitution
     # error, fall back to the raw unrendered name rather than raising.
     private def evaluate_when(when_condition : String, vars_context : Hash(String, JSON::Any), host : Host, substitutor : VarSubstitutor? = nil, task : Task? = nil) : Bool
+      # Ansible compiles the raw conditional as an expression (no `{{ }}`
+      # pre-render), so delimiters outside a string literal are its
+      # "Template delimiters are not supported in expressions" syntax
+      # error - and the error comes FIRST, before the all-template
+      # deprecation below (live-verified vs 2.19.11: `when: 1 >= {{ 1 }}`
+      # and `when: "{{ 1 }} == 1"` fatal straight to it with no warning;
+      # a whole-template `when: "{{ x }}"` still only deprecates).
+      # Checked before substitution, while the delimiters are still
+      # visible (chriswayg.mailcow / rockandska.rabbitmq rounds had this
+      # engine rendering them away and passing the task).
+      if delimiter = ConditionalEvaluator.template_delimiter_error(when_condition)
+        raise WhenEvaluationError.new("Task failed: #{delimiter}")
+      end
       # Ansible's conditional-as-template deprecation fires while the
       # conditional is being evaluated (see
       # maybe_conditional_delimiters_deprecation) - before the evaluation
@@ -1545,6 +1558,9 @@ module Krikri
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
           end
+          if err_origin = action_result.error_origin?
+            failed["_ansible_error_origin"] = err_origin
+          end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
           return apply_changed_failed_when(task, result_json, vars_context, host)
@@ -1883,6 +1899,9 @@ module Krikri
           failed["_ansible_action_level"] = true if action_result.action_level?
           if detail = action_result.error_detail?
             failed["_ansible_error_detail"] = detail
+          end
+          if err_origin = action_result.error_origin?
+            failed["_ansible_error_origin"] = err_origin
           end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)

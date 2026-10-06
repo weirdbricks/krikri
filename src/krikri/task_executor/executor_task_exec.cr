@@ -2252,8 +2252,24 @@ module Krikri
       src = params["src"]?
       dest = params["dest"]?
       return false unless src && dest && Krikri.non_string_scalar(src).nil? && Krikri.non_string_scalar(dest).nil?
-      return false unless File.file?(src) && File.file?(dest)
+      # Both probes must never RAISE: a controller path the invoking user
+      # cannot read (dest like /root/... on a non-root controller, EACCES
+      # up the path) makes Crystal's File.file? throw instead of returning
+      # false, and a throw here escaped as a controller-side crash
+      # (geometrylabs.polkadot_library, round 1500139 - the same
+      # exception class as ArgspecValidator#defers_to_unarchive_action?'s).
+      # Unreadable means "cannot confirm equal content" - the branch stays
+      # undecided, exactly like a genuinely remote destination.
+      return false unless both_readable_files?(src, dest)
       Digest::SHA1.hexdigest(File.read(src)) == Digest::SHA1.hexdigest(File.read(dest))
+    end
+
+    # File.file? over two controller paths, false on any unreadable path
+    # instead of raising (see copy_module_never_runs?).
+    private def both_readable_files?(src : String, dest : String) : Bool
+      File.file?(src) && File.file?(dest)
+    rescue File::Error
+      false
     end
 
     # SHA1 of the source content a copy/template task would deploy - the
@@ -2269,8 +2285,18 @@ module Krikri
       # without ever computing a local checksum.
       return nil if Krikri.lenient_boolean_true?(params["remote_src"]?)
       src = params["src"]?
-      return nil unless src && File.exists?(src) && !File.directory?(src)
+      return nil unless src && File.exists?(src) && !directory_or_unreadable?(src)
       Digest::SHA1.hexdigest(File.read(src))
+    end
+
+    # File.directory? for a controller path, true when the path cannot be
+    # read at all (EACCES must not escape as a controller-side crash the
+    # way a bare File.directory? would - same exception class as
+    # ArgspecValidator#defers_to_unarchive_action?'s probe).
+    private def directory_or_unreadable?(path : String) : Bool
+      File.directory?(path)
+    rescue File::Error
+      true
     end
 
     # Adds stdout_lines/stderr_lines (Ansible behavior - each module

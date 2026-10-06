@@ -1762,7 +1762,14 @@ module Krikri
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
-        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name)
+        # Same delegate marker as the plain execute path (see
+        # executor_task_exec's display_result call): this until:/retries:
+        # path displayed its result WITHOUT `-> <target>`, printing
+        # `ok: [host]` where ansible-playbook prints `ok: [host ->
+        # localhost]` (dockpack.base_goss's own "Get goss binary" -
+        # delegate_to: localhost plus until: network_access is success,
+        # round 1500188).
+        ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: resolve_task_ignore_errors(task, vars_context), no_log: resolve_task_no_log(task, vars_context), source_task: task, module_name: task.module_name, delegate_target: exec_host && exec_host != host ? exec_host.name : nil)
       end
       ResultDisplay.update_stats(@results[host.name], result, resolve_task_ignore_errors(task, vars_context))
       halt_if_failed(task, host, failed, result)

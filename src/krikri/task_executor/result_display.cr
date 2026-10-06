@@ -577,9 +577,18 @@ module Krikri
       # A plugin flagging _ansible_action_level failed in Ansible's controller-
       # side ACTION plugin (a bare AnsibleActionFail: no "Module failed."
       # middle segment), e.g. assemble's remote_src: false isdir() check.
+      # _ansible_error_origin additionally points the CAUSE segment at the
+      # file the crash happened in (Ansible's event source context comes
+      # from the offending value's own origin tag): template:'s
+      # `#jinja2:` directive TypeError reports against the TEMPLATE file,
+      # with no line/column (round 1500121, apolloclark.packetbeat).
       if result["_ansible_action_level"]?.try(&.as_bool?) == true
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
-        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        cause = ErrorBlock::Node.new(msg)
+        if (crash_path = result["_ansible_error_origin"]?.try(&.as_s?)) && !crash_path.empty?
+          cause.source_context = "Origin: #{crash_path}"
+        end
+        ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
         return
       end
       # set_fact's validate_variable_name failure: Ansible's cause carries
