@@ -167,9 +167,12 @@ module Krikri
       # the two spellings can never disagree, and memoized per host
       # (facts_dict_for) rather than rebuilt on every single task - see
       # that method's own comment for the invalidation contract.
-      unless @facts[host.name].empty?
-        vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
-      end
+      #
+      # Always present, even before any fact exists (gather_facts: false):
+      # ansible pre-seeds an empty dict, so `ansible_facts is defined` is
+      # true and `ansible_facts['os_family']` fails with "no attribute",
+      # not "'ansible_facts' is undefined".
+      vars_context["ansible_facts"] = JSON::Any.new(facts_dict_for(host.name))
 
       vars_context["hostvars"] = JSON::Any.new(build_hostvars)
       vars_context["groups"] = JSON::Any.new(build_groups)

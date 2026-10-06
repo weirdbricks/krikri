@@ -101,7 +101,9 @@ describe "include_vars: with a failing templated path" do
       YAML
 
     status.exit_code.must_equal(2)
-    output.must_include("is undefined")
+    # ansible_facts is a pre-seeded empty dict under gather_facts: false,
+    # so the failure is the subscript, as in real ansible.
+    output.must_include("has no attribute 'os_family'")
     output.wont_include("from_debian_yml")
   end
 

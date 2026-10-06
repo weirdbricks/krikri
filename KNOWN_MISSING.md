@@ -56,9 +56,6 @@ defect moves down or gets deleted.
   (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
   build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
-- **`ansible_facts` is undefined (not an empty dict) with `gather_facts: false`.** Real pre-seeds an empty
-  `ansible_facts`, so `when: ansible_facts['os_family'] == 'X'` fails with `object of type 'dict' has no attribute
-  'os_family'`; krikri fails with `'ansible_facts' is undefined`. Same outcome (the task fails), different text.
 
 ## Deliberate limits (decided, not defects)
 
