@@ -304,6 +304,27 @@ describe Krikri::ArgspecValidator do
     failure.as(Failure).msg.starts_with?("Unsupported parameters for (ansible.legacy.service) module: zz.").must_equal(true)
   end
 
+  it "strips service's action-consumed use: from the delegated manager spec" do
+    Krikri::ArgspecValidator.validate(
+      "service", "ansible.builtin.service",
+      {"use" => "systemd", "name" => "docker", "enabled" => "true"},
+      vars({"ansible_service_mgr" => JSON::Any.new("systemd")})).must_be_nil
+  end
+
+  it "strips systemd's UNUSED_PARAMS from service args instead of failing" do
+    Krikri::ArgspecValidator.validate(
+      "service", "ansible.builtin.service",
+      {"name" => "ntp", "state" => "started", "pattern" => "ntpd*"},
+      vars({"ansible_service_mgr" => JSON::Any.new("systemd")})).must_be_nil
+  end
+
+  it "rewrites a bool value to a choices option's single boolean overlap (apt upgrade: true)" do
+    Krikri::ArgspecValidator.validate(
+      "apt", "ansible.builtin.apt",
+      {"upgrade" => "true", "update_cache" => "true"},
+      vars).must_be_nil
+  end
+
   it "never validates the modules Ansible does not validate" do
     {"ansible.builtin.fetch"     => {"src" => "/etc/hostname", "dest" => "/tmp/x", "zz" => "1"},
      "ansible.builtin.set_fact"  => {"zz" => "1"},

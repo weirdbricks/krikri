@@ -809,6 +809,18 @@ rescue ex : Krikri::IncludeDirectiveError
   # verbatim.
   STDERR.print ex.render
   exit 4
+rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
+  # A key not on TaskInclude/IncludeRole's attribute allowlist (e.g.
+  # `static: no` beside an import_tasks:) is ansible-core's whole-
+  # playbook-load refusal: the [ERROR] + suppression + Origin block on
+  # STDERR, rc=4 (live-verified vs 2.19.11). The render was built at
+  # the raise site; print it verbatim.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
+  exit 4
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
@@ -1268,6 +1280,20 @@ playbook.plays.each_with_index do |play, _play_index|
       # the identical message and rc=4 - see UnresolvedModuleError's
       # own comment.
       puts "[ERROR]: #{ex.message}".colorize(:red)
+      exit 4
+    rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
+      # Same whole-run abort discovered by a runtime-loaded file's own
+      # include-family directive (include_tasks:-loaded file with
+      # `static: no` beside an import_tasks:): ansible-core 2.19's
+      # TaskInclude/IncludeRole attribute validation refuses the run
+      # with the [ERROR] + Origin block on STDERR and rc=4, NO recap
+      # (live-verified vs 2.19.11: ovirt.image-template's
+      # qcow2_image.yml:173). The render was built at the raise site.
+      if render = ex.render
+        STDERR.print render
+      else
+        STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+      end
       exit 4
     end
     unavailable_modules_found.concat(executor.reachable_unavailable_modules)

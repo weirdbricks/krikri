@@ -2156,8 +2156,15 @@ module Krikri
       # (`static: no` next to an `import_tasks:`) is the live specimen.
       # Validated here, at parse time, so the blast radius matches
       # Ansible's instead of silently ignoring the key and running on.
+      # The render travels on the exception so BOTH abort shapes print
+      # real's byte-identical [ERROR] block: the parse-time one (main's
+      # rescue) and the runtime-include one (an include_tasks:-loaded
+      # file's own import_tasks: + static:, round 2100407, where the
+      # executor's include loader used to swallow the parse error into
+      # a per-task "Failed to load included tasks" failure, rc=2).
       if hash["static"]?
-        raise InvalidIncludeAttributeError.new("static", "TaskInclude")
+        raise InvalidIncludeAttributeError.new("static", "TaskInclude",
+          include_attribute_render("static", "TaskInclude", source_file, source_map, task_source_prefix(source_prefix, source_index)))
       end
 
       # Ansible's TaskInclude.check_options runs at PLAYBOOK-LOAD
@@ -2561,7 +2568,8 @@ module Krikri
       # rc=4 whole-playbook abort). See try_parse_import_tasks's matching
       # check for the ovirt.image-template provenance.
       if directive(task_hash, "import_role") && task_hash["static"]?
-        raise InvalidIncludeAttributeError.new("static", "IncludeRole")
+        raise InvalidIncludeAttributeError.new("static", "IncludeRole",
+          include_attribute_render("static", "IncludeRole", source_file, source_map, task_source_prefix(source_prefix, index)))
       end
 
       if import_role_value = directive(task_hash, "import_role")
@@ -4030,6 +4038,30 @@ module Krikri
       end
     end
 
+    # The [ERROR] block for a key not on the include-family attribute
+    # allowlist (TaskInclude/IncludeRole validation): the message, the
+    # invalid_task_attribute_failed suppression line, and an Origin at
+    # the offending KEY itself (live-verified vs 2.19.11:
+    # ovirt.image-template's `static: no` beside an `import_tasks:` ->
+    # Origin at the `static:` column, 173:11 - the source map records
+    # the VALUE position, so walk back to the key on the same line, the
+    # same walk-back parse_task's own static: handling does). Nil when
+    # no source position is known - the exception then renders bare.
+    private def self.include_attribute_render(key : String, kind : String, source_file : String?, source_map : YamlSourceMap?, prefix : String) : String?
+      return nil unless source_map
+      message = "'#{key}' is not a valid attribute for a #{kind}\n" \
+                "This error can be suppressed as a warning using the " \
+                "\"invalid_task_attribute_failed\" configuration"
+      pos = source_map.at?("#{prefix}/#{key}")
+      return nil unless pos
+      if (line = pos[0]) > 0 && source_file && File.file?(source_file)
+        src_line = File.read_lines(source_file)[line - 1]?
+        key_idx = src_line.try(&.index("#{key}:"))
+        pos = {line, key_idx + 1} if key_idx
+      end
+      origin_error_render_at(message, source_file, source_map, pos)
+    end
+
     private def self.origin_error_render(message : String, path : String?, source_map : YamlSourceMap?, prefix : String) : String
       String.build do |io|
         io << "[ERROR]: " << message << "\n"
@@ -4285,8 +4317,9 @@ module Krikri
     class InvalidIncludeAttributeError < Exception
       getter key : String
       getter kind : String
+      getter render : String?
 
-      def initialize(@key : String, @kind : String)
+      def initialize(@key : String, @kind : String, @render : String? = nil)
         super("'#{@key}' is not a valid attribute for a #{@kind}")
       end
     end

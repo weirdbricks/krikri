@@ -262,15 +262,20 @@ module Krikri
     # "[Errno 2] No such file or directory: b''" AFTER the rename already
     # created the file (live-verified vs 2.19.11 for relative/int/bool/
     # float/list dests; the dest file is left behind in both engines).
+    # An EXISTING dest is the module's normal case (assembling over the
+    # stock /etc/ssh/sshd_config): real's rename replaces it wholesale.
+    # 0.9.1465's rewrite of this method added an early return that made
+    # any existing dest a no-op - the task then reported changed=true on
+    # every run (content never converged, only the mode:/owner: pass
+    # landed) and never actually assembled anything
+    # (thulium_drake.sshd, round 2100109 warm).
     private def write_assembled(dest : String, content : String, existing : String?) : PluginResult | String
+      # backup_local stamps LOCAL time (same as copy/template's backups)
       backup_file = ""
       if existing && true?(@params["backup"]?)
-        # backup_local stamps LOCAL time (same as copy/template's backups)
         backup_file = "#{dest}.#{Process.pid}.#{Time.local.to_s("%Y-%m-%d@%H:%M:%S")}~"
         File.write(backup_file, existing)
       end
-
-      return backup_file if File.exists?(dest)
 
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)

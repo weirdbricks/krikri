@@ -296,6 +296,7 @@ module Krikri
       print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
       return SpecOutcome.new(nil, false) unless entry
 
+      params = strip_service_unused_params(module_name, spec_owner, params)
       SpecOutcome.new(validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists), false)
     end
 
@@ -689,6 +690,7 @@ module Krikri
       print_name, entry, spec_owner = resolve_entry(action_name, module_name, entry, vars_context)
       return nil unless entry
 
+      params = strip_service_unused_params(module_name, spec_owner, params)
       validate_spec_entry_tail(action_name, print_name, entry, spec_owner, params, non_string_natives, non_string_lists)
     end
 
@@ -938,11 +940,61 @@ module Krikri
       fact_value = delegating_fact(fact, vars_context)
       target = fact_delegate["map"].as_h[fact_value]?.try(&.as_s)
       if target && (target_entry = table[target]?)
-        return {"ansible.legacy.#{target.split(".").last}", target_entry, target}
+        return {"ansible.legacy.#{target.split(".").last}", merge_consumed_keys(entry, target_entry), target}
       end
       return {action_name, nil, module_name} unless fact == "ansible_service_mgr"
 
       {"ansible.legacy.#{module_name.split(".").last}", entry, module_name}
+    end
+
+    # A fact-delegate swap (service -> systemd) replaces the delegating
+    # entry with the backend's own spec, which lacks the delegating
+    # entry's `consumed_by_action` list - Ansible's action plugin strips
+    # those params from the args it forwards (service.py deletes `use`
+    # before running the manager module), so the backend spec must still
+    # see them consumed or a `service: {use: systemd, ...}` task fails
+    # the backend's Unsupported-parameters check (round 2100129,
+    # haxorof.docker_ce's `service: {use: ..., name: docker, enabled:
+    # true}`). Shallow-copies the target entry; the table is cached and
+    # shared.
+    private def merge_consumed_keys(original : JSON::Any, target : JSON::Any) : JSON::Any
+      original_consumed = consumed_keys(original)
+      return target if original_consumed.empty?
+      merged = (consumed_keys(target) + original_consumed).uniq
+      hash = target.as_h.dup
+      hash["consumed_by_action"] = JSON::Any.new(merged.map { |k| JSON::Any.new(k) })
+      JSON::Any.new(hash)
+    end
+
+    SYSTEMD_UNUSED_PARAMS = {"pattern", "runlevel", "sleep", "arguments", "args"}
+
+    # ansible.module_utils.parsing.convert_bool.BOOLEANS_TRUE/FALSE's
+    # string members - the choices a 'True'/'False' value can rewrite to
+    # when exactly one of them appears in an option's choices list.
+    BOOL_TRUE_CHOICES  = {"y", "yes", "on", "1", "true", "t"}
+    BOOL_FALSE_CHOICES = {"n", "no", "off", "0", "false", "f"}
+
+    # Ansible's service action plugin deletes from the args it forwards,
+    # beside `use` (consumed above), the params its UNUSED_PARAMS table
+    # lists for the resolved manager module - for systemd:
+    # pattern, runlevel, sleep, arguments, args (service.py) - warning
+    # `Ignoring "X" as it is not used in "systemd"` per distinct param.
+    # Those params are in the generic service module's own spec but not
+    # systemd's, so a `service: {pattern: ...}` task on a systemd host
+    # must not fail systemd's Unsupported-parameters check (round
+    # 2100313, stackhpc.ntp's `service: {pattern: ..., state: ...}`).
+    # An explicit `use:` names the manager regardless of the gathered
+    # fact (the plugin reads `use` before the fact); without it the
+    # fact-delegate's target does.
+    private def strip_service_unused_params(module_name : String, spec_owner : String, params : Hash(String, String)) : Hash(String, String)
+      return params unless module_name.split(".").last == "service"
+      effective = params["use"]?.try(&.downcase) || spec_owner.split(".").last
+      return params unless effective == "systemd"
+      stripped = params.reject { |key, _| SYSTEMD_UNUSED_PARAMS.includes?(key) }
+      (params.keys - stripped.keys).each do |key|
+        Krikri::ResultDisplay.emit_action_warning("Ignoring \"#{key}\" as it is not used in \"systemd\"")
+      end
+      stripped
     end
 
     # Facts not gathered: Ansible's action plugin runs setup for just the
@@ -1644,12 +1696,35 @@ module Krikri
           end
         else
           value = raw == Krikri::NONE_SENTINEL ? "None" : raw
-          unless allowed.includes?(value)
+          unless allowed.includes?(value) || rewrites_to_bool_choice?(name, value, allowed, provided)
             return "value of #{name} must be one of: #{allowed.join(", ")}, got: #{value}"
           end
         end
       end
       nil
+    end
+
+    # Ansible's _validate_argument_values rewrites a value that
+    # stringified to exactly 'True'/'False' (a YAML native bool reaching
+    # a type:'str' choices option - check_type_str's to_native) to the
+    # choice itself when the choices overlap BOOLEANS_TRUE/
+    # BOOLEANS_FALSE in exactly ONE member, and leaves the value alone
+    # (failing the check) otherwise (parameters.py). So
+    # `apt: {upgrade: true}` passes - 'True' rewrites to the single
+    # true-choice 'yes' - while a value with no unambiguous overlap
+    # ("got: dog") still fails with the ORIGINAL text. krikri
+    # stringifies both a YAML-native bool and its quoted spelling to
+    # "true"/"false", so both spellings rewrite here (round 2100408,
+    # aleksanderbl29.hyperhdr's `apt: {upgrade: true, update_cache:
+    # true}`). The rewrite lands in `provided` so the later group
+    # checks see the choice, exactly like real's in-place
+    # parameters[param] mutation.
+    private def rewrites_to_bool_choice?(name : String, value : String, allowed : Array(String), provided : Hash(String, String)) : Bool
+      bool_choices = value.downcase == "true" ? BOOL_TRUE_CHOICES : value.downcase == "false" ? BOOL_FALSE_CHOICES : nil
+      overlap = bool_choices.try { |set| allowed.select { |choice| set.includes?(choice) } }
+      return false unless overlap && overlap.size == 1
+      provided[name] = overlap.first
+      true
     end
 
     private def choices_strings(choices : Array(JSON::Any)) : Array(String)

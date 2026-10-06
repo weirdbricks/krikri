@@ -685,6 +685,30 @@ module Krikri
       member_names
     end
 
+    # Whether an archive member survives the include:/exclude: filter.
+    # tar's member args glob-match the member itself AND pull in the
+    # whole tree under a matched directory (GNU tar lists/extracts a
+    # named directory with its contents), so a prefix match counts;
+    # zip's filtering is pure fnmatch per member (unarchive.py's
+    # files_in_archive walk), so the prefix rule only applies to the
+    # tar handler. Unbracketed fnmatch specials (* ?) are translated,
+    # everything else is literal.
+    private def member_matches_any_pattern?(patterns : Array(String), member : String, tree = true) : Bool
+      patterns.any? do |pattern|
+        return true if member == pattern
+        return true if tree && member.starts_with?("#{pattern}/")
+        escaped = pattern.gsub(/[\\^$.|+(){}]/) { |special| "\\#{special}" }
+          .gsub("*", ".*")
+          .gsub("?", ".")
+          .gsub("[", "\\[").gsub("]", "\\]")
+        begin
+          Regex.new("^#{escaped}$").matches?(member)
+        rescue
+          false
+        end
+      end
+    end
+
     # Maps an archive-listing member path to its on-disk path under dest
     # after --strip-components=N stripping (mirroring GNU tar's own
     # semantics: N leading path components removed, a member left with
@@ -736,10 +760,27 @@ module Krikri
     private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
       strip = handler == :tar ? strip_components_count : 0
       member_filter = handler == :tar ? extra_opts_member_filter : [] of String
+      include_files = parse_list_param(@params["include"]?)
+      exclude_files = parse_list_param(@params["exclude"]?).map(&.rstrip('/'))
       members(handler, src).compact_map do |member|
         if !member_filter.empty? && member_filter.none? { |named| member == named || member.starts_with?("#{named}/") }
           next nil
         end
+        # include:/exclude: filter the EXTRACTION (tar member args / unzip
+        # patterns) and real's attribute pass walks handler.
+        # files_in_archive, which carries the SAME filter: tar --list
+        # with member args lists only the matching members (plus the
+        # contents of a matched directory), zip's files_in_archive
+        # fnmatch-filters per member (unarchive.py). Without the filter
+        # here the attribute pass walks members that were never
+        # extracted, failing every find with "No such file or directory"
+        # (round 2100210: alecunsolo.chezmoi's `unarchive: {include:
+        # [chezmoi], owner: root, mode: "0755"}` into /usr/local/bin -
+        # the tarball's untouched LICENSE/README.md/completions members
+        # are not on disk). exclude: entries lose a trailing '/' like
+        # real's own excludes prep.
+        next nil if !include_files.empty? && !member_matches_any_pattern?(include_files, member, handler == :tar)
+        next nil if exclude_files.any? { |pattern| member_matches_any_pattern?([pattern], member) }
         stripped = stripped_member(member, strip)
         # A member that collapses onto dest itself under stripping (the
         # wrapper dir of a GitHub-release tarball, or the leading "./" of

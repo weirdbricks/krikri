@@ -230,6 +230,16 @@ module Krikri
           # degrade to a per-task "Failed to load included tasks"
           # failure. See UnresolvedModuleError's own comment.
           raise ex
+        rescue ex : PlaybookParser::InvalidIncludeAttributeError
+          # Same bypass: a runtime-loaded file's own import_tasks:/
+          # include_tasks:/include_role: with a disallowed attribute
+          # (`static: no`, `become:`) is ansible-core's whole-run
+          # attribute-validation refusal (rc=4, no recap) - not a
+          # per-task failure. The exception carries the [ERROR]
+          # render; the play-loop rescue in krikri-playbook.cr prints
+          # it. Round 2100407, oVirt.image-template's
+          # qcow2_image.yml:173.
+          raise ex
         rescue ex
           group_hosts.each { |host| fail_include(task, host, "Failed to load included tasks: #{ex.message}") }
         end
@@ -1920,6 +1930,9 @@ module Krikri
       :ok
     rescue ex : HandlerNotFoundError
       # Same as the batched include path above - see there.
+      raise ex
+    rescue ex : PlaybookParser::InvalidIncludeAttributeError
+      # Same bypass as the batched include path above - see there.
       raise ex
     rescue ex
       fail_include(task, host, "Failed to load included tasks: #{ex.message}")

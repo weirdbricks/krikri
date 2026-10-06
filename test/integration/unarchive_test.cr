@@ -264,6 +264,29 @@ describe "unarchive plugin" do
     result["changed"].as_bool.must_equal(false)
   end
 
+  it "scopes the attribute pass to include:-filtered members" do
+    # Real bug found in round 2100210 (alecunsolo.chezmoi): the include:
+    # filter applies to the EXTRACTION but the owner:/group:/mode:
+    # attribute pass walked the archive's FULL member list, so
+    # `find` ran over members that were never extracted (the tarball's
+    # LICENSE/README.md/completions) and the task failed with
+    # "Failed to set owner under <dest>: find: '<path>': No such file
+    # or directory" where Ansible (whose attribute pass walks the same
+    # include-filtered handler.files_in_archive) succeeded.
+    dest = fresh_dest("tar-include-member-filter")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"     => File.join(TMP_DIR, "multi_member.tar.gz"),
+      "dest"    => dest,
+      "mode"    => "0700",
+      "include" => "hugo",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(File.join(dest, "hugo")).permissions.value & 0o777).must_equal(0o700)
+    File.exists?(File.join(dest, "README.md")).must_equal(false)
+    File.exists?(File.join(dest, "LICENSE")).must_equal(false)
+  end
+
   it "honors extra_opts: when it arrives as a JSON-array-encoded string, not just the comma-joined literal-list form" do
     # Real bug found live-verifying prometheus.prometheus.node_exporter
     # (round 22): `extra_opts:` in that role's own task is a `{{ }}`-

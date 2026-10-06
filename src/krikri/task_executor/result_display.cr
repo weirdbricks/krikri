@@ -104,6 +104,18 @@ module Krikri
       STDERR.puts line.colorize(:light_magenta)
     end
 
+    # An action-plugin warning raised while validating task args (the
+    # service plugin's `Ignoring "X" as it is not used in "systemd"` for
+    # its UNUSED_PARAMS): one console line per distinct message per run,
+    # exactly like Ansible's Display.warning dedupe.
+    @@action_warnings = Set(String).new
+
+    def self.emit_action_warning(text : String) : Nil
+      line = "[WARNING]: #{text}"
+      return unless @@action_warnings.add?(line)
+      STDERR.puts line.colorize(:light_magenta)
+    end
+
     # A collection-redirect deprecation (community.mysql.<module> ->
     # ansible.mysql.<module>): one [DEPRECATION WARNING] console line per
     # distinct message per run through emit_core_deprecation, exactly like
