@@ -30,6 +30,30 @@ module Krikri
 
       alias Runner = String -> NamedTuple(exit_code: Int32, stdout: String, stderr: String)
 
+      # The daemon URL common_cli.py falls back to when neither a
+      # docker_host nor a cli_context is in play (DEFAULT_DOCKER_HOST).
+      DEFAULT_HOST = "unix:///var/run/docker.sock"
+
+      # The argv prefix real's DockerCLIClient builds once in
+      # common_cli.py (self._cli_base) and prepends to EVERY CLI call it
+      # makes: the docker_cli param (or the plain `docker` name - #probe
+      # has already proved it resolves when it runs first), then
+      # `--host <docker_host>` unless a cli_context: is in play (real's
+      # own rule: no docker_host and no cli_context means the default
+      # daemon URL, still passed explicitly).
+      def self.base_args(docker_cli : String?, docker_host : String?, cli_context : String?) : Array(String)
+        args = [docker_cli.presence || "docker"]
+        args << "--host" << (docker_host.presence || DEFAULT_HOST) unless cli_context.presence
+        args
+      end
+
+      # #base_args rendered for embedding in a shell command string
+      # (shlex.quote semantics - bare when safe, matching how real's
+      # _compose_cmd_str/_clean_args render the same argv).
+      def self.base_command(docker_cli : String?, docker_host : String?, cli_context : String?) : String
+        base_args(docker_cli, docker_host, cli_context).map { |arg| shlex_quote(arg) }.join(" ")
+      end
+
       # Runs the probe through *run* (the plugin's remote_exec). Returns
       # nil when the daemon answered, otherwise the Failure to fail the
       # task with.
@@ -41,12 +65,10 @@ module Krikri
           cli = resolved[:stdout].strip
         end
 
-        args = [cli]
         # common_cli.py: no docker_host and no cli_context => the default
         # daemon URL, passed explicitly (the CLI would otherwise consult
         # its own context configuration).
-        host = docker_host.presence || "unix:///var/run/docker.sock"
-        args += ["--host", host] unless cli_context.presence
+        args = base_args(cli, docker_host, cli_context)
         args += ["version", "--format", "{{ json . }}"]
 
         cmd = args.map { |arg| shlex_quote(arg) }.join(" ")
@@ -74,7 +96,7 @@ module Krikri
       # same quoting real's _clean_args applies when it renders the cmd
       # string into the failure result (observed: '{{ json . }}' quoted,
       # paths and --host values bare).
-      private def self.shlex_quote(value : String) : String
+      def self.shlex_quote(value : String) : String
         return "''" if value.empty?
         return value unless value.matches?(/[^\w@%+=:,.\/-]/)
 

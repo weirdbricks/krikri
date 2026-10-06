@@ -160,7 +160,14 @@ module Krikri
       return no_build_result(existing_image || JSON.parse("{}"), changed: true) if check_mode
 
       args = build_args(ref_name, tag, path)
-      build_result = remote_exec("docker #{args.map { |arg| shell_quote(arg) }.join(" ")}")
+      # Real runs the build through call_cli, i.e.
+      # self._cli_base + args - the CLI binary with `--host
+      # <docker_host>` in front (see DockerCliProbe.base_args), the same
+      # prefix the version probe above already uses. The recorded
+      # `command` stays the bare buildx argv: real's fail_json/exit_json
+      # records `command=args`, without the base args.
+      build_cmd = PluginHelpers::DockerCliProbe.base_command(@params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+      build_result = remote_exec("#{build_cmd} #{args.map { |arg| shell_quote(arg) }.join(" ")}")
 
       unless build_result[:exit_code] == 0
         result = PluginResult.new(changed: false, failed: true,

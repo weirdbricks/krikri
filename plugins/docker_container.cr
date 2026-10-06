@@ -61,8 +61,12 @@ module Krikri
   #   list-of-`KEY=VALUE` form its own dict conversion handles, which
   #   travels on the same JSON wire as the other list options below)
   # - labels: dict of labels (same list form as env:, below)
-  # - ports: comma-separated list of docker_ports.cr-syntax mappings
-  #   ("8080:80", "127.0.0.1:8080:80/udp", ...)
+  # - published_ports: comma-separated list of docker_ports.cr-syntax
+  #   mappings ("8080:80", "127.0.0.1:8080:80/udp", ...) - `ports:` is
+  #   its alias (real's argspec spells the option `published_ports`
+  #   with `aliases: [ports]`), and both spellings bind the same host
+  #   ports here. `exposed_ports:` is a DIFFERENT real option
+  #   (aliases: expose/exposed) and is not implemented.
   # - volumes: comma-separated list of "host_path:container_path[:mode]"
   #   bind mounts (passed straight through as Docker's own Binds: syntax)
   # - restart_policy: "no" (default)/"always"/"on-failure"/"unless-stopped"
@@ -468,7 +472,7 @@ module Krikri
     private def create_host_config_given? : Bool
       %w[auto_remove cpuset_cpus cpuset_mems cpu_shares cpus memory memory_reservation
         memory_swap memory_swappiness network_mode oom_kill_disable oom_score_adj pids_limit
-        privileged restart_policy volumes ports].any? { |field| @params[field]? }
+        privileged restart_policy volumes ports published_ports].any? { |field| @params[field]? }
     end
 
     # Ansible's HostConfig for the create payload, in Ansible's own option
@@ -526,7 +530,7 @@ module Krikri
         })
       end
       config["Binds"] = json_string_list(parse_volumes(@params["volumes"]?) || [] of String) if @params["volumes"]?
-      if @params["ports"]?
+      if ports_param_raw
         _exposed, port_bindings = build_ports
         bindings = Hash(String, JSON::Any).new
         port_bindings.each do |port, port_entries|
@@ -829,7 +833,7 @@ module Krikri
       extra_fields_match?(api, api.containers.inspect(existing.id), image_ref)
     end
 
-    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports healthcheck
+    EXTRA_COMPARISON_FIELDS = %w[entrypoint env labels volumes restart_policy network_mode privileged auto_remove ports published_ports healthcheck
       memory memory_reservation memory_swap memory_swappiness cpus cpu_shares cpuset_cpus cpuset_mems
       oom_kill_disable oom_score_adj pids_limit]
 
@@ -856,13 +860,25 @@ module Krikri
     # `comparisons: {<field>: strict}` explicitly overrides an
     # allow_more_present-by-default field to exact-equality instead
     # (Ansible's own supported override direction); `ignore` always
-    # wins regardless of the field's default.
+    # wins regardless of the field's default. The comparisons dict's
+    # own keys go through the option's alias map in real
+    # (_parse_comparisons: `ports` resolves to `published_ports`), so
+    # both spellings are looked up for the ports field.
     private def comparison_mode(field : String, default : String) : String
       raw = @params["comparisons"]?
       return default unless raw
       parsed = JSON.parse(raw) rescue nil
-      parsed.try(&.[field]?).try(&.as_s?) || default
+      return default unless parsed
+      keys = COMPARISON_KEY_ALIASES[field]? || [field]
+      keys.each do |key|
+        if value = parsed[key]?.try(&.as_s?)
+          return value
+        end
+      end
+      default
     end
+
+    COMPARISON_KEY_ALIASES = {"ports" => ["ports", "published_ports"]}
 
     private def extra_fields_match?(api : Docr::API, inspected : Docr::Types::ContainerInspectResponse, image_ref : String?) : Bool
       config = inspected.config
@@ -959,7 +975,7 @@ module Krikri
     end
 
     private def ports_field_matches?(api : Docr::API, config : Docr::Types::ContainerConfig, host_config : Docr::Types::HostConfig, image_ref : String?) : Bool
-      return true unless @params["ports"]?
+      return true unless ports_param_raw
       mode = comparison_mode("ports", "allow_more_present")
       mode == "ignore" || ports_match?(api, config, host_config, image_ref, strict: mode == "strict")
     end
@@ -1441,8 +1457,14 @@ module Krikri
       literal_list_param(raw) || raw.split(',').map(&.strip).reject(&.empty?)
     end
 
+    # Ansible's `published_ports:` (the canonical name - `ports:` is
+    # its alias in real's argspec): whichever spelling the task used.
+    private def ports_param_raw : String?
+      @params["published_ports"]? || @params["ports"]?
+    end
+
     private def parse_port_entries : Array(String)
-      raw = @params["ports"]?
+      raw = ports_param_raw
       return [] of String unless raw
       (literal_list_param(raw) || raw.split(',').map(&.strip)).reject(&.empty?)
     end

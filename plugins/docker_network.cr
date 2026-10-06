@@ -134,6 +134,22 @@ module Krikri
     # PluginHelpers::DockerSdkError reproduces.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
+    # Registered key order of an UNHANDLED module exception (real's
+    # crash path: an uncaught re.match(None) TypeError in
+    # TaskParameters), live-verified against ansible-core 2.19.11 +
+    # community.docker 5.2.1 with `register:` + `to_json`:
+    # failed, ansible_facts, changed, exception, msg, warnings. That is
+    # a DIFFERENT order from a plain fail_json (failed, msg, changed,
+    # exception - the CIDR-validation failure below takes that one),
+    # with `msg` AFTER `exception` and the controller's
+    # interpreter-discovery `ansible_facts`/`warnings` slots in
+    # between. krikri's wire carries only failed/changed/exception/msg
+    # for this failure (its module wire has no interpreter discovery to
+    # add the controller-side ansible_facts/warnings keys), and the
+    # marker skips the absent ones - the relative order of the keys it
+    # does emit is real's.
+    EXCEPTION_KEY_ORDER = %w[failed ansible_facts changed exception msg warnings]
+
     def execute : PluginResult
       if err = validate_arguments
         return err
@@ -458,7 +474,12 @@ module Krikri
       ipam_pools.each do |pool|
         subnet = pool.subnet
         unless subnet
-          return PluginResult.new(changed: false, failed: true, msg: "expected string or bytes-like object, got 'NoneType'")
+          # An unhandled TypeError in real (re.match(None)) - its
+          # registered result takes the exception-path key order, not
+          # the plain fail_json one the CIDR text below reports.
+          result = PluginResult.new(changed: false, failed: true, msg: "expected string or bytes-like object, got 'NoneType'")
+          result.key_order = EXCEPTION_KEY_ORDER
+          return result
         end
         next if subnet.as_s.matches?(CIDR_IPV4) || subnet.as_s.matches?(CIDR_IPV6)
         return PluginResult.new(changed: false, failed: true, msg: "\"#{subnet.as_s}\" is not a valid CIDR")

@@ -4871,10 +4871,10 @@ module Krikri
     end
 
     # docker_container's list-typed options (`command`, `entrypoint`,
-    # `volumes`, `ports`, and the list form of the dict-typed `env` /
-    # `labels`) travel JSON-encoded rather than on the generic
-    # comma-joined wire, because a comma inside one element is
-    # meaningful there - see #parse_module_params.
+    # `volumes`, `ports`/`published_ports`, and the list form of the
+    # dict-typed `env` / `labels`) travel JSON-encoded rather than on
+    # the generic comma-joined wire, because a comma inside one element
+    # is meaningful there - see #parse_module_params.
     DOCKER_CONTAINER_LIST_PARAMS = {"community.docker.docker_container", "docker_container"}
 
     private def self.parse_module_params(yaml : YAML::Any, module_name : String) : Hash(String, String)
@@ -4987,7 +4987,7 @@ module Krikri
             entries = value.as_a.map { |item| stringify_value(item) }
             params[key.to_s] = entries.to_json
           elsif DOCKER_CONTAINER_LIST_PARAMS.includes?(module_name) &&
-                {"command", "entrypoint", "volumes", "ports", "env", "labels"}.includes?(key.to_s) && value.as_a?
+                {"command", "entrypoint", "volumes", "ports", "published_ports", "env", "labels"}.includes?(key.to_s) && value.as_a?
             # community.docker's docker_container takes `command` as an
             # ansible-type `raw` option (a list reaches the daemon as
             # the argv list verbatim; `entrypoint`, `volumes` and

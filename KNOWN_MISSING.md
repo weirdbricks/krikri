@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1520`.**
+**Currently at `0.9.1524`.**
 
 ## Open gaps
 
@@ -39,9 +39,7 @@ defect moves down or gets deleted.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
   socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real);
-  an `ipam_config` element without `subnet` registers real's odd exception-path key order; `docker_container`
-  implements `ports:` but not real's `published_ports:` alias; `docker buildx build`/`docker compose`
-  calls do not pass `--host` (only the version probe does). `docker_image_build`'s SDK-error path could
+  `docker_image_build`'s SDK-error path could
   not be provoked on podman (no buildx), so that wording is aligned but unverified live.
 - **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in

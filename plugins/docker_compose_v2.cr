@@ -335,7 +335,7 @@ module Krikri
     # A failed version probe is NOT an error - the first real command
     # surfaces its own failure (rc != 0) in that case, same net result.
     private def validate_compose_version : PluginResult?
-      result = remote_exec("#{base_cli} compose version --format json")
+      result = remote_exec("#{cli_prefix} compose version --format json")
       return nil if result[:exit_code] != 0
       parsed = JSON.parse(result[:stdout].strip) rescue nil
       return nil unless parsed && parsed.as_h?
@@ -567,7 +567,7 @@ module Krikri
     # Runs one `compose <args>` and decodes its JSON stdout - the CLI
     # prints one JSON object per line.
     private def compose_json_array(args : String) : Array(JSON::Any)
-      result = remote_exec("cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{args}")
+      result = remote_exec("cd #{q(project_src!)} && #{cli_prefix} #{compose_base_args.join(" ")} #{args}")
       return [] of JSON::Any if result[:exit_code] != 0
       decoded = [] of JSON::Any
       result[:stdout].strip.lines.reject(&.empty?).each do |line|
@@ -595,6 +595,16 @@ module Krikri
       "docker"
     end
 
+    # Real's DockerCLIClient._cli_base - the CLI binary plus `--host
+    # <docker_host>` (unless a cli_context: is in play) - prepended to
+    # EVERY CLI call (call_cli = self._cli_base + args), compose
+    # invocations included. Shlex-joined for the shell command string;
+    # #base_cli above stays the bare binary for the module's own
+    # messages, which quote get_cli() alone.
+    private def cli_prefix : String
+      PluginHelpers::DockerCliProbe.base_command(@params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+    end
+
     # Ansible module's get_base_args (text-progress variant): --ansi never
     # always, then the project/file/env/profile wiring. Paths are
     # single-quoted - all of them can contain spaces.
@@ -611,7 +621,7 @@ module Krikri
     # Runs with cwd=project_src (the Ansible module passes cwd= to every
     # call, so relative --file/--env-file paths resolve the same way).
     private def capture_cmd(cmd_args : Array(String)) : String
-      "cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} #{cmd_args.map { |arg| q(arg) }.join(" ")}"
+      "cd #{q(project_src!)} && #{cli_prefix} #{compose_base_args.join(" ")} #{cmd_args.map { |arg| q(arg) }.join(" ")}"
     end
 
     private def project_src! : String
@@ -668,7 +678,7 @@ module Krikri
     # (or there are no containers at all).
     private def containers_all_stopped? : Bool
       stopped_states = %w[created exited stopped killed]
-      result = remote_exec("cd #{q(project_src!)} && #{base_cli} #{compose_base_args.join(" ")} ps --format json --all")
+      result = remote_exec("cd #{q(project_src!)} && #{cli_prefix} #{compose_base_args.join(" ")} ps --format json --all")
       return true if result[:exit_code] != 0
       containers = result[:stdout].strip.lines.reject(&.empty?).select(&.starts_with?("{"))
       return true if containers.empty?
