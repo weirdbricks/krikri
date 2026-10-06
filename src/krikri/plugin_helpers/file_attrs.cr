@@ -41,9 +41,10 @@ module Krikri
         if owner = @params["owner"]?
           uid = resolve_owner_uid(owner)
           if before_uid(path) != uid
-            return {false, chown(path, uid)}
+            failure = chown(path, uid)
+            return {false, failure} if failure
+            changed = true
           end
-          changed = true
         end
 
         if group = @params["group"]?
@@ -51,8 +52,8 @@ module Krikri
           if before_gid(path) != gid
             failure = chgrp(path, gid)
             return {false, failure} if failure
+            changed = true
           end
-          changed = true
         end
 
         if mode = @params["mode"]?

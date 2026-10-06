@@ -476,5 +476,53 @@ describe "ini_file plugin" do
       result["changed"].as_bool.must_equal(false)
       (File.info(path).permissions.value & 0o7777).must_equal(0o644)
     end
+
+    # Real basic.py's set_owner_if_different/set_group_if_different only
+    # flip `changed` when the uid/gid actually differs - a converged
+    # owner:/group: is a no-op. krikri's file-attrs helper used to set
+    # changed=true whenever owner:/group: was present at all, so a warm
+    # (idempotent) second run of a task with owner:/group:/mode: re-saw
+    # the file as changed where real reports ok (0ta2.php_role round
+    # 1600015: `Create 99-php.ini.` warm py changed=1 vs krikri 2).
+    it "reports no change when owner/group already match" do
+      path = PluginSpecHelper.tmp_path("ini_file-owner-converged")
+      File.write(path, "[main]\nkey = value\n")
+      info = File.info(path)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "key",
+        "value" => "value", "owner" => info.owner_id.to_s,
+        "group" => info.group_id.to_s, "mode" => "0644",
+      })
+
+      result["changed"].as_bool.must_equal(false)
+      File.info(path).owner_id.must_equal(info.owner_id)
+    end
+
+    it "reports no change with only a converged owner:" do
+      path = PluginSpecHelper.tmp_path("ini_file-owner-only-converged")
+      File.write(path, "[main]\nkey = value\n")
+      info = File.info(path)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "key",
+        "value" => "value", "owner" => info.owner_id.to_s,
+      })
+
+      result["changed"].as_bool.must_equal(false)
+    end
+
+    it "reports no change with only a converged group:" do
+      path = PluginSpecHelper.tmp_path("ini_file-group-only-converged")
+      File.write(path, "[main]\nkey = value\n")
+      info = File.info(path)
+
+      result = PluginSpecHelper.run("ini_file", {
+        "path" => path, "section" => "main", "option" => "key",
+        "value" => "value", "group" => info.group_id.to_s,
+      })
+
+      result["changed"].as_bool.must_equal(false)
+    end
   end
 end
