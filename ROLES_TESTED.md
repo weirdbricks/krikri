@@ -1772,7 +1772,7 @@ its warm numbers drop so far below its own cold.
 | 030.ansible_bfg | ✅ Clean (round 1500212, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
 | 030.ansible_firefox | ✅ Clean (round 1500200, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 60.9s vs cr 50.3s; warm py 11.0s vs cr 1.1s. |
 | 0ta2.bash_completion_role | ✅ Clean (round 1500192, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.0s vs cr 4.5s; warm py 6.1s vs cr 0.8s. |
-| 0ta2.php_role | ❌ DIVERGENT (round 1600015, 0.9.1509, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 51.0s vs cr 43.7s; warm py 16.1s vs cr 6.7s. warm idempotency gap: krikri's ini_file re-reports the unchanged date.timezone option as changed on the second run where real reports ok (cold runs byte-identical). |
+| 0ta2.php_role | ✅ Clean (round 1800001, 0.9.1512, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 44.9s vs cr 39.4s; warm py 13.7s vs cr 6.4s. |
 | 1davidmichael.ansible-role-nginx | ✅ Clean (round 1500269, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
 | 1mr.hostname | ✅ Clean (round 1500482, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.5s vs cr 4.6s; warm py 6.1s vs cr 0.5s. |
 | A-j-K.kubernetes-centos-installer | ✅ Clean (round 1500018, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
@@ -2221,7 +2221,7 @@ its warm numbers drop so far below its own cold.
 | srsp.oracle-java | ✅ Clean (round 1500193, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.1s vs cr 4.7s; warm py 2.8s vs cr 0.4s. |
 | stackbuilders.sb-debian-base | ✅ Clean (round 1500066, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 33.6s vs cr 20.9s; warm py 14.4s vs cr 2.5s. |
 | stackhpc.systemd_networkd | ✅ Clean (round 1500079, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.9s vs cr 4.9s; warm py 2.9s vs cr 0.4s. |
-| stafwag.libvirt | ❌ DIVERGENT (round 1600008, 0.9.1509, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 133.0s vs cr 103.9s; warm py 22.8s vs cr 0.9s. tag filtering: the role's `tags: [never, debug]` Display debug tasks (loaded at runtime via include_tasks) ran in krikri (2 extra ok tasks) where real's `never` tag excludes them entirely - fixed in 0.9.1510, after this round's binary. |
+| stafwag.libvirt | ✅ Clean (round 1800002, 0.9.1512, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 117.8s vs cr 97.5s; warm py 21.7s vs cr 0.6s. |
 | stephdewit.nvm | ✅ Clean (round 1500256, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 37.4s vs cr 79.1s; warm py 15.9s vs cr 2.6s. |
 | Stouts.collectd | ✅ Clean (round 1500543, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.0s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
 | stuart.dockercheck | ✅ Clean (round 1500490, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 24.9s vs cr 17.3s; warm py 14.6s vs cr 3.4s. |
@@ -2276,7 +2276,7 @@ its warm numbers drop so far below its own cold.
 | webarchitect609.sublime_text | ✅ Clean (round 1500083, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 61.9s vs cr 37.0s; warm py 16.7s vs cr 1.5s. |
 | wf72.systemd_timesyncd | ✅ Clean (round 1500004, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 38.4s vs cr 29.1s; warm py 14.1s vs cr 3.9s. |
 | whiskerlabs.python | ✅ Clean (round 1500376, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.2s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
-| wiggels.snipeit | ❌ BLOCKED: GALAXY_MISSING (round 1600000, 0.9.1509). No timings Galaxy's role tarball download timed out before any engine ran (was DIVERGENT at 1500000: mysql_user salt: mismatch, fixed in 0.9.1509 - not re-verified). |
+| wiggels.snipeit | ✅ Clean (round 1800000, 0.9.1512, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 239.6s vs cr 187.6s; warm py 65.4s vs cr 8.9s. |
 | William-Yeh.uwsgi | ✅ Clean (round 1500411, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
 | wittdennis.install-helm | ✅ Clean (round 1500574, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 15.7s vs cr 11.4s; warm py 7.0s vs cr 0.5s. |
 | wittdennis.kubeadm_upgrade | ✅ Clean (round 1500567, 0.9.1507, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.5s vs cr 4.1s; warm py 2.6s vs cr 0.3s. |
