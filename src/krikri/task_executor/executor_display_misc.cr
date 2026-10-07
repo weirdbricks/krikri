@@ -57,17 +57,51 @@ module Krikri
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       errors = [] of String
-      rendered = String.build do |io|
+      rendered = marker_render_chunks(task.name, substitutor, vars_context, errors, 0)
+
+      emit_name_template_error_warning(task, errors) unless errors.empty?
+      rendered
+    rescue
+      task.name
+    end
+
+    # Ansible's name templating applies its ReplacingMarkerBehavior at
+    # EVERY recursion level, not just the name's own top-level spans: a
+    # span whose variable's own stored value is unrendered Jinja gets
+    # that value rendered chunk-wise too, each failing sub-expression
+    # annotated individually while resolvable literals and sibling
+    # expressions survive (andrewrothstein.nats, round 2300765: a name
+    # over `nats_install_dir: '{{ nats_parent_install_dir }}/{{ nats_name }}'`
+    # with `nats_name: '{{ nats_app }}-{{ nats_ver }}-{{ nats_platform }}'`
+    # and both nats_app/nats_ver undefined printed
+    # `/usr/local/<< error 1 - 'nats_app' is undefined >>-<< error 2 -
+    # 'nats_ver' is undefined >>-linux-amd64`, not one collapsed marker
+    # for the whole span). The error counter is shared across levels,
+    # matching Ansible's per-name numbering.
+    private MAX_NAME_MARKER_DEPTH = 8
+
+    private def marker_render_chunks(text : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), errors : Array(String), depth : Int32) : String
+      String.build do |io|
         pos = 0
-        while (start = task.name.index("{{", pos))
-          stop = task.name.index("}}", start) || break
-          io << task.name[pos...start]
-          span = task.name[start..stop + 1]
+        while (start = text.index("{{", pos))
+          stop = text.index("}}", start) || break
+          io << text[pos...start]
+          span = text[start..stop + 1]
           begin
             io << substitutor.substitute(span, strict: true)
           rescue e : UndefinedVariableError
-            errors << e.message.to_s
-            io << "<< error #{errors.size} - #{e.message} >>"
+            # Recurse into the failed span's underlying variable value
+            # when that value is itself plain `{{ }}` template text -
+            # partial results and sibling expressions survive there.
+            # Anything else (non-bare reference, non-template value,
+            # depth exhausted) keeps the single collapsed marker.
+            raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
+            if raw_template
+              io << marker_render_chunks(raw_template, substitutor, vars_context, errors, depth + 1)
+            else
+              errors << e.message.to_s
+              io << "<< error #{errors.size} - #{e.message} >>"
+            end
           rescue
             # A non-undefined span failure (bad filter, syntax) is not a
             # Marker in real either - keep the old lenient render for it.
@@ -75,13 +109,20 @@ module Krikri
           end
           pos = stop + 2
         end
-        io << task.name[pos..]
+        io << text[pos..]
       end
+    end
 
-      emit_name_template_error_warning(task, errors) unless errors.empty?
-      rendered
-    rescue
-      task.name
+    # The raw stored value of a failed span's bare variable reference,
+    # when that value is itself plain `{{ }}` template text (no block
+    # tags - those route through the full renderer, not chunk-wise) -
+    # nil otherwise, so the caller falls back to the collapsed marker.
+    private def bare_var_raw_template(span : String, vars_context : Hash(String, JSON::Any)) : String?
+      return nil unless (m = span.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/))
+      raw = vars_context[m[1]]?
+      return nil unless raw && (value = raw.as_s?) && value.includes?("{{")
+      return nil if value.includes?("{%") || value.includes?("{#")
+      value
     end
 
     # The old lenient whole-name substitution - still used for names

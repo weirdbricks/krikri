@@ -38,7 +38,18 @@ module Krikri
       # buluma.roundcubemail, xanmanning.k3s's "Set the control host").
       # The single-host execute_block already propagates before its own
       # skip printing, which is why single-host repros kept passing.
+      # always: children print skipped banners on this path too, and
+      # without propagation their templated names lose the role's
+      # invocation vars (a meta/main.yml dependency's own args, e.g.
+      # andrewrothstein.zookeeper-cluster's openjdk_app: jre): the
+      # role's defaults/vars/main.yml names still resolved through the
+      # play-wide layers, so only dep-arg references collapsed to
+      # "<< error 1 - 'x' is undefined >>" markers in the skipped
+      # banner - warm runs only, since cold ran the block and the
+      # executed path propagates always: right before running it
+      # (round 2300431).
       propagate_role_context(task, task.block_tasks || [] of Task)
+      propagate_role_context(task, task.always_tasks || [] of Task)
 
       run_hosts, skip_hosts = partition_by_when(task, hosts, inherit_on_error: true)
 
@@ -1347,8 +1358,18 @@ module Krikri
       # role_name to be set already (a skipped block's banners used to
       # lose their "role : " prefix because propagate ran only on the
       # executed path - 0x0i.systemd's "Broadcast uninstall signal" /
-      # "Flush handlers" skipped-banner shape).
+      # "Flush handlers" skipped-banner shape). always: children need
+      # the same propagation here: they print skipped banners on this
+      # path too, and without it their templated names lose the role's
+      # invocation vars (a meta/main.yml dependency's own args, e.g.
+      # andrewrothstein.zookeeper-cluster's openjdk_app: jre) - the
+      # role's defaults/vars/main.yml names still resolved through the
+      # play-wide layers, so only the dep-arg references collapsed to
+      # "<< error 1 - 'x' is undefined >>" markers in the skipped
+      # banner (round 2300431, warm runs only: cold ran the block, and
+      # the executed path propagates always: right before running it).
       propagate_role_context(task, task.block_tasks || [] of Task)
+      propagate_role_context(task, task.always_tasks || [] of Task)
 
       if task.when_condition
         vars_context = build_vars_context(task, host)
