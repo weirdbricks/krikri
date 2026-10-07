@@ -39,8 +39,8 @@ defect moves down or gets deleted.
   `connect_timeout` (via `connect_params` or `PGCONNECT_TIMEOUT`, task `environment:` first) is verified
   byte-identical against real 2.19.11 on a held listener ("timeout expired", no hint line). A connect to an unroutable
   address (`192.0.2.1`) with a `connect_timeout` set words as "timeout expired" too (probe still pending
-  after a fiber-side failure is read as the deadline, not an errno; unit-pinned only, not
-  re-confirmed live yet). The live tests
+  after a fiber-side failure is read as the deadline, not an errno; unit-pinned, and
+  re-confirmed on an Atlantic.net host in round 2400002). The live tests
   on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
@@ -53,30 +53,10 @@ defect moves down or gets deleted.
   never as an SDK APIError. The one DockerException this module can raise,
   resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
   unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
-- **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
-  `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
-  the daemon, <1% templating/conditions. Done from that profile: a **local plugin daemon** serves
-  `ansible_connection=local` (0.837 s -> 0.348 s on the 30-exec local probe; `--no-persistent-daemon`
-  turns it off), the **parse phase** lost its one hotspot (the reserved-var warning re-read the whole
-  playbook per task; `--syntax-check` of the 304-task bench 30 ms -> 9 ms), and the **vars-hash dup /
-  second substitutor** went copy-on-write (`ensure_magic_vars!` skips its writes entirely when they
-  would be verified no-ops, so the lazy `ensure_owned!` full-hash dup never fires on the executor's
-  vars_context shape and the jinja resolver's second substitutor aliases the same hash): on a 300-task
-  local template-heavy bench (~350-key vars, release, interleaved paired runs, median) wall
-  128 -> 115 ms (-10%), the templating bucket 41 -> 34.5 ms (-16%); a second, independent 300-task bench
-  (15 interleaved runs) 79.1 -> 73.2 ms (-7.4%); invalidation stays exact because
-  every call site constructs a fresh substitutor after any vars mutation (set_fact, register, loop
-  item, include_vars, until:-retry) and the aliased hash is read live - pinned by
-  `test/unit/var_substitutor_liveness_test.cr` and
-  `test/integration/vars_invalidation_templating_test.cr`. Measured and **not worth
-  starting** (each <= ~1% of warm wall): `ip` forks in `gather_network_facts` (~11 ms/gather), the
-  interpreter spawn in `gather_python_facts` (~20 ms), cold plugin upload (the 14.8 MB fat plugin's rsync is ~0.18 s over a warm ControlMaster, within ~30 ms of the
-  ~0.15 s transport floor; a `tar | ssh` pipe measured slower cold, ~0.22-0.26 s, from a first-bulk-session
-  penalty after a fresh ControlMaster), `ConditionalEvaluator` re-parsing (5-7 us/call),
-  ENV re-conversion
-  (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
-  ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
-  build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
+- **Test suite on a host without a container daemon:** six tests fail or flake without Docker/podman:
+  `docker_compose_v2` (3: missing project dir wording), `docker_image_build` argument validation (1), the
+  `--check` mode Docker end-to-end test (1) and one `statvfs` test that flakes under parallel workers (passes
+  alone). They need a reachable daemon socket; everything else in `scripts/minitest.sh -- -p 4` passes.
 
 ## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
 
