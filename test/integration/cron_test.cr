@@ -71,6 +71,30 @@ describe "cron plugin" do
     second["changed"].as_bool.must_equal(false)
   end
 
+  it "is idempotent when the job carries a trailing newline (folded scalar)" do
+    # hspaans.nagios round 2300278: a YAML folded scalar `job: >` arrives
+    # with a trailing "\n"; real cron.py's get_cron_job strips it
+    # (`job.strip('\r\n')`) before rendering, so the second run finds its
+    # own entry and reports ok. Without the strip the rendered line ends
+    # in "\n", the written crontab grows a blank line, and every rerun
+    # reports changed forever.
+    path = tmp_path("cron-folded-job.txt")
+    File.delete(path) if File.exists?(path)
+    params = {
+      "name" => "Slack Heartbeat message",
+      "minute" => "0", "hour" => "6,18",
+      "job" => "/usr/local/lib/nagios/plugins/notification-slack.pl -field SERVICEDESC=\"Heartbeat\"\n",
+      "cron_file" => path, "user" => "root",
+    }
+
+    first = PluginSpecHelper.run("cron", params)
+    first["changed"].as_bool.must_equal(true)
+
+    second = PluginSpecHelper.run("cron", params)
+    second["changed"].as_bool.must_equal(false)
+    File.read(path).must_equal("#Ansible: Slack Heartbeat message\n0 6,18 * * * root /usr/local/lib/nagios/plugins/notification-slack.pl -field SERVICEDESC=\"Heartbeat\"\n")
+  end
+
   it "updates the schedule in place when it changes" do
     path = tmp_path("cron-update.txt")
     PluginSpecHelper.run("cron", {"name" => "job", "job" => "/bin/true", "hour" => "1", "cron_file" => path, "user" => "root"})

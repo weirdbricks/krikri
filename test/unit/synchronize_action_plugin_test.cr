@@ -136,6 +136,43 @@ describe "SynchronizeActionPlugin delegate_to localhost munging" do
     json.as_h["cmd"].as_s.wont_include("--rsh=")
   end
 
+  it "runs a plain remote pull (no delegate_to) from the controller, not on the target" do
+    # softasap.sa-vpn-softether round 2300304: the executor used to pass
+    # task_host == host even with NO delegate_to:, so synchronize's
+    # dest_is_local branch (meant for delegate_to naming the task's own
+    # host) fired for every plain remote task and the module binary was
+    # dispatched ONTO the target host - where pull mode's controller-side
+    # dest path (/home/<user>/...) cannot exist and rsync died with
+    # "mkdir ... No such file or directory" while real ansible pulled the
+    # files. The task host here is unresolvable on purpose: the point is
+    # that rsync RUNS ON THE CONTROLLER and qualifies the remote src.
+    task_host = Krikri::Host.new("unresolvable-sync-spec-host")
+    plugin = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/opt/vpnserver/generated",
+      "dest" => "/tmp/sync-spec-dest/generated",
+      "mode" => "pull",
+    }, Hash(String, JSON::Any).new, task_host, nil, nil)
+    result = plugin.execute
+
+    json = result.final_result || raise "expected a final result"
+    json.as_h["cmd"].as_s.must_include("unresolvable-sync-spec-host:/opt/vpnserver/generated")
+  end
+
+  it "still dispatches the module on the host for delegate_to naming the task's own host" do
+    task_host = Krikri::Host.new("unresolvable-sync-spec-host")
+    plugin = Krikri::SynchronizeActionPlugin.new({
+      "src"  => "/tmp/sync-spec-src",
+      "dest" => "/tmp/sync-spec-dest",
+    }, Hash(String, JSON::Any).new, task_host, nil, task_host)
+    result = plugin.execute
+
+    result.final_result.must_be_nil
+    result.modified_params.must_equal({
+      "src"  => "/tmp/sync-spec-src",
+      "dest" => "/tmp/sync-spec-dest",
+    })
+  end
+
   it "check mode predicts changes with rsync --dry-run and writes nothing" do
     delegate = Krikri::Host.new("localhost")
     delegate.vars["ansible_connection"] = JSON::Any.new("local")

@@ -1703,6 +1703,24 @@ module Krikri
       result
     end
 
+    # Real package_status()'s lone-installed-provider resolution for a
+    # purely virtual name (see handle_latest's spec_list): the provider's
+    # candidate version becomes the pin when the provider is installed at
+    # any other version; nil otherwise (provider absent, multiple
+    # providers, or already at the candidate - the bare-spec paths).
+    private def virtual_provider_pin(name : String) : String?
+      providers = apt_reverse_provides_batch([name])[name]?
+      return nil unless providers && providers.size == 1
+      provider = providers[0]
+      statuses = dpkg_installed_status([provider])
+      status = statuses[provider]?
+      return nil unless status && status[0]
+      installed_version = status[1]
+      _resolvable, provider_candidate = apt_candidate(provider)
+      return nil unless provider_candidate
+      installed_version == provider_candidate ? nil : provider_candidate
+    end
+
     # Handle installing packages. build_dep: is real apt.py's
     # state=build-dep (install() with build_dep=True: every spec goes to
     # `apt-get build-dep` verbatim, no installed-status short-circuit);
@@ -2202,8 +2220,24 @@ module Krikri
         # capture or apt.py format string produces.
         spec_list = packages.map do |pkg|
           base_name, pinned_version = split_name_version(pkg)
-          _resolvable, candidate = apt_candidate(base_name)
+          resolvable, candidate = apt_candidate(base_name)
           version = pinned_version || candidate
+          unless pinned_version || version || !resolvable
+            # A purely virtual name (Candidate: (none)) with state=latest:
+            # real package_status() resolves it through its providers - a
+            # LONE provider that is already installed contributes its own
+            # candidate as version_installable when the installed version
+            # differs, and main() pins THAT onto the requested (virtual)
+            # name: "git-core=1:2.34.1-1ubuntu1.17". apt-get then refuses a
+            # version pin on a virtual name and the task FAILS, exactly as
+            # captured in iroquoisorg.tools round 2300027 ("E: Version
+            # '1:2.34.1-1ubuntu1.17' for 'git-core' was not found") - this
+            # engine used to pass the bare virtual name through, letting
+            # apt-get silently upgrade the provider and report changed.
+            # Multi-provider or not-installed-provider virtual names take
+            # real's "let apt sort it out" bare-spec path (unchanged).
+            version = virtual_provider_pin(base_name)
+          end
           version ? "#{base_name}=#{version}" : base_name
         end
         pkg_list = spec_list.map { |spec| naive_single_quote(spec) }.join(" ")
@@ -2225,10 +2259,16 @@ module Krikri
         # fell through to success here (found via buluma.sensu-install,
         # where packagecloud's sensu/stable repo has no jammy candidate).
         if upgrade_result[:exit_code] != 0
+          # Real install()'s rc!=0 failure msg: "'%s' failed: %s" over the
+          # full apt-get command and stderr - the shape the round-2300027
+          # git-core capture shows ("'/usr/bin/apt-get -y -o ... install
+          # 'git-core=1:2.34.1-1ubuntu1.17'' failed: E: Version ... was not
+          # found"); this path previously said its own "Failed to install
+          # latest: ..." instead.
           return PluginResult.new(
             changed: changed,
             failed: true,
-            msg: "Failed to install latest: #{upgrade_result[:stderr]}"
+            msg: "'#{latest_cmd}' failed: #{upgrade_result[:stderr]}"
           )
         end
 

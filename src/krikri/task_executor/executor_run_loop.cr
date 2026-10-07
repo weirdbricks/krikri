@@ -1548,7 +1548,15 @@ module Krikri
       end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
-        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, host, resolve_task_check_mode(task, vars_context))
+        # task_host is the TASK's own host, passed only when delegate_to: is
+        # in play - synchronize's dest_is_local branch (delegate_to naming
+        # the task's own host) must not fire for a plain remote task, or the
+        # module binary gets dispatched ONTO the target host and pull mode
+        # rsyncs a controller-only dest path there (softasap.sa-vpn-softether
+        # round 2300304: "mkdir /home/labros/... failed: No such file or
+        # directory"). Batchable tasks never carry delegate_to:, so this is
+        # nil in practice here.
+        action_result = ActionPluginManager.execute_action(task.module_name, substituted_params, vars_context, host, @inventory, task.delegate_to ? host : nil, resolve_task_check_mode(task, vars_context))
 
         unless action_result.success?
           failed = {
@@ -1883,13 +1891,20 @@ module Krikri
       end
 
       if ActionPluginManager.has_action_plugin?(task.module_name)
+        # task_host is the TASK's own host, passed only when delegate_to: is
+        # in play (exec_host above is the delegate-resolved endpoint) - see
+        # prepare_batch_step's identical call for why. A plain remote task
+        # (no delegate_to:) must NOT hit synchronize's dest_is_local branch:
+        # that dispatched the module binary onto the target host, where a
+        # pull-mode dest: pointing into the controller failed rsync's mkdir
+        # (softasap.sa-vpn-softether round 2300304).
         action_result = ActionPluginManager.execute_action(
           task.module_name,
           substituted_params,
           vars_context,
           exec_host,
           @inventory,
-          host,
+          task.delegate_to ? host : nil,
           resolve_task_check_mode(task, vars_context)
         )
 

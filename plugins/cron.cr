@@ -412,6 +412,15 @@ module Krikri
     end
 
     private def build_line(job : String, include_user : Bool) : String
+      # Real cron.py's get_cron_job normalizes "any leading/trailing
+      # newlines (ansible/ansible-modules-core#3791)" - `job.strip('\r\n')`
+      # - before rendering the entry line. Without it a folded-scalar
+      # `job: >` (hspaans.nagios "Sent out a heartbeat via Slack", round
+      # 2300278) carries its trailing newline into the rendered line, so
+      # the written crontab gains a blank line the next run's own
+      # upsert never converges back to - changed=true forever.
+      job = job.strip("\r\n")
+
       schedule = PluginHelpers::CronTable.schedule(
         @params["minute"]? || "*",
         @params["hour"]? || "*",

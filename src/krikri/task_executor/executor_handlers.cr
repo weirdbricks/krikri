@@ -905,13 +905,20 @@ module Krikri
       # template:/copy:-with-role-src:/etc. handler in a real playbook
       # would hit this identically.
       if ActionPluginManager.has_action_plugin?(handler.module_name)
+        # task_host is the TASK's own host, passed only when delegate_to: is
+        # in play - same rule as the regular-task call sites in
+        # executor_run_loop.cr (synchronize's dest_is_local branch must not
+        # fire for a plain remote handler; see there for the round-2300304
+        # detail). Handler delegate_to: keeps today's semantics (task_host
+        # set, module dispatched on the host) since the handler path never
+        # resolved a separate exec host.
         action_result = ActionPluginManager.execute_action(
           handler.module_name,
           substituted_params,
           vars_context,
           host,
           @inventory,
-          host,
+          handler.delegate_to ? host : nil,
           resolve_task_check_mode(handler, vars_context)
         )
 
