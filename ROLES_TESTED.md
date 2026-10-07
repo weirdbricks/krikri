@@ -3986,7 +3986,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 
 | `aalaesar.install_nextcloud` | ubuntu | ⚠️ divergent - role's own missing dependency (`geerlingguy.php-versions` role not installed) fails identically on both engines; recap differs by one step before the shared failure. Times: cold py 45.27s vs cr 34.03s; warm py 7.65s vs cr 0.49s. |
 | `ableton.clang` | ubuntu | ✅ clean. Times: cold py 4.61s vs cr 4.19s; warm py 3.49s vs cr 0.81s. |
-| `Aisbergg.networkmanager` | ubuntu | ✅ clean. Times: cold py 8.15s vs cr 3.82s; warm py 5.42s vs cr 1.46s. |
+| `Aisbergg.networkmanager` | ubuntu | ✅ clean. Times: cold py 30.83s vs cr 23.06s; warm py 8.84s vs cr 1.16s. |
 | `alexdzyoba.jmx-exporter` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
 | `andrewrothstein.cluster_api` | ubuntu | ✅ clean. Times: cold py 8.74s vs cr 4.58s; warm py 4.90s vs cr 1.04s. |
 | `andrewrothstein.dolt` | ubuntu | ✅ clean. Times: cold py 9.68s vs cr 6.29s; warm py 4.30s vs cr 1.20s. |
@@ -5506,7 +5506,7 @@ First batch since Atlantic.net's server-limit increase (10 → 25). 200 never-be
 | `anasbouzid.systemd` | rocky | ✅ clean. Times: cold py 4.66s vs cr 10.71s; warm py 3.05s vs cr 0.35s. |
 | `andock.build` | rocky | ✅ clean. Times: cold py 4.54s vs cr 10.84s; warm py 4.92s vs cr 0.43s. |
 | `andock-ci.ansible_role_ssh_keys` | rocky | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
-| `andock-ci.build` | rocky | ✅ clean. Times: cold py 11.02s vs cr 9.01s; warm py 9.65s vs cr 0.50s. |
+| `andock-ci.build` | rocky | ✅ clean. Times: cold py 13.48s vs cr 9.75s; warm py 22.39s vs cr 0.56s. |
 | `andock-ci.fin` | rocky | ✅ clean. Times: cold py 4.31s vs cr 8.72s; warm py 3.23s vs cr 0.42s. |
 | `andock-ci.server` | rocky | ✅ clean. Times: cold py 19.69s vs cr 19.11s; warm py 9.51s vs cr 2.70s. |
 | `andock-ci.tag` | rocky | ✅ clean. Times: cold py 3.70s vs cr 11.55s; warm py 2.94s vs cr 0.36s. |
@@ -8127,7 +8127,7 @@ tomcat handler). No fix dispatched; no confirm round run.
 | `azavea.vagrant` | ubuntu | ✅ clean. Times: cold py 33.83s vs cr 40.58s; warm py 8.75s vs cr 2.57s. |
 | `thommignot.compose` | rocky | ✅ clean. Times: cold py 0.46s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `manala.cloud_init` | ubuntu | ✅ clean. Times: cold py 29.01s vs cr 24.05s; warm py 5.46s vs cr 0.44s. |
-| `ansibleguy.sw_mailcow` | rocky | ✅ clean. Times: cold py 3.45s vs cr 16.38s; warm py 3.35s vs cr 0.27s. |
+| `ansibleguy.sw_mailcow` | rocky | ✅ clean. Times: cold py 5.56s vs cr 9.30s; warm py 5.10s vs cr 0.45s. |
 | `ccdc.cpp_required_system_libraries` | ubuntu | ✅ clean. Times: cold py 4.06s vs cr 3.98s; warm py 2.34s vs cr 0.32s. |
 | `elnur.ec2-init` | rocky | ✅ clean. Times: cold py 4.10s vs cr 9.76s; warm py 2.75s vs cr 0.34s. |
 | `lucasmaurice.common` | ubuntu | ✅ clean. Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
@@ -8236,7 +8236,7 @@ tomcat handler). No fix dispatched; no confirm round run.
 | `mullholland.packages` | rocky | ✅ clean. Times: cold py 7.53s vs cr 10.02s; warm py 6.83s vs cr 0.51s. |
 | `green_leader.codium` | ubuntu | ✅ clean. Times: cold py 134.49s vs cr 78.38s; warm py 9.20s vs cr 0.75s. |
 | `nycrecords.rhsm` | rocky | ✅ clean. Times: cold py 6.27s vs cr 10.76s; warm py 5.36s vs cr 0.41s. |
-| `fiaasco.mariadb` | ubuntu | ✅ clean. Times: cold py 7.60s vs cr 7.54s; warm py 5.15s vs cr 1.37s. |
+| `fiaasco.mariadb` | ubuntu | ✅ clean. Times: cold py 78.90s vs cr 50.30s; warm py 32.95s vs cr 1.20s. |
 | `micafer.ganglia` | rocky | ✅ clean. Times: cold py 0.48s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `cloudtooling.springboot` | ubuntu | ✅ clean. Times: cold py 10.08s vs cr 5.38s; warm py 9.76s vs cr 0.54s. |
 | `geerlingguy.sonar-runner` | rocky | ✅ clean. Times: cold py 19.73s vs cr 12.56s; warm py 11.95s vs cr 0.84s. |
@@ -8726,7 +8726,7 @@ tomcat handler). No fix dispatched; no confirm round run.
 | `thorian93.nfs_client` | rocky | ✅ clean. Times: cold py 4.13s vs cr 10.00s; warm py 3.27s vs cr 0.34s. |
 | `bguerel_update_reboot` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
 | `grycap.marathon` | rocky | ✅ clean. Times: cold py 654.02s vs cr 589.45s; warm py 35.23s vs cr 5.82s. |
-| `softasap.sa-vpn-softether` | ubuntu | ✅ clean. Times: cold py 18.95s vs cr 13.32s; warm py 13.07s vs cr 2.65s. |
+| `softasap.sa-vpn-softether` | ubuntu | ✅ clean. Times: cold py 62.01s vs cr 26.03s; warm py 46.53s vs cr 6.37s. |
 | `andrewrothstein.jupyter-supervisord` | rocky | ✅ clean. Times: cold py 7.28s vs cr 11.91s; warm py 4.57s vs cr 0.38s. |
 | `lae_elasticsearch` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
 | `olipinski.openbao` | rocky | ✅ clean. Times: cold py 12.05s vs cr 22.12s; warm py 12.07s vs cr 8.51s. |
@@ -9280,7 +9280,7 @@ apt packages).
 | `leonidas.nvm` | ubuntu | ✅ clean. Times: cold py 0.45s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
 | `grycap.nvidia_driver` | ubuntu | ✅ clean. Times: cold py 38.80s vs cr 43.00s; warm py 19.40s vs cr 5.26s. |
 | `rbicker.nextcloud` | ubuntu | ✅ clean. Times: cold py 13.56s vs cr 7.79s; warm py 12.44s vs cr 3.75s. |
-| `ansibleguy.addons_nftables` | ubuntu | ✅ clean. Times: cold py 4.02s vs cr 3.99s; warm py 2.41s vs cr 0.45s. |
+| `ansibleguy.addons_nftables` | ubuntu | ✅ clean. Times: cold py 5.06s vs cr 5.26s; warm py 3.55s vs cr 0.53s. |
 | `thorian93.ssh` | ubuntu | ✅ clean. Times: cold py 4.21s vs cr 4.72s; warm py 3.18s vs cr 0.38s. |
 | `idealista.clickhouse` | ubuntu | ✅ clean. Times: cold py 3.89s vs cr 3.80s; warm py 3.32s vs cr 0.42s. |
 | `darexsu.mariadb` | ubuntu | ✅ clean. Times: cold py 5.05s vs cr 3.99s; warm py 2.87s vs cr 0.27s. |
@@ -9503,7 +9503,7 @@ rows below).
 | `ussrlongbow_percona_toolkit` | ubuntu | ❌ BLOCKED: GALAXY_MISSING |
 | `hurricanehrndz.pam_yubikey` | ubuntu | ✅ clean. Times: cold py 14.28s vs cr 9.35s; warm py 8.18s vs cr 0.41s. |
 | `trfore.mongodb_install` | rocky | ✅ FIXED (0.9.1152/0.9.1153): Message: Unsupported parameters for (ansible.builtin.dnf) module: _module_name. Supporte Confirmed CLEAN in round 826000. Times: cold py 49.22s vs cr 14.57s; warm py 8.29s vs cr 0.51s. Confirm-round times: cold py 103.44s vs cr 65.40s; warm py 21.09s vs cr 11.55s. |
-| `iroquoisorg.tools` | ubuntu | ✅ clean. Times: cold py 188.06s vs cr 93.05s; warm py 37.44s vs cr 7.77s. |
+| `iroquoisorg.tools` | ubuntu | ✅ clean. Times: cold py 133.51s vs cr 111.20s; warm py 42.95s vs cr 17.84s. |
 | `stuvusIT.systemd-udevd` | ubuntu | ✅ clean. Times: cold py 11.15s vs cr 4.28s; warm py 7.02s vs cr 0.38s. |
 | `tinyblargon.qemu_guest_agent` | ubuntu | ✅ clean. Times: cold py 6.18s vs cr 6.12s; warm py 4.19s vs cr 0.35s. |
 | `azmodude.timezone` | rocky | ✅ clean. Times: cold py 7.80s vs cr 9.89s; warm py 5.38s vs cr 0.33s. |
@@ -10200,7 +10200,7 @@ Crinja `%` operator) and Deliberate Limits for `aem_design.aem_license`.
 | `itnok.install_ros_ubuntu` | ubuntu | ✅ clean. Times: cold py 62.58s vs cr 44.48s; warm py 24.43s vs cr 2.00s. |
 | `avnes.tint2` | ubuntu | ✅ clean. Times: cold py 61.54s vs cr 54.02s; warm py 12.53s vs cr 3.52s. |
 | `ten7.pantheon_deploy` | ubuntu | ✅ clean. Times: cold py 13.05s vs cr 4.45s; warm py 11.01s vs cr 0.52s. |
-| `hspaans.nagios` | ubuntu | ✅ clean. Times: cold py 10.31s vs cr 6.16s; warm py 7.35s vs cr 1.28s. |
+| `hspaans.nagios` | ubuntu | ✅ clean. Times: cold py 112.10s vs cr 85.54s; warm py 21.16s vs cr 0.73s. |
 | `f500.bashrc` | ubuntu | ⚠️ DIVERGENT (not root-caused/fixed this round). Times: cold py 11.05s vs cr 4.56s; warm py 8.54s vs cr 0.57s. |
 | `iambryancs.ppa-ondrej` | ubuntu | ✅ clean. Times: cold py 35.37s vs cr 31.09s; warm py 3.88s vs cr 0.46s. |
 | `redhat-cip.openstack-certification` | ubuntu | ✅ clean. Times: cold py 5.04s vs cr 4.31s; warm py 4.61s vs cr 0.34s. |

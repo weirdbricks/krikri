@@ -78,6 +78,25 @@ defect moves down or gets deleted.
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
   build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
 
+## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
+
+800 roles drawn at random from the clean rows (no postgres), cold + warm on both engines, static release
+build 0.9.1527: 777 CLEAN, 16 DIVERGENT, 7 Galaxy-missing. The harness also diffed per-task
+ok/changed/skipping/failed status (not just the PLAY RECAP counters): 79 of 1586 role-phases differed,
+most of them diff-script artifacts (list-repr quoting, per-item skip lines, host names in banners). All
+16 divergences were traced; the krikri bugs found were fixed and re-confirmed on Atlantic.net
+(rounds 2400000-2800000): role-local `test_plugins` (`is list`), `mysql_user` on MariaDB (default
+`localhost` -> unix socket, password compare, `USAGE`/`append_privs` diff, `GRANT PROXY`), the `timeout:`
+task keyword and `role_path` in static imports inside blocks, `cron` folded `job:`, `synchronize`
+pull dest dir, `apt` virtual-package version pin, `lineinfile` terminator handling, per-expression error
+markers in task banners and role vars on skipped `always:` children, and the PostgreSQL blackhole
+`connect_timeout` wording. Not krikri bugs: `adarnimrod.ca-store`/`apache` (missing community.crypto),
+`ansible-pip` (host pip and upstream `get-pip`), both `ubuntu22_cis` roles (900 s cap), `dellos-*`
+(unsupported network modules), `fact_inventory` (cold SSH flake), and `andrewrothstein.emacs-build`'s
+one cold `dnf` stall (not reproducible in podman with the same commands, treated as a mirror/host flake;
+the only ceiling on a stalled package-manager child is the 3600 s transport timeout, above the harness
+cap - revisit only if it recurs).
+
 ## Deliberate limits (decided, not defects)
 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
