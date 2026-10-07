@@ -44,4 +44,26 @@ describe "conflicting action statement detection" do
     play = Krikri::PlaybookParser.parse_string(content).plays[0]
     play.tasks[0].module_name.must_equal("ansible.builtin.debug")
   end
+
+  it "accepts the timeout: task keyword beside an action" do
+    # `timeout:` is a real ansible-core task keyword (per-task time
+    # limit). Treated as a second action it aborted whole playbooks with
+    # "conflicting action statements: ansible.builtin.command, timeout"
+    # (ansibleguy.addons_nftables round 2300479, ansibleguy.sw_mailcow
+    # round 2300709, both rc=4 before anything ran; ansible-core parses
+    # the same tasks fine and proceeds).
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: t\n      ansible.builtin.command: \"echo hi\"\n      timeout: 5\n"
+    play = Krikri::PlaybookParser.parse_string(content).plays[0]
+    play.tasks[0].module_name.must_equal("ansible.builtin.command")
+  end
+
+  it "keeps a module-dict timeout: argument a module arg, not the task keyword" do
+    # Only the task-LEVEL timeout: (a sibling of the module key) is the
+    # keyword; a timeout inside the module's own arg dict stays a module
+    # parameter (e.g. uri's own timeout).
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: t\n      ansible.builtin.uri:\n        url: http://example.com\n        timeout: 5\n"
+    play = Krikri::PlaybookParser.parse_string(content).plays[0]
+    play.tasks[0].module_name.must_equal("ansible.builtin.uri")
+    play.tasks[0].params["timeout"].to_s.includes?("5").must_equal(true)
+  end
 end

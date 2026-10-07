@@ -1854,6 +1854,45 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks.map(&.name).must_equal(["debian branch"])
     end
 
+    it "resolves role_path in a static import path inside a role block" do
+      # Real bug found benchmarking andock-ci.build (round 2300468): its
+      # tasks/main.yml does, INSIDE a `- block:`:
+      #   import_tasks: "{{ hook_build_tasks | default(role_path ~ '/hooks/empty.yml') }}"
+      # krikri aborted the whole playbook at parse ("'role_path' is
+      # undefined", rc=4) because the block branch of task parsing
+      # dropped the role-load known-vars context that carries role_path;
+      # ansible-core resolves role_path here and runs the play.
+      root = PluginSpecHelper.tmp_path("playbook_parser_import_tasks_block_role_path_spec")
+      FileUtils.rm_rf(root) if Dir.exists?(root)
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+      Dir.mkdir_p(File.join(root, "roles", "myrole", "hooks"))
+      File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+        - block:
+          - import_tasks: "{{ hook_build_tasks | default(role_path ~ '/hooks/empty.yml') }}"
+        YAML
+      File.write(File.join(root, "roles", "myrole", "hooks", "empty.yml"), <<-YAML)
+        - name: empty hook task
+          ansible.builtin.debug:
+            msg: empty hook ran
+        YAML
+      File.write(File.join(root, "roles", "myrole", "hooks", "build_tasks.yml"), <<-YAML)
+        - name: hook task
+          ansible.builtin.debug:
+            msg: hook ran
+        YAML
+
+      playbook_yaml = <<-YAML
+        - name: play
+          hosts: all
+          roles:
+            - myrole
+        YAML
+
+      playbook = Krikri::PlaybookParser.parse_string(playbook_yaml, File.join(root, "site.yml"))
+
+      playbook.plays[0].tasks[0].block_tasks.try(&.[0].name).must_equal("empty hook task")
+    end
+
     it "raises a fatal StaticImportMissingFileError (aborts the whole playbook) when an import_tasks: path resolves to a file that doesn't exist" do
       # lucascbeyeler.zimbra (round 900185), reduced to a minimal case
       # and verified directly against ansible-playbook

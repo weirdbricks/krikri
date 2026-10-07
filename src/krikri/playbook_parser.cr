@@ -1391,6 +1391,14 @@ module Krikri
         "name", "when", "register", "ignore_errors", "check_mode",
         "diff", "become", "become_user", "become_method", "become_flags",
         "become_pass", "become_exe", "tags", "args", "listen", "with_items", "loop",
+        # `timeout:` is a real task keyword in ansible-core (per-task
+        # time limit, ansibleguy.addons_nftables/sw_mailcow round
+        # 2300479/2300709) - treated as a second action it aborted whole
+        # playbooks with "conflicting action statements: <module>,
+        # timeout". Accepted but NOT enforced: the executor has no
+        # per-task wall-clock watchdog mechanism, so like other
+        # unenforced keywords it parses and is otherwise ignored.
+        "timeout",
         "with_dict", "with_fileglob", "with_file", "with_first_found", "with_nested", "with_together", "with_sequence",
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
         "with_community.general.filetree",
@@ -2003,7 +2011,7 @@ module Krikri
           if imported = try_parse_import_tasks(task_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
             tasks.concat(imported)
           else
-            task = parse_task(task_yaml, index, play, file_dir, role_path, playbook_dir, source_file, source_map, source_prefix)
+            task = parse_task(task_yaml, index, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix)
             stamp_task_source(task, source_file, source_map, source_prefix, index)
             tasks << task
           end
@@ -2243,8 +2251,19 @@ module Krikri
       # Ansible draws.
       if file_rel.includes?("{{")
         original_file_rel = file_rel
+        # role_path is a magic var Ansible always resolves inside a role,
+        # even at this parse-time evaluation (andock-ci.build's
+        # `import_tasks: '{{ hook_build_tasks | default(role_path ~
+        # "/hooks/empty.yml") }}'` inside a block) - RoleLoader normally
+        # puts it in known_vars, but inject it from the role_path param
+        # here too so any caller threading only the param still matches
+        # Ansible.
+        sub_vars = known_vars ? known_vars.dup : Hash(String, JSON::Any).new
+        if rp = role_path
+          sub_vars["role_path"] = JSON::Any.new(rp) unless sub_vars.has_key?("role_path")
+        end
         begin
-          file_rel = VarSubstitutor.new(vars: known_vars || Hash(String, JSON::Any).new).substitute(file_rel, strict: true)
+          file_rel = VarSubstitutor.new(vars: sub_vars).substitute(file_rel, strict: true)
         rescue ex : UndefinedVariableError
           raise StaticImportUndefinedError.new(
             "Error when evaluating variable in import path '#{original_file_rel}': #{ex.message}\n" \
@@ -2555,7 +2574,7 @@ module Krikri
     end
 
     # Parse a single task
-    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Task
+    private def self.parse_task(yaml : YAML::Any, index : Int32, play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "") : Task
       unless yaml.as_h?
         raise "Task must be a YAML mapping (hash)"
       end
@@ -2572,7 +2591,7 @@ module Krikri
       name = task_hash["name"]?.try(&.as_s)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
-        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, role_path, playbook_dir, source_file, source_map, source_prefix, index)
+        return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
       end
 
       # include_tasks: - Ansible's TaskInclude.check_options runs at
@@ -4159,7 +4178,7 @@ module Krikri
       end
     end
 
-    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+    private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
       task = Task.new(name, "_block")
 
       # Resolve this block's own become:/become_user: FIRST, then
@@ -4209,14 +4228,21 @@ module Krikri
       # block's escalation into every play section parsed AFTER it.
       begin
         block_prefix = "#{task_source_prefix(source_prefix, source_index)}/block"
-        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: block_prefix)
+        # known_vars is threaded into blocks too: a static import_tasks:
+        # INSIDE a block is still parsed at role-load time with the same
+        # known-vars context as a top-level one - dropping the context
+        # here made `import_tasks: '{{ x | default(role_path ~ ...) }}'`
+        # inside `- block:` die at parse with "'role_path' is undefined"
+        # even though role_loader put role_path in known_vars for exactly
+        # this purpose (andock-ci.build, round 2300468).
+        task.block_tasks = parse_tasks(block_yaml, play, "task in block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: block_prefix)
 
         if rescue_yaml = task_hash["rescue"]?.try(&.as_a?)
-          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/rescue")
+          task.rescue_tasks = parse_tasks(rescue_yaml, play, "task in rescue of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/rescue")
         end
 
         if always_yaml = task_hash["always"]?.try(&.as_a?)
-          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/always")
+          task.always_tasks = parse_tasks(always_yaml, play, "task in always of block '#{name}'", file_dir, known_vars, role_path: role_path, playbook_dir: playbook_dir, source_file: source_file, source_map: source_map, source_prefix: "#{task_source_prefix(source_prefix, source_index)}/always")
         end
       ensure
         play.become = saved_become
