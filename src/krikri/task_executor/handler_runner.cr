@@ -89,6 +89,7 @@ module Krikri
       diff_mode : Bool,
       name_resolver : Proc(Task, Host, String)? = nil,
       halted_hosts : Set(String)? = nil,
+      unusable_handlers : Set(Task)? = nil,
     )
       return unless any_notified?
 
@@ -121,6 +122,7 @@ module Krikri
 
       2.times do |pass|
         @handlers.each_with_index do |handler, handler_index|
+          next if unusable_handlers.try(&.includes?(handler))
           @hosts.each do |host|
             run_handler_on_host(handler, handler_index, host, pass,
               execute_callback, results, diff_mode, name_resolver, halted_hosts,

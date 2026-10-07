@@ -1560,8 +1560,9 @@ module Krikri
       # tv value's own line/column in the task's file).
       unless task.vars.empty?
         task.vars.each_key do |key|
-          next unless (pos = source_map.at?("#{task_source_prefix(source_prefix, index)}/vars/#{key}")) && source_file
-          task.vars_origins[key] = FileVarOrigin.new(File.expand_path(source_file.not_nil!), pos[0], pos[1])
+          next unless source_file
+          next unless (pos = source_map.at?("#{task_source_prefix(source_prefix, index)}/vars/#{key}"))
+          task.vars_origins[key] = FileVarOrigin.new(File.expand_path(source_file), pos[0], pos[1])
         end
       end
     end
@@ -4829,8 +4830,11 @@ module Krikri
       end
 
       # Real IncludeRole.get_name: an unnamed include_role/import_role is
-      # displayed as "<action> : <role name>".
-      display_name = name || "#{is_static ? "import_role" : "include_role"} : #{role_name}"
+      # displayed as "<action> : <role name>" - with the action AS
+      # WRITTEN (live-verified vs 2.19.11: `ansible.builtin.include_role:`
+      # with no name: shows "TASK [ansible.builtin.include_role : ic]",
+      # not the bare "include_role").
+      display_name = name || "#{action} : #{role_name}"
       task = Task.new(display_name, "_include_role")
       task.is_static_import = is_static
       task.has_explicit_name = !name.nil?

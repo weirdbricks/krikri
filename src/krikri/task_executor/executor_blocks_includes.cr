@@ -379,7 +379,24 @@ module Krikri
           return native
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host_name)
-        rendered = substitutor.substitute(raw)
+        # An invocation var whose render hits an UNDEFINED variable stays
+        # RAW here: real keeps role-entry `vars:` lazy templates (no fail
+        # at include time - live-verified vs 2.19.11, an
+        # `import_role:`/`include_role:` `vars:` entry referencing an
+        # undefined name lets the include succeed and the CHILD task's
+        # own name render produce the error marker with the Origin at
+        # the playbook's vars: entry). The old lenient substitute
+        # collapsed the value to the string "undefined" instead, so the
+        # child banner showed "Q undefined" with no warning block at
+        # all. Other (non-undefined) render failures keep the old
+        # lenient render.
+        rendered = begin
+          substitutor.substitute(raw, strict: true)
+        rescue UndefinedVariableError
+          return value
+        rescue
+          substitutor.substitute(raw)
+        end
         parsed = (rendered.starts_with?('{') || rendered.starts_with?('[')) ? (JSON.parse(rendered) rescue nil) : nil
         parsed || JSON::Any.new(rendered)
       when Array
@@ -434,6 +451,19 @@ module Krikri
       roots << Dir.current
 
       first_existing(roots, candidate)
+    end
+
+    # Records the VarOrigin of every key a successfully loaded
+    # include_vars: file defines (see @included_var_origins): real points
+    # a name-template error inside such a value at the included file's
+    # own value position (live-verified vs 2.19.11: an
+    # `include_vars: iv.yml` value `ivv: "{{ undef_ivv }}"` reports
+    # iv.yml:1:6). Best-effort - a key the source-map scan cannot locate
+    # simply gets no origin, and the warning block for it is then
+    # omitted (never mislabeled).
+    private def record_include_var_origins(host : Host, path : String, loaded : Hash(String, JSON::Any)) : Nil
+      origins = (@included_var_origins[host.name] ||= Hash(String, VarOrigin).new)
+      VarOrigin.vars_file_origins(path, loaded.keys).each { |key, origin| origins[key] = origin }
     end
 
     private def execute_include_vars(task : Task, host : Host) : Nil
@@ -676,6 +706,7 @@ module Krikri
           elsif name_key.nil?
             loaded.each { |key, value| store[key] = value }
           end
+          record_include_var_origins(host, path, loaded)
           @hv_generation += 1
           vars_context = item_context
 
@@ -823,6 +854,7 @@ module Krikri
       elsif name_key.nil?
         loaded.each { |key, value| store[key] = value }
       end
+      record_include_var_origins(host, path, loaded)
       @hv_generation += 1
 
       # A non-looped `include_vars: ... register: some_var` - same
@@ -950,6 +982,7 @@ module Krikri
           return
         end
         loaded.each { |key, value| combined[key] = value }
+        record_include_var_origins(host, path, loaded)
       end
 
       store = (@included_vars[host.name] ||= Hash(String, JSON::Any).new)
@@ -1537,6 +1570,19 @@ module Krikri
           merged = enclosing.vars.dup
           nested_task.vars.each { |key, value| merged[key] = value }
           nested_task.vars = merged
+          # Same merge for the ORIGINS of those values (see
+          # Task#vars_origins): a name-template error inside a value
+          # inherited from the enclosing block must report the BLOCK's
+          # `vars:` entry as the Origin (live-verified vs 2.19.11:
+          # `block: [...] vars: {bv: "{{ undef_bv }}"}` reports
+          # site.yml:<block vars line>:<value column>), not the nested
+          # task's own name line. The nested task's own stamped origins
+          # win for keys it defines itself, exactly like the values.
+          unless enclosing.vars_origins.empty?
+            merged_origins = enclosing.vars_origins.dup
+            nested_task.vars_origins.each { |key, origin| merged_origins[key] = origin }
+            nested_task.vars_origins = merged_origins
+          end
         end
       end
     end
@@ -2262,6 +2308,19 @@ module Krikri
       child_parent_defaults = task.role_defaults || Hash(String, JSON::Any).new
 
       rendered_include_vars = render_include_role_vars(task.include_role_vars, vars_context, host.name)
+      # The invocation vars' ORIGINS: the include/import task's own
+      # `vars:` entries, source-mapped at stamp_task_source time - real
+      # points a name-template error inside one at the PLAYBOOK's
+      # vars: entry (live-verified vs 2.19.11: both import_role: and
+      # include_role: `vars: {irq: "{{ undef_irq }}"}` report
+      # site.yml:<vars line>:<value column>).
+      include_role_var_origins = if (irv = task.include_role_vars) && !irv.empty?
+                                    o = Hash(String, VarOrigin).new
+                                    task.vars_origins.each { |key, origin| o[key] = origin if irv.has_key?(key) }
+                                    o
+                                  else
+                                    Hash(String, VarOrigin).new
+                                  end
 
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(
@@ -2283,7 +2342,8 @@ module Krikri
           child_parent_defaults,
           # The ancestor chain's defaults origins travel with the values
           # (see Task#role_default_origins).
-          task.role_default_origins
+          task.role_default_origins,
+          include_role_var_origins
         )
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d

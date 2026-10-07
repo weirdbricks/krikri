@@ -273,6 +273,241 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "points a block vars error at the block's vars entry, not the task line" do
+    src_dir = File.tempname("name-warn-block-vars")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - block:
+              - name: B {{ bv }}
+                ansible.builtin.debug:
+                  msg: hi
+            vars:
+              bv: "{{ undef_bv }}"
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    # Real points the Origin at the block's own `vars:` value, not at
+    # the nested task's name line (verified byte-for-byte against
+    # 2.19.11 with this exact layout).
+    output.to_s.must_include("error 1 - 'undef_bv' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:10:13\n\n 8             msg: hi\n 9       vars:\n10         bv: \"{{ undef_bv }}\"\n               ^ column 13\n\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "points an include_vars value error at the included file" do
+    src_dir = File.tempname("name-warn-include-vars")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "iv.yml"), <<-YAML)
+      ivv: "{{ undef_ivv }}"
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.include_vars:
+              file: iv.yml
+          - name: V {{ ivv }}
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    output.to_s.must_include("error 1 - 'undef_ivv' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "iv.yml"))}:1:6\n\n1 ivv: \"{{ undef_ivv }}\"\n       ^ column 6\n\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "points an -e @file value error at the file's value position" do
+    src_dir = File.tempname("name-warn-extra-file")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "extra.yml"), <<-YAML)
+      evf: "{{ undef_evf }}"
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: X {{ evf }}
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "-e", "@extra.yml", "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    # NOT `Origin: <CLI option '-e'>` - the file's own value position,
+    # with the usual excerpt + caret (verified against 2.19.11).
+    output.to_s.must_include("error 1 - 'undef_evf' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "extra.yml"))}:1:6\n\n1 evf: \"{{ undef_evf }}\"\n       ^ column 6\n\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "renders a k=v extra var containing spaces and reports the CLI origin" do
+    src_dir = File.tempname("name-warn-extra-kv")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: E {{ ev }}
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    # The whitespace split is split_args-aware: the value's jinja2 block
+    # survives the space (real renders the chain, erroring on
+    # undef_ev), rather than truncating the value at the first space.
+    Process.run(BINARY, ["-i", INVENTORY, "-e", "ev={{ undef_ev }}", "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    output.to_s.must_include("error 1 - 'undef_ev' is undefined\nOrigin: <CLI option '-e'>\n\n{{ undef_ev }}\n\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "points an include_role vars error at the playbook's vars entry and keeps the written action in the banner" do
+    src_dir = File.tempname("name-warn-include-role-vars")
+    Dir.mkdir_p(File.join(src_dir, "roles", "ic", "tasks"))
+    File.write(File.join(src_dir, "roles", "ic", "tasks", "main.yml"), <<-YAML)
+      - name: C {{ icv }}
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.include_role:
+              name: ic
+            vars:
+              icv: "{{ undef_icv }}"
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # The include itself succeeds; the CHILD task's name render carries
+    # the marker, with the Origin at the playbook's vars: entry
+    # (site.yml line 8, value column 14).
+    text.must_include("error 1 - 'undef_icv' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:8:14\n\n6         name: ic\n7       vars:\n8         icv: \"{{ undef_icv }}\"\n               ^ column 14\n\n")
+    # An unnamed include_role's banner keeps the action AS WRITTEN
+    # (real: "TASK [ansible.builtin.include_role : ic]").
+    text.must_include("TASK [ansible.builtin.include_role : ic] ")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "points an import_role vars error at the playbook's vars entry" do
+    src_dir = File.tempname("name-warn-import-role-vars")
+    Dir.mkdir_p(File.join(src_dir, "roles", "ir", "tasks"))
+    File.write(File.join(src_dir, "roles", "ir", "tasks", "main.yml"), <<-YAML)
+      - name: Q {{ irq }}
+        ansible.builtin.debug:
+          msg: hi
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.import_role:
+              name: ir
+            vars:
+              irq: "{{ undef_irq }}"
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    output.to_s.must_include("error 1 - 'undef_irq' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:8:14\n\n6         name: ir\n7       vars:\n8         irq: \"{{ undef_irq }}\"\n               ^ column 14\n\n")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "treats a handler whose name fails to template as unusable (warning + not-found abort, no error block)" do
+    src_dir = File.tempname("name-warn-handler-unusable")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          hv2: "{{ undef_hv2 }}"
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+            changed_when: true
+            notify: h1
+        handlers:
+          - name: HH {{ hv2 }}
+            ansible.builtin.debug:
+              msg: ran
+      YAML
+
+    stdout_io = IO::Memory.new
+    stderr_io = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: stdout_io, error: stderr_io, chdir: src_dir)
+
+    # Real never runs the handler: the unusable-name warning (not the
+    # task-name template-error block) plus the not-found abort, both on
+    # STDERR; rc=1; no recap.
+    stderr_io.to_s.must_equal("[WARNING]: Handler 'HH {{ hv2 }}' is unusable because it has no listen topics and the name could not be templated (host-specific variables are not supported in handler names). The error: 'undef_hv2' is undefined\n[ERROR]: The requested handler 'h1' was not found in either the main handlers list nor in the listening handlers list\n")
+    refute(stdout_io.to_s.includes?("RUNNING HANDLER"))
+    refute(stdout_io.to_s.includes?("Origin:"))
+    status.exit_code.must_equal 1
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "treats a handler name referencing a HOST var as unusable (host vars are not in scope)" do
+    src_dir = File.tempname("name-warn-handler-hostvar")
+    Dir.mkdir_p(File.join(src_dir, "inv", "host_vars"))
+    File.write(File.join(src_dir, "inv", "hosts.ini"), "localhost ansible_connection=local\n")
+    File.write(File.join(src_dir, "inv", "host_vars", "localhost.yml"), <<-YAML)
+      hfail: "{{ undef_hf }}"
+      YAML
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: trigger
+            ansible.builtin.debug:
+              msg: hi
+            changed_when: true
+            notify: h1
+        handlers:
+          - name: HH {{ hfail }}
+            ansible.builtin.debug:
+              msg: ran
+      YAML
+
+    stderr_io = IO::Memory.new
+    stdout_io = IO::Memory.new
+    Process.run(BINARY, ["-i", File.join(src_dir, "inv", "hosts.ini"), "pb.yml"], output: stdout_io, error: stderr_io, chdir: src_dir)
+
+    # Live-verified vs 2.19.11: handler-name templating sees NO
+    # host-scoped variables at all, so even a resolvable host var makes
+    # the handler unusable.
+    stderr_io.to_s.must_include("Handler 'HH {{ hfail }}' is unusable because it has no listen topics and the name could not be templated (host-specific variables are not supported in handler names). The error: 'hfail' is undefined")
+    stderr_io.to_s.must_include("[ERROR]: The requested handler 'h1' was not found in either the main handlers list nor in the listening handlers list")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "numbers a later nested multi-part context before the enclosing context's errors" do
     src_dir = File.tempname("name-warn-context-order")
     Dir.mkdir_p(File.join(src_dir, "roles", "e11", "tasks"))

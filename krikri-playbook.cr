@@ -514,9 +514,10 @@ rescue ex : Exception
 end
 
 extra_vars = {} of String => JSON::Any
+extra_var_origins = {} of String => Krikri::VarOrigin
 unless extra_vars_args.empty?
   begin
-    extra_vars = Krikri::ExtraVarsParser.parse(extra_vars_args)
+    extra_vars, extra_var_origins = Krikri::ExtraVarsParser.parse_with_origins(extra_vars_args)
   rescue ex : Krikri::ExtraVarsParser::Error
     puts "Error: #{ex.message}".colorize(:red)
     exit 1
@@ -1256,6 +1257,7 @@ playbook.plays.each_with_index do |play, _play_index|
       set_fact_store: run_set_fact_store,
       registered_store: run_registered_store,
       extra_vars: extra_vars,
+      extra_var_origins: extra_var_origins,
       force_handlers: force_handlers || play.force_handlers?,
       vars_files: play.vars_files,
       vars_files_dir: File.dirname(File.expand_path(playbook_file)),
@@ -1281,7 +1283,9 @@ playbook.plays.each_with_index do |play, _play_index|
       # Ansible aborts the whole run at the notifying task, prints
       # this one line, and exits 1 with NO play recap (verified against
       # ansible-core 2.19.4) - see HandlerNotFoundError's own comment.
-      puts "[ERROR]: #{ex.message}".colorize(:red)
+      # On STDERR, like every other [ERROR] display line (live-verified
+      # vs 2.19.11: the not-found handler abort prints on stderr).
+      STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
       exit 1
     rescue ex : Krikri::UnresolvedModuleError
       # Same whole-run abort for a module name Ansible can't

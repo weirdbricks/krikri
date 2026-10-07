@@ -268,6 +268,12 @@ module Krikri
     # wins - matching include_vars sitting below set_fact in
     # Ansible's precedence ladder.
     @included_vars : Hash(String, Hash(String, JSON::Any))
+    # Origins for include_vars:-loaded keys, per host (see VarOrigin):
+    # real points a name-template error inside such a value at the
+    # INCLUDED FILE's own value position. Filled next to every
+    # @included_vars store site; an entry is only ever consulted for a
+    # key @included_vars actually holds.
+    @included_var_origins : Hash(String, Hash(String, VarOrigin))
     # Per host, per task: the result already fetched via a batch's single
     # SSH round trip (nil = that task's when: was false, already handled
     # - see `execute_batch_group`), consumed lazily as the task-major
@@ -397,6 +403,12 @@ module Krikri
       # override one either - which is why these are applied at the very
       # END of build_vars_context rather than as a base layer.
       @extra_vars = {} of String => JSON::Any,
+      # Origins for extra-var VALUES that came from `-e @file` (see
+      # VarOrigin): a name-template error inside one reports the FILE's
+      # own value position (live-verified vs 2.19.11), not
+      # "<CLI option '-e'>". k=v / inline-JSON extra vars have no
+      # entry here and keep the CLI-option origin.
+      @extra_var_origins = {} of String => VarOrigin,
       # --force-handlers / the `force_handlers: true` play keyword: run
       # notified handlers even for a host a task already failed on.
       @force_handlers = false,
@@ -472,6 +484,7 @@ module Krikri
       @batch_cache = Hash(String, Hash(Task, {JSON::Any?, Hash(String, JSON::Any)})).new
       @batch_groups_run = Set({String, UInt64}).new
       @included_vars = Hash(String, Hash(String, JSON::Any)).new
+      @included_var_origins = Hash(String, Hash(String, VarOrigin)).new
 
       @hosts.each do |host|
         @results[host.name] = {

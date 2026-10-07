@@ -69,16 +69,56 @@ module Krikri
 
       # baseB (included_vars/facts/set_facts) and -e/--extra-vars are the
       # final words; their values are never raw templates with a
-      # knowable file origin.
+      # knowable file origin - EXCEPT an include_vars: file's values
+      # (real points the Origin at the included file's own value line,
+      # live-verified vs 2.19.11) and an `-e @file` value (origin: the
+      # file's value position).
       if base_context_b_for(host).has_key?(name)
         set.call(nil)
       end
+      if (iv = @included_vars[host.name]?) && iv.has_key?(name)
+        set.call(@included_var_origins[host.name]?.try(&.[name]?))
+      end
       if @extra_vars.has_key?(name)
         raw = @extra_vars[name]
-        set.call(TextVarOrigin.new("<CLI option '-e'>", raw.as_s? || raw.to_s))
+        set.call(@extra_var_origins[name]? || TextVarOrigin.new("<CLI option '-e'>", raw.as_s? || raw.to_s))
       end
 
       have ? winner : nil
+    end
+
+    # The PLAY-LEVEL variable layers only - Ansible's
+    # get_vars(play=play, task=handler) shape: NO host-scoped variables
+    # at all (no host vars, registered results, facts, set_facts or
+    # include_vars). Used for handler-name templating, where real
+    # deliberately excludes host variables ("host-specific variables
+    # are not supported in handler names", live-verified vs 2.19.11: a
+    # handler name referencing an inventory host_vars value fails with
+    # "'x' is undefined" even though the task-layer value resolves).
+    private def play_level_vars_context(task : Task, host : Host) : Hash(String, JSON::Any)
+      vars_context = {} of String => JSON::Any
+
+      @play_vars.each { |key, value| vars_context[key] = value }
+
+      if (rd = task.role_defaults) && !rd.empty?
+        rd.each { |key, value| vars_context[key] ||= value }
+      end
+      @all_role_defaults.each { |key, value| vars_context[key] ||= value }
+
+      unless @vars_files.empty?
+        load_vars_files(host).each { |key, value| vars_context[key] = value }
+      end
+
+      if (rv = task.role_vars) && !rv.empty?
+        rv.each { |key, value| vars_context[key] = value }
+      end
+      @all_role_vars.each { |key, value| vars_context[key] = value }
+
+      task.vars.each { |key, value| vars_context[key] = value }
+
+      @extra_vars.each { |key, value| vars_context[key] = value }
+
+      vars_context
     end
 
     private def build_vars_context(task : Task, host : Host, include_legacy_ssh_aliases : Bool = true, loop_lenient_vars : Bool = false) : Hash(String, JSON::Any)

@@ -117,41 +117,60 @@ module Krikri
     private def handler_answers_to?(notify_name : String, task : Task, host : Host) : Bool
       bare_name = (idx = notify_name.rindex(" : ")) ? notify_name[(idx + 3)..] : notify_name
 
-      templated = false
+      # Name pass (Ansible's search_handlers_by_notification first
+      # loop): a handler whose name is a template is rendered against
+      # the PLAY-LEVEL variables (host-specific variables are not
+      # supported in handler names). A failure makes the handler
+      # UNUSABLE - a warning (deduped by exact text, like real's
+      # display.warning) when it has no listen topics, then skipped -
+      # NOT a "possible match": real aborts a notification that
+      # matches nothing with the not-found HandlerNotFoundError
+      # (live-verified vs 2.19.11).
       @handler_runner.handlers.each do |handler|
-        candidates = [handler.name]
-        candidates.concat(handler.listen || [] of String)
-
-        candidates.each do |candidate|
-          if candidate.includes?("{{")
-            templated = true
-            next
-          end
-          return true if candidate == notify_name || candidate == bare_name
+        if handler.name.includes?("{{")
+          rendered = render_handler_name_play_level(handler, host, warn_on_failure: true)
+          next if rendered.nil?
+          return true if rendered == notify_name || rendered == bare_name
+        else
+          return true if handler.name == notify_name || handler.name == bare_name
         end
       end
 
-      return false unless templated
-
-      # Only pay for rendering when a raw comparison already missed AND
-      # some handler name/topic is a template.
-      substitutor = VarSubstitutor.new(vars: build_vars_context(task, host), host_name: host.name)
+      # Listen pass (real's second loop): a raw compare of the
+      # notification against every handler's listen: topics - listen
+      # topics are NOT templated here (a template topic never equals a
+      # rendered notification in real either).
       @handler_runner.handlers.each do |handler|
-        candidates = [handler.name]
-        candidates.concat(handler.listen || [] of String)
-
-        candidates.each do |candidate|
-          next unless candidate.includes?("{{")
-          rendered = (substitutor.substitute(candidate) rescue nil)
-          # An unrenderable handler name is treated as a possible match,
-          # not a miss - its real value depends on vars this task's own
-          # context may not carry.
-          return true if rendered.nil? || rendered.includes?("{{")
-          return true if rendered == notify_name || rendered == bare_name
+        (handler.listen || [] of String).each do |listen_topic|
+          return true if listen_topic == notify_name || listen_topic == bare_name
         end
       end
 
       false
+    end
+
+    # Renders a handler's templated `name:` against the PLAY-LEVEL
+    # variable layers (Ansible's search_handlers_by_notification
+    # templates each handler name once via
+    # get_vars(play=play, task=handler) - no host-scoped variables at
+    # all: play vars, play-wide role defaults/vars, vars_files, the
+    # handler's own vars:, extra vars). Returns nil when the render
+    # fails - the handler is then unusable - and, with
+    # *warn_on_failure*, prints real's "Handler ... is unusable"
+    # warning for a handler with no listen topics (live-verified vs
+    # 2.19.11, byte for byte).
+    @@unusable_handler_warnings = Set(String).new
+
+    private def render_handler_name_play_level(handler : Task, host : Host, warn_on_failure : Bool = false) : String?
+      substitutor = VarSubstitutor.new(vars: play_level_vars_context(handler, host), host_name: host.name)
+      rendered = substitutor.substitute(handler.name, strict: true)
+      rendered.includes?("{{") ? nil : rendered
+    rescue ex
+      if warn_on_failure && (handler.listen || [] of String).empty?
+        line = "[WARNING]: Handler '#{handler.name}' is unusable because it has no listen topics and the name could not be templated (host-specific variables are not supported in handler names). The error: #{ex.message}"
+        STDERR.puts line if @@unusable_handler_warnings.add?(line)
+      end
+      nil
     end
 
     # Build the base variable context (play/host/registered/task vars + facts)
@@ -187,13 +206,28 @@ module Krikri
         render_task_name_for_display(handler, host)
       }
 
+      # Handlers whose templated name fails to render against the
+      # PLAY-LEVEL variables are unusable (see
+      # #render_handler_name_play_level): real never runs them (the
+      # notification search skipped them at notify time), so the flush
+      # must not even RESOLVE their display name - that render would
+      # print the task-name template-error warning block on stderr,
+      # which real never emits for a handler name.
+      unusable_handlers = Set(Task).new
+      if (first_host = @hosts.first?) && @handler_runner.handlers.any? { |candidate| candidate.name.includes?("{{") }
+        @handler_runner.handlers.each do |handler|
+          next unless handler.name.includes?("{{")
+          unusable_handlers << handler if render_handler_name_play_level(handler, first_host).nil?
+        end
+      end
+
       # Passing nil instead of @halted_hosts is what --force-handlers
       # means: HandlerRunner skips a notified handler for any host in
       # that set, so withholding it lets a failed host still flush its
       # handlers. Ansible keeps failed=1 and rc=2 either way - the
       # flag only decides whether the handler runs.
       @handler_runner.run(execute_callback, @results, @diff_mode, name_resolver,
-        @force_handlers ? nil : @halted_hosts)
+        @force_handlers ? nil : @halted_hosts, unusable_handlers)
     end
 
     # Execute a handler (internal - called via callback)
