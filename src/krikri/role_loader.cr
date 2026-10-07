@@ -118,9 +118,9 @@ module Krikri
         # error inside a role PARAM at the playbook's `roles:` entry
         # (live-verified 2.19.11: `roles: [{role: e9, vars: {rp: ...}}]`
         # reports e9.yml's vars value position).
-        name, entry_version, invocation_vars, invocation_tags, entry_when, invocation_origins = parse_role_entry(entry, play.source_file, source_map, "#{roles_prefix}/#{entry_index}")
+        name, entry_version, invocation_vars, invocation_tags, entry_when, invocation_origins, entry_timeout = parse_role_entry(entry, play.source_file, source_map, "#{roles_prefix}/#{entry_index}")
         before_count = tasks.size
-        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when, invocation_var_origins: invocation_origins)
+        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when, invocation_var_origins: invocation_origins, role_timeout: entry_timeout)
         apply_role_when(tasks, before_count, entry_when)
       end
 
@@ -149,9 +149,9 @@ module Krikri
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
-    private def self.parse_role_entry(entry : YAML::Any, origin_file : String? = nil, source_map : YamlSourceMap? = nil, path_prefix : String? = nil) : {String, String?, Hash(String, JSON::Any), Array(String), String?, Hash(String, VarOrigin)}
+    private def self.parse_role_entry(entry : YAML::Any, origin_file : String? = nil, source_map : YamlSourceMap? = nil, path_prefix : String? = nil) : {String, String?, Hash(String, JSON::Any), Array(String), String?, Hash(String, VarOrigin), {Int64?, String?}}
       if bare_name = entry.as_s?
-        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil, Hash(String, VarOrigin).new}
+        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil, Hash(String, VarOrigin).new, {nil, nil}}
       end
 
       origins = Hash(String, VarOrigin).new
@@ -196,7 +196,7 @@ module Krikri
       # distinct invocations and runs both (verified live,
       # andrewrothstein.kafka-consumer's v1.0.13-via-kafka vs
       # v1.0.12-via-openjdk unarchive-deps double run).
-      reserved = {"role", "name", "src", "version", "scm", "vars", "tags", "when"}
+      reserved = {"role", "name", "src", "version", "scm", "vars", "tags", "when", "timeout"}
       version = hash["version"]?.try(&.to_s)
       hash.each do |key, value|
         key_str = key.to_s
@@ -224,7 +224,15 @@ module Krikri
       # dropped through as a role VAR named "when" instead of a gate.
       role_when = hash["when"]?.try { |cond| PlaybookParser.condition_to_string(cond) }
 
-      {name, version, vars, tags, role_when, origins}
+      # `timeout:` on a roles: entry is a valid TASK keyword in real
+      # ansible-core (live-verified vs 2.19.11: `roles: [- role: r,
+      # timeout: 2]` fails every role task that runs past it) - a
+      # keyword, NOT a role var, so it is reserved out of the vars bag
+      # and applied to the role's tasks through load_role's ambient
+      # inheritance (precedence task > block > role entry > play).
+      role_timeout = PlaybookParser.parse_timeout_value(hash["timeout"]?)
+
+      {name, version, vars, tags, role_when, origins, role_timeout}
     end
 
     # One roles:/dependency entry var's defining position - nil when no
@@ -273,6 +281,10 @@ module Krikri
       # matching Ansible, which never exposes it as one).
       role_version : String? = nil,
       role_when : String? = nil,
+      # The roles:-entry's own `timeout:` keyword value {int, expr} -
+      # {nil, nil} when the entry set none (the default for include_role:,
+      # whose invocation has no such keyword in this engine).
+      role_timeout : {Int64?, String?} = {nil, nil},
     )
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
@@ -441,8 +453,22 @@ module Krikri
       # different calls - `tasks_from: install.yml` as well as bare
       # names elsewhere) - append .yml only when it's not already there.
       tasks_path = resolve_role_tasks_path(role_dir, tasks_from)
-      role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir)
-      role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir)
+      # The roles:-entry's own `timeout:` (a real task keyword in real
+      # ansible-core) becomes the ambient default every task parsed
+      # below inherits - the same save/set/parse/restore pattern
+      # PlaybookParser#parse_block_task uses for block-level keywords,
+      # so precedence stays task > block > role entry > play.
+      saved_task_timeout = play.task_timeout
+      saved_task_timeout_expr = play.task_timeout_expr
+      play.task_timeout = role_timeout[0] if role_timeout[0]
+      play.task_timeout_expr = role_timeout[1] if role_timeout[1]
+      begin
+        role_tasks = load_tasks_file(tasks_path, play, known_vars, role_dir)
+        role_handlers = load_tasks_file(find_main_file(File.join(role_dir, "handlers")) || File.join(role_dir, "handlers", "main.yml"), play, known_vars, role_dir)
+      ensure
+        play.task_timeout = saved_task_timeout
+        play.task_timeout_expr = saved_task_timeout_expr
+      end
 
       # The argument-spec "Validating arguments..." task only applies to
       # the role's own default ("main") entry point, not an arbitrary

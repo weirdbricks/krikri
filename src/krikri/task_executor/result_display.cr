@@ -524,6 +524,38 @@ module Krikri
       # args for ...") get their own multi-level block from the executor
       # (emit_finalization_error_block) before the fatal line.
       return if msg.starts_with?("Task failed: Finalization of task args for")
+      # A task `timeout:` deadline kill (the executor's task_timeout_
+      # result) or an out-of-range timeout value (its
+      # task_timeout_invalid_result): real's chain is the COLLAPSED
+      # single-segment shape - the TaskTimeoutError / bare ValueError
+      # carry no obj/origin of their own, so "Task failed." + the
+      # message collapse into the one header line with the task's own
+      # Origin and no middle "Module failed." segment (live-verified vs
+      # 2.19.11 for both).
+      if result["timedout"]? || msg.starts_with?("Task failed: Timeout ")
+        if origin = error_origin_context(source_task)
+          inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner)))
+        end
+        return
+      end
+      # A templated `timeout:` that resolved to a non-integer (the
+      # executor's task_timeout_conversion_failure): the brief is real's
+      # exact wording; the chain is a best-effort two-link approximation
+      # (real's innermost link points at the source VARIABLE's own
+      # definition site - see the executor's own comment).
+      if conversion = result["_ansible_timeout_conversion"]?.try(&.as_h?)
+        if origin = error_origin_context(source_task)
+          keyword = ErrorBlock::Node.new("Error processing keyword 'timeout'.",
+            source_context: conversion["origin"]?.try(&.as_s?))
+          keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true,
+            ErrorBlock::Node.new(conversion["conversion"]?.try(&.as_s?) || ""))
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, keyword))
+        end
+        return
+      end
       # assert:'s that: conditional failure: two-level chain, the second
       # Origin pointing at the failing that: item (index carried in the
       # internal _ansible_that_index key; when: failures are emitted by

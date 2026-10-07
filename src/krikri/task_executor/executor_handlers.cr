@@ -980,14 +980,27 @@ module Krikri
         end
       end
 
+      # `timeout:` - same resolution and range validation the regular
+      # task path runs (see execute_task_once); a handler is a task, and
+      # real's alarm wraps its handler.run identically.
+      handler_timeout, timeout_failure = resolve_task_timeout(handler, substitutor)
+      if timeout_failure
+        return timeout_failure
+      end
+
       result = PluginManager.execute_plugin(
         handler.module_name,
         config,
         host,
         vars_context,
         become,
-        become_user
+        become_user,
+        handler_timeout
       )
+
+      if period = marker_task_timeout(result)
+        return task_timeout_result(period)
+      end
 
       # A handler's own changed_when:/failed_when:/register: were
       # entirely unapplied - this method just returned the raw plugin

@@ -901,9 +901,10 @@ module Krikri
       vars : Hash(String, JSON::Any),
       become : Bool,
       become_user : String?,
+      task_timeout : Int64? = nil,
     ) : JSON::Any
       if remote_execution?(plugin_name, host, vars)
-        execute_remote_plugin(plugin_name, config, host, vars, become, become_user)
+        execute_remote_plugin(plugin_name, config, host, vars, become, become_user, task_timeout)
       elsif controller_only?(plugin_name)
         # A controller-only plugin (fetch, see CONTROLLER_ONLY_PLUGINS'
         # own comment) always runs unprivileged on the controller itself,
@@ -919,9 +920,9 @@ module Krikri
         # root --`, which fails outright with "sudo: a password is
         # required" on any controller account without passwordless sudo
         # configured for itself - unrelated to the actual remote target).
-        execute_local_plugin(plugin_name, config, host, false, nil)
+        execute_local_plugin(plugin_name, config, host, false, nil, nil, task_timeout)
       else
-        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host))
+        execute_local_plugin(plugin_name, config, host, become, become_user, Passwords.become(vars, host), task_timeout)
       end
     end
 
@@ -962,7 +963,7 @@ module Krikri
     end
 
     # Execute plugin locally
-    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
+    private def self.execute_local_plugin(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
       # The local persistent daemon (the ansible_connection=local analogue
       # of the ssh daemon - see LocalPluginDaemon's own header) is tried
       # first when enabled and eligible; on any failure that means the
@@ -974,11 +975,11 @@ module Krikri
       # nested measure in the same "transport" group is not recorded at
       # all (see TimingProfile.measure's group rule), and the daemon round
       # trip is its own transport bucket the way the ssh daemon's is.
-      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password)
+      if result = try_local_daemon(plugin_name, config, host, become, become_user, become_password, task_timeout)
         return result
       end
       TimingProfile.measure("transport.local_exec", "transport") do
-        execute_local_plugin_impl(plugin_name, config, become, become_user, become_password)
+        execute_local_plugin_impl(plugin_name, config, become, become_user, become_password, task_timeout)
       end
     end
 
@@ -996,8 +997,17 @@ module Krikri
     # mode; a daemon attempt on one would fail three times, trip the
     # breaker and never fall back transparently, so it is skipped up front
     # instead.
-    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?) : JSON::Any?
+    private def self.try_local_daemon(plugin_name : String, config : String, host : Host, become : Bool, become_user : String?, become_password : String?, task_timeout : Int64? = nil) : JSON::Any?
       return nil unless @@daemon_enabled
+      # A `timeout:` task's deadline kill needs a process it owns - a
+      # plugin running INSIDE the resident daemon process cannot be
+      # killed without killing the daemon itself (and its in-flight
+      # request classification - dispatched-or-not - would be lost).
+      # Such a task takes the one-shot path below, whose deadline kill
+      # SIGKILLs a process group of exactly one plugin run. Same
+      # treatment as the ssh daemon's gate in
+      # #execute_remote_plugin_transport.
+      return nil if task_timeout && task_timeout > 0
       return nil unless daemon_eligible?(plugin_name, become)
 
       plugin_path = get_local_plugin_path(plugin_name)
@@ -1114,7 +1124,7 @@ module Krikri
       false
     end
 
-    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil) : JSON::Any
+    private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
 
@@ -1134,13 +1144,40 @@ module Krikri
 
       begin
         process = if sudo_user
-                    # No shell involved (args passed as a real argv array,
-                    # not interpolated into a command string), so
-                    # become_user doesn't need shell-escaping here - unlike
-                    # the remote/SSH path below, where it does.
+                    if task_timeout && task_timeout > 0
+                      # The deadline kill must take the plugin's WHOLE
+                      # process tree down (the shell module runs its
+                      # command as the plugin's own child - a bare SIGKILL
+                      # to the plugin binary would orphan the `sh -c` and
+                      # everything under it). Only the timeout path pays
+                      # for the `setsid` wrapper: the spawn gets its own
+                      # session/process group, so the kill targets the
+                      # group. The normal path keeps the exact spawn shape
+                      # it always had.
+                      Process.new(
+                        "setsid",
+                        ["--", "sudo"] + local_sudo_argv(sudo_user, plugin_path, interactive),
+                        input: Process::Redirect::Pipe,
+                        output: stdout,
+                        error: stderr
+                      )
+                    else
+                      # No shell involved (args passed as a real argv array,
+                      # not interpolated into a command string), so
+                      # become_user doesn't need shell-escaping here - unlike
+                      # the remote/SSH path below, where it does.
+                      Process.new(
+                        "sudo",
+                        local_sudo_argv(sudo_user, plugin_path, interactive),
+                        input: Process::Redirect::Pipe,
+                        output: stdout,
+                        error: stderr
+                      )
+                    end
+                  elsif task_timeout && task_timeout > 0
                     Process.new(
-                      "sudo",
-                      local_sudo_argv(sudo_user, plugin_path, interactive),
+                      "setsid",
+                      ["--", plugin_path],
                       input: Process::Redirect::Pipe,
                       output: stdout,
                       error: stderr
@@ -1154,13 +1191,50 @@ module Krikri
                     )
                   end
 
-        # Write config to stdin (password line first when sudo -S will
-        # read it - see #local_plugin_stdin)
-        process.input.print(local_plugin_stdin(config, become_password, interactive))
-        process.input.close
+        stdin_data = local_plugin_stdin(config, become_password, interactive)
 
-        process.wait
-        output = stdout.to_s
+        if task_timeout && task_timeout > 0
+          # Same "bound a blocking pipe op + #wait to a wall-clock deadline
+          # on a separate fiber" shape as SSHManager#run_with_timeout (see
+          # its comment for why the pipe write needs bounding too). On
+          # expiry the process GROUP is SIGKILLed - the spawned fiber's
+          # #wait then unblocks and reaps, so nothing leaks - and the
+          # `_task_timeout` marker result is returned for the executor to
+          # convert into Ansible's Timed-out task failure.
+          completed = Channel(Nil).new(1)
+          spawn do
+            begin
+              process.input.print(stdin_data)
+              process.input.close
+              process.wait
+            rescue
+            end
+            completed.send(nil)
+          end
+          timed_out = false
+          select
+          when completed.receive
+          when timeout(task_timeout.seconds)
+            timed_out = true
+          end
+          if timed_out
+            kill_plugin_process_group(process)
+            return JSON.parse({
+              "changed"       => false,
+              "failed"        => true,
+              "_task_timeout" => task_timeout,
+            }.to_json)
+          end
+          output = stdout.to_s
+        else
+          # Write config to stdin (password line first when sudo -S will
+          # read it - see #local_plugin_stdin)
+          process.input.print(stdin_data)
+          process.input.close
+
+          process.wait
+          output = stdout.to_s
+        end
 
         # Try to parse JSON output
         begin
@@ -1194,6 +1268,22 @@ module Krikri
       end
     end
 
+    # SIGKILLs *process* and, because the timeout path spawns it under
+    # `setsid` (its own session/process group), its whole process group -
+    # the plugin's own children (the shell module's `sh -c`, everything
+    # IT spawned) would otherwise survive as orphans and run to
+    # completion. Best effort in both directions: a group whose members
+    # already exited (ESRCH) or a vanished pid is ignored, and a plain
+    # direct-child SIGKILL goes out on top so even a spawn that somehow
+    # skipped the setsid wrapper still dies.
+    private def self.kill_plugin_process_group(process : Process) : Nil
+      LibC.kill(-process.pid, Signal::KILL.value)
+      begin
+        process.signal(Signal::KILL) unless process.terminated?
+      rescue
+      end
+    end
+
     # Execute plugin remotely (uploads if needed, then runs).
     # *config* is already the exact payload to send - see the String
     # entry point above for who is responsible for injecting
@@ -1217,8 +1307,9 @@ module Krikri
       vars : Hash(String, JSON::Any),
       become : Bool,
       become_user : String?,
+      task_timeout : Int64? = nil,
     ) : JSON::Any
-      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user))
+      normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout))
     rescue ex
       raise ex unless SSHManager.connection_level_exception?(ex)
       detail = ex.message.to_s.lines.first?.to_s
@@ -1252,6 +1343,7 @@ module Krikri
       vars : Hash(String, JSON::Any),
       become : Bool,
       become_user : String?,
+      task_timeout : Int64? = nil,
     ) : JSON::Any
       # Get the actual connection host (checks ansible_host)
       connection_host = get_connection_host(host, vars)
@@ -1300,7 +1392,10 @@ module Krikri
       # command line the same way the one-shot target string is.
       daemon_user = become_needed?(become, become_user || "root", host.user || "root") ? (become_user || "root") : nil
 
-      if @@daemon_enabled && daemon_eligible?(plugin_name, become) &&
+      # A `timeout:` task bypasses the daemon (its in-flight module cannot
+      # be killed without killing the daemon, and a dispatched-or-not
+      # classification would be lost) - same gate as the local daemon's.
+      if @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become) &&
          !SSHManager.daemon_unavailable?(connection_host, host.user || "root", host.port, daemon_user)
         begin
           return SSHManager.daemon_send(
@@ -1370,13 +1465,23 @@ module Krikri
       # newline inside the JSON can't break the remote `echo` line either.
       encoded = Base64.strict_encode(config)
       script = "echo #{shell_single_quote(encoded)} | base64 -d | #{target}\n"
+      # A `timeout:` task bounds the whole handler run - upload included,
+      # since the deadline in real covers everything from the action
+      # plugin down. The exec gets whatever of the budget the upload did
+      # not spend; the killed-exec classification below then turns the
+      # SIGKILLed transport result into the task-timeout marker instead
+      # of a bogus unreachable.
+      started = task_timeout ? Time.instant : nil
       result = SSHManager.exec_script(
         connection_host,
         host.user || "root",
         script,
         host.port,
+        timeout: remaining_exec_timeout(started, task_timeout),
         identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       )
+
+      return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, result)
 
       interpreted = interpret_remote_result(result[:exit_code], result[:stdout], result[:stderr])
 
@@ -1398,12 +1503,55 @@ module Krikri
           host.user || "root",
           script,
           host.port,
+          timeout: remaining_exec_timeout(started, task_timeout),
           identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
         )
+        return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
         return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
       end
 
       interpreted
+    end
+
+    # The `_task_timeout` marker result a deadline kill turns into: the
+    # executor (TaskExecutor#execute_task_once / handler dispatch) reads
+    # the marker key out of the plugin result and converts it into
+    # Ansible's own Timed-out task failure shape before display.
+    def self.task_timeout_marker(task_timeout : Int64?) : JSON::Any
+      JSON.parse({
+        "changed"       => false,
+        "failed"        => true,
+        "_task_timeout" => task_timeout,
+      }.to_json)
+    end
+
+    # The exec_script timeout for one dispatch of a `timeout:` task: the
+    # task budget minus whatever earlier transport stages (the plugin
+    # upload) already spent, bounded below at 1s so a budget exhausted
+    # before the exec still gets one immediate-chance attempt instead of
+    # a zero/negative timeout. nil (no task timeout) keeps the transport's
+    # own default.
+    private def self.remaining_exec_timeout(started : Time::Instant?, task_timeout : Int64?) : Int32
+      return SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS unless started && task_timeout
+      remaining = task_timeout - (Time.instant - started).total_seconds
+      remaining < 1 ? 1 : remaining.to_i32
+    end
+
+    # Whether the just-returned exec_script result is the transport
+    # SIGKILLed by the task's own deadline (as opposed to a legitimate
+    # transport failure or a module that ran and failed). Deliberately
+    # narrow: exit_code 137 is run_with_timeout's signal-killed mapping
+    # (128+SIGKILL) for the local ssh process, and the only other shape
+    # the deadline path produces carries its own "timed out after" words;
+    # both must ALSO line up with the wall clock having actually reached
+    # the task's budget - a module that genuinely died of its own SIGKILL
+    # (an OOM on the target, say) before the deadline keeps its real
+    # booking.
+    private def self.task_timeout_kill?(started : Time::Instant?, task_timeout : Int64?, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
+      return false unless started && task_timeout
+      return false unless result[:exit_code] == 137 ||
+                          (result[:exit_code] == 255 && result[:stderr].includes?("timed out after"))
+      (Time.instant - started).total_seconds >= task_timeout
     end
 
     # Does this failure look like "the plugin binary is not on the

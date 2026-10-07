@@ -108,6 +108,13 @@ module Krikri
     property remote_user : String? = nil
     # `debugger:` at task scope - see Play#debugger.
     property debugger : String? = nil
+    # `timeout:` - the per-task wall-clock limit in seconds (ansible-core's
+    # TASK_TIMEOUT: the controller fails the task once it runs longer than
+    # this). 0/absent means no limit. Templated values keep their raw
+    # `{{ }}` text in timeout_expr and resolve per host at execution time,
+    # the same deferred shape `become_expr`/`check_mode_expr` use.
+    property timeout : Int64? = nil
+    property timeout_expr : String? = nil
     # Block- and task-scope `module_defaults:` - see Play#module_defaults.
     property module_defaults : Hash(String, Hash(String, String)) = Hash(String, Hash(String, String)).new
     # Where this task's own YAML mapping starts in its source file -
@@ -873,6 +880,15 @@ module Krikri
     # `debugger:` at play scope - always/never/on_failed/on_skipped/
     # on_unreachable. A task's own debugger: wins.
     property debugger : String? = nil
+    # `timeout:` at play scope - the play's default per-task wall-clock
+    # limit every task inherits (Ansible's play-level `timeout:` keyword;
+    # live-verified vs 2.19.11: a play-level timeout: 2 fails each task
+    # that runs past it). Also the ambient-inheritance carrier the block
+    # parser uses: parse_block_task temporarily raises this to the
+    # block's own value while its children parse, so precedence is
+    # task > block > play with no parent pointers needed.
+    property task_timeout : Int64? = nil
+    property task_timeout_expr : String? = nil
     # `vars_prompt:` - name/prompt/private/default per entry, asked
     # before the play runs.
     property vars_prompt : Array(Hash(String, String)) = [] of Hash(String, String)
@@ -1867,6 +1883,7 @@ module Krikri
       play.order = yaml["order"]?.try { |value| safe_yaml_to_string(value).strip }
       play.remote_user = yaml["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       play.debugger = yaml["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      play.task_timeout, play.task_timeout_expr = parse_timeout_value(yaml["timeout"]?)
 
       # vars_prompt: each entry is a mapping with at least a name; the
       # rest (prompt, private, default) are optional.
@@ -2766,7 +2783,7 @@ module Krikri
       if include_vars_yaml = directive(task_hash, "include_vars")
         # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
         written = ["include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"].find { |key| task_hash.has_key?(key) } || "include_vars"
-        include_vars_task = parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index)
+        include_vars_task = parse_include_vars_task(name || written, task_hash, include_vars_yaml, source_file, source_map, source_prefix, index, play)
         include_vars_task.has_explicit_name = !name.nil?
         return include_vars_task
       end
@@ -3069,7 +3086,7 @@ module Krikri
       end
 
       # Parse task-level settings - FIXED to handle boolean values safely
-      parse_common_task_attributes(task, task_hash)
+      parse_common_task_attributes(task, task_hash, play)
       task.register = task_hash["register"]?.try do |v|
         register_value = safe_yaml_to_string(v)
         validate_register_name(register_value)
@@ -3544,7 +3561,7 @@ module Krikri
       end
     end
 
-    private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any)) : Nil
+    private def self.parse_common_task_attributes(task : Task, task_hash : Hash(YAML::Any, YAML::Any), play : Play? = nil) : Nil
       task.when_condition = task_hash["when"]?.try { |v| condition_to_string(v) }
       task.when_condition_list = task_hash["when"]?.try { |v| condition_to_list(v) }
       # A templated ignore_errors: keeps its parse-time guess in
@@ -3567,6 +3584,20 @@ module Krikri
       task.throttle = task_hash["throttle"]?.try { |tv_blk| safe_yaml_to_string(tv_blk).to_i? } || 0
       task.remote_user = task_hash["remote_user"]?.try { |entry| safe_yaml_to_string(entry).strip }
       task.debugger = task_hash["debugger"]?.try { |entry| safe_yaml_to_string(entry).strip }
+      # `timeout:` - the task's OWN keyword first; unset falls back to the
+      # ambient play/block scope (play.task_timeout is temporarily the
+      # enclosing block's value while its children parse - see
+      # parse_block_task). Ansible's own precedence is task > block >
+      # play; live-verified vs 2.19.11 at all three levels plus a
+      # roles: entry.
+      own_timeout, own_timeout_expr = parse_timeout_value(task_hash["timeout"]?)
+      if own_timeout.nil? && own_timeout_expr.nil? && play
+        task.timeout = play.task_timeout
+        task.timeout_expr = play.task_timeout_expr
+      else
+        task.timeout = own_timeout
+        task.timeout_expr = own_timeout_expr
+      end
       task.module_defaults = parse_module_defaults(task_hash["module_defaults"]?)
 
       if tags_yaml = task_hash["tags"]?
@@ -3612,7 +3643,7 @@ module Krikri
     INCLUDE_VARS_FILE_ARGS = ["file", "_raw_params"]
     INCLUDE_VARS_ALL_ARGS  = ["name", "hash_behaviour"]
 
-    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
+    private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, play : Play? = nil) : Task
       task = Task.new(name, "_include_vars")
 
       if hash = value.as_h?
@@ -3713,7 +3744,7 @@ module Krikri
         task.include_vars_file = value.as_s?
       end
 
-      parse_common_task_attributes(task, task_hash)
+      parse_common_task_attributes(task, task_hash, play)
 
       # changed_when:/failed_when: live outside parse_common_task_
       # attributes (only the generic #parse_task path sets them), so this
@@ -4257,6 +4288,18 @@ module Krikri
       play.check_mode = parse_optional_bool_or_template(task_hash["check_mode"]?)
       play.check_mode_expr = template_expression(task_hash["check_mode"]?)
 
+      # Same ambient-inheritance pattern for the block's own `timeout:`
+      # (ansible-core's per-task wall-clock limit; precedence task >
+      # block > play, live-verified vs 2.19.11 - a block-level
+      # `timeout: 2` fails each child task that runs past it, with the
+      # child task's own Origin). nil means "block did not set one",
+      # so the play's value stays the ambient default underneath.
+      saved_task_timeout = play.task_timeout
+      saved_task_timeout_expr = play.task_timeout_expr
+      block_timeout, block_timeout_expr = parse_timeout_value(task_hash["timeout"]?)
+      play.task_timeout = block_timeout if block_timeout
+      play.task_timeout_expr = block_timeout_expr if block_timeout_expr
+
       # ensure-restore, not fall-through-restore: if a child parse raises
       # (a typed bypass like RemovedActionError rethrown through
       # parse_tasks, or any parse error), the play's become must still be
@@ -4285,6 +4328,8 @@ module Krikri
         play.become_user = saved_become_user
         play.check_mode = saved_check_mode
         play.check_mode_expr = saved_check_mode_expr
+        play.task_timeout = saved_task_timeout
+        play.task_timeout_expr = saved_task_timeout_expr
       end
 
       # Stamp this block's own name onto every descendant's
@@ -4298,7 +4343,7 @@ module Krikri
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.
-      parse_common_task_attributes(task, task_hash)
+      parse_common_task_attributes(task, task_hash, play)
       # A block's ignore_errors: is inherited by every task inside block:,
       # rescue: and always: (real resolves it through the parent chain), so a
       # failing rescue task under `ignore_errors: true` is ignored too.
@@ -4546,7 +4591,7 @@ module Krikri
       task.include_file_dir = file_dir
       parse_include_apply(task, directive(task_hash, "include_tasks").try(&.as_h?).try(&.["apply"]?))
 
-      parse_common_task_attributes(task, task_hash)
+      parse_common_task_attributes(task, task_hash, play)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -4808,7 +4853,7 @@ module Krikri
       end
       parse_include_apply(task, role_args["apply"]?)
 
-      parse_common_task_attributes(task, task_hash)
+      parse_common_task_attributes(task, task_hash, play)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user
@@ -5978,6 +6023,22 @@ module Krikri
       raw = yaml.raw
       return nil unless raw.is_a?(String)
       raw.strip.starts_with?("{{") ? raw.strip : nil
+    end
+
+    # Companion to #resolve_become's family: parses a `timeout:` keyword
+    # value - an integer literal (seconds) or a raw `{{ }}` expression
+    # (resolved per host at execution time by the executor). Returns
+    # {int, expr}: exactly one non-nil when the keyword is present,
+    # {nil, nil} when absent. A non-numeric literal keeps {nil, nil}
+    # (no limit) - Ansible's own post_validate rejects those, but the
+    # executor's 0/absent no-limit path is the gentler degradation.
+    # Public so RoleLoader's roles:-entry parser can share it verbatim.
+    def self.parse_timeout_value(yaml : YAML::Any?) : {Int64?, String?}
+      return {nil, nil} unless yaml
+      if expr = template_expression(yaml)
+        return {nil, expr}
+      end
+      {safe_yaml_to_string(yaml).strip.to_i64?, nil}
     end
 
     private def self.safe_yaml_to_string(yaml : YAML::Any) : String

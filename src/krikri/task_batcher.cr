@@ -305,10 +305,23 @@ module Krikri
       # dropping a real task's execution. Any empty-list templated
       # with_nested:/with_flattened: task immediately followed by a
       # non-looped task hits this.
+      !!(needs_runtime_loop_source?(task) ||
+        task.until_condition || task.async_seconds ||
+        # A `timeout:` task must fail the moment its OWN wall-clock limit
+        # expires - inside a batch it shares one SSH round trip with its
+        # group, whose per-step results only come back as a whole, so a
+        # per-task deadline is unenforceable there. Same control-flow
+        # class as until:/async: above.
+        task.timeout || task.timeout_expr)
+    end
+
+    # The loop-source half of needs_controller_control_flow?'s original
+    # condition, extracted verbatim (see that method's comment for the
+    # gantsign.sdkman bug each field guards against).
+    private def self.needs_runtime_loop_source?(task : Task) : Bool
       !!(task.loop_items || task.loop_fileglob || task.loop_template_kind ||
         task.loop_nested_sources || task.loop_together_sources || task.loop_flattened ||
-        task.loop_subelements_list || task.loop_first_found || task.loop_file ||
-        task.until_condition || task.async_seconds)
+        task.loop_subelements_list || task.loop_first_found || task.loop_file)
     end
 
     # failed_when: alone (with or without changed_when:) - see

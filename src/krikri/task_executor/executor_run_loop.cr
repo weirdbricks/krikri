@@ -1954,6 +1954,21 @@ module Krikri
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
 
+      # `timeout:` - the task's wall-clock limit (ansible-core's
+      # TASK_TIMEOUT alarm around handler.run). Resolved here - after
+      # `when:` and arg finalization, matching real's order (a when:-false
+      # task never validates its timeout, live-verified) - validated to
+      # Ansible's own 0..100000000 alarm range, and handed to the plugin
+      # dispatch below, which SIGKILLs a run that outlives it and returns
+      # the `_task_timeout` marker converted right after. async: tasks
+      # keep NO deadline: real's alarm only wraps the fire-and-forget
+      # dispatch itself (the handler returns the job id immediately), so
+      # the detached job stays governed by `async:` alone.
+      task_timeout, timeout_failure = resolve_task_timeout(task, substitutor)
+      if timeout_failure
+        return timeout_failure
+      end
+
       # Same override execute_remote_plugin used to apply to the wire
       # payload only (never to vars_context itself, which stays the
       # controller's own view for when:/changed_when:/failed_when:
@@ -2011,7 +2026,10 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env, task_timeout)
+        if period = marker_task_timeout(result)
+          return task_timeout_result(period)
+        end
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -2021,9 +2039,13 @@ module Krikri
         exec_host,
         vars_context,
         become,
-        become_user
+        become_user,
+        task_timeout
       )
 
+      if period = marker_task_timeout(result)
+        return task_timeout_result(period)
+      end
       result = shape_raw_result(task, result)
       result = attach_invocation(task, substituted_params, result)
       apply_changed_failed_when(task, result, vars_context, host)
@@ -2107,7 +2129,7 @@ module Krikri
     # hosts; the module's argument dict mirrors Ansible's typed
     # JSON args for new-style modules (the params the parser already
     # JSON-encoded come back as real arrays/dicts for the module).
-    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil) : JSON::Any
+    private def execute_python_module(task : Task, source_path : String, substituted_params : Hash(String, String), exec_host : Host, vars_context : Hash(String, JSON::Any), wire_vars : Hash(String, JSON::Any), become : Bool, become_user : String?, substituted_become_user : String?, substituted_env : Hash(String, String)? = nil, task_timeout : Int64? = nil) : JSON::Any
       module_name = PythonModuleRunner.short_name(task.unavailable_module || task.module_name)
       source_text = File.read(source_path)
       new_style = PythonModuleRunner.new_style?(source_text)
@@ -2201,7 +2223,8 @@ module Krikri
         exec_host,
         vars_context,
         become,
-        become_user
+        become_user,
+        task_timeout
       )
     end
 
@@ -2380,6 +2403,124 @@ module Krikri
     # Marks `host` as halted (no further tasks in this play run for it)
     # when `failed` and the task didn't opt out via ignore_errors:.
     #
+    # The task's effective `timeout:` limit in seconds, or nil when there
+    # is none (keyword absent, or 0 - ansible-core's TASK_TIMEOUT default).
+    # Parse-time inheritance (task > block > roles:-entry > play) has
+    # already folded the outer levels into Task#timeout; a templated
+    # value (Task#timeout_expr) renders per host here. The second tuple
+    # element is a pre-built failed-task result for a value that could
+    # not be resolved to an integer (Ansible's post_validate conversion
+    # error) or falls outside the alarm's 0..100000000 range - checked
+    # by the caller BEFORE the failure is returned instead of a dispatch.
+    private def resolve_task_timeout(task : Task, substitutor : VarSubstitutor) : {Int64?, JSON::Any?}
+      if expr = task.timeout_expr
+        rendered = substitutor.substitute(expr)
+        if period = rendered.strip.to_i64?
+          return validate_task_timeout(period)
+        end
+        return {nil, task_timeout_conversion_failure(task, rendered)}
+      end
+      validate_task_timeout(task.timeout)
+    end
+
+    private def validate_task_timeout(period : Int64?) : {Int64?, JSON::Any?}
+      return {nil, nil} unless period
+      return {nil, task_timeout_invalid_result(period)} if period < 0 || period > 100_000_000
+      {period == 0 ? nil : period, nil}
+    end
+
+    # The failed task result ansible-core produces when a task outlives
+    # its `timeout:` (TaskTimeoutError's ContributesToTaskResult
+    # contribution, live-captured from 2.19.11):
+    #   {"changed": false, "msg": "Task failed: Timed out after N
+    #    second(s).", "timedout": {"frame": ..., "period": N}}
+    # Deliberately NOT routed through apply_changed_failed_when: the
+    # alarm raises inside handler.run, before failed_when:/changed_when:
+    # are ever evaluated, so those keywords cannot reinterpret a run
+    # that never produced a result (ignore_errors:/rescue: still apply
+    # downstream, which this plain failed result preserves).
+    private def task_timeout_result(period : Int64) : JSON::Any
+      result = JSON.parse({
+        "changed"  => false,
+        "failed"   => true,
+        "msg"      => "Task failed: Timed out after #{period} second(s).",
+        "timedout" => {
+          "frame"  => "Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.",
+          "period" => period,
+        },
+      }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
+    end
+
+    # A `timeout:` outside the alarm's supported range fails the task
+    # with Ansible's own ValueError wording (live-captured from
+    # 2.19.11: `timeout: -5` fails with "Task failed: Timeout -5 is
+    # invalid, it must be between 0 and 100000000.") - and with NO
+    # `timedout` key, since no alarm ever ran.
+    private def task_timeout_invalid_result(value : Int64) : JSON::Any
+      result = JSON.parse({
+        "changed" => false,
+        "failed"  => true,
+        "msg"     => "Task failed: Timeout #{value} is invalid, it must be between 0 and 100000000.",
+      }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
+    end
+
+    # A templated `timeout:` that did not resolve to an integer is
+    # Ansible's post_validate conversion failure ("Error processing
+    # keyword 'timeout': The value 'X' could not be converted to
+    # 'int'."). The fatal msg is Ansible's exact collapsed brief; the
+    # [ERROR] chain is a best-effort approximation of real's three-link
+    # one (real points its innermost link at the source VARIABLE's own
+    # definition site, which would need per-value origin tracking this
+    # engine does not have) - the middle link carries the timeout:
+    # VALUE's own source position, exactly as real's does.
+    private def task_timeout_conversion_failure(task : Task, rendered : String) : JSON::Any
+      value_repr = "'" + rendered.gsub("\\", "\\\\\\\\").gsub("'", "\\\\'") + "'"
+      conversion = "The value #{value_repr} could not be converted to 'int'."
+      brief = "Task failed: Error processing keyword 'timeout': #{conversion}"
+      result = JSON.parse({
+        "changed"                     => false,
+        "failed"                      => true,
+        "msg"                         => brief,
+        "_ansible_timeout_conversion" => JSON.parse({
+          "conversion" => conversion,
+          "origin"     => timeout_keyword_value_origin(task),
+        }.to_json),
+      }.to_json)
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      result
+    end
+
+    # The `timeout:` VALUE's own column (the first non-space character
+    # after the key's colon), same best-effort source scan
+    # task_param_value_origin uses - real's middle chain link points
+    # there, not at the key.
+    private def timeout_keyword_value_origin(task : Task) : String?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+      lines = File.read_lines(path)
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = line.index("timeout:")
+        next unless at
+        next unless line[0...at].strip.empty?
+        col = at + "timeout:".size
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        return ErrorBlock.origin_context(path, idx + 1, col + 1)
+      end
+      nil
+    end
+
+    # Reads the `_task_timeout` marker a deadline-killed dispatch returns.
+    private def marker_task_timeout(result : JSON::Any) : Int64?
+      result.as_h?.try(&.["_task_timeout"]?.try(&.as_i64?))
+    end
+
     # A failed `run_once:` task halts every OTHER host in the play too
     # (ansible-core's _process_pending_results: a failed run_once
     # result calls iterator.mark_host_failed(h) for every host in the
