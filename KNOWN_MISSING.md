@@ -35,12 +35,10 @@ defect moves down or gets deleted.
   Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
   every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
   `connect_timeout` (via `connect_params` or `PGCONNECT_TIMEOUT`, task `environment:` first) is verified
-  byte-identical against real 2.19.11 on a held listener ("timeout expired", no hint line). **Open:** a
-  connect to an unroutable address (`192.0.2.1`, SYN never answered) on an Atlantic.net host reports
-  "Operation timed out" plus the "Is the server running..." hint line instead of real's
-  "timeout expired" (musl's ETIMEDOUT text, so the connect failed through the errno-probe path instead of
-  the deadline); the same case matches real locally (fires after 2.08 s). Cause not found; repro: the
-  `kop_pg_timeout` probe's `pg_blackhole` case. The live tests
+  byte-identical against real 2.19.11 on a held listener ("timeout expired", no hint line). A connect to an unroutable
+  address (`192.0.2.1`) with a `connect_timeout` set words as "timeout expired" too (probe still pending
+  after a fiber-side failure is read as the deadline, not an errno; unit-pinned only, not
+  re-confirmed live yet). The live tests
   on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman

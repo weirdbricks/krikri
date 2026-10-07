@@ -24,7 +24,10 @@ module Krikri
       # hash is passed so the message can quote the host/port or
       # socket path the plugin actually dialed.
       def self.pg_connection_failed(ex : DB::ConnectionRefused, params : Hash(String, String)) : PluginResult
-        detail = PostgresqlConnection.libpq_connect_error(ex, PostgresqlConnection.effective_target(params))
+        detail = PostgresqlConnection.libpq_connect_error(
+          ex, PostgresqlConnection.effective_target(params),
+          timeout_set: !PostgresqlConnection.connect_timeout(params).nil?,
+        )
         PluginResult.new(changed: false, failed: true, msg: "unable to connect to database: #{detail}")
       end
 

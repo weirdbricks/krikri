@@ -163,9 +163,17 @@ module Krikri
         expired = false
         handed_off : DB::Database? = nil
         failure : DB::ConnectionRefused? = nil
+        # When the connect fiber itself failed, the elapsed time at
+        # which it failed - the done branch below needs to know whether
+        # the failure landed before or after the deadline moment,
+        # because real libpq words the two differently (its poll
+        # deadline fires at the same instant regardless of what the
+        # socket does next).
+        failed_at : Time::Span? = nil
         # Buffered: the fiber must never block on signaling a result
         # the caller already gave up on (the expired path).
         done = Channel(Nil).new(1)
+        started = Time.instant
 
         spawn do
           begin
@@ -178,12 +186,20 @@ module Krikri
               end
             end
           rescue ex : DB::ConnectionRefused
-            mutex.synchronize { failure = ex }
+            at = Time.instant - started
+            mutex.synchronize do
+              failure = ex
+              failed_at = at
+            end
           rescue ex : Exception
             # crystal-pg wraps every connect-stage failure; anything
             # not already a ConnectionRefused becomes one, keeping the
             # plugins' single rescue type intact.
-            mutex.synchronize { failure = DB::ConnectionRefused.new(cause: ex) }
+            at = Time.instant - started
+            mutex.synchronize do
+              failure = DB::ConnectionRefused.new(cause: ex)
+              failed_at = at
+            end
           ensure
             done.send(nil)
           end
@@ -192,6 +208,15 @@ module Krikri
         select
         when done.receive
           if ex = failure
+            # A connect-stage failure that lands at or after the
+            # deadline moment is worded as the deadline expiry: real
+            # libpq's poll deadline fires at that same instant, before
+            # the socket's own error can ever be observed (its wording
+            # for that is "timeout expired", no hint line). Before the
+            # deadline the socket error is real and keeps the errno
+            # wording.
+            at = failed_at
+            raise DB::ConnectionRefused.new(cause: ConnectTimeoutCause.new(deadline)) if at && at >= deadline
             raise ex
           end
           mutex.synchronize { handed_off.not_nil! }
@@ -325,7 +350,7 @@ module Krikri
       # connect_timeout wording ("timeout expired"), formerly in this
       # not-reproducible list, is now modeled - see ConnectTimeoutCause
       # / #libpq_connect_error below.
-      def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}) : String
+      def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}, timeout_set : Bool = false) : String
         case cause = unwrap(ex.cause)
         when ConnectTimeoutCause
           # libpq's connect_timeout wording (fe-connect.c), for the
@@ -343,9 +368,9 @@ module Krikri
         when Socket::Addrinfo::Error
           libpq_dns_error(target[:host], target[:port])
         when IO::Error
-          io_error_detail(cause, target)
+          io_error_detail(cause, target, timeout_set)
         else
-          io_error_detail(nil, target)
+          io_error_detail(nil, target, timeout_set)
         end
       end
 
@@ -368,39 +393,59 @@ module Krikri
       #   plus libpq's "Is the server running..." hint line (matches
       #   real for ECONNREFUSED/ENETUNREACH/ETIMEDOUT and any other
       #   errno).
-      # - probe itself times out: worded as ETIMEDOUT ("Connection
-      #   timed out"), which is what a natural (unbounded) connect to
-      #   such a target ends up reporting too - live-verified against
-      #   real with a blackhole address (192.0.2.1, ~2min system
-      #   timeout): "Connection timed out". Note real words a *libpq
-      #   connect_timeout* expiry differently ("timeout expired", when
-      #   a connect_timeout is set); krikri models that wording too,
-      #   via PostgresqlConnection's own bounded open (see the timeout
-      #   comment at the top of this module), not via this errno path.
+      # - probe itself times out (its connect still EINPROGRESS when
+      #   the poll window closes, i.e. the target blackholes SYNs):
+      #   worded as ETIMEDOUT ("Connection timed out"), which is what
+      #   a natural (unbounded) connect to such a target ends up
+      #   reporting too - live-verified against real with a blackhole
+      #   address (192.0.2.1, ~2min system timeout): "Connection timed
+      #   out". Real words a *libpq connect_timeout* expiry differently
+      #   ("timeout expired", no hint, when a connect_timeout is set);
+      #   when *timeout_set* says one was set, that is the wording used
+      #   here too: real's own poll deadline is what ends a connect to
+      #   a still-blackholed target, before the kernel can ever report
+      #   anything. This also covers the mid-flight teardown bug this
+      #   module works around (see #connect_within_deadline): a connect
+      #   the fiber lost at ~1s whose probe is STILL EINPROGRESS was
+      #   never a real refusal, and with a deadline set real never
+      #   reports an errno for it.
       # - probe impossible (no fd, resolution failing now): falls back
       #   to the wording the old code printed for every TCP failure.
       #
       # For a Unix socket the connect-phase errno is decided by the
       # socket directory's existence, as before (ENOENT for a missing
       # directory, ECONNREFUSED for a present one with no listener).
-      private def self.io_error_detail(cause : IO::Error?, target : {host: String?, port: String, unix_socket: String?}) : String
+      private def self.io_error_detail(cause : IO::Error?, target : {host: String?, port: String, unix_socket: String?}, timeout_set : Bool = false) : String
         if unix_socket = target[:unix_socket]
           "#{target_prefix(target)} failed: #{unix_connect_strerror(unix_socket)}\n\t#{hint(target)}\n"
         else
-          errno = probe_tcp_connect_errno(target[:host] || "", target[:port])
-          if errno.nil?
-            "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
-          elsif errno.zero?
-            "#{target_prefix(target)} failed: #{SERVER_CLOSED_TEXT}"
-          else
-            "#{target_prefix(target)} failed: #{Errno.new(errno).message}\n\t#{hint(target)}\n"
-          end
+          probe_wording(probe_tcp_connect_errno(target[:host] || "", target[:port]), target, timeout_set)
+        end
+      end
+
+      # The wording for a probe result (see #io_error_detail for the
+      # live-verified cases). Split from the probing itself so the
+      # deadline-vs-errno decision stays unit-testable without a real
+      # blackhole route.
+      def self.probe_wording(probe : {errno: Int32, pending: Bool}?, target : {host: String?, port: String, unix_socket: String?}, timeout_set : Bool) : String
+        if probe.nil?
+          "#{target_prefix(target)} failed: Connection refused\n\t#{hint(target)}\n"
+        elsif probe[:errno].zero?
+          "#{target_prefix(target)} failed: #{SERVER_CLOSED_TEXT}"
+        elsif probe[:pending] && timeout_set
+          "#{target_prefix(target)} failed: timeout expired\n"
+        else
+          "#{target_prefix(target)} failed: #{Errno.new(probe[:errno]).message}\n\t#{hint(target)}\n"
         end
       end
 
       # errno of a fresh non-blocking connect to host:port, or nil when
       # the probe cannot even be attempted (socket()/fcntl() failure,
-      # or the host no longer resolving). 0 means connected.
+      # or the host no longer resolving). 0 means connected. `pending`
+      # is true only when the probe's connect was still EINPROGRESS
+      # when its poll window closed - i.e. the target blackholes SYNs
+      # and nothing was ever refused - in which case the errno is the
+      # ETIMEDOUT stand-in, not a kernel-reported one.
       private PROBE_TIMEOUT_MS = 3000
 
       # poll(2)'s POLLOUT event bit (Linux poll.h: 0x004) - named locally
@@ -409,7 +454,7 @@ module Krikri
       # fat plugin build).
       private PROBE_POLLOUT = 0x004
 
-      private def self.probe_tcp_connect_errno(host : String, port : String) : Int32?
+      private def self.probe_tcp_connect_errno(host : String, port : String) : {errno: Int32, pending: Bool}?
         address : Socket::IPAddress? = begin
           # A literal IP (the overwhelmingly common login_host:) is
           # probed verbatim - resolving it could in principle return a
@@ -427,7 +472,7 @@ module Krikri
         return nil unless address
         fd = LibC.socket(address.family.value, LibC::SOCK_STREAM, LibC::IPPROTO_TCP)
         return nil if fd < 0
-        errno : Int32? = nil
+        result : {errno: Int32, pending: Bool}? = nil
         begin
           flags = LibC.fcntl(fd, LibC::F_GETFL, 0)
           if flags >= 0
@@ -435,32 +480,32 @@ module Krikri
           end
           rc = LibC.connect(fd, address.to_unsafe, address.size)
           if rc.zero?
-            errno = 0
+            result = {errno: 0, pending: false}
           elsif (e = Errno.value) == Errno::EINPROGRESS
             {% if flag?(:linux) %}
               pfd = LibC::Pollfd.new(fd: fd, events: PROBE_POLLOUT.to_i16, revents: 0i16)
               rc = LibC.poll(pointerof(pfd), 1, PROBE_TIMEOUT_MS)
               if rc <= 0
-                errno = Errno::ETIMEDOUT.value
+                result = {errno: Errno::ETIMEDOUT.value, pending: true}
               else
                 so_err = 0
                 len = LibC::SocklenT.new(sizeof(Int32))
                 if LibC.getsockopt(fd, LibC::SOL_SOCKET, LibC::SO_ERROR, pointerof(so_err), pointerof(len)).zero?
-                  errno = so_err
+                  result = {errno: so_err, pending: false}
                 else
-                  errno = Errno.value.value
+                  result = {errno: Errno.value.value, pending: false}
                 end
               end
             {% else %}
-              errno = Errno::ETIMEDOUT.value
+              result = {errno: Errno::ETIMEDOUT.value, pending: true}
             {% end %}
           else
-            errno = e.value
+            result = {errno: e.value, pending: false}
           end
         ensure
           LibC.close(fd)
         end
-        errno
+        result
       end
 
       # The Unix-socket variant of the old connect() failure text: a

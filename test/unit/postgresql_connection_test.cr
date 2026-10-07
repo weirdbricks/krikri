@@ -254,4 +254,69 @@ describe Krikri::PluginHelpers::PostgresqlConnection do
       )
     end
   end
+
+  # The deadline-vs-errno wording decision: a probe connect that is
+  # still EINPROGRESS when its poll window closes means the target
+  # blackholes SYNs and nothing was ever refused - with a
+  # connect_timeout set, real libpq's own poll deadline is what ends
+  # such an attempt ("timeout expired", no hint line); without one,
+  # the natural (unbounded) connect wording stands. A probe that
+  # resolved a concrete errno keeps that errno's text either way.
+  describe ".libpq_connect_error probe wording under a deadline" do
+    alias Target = {host: String?, port: String, unix_socket: String?}
+
+    def self.wording(probe, target : Target, timeout_set : Bool) : String
+      Krikri::PluginHelpers::PostgresqlConnection.probe_wording(probe, target, timeout_set)
+    end
+
+    it "words a still-pending probe as timeout expired when a deadline is set" do
+      self.class.wording(
+        {errno: Errno::ETIMEDOUT.value, pending: true},
+        {host: "192.0.2.1", port: "5432", unix_socket: nil}, true
+      ).must_equal(
+        "connection to server at \"192.0.2.1\", port 5432 failed: timeout expired\n"
+      )
+    end
+
+    it "keeps the natural-timeout wording for a still-pending probe without a deadline" do
+      self.class.wording(
+        {errno: Errno::ETIMEDOUT.value, pending: true},
+        {host: "192.0.2.1", port: "5432", unix_socket: nil}, false
+      ).must_equal(
+        "connection to server at \"192.0.2.1\", port 5432 failed: Connection timed out\n" \
+        "\tIs the server running on that host and accepting TCP/IP connections?\n"
+      )
+    end
+
+    it "keeps a concrete probe errno's text even when a deadline is set" do
+      self.class.wording(
+        {errno: Errno::ECONNREFUSED.value, pending: false},
+        {host: "127.0.0.1", port: "1", unix_socket: nil}, true
+      ).must_equal(
+        "connection to server at \"127.0.0.1\", port 1 failed: Connection refused\n" \
+        "\tIs the server running on that host and accepting TCP/IP connections?\n"
+      )
+    end
+
+    it "keeps the connected-probe server-closed wording" do
+      self.class.wording(
+        {errno: 0, pending: false},
+        {host: "127.0.0.1", port: "5432", unix_socket: nil}, true
+      ).must_equal(
+        "connection to server at \"127.0.0.1\", port 5432 failed: " \
+        "server closed the connection unexpectedly\n" \
+        "\tThis probably means the server terminated abnormally\n" \
+        "\tbefore or while processing the request.\n"
+      )
+    end
+
+    it "falls back to the refused wording when the probe cannot be attempted" do
+      self.class.wording(
+        nil, {host: "192.0.2.1", port: "5432", unix_socket: nil}, true
+      ).must_equal(
+        "connection to server at \"192.0.2.1\", port 5432 failed: Connection refused\n" \
+        "\tIs the server running on that host and accepting TCP/IP connections?\n"
+      )
+    end
+  end
 end
