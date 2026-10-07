@@ -126,6 +126,20 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
     include RaisesAssertion
     ALIAS = Krikri::PluginHelpers::MysqlPrivileges
 
+    describe ".grant_parts" do
+      it "keeps GRANT out of the privilege list" do
+        ALIAS.grant_parts(["ALL", "GRANT"]).must_equal({"ALL", " WITH GRANT OPTION"})
+      end
+
+      it "turns a lone GRANT into USAGE with the clause" do
+        ALIAS.grant_parts(["GRANT"]).must_equal({"USAGE", " WITH GRANT OPTION"})
+      end
+
+      it "leaves a plain list alone" do
+        ALIAS.grant_parts(["INSERT", "SELECT"]).must_equal({"INSERT, SELECT", ""})
+      end
+    end
+
     it "plans nothing when current grants already match the spec" do
       current = {
         "*.*"      => Set{"USAGE"},

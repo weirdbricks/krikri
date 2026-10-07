@@ -697,8 +697,8 @@ module Krikri
         when :revoke
           db.exec "REVOKE #{op.privileges.join(", ")} ON #{target} FROM #{account}"
         when :grant
-          clause = op.privileges.includes?("GRANT") ? " WITH GRANT OPTION" : ""
-          db.exec "GRANT #{op.privileges.join(", ")} ON #{target} TO #{account}#{clause}"
+          list, clause = PluginHelpers::MysqlPrivileges.grant_parts(op.privileges)
+          db.exec "GRANT #{list} ON #{target} TO #{account}#{clause}"
         end
       end
     end

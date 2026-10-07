@@ -135,6 +135,16 @@ module Krikri
         ops << Op.new(:grant, target, granted) unless granted.empty?
       end
 
+      # The privilege list and WITH GRANT OPTION clause for a GRANT
+      # statement. GRANT is the grant-option pseudo-privilege, never a
+      # name in the list ("ALL, GRANT" is a syntax error on MariaDB); an
+      # otherwise empty list is USAGE.
+      def self.grant_parts(privileges : Array(String)) : {String, String}
+        list = privileges.reject("GRANT")
+        list = ["USAGE"] if list.empty?
+        {list.join(", "), privileges.includes?("GRANT") ? " WITH GRANT OPTION" : ""}
+      end
+
       private def self.normalize_privileges(raw : Enumerable(String)) : Set(String)
         raw.map(&.strip.upcase).reject(&.empty?).map { |pth| pth == "ALL PRIVILEGES" ? "ALL" : pth }.to_set
       end
