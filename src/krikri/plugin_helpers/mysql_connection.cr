@@ -30,10 +30,56 @@ module Krikri
       #   only user/password, plus socket as a fallback when no login_host
       #   was given, reach the URI.
       # login_host/login_port never come from the config file. A
-      # config-file [client] socket is only used when neither
-      # login_unix_socket nor login_host was given.
-      private def self.resolve_socket(unix_socket : String?, host : String?, defs : NamedTuple(user: String?, password: String?, socket: String?)) : String?
-        unix_socket || (host ? nil : defs[:socket])
+      # config-file [client] socket is used when no login_unix_socket was
+      # given and the login host is the implicit/explicit 'localhost'
+      # (libmariadb's read_default_file [client] socket overrides its
+      # compiled-in default in exactly that situation).
+      #
+      # Default-socket fallback (round 2300215, fiaasco.mariadb): when no
+      # login_unix_socket is given, community.mysql hands its default
+      # login_host of 'localhost' plus the port to the Python driver. On
+      # the Debian-family target stacks these roles actually run on, that
+      # driver is MySQLdb/libmariadb (the role installs python3-mysqldb;
+      # community.mysql prefers PyMySQL but it isn't present), and
+      # libmariadb maps a host of 'localhost' to its compiled-in
+      # unix-socket path, NOT to TCP. That is how real ansible
+      # bootstraps Debian's dual-auth root@localhost (native-password
+      # 'invalid' OR unix_socket) through the socket as the OS root user
+      # (SO_PEERCRED): live-verified on Ubuntu 24.04 + MariaDB 10.11,
+      # MySQLdb root/'' host='localhost' connects over the socket while
+      # host='127.0.0.1' is denied with errno 1698. Going TCP like PyMySQL
+      # would get 'Access denied' there, which is exactly what this engine
+      # did (all four mysql_user items of the role failed). The fallback
+      # only picks a candidate path that actually exists - if none does
+      # (no local server socket at a known location), we keep the TCP
+      # behavior so a pure-TCP server still connects.
+      def self.resolve_socket(unix_socket : String?, host : String?, defs : NamedTuple(user: String?, password: String?, socket: String?), exists : String -> Bool = ->(path : String) { File.exists?(path) }) : String?
+        return unix_socket if unix_socket
+
+        localhost = host.nil? || host == "localhost"
+        return defs[:socket] if localhost && defs[:socket]
+        return default_socket_file(exists) if localhost
+
+        nil
+      end
+
+      # Compiled-in default socket paths of the client libraries that
+      # resolve host 'localhost' to a socket (libmariadb/MySQLdb), per
+      # packaging family. Debian/Ubuntu put the socket under /var/run/mysqld
+      # (/var/run -> /run symlink); RHEL-family MariaDB packages use
+      # /var/lib/mysql/mysql.sock; upstream tarballs/RPMs use /tmp/mysql.sock.
+      DEFAULT_SOCKET_CANDIDATES = [
+        "/var/run/mysqld/mysqld.sock",
+        "/run/mysqld/mysqld.sock",
+        "/var/lib/mysql/mysql.sock",
+        "/tmp/mysql.sock",
+      ]
+
+      # First default socket path that exists on this host, or nil when
+      # none does. `exists` is injectable so tests can exercise the
+      # candidate ordering without a real MySQL server's socket files.
+      def self.default_socket_file(exists : String -> Bool = ->(path : String) { File.exists?(path) }) : String?
+        DEFAULT_SOCKET_CANDIDATES.find { |path| exists.call(path) }
       end
 
       private def self.build_base_uri(socket : String?, host : String?, port : String?) : URI

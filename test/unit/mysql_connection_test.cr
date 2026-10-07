@@ -67,6 +67,87 @@ describe Krikri::PluginHelpers::MysqlConnection do
     end
   end
 
+  describe ".resolve_socket" do
+    NO_DEFS = {user: nil, password: nil, socket: nil}
+
+    it "keeps an explicit login_unix_socket no matter what else is set" do
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket("/explicit.sock", "localhost", NO_DEFS, exists: ->(_p : String) { true })
+        .must_equal("/explicit.sock")
+    end
+
+    it "maps the implicit and the explicit 'localhost' login host to a default socket (libmariadb/MySQLdb semantics)" do
+      # Only the first candidate that "exists" is picked; with a real
+      # Debian-family MariaDB this is /var/run/mysqld/mysqld.sock, which is
+      # how real ansible's mysql_user connects as root/'' (the Debian
+      # root@localhost is native-'invalid'-OR-unix_socket, so TCP is denied
+      # while the socket authenticates the OS root user via SO_PEERCRED -
+      # round 2300215 fiaasco.mariadb).
+      expected = Krikri::PluginHelpers::MysqlConnection::DEFAULT_SOCKET_CANDIDATES.first
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, nil, NO_DEFS, exists: ->(_p : String) { true })
+        .must_equal(expected)
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "localhost", NO_DEFS, exists: ->(_p : String) { true })
+        .must_equal(expected)
+    end
+
+    it "picks the first candidate that exists, in order" do
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "localhost", NO_DEFS, exists: ->(p : String) { p == "/var/lib/mysql/mysql.sock" })
+        .must_equal("/var/lib/mysql/mysql.sock")
+    end
+
+    it "stays on TCP when no default socket exists (pure-TCP servers keep working)" do
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, nil, NO_DEFS, exists: ->(_p : String) { false })
+        .must_be_nil
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "localhost", NO_DEFS, exists: ->(_p : String) { false })
+        .must_be_nil
+    end
+
+    it "does not map a non-localhost login host to a socket" do
+      # host='127.0.0.1' is TCP even with sockets present (same denial real
+      # ansible gets through MySQLdb for an explicit 127.0.0.1 login host).
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "127.0.0.1", NO_DEFS, exists: ->(_p : String) { true })
+        .must_be_nil
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "db.example.com", NO_DEFS, exists: ->(_p : String) { true })
+        .must_be_nil
+    end
+
+    it "prefers an option-file [client] socket over the default candidates" do
+      defs = {user: "root", password: "pw", socket: "/mycnf.sock"}
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, nil, defs, exists: ->(_p : String) { true })
+        .must_equal("/mycnf.sock")
+    end
+
+    it "still prefers an option-file socket only for localhost-style hosts" do
+      defs = {user: "root", password: "pw", socket: "/mycnf.sock"}
+      Krikri::PluginHelpers::MysqlConnection.resolve_socket(nil, "db.example.com", defs, exists: ->(_p : String) { true })
+        .must_be_nil
+    end
+  end
+
+  describe ".default_socket_file" do
+    it "returns nil when none of the candidate paths exists" do
+      Krikri::PluginHelpers::MysqlConnection.default_socket_file(exists: ->(_p : String) { false }).must_be_nil
+    end
+
+    it "scans the candidates in declaration order" do
+      seen = [] of String
+      result = Krikri::PluginHelpers::MysqlConnection.default_socket_file(exists: ->(p : String) { seen << p; p.ends_with?(".sock") && seen.size > 1 })
+      result.must_equal(Krikri::PluginHelpers::MysqlConnection::DEFAULT_SOCKET_CANDIDATES[1])
+      seen.first.must_equal(Krikri::PluginHelpers::MysqlConnection::DEFAULT_SOCKET_CANDIDATES[0])
+    end
+
+    it "falls back to the real filesystem check when no predicate is given" do
+      # No MySQL server socket is expected on the test host; whatever the
+      # real answer is, it must be one of the candidates.
+      result = Krikri::PluginHelpers::MysqlConnection.default_socket_file
+      if result
+        Krikri::PluginHelpers::MysqlConnection::DEFAULT_SOCKET_CANDIDATES.must_include(result)
+        File.exists?(result).must_equal(true)
+      else
+        Krikri::PluginHelpers::MysqlConnection::DEFAULT_SOCKET_CANDIDATES.each { |candidate| File.exists?(candidate).must_equal(false) }
+      end
+    end
+  end
+
   describe "option-file (config_file) fallback" do
     # Writes a throwaway my.cnf-format file and returns its path.
     private def setup(contents : String)
