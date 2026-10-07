@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1525`.**
+**Currently at `0.9.1526`.**
 
 ## Open gaps
 
@@ -51,7 +51,8 @@ defect moves down or gets deleted.
   would be verified no-ops, so the lazy `ensure_owned!` full-hash dup never fires on the executor's
   vars_context shape and the jinja resolver's second substitutor aliases the same hash): on a 300-task
   local template-heavy bench (~350-key vars, release, interleaved paired runs, median) wall
-  128 -> 115 ms (-10%), the templating bucket 41 -> 34.5 ms (-16%); invalidation stays exact because
+  128 -> 115 ms (-10%), the templating bucket 41 -> 34.5 ms (-16%); a second, independent 300-task bench
+  (15 interleaved runs) 79.1 -> 73.2 ms (-7.4%); invalidation stays exact because
   every call site constructs a fresh substitutor after any vars mutation (set_fact, register, loop
   item, include_vars, until:-retry) and the aliased hash is read live - pinned by
   `test/unit/var_substitutor_liveness_test.cr` and
