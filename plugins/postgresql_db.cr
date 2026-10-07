@@ -119,7 +119,7 @@ module Krikri
       return run_dump_or_restore(state, name) if state == "dump" || state == "restore"
 
       uri = build_maintenance_uri
-      DB.open(uri) do |dbcon|
+      PluginHelpers::PostgresqlConnection.open(uri, @params) do |dbcon|
         exists = dbcon.query_all("SELECT datname FROM pg_database", as: String).includes?(name)
         apply_state(state, dbcon, name, exists, true?(@params["_ansible_check_mode"]?))
       end

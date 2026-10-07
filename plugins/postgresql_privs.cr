@@ -240,7 +240,7 @@ module Krikri
         dbname: p.login_db,
       )
 
-      DB.open(uri) do |database|
+      PluginHelpers::PostgresqlConnection.open(uri, @params) do |database|
         if session_role = p.session_role
           database.exec %(SET ROLE "#{session_role.gsub('"', "\"\"")}")
         end

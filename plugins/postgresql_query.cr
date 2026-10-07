@@ -166,7 +166,7 @@ module Krikri
       )
 
       outcome = begin
-        DB.open(uri) do |conn|
+        PluginHelpers::PostgresqlConnection.open(uri, @params) do |conn|
           if autocommit
             run_queries(conn, queries, positional, named, search_path)
           else

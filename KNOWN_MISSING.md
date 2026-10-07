@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1524`.**
+**Currently at `0.9.1525`.**
 
 ## Open gaps
 
@@ -34,7 +34,7 @@ defect moves down or gets deleted.
 - **PostgreSQL:** the deprecated aliases (`port`, `host`, `login`, `unix_socket`, `db`) register
   Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
   every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
-  crystal-pg has no connect timeout, so libpq's `timeout expired` is unreachable. The live tests
+  The live tests
   on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman

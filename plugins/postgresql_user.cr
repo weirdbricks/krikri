@@ -99,7 +99,7 @@ module Krikri
         dbname: @params["login_db"]? || @params["db"]? || "postgres",
       )
 
-      DB.open(uri) do |dbcon|
+      PluginHelpers::PostgresqlConnection.open(uri, @params) do |dbcon|
         existing_flags = current_flags(dbcon, name)
 
         if state == "absent"

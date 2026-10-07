@@ -21,6 +21,8 @@ require "socket"
   end
 {% end %}
 
+require "json"
+
 module Krikri
   module PluginHelpers
     # PostgresqlConnection - pure logic for building a postgres://
@@ -50,6 +52,158 @@ module Krikri
       # socket directory to this path - matches `postgresql.conf`'s own
       # `unix_socket_directories` default there.
       DEFAULT_UNIX_SOCKET_DIR = "/var/run/postgresql"
+
+      # libpq's connect_timeout: the whole connect sequence - TCP
+      # connect, SSL negotiation, startup packet exchange, auth - is
+      # bounded; on expiry libpq words the failure "timeout expired"
+      # (fe-connect.c's connect-timeout handling; the sentence libpq
+      # prints is
+      #   connection to server at "H", port N failed: timeout expired
+      # with NO "Is the server running..." hint line, unlike the errno
+      # path - UNVERIFIED against real ansible until checked on a real
+      # host). Both of community.postgresql's ways to set it are
+      # honored, in libpq's own precedence order (PGCONNECT_TIMEOUT is
+      # consulted only when the conninfo keyword is absent):
+      # - the module's own integer `connect_timeout:` param;
+      # - PGCONNECT_TIMEOUT in the module's process environment (the
+      #   gateway to libpq's built-in default - libpq's default when
+      #   neither is set is a plain 2-minute OS connect timeout, so
+      #   neither set means unbounded and no DB-level bound is applied).
+      # crystal-pg itself has no connect timeout (its ConnInfo parses no
+      # such key and PQ::Connection#initialize connects unboundedly), so
+      # the connect attempt is bounded instead: DB.open only fails with
+      # DB::ConnectionRefused (from PG::Connection#initialize wrapping
+      # whatever PQ::Connection raised) while the pool's initial
+      # connection is built, so a ConnectionRefused whose cause carries
+      # the deadline marker means the deadline, not the socket, expired.
+      # Only the connection attempt is bounded: the module block (the
+      # queries) runs on the connected database afterwards, outside the
+      # deadline, so a slow query can never be misreported as a connect
+      # timeout.
+
+      # Exception cause marker used to detect an expiry-caused
+      # ConnectionRefused at the plugin rescue sites (where the raw
+      # params hash is available for the target text). Nested, not
+      # raised directly, so it can only ever be present through this
+      # module's own timeout path.
+      class ConnectTimeoutCause < ::Exception
+        def initialize(@timeout : Time::Span)
+          super("timeout expired")
+        end
+
+        getter timeout : Time::Span
+      end
+
+      # Resolves the effective connect timeout for a module run, the two
+      # ways community.postgresql lets one be set (it has no top-level
+      # `connect_timeout` option): `connect_params: {connect_timeout: N}`
+      # first, then PGCONNECT_TIMEOUT. Nil = unbounded (no DB-level
+      # deadline).
+      def self.connect_timeout(params : Hash(String, String)) : Time::Span?
+        if raw = params["connect_params"]?
+          if (dict = (JSON.parse(raw).as_h? rescue nil)) && (value = dict["connect_timeout"]?)
+            seconds = value.as_i? || value.as_s?.try(&.to_i?)
+            return seconds.seconds if seconds && seconds > 0
+          end
+        end
+        if raw = task_pgconnect_timeout(params) || ENV["PGCONNECT_TIMEOUT"]?
+          return raw.to_i.seconds if (n = raw.to_i?) && n > 0
+        end
+        nil
+      end
+
+      # PGCONNECT_TIMEOUT from the task's `environment:` keyword. It
+      # reaches the plugin as the `_environment` JSON param, not in the
+      # plugin process's own ENV, and - as in Ansible, where the task
+      # environment is applied over the module's - it wins over the
+      # process environment.
+      private def self.task_pgconnect_timeout(params : Hash(String, String)) : String?
+        raw = params["_environment"]? || return nil
+        value = JSON.parse(raw).as_h?.try(&.["PGCONNECT_TIMEOUT"]?) rescue nil
+        value.try { |v| v.as_s? || v.as_i?.try(&.to_s) }
+      end
+
+      # DB.open bounded by *timeout* (nil = plain DB.open). Only the
+      # connection attempt runs under the deadline - the module block
+      # runs on the connected database afterwards, in the caller's
+      # fiber, so a slow query is never misreported as a connect
+      # timeout. Raises DB::ConnectionRefused (cause:
+      # ConnectTimeoutCause) when the deadline expires; a database that
+      # finishes connecting after the deadline is closed by the fiber
+      # that built it (see #connect_within_deadline), so neither that
+      # fiber nor the connection leaks. crystal-db's pool builds its
+      # initial connection eagerly inside `DB::Database.new` and, with
+      # retry_attempts=0, ConnectionRefused is never retried or
+      # swallowed there, so the only connection attempt in flight is
+      # the one this bounds.
+      def self.open(uri : String, params : Hash(String, String), &block : DB::Database -> _)
+        timeout = connect_timeout(params)
+        if timeout.nil?
+          DB.open(uri) { |db| block.call(db) }
+        else
+          db = connect_within_deadline(uri, timeout)
+          begin
+            block.call(db)
+          ensure
+            db.close
+          end
+        end
+      end
+
+      # The bounded connect attempt itself: `DB.open(uri)` with NO
+      # block, run in a spawned fiber under the deadline. Returns the
+      # connected database, or raises the deadline-caused
+      # DB::ConnectionRefused. The mutex guards the handoff so an
+      # expiry landing in the same instant the connect completes still
+      # closes the database exactly once - either the fiber sees the
+      # expiry first and closes the database itself, or it hands it
+      # over and the deadline branch closes it.
+      private def self.connect_within_deadline(uri : String, deadline : Time::Span) : DB::Database
+        mutex = Mutex.new
+        expired = false
+        handed_off : DB::Database? = nil
+        failure : DB::ConnectionRefused? = nil
+        # Buffered: the fiber must never block on signaling a result
+        # the caller already gave up on (the expired path).
+        done = Channel(Nil).new(1)
+
+        spawn do
+          begin
+            db = DB.open(uri)
+            mutex.synchronize do
+              if expired
+                db.close
+              else
+                handed_off = db
+              end
+            end
+          rescue ex : DB::ConnectionRefused
+            mutex.synchronize { failure = ex }
+          rescue ex : Exception
+            # crystal-pg wraps every connect-stage failure; anything
+            # not already a ConnectionRefused becomes one, keeping the
+            # plugins' single rescue type intact.
+            mutex.synchronize { failure = DB::ConnectionRefused.new(cause: ex) }
+          ensure
+            done.send(nil)
+          end
+        end
+
+        select
+        when done.receive
+          if ex = failure
+            raise ex
+          end
+          mutex.synchronize { handed_off.not_nil! }
+        when timeout(deadline)
+          mutex.synchronize do
+            expired = true
+            handed_off.try(&.close)
+            handed_off = nil
+          end
+          raise DB::ConnectionRefused.new(cause: ConnectTimeoutCause.new(deadline))
+        end
+      end
 
       private def self.new_uri(unix_socket : String?, host : String?, port : String?, path : String) : URI
         if unix_socket
@@ -137,9 +291,9 @@ module Krikri
       #     connection to server at "192.0.2.1", port 5432 failed: Connection timed out\n
       #     \tIs the server running on that host and accepting TCP/IP connections?\n
       #   (real words a *libpq connect_timeout* expiry differently -
-      #   "timeout expired", no hint - when PGCONNECT_TIMEOUT is set;
-      #   krikri models no connect timeout, so that wording does not
-      #   apply.)
+      #   "timeout expired", no hint - when a connect_timeout is set;
+      #   krikri models that wording via PostgresqlConnection's own
+      #   bounded open, see the module's timeout comment.)
       # - TCP, server accepted the connection and then dropped it (both
       #   a clean close and an SO_LINGER-0 RST on the accepted socket):
       #     connection to server at "127.0.0.1", port 59999 failed: server closed the connection unexpectedly\n
@@ -167,10 +321,18 @@ module Krikri
       # name resolution" (Crystal's Socket::Addrinfo::Error carries no
       # gai code, so krikri prints the EAI_NONAME wording instead), any
       # strerror string from a non-glibc libc (libpq prints the
-      # system's own, locale-dependent strings), and libpq's
-      # connect_timeout wording ("timeout expired").
+      # system's own, locale-dependent strings). The libpq
+      # connect_timeout wording ("timeout expired"), formerly in this
+      # not-reproducible list, is now modeled - see ConnectTimeoutCause
+      # / #libpq_connect_error below.
       def self.libpq_connect_error(ex : DB::ConnectionRefused, target : {host: String?, port: String, unix_socket: String?}) : String
         case cause = unwrap(ex.cause)
+        when ConnectTimeoutCause
+          # libpq's connect_timeout wording (fe-connect.c), for the
+          # connect attempt the deadline killed: no errno was ever
+          # seen, so no "Is the server running..." hint line follows
+          # (see the timeout comment at the top of this module).
+          "#{target_prefix(target)} failed: timeout expired\n"
         when PQ::PQError
           # crystal-pg reports the server's ErrorResponse fields by
           # protocol-symbol name; the severity libpq prints ahead of
@@ -212,8 +374,9 @@ module Krikri
       #   real with a blackhole address (192.0.2.1, ~2min system
       #   timeout): "Connection timed out". Note real words a *libpq
       #   connect_timeout* expiry differently ("timeout expired", when
-      #   PGCONNECT_TIMEOUT is set); krikri models no connect timeout,
-      #   so that wording does not apply.
+      #   a connect_timeout is set); krikri models that wording too,
+      #   via PostgresqlConnection's own bounded open (see the timeout
+      #   comment at the top of this module), not via this errno path.
       # - probe impossible (no fd, resolution failing now): falls back
       #   to the wording the old code printed for every TCP failure.
       #
