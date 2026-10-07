@@ -1,0 +1,116 @@
+---
+# Probe for community.postgresql connect_timeout parity (connect_params
+# connect_timeout and the PGCONNECT_TIMEOUT env var) against a real libpq.
+# The holder below accepts TCP connects at kernel level (listen backlog) but
+# never speaks, so libpq's connect_timeout - not a refusal - fires.
+# Convention: each probed task registers r, then a debug emits
+# "KEYORDER|<case>|<registered result as json>". ignore_errors everywhere.
+
+- name: Install the SDK
+  ansible.builtin.apt:
+    name: [python3-psycopg2]
+    state: present
+    update_cache: true
+
+- name: Stop a leftover holder
+  ansible.builtin.shell: pkill -f '[k]op_pg_holder' || true
+  changed_when: false
+
+- name: Start a holder that never answers the handshake
+  ansible.builtin.shell: |
+    nohup setsid python3 -c "
+    import socket, time  # kop_pg_holder
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('127.0.0.1', 15433)); s.listen(16)
+    time.sleep(3600)" >/dev/null 2>&1 &
+    sleep 1
+  changed_when: false
+
+- name: Held listener, connect_params connect_timeout
+  community.postgresql.postgresql_query:
+    login_host: 127.0.0.1
+    login_port: 15433
+    login_user: postgres
+    login_password: krikri
+    login_db: postgres
+    connect_params:
+      connect_timeout: 2
+    query: SELECT 1
+  register: r
+  ignore_errors: true
+
+- name: Report pg_held_connect_params
+  ansible.builtin.debug:
+    msg: "KEYORDER|pg_held_connect_params|{{ r | to_json }}"
+
+- name: Held listener, PGCONNECT_TIMEOUT env
+  community.postgresql.postgresql_query:
+    login_host: 127.0.0.1
+    login_port: 15433
+    login_user: postgres
+    login_password: krikri
+    login_db: postgres
+    query: SELECT 1
+  environment:
+    PGCONNECT_TIMEOUT: "2"
+  register: r
+  ignore_errors: true
+
+- name: Report pg_held_env
+  ansible.builtin.debug:
+    msg: "KEYORDER|pg_held_env|{{ r | to_json }}"
+
+- name: Held listener, connect_params wins over a larger env value
+  community.postgresql.postgresql_query:
+    login_host: 127.0.0.1
+    login_port: 15433
+    login_user: postgres
+    login_password: krikri
+    login_db: postgres
+    connect_params:
+      connect_timeout: 2
+    query: SELECT 1
+  environment:
+    PGCONNECT_TIMEOUT: "30"
+  register: r
+  ignore_errors: true
+
+- name: Report pg_held_precedence
+  ansible.builtin.debug:
+    msg: "KEYORDER|pg_held_precedence|{{ r | to_json }}"
+
+- name: Blackhole address, connect_params connect_timeout
+  community.postgresql.postgresql_query:
+    login_host: 192.0.2.1
+    login_user: postgres
+    login_password: krikri
+    login_db: postgres
+    connect_params:
+      connect_timeout: 2
+    query: SELECT 1
+  register: r
+  ignore_errors: true
+
+- name: Report pg_blackhole
+  ansible.builtin.debug:
+    msg: "KEYORDER|pg_blackhole|{{ r | to_json }}"
+
+- name: Held listener through postgresql_db
+  community.postgresql.postgresql_db:
+    login_host: 127.0.0.1
+    login_port: 15433
+    login_user: postgres
+    login_password: krikri
+    connect_params:
+      connect_timeout: 2
+    name: kop_pgtimeout_db
+  register: r
+  ignore_errors: true
+
+- name: Report pg_held_db
+  ansible.builtin.debug:
+    msg: "KEYORDER|pg_held_db|{{ r | to_json }}"
+
+- name: Stop the holder
+  ansible.builtin.shell: pkill -f '[k]op_pg_holder' || true
+  changed_when: false

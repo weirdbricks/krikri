@@ -1,0 +1,1 @@
+local:$KRIKRI_ROOT/testing/keyorder_probes/kop_pg_timeout

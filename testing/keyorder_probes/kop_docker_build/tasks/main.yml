@@ -1,0 +1,132 @@
+---
+# docker_image_build SDK-error-path probe: a fake daemon on a unix socket
+# answers /_ping and /version, then fails every other call (500 or 404 JSON),
+# so the module's "An unexpected Docker error occurred: ..." path runs without
+# needing buildx to be provokable. Compared py (real ansible) vs krikri.
+# Convention: each probed task registers r, then a debug emits
+# "KEYORDER|<case>|<registered result as json>". ignore_errors everywhere.
+
+- name: Install docker and the SDK
+  ansible.builtin.apt:
+    name: [docker.io, python3-docker, python3-requests]
+    state: present
+    update_cache: true
+
+- name: Stop leftover fake daemons
+  ansible.builtin.shell: pkill -f '[k]op_fake_docker' || true
+  changed_when: false
+
+- name: Install the fake daemon
+  ansible.builtin.copy:
+    src: kop_fake_docker.py
+    dest: /tmp/kop_fake_docker.py
+    mode: "0644"
+
+- name: Build context dir
+  ansible.builtin.file:
+    path: /tmp/kop_ctx
+    state: directory
+    mode: "0755"
+
+- name: Build context
+  ansible.builtin.copy:
+    content: "FROM scratch\n"
+    dest: /tmp/kop_ctx/Dockerfile
+    mode: "0644"
+
+- name: Start the fake daemons
+  ansible.builtin.shell: |
+    nohup setsid python3 /tmp/kop_fake_docker.py /tmp/kop_fake_500.sock e500 >/dev/null 2>&1 &
+    nohup setsid python3 /tmp/kop_fake_docker.py /tmp/kop_fake_404.sock e404 >/dev/null 2>&1 &
+    sleep 2
+  changed_when: false
+
+- name: docker_image_build against a daemon failing with 500
+  community.docker.docker_image_build:
+    name: kop_img500
+    path: /tmp/kop_ctx
+    docker_host: unix:///tmp/kop_fake_500.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_500
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_500|{{ r | to_json }}"
+
+- name: docker_image_build against a daemon failing with 404
+  community.docker.docker_image_build:
+    name: kop_img404
+    path: /tmp/kop_ctx
+    docker_host: unix:///tmp/kop_fake_404.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_404
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_404|{{ r | to_json }}"
+
+- name: docker_image_build with rebuild always against the 500 daemon
+  community.docker.docker_image_build:
+    name: kop_img500b
+    path: /tmp/kop_ctx
+    rebuild: always
+    docker_host: unix:///tmp/kop_fake_500.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_500_rebuild
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_500_rebuild|{{ r | to_json }}"
+
+- name: Install the real buildx plugin
+  ansible.builtin.get_url:
+    url: https://github.com/docker/buildx/releases/download/v0.17.1/buildx-v0.17.1.linux-amd64
+    dest: /usr/libexec/docker/cli-plugins/docker-buildx
+    mode: "0755"
+  register: bx_install
+  ignore_errors: true
+
+- name: Report buildx install outcome
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_buildx_installed|{{ {'failed': bx_install is failed} | to_json }}"
+
+- name: docker_image_build with buildx present against a daemon failing with 500
+  community.docker.docker_image_build:
+    name: kop_img500_bx
+    path: /tmp/kop_ctx
+    docker_host: unix:///tmp/kop_fake_500.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_500_bx
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_500_bx|{{ r | to_json }}"
+
+- name: docker_image_build with buildx present against a daemon failing with 404
+  community.docker.docker_image_build:
+    name: kop_img404_bx
+    path: /tmp/kop_ctx
+    docker_host: unix:///tmp/kop_fake_404.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_404_bx
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_404_bx|{{ r | to_json }}"
+
+- name: docker_image_build rebuild always with buildx present, 500 daemon
+  community.docker.docker_image_build:
+    name: kop_img500b_bx
+    path: /tmp/kop_ctx
+    rebuild: always
+    docker_host: unix:///tmp/kop_fake_500.sock
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_500_rebuild_bx
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_500_rebuild_bx|{{ r | to_json }}"
+
+- name: Stop the fake daemons
+  ansible.builtin.shell: pkill -f '[k]op_fake_docker' || true
+  changed_when: false
