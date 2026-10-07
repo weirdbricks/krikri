@@ -16,8 +16,6 @@ defect moves down or gets deleted.
 **Currently at `0.9.1527`.**
 
 ## Open gaps
-- **Task `timeout:` keyword:** parsed and accepted but not enforced - the executor has no per-task wall-clock
-  watchdog (real Ansible fails the task once it runs past the limit). Module-level `timeout:` args are unaffected.
 
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
