@@ -45,9 +45,18 @@ module Krikri
           @last_request_url = url
           exec(method, url, headers, body) do |response|
             unless response.success?
-              response_body = response.body_io?.try(&.gets_to_end) || "{\"message\": \"No response body\"}"
-              error = Docr::Types::ErrorResponse.from_json(response_body)
-              raise Docr::Errors::DockerAPIError.new(error.message, response.status_code)
+              response_body = response.body_io?.try(&.gets_to_end) || ""
+              # Some daemons answer an API error with an EMPTY or non-JSON
+              # body (podman's compat API 500s an unparseable image
+              # reference with no JSON at all) - fall back to the raw body,
+              # exactly like the SDK's APIError.__str__ does, instead of
+              # crashing on the ErrorResponse parse.
+              message = begin
+                Docr::Types::ErrorResponse.from_json(response_body).message
+              rescue JSON::ParseException | JSON::Error
+                response_body
+              end
+              raise Docr::Errors::DockerAPIError.new(message, response.status_code)
             end
             yield response
           end

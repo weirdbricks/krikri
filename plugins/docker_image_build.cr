@@ -1,7 +1,6 @@
 #!/usr/bin/env crystal
 
 require "json"
-require "docr"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/ansible_arg_validation"
 require "../src/krikri/plugin_helpers/docker_ref"
@@ -17,8 +16,11 @@ module Krikri
   # directly), buildx builds have no API equivalent - Ansible's own
   # module shells out to the `docker buildx build` CLI too, so this
   # plugin does the same via #remote_exec. Image-existence checking (for
-  # the rebuild: never idempotency check) still goes straight to the
-  # Engine API, same approach as docker_image.cr.
+  # the rebuild: never idempotency check) goes through the CLI exactly
+  # like real's find_image: `docker image ls --format '{{ json . }}'
+  # --no-trunc --filter reference=<name>` plus the docker.io fallback
+  # chain, then `docker image inspect <ID>` - so daemon failures surface
+  # in the CLI run_command failure shape, not any SDK wording.
   #
   # Supported parameters: name (required), tag (default "latest"), path
   # (required), dockerfile, cache_from (list), pull (bool), network,
@@ -56,9 +58,62 @@ module Krikri
       "validate_certs" => %w[tls_verify],
     }
     # Ansible's own wrapper for a DockerException escaping the module body
-    # (docker_image_build.py's main); the wrapped text is the Python SDK's
-    # own APIError rendering, which PluginHelpers::DockerSdkError reproduces.
+    # (docker_image_build.py's main). For this CLI-client module the only
+    # DockerException the flow can raise is _api/auth.py's InvalidRepository,
+    # reached from find_image's empty-lookup fallback (which resolves the
+    # repository name from the raw `name:` param); no SDK APIError is
+    # reachable because the module builds no Engine API client at all -
+    # the image lookup is CLI-side, exactly like real's (live-verified vs
+    # ansible-core 2.19.11 + community.docker 5.2.1 driving a real docker
+    # CLI + buildx plugin against a podman `system service` socket,
+    # 2026-10-06). The wrap's fail_json(msg=..., exception=...) shape -
+    # kwargs lead, then failed, msg, changed, exception - is WRAP_KEY_ORDER.
     API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+
+    # The fail_json shape the DockerException wrap produces: client.fail
+    # passes exception= as a kwarg (which leads), then failed, then msg.
+    WRAP_KEY_ORDER = %w[exception failed msg changed]
+
+    # _api/auth.py resolve_repository_name, raising its errors.InvalidRepository
+    # (a DockerException) exactly when real's find_image does: ONLY after the
+    # `docker image ls --filter reference=<name>` lookup (and the docker.io
+    # fallbacks) returned no rows, i.e. when our Engine-API lookup finds no
+    # image. split_repo_name takes the part before the first "/" as the
+    # "index" name unless it has no "/" (or that part has no dot/colon and
+    # isn't "localhost", i.e. a docker.io repo); resolve_repository_name
+    # rejects a scheme anywhere in the name and an index name beginning or
+    # ending with a hyphen.
+    def self.invalid_repository_error(name : String) : String?
+      return "Repository name cannot contain a scheme (#{name})" if name.includes?("://")
+
+      parts = name.split("/", 2)
+      index_name = if parts.size < 2 || (!parts[0].includes?(".") && !parts[0].includes?(":") && parts[0] != "localhost")
+                     "docker.io"
+                   else
+                     parts[0]
+                   end
+      if index_name[0] == '-' || index_name[-1] == '-'
+        return "Invalid index name (#{index_name}). Cannot begin or end with a hyphen."
+      end
+      nil
+    end
+
+    # _api/auth.py split_repo_name + resolve_index_name, for find_image's
+    # docker.io fallback chain: the part before the first "/" is the
+    # "index" unless it has no dot/colon and isn't "localhost" (then it's
+    # the whole name on the docker.io index); "index.docker.io" resolves
+    # to "docker.io".
+    def self.split_repo_name(name : String) : {String, String}
+      parts = name.split("/", 2)
+      index_name = if parts.size < 2 || (!parts[0].includes?(".") && !parts[0].includes?(":") && parts[0] != "localhost")
+                     "docker.io"
+                   else
+                     parts[0]
+                   end
+      index_name = "docker.io" if index_name == "index.docker.io"
+      remote = parts.size < 2 ? name : parts[1]
+      {index_name, remote}
+    end
 
     # Engine-internal executor keys that never reach the Ansible module's
     # params (see apt.cr's same exclusion list).
@@ -122,7 +177,19 @@ module Krikri
       # run_command(check_rc=True). A daemon that cannot be reached fails
       # right there, with the CLI's own stderr as the message and the
       # run_command failure shape, NOT the API client's SDK wording.
-      if failure = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+      probe = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+      if failure = probe.failure
+        return probe_failure_result(failure)
+      end
+
+      # Real's ImageBuilder.__init__ gates on the buildx CLI plugin
+      # BEFORE any path/tag validation and before any Engine-API use:
+      # `docker info --format '{{ json . }}'`, then a scan of
+      # ClientInfo.Plugins for buildx. A host with docker.io installed
+      # but no buildx plugin fails right here ("Docker CLI <cli> does
+      # not have the buildx plugin installed", plain fail_json shape)
+      # instead of reaching the image lookup or the build.
+      if failure = PluginHelpers::DockerCliProbe.buildx_check(->(cmd : String) { remote_exec(cmd) }, probe.cli, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
         return probe_failure_result(failure)
       end
 
@@ -142,9 +209,24 @@ module Krikri
       rebuild = @params["rebuild"]? || "never"
       check_mode = true?(@params["_ansible_check_mode"]?)
 
-      client, _ = PluginHelpers::DockerClient.build(@params)
-      full_ref = PluginHelpers::DockerRef.join(ref_name, tag)
-      existing_image = image_inspect(client, full_ref)
+      # Real's build_image starts with client.find_image(name, tag), which
+      # resolves the image through the CLI - NOT the Engine API (the CLI
+      # client module builds no API client at all). InvalidRepository
+      # (resolve_repository_name) raises inside that chain when the first
+      # lookup returned no rows; a daemon that rejects the reference
+      # outright (podman's 301 on a scheme URL, its 500 on an invalid
+      # reference) answers real's image-ls chain with "no rows" too, which
+      # is exactly what gates the raise - raising the API error from a
+      # pre-check here would resurface as the SDK's wording instead.
+      lookup = cli_find_image(probe.cli, ref_name, tag)
+      return failure if failure = lookup.failure
+      if wrap = lookup.invalid_repo
+        result = PluginResult.new(changed: false, failed: true,
+          msg: "#{API_ERROR_PREFIX}#{wrap}")
+        result.key_order = WRAP_KEY_ORDER
+        return result
+      end
+      existing_image = lookup.image
 
       # Ansible's build_image returns the module dict {changed, actions,
       # image} verbatim when the image already exists with rebuild: never
@@ -180,22 +262,21 @@ module Krikri
         return result
       end
 
-      # Real re-looks the image up after the build; a buildx backend that
-      # doesn't load the result into the daemon's store (a remote
-      # driver's default output) leaves it at the seeded {}.
+      # Real re-looks the image up after the build through the same CLI
+      # find_image; a buildx backend that doesn't load the result into the
+      # daemon's store (a remote driver's default output) leaves it at the
+      # seeded {}.
+      post = cli_find_image(probe.cli, ref_name, tag)
+      return failure if failure = post.failure
       result = PluginResult.new(changed: true, failed: false, failed_flag: false,
         actions: json_string_array([] of String),
-        image: image_inspect(client, full_ref) || JSON.parse("{}"),
+        image: post.image || JSON.parse("{}"),
         stdout: build_result[:stdout], stderr: build_result[:stderr],
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stdout]),
         stderr_lines: PluginHelpers::AnsibleSplitlines.split(build_result[:stderr]),
         command: json_string_array(args))
       result.key_order = SUCCESS_KEY_ORDER
       result
-    rescue ex : Docr::Errors::DockerAPIError
-      PluginResult.new(changed: false, failed: true, msg: "#{API_ERROR_PREFIX}#{PluginHelpers::DockerSdkError.api_error_text(client, @params, ex)}")
-    rescue ex : Socket::ConnectError
-      PluginResult.new(changed: false, failed: true, msg: PluginHelpers::DockerSdkError.connect_error_text(ex, PluginHelpers::DockerClient.resolved_docker_host(@params)))
     end
 
     # The run_command(check_rc=True) failure shape real's CLI probe fails
@@ -230,6 +311,155 @@ module Krikri
         actions: json_string_array([] of String), image: image)
       result.key_order = NO_BUILD_KEY_ORDER
       result
+    end
+
+    # _common_cli.py's find_image/_image_lookup over the CLI (the module
+    # builds no Engine API client at all): `docker image ls --format
+    # '{{ json . }}' --no-trunc --filter reference=<name>` through
+    # call_cli_json_stream(check_rc=True), the first Tag/Digest row match
+    # when a tag is in play, the docker.io fallback chain when the first
+    # lookup returned no rows (with resolve_repository_name's
+    # InvalidRepository raise right after it), then a single
+    # `docker image inspect <ID>` (call_cli_json, check_rc=False) whose
+    # first row becomes the module's image dict. Daemon failures surface
+    # in the shapes real produces: the run_command failure shape for a
+    # failing image ls, the "Error while parsing JSON output of ..." shape
+    # for unparseable CLI JSON, and plain fail_json for the >1-rows and
+    # failed-inspect arms.
+    private record CliImage, image : JSON::Any?, failure : PluginResult?, invalid_repo : String?
+    private record CliRows, images : Array(JSON::Any), failure : PluginResult?
+    private record CliInspect, image : JSON::Any?, failure : PluginResult?
+
+    private def cli_find_image(cli : String, name : String, tag : String) : CliImage
+      return CliImage.new(nil, nil, nil) if name.empty?
+
+      outcome = image_lookup(cli, name, tag)
+      return CliImage.new(nil, outcome.failure, nil) if outcome.failure
+      images = outcome.images
+
+      if images.empty?
+        # resolve_repository_name raises InvalidRepository exactly here:
+        # after the first lookup returned no rows, before any docker.io
+        # fallback (those only run for the docker.io index anyway).
+        if err = DockerImageBuildPlugin.invalid_repository_error(name)
+          return CliImage.new(nil, nil, err)
+        end
+        registry, repo_name = DockerImageBuildPlugin.split_repo_name(name)
+        if registry == "docker.io"
+          outcome = image_lookup(cli, repo_name, tag)
+          return CliImage.new(nil, outcome.failure, nil) if outcome.failure
+          images = outcome.images
+          if images.empty? && repo_name.starts_with?("library/")
+            outcome = image_lookup(cli, repo_name["library/".size..], tag)
+            return CliImage.new(nil, outcome.failure, nil) if outcome.failure
+            images = outcome.images
+          end
+          if images.empty?
+            outcome = image_lookup(cli, "#{registry}/#{repo_name}", tag)
+            return CliImage.new(nil, outcome.failure, nil) if outcome.failure
+            images = outcome.images
+          end
+          if images.empty? && !repo_name.includes?("/")
+            outcome = image_lookup(cli, "#{registry}/library/#{repo_name}", tag)
+            return CliImage.new(nil, outcome.failure, nil) if outcome.failure
+            images = outcome.images
+          end
+        end
+      end
+
+      return CliImage.new(nil, nil, nil) if images.empty?
+      if images.size > 1
+        return CliImage.new(nil, PluginResult.new(changed: false, failed: true,
+          msg: "Daemon returned more than one result for #{name}:#{tag}"), nil)
+      end
+
+      inspected = image_inspect_via_cli(cli, name, tag, images[0])
+      return CliImage.new(nil, inspected.failure, nil) if inspected.failure
+      CliImage.new(inspected.image, nil, nil)
+    end
+
+    private def image_lookup(cli : String, name : String, tag : String) : CliRows
+      args = PluginHelpers::DockerCliProbe.base_args(cli, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?) +
+             ["image", "ls", "--format", "{{ json . }}", "--no-trunc", "--filter", "reference=#{name}"]
+      cmd = args.map { |arg| PluginHelpers::DockerCliProbe.shlex_quote(arg) }.join(" ")
+      result = remote_exec(cmd)
+      unless result[:exit_code] == 0
+        return CliRows.new([] of JSON::Any, run_command_failure(cmd, result))
+      end
+
+      # call_cli_json_stream: one JSON object per stdout line (stripped,
+      # only lines starting with '{'); a bad line fails the module with
+      # cmd/rc/stdout/stderr attached.
+      images = [] of JSON::Any
+      result[:stdout].each_line do |line|
+        line = line.strip
+        next unless line.starts_with?("{")
+        begin
+          images << JSON.parse(line)
+        rescue ex : JSON::ParseException
+          return CliRows.new([] of JSON::Any, json_parse_failure(cmd, result, ex))
+        end
+      end
+
+      # _image_lookup's own tag filter: the FIRST row whose Tag or Digest
+      # matches - the row list collapses to 0 or 1 entries (only an empty
+      # tag skips the filter and can leave more than one).
+      unless tag.empty?
+        matched = images.find do |image|
+          image["Tag"]?.try(&.as_s?) == tag || image["Digest"]?.try(&.as_s?) == tag
+        end
+        images = matched ? [matched] : [] of JSON::Any
+      end
+      CliRows.new(images, nil)
+    end
+
+    private def image_inspect_via_cli(cli : String, name : String, tag : String, row : JSON::Any) : CliInspect
+      image_id = row["ID"]?.try(&.as_s?) || ""
+      args = PluginHelpers::DockerCliProbe.base_args(cli, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?) +
+             ["image", "inspect", image_id]
+      cmd = args.map { |arg| PluginHelpers::DockerCliProbe.shlex_quote(arg) }.join(" ")
+      result = remote_exec(cmd)
+
+      parsed = begin
+        JSON.parse(result[:stdout])
+      rescue ex : JSON::ParseException
+        return CliInspect.new(nil, json_parse_failure(cmd, result, ex))
+      end
+
+      # real: `if not image: return None` runs BEFORE the rc check - an
+      # empty inspect list means "not found" even on failure.
+      unless (list = parsed.as_a?) && !list.empty?
+        return CliInspect.new(nil, nil)
+      end
+      if result[:exit_code] != 0
+        return CliInspect.new(nil, PluginResult.new(changed: false, failed: true,
+          msg: "Error inspecting image #{name}:#{tag} - #{result[:stderr]}"))
+      end
+      CliInspect.new(list[0], nil)
+    end
+
+    # The run_command(check_rc=True) failure shape real's CLI probe fails
+    # with: fail_json(cmd=..., rc=..., stdout=..., stderr=..., msg=...) -
+    # kwargs in that order, then _return_formatted's stdout_lines/
+    # stderr_lines, with changed/exception appended by the module
+    # protocol. A missing CLI binary fails as a plain fail_json(msg=...)
+    # (common_cli.py's get_bin_path failure - no cmd/rc at all).
+    private def run_command_failure(cmd : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      probe_failure_result(PluginHelpers::DockerCliProbe::Failure.new(
+        cmd: cmd,
+        msg: result[:stderr].rstrip,
+        rc: result[:exit_code],
+        stdout: result[:stdout],
+        stderr: result[:stderr]))
+    end
+
+    private def json_parse_failure(cmd : String, result : NamedTuple(exit_code: Int32, stdout: String, stderr: String), ex : JSON::ParseException) : PluginResult
+      probe_failure_result(PluginHelpers::DockerCliProbe::Failure.new(
+        cmd: cmd,
+        msg: "Error while parsing JSON output of #{cmd}: #{ex.message}\nJSON output: #{result[:stdout]}\n\nError output:\n#{result[:stderr]}",
+        rc: result[:exit_code],
+        stdout: result[:stdout],
+        stderr: result[:stderr]))
     end
 
     # AnsibleModule validation for this module's argument_spec,
@@ -639,24 +869,6 @@ module Krikri
 
     private def shell_quote(str : String) : String
       "'" + str.gsub("'", "'\\''") + "'"
-    end
-
-    # The image's full daemon inspect payload for the reference (real
-    # registers `docker image inspect`'s dict, or {} when the image
-    # isn't there), nil if the image doesn't exist - same raw-GET,
-    # minimal-trust approach as docker_image.cr's image_inspect_json,
-    # plus 404 tolerance since build_image consults it speculatively
-    # before AND after the build.
-    private def image_inspect(client : Docr::Client, ref : String) : JSON::Any?
-      raw = nil
-      client.call("GET", "/images/#{ref}/json") do |response|
-        raw = response.body_io?.try(&.gets_to_end)
-      end
-      return nil if raw.nil? || raw.empty?
-      JSON.parse(raw)
-    rescue ex : Docr::Errors::DockerAPIError
-      return nil if ex.status_code == 404
-      raise ex
     end
   end
 end

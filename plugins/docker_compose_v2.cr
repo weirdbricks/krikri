@@ -116,7 +116,8 @@ module Krikri
       # cannot be reached fails right there (even a missing compose file
       # never gets that far), with the CLI's own stderr as the message
       # and the run_command failure shape.
-      if failure = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+      probe = PluginHelpers::DockerCliProbe.probe(->(cmd : String) { remote_exec(cmd) }, @params["docker_cli"]?, PluginHelpers::DockerClient.resolved_docker_host(@params), @params["cli_context"]?)
+      if failure = probe.failure
         return probe_failure_result(failure)
       end
 

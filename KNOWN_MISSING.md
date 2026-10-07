@@ -38,9 +38,15 @@ defect moves down or gets deleted.
   on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
-  socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real);
-  `docker_image_build`'s SDK-error path could
-  not be provoked on podman (no buildx), so that wording is aligned but unverified live.
+  socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real).
+  `docker_image_build` is verified against real Ansible 2.19.11 + community.docker on a real
+  docker.io host (the `kop_docker_build` probe, 7 probes byte-identical): the buildx-plugin gate
+  ("Docker CLI /usr/bin/docker does not have the buildx plugin installed", before any daemon call) and
+  the image lookup, which real runs through the CLI (`docker image ls`, then `docker image inspect`),
+  so a daemon failure surfaces in the CLI run_command shape (`cmd rc stdout stderr failed msg ...`),
+  never as an SDK APIError. The one DockerException this module can raise,
+  resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
+  unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
 - **Performance** (profiled 2026-10-05, release static build, `--forks 1`, report kept in
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
   the daemon, <1% templating/conditions. Done from that profile: a **local plugin daemon** serves

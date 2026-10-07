@@ -1,3 +1,4 @@
+require "json"
 require "./docker_client"
 
 module Krikri
@@ -54,14 +55,22 @@ module Krikri
         base_args(docker_cli, docker_host, cli_context).map { |arg| shlex_quote(arg) }.join(" ")
       end
 
+      # The resolved docker CLI path (the docker_cli param, else the
+      # `command -v docker` resolution) alongside the probe outcome - the
+      # buildx gate needs the same path real's get_cli() renders into its
+      # failure message.
+      record Result, failure : Failure?, cli : String
+
       # Runs the probe through *run* (the plugin's remote_exec). Returns
-      # nil when the daemon answered, otherwise the Failure to fail the
-      # task with.
-      def self.probe(run : Runner, docker_cli : String?, docker_host : String?, cli_context : String? = nil) : Failure?
+      # a Result whose #failure is nil when the daemon answered, otherwise
+      # the Failure to fail the task with.
+      def self.probe(run : Runner, docker_cli : String?, docker_host : String?, cli_context : String? = nil) : Result
         cli = docker_cli.presence
         if cli.nil?
           resolved = run.call("command -v docker")
-          return missing_cli_failure if resolved[:exit_code] != 0 || resolved[:stdout].strip.empty?
+          if resolved[:exit_code] != 0 || resolved[:stdout].strip.empty?
+            return Result.new(failure: missing_cli_failure, cli: "")
+          end
           cli = resolved[:stdout].strip
         end
 
@@ -73,9 +82,9 @@ module Krikri
 
         cmd = args.map { |arg| shlex_quote(arg) }.join(" ")
         result = run.call(cmd)
-        return nil if result[:exit_code] == 0
+        return Result.new(failure: nil, cli: cli) if result[:exit_code] == 0
 
-        Failure.new(
+        failure = Failure.new(
           cmd: cmd,
           # run_command(check_rc=True)'s fail_json: msg = stderr rstrip
           # (heuristic_log_sanitize has nothing to blank here).
@@ -83,6 +92,77 @@ module Krikri
           rc: result[:exit_code],
           stdout: result[:stdout],
           stderr: result[:stderr])
+        Result.new(failure: failure, cli: cli)
+      end
+
+      # Real's buildx-plugin gate (docker_image_build.py's
+      # ImageBuilder.__init__): get_client_plugin_info('buildx') runs
+      # `docker info --format '{{ json . }}'` (call_cli_json,
+      # check_rc=True) and scans ClientInfo.Plugins for Name == 'buildx'
+      # - BEFORE any path/tag validation and before any Engine-API use.
+      # A host whose docker CLI has no buildx plugin (e.g. docker.io's
+      # package without docker-buildx installed) fails right here with
+      # "Docker CLI <cli> does not have the buildx plugin installed"
+      # (cli = get_cli(): the docker_cli param, else the resolved PATH
+      # entry), a plain fail_json shape.
+      # The other failure arms real can reach first, same mechanisms as
+      # the version probe:
+      # - non-zero rc: run_command(check_rc=True)'s shape (msg = stderr);
+      # - unparseable stdout: call_cli_json's own fail_json("Error while
+      #   parsing JSON output of <cmd>: <exc>\nJSON output: ...\n\nError
+      #   output:\n<stderr>", cmd=..., rc=..., stdout=..., stderr=...) -
+      #   kwargs lead, so the same key shape as the run_command failure
+      #   (the exception text is Python simplejson's, not Crystal's);
+      # - ClientInfo absent/not a dict: "Cannot determine Docker client
+      #   information. Are you maybe using podman instead of docker?".
+      # The plugin-version comparisons real does next (LooseVersion vs
+      # 0.6.0 for secrets of type=env/value, vs 0.13.0 for more than one
+      # output) never fire here: secrets/outputs are rejected by the
+      # plugin's unsupported-parameters validation before this runs.
+      def self.buildx_check(run : Runner, cli : String, docker_host : String?, cli_context : String?) : Failure?
+        args = base_args(cli, docker_host, cli_context) + ["info", "--format", "{{ json . }}"]
+        cmd = args.map { |arg| shlex_quote(arg) }.join(" ")
+
+        result = run.call(cmd)
+        unless result[:exit_code] == 0
+          return Failure.new(
+            cmd: cmd,
+            msg: result[:stderr].rstrip,
+            rc: result[:exit_code],
+            stdout: result[:stdout],
+            stderr: result[:stderr])
+        end
+
+        begin
+          info = JSON.parse(result[:stdout])
+        rescue ex : JSON::ParseException
+          return Failure.new(
+            cmd: cmd,
+            msg: "Error while parsing JSON output of #{cmd}: #{ex.message}\nJSON output: #{result[:stdout]}\n\nError output:\n#{result[:stderr]}",
+            rc: result[:exit_code],
+            stdout: result[:stdout],
+            stderr: result[:stderr])
+        end
+
+        client_info = info.as_h?.try(&.["ClientInfo"]?)
+        unless client_info && client_info.raw.is_a?(Hash)
+          return plain_failure("Cannot determine Docker client information. Are you maybe using podman instead of docker?")
+        end
+
+        plugins = client_info.as_h["Plugins"]?
+        plugins = nil unless plugins && plugins.raw.is_a?(Array)
+        has_buildx = plugins.try(&.as_a.any? do |plugin|
+          next false unless plugin.raw.is_a?(Hash)
+          name = plugin.as_h["Name"]?
+          name.try(&.as_s?) == "buildx"
+        end)
+        return nil if has_buildx
+
+        plain_failure("Docker CLI #{cli} does not have the buildx plugin installed")
+      end
+
+      private def self.plain_failure(msg : String) : Failure
+        Failure.new(cmd: nil, msg: msg, rc: 0, stdout: "", stderr: "")
       end
 
       private def self.missing_cli_failure : Failure
