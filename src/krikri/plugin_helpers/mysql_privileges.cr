@@ -37,6 +37,10 @@ module Krikri
       # "*.*:USAGE" must compare equal to the baseline row, not look
       # like a missing grant.
       def self.parse_show_grants_line(line : String) : Grant?
+        # `GRANT PROXY ON ''@'%' TO ...` (MariaDB root) is not a db/table
+        # privilege: its "target" is a user, and revoking it as one is
+        # "Incorrect table name ''". Real community.mysql never plans it.
+        return nil if line =~ /\AGRANT\s+PROXY\s+ON\s/i
         match = line.match(/\AGRANT\s+(.+?)\s+ON\s+(\S+)\s+TO\s+/i)
         return nil unless match
 

@@ -126,6 +126,11 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
     include RaisesAssertion
     ALIAS = Krikri::PluginHelpers::MysqlPrivileges
 
+    it "ignores MariaDB's GRANT PROXY line" do
+      ALIAS.parse_show_grants_line("GRANT PROXY ON ''@'%' TO 'root'@'localhost' WITH GRANT OPTION").must_be_nil
+      ALIAS.current_grants(["GRANT ALL PRIVILEGES ON *.* TO `root`@`localhost` WITH GRANT OPTION", "GRANT PROXY ON ''@'%' TO 'root'@'localhost' WITH GRANT OPTION"]).keys.must_equal(["*.*"])
+    end
+
     describe ".grant_parts" do
       it "keeps GRANT out of the privilege list" do
         ALIAS.grant_parts(["ALL", "GRANT"]).must_equal({"ALL", " WITH GRANT OPTION"})
