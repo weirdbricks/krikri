@@ -2,6 +2,7 @@ require "yaml"
 require "./unsafe_values"
 require "./vault"
 require "./host"
+require "./var_origin"
 require "./inventory_plugins"
 
 module Krikri
@@ -290,11 +291,16 @@ module Krikri
     property hosts : Hash(String, Host)
     property children : Array(String)
     property vars : Hash(String, JSON::Any)
+    # Where each of this group's own vars was defined (see Host#var_origins
+    # for why) - applied to member hosts by apply_group_vars mirroring the
+    # value merge.
+    property var_origins : Hash(String, VarOrigin)
 
     def initialize(@name : String)
       @hosts = Hash(String, Host).new
       @children = [] of String
       @vars = Hash(String, JSON::Any).new
+      @var_origins = Hash(String, VarOrigin).new
     end
 
     # Add host to group
@@ -391,14 +397,23 @@ module Krikri
         # "Invalid YAML in inventory file" message (and for a
         # non-YAML-extension source, parse routes to the INI parser).
         is_yaml_source = source.ends_with?(".yml") || source.ends_with?(".yaml")
-        doc = is_yaml_source ? (YAML.parse(File.read(source)) rescue nil) : nil
+        if is_yaml_source
+          # Read once: the text feeds both the parse and the source map
+          # that labels the inventory vars' origins.
+          text = File.read(source)
+          doc = (YAML.parse(text) rescue nil)
+          merged_map = doc ? YamlSourceMap.scan(text) : nil
+        else
+          doc = nil
+          merged_map = nil
+        end
 
         if doc && InventoryPlugins.plugin_name(doc) == "constructed"
           deferred_constructed << {source, doc}
           next
         end
 
-        merge_inventory(merged, doc ? parse_yaml(source, doc, playbook_dir) : parse(source, playbook_dir))
+        merge_inventory(merged, doc ? parse_yaml(source, doc, playbook_dir, merged_map) : parse(source, playbook_dir))
       end
 
       deferred_constructed.each do |(source, doc)|
@@ -415,7 +430,15 @@ module Krikri
     private def self.merge_inventory(target : Inventory, source : Inventory) : Nil
       source.hosts.each do |name, host|
         if existing = target.hosts[name]?
-          host.vars.each { |key, value| existing.vars[key] = value }
+          host.vars.each do |key, value|
+            existing.vars[key] = value
+            # The later file's value wins, so its origin travels with it.
+            if origin = host.var_origins[key]?
+              existing.var_origins[key] = origin
+            else
+              existing.var_origins.delete(key)
+            end
+          end
           existing.user = host.user if host.user
           existing.port = host.port
         else
@@ -434,7 +457,14 @@ module Krikri
           end
         end
         group.children.each { |child| target_group.add_child(child) }
-        group.vars.each { |key, value| target_group.vars[key] = value }
+        group.vars.each do |key, value|
+          target_group.vars[key] = value
+          if origin = group.var_origins[key]?
+            target_group.var_origins[key] = origin
+          else
+            target_group.var_origins.delete(key)
+          end
+        end
       end
     end
 
@@ -606,8 +636,13 @@ module Krikri
       current_group : String? = nil
       group_type = :hosts # Observed behavior: hosts or :vars or :children
 
-      content.lines.each do |line|
-        line = line.strip
+      content.lines.each_with_index do |raw_line, line_idx|
+        # The raw line and its 1-based number travel with every parse
+        # call: an inventory var's VarOrigin is the defining LINE (real
+        # prints no column for inventory origins and underlines the whole
+        # line).
+        line = raw_line.strip
+        line_no = line_idx + 1
 
         # Skip empty lines and comments
         next if line.empty? || line.starts_with?("#") || line.starts_with?(";")
@@ -637,15 +672,15 @@ module Krikri
         if current_group
           case group_type
           when :hosts
-            parse_host_line(line, current_group, inventory)
+            parse_host_line(line, current_group, inventory, path, line_no)
           when :vars
-            parse_var_line(line, current_group, inventory)
+            parse_var_line(line, current_group, inventory, path, line_no)
           when :children
             parse_child_line(line, current_group, inventory)
           end
         else
           # No group - add to ungrouped
-          parse_host_line(line, "ungrouped", inventory)
+          parse_host_line(line, "ungrouped", inventory, path, line_no)
         end
       end
 
@@ -662,7 +697,7 @@ module Krikri
     def self.parse_yaml(path : String, playbook_dir : String? = nil) : Inventory
       text = File.read(path)
       UnsafeValues.mark_yaml_text(text)
-      parse_yaml(path, YAML.parse(text), playbook_dir)
+      parse_yaml(path, YAML.parse(text), playbook_dir, YamlSourceMap.scan(text))
     rescue ex : YAML::ParseException
       raise "Invalid YAML in inventory file: #{ex.message}"
     end
@@ -670,7 +705,7 @@ module Krikri
     # Overload taking an already-parsed document - parse_directory hands
     # over the doc it already read for its constructed-source sniff, so
     # each directory source is read + parsed once, not twice.
-    def self.parse_yaml(path : String, yaml : YAML::Any, playbook_dir : String? = nil) : Inventory
+    def self.parse_yaml(path : String, yaml : YAML::Any, playbook_dir : String? = nil, source_map : YamlSourceMap? = nil) : Inventory
       inventory = Inventory.new
 
       # YAML-defined inventory plugin source (`plugin: <name>` at the top
@@ -689,7 +724,7 @@ module Krikri
         root.each do |group_name, group_def|
           next if group_name == "plugin"
           next unless group_def.as_h?
-          parse_yaml_group(group_name.to_s, group_def, inventory)
+          parse_yaml_group(group_name.to_s, group_def, inventory, path, source_map, group_name.to_s)
         end
       end
 
@@ -742,8 +777,9 @@ module Krikri
       names.empty? ? [entry] : names
     end
 
-    # Parse host line from INI
-    private def self.parse_host_line(line : String, group_name : String, inventory : Inventory) : Nil
+    # Parse host line from INI. *path*/*line_no* label the line for
+    # Host#var_origins.
+    private def self.parse_host_line(line : String, group_name : String, inventory : Inventory, path : String? = nil, line_no : Int32 = 0) : Nil
       # Format: hostname key=value key=value
       #
       # Split the way Ansible does - `shlex.split`, not a plain
@@ -778,6 +814,11 @@ module Krikri
 
           key, value = part.split("=", 2)
           host.vars[key] = parse_value(value)
+          # Origin of the inline value: the defining inventory line, no
+          # column - real's inventory origins render line-only.
+          if path
+            host.var_origins[key] = FileVarOrigin.new(File.expand_path(path), line_no, 0)
+          end
         end
 
         # Special handling for ansible_host: don't modify host.name, but
@@ -803,13 +844,18 @@ module Krikri
       end
     end
 
-    # Parse variable line from INI
-    private def self.parse_var_line(line : String, group_name : String, inventory : Inventory) : Nil
+    # Parse variable line from INI. *path*/*line_no* label the line for
+    # HostGroup#var_origins (applied to member hosts by apply_group_vars).
+    private def self.parse_var_line(line : String, group_name : String, inventory : Inventory, path : String? = nil, line_no : Int32 = 0) : Nil
       return unless line.includes?("=")
 
       key, value = line.split("=", 2)
       group = inventory.get_or_create_group(group_name)
-      group.vars[key.strip] = parse_value(value.strip)
+      key = key.strip
+      group.vars[key] = parse_value(value.strip)
+      if path
+        group.var_origins[key] = FileVarOrigin.new(File.expand_path(path), line_no, 0)
+      end
     end
 
     # Parse child group line from INI
@@ -822,8 +868,10 @@ module Krikri
       inventory.get_or_create_group(child_group_name)
     end
 
-    # Parse YAML group
-    private def self.parse_yaml_group(group_name : String, yaml : YAML::Any, inventory : Inventory) : Nil
+    # Parse YAML group. *origin_path*/*source_map*/*prefix* label the
+    # group's own vars and host vars with their defining positions
+    # (HostGroup#var_origins / Host#var_origins).
+    private def self.parse_yaml_group(group_name : String, yaml : YAML::Any, inventory : Inventory, origin_path : String? = nil, source_map : YamlSourceMap? = nil, prefix : String = group_name) : Nil
       group = inventory.get_or_create_group(group_name)
 
       # Parse hosts
@@ -835,6 +883,9 @@ module Krikri
           if host_vars.as_h?
             host_vars.as_h.each do |key, value|
               host.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
+              if origin_path && source_map && (pos = source_map.at?("#{prefix}/hosts/#{hostname}/#{key}"))
+                host.var_origins[key.to_s] = FileVarOrigin.new(File.expand_path(origin_path), pos[0], pos[1])
+              end
 
               # Handle special ansible vars
               case key.to_s
@@ -855,6 +906,9 @@ module Krikri
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           group.vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
+          if origin_path && source_map && (pos = source_map.at?("#{prefix}/vars/#{key}"))
+            group.var_origins[key.to_s] = FileVarOrigin.new(File.expand_path(origin_path), pos[0], pos[1])
+          end
         end
       end
 
@@ -862,7 +916,7 @@ module Krikri
       if children_yaml = yaml["children"]?.try(&.as_h?)
         children_yaml.each do |child_name, child_yaml|
           group.add_child(child_name.to_s)
-          parse_yaml_group(child_name.to_s, child_yaml, inventory)
+          parse_yaml_group(child_name.to_s, child_yaml, inventory, origin_path, source_map, "#{prefix}/children/#{child_name}")
         end
       end
     end
@@ -1001,6 +1055,10 @@ module Krikri
       end
       return unless hash = yaml.as_h?
 
+      # Positions for the origins of the vars this file applies (only set
+      # when the write actually happens, mirroring the value merge).
+      source_map = YamlSourceMap.scan(text)
+
       hosts.each do |host|
         host_override = override.try(&.[host.name]?)
         host_applied = applied.try { |applied_hash| applied_hash[host.name] ||= Set(String).new }
@@ -1012,6 +1070,11 @@ module Krikri
 
           json_value = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
           host.vars[key_str] = json_value
+          if pos = source_map.at?(key_str)
+            host.var_origins[key_str] = FileVarOrigin.new(File.expand_path(path), pos[0], pos[1])
+          else
+            host.var_origins.delete(key_str)
+          end
           host_applied.try(&.add(key_str))
 
           case key_str
@@ -1040,7 +1103,13 @@ module Krikri
         # in a different file.
         if group_name == "all"
           inventory.hosts.each_value do |host|
-            group.vars.each { |key, value| host.vars[key] ||= value }
+            group.vars.each do |key, value|
+              was_absent = !host.vars.has_key?(key)
+              host.vars[key] ||= value
+              if was_absent && (origin = group.var_origins[key]?)
+                host.var_origins[key] = origin
+              end
+            end
           end
         end
 
@@ -1048,7 +1117,11 @@ module Krikri
         group.hosts.each do |_hostname, host|
           group.vars.each do |key, value|
             # Only set if not already set on host
+            was_absent = !host.vars.has_key?(key)
             host.vars[key] ||= value
+            if was_absent && (origin = group.var_origins[key]?)
+              host.var_origins[key] = origin
+            end
           end
         end
 
@@ -1057,7 +1130,11 @@ module Krikri
           if child_group = inventory.groups[child_name]?
             child_group.hosts.each do |_hostname, host|
               group.vars.each do |key, value|
+                was_absent = !host.vars.has_key?(key)
                 host.vars[key] ||= value
+                if was_absent && (origin = group.var_origins[key]?)
+                  host.var_origins[key] = origin
+                end
               end
             end
           end

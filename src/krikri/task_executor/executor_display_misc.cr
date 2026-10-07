@@ -34,20 +34,62 @@ module Krikri
       ResultDisplay.show_recap(@hosts, @results)
     end
 
-    # Execute a task on a host - dispatches to the loop, retry, or plain
-    # single-execution path depending on what the task declares.
     # Ansible templates a task's `name:` leniently through
-    # ReplacingMarkerBehavior (the Ansible module
-    # _post_validate_name): every undefined span becomes a numbered
+    # ReplacingMarkerBehavior (the Ansible module _post_validate_name):
+    # every undefined span becomes a numbered
     # `<< error N - 'x' is undefined >>` placeholder IN the displayed
-    # name, and each name-templating context exits by emitting one
-    # aggregated `[WARNING]: Encountered N template error(s).` block on
-    # stderr with the name value's YAML origin (file:line:column of the
-    # value token, 2 leading context lines, caret under the value start).
+    # name, and every name-templating CONTEXT exits by emitting
+    # `[WARNING]: Encountered N template error(s).` block(s) on stderr -
+    # one block per consecutive run of same-origin errors - with the
+    # ORIGIN OF THE FAILING VALUE'S DEFINING SITE: the task's own file
+    # for a direct `{{ undefined }}` in the name, but the file/line where
+    # a nested variable's value was DEFINED (role vars/main.yml, play
+    # vars, the inventory line, ...) once the render recurses into it.
     # Live-verified against ansible-core 2.19.11: the warning fires even
-    # when the task is when:-skipped, numbering restarts per task, and
-    # identical warning text dedups to one display per run.
+    # when the task is when:-skipped, the error counter is shared across
+    # contexts within one task's name (and restarts per task), a nested
+    # MULTI-part value's context completes (and numbers its errors)
+    # before the enclosing context's own errors, and identical warning
+    # text dedups to one display per run.
     @@name_warning_seen = Set(String).new
+
+    # Per-name-render error state: the shared counter (numbers are
+    # assigned when a context completes, not when its error occurs -
+    # a nested context's errors number first) and the placeholder prefix
+    # markers embed while their number is still unknown.
+    private class NameTemplateErrorState
+      property counter = 0
+      getter placeholder_prefix : String
+
+      def initialize
+        # Random per render: a resolved variable's VALUE could otherwise
+        # collide with a fixed sentinel and corrupt the final marker text.
+        @placeholder_prefix = "\uE000#{Random::Secure.hex(8)}\uE000"
+      end
+
+      def take(count : Int32) : Array(Int32)
+        numbers = ((counter + 1)..(counter + count)).to_a
+        @counter += count
+        numbers
+      end
+    end
+
+    # One name-templating context: the template text being rendered (the
+    # name itself, or a nested variable's multi-part value) plus the
+    # origin its errors are reported against (overridable per error -
+    # a nested SINGLE-expression value's failure joins the enclosing
+    # context but carries the nested value's own origin, live-verified:
+    # `dx: "{{ undef_d }} {{ ex }}"`, `ex: "{{ undef_e }}"` numbers
+    # undef_d 1 and undef_e 2 with each error's OWN defining file).
+    private class NameTemplateContext
+      property origin : VarOrigin? = nil
+      getter errors = [] of {String, VarOrigin?}
+
+      def push(msg : String, origin : VarOrigin?) : Int32
+        @errors << {msg, origin}
+        @errors.size - 1
+      end
+    end
 
     private def render_task_name_for_display(task : Task, host : Host) : String
       return task.name unless task.name.includes?("{{")
@@ -56,11 +98,11 @@ module Krikri
       vars_context = build_vars_context(task, host)
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
-      errors = [] of String
-      rendered = marker_render_chunks(task.name, substitutor, vars_context, errors, 0)
-
-      emit_name_template_error_warning(task, errors) unless errors.empty?
-      rendered
+      state = NameTemplateErrorState.new
+      top = NameTemplateContext.new
+      top.origin = name_value_origin(task)
+      rendered = marker_render_chunks(task.name, substitutor, vars_context, task, host, top, state, 0, nil)
+      complete_name_context(top, state, rendered)
     rescue
       task.name
     end
@@ -70,47 +112,69 @@ module Krikri
     # span whose variable's own stored value is unrendered Jinja gets
     # that value rendered chunk-wise too, each failing sub-expression
     # annotated individually while resolvable literals and sibling
-    # expressions survive (andrewrothstein.nats, round 2300765: a name
-    # over `nats_install_dir: '{{ nats_parent_install_dir }}/{{ nats_name }}'`
-    # with `nats_name: '{{ nats_app }}-{{ nats_ver }}-{{ nats_platform }}'`
-    # and both nats_app/nats_ver undefined printed
-    # `/usr/local/<< error 1 - 'nats_app' is undefined >>-<< error 2 -
-    # 'nats_ver' is undefined >>-linux-amd64`, not one collapsed marker
-    # for the whole span). The error counter is shared across levels,
-    # matching Ansible's per-name numbering.
+    # expressions survive (andrewrothstein.nats, round 2300765). The
+    # error counter is shared across levels, matching Ansible's per-name
+    # numbering.
     private MAX_NAME_MARKER_DEPTH = 8
 
-    private def marker_render_chunks(text : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), errors : Array(String), depth : Int32) : String
-      String.build do |io|
-        pos = 0
-        while (start = text.index("{{", pos))
-          stop = text.index("}}", start) || break
-          io << text[pos...start]
-          span = text[start..stop + 1]
-          begin
-            io << substitutor.substitute(span, strict: true)
-          rescue e : UndefinedVariableError
-            # Recurse into the failed span's underlying variable value
-            # when that value is itself plain `{{ }}` template text -
-            # partial results and sibling expressions survive there.
-            # Anything else (non-bare reference, non-template value,
-            # depth exhausted) keeps the single collapsed marker.
-            raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
-            if raw_template
-              io << marker_render_chunks(raw_template, substitutor, vars_context, errors, depth + 1)
+    private def marker_render_chunks(text : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32, error_origin : VarOrigin?) : String
+      pieces = [] of String
+      pos = 0
+      while (start = text.index("{{", pos))
+        stop = text.index("}}", start) || break
+        pieces << text[pos...start]
+        span = text[start..stop + 1]
+        begin
+          pieces << substitutor.substitute(span, strict: true)
+        rescue e : UndefinedVariableError
+          # Recurse into the failed span's underlying variable value
+          # when that value is itself plain `{{ }}` template text -
+          # partial results and sibling expressions survive there.
+          # Anything else (non-bare reference, non-template value,
+          # depth exhausted) keeps the single collapsed marker.
+          raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
+          if raw_template && (m = span.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/))
+            origin = var_origin_for(task, host, m[1])
+            if single_span_template?(raw_template)
+              # A value that IS exactly one expression renders without a
+              # context of its own (Ansible's single-expression
+              # short-circuit): its failures join THIS context but carry
+              # the nested value's own origin - and a chain of
+              # single-expression values keeps re-pointing the override
+              # at the immediately failing definition.
+              pieces << marker_render_chunks(raw_template, substitutor, vars_context, task, host, ctx, state, depth + 1, origin || error_origin)
             else
-              errors << e.message.to_s
-              io << "<< error #{errors.size} - #{e.message} >>"
+              child = NameTemplateContext.new
+              child.origin = origin
+              child_out = marker_render_chunks(raw_template, substitutor, vars_context, task, host, child, state, depth + 1, nil)
+              # The nested context completes (numbers its errors, emits
+              # its warning blocks) BEFORE the enclosing one - verified:
+              # nats' nats_name errors numbered 1,2 while the enclosing
+              # nats_install_dir context's own error numbered 3.
+              pieces << complete_name_context(child, state, child_out)
             end
-          rescue
-            # A non-undefined span failure (bad filter, syntax) is not a
-            # Marker in real either - keep the old lenient render for it.
-            io << substitutor.substitute(span)
+          else
+            idx = ctx.push(e.message.to_s, error_origin || ctx.origin)
+            pieces << "#{state.placeholder_prefix}#{idx}\uE001"
           end
-          pos = stop + 2
+        rescue
+          # A non-undefined span failure (bad filter, syntax) is not a
+          # Marker in real either - keep the old lenient render for it.
+          pieces << (substitutor.substitute(span) rescue span)
         end
-        io << text[pos..]
+        pos = stop + 2
       end
+      pieces << text[pos..]
+      pieces.join
+    end
+
+    # A value consisting of exactly one `{{ ... }}` construct (no
+    # surrounding literal text) - Ansible's single-expression template
+    # shape, which evaluates inline instead of opening a nested context.
+    private def single_span_template?(value : String) : Bool
+      stripped = value.strip
+      return false unless stripped.starts_with?("{{") && stripped.ends_with?("}}")
+      stripped.scan(/\{\{/).size == 1 && stripped.scan(/\}\}/).size == 1
     end
 
     # The raw stored value of a failed span's bare variable reference,
@@ -135,40 +199,109 @@ module Krikri
       task.name
     end
 
-    private def emit_name_template_error_warning(task : Task, errors : Array(String)) : Nil
-      text = name_template_error_text(task, errors)
-      return if text.empty?
-      return unless @@name_warning_seen.add?(text)
-      STDERR.puts text
+    # A context's exit: number its collected errors from the shared
+    # counter, turn the placeholder markers it embedded into final
+    # `<< error N - ... >>` text, emit its warning blocks (one per
+    # consecutive run of same-origin errors), and return the finalized
+    # string for splicing.
+    private def complete_name_context(ctx : NameTemplateContext, state : NameTemplateErrorState, rendered : String) : String
+      return rendered if ctx.errors.empty?
+
+      numbers = state.take(ctx.errors.size)
+      finalized = rendered.gsub(/#{Regex.escape(state.placeholder_prefix)}(\d+)#{Regex.escape("\uE001")}/) do |match|
+        idx = $1.to_i
+        msg = ctx.errors[idx]?.try(&.[0]) || match
+        "<< error #{numbers[idx]? || idx + 1} - #{msg} >>"
+      end
+
+      # Group consecutive same-origin errors into one block (verified:
+      # two errors from one defining file share a block; an intervening
+      # error from another file splits it).
+      group_start = 0
+      while group_start < ctx.errors.size
+        group_origin = ctx.errors[group_start][1]
+        group_end = group_start
+        while group_end + 1 < ctx.errors.size &&
+              ctx.errors[group_end + 1][1].try(&.group_key) == group_origin.try(&.group_key)
+          group_end += 1
+        end
+
+        block = String.build do |io|
+          count = group_end - group_start + 1
+          io << "[WARNING]: Encountered #{count} template error#{count == 1 ? "" : "s"}.\n"
+          (group_start..group_end).each do |i|
+            io << "error #{numbers[i]} - #{ctx.errors[i][0]}\n"
+          end
+          if origin = group_origin
+            io << var_origin_block(origin)
+          end
+          io << "\n"
+        end
+        STDERR.puts block if @@name_warning_seen.add?(block)
+
+        group_start = group_end + 1
+      end
+
+      finalized
     end
 
-    # Best-effort origin: the parser doesn't track per-task source
-    # positions, so the task is located by scanning the playbook file for
-    # its `- name:` line (same approach as task_arg_error_context), with
-    # the origin column at the name VALUE's first character - real points
-    # at the value token itself (quote included), not the `name:` key.
-    private def name_template_error_text(task : Task, errors : Array(String)) : String
-      path = @playbook_file
-      return "" unless path && File.file?(path)
+    # The `Origin: ...` + excerpt section of a warning block, in real's
+    # three shapes (see VarOrigin).
+    private def var_origin_block(origin : VarOrigin) : String
+      case origin
+      when FileVarOrigin
+        return line_origin_block(origin.path, origin.line) if origin.column <= 0
+        return "Origin: #{File.expand_path(origin.path)}:#{origin.line}:#{origin.column}\n\n" unless File.file?(origin.path)
+        lines = File.read_lines(origin.path)
+        origin_context_block(origin.path, lines, origin.line, origin.column)
+      when TextVarOrigin
+        "Origin: #{origin.label}\n\n#{origin.text}\n"
+      else
+        ""
+      end
+    end
+
+    # Inventory-shaped origin: `Origin: <file>:<line>` with the usual
+    # 2-context-line excerpt but a full-line caret RUN instead of a
+    # positioned caret (live-verified 2.19.11).
+    private def line_origin_block(path : String, line_num : Int) : String
+      lines = File.file?(path) ? File.read_lines(path) : [] of String
+      String.build do |io|
+        io << "Origin: " << File.expand_path(path) << ":" << line_num << "\n"
+        io << "\n"
+
+        label_width = line_num.to_s.size
+        start_idx = Math.max(0, (line_num - 1) - 2)
+        (start_idx..(line_num - 1)).each do |idx|
+          line = lines[idx]?.to_s.chomp.gsub('\t', ' ')
+          io << (idx + 1).to_s.rjust(label_width) << (line.empty? ? "" : " ") << line << "\n"
+        end
+        content = lines[line_num - 1]?.to_s.chomp.gsub('\t', ' ')
+        io << " " * (label_width + 1) << "^" * content.size << "\n"
+      end
+    end
+
+    # The name value's own origin: the task's own source file (role tasks
+    # files and include_tasks: targets included - real points there, NOT
+    # at the playbook), located by scanning for the task's `- name:` line
+    # (same approach as task_arg_error_context), with the origin column
+    # at the name VALUE's first character - real points at the value
+    # token itself (quote included), not the `name:` key.
+    private def name_value_origin(task : Task) : VarOrigin?
+      path = task.source_file || @playbook_file
+      return nil unless path && File.file?(path)
 
       lines = File.read_lines(path)
       located = locate_name_line(lines, task)
-      return "" unless located
-      name_idx, column = located
+      return nil unless located
+      name_idx, _key_col = located
 
-      String.build do |io|
-        io << "[WARNING]: Encountered #{errors.size} template error#{errors.size == 1 ? "" : "s"}.\n"
-        errors.each_with_index { |msg, i| io << "error #{i + 1} - #{msg}\n" }
-        # Real points the Origin at the name VALUE's first character (the
-        # quote included), not the `name:` key - column 13 for
-        # `    - name: "..."`.
-        if (name_key = lines[name_idx].index("name:"))
-          rest = lines[name_idx][(name_key + 5)..]
-          column = name_key + 5 + (rest.size - rest.lstrip.size) + 1
-        end
-        io << origin_context_block(path, lines, name_idx + 1, column)
-        io << "\n"
+      column = 1
+      if (name_key = lines[name_idx].index("name:"))
+        rest = lines[name_idx][(name_key + 5)..]
+        column = name_key + 5 + (rest.size - rest.lstrip.size) + 1
       end
+      FileVarOrigin.new(File.expand_path(path), name_idx + 1, column)
     end
 
     # The "myrole : " prefix Ansible puts on a role-sourced task's

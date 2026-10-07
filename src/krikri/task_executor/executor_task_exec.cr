@@ -41,6 +41,7 @@ module Krikri
       end
 
       merged = Hash(String, JSON::Any).new
+      merged_origins = Hash(String, VarOrigin).new
       base = base_context_a_for(host).dup
       base_context_b_for(host).each { |key, value| base[key] = value }
       # vars_files paths are play/task-arg-grade templating, not loop-
@@ -60,7 +61,13 @@ module Krikri
             UnsafeValues.mark_yaml_text(text)
             parsed = YAML.parse(text)
             if hash = parsed.as_h?
-              hash.each { |key, value| merged[key.to_s] = JSON.parse(value.to_json) }
+              hash.each do |key, value|
+                key_str = key.to_s
+                merged[key_str] = JSON.parse(value.to_json)
+                # The later file's value wins, so its origin travels with
+                # it (mirroring the value merge).
+                VarOrigin.vars_file_origins(path, [key_str]).each { |k, origin| merged_origins[k] = origin }
+              end
             end
           rescue
             # A vars file that will not parse is skipped rather than
@@ -73,6 +80,7 @@ module Krikri
       end
 
       @vars_files_cache[cache_key] = merged
+      @vars_files_origins_cache[cache_key] = merged_origins
       # Only a host's CURRENT generation entry is ever looked up (the key
       # embeds the generation, which only ever increases), so older
       # entries for this host are unreachable garbage. Every register:/
@@ -83,6 +91,9 @@ module Krikri
       prefix = "#{host.name}\u0000"
       @vars_files_cache.keys.each do |key|
         @vars_files_cache.delete(key) if key.starts_with?(prefix) && key != cache_key
+      end
+      @vars_files_origins_cache.keys.each do |key|
+        @vars_files_origins_cache.delete(key) if key.starts_with?(prefix) && key != cache_key
       end
       merged
     end

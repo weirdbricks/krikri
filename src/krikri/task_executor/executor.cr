@@ -359,6 +359,12 @@ module Krikri
       # See #build_vars_context for exactly where they rank.
       @all_role_defaults = {} of String => JSON::Any,
       @all_role_vars = {} of String => JSON::Any,
+      # Origins for the play vars and the play-wide role layers (see
+      # VarOrigin) - consumed only by the task-name template-error
+      # warning, riding alongside the value hashes they mirror.
+      @play_var_origins = {} of String => VarOrigin,
+      @all_role_default_origins = {} of String => VarOrigin,
+      @all_role_var_origins = {} of String => VarOrigin,
       @gather_facts = true,
       @inventory = nil,
       @inventory_path = nil,

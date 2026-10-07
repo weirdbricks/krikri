@@ -161,6 +161,7 @@ module Krikri
     # they do not change between tasks, and re-reading a YAML file for
     # every task on every host would be pure waste.
     @vars_files_cache = Hash(String, Hash(String, JSON::Any)).new
+    @vars_files_origins_cache = Hash(String, Hash(String, VarOrigin)).new
 
     private def flatten_handler_blocks(handlers : Array(Task)) : Array(Task)
       handlers.flat_map do |handler|

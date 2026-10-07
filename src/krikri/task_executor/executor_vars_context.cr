@@ -6,6 +6,81 @@ require "../needle_lookup"
 
 module Krikri
   class TaskExecutor
+    # The VarOrigin of the layer that actually supplies *name*'s value
+    # for this task/host - replaying build_vars_context's exact merge
+    # sequence (including the registered-var skip that lifts registered
+    # results above the role-var layers) and returning the winning
+    # layer's origin. nil when the winner has no known origin (runtime
+    # values - registered results, facts, set_fact - and definitions no
+    # source map covers): the warning block for such a context is then
+    # omitted, never mislabeled.
+    private def var_origin_for(task : Task, host : Host, name : String) : VarOrigin?
+      winner : VarOrigin? = nil
+      have = false
+      set = ->(origin : VarOrigin?) do
+        have = true
+        winner = origin
+      end
+
+      # baseA, in its own merge order: play vars, inventory host vars,
+      # registered results, then facts fill-only.
+      if @play_vars.has_key?(name)
+        set.call(@play_var_origins[name]?)
+      end
+      if host.vars.has_key?(name)
+        set.call(host.var_origins[name]?)
+      end
+      registered = @registered_vars[host.name]
+      if registered.has_key?(name)
+        set.call(nil)
+      end
+      if !have && @facts[host.name].has_key?(name)
+        set.call(nil)
+      end
+
+      # The two fill-only defaults layers: task.role_defaults applied
+      # first, so it wins what it has.
+      if !have && (rd = task.role_defaults) && rd.has_key?(name)
+        set.call(task.role_default_origins[name]?)
+      end
+      if !have && @all_role_defaults.has_key?(name)
+        set.call(@all_role_default_origins[name]?)
+      end
+
+      # vars_files overwrite the whole baseA but lose to the role-var and
+      # task-var layers.
+      cache_key = "#{host.name}\u0000#{@hv_generation}"
+      if (vf = load_vars_files(host)) && vf.has_key?(name)
+        set.call(@vars_files_origins_cache[cache_key]?.try(&.[name]?))
+      end
+
+      # The role-var layers overwrite everything above, EXCEPT a key a
+      # registered result already holds (build_vars_context skips those).
+      if (rv = task.role_vars) && rv.has_key?(name) && !registered.has_key?(name)
+        set.call(task.role_var_origins[name]?)
+      end
+      if @all_role_vars.has_key?(name) && !registered.has_key?(name)
+        set.call(@all_role_var_origins[name]?)
+      end
+
+      if task.vars.has_key?(name)
+        set.call(task.vars_origins[name]?)
+      end
+
+      # baseB (included_vars/facts/set_facts) and -e/--extra-vars are the
+      # final words; their values are never raw templates with a
+      # knowable file origin.
+      if base_context_b_for(host).has_key?(name)
+        set.call(nil)
+      end
+      if @extra_vars.has_key?(name)
+        raw = @extra_vars[name]
+        set.call(TextVarOrigin.new("<CLI option '-e'>", raw.as_s? || raw.to_s))
+      end
+
+      have ? winner : nil
+    end
+
     private def build_vars_context(task : Task, host : Host, include_legacy_ssh_aliases : Bool = true, loop_lenient_vars : Bool = false) : Hash(String, JSON::Any)
       # See the @base_context_a_cache/@base_context_b_cache ivar comments
       # above for why this is 2 caches, not 1, and exactly what real

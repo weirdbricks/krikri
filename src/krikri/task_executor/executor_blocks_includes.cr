@@ -2280,7 +2280,10 @@ module Krikri
           task.include_role_tasks_from,
           child_parent_names,
           child_parent_paths,
-          child_parent_defaults
+          child_parent_defaults,
+          # The ancestor chain's defaults origins travel with the values
+          # (see Task#role_default_origins).
+          task.role_default_origins
         )
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d

@@ -107,15 +107,20 @@ module Krikri
     # dependencies, recursively), in order. Returns {tasks, handlers} to
     # prepend to the play - Ansible runs role tasks before the play's own
     # tasks: (pre_tasks:/post_tasks: aren't implemented).
-    def self.load_roles(roles_yaml : Array(YAML::Any), play : Play, playbook_dir : String) : {Array(Task), Array(Task)}
+    def self.load_roles(roles_yaml : Array(YAML::Any), play : Play, playbook_dir : String, source_map : YamlSourceMap? = nil, roles_prefix : String = "roles") : {Array(Task), Array(Task)}
       seen = Set(String).new
       tasks = [] of Task
       handlers = [] of Task
 
-      roles_yaml.each do |entry|
-        name, entry_version, invocation_vars, invocation_tags, entry_when = parse_role_entry(entry)
+      roles_yaml.each_with_index do |entry, entry_index|
+        # The entry's invocation vars carry their defining positions from
+        # the playbook's own source map - real points a name-template
+        # error inside a role PARAM at the playbook's `roles:` entry
+        # (live-verified 2.19.11: `roles: [{role: e9, vars: {rp: ...}}]`
+        # reports e9.yml's vars value position).
+        name, entry_version, invocation_vars, invocation_tags, entry_when, invocation_origins = parse_role_entry(entry, play.source_file, source_map, "#{roles_prefix}/#{entry_index}")
         before_count = tasks.size
-        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when)
+        load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, play_scope: true, role_version: entry_version, role_when: entry_when, invocation_var_origins: invocation_origins)
         apply_role_when(tasks, before_count, entry_when)
       end
 
@@ -131,12 +136,12 @@ module Krikri
     # deduplicated the way a role listed twice under roles: would be.
     # allow_duplicates: false on the include itself isn't honored (dedup
     # only happens within a single call's own meta dependency chain).
-    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new) : {Array(Task), Array(Task)}
+    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, invocation_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new) : {Array(Task), Array(Task)}
       seen = Set(String).new
       tasks = [] of Task
       handlers = [] of Task
 
-      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, tasks_from, parent_names, parent_paths, parent_defaults)
+      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, tasks_from, parent_names, parent_paths, parent_defaults, parent_default_origins, invocation_var_origins)
 
       {tasks, handlers}
     end
@@ -144,10 +149,12 @@ module Krikri
     # A roles: entry is either a bare string ("common") or a mapping with
     # role:/name: (+ optional vars:/tags:, and Ansible also treats any
     # other top-level key as a role var - `roles: [{role: app, port: 8080}]`).
-    private def self.parse_role_entry(entry : YAML::Any) : {String, String?, Hash(String, JSON::Any), Array(String), String?}
+    private def self.parse_role_entry(entry : YAML::Any, origin_file : String? = nil, source_map : YamlSourceMap? = nil, path_prefix : String? = nil) : {String, String?, Hash(String, JSON::Any), Array(String), String?, Hash(String, VarOrigin)}
       if bare_name = entry.as_s?
-        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil}
+        return {bare_name, nil, Hash(String, JSON::Any).new, [] of String, nil, Hash(String, VarOrigin).new}
       end
+
+      origins = Hash(String, VarOrigin).new
 
       hash = entry.as_h
       # `src:` is Ansible's own `RoleRequirement` key - the SAME
@@ -167,7 +174,13 @@ module Krikri
 
       vars = Hash(String, JSON::Any).new
       if vars_yaml = hash["vars"]?.try(&.as_h?)
-        vars_yaml.each { |key, value| vars[key.to_s] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value)) }
+        vars_yaml.each do |key, value|
+          key_str = key.to_s
+          vars[key_str] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
+          if origin = entry_var_origin(origin_file, source_map, path_prefix, key_str, "vars")
+            origins[key_str] = origin
+          end
+        end
       end
 
       # `version`/`scm` are the other two `RoleRequirement` galaxy-source
@@ -189,6 +202,9 @@ module Krikri
         key_str = key.to_s
         next if reserved.includes?(key_str)
         vars[key_str] = Vault.maybe_decrypt_json(Vault.yaml_value_to_json(value))
+        if origin = entry_var_origin(origin_file, source_map, path_prefix, key_str, nil)
+          origins[key_str] = origin
+        end
       end
 
       tags = hash["tags"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
@@ -208,7 +224,17 @@ module Krikri
       # dropped through as a role VAR named "when" instead of a gate.
       role_when = hash["when"]?.try { |cond| PlaybookParser.condition_to_string(cond) }
 
-      {name, version, vars, tags, role_when}
+      {name, version, vars, tags, role_when, origins}
+    end
+
+    # One roles:/dependency entry var's defining position - nil when no
+    # source map is available (the origin block for such a var is then
+    # omitted, never mislabeled).
+    private def self.entry_var_origin(origin_file : String?, source_map : YamlSourceMap?, path_prefix : String?, key : String, sub : String?) : VarOrigin?
+      return nil unless source_map && path_prefix && origin_file
+      path = sub ? "#{path_prefix}/#{sub}/#{key}" : "#{path_prefix}/#{key}"
+      return nil unless pos = source_map.at?(path)
+      FileVarOrigin.new(File.expand_path(origin_file), pos[0], pos[1])
     end
 
     private def self.load_role(
@@ -224,6 +250,16 @@ module Krikri
       parent_names : Array(String) = [] of String,
       parent_paths : Array(String) = [] of String,
       parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new,
+      # Origins for parent_defaults (see Task#role_default_origins) -
+      # threaded through the include_role/dependency chain exactly like
+      # the values themselves.
+      parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new,
+      # Origins for invocation_vars.
+      invocation_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new,
+      # When non-nil, receives this role's merged defaults origins
+      # (mirroring the `defaults` return value) - load_meta_dependencies
+      # collects them alongside the dependency defaults.
+      default_origins_out : Hash(String, VarOrigin)? = nil,
       # Whether this role's own defaults/vars join the PLAY-WIDE layers
       # every role can see (Play#all_role_defaults/#all_role_vars). True
       # for a static `roles:` entry and its meta dependencies, which
@@ -287,7 +323,8 @@ module Krikri
       # extended further), matching Ansible: a dependency isn't
       # "nested inside" the declaring role's own tasks the way an
       # include_role: call is.
-      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope)
+      dependency_default_origins = Hash(String, VarOrigin).new
+      dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope, parent_default_origins, dependency_default_origins)
 
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Ansible keeps a role's defaults visible for the rest of the
@@ -324,9 +361,25 @@ module Krikri
       # precedence than this role's own defaults, matching
       # Ansible's own dependency-then-self load order.
       defaults = parent_defaults.merge(dependency_defaults).merge(defaults)
+      # Origins mirror the value merge above exactly, so a lookup always
+      # answers for the value that actually wins (see
+      # Task#role_default_origins).
+      defaults_origins = parent_default_origins.merge(dependency_default_origins).merge(load_vars_file_origins_main(File.join(role_dir, "defaults")))
       own_vars = load_vars_file_main(File.join(role_dir, "vars"))
+      own_var_origins = load_vars_file_origins_main(File.join(role_dir, "vars"))
       role_vars = own_vars.dup
-      invocation_vars.each { |key, value| role_vars[key] = value } # invocation vars win over vars/main.yml
+      role_var_origins = own_var_origins.dup
+      invocation_vars.each do |key, value|
+        role_vars[key] = value
+        # The winning value's origin travels with it; an invocation var
+        # with no known origin (no source map) erases the vars/main.yml
+        # origin it overrides, matching the value it replaces.
+        if (origin = invocation_var_origins[key]?)
+          role_var_origins[key] = origin
+        else
+          role_var_origins.delete(key)
+        end
+      end
 
       # Contribute to the play-wide layers every role can see - see
       # Play#all_role_defaults for why Ansible makes these visible
@@ -353,7 +406,9 @@ module Krikri
       if play_scope
         own_defaults = load_vars_file_main(File.join(role_dir, "defaults"))
         own_defaults.each { |key, value| play.all_role_defaults[key] = value }
+        load_vars_file_origins_main(File.join(role_dir, "defaults")).each { |key, origin| play.all_role_default_origins[key] = origin }
         own_vars.each { |key, value| play.all_role_vars[key] = value }
+        own_var_origins.each { |key, origin| play.all_role_var_origins[key] = origin }
       end
 
       files_dir = existing_dir(File.join(role_dir, "files"))
@@ -399,6 +454,8 @@ module Krikri
       (role_tasks + role_handlers).each do |task|
         task.role_defaults = defaults
         task.role_vars = role_vars
+        task.role_default_origins = defaults_origins
+        task.role_var_origins = role_var_origins
         task.role_files_dir = files_dir
         task.role_templates_dir = templates_dir
         task.role_vars_dir = vars_dir
@@ -449,6 +506,9 @@ module Krikri
 
       # Returned so a DECLARING role can pick these up as its own
       # dependency defaults (see the `dependency_defaults` merge above).
+      if out = default_origins_out
+        defaults_origins.each { |key, origin| out[key] = origin }
+      end
       defaults
     end
 
@@ -502,7 +562,7 @@ module Krikri
     # dependencies winning over earlier ones on a name collision, matching
     # Ansible's load order), for the declaring role to merge under
     # its own - see `load_role`'s `dependency_defaults` comment.
-    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false) : Hash(String, JSON::Any)
+    private def self.load_meta_dependencies(role_dir : String, play : Play, playbook_dir : String, seen : Set(String), tasks : Array(Task), handlers : Array(Task), parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, play_scope : Bool = false, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, collected_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new) : Hash(String, JSON::Any)
       collected = Hash(String, JSON::Any).new
       meta_path = find_main_file(File.join(role_dir, "meta")) || File.join(role_dir, "meta", "main.yml")
       return collected unless File.exists?(meta_path)
@@ -511,11 +571,23 @@ module Krikri
       deps = meta_yaml["dependencies"]?.try(&.as_a?)
       return collected unless deps
 
-      deps.each do |dep|
-        dep_name, dep_version, dep_vars, dep_tags, dep_when = parse_role_entry(dep)
+      deps.each_with_index do |dep, dep_index|
+        dep_name, dep_version, dep_vars, dep_tags, dep_when, dep_origins = parse_role_entry(dep, meta_path, cached_source_map(meta_path), "dependencies/#{dep_index}")
         before_count = tasks.size
-        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, play_scope, role_version: dep_version, role_when: dep_when)
+        dep_default_origins = Hash(String, VarOrigin).new
+        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins)
         apply_role_when(tasks, before_count, dep_when)
+        # Origins mirror the value merge below exactly: a key the earlier
+        # dependency already provided keeps ITS origin; a key this
+        # dependency newly provides takes this dependency's (or none).
+        dep_defaults.each_key do |key|
+          next if collected.has_key?(key)
+          if dep_default_origins.has_key?(key)
+            collected_origins[key] = dep_default_origins[key]
+          else
+            collected_origins.delete(key)
+          end
+        end
         collected.merge!(dep_defaults)
       end
 
@@ -775,6 +847,32 @@ module Krikri
         load_vars_file(path).each { |key, value| result[key] = value }
       end
       result
+    end
+
+    # Origins for #load_vars_file_main's result - same file discovery,
+    # same merge order, so a lookup answers for the value that wins.
+    private def self.load_vars_file_origins_main(dir : String) : Hash(String, VarOrigin)
+      if found = find_main_file(dir)
+        return vars_file_origins(found)
+      end
+
+      main_dir = File.join(dir, "main")
+      return Hash(String, VarOrigin).new unless Dir.exists?(main_dir)
+
+      result = Hash(String, VarOrigin).new
+      (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort.each do |path|
+        vars_file_origins(path).each { |key, origin| result[key] = origin }
+      end
+      result
+    end
+
+    # Origins for one vars-style YAML file's top-level keys (the keys come
+    # from the same cached_yaml parse load_vars_file uses).
+    private def self.vars_file_origins(path : String) : Hash(String, VarOrigin)
+      keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || [] of String
+      VarOrigin.vars_file_origins(path, keys)
+    rescue
+      Hash(String, VarOrigin).new
     end
 
     # Ansible auto-inserts a "Validating arguments against arg spec"

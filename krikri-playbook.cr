@@ -1240,6 +1240,9 @@ playbook.plays.each_with_index do |play, _play_index|
       play_vars: play.vars,
       all_role_defaults: play.all_role_defaults,
       all_role_vars: play.all_role_vars,
+      play_var_origins: play.var_origins,
+      all_role_default_origins: play.all_role_default_origins,
+      all_role_var_origins: play.all_role_var_origins,
       # --gathering explicit gathers only for plays that actually wrote
       # `gather_facts: true`; an unset gather_facts (which defaults to true
       # under implicit/smart) means "don't" here.

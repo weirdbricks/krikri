@@ -1,4 +1,5 @@
 require "json"
+require "./var_origin"
 
 module Krikri
   # Represents a target host for automation
@@ -13,6 +14,12 @@ module Krikri
     # still overrides ssh's config exactly as `-p` always has.
     property port : Int32?
     property vars : Hash(String, JSON::Any)
+    # Where each of this host's inventory vars was defined - real
+    # ansible-core labels a name-template error inside an inventory value
+    # with the DEFINING INVENTORY LINE (no column; the excerpt's caret is
+    # a full-line run). Only inventory-sourced vars carry an entry; vars
+    # a host picks up elsewhere never consult this.
+    property var_origins : Hash(String, VarOrigin)
     # True when the host entry came from an `add_host:` action (or was
     # merged into one) rather than the static inventory. TaskExecutor's
     # hostvars builder enriches such hosts' entries with the play magic
@@ -21,6 +28,7 @@ module Krikri
 
     def initialize(@name : String, @user : String? = nil, @port : Int32? = nil)
       @vars = Hash(String, JSON::Any).new
+      @var_origins = Hash(String, VarOrigin).new
     end
 
     # Create from JSON (for plugin communication). Uses the `?` variants

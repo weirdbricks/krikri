@@ -1,6 +1,7 @@
 require "yaml"
 require "./unsafe_values"
 require "./yaml_source_map"
+require "./var_origin"
 require "./module_registry"
 require "./loop_resolver"
 require "./python_module_runner"
@@ -417,6 +418,15 @@ module Krikri
     # plugin subprocess itself has no concept of roles.
     property role_defaults : Hash(String, JSON::Any)?
     property role_vars : Hash(String, JSON::Any)?
+    # Where each of the role layers' raw values was defined - the Origin
+    # real prints when a task NAME's template chain fails inside one of
+    # them (see VarOrigin). Mirrors role_defaults/role_vars' merges, so a
+    # lookup here answers for exactly the value vars_context serves.
+    property role_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
+    property role_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
+    # The task's own `vars:` entries' defining positions (the task's own
+    # source file) - same Origin purpose as the role layers above.
+    property vars_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
     property role_files_dir : String?
     property role_templates_dir : String?
     # The role's vars/ directory - where include_vars: and
@@ -823,6 +833,14 @@ module Krikri
     # dependency chain).
     property all_role_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new
     property all_role_vars : Hash(String, JSON::Any) = Hash(String, JSON::Any).new
+    # Origins for the play-level `vars:` entries and the play-wide role
+    # layers (see Task#role_var_origins for what consumes them).
+    property var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
+    property all_role_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
+    property all_role_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new
+    # This play's own YAML source map - labels roles:-entry vars and the
+    # play's vars: with their defining positions.
+    property source_map : YamlSourceMap? = nil
     # `any_errors_fatal:` - one host failing aborts the play for ALL of
     # them. `max_fail_percentage:` - abort once the share of failed hosts
     # is STRICTLY GREATER than this (verified: 1 of 3 hosts, i.e. 33.3%,
@@ -1519,6 +1537,17 @@ module Krikri
         task.source_line, task.source_col = pos
       end
       warn_reserved_vars(task.vars.keys, task.source_file, task.source_line)
+
+      # The task's own `vars:` entries' defining positions - real points a
+      # name-template error inside one at its `vars:` value (live-verified
+      # 2.19.11: a role task's `vars: {tv: "{{ undef_tv }}"}` reports the
+      # tv value's own line/column in the task's file).
+      unless task.vars.empty?
+        task.vars.each_key do |key|
+          next unless (pos = source_map.at?("#{task_source_prefix(source_prefix, index)}/vars/#{key}")) && source_file
+          task.vars_origins[key] = FileVarOrigin.new(File.expand_path(source_file.not_nil!), pos[0], pos[1])
+        end
+      end
     end
 
     # Parse playbook from string
@@ -1908,9 +1937,16 @@ module Krikri
       if vars_yaml = yaml["vars"]?.try(&.as_h?)
         vars_yaml.each do |key, value|
           play.vars[key.to_s] = Vault.maybe_decrypt_json(JSON.parse(value.to_json))
+          if source_map && source_file && (pos = source_map.at?("#{index}/vars/#{key}"))
+            play.var_origins[key.to_s] = FileVarOrigin.new(File.expand_path(source_file), pos[0], pos[1])
+          end
         end
         warn_reserved_vars(vars_yaml.keys.map(&.to_s), source_file, play_start_line(source_map, index))
       end
+
+      # The map stays on the play: the roles: entries' invocation vars are
+      # labeled from it by RoleLoader.load_roles.
+      play.source_map = source_map
 
       # Parse tags
       if tags_yaml = yaml["tags"]?.try(&.as_a?)
@@ -1939,7 +1975,7 @@ module Krikri
       role_handlers = [] of Task
       if roles_yaml = yaml["roles"]?.try(&.as_a?)
         begin
-          role_tasks, role_handlers = RoleLoader.load_roles(roles_yaml, play, playbook_dir)
+          role_tasks, role_handlers = RoleLoader.load_roles(roles_yaml, play, playbook_dir, source_map, "#{index}/roles")
         rescue ex : RoleNotFoundError
           # Ansible's Origin for this raise points at the offending roles:
           # ENTRY itself (live-verified vs 2.19.11: `- zzznope` reports
