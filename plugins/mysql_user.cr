@@ -61,9 +61,9 @@ module Krikri
   #   hardening's own two host_all: callers - root's password and
   #   removing anonymous users - never combine it with priv: either).
   #
-  # Not implemented: update_password: on_new_username, salt:, append_privs:/
-  # subtract_privs: (this always does a full revoke-then-regrant instead),
-  # resource_limits:, locked:, config_file:.
+  # Not implemented: update_password: on_new_username, salt:,
+  # subtract_privs: (append_privs: is - add-only diffing, see
+  # #apply_priv_if_needed), resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
     # Carries the fail_json msg Ansible's module would produce for a server
     # rejection of a password/plugin auth statement, out of the deep
@@ -122,6 +122,7 @@ module Krikri
       end
       password = @params["password"]?
       priv = @params["priv"]?
+      append_privs = true?(@params["append_privs"]?)
       update_password = @params["update_password"]? || "always"
       check_mode = true?(@params["_ansible_check_mode"]?)
       host_all = true?(@params["host_all"]?)
@@ -145,7 +146,7 @@ module Krikri
       )
 
       with_shape(
-        run_with_db(uri, name, host, state, password, update_password, priv, plugin,
+        run_with_db(uri, name, host, state, password, update_password, priv, append_privs, plugin,
           plugin_hash_string, plugin_auth_string, check_mode, host_all),
         name
       )
@@ -238,7 +239,7 @@ module Krikri
     end
 
     private def run_with_db(uri : String, name : String, host : String, state : String, password : String?,
-                            update_password : String, priv : String?, plugin : String?,
+                            update_password : String, priv : String?, append_privs : Bool, plugin : String?,
                             plugin_hash_string : String?, plugin_auth_string : String?,
                             check_mode : Bool, host_all : Bool) : PluginResult
       DB.open(uri) do |connection|
@@ -246,7 +247,7 @@ module Krikri
           run_host_all(connection, name, state, password, update_password, host,
             plugin, plugin_hash_string, plugin_auth_string, check_mode)
         else
-          run_single_host(connection, name, host, state, password, update_password, priv,
+          run_single_host(connection, name, host, state, password, update_password, priv, append_privs,
             plugin, plugin_hash_string, plugin_auth_string, check_mode)
         end
       end
@@ -267,28 +268,28 @@ module Krikri
 
     private def run_single_host(connection : DB::Database, name : String, host : String,
                                 state : String, password : String?, update_password : String,
-                                priv : String?, plugin : String?, plugin_hash_string : String?,
+                                priv : String?, append_privs : Bool, plugin : String?, plugin_hash_string : String?,
                                 plugin_auth_string : String?, check_mode : Bool) : PluginResult
       exists = user_exists?(connection, name, host)
 
       if state == "absent"
         ensure_absent(connection, name, host, exists, check_mode)
       else
-        ensure_present(connection, name, host, exists, password, update_password, priv,
+        ensure_present(connection, name, host, exists, password, update_password, priv, append_privs,
           plugin, plugin_hash_string, plugin_auth_string, check_mode)
       end
     end
 
     private def ensure_present(
       db : DB::Database, name : String, host : String, exists : Bool,
-      password : String?, update_password : String, priv : String?,
+      password : String?, update_password : String, priv : String?, append_privs : Bool,
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
       early, changed, created = create_or_update_account(db, name, host, exists, password, update_password,
         plugin, plugin_hash_string, plugin_auth_string, check_mode)
       return early if early
 
-      early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, check_mode)
+      early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, append_privs, check_mode)
       return early if early
 
       # Ansible branches the success msg on create-vs-modify (its own
@@ -546,46 +547,56 @@ module Krikri
     # True when the account's current authentication_string already
     # equals the given mysql_native_password hash, so no ALTER is needed.
     private def password_already_matches?(db : DB::Database, name : String, host : String, hash : String) : Bool
-      # Does the comparison entirely server-side (`authentication_string
-      # = ?` against the precomputed hash, a boolean 0/1) rather than
-      # pulling mysql.user.authentication_string back through the driver
-      # as a value - that column is LONGTEXT on the wire, a MySQL
-      # protocol type this vendored driver's type table has no `read`
-      # for at all (`MySql::Type::LongBlob` has no override, only the
-      # base `raise "not supported read"`). The comparison result itself
-      # must be read as Int64: MySQL reports LONGLONG for any `=`
-      # expression and the vendored driver has no read(Int32), so an
-      # `as: Int32` cast raised ColumnTypeMismatchError that the rescue
-      # below swallowed as "doesn't match" - every warm run re-issued the
-      # ALTER (robertdebock.mysql's warm idempotency, round 1700000
-      # investigation). A NULL authentication
-      # string compares as NULL (never equal), matching Ansible's
+      # Does the comparison entirely server-side rather than pulling
+      # mysql.user.authentication_string back through the driver as a
+      # value - that column is LONGTEXT on the wire, a MySQL protocol
+      # type this vendored driver's type table has no `read` for at all
+      # (`MySql::Type::LongBlob` has no override, only the base
+      # `raise "not supported read"`). The comparison is wrapped in
+      # COUNT(*) so the result's wire type doesn't depend on the
+      # server: MySQL reports a bare `authentication_string = ?`
+      # boolean as LONGLONG (readable as Int64) but MariaDB reports
+      # the very same expression as Int32, and the driver has no
+      # read(Int32) - the `as: Int64` cast raised
+      # ColumnTypeMismatchError that the rescue below swallowed as
+      # "doesn't match", so on MariaDB every warm run re-issued the
+      # ALTER (fiaasco.mariadb's warm idempotency, round 2400001;
+      # COUNT(*) is LONGLONG on both servers). A NULL authentication
+      # string simply matches no row (count 0), matching Ansible's
       # current_pass_hash != encrypted_password on an unset password.
-      matches = db.query_all(
-        "SELECT authentication_string = ? FROM mysql.user WHERE User = ? AND Host = ?",
-        hash, name, host, as: Int64
-      ).first?
-      matches == 1
+      matches = db.query_one(
+        "SELECT COUNT(*) FROM mysql.user WHERE User = ? AND Host = ? AND authentication_string = ?",
+        name, host, hash, as: Int64
+      )
+      matches > 0
     rescue
       false
     end
 
-    # Applies priv: (if given) when it differs from the account's
-    # current grants. Returns {early_result, changed} the same way
-    # #create_or_update_account does - changed carries forward the
-    # value the caller already had if nothing here needed to change.
+    # Applies priv: (if given) when the account's current grants differ
+    # from it. The change plan is computed by
+    # PluginHelpers::MysqlPrivileges.plan_changes (pure logic, mirroring
+    # real community.mysql's privilege diffing); an empty plan means the
+    # account already matches and nothing is reported changed - notably
+    # the baseline "*.*:USAGE" spec, whose desired entry equals the
+    # identity USAGE row every account carries. Returns {early_result,
+    # changed} the same way #create_or_update_account does - changed
+    # carries forward the value the caller already had if nothing here
+    # needed to change.
     private def apply_priv_if_needed(
-      db : DB::Database, name : String, host : String, exists : Bool, changed : Bool, priv : String?, check_mode : Bool,
+      db : DB::Database, name : String, host : String, exists : Bool, changed : Bool, priv : String?,
+      append_privs : Bool, check_mode : Bool,
     ) : {PluginResult?, Bool}
       return {nil, changed} unless priv
 
       desired = PluginHelpers::MysqlPrivileges.desired_grants(priv)
-      current = exists && !changed ? current_grants(db, name, host) : Hash(String, Set(String)).new
-      return {nil, changed} if current == desired
+      current = exists ? current_grants(db, name, host) : Hash(String, Set(String)).new
+      ops = PluginHelpers::MysqlPrivileges.plan_changes(desired, current, append_privs)
+      return {nil, changed} if ops.empty?
 
       return {PluginResult.new(changed: true, failed: false, msg: "User updated"), changed} if check_mode
 
-      apply_grants(db, name, host, desired)
+      execute_grant_plan(db, name, host, ops)
       {nil, true}
     end
 
@@ -619,7 +630,7 @@ module Krikri
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
       if existing_hosts.empty?
-        return ensure_present(db, name, fallback_host, false, password, update_password, nil,
+        return ensure_present(db, name, fallback_host, false, password, update_password, nil, false,
           plugin, plugin_hash_string, plugin_auth_string, check_mode)
       end
 
@@ -669,18 +680,26 @@ module Krikri
       PluginHelpers::MysqlPrivileges.current_grants(rows)
     end
 
-    private def apply_grants(db : DB::Database, name : String, host : String, desired : Hash(String, Set(String))) : Nil
+    private def execute_grant_plan(db : DB::Database, name : String, host : String,
+                                   ops : Array(PluginHelpers::MysqlPrivileges::Op)) : Nil
       account = "#{quote_str(name)}@#{quote_str(host)}"
-
-      db.exec "REVOKE ALL PRIVILEGES, GRANT OPTION FROM #{account}"
-
-      desired.each do |target, privileges|
-        grant_option = privileges.includes?("GRANT")
-        list = privileges.reject { |priv_name| priv_name == "GRANT" }
-        list = ["USAGE"] if list.empty?
-
-        clause = grant_option ? " WITH GRANT OPTION" : ""
-        db.exec "GRANT #{list.join(", ")} ON #{quote_target(target)} TO #{account}#{clause}"
+      ops.each do |op|
+        target = quote_target(op.target)
+        case op.kind
+        when :revoke_all
+          # Not `REVOKE ALL PRIVILEGES, GRANT OPTION ON ...` - MariaDB
+          # rejects that combined form outside the global *..* scope
+          # (error 1064), so the option is a separate :revoke_grant_option
+          # op planned only when the account holds it.
+          db.exec "REVOKE ALL PRIVILEGES ON #{target} FROM #{account}"
+        when :revoke_grant_option
+          db.exec "REVOKE GRANT OPTION ON #{target} FROM #{account}"
+        when :revoke
+          db.exec "REVOKE #{op.privileges.join(", ")} ON #{target} FROM #{account}"
+        when :grant
+          clause = op.privileges.includes?("GRANT") ? " WITH GRANT OPTION" : ""
+          db.exec "GRANT #{op.privileges.join(", ")} ON #{target} TO #{account}#{clause}"
+        end
       end
     end
 
