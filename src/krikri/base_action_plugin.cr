@@ -65,7 +65,16 @@ module Krikri
     # own optional parameter; most action plugins ignore it entirely.
     getter inventory : Inventory?
 
-    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host, @inventory : Inventory? = nil, @task_host : Host? = nil)
+    # The task's own `timeout:` wall-clock limit as an absolute instant
+    # (nil when the task carries none). Real's TASK_TIMEOUT alarm wraps
+    # all of handler.run - the action plugin included - so a long-running
+    # action can honor the same deadline the executor guards the whole
+    # dispatch with (only pause: reads it today; its sleep truncates to
+    # the deadline so its console lines survive onto the timed-out
+    # result, see PauseActionPlugin).
+    getter deadline : Time::Instant?
+
+    def initialize(@params : Hash(String, String), @vars : Hash(String, JSON::Any), @host : Host, @inventory : Inventory? = nil, @task_host : Host? = nil, @deadline : Time::Instant? = nil)
     end
 
     # Execute action on controller

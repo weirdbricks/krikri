@@ -277,6 +277,165 @@ describe "task timeout keyword" do
     output.includes?(%q{KEYORDER|{\"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"changed\": false}}).must_equal(true, output)
   end
 
+  # Real's alarm wraps ALL of handler.run (ansible/executor/
+  # task_executor.py:621), action plugin included - `pause: seconds: 30`
+  # with `timeout: 2` dies mid-sleep with the standard task-timeout
+  # failure, but its "Pausing for 30 seconds" console line (which
+  # real's pause action writes itself just before the alarm fires) is
+  # still there, and the [ERROR] block is the TWO-SEGMENT action-failure
+  # shape (the exception unwinds through the action-plugin call), unlike
+  # a module-dispatch kill's collapsed single segment. Everything below
+  # was live-captured from 2.19.11 running the same playbooks locally.
+  it "kills a controller-side action plugin past its deadline, console line intact" do
+    success, output = run_play([
+      "    - name: slow pause",
+      "      ansible.builtin.pause:",
+      "        seconds: 30",
+      "      timeout: 2",
+    ])
+
+    success.must_equal(false)
+    output.includes?("Pausing for 30 seconds").must_equal(true, output)
+    output.includes?("[ERROR]: Task failed: Timed out after 2 second(s).").must_equal(true, output)
+    # The two-segment block: headline + task Origin, then the caused-by
+    # separator and the bare timeout message (no task context of its own).
+    output.includes?("Task failed.\nOrigin: ").must_equal(true, output)
+    output.includes?("<<< caused by >>>\n\nTimed out after 2 second(s).").must_equal(true, output)
+    output.includes?(FATAL_LINE).must_equal(true, output)
+    output.includes?("localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, output)
+  end
+
+  it "applies an action-plugin timeout per loop item in real's interleaved order" do
+    success, output = run_play([
+      "    - name: loop pause",
+      "      ansible.builtin.pause:",
+      "        seconds: 30",
+      "      timeout: 2",
+      "      loop: [a, b]",
+    ])
+
+    success.must_equal(false)
+    # Real: "Pausing" before EACH item's failed line, the [ERROR] block
+    # once (Display-level dedup), and both items attempted.
+    output.includes?("failed: [localhost] (item=a) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"a\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
+    output.includes?("failed: [localhost] (item=b) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": \"b\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}}").must_equal(true, output)
+    output.scan("Pausing for 30 seconds").size.must_equal(2, output)
+    first_pause = output.index!("Pausing for 30 seconds")
+    item_a = output.index!("(item=a) =>")
+    second_pause = output.index!("Pausing for 30 seconds", item_a)
+    item_b = output.index!("(item=b) =>")
+    (first_pause < item_a).must_equal(true, output)
+    (item_a < second_pause).must_equal(true, output)
+    (second_pause < item_b).must_equal(true, output)
+    output.includes?("localhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, output)
+  end
+
+  it "honors ignore_errors on a timed-out action plugin and plays on" do
+    success, output = run_play([
+      "    - name: ignored pause",
+      "      ansible.builtin.pause:",
+      "        seconds: 30",
+      "      timeout: 2",
+      "      ignore_errors: true",
+      "    - ansible.builtin.debug:",
+      "        msg: after",
+    ])
+
+    success.must_equal(true)
+    output.includes?(FATAL_LINE).must_equal(true, output)
+    output.includes?("...ignoring").must_equal(true, output)
+    output.includes?("\"msg\": \"after\"").must_equal(true, output)
+    output.includes?("localhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1").must_equal(true, output)
+  end
+
+  it "feeds a timed-out action plugin to rescue: like any other failure" do
+    success, output = run_play([
+      "    - name: rescue pause",
+      "      block:",
+      "        - ansible.builtin.pause:",
+      "            seconds: 30",
+      "          timeout: 2",
+      "      rescue:",
+      "        - ansible.builtin.debug:",
+      "            msg: rescued",
+    ])
+
+    success.must_equal(true)
+    output.includes?(FATAL_LINE).must_equal(true, output)
+    output.includes?("\"msg\": \"rescued\"").must_equal(true, output)
+    output.includes?("localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0").must_equal(true, output)
+  end
+
+  it "applies an inherited block-level timeout to an action plugin" do
+    success, output = run_play([
+      "    - name: block pause",
+      "      block:",
+      "        - ansible.builtin.pause:",
+      "            seconds: 30",
+      "      timeout: 2",
+    ])
+
+    success.must_equal(false)
+    output.includes?("Pausing for 30 seconds").must_equal(true, output)
+    output.includes?(FATAL_LINE).must_equal(true, output)
+  end
+
+  it "validates the timeout before the action plugin runs (no console line)" do
+    # Live-verified vs 2.19.11: both the out-of-range ValueError and the
+    # templated non-conversion fail with NO "Pausing for ..." line - the
+    # timeout is converted/validated in post_validate, before handler.run.
+    success, output = run_play([
+      "    - name: neg pause",
+      "      ansible.builtin.pause:",
+      "        seconds: 30",
+      "      timeout: -5",
+    ])
+    success.must_equal(false)
+    output.includes?("[ERROR]: Task failed: Timeout -5 is invalid, it must be between 0 and 100000000.").must_equal(true, output)
+    output.includes?("Pausing for").must_equal(false, output)
+
+    success, output = run_play([
+      "    - name: bad pause",
+      "      ansible.builtin.pause:",
+      "        seconds: 1",
+      "      timeout: \"{{ bad }}\"",
+      "      vars:",
+      "        bad: abc",
+    ])
+    success.must_equal(false)
+    output.includes?("[ERROR]: Task failed: Error processing keyword 'timeout': The value 'abc' could not be converted to 'int'.").must_equal(true, output)
+    output.includes?("Pausing for").must_equal(false, output)
+  end
+
+  it "applies the deadline to an action plugin run as a handler" do
+    playbook = PluginSpecHelper.tmp_path("task-timeout-handler-#{Random::Secure.hex(4)}.yml")
+    File.write(playbook, [
+      "- hosts: localhost",
+      "  gather_facts: false",
+      "  connection: local",
+      "  tasks:",
+      "    - name: trigger",
+      "      ansible.builtin.command: \"true\"",
+      "      notify: slow handler",
+      "  handlers:",
+      "    - name: slow handler",
+      "      ansible.builtin.pause:",
+      "        seconds: 30",
+      "      timeout: 2",
+    ].join("\n") + "\n")
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, input: IO::Memory.new)
+    status.success?.must_equal(false)
+    text = output.to_s
+    text.includes?("RUNNING HANDLER [slow handler] ***").must_equal(true, text)
+    text.includes?("Pausing for 30 seconds").must_equal(true, text)
+    text.includes?("<<< caused by >>>\n\nTimed out after 2 second(s).").must_equal(true, text)
+    text.includes?(FATAL_LINE).must_equal(true, text)
+    text.includes?("localhost                  : ok=1    changed=1    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0").must_equal(true, text)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "never shares a batch group with its neighbors" do
     # A batched task's result only comes back with its whole group's SSH
     # round trip, so a per-task deadline is unenforceable inside one -

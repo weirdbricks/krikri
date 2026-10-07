@@ -927,6 +927,17 @@ module Krikri
       substituted_params = staged_assemble
       substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
 
+      # `timeout:` - same resolution and range validation the regular
+      # task path runs (see execute_task_once), at the same point: after
+      # arg finalization, BEFORE the action stage - real's alarm wraps
+      # all of handler.run, action plugin included, and one deadline
+      # started here covers the module dispatch below via its remainder.
+      handler_timeout, timeout_failure = resolve_task_timeout(handler, substitutor)
+      if timeout_failure
+        return timeout_failure
+      end
+      handler_deadline = handler_timeout ? Time.instant + handler_timeout.seconds : nil
+
       # Real bug found benchmarking geerlingguy.jenkins: its own
       # "configure default users" handler is a template: task
       # (`handlers/main.yml`, not `tasks/`) - unlike #execute_task_once/
@@ -947,15 +958,25 @@ module Krikri
         # detail). Handler delegate_to: keeps today's semantics (task_host
         # set, module dispatched on the host) since the handler path never
         # resolved a separate exec host.
-        action_result = ActionPluginManager.execute_action(
-          handler.module_name,
-          substituted_params,
-          vars_context,
-          host,
-          @inventory,
-          handler.delegate_to ? host : nil,
-          resolve_task_check_mode(handler, vars_context)
-        )
+        action_result = execute_action_with_deadline(handler_deadline) do
+          ActionPluginManager.execute_action(
+            handler.module_name,
+            substituted_params,
+            vars_context,
+            host,
+            @inventory,
+            handler.delegate_to ? host : nil,
+            resolve_task_check_mode(handler, vars_context),
+            handler_deadline
+          )
+        end
+        # The deadline expired during the action stage itself - same
+        # task-timeout failure the module-dispatch path returns.
+        if action_result.nil?
+          period = handler_timeout
+          raise "handler timeout expiry without a period" unless period
+          return task_timeout_result(period)
+        end
 
         unless action_result.success?
           failed = {
@@ -975,6 +996,9 @@ module Krikri
         bump_hv_generation_for_add_host(handler.module_name)
 
         if final = action_result.final_result
+          if timeout_with_console = action_plugin_timeout_result(final, handler_timeout)
+            return timeout_with_console
+          end
           result = apply_changed_failed_when(handler, final, vars_context, host)
           if register_name = handler.register
             register_result(host, register_name, result) unless register_name.empty?
@@ -1014,13 +1038,10 @@ module Krikri
         end
       end
 
-      # `timeout:` - same resolution and range validation the regular
-      # task path runs (see execute_task_once); a handler is a task, and
-      # real's alarm wraps its handler.run identically.
-      handler_timeout, timeout_failure = resolve_task_timeout(handler, substitutor)
-      if timeout_failure
-        return timeout_failure
-      end
+      # `timeout:` - the module dispatch inherits whatever of the task's
+      # budget the action stage already spent (real's alarm is set once
+      # around all of handler.run - see the resolution above).
+      dispatch_timeout = remaining_dispatch_timeout(handler_deadline)
 
       result = PluginManager.execute_plugin(
         handler.module_name,
@@ -1029,7 +1050,7 @@ module Krikri
         vars_context,
         become,
         become_user,
-        handler_timeout
+        dispatch_timeout
       )
 
       if period = marker_task_timeout(result)

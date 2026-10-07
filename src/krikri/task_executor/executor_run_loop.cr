@@ -1800,6 +1800,25 @@ module Krikri
         return result
       end
 
+      # `timeout:` - the task's wall-clock limit (ansible-core's
+      # TASK_TIMEOUT alarm around handler.run). Resolved at the same point
+      # real's post_validate converts it: after `when:` and arg
+      # finalization, but BEFORE the action plugin runs (live-verified vs
+      # 2.19.11: a pause: task with an out-of-range or non-convertible
+      # timeout fails with NO "Pausing for ..." console line). The
+      # deadline then covers the ACTION PLUGIN too - real's alarm wraps
+      # all of handler.run (ansible/executor/task_executor.py), not just
+      # the module dispatch - and the module dispatch below inherits
+      # whatever budget the action stage did not spend. async: tasks
+      # keep NO deadline: real's alarm only wraps the fire-and-forget
+      # dispatch itself (the handler returns the job id immediately), so
+      # the detached job stays governed by `async:` alone.
+      task_timeout, timeout_failure = resolve_task_timeout(task, substitutor)
+      if timeout_failure
+        return timeout_failure
+      end
+      task_deadline = task_timeout ? Time.instant + task_timeout.seconds : nil
+
       # Action-only directives (debug/assert/fail/pause/script/... and
       # group_by) are validated by Ansible's ACTION PLUGIN, before any
       # action runs - this pre-action hook handles exactly those; the
@@ -1898,15 +1917,25 @@ module Krikri
         # that dispatched the module binary onto the target host, where a
         # pull-mode dest: pointing into the controller failed rsync's mkdir
         # (softasap.sa-vpn-softether round 2300304).
-        action_result = ActionPluginManager.execute_action(
-          task.module_name,
-          substituted_params,
-          vars_context,
-          exec_host,
-          @inventory,
-          task.delegate_to ? host : nil,
-          resolve_task_check_mode(task, vars_context)
-        )
+        action_result = execute_action_with_deadline(task_deadline) do
+          ActionPluginManager.execute_action(
+            task.module_name,
+            substituted_params,
+            vars_context,
+            exec_host,
+            @inventory,
+            task.delegate_to ? host : nil,
+            resolve_task_check_mode(task, vars_context),
+            task_deadline
+          )
+        end
+        # The deadline expired during the action stage itself (real's
+        # alarm fires inside handler.run, wherever it happens to be).
+        if action_result.nil?
+          period = task_timeout
+          raise "task timeout expiry without a period" unless period
+          return task_timeout_result(period)
+        end
 
         unless action_result.success?
           failed = {
@@ -1934,6 +1963,9 @@ module Krikri
         bump_hv_generation_for_add_host(task.module_name)
 
         if final = action_result.final_result
+          if timeout_with_console = action_plugin_timeout_result(final, task_timeout)
+            return timeout_with_console
+          end
           return apply_changed_failed_when(task, final, vars_context, host)
         end
 
@@ -1941,6 +1973,13 @@ module Krikri
           substituted_params = modified_params
         end
       end
+
+      # Whatever of the task's `timeout:` budget the action stage (and
+      # the controller-side gates above it) already spent: real's alarm
+      # is set ONCE before handler.run and keeps counting through the
+      # module dispatch, so the dispatch gets the remainder, not the
+      # whole budget again.
+      dispatch_timeout = remaining_dispatch_timeout(task_deadline)
 
       # Data-driven module argument validation against Ansible's own
       # argument specs (see ArgspecValidator) - the same checks the real
@@ -1952,21 +1991,6 @@ module Krikri
       # Action-level entries were already handled above.
       if violation = argspec_validation_result(task, substituted_params, vars_context, action_level_only: false, check_mode: resolve_task_check_mode(task, vars_context))
         return apply_changed_failed_when(task, violation, vars_context, host)
-      end
-
-      # `timeout:` - the task's wall-clock limit (ansible-core's
-      # TASK_TIMEOUT alarm around handler.run). Resolved here - after
-      # `when:` and arg finalization, matching real's order (a when:-false
-      # task never validates its timeout, live-verified) - validated to
-      # Ansible's own 0..100000000 alarm range, and handed to the plugin
-      # dispatch below, which SIGKILLs a run that outlives it and returns
-      # the `_task_timeout` marker converted right after. async: tasks
-      # keep NO deadline: real's alarm only wraps the fire-and-forget
-      # dispatch itself (the handler returns the job id immediately), so
-      # the detached job stays governed by `async:` alone.
-      task_timeout, timeout_failure = resolve_task_timeout(task, substitutor)
-      if timeout_failure
-        return timeout_failure
       end
 
       # Same override execute_remote_plugin used to apply to the wire
@@ -2026,7 +2050,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env, task_timeout)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -2040,7 +2064,7 @@ module Krikri
         vars_context,
         become,
         become_user,
-        task_timeout
+        dispatch_timeout
       )
 
       if period = marker_task_timeout(result)
@@ -2429,6 +2453,67 @@ module Krikri
       {period == 0 ? nil : period, nil}
     end
 
+    # Whatever of the task's `timeout:` budget is left for the module
+    # dispatch: the deadline was started BEFORE the action stage (real's
+    # alarm is set once around all of handler.run, and the action plugin
+    # - pause's sleep, synchronize's rsync - runs under it), so the
+    # dispatch inherits the remainder. nil when the task carries no
+    # timeout. Bounded below at 1s, mirroring
+    # PluginManager.remaining_exec_timeout's own convention for an
+    # already-exhausted budget.
+    private def remaining_dispatch_timeout(task_deadline : Time::Instant?) : Int64?
+      return nil unless task_deadline
+      left = (task_deadline - Time.instant).total_seconds
+      left < 1 ? 1_i64 : left.ceil.to_i64
+    end
+
+    # Runs the action-plugin dispatch under the task's `timeout:`
+    # deadline - real's alarm covers the action plugin too
+    # (ansible/executor/task_executor.py wraps handler.run, which
+    # includes the action stage). The plugin runs in its own fiber; when
+    # the deadline expires first, nil is returned (the caller produces
+    # real's task-timeout failure) and the abandoned fiber is left to
+    # finish harmlessly in the background - real's SIGALRM likewise only
+    # unwinds the controller, leaving the action's child processes
+    # running. pause: is the exception: it is deadline-aware itself (see
+    # PauseActionPlugin) so its "Pausing for ..." console lines - which
+    # real writes just before the alarm fires - survive on the timed-out
+    # result, and it always beats this guard's own expiry.
+    private def execute_action_with_deadline(task_deadline : Time::Instant?, &block : -> ActionResult) : ActionResult?
+      return block.call unless task_deadline
+      channel = Channel(ActionResult).new(1)
+      spawn do
+        begin
+          channel.send(block.call)
+        rescue
+          # The task already returned its timeout result; a late failure
+          # in the abandoned plugin fiber is discarded.
+        end
+      end
+      left = (task_deadline - Time.instant).total_seconds
+      select
+      when result = channel.receive then result
+      when timeout(left.seconds) then nil
+      end
+    end
+
+    # A final action-plugin result that carries the `_task_timeout`
+    # marker (PauseActionPlugin's own deadline kill, its console lines
+    # aboard): converted to real's task-timeout failure shape while
+    # keeping `_ansible_pause_console`, so the lines still print before
+    # the [ERROR] block exactly like real's action plugin writing them
+    # itself just before the alarm fired.
+    private def action_plugin_timeout_result(final : JSON::Any, task_timeout : Int64?) : JSON::Any?
+      return nil unless task_timeout
+      return nil unless final.as_h?.try(&.has_key?("_task_timeout"))
+      result = task_timeout_result(task_timeout, final.as_h["_ansible_pause_console"]?)
+      # Marks the kill as ACTION-STAGE (the alarm fired inside the action
+      # plugin, not the module dispatch) - ResultDisplay renders that
+      # distinction as real's two-segment [ERROR] block.
+      result.as_h["_ansible_action_stage_timeout"] = JSON::Any.new(true)
+      result
+    end
+
     # The failed task result ansible-core produces when a task outlives
     # its `timeout:` (TaskTimeoutError's ContributesToTaskResult
     # contribution, live-captured from 2.19.11):
@@ -2439,7 +2524,12 @@ module Krikri
     # are ever evaluated, so those keywords cannot reinterpret a run
     # that never produced a result (ignore_errors:/rescue: still apply
     # downstream, which this plain failed result preserves).
-    private def task_timeout_result(period : Int64) : JSON::Any
+    # *console_lines* (an `_ansible_pause_console` array handed over from
+    # a deadline-killed PauseActionPlugin) rides along so the display
+    # prints the plugin's own console lines before the [ERROR] block,
+    # exactly like real's action plugin writing them just before the
+    # alarm fired.
+    private def task_timeout_result(period : Int64, console_lines : JSON::Any? = nil) : JSON::Any
       result = JSON.parse({
         "changed"  => false,
         "failed"   => true,
@@ -2449,6 +2539,7 @@ module Krikri
           "period" => period,
         },
       }.to_json)
+      result.as_h["_ansible_pause_console"] = console_lines if console_lines
       # Registered order pinned to real's (TaskTimeoutError's
       # result_contribution dict leads the merged registered result):
       # timedout, failed, exception, msg, changed.

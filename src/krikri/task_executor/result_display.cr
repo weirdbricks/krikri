@@ -535,8 +535,26 @@ module Krikri
       if result["timedout"]? || msg.starts_with?("Task failed: Timeout ")
         if origin = error_origin_context(source_task)
           inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
-          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
-            .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner)))
+          if result["_ansible_action_stage_timeout"]?.try(&.as_bool?)
+            # The alarm fired inside the ACTION plugin stage itself
+            # (pause's deadline-aware sleep): real's exception unwinds
+            # through the action-plugin call and renders the TWO-SEGMENT
+            # block - "Task failed." headline, the task's own Origin,
+            # "<<< caused by >>>" and the bare timeout message
+            # (live-verified vs 2.19.11 for `pause: seconds: 30,
+            # timeout: 2`, solo and looped). A module-dispatch kill
+            # collapses into the single segment below instead. The cause
+            # carries a non-following dummy chain under a different
+            # reason purely to keep the collapse from folding the two
+            # segments together (it is never rendered - chain_follow is
+            # false).
+            cause = ErrorBlock::Node.new(inner).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(""))
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+          else
+            ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+              .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner)))
+          end
         end
         return
       end

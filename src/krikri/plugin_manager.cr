@@ -1348,7 +1348,21 @@ module Krikri
       # Get the actual connection host (checks ansible_host)
       connection_host = get_connection_host(host, vars)
 
+      # The task's `timeout:` budget covers the whole transport - the
+      # plugin-binary upload window included: real's alarm is set before
+      # handler.run and its module-transfer time counts against it, so
+      # the clock starts here, BEFORE the upload, not at the exec below.
+      started = task_timeout ? Time.instant : nil
+
       ensure_uploaded(host, plugin_name, vars)
+
+      # The upload window ate the whole budget: real dies mid-transfer;
+      # krikri's upload is not individually interruptible, so it fails
+      # with the task-timeout result the moment the upload completes
+      # instead of executing anything.
+      if deadline_exhausted?(started, task_timeout)
+        return task_timeout_marker(task_timeout)
+      end
 
       # Perf items 1-3: try the
       # persistent daemon connection first when opted in and eligible -
@@ -1465,13 +1479,10 @@ module Krikri
       # newline inside the JSON can't break the remote `echo` line either.
       encoded = Base64.strict_encode(config)
       script = "echo #{shell_single_quote(encoded)} | base64 -d | #{target}\n"
-      # A `timeout:` task bounds the whole handler run - upload included,
-      # since the deadline in real covers everything from the action
-      # plugin down. The exec gets whatever of the budget the upload did
-      # not spend; the killed-exec classification below then turns the
-      # SIGKILLed transport result into the task-timeout marker instead
-      # of a bogus unreachable.
-      started = task_timeout ? Time.instant : nil
+      # The exec gets whatever of the budget the upload did not spend
+      # (`started` was set before the upload above); the killed-exec
+      # classification below then turns the SIGKILLed transport result
+      # into the task-timeout marker instead of a bogus unreachable.
       result = SSHManager.exec_script(
         connection_host,
         host.user || "root",
@@ -1498,6 +1509,13 @@ module Krikri
       # genuinely broken target still fails instead of looping.
       if missing_remote_binary?(interpreted, target, remote_plugin_dir(host.user || "root"))
         recover_missing_plugin!(host, plugin_name, vars)
+        # The re-upload just spent real transfer time; if it consumed the
+        # task's `timeout:` budget, fail now - real's alarm dies mid-
+        # transfer, and retrying the exec (with the 1s-floored remaining
+        # timeout) would let a module run that real never reaches.
+        if deadline_exhausted?(started, task_timeout)
+          return task_timeout_marker(task_timeout)
+        end
         retry_result = SSHManager.exec_script(
           connection_host,
           host.user || "root",
@@ -1523,6 +1541,16 @@ module Krikri
         "failed"        => true,
         "_task_timeout" => task_timeout,
       }.to_json)
+    end
+
+    # Whether the task's `timeout:` budget is already spent - the shared
+    # wall-clock check behind the two post-upload gates (the initial
+    # ensure_uploaded and the missing-binary recovery re-upload): real's
+    # alarm counts the module-transfer window toward the deadline, and
+    # these are the two points krikri's own transfer window can land in.
+    private def self.deadline_exhausted?(started : Time::Instant?, task_timeout : Int64?) : Bool
+      return false unless started && task_timeout
+      (Time.instant - started).total_seconds >= task_timeout
     end
 
     # The exec_script timeout for one dispatch of a `timeout:` task: the

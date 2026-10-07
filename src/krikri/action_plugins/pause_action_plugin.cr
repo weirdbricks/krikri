@@ -48,12 +48,9 @@ module Krikri
     INTERRUPT_HINT = "(ctrl+C then 'C' = continue early, ctrl+C then 'A' = abort)\r"
 
     def execute : ActionResult
-      seconds_param = @params["seconds"]?
-      minutes_param = @params["minutes"]?
-
-      if seconds_param && minutes_param
-        return ActionResult.final(ActionResult.plugin_result_json(false, true, "parameters are mutually exclusive: minutes|seconds"))
-      end
+      parsed = parse_duration
+      return parsed if parsed.is_a?(ActionResult)
+      wait, unit = parsed
 
       # echo is read BEFORE real narrows it (`echo = seconds is None and
       # echo`), so it still decides the " (output is hidden)" note on a
@@ -61,19 +58,6 @@ module Krikri
       # true-spellings all land here, not a native-bool check.
       echo = @params["echo"]? ? Krikri.lenient_boolean_true?(@params["echo"]?) : true
       echo_note = echo ? "" : " (output is hidden)"
-
-      unit = "minutes"
-      wait : Int64? = nil
-      if seconds_param
-        value = parse_int_arg(seconds_param, "seconds")
-        return validation_failure("seconds") unless value
-        wait = value
-        unit = "seconds"
-      elsif minutes_param
-        value = parse_int_arg(minutes_param, "minutes")
-        return validation_failure("minutes") unless value
-        wait = value * 60
-      end
 
       unless wait
         warn_noninteractive_stdin
@@ -88,8 +72,20 @@ module Krikri
       # to the end of the loop (executor_loops.cr's finish_looped_task)
       # and writing here would print every item's banner before the very
       # first item's "ok:".
-      console_lines = pause_console(wait, echo_note)
+      console_lines, timed_out = pause_console(wait, echo_note)
       stop = Time.local
+
+      # The task's own `timeout:` deadline expired during the wait - real's
+      # alarm fires mid-sleep and unwinds the action with the task-timeout
+      # failure (live-verified vs 2.19.11: `pause: seconds: 30, timeout: 2`
+      # still shows the "Pausing for 30 seconds" line, then the standard
+      # [ERROR] block + fatal). The console lines were already built above;
+      # they ride the marker result so the executor's conversion keeps
+      # them on the timed-out result (see
+      # TaskExecutor#action_plugin_timeout_result). The deadline-aware
+      # sleep in pause_console ends just BEFORE the executor's own
+      # deadline guard expires, so this result always wins that race.
+      return deadline_kill_result(console_lines) if timed_out
 
       elapsed = (stop - start).total_seconds
       shown = unit == "minutes" ? (elapsed / 60).round(2) : elapsed.round(2)
@@ -139,21 +135,69 @@ module Krikri
       @@stdin_warning_shown = true
     end
 
-    # A duration pause's console lines (empty for a bare `pause:`), doing
-    # the sleep itself. Real clamps the CONVERTED second count up to 1
+    # seconds/minutes are `{'type': int}`-validated BEFORE anything
+    # happens (float values truncate, non-numerics fail the task), and
+    # the two are mutually exclusive. Returns the {wait, unit} pair, or
+    # the failure ActionResult for the exclusive/invalid cases.
+    private def parse_duration : {Int64?, String} | ActionResult
+      seconds_param = @params["seconds"]?
+      minutes_param = @params["minutes"]?
+
+      if seconds_param && minutes_param
+        return ActionResult.final(ActionResult.plugin_result_json(false, true, "parameters are mutually exclusive: minutes|seconds"))
+      end
+
+      if seconds_param
+        value = parse_int_arg(seconds_param, "seconds")
+        return validation_failure("seconds") unless value
+        {value, "seconds"}
+      elsif minutes_param
+        value = parse_int_arg(minutes_param, "minutes")
+        return validation_failure("minutes") unless value
+        {value * 60, "minutes"}
+      else
+        {nil, "minutes"}
+      end
+    end
+
+    # The timed-out pause's marker result: the executor converts it to
+    # real's task-timeout failure shape while keeping the console lines
+    # (already built - real's pause writes them before the alarm fires).
+    private def deadline_kill_result(console_lines : Array(JSON::Any)?) : ActionResult
+      lines = console_lines || Array(JSON::Any).new
+      ActionResult.final(ActionResult.plugin_result_json(false, true, "",
+        {
+          "_ansible_pause_console" => JSON::Any.new(lines),
+          "_task_timeout"          => JSON::Any.new(0_i64),
+        }))
+    end
+
+    # A duration pause's console lines (nil when there is no wait at
+    # all), doing the sleep itself - and honoring the task's `timeout:`
+    # deadline when it is shorter than the wait (the second tuple element
+    # reports that expiry). Real clamps the CONVERTED second count up to 1
     # before both the console line and the sleep, so `seconds: 0`,
     # `minutes: 0` and any negative all announce and wait the same 1
     # second. The interrupt hint is the PROMPT's slot, not an extra line:
     # with a prompt Ansible prints it after the "Pausing for" line, and with
     # no prompt it REPLACES the prompt instead - which is never written at
     # all with non-interactive stdin.
-    private def pause_console(wait : Int64?, echo_note : String) : Array(JSON::Any)?
-      return nil unless wait
+    private def pause_console(wait : Int64?, echo_note : String) : {Array(JSON::Any)?, Bool}
+      return {nil, false} unless wait
       clamped = wait < 1 ? 1_i64 : wait
       console = ["Pausing for #{clamped} seconds#{echo_note}"]
       console << INTERRUPT_HINT if prompt_given?
+      lines = console.map { |line| JSON::Any.new(line) }
+      if (deadline = @deadline) && (left = (deadline - Time.instant).total_seconds) < clamped
+        # The `timeout:` deadline is shorter than the wait: sleep only
+        # the remaining budget, minus a small margin so this result
+        # (which carries the console lines real shows before the
+        # [ERROR] block) beats the executor's own deadline guard.
+        sleep Math.max(left - 0.1, 0.0).seconds
+        return {lines, true}
+      end
       sleep clamped.seconds
-      console.map { |line| JSON::Any.new(line) }
+      {lines, false}
     end
 
     # Ansible's own `if new_module_args['prompt']` truthiness test on the

@@ -86,6 +86,13 @@ module Krikri
     # `inventory` is the run's shared Inventory, passed only so plugins
     # that mutate run-scoped state (add_host:) reach the same object
     # every play's hosts:-pattern resolution reads from.
+    # `deadline` is the task's own `timeout:` wall-clock limit as an
+    # absolute instant (nil when the task carries none) - real's
+    # TASK_TIMEOUT alarm covers the action plugin too (it wraps all of
+    # handler.run), so a long-running action gets the deadline handed to
+    # it (only pause: reads it today; the executor additionally guards
+    # the whole dispatch itself, see
+    # TaskExecutor#execute_action_with_deadline).
     def self.execute_action(
       module_name : String,
       params : Hash(String, String),
@@ -94,6 +101,7 @@ module Krikri
       inventory : Inventory? = nil,
       task_host : Host? = nil,
       check_mode : Bool = false,
+      deadline : Time::Instant? = nil,
     ) : ActionResult
       # Get action plugin class
       plugin_class = ACTION_PLUGINS[module_name]?
@@ -147,7 +155,7 @@ module Krikri
       params["_ansible_check_mode"] = check_mode.to_s
 
       # Create and execute action plugin
-      action_plugin = plugin_class.new(params, vars, host, inventory, task_host)
+      action_plugin = plugin_class.new(params, vars, host, inventory, task_host, deadline)
 
       # Check if should run
       unless action_plugin.should_run?
