@@ -92,7 +92,7 @@ describe "lineinfile plugin" do
     File.read(path).must_equal(after_cold)
   end
 
-  it "is idempotent when the line value spans several embedded physical lines (regression: a value with an internal newline, e.g. a YAML literal '|' block, only matched the FIRST physical line by regexp - comparing that one element against the whole multi-line value never matched, and splicing only ever inserted after it without removing the old trailing lines, so the file grew a fresh copy of the non-first lines on every single run)" do
+  it "matches Ansible's NON-idempotent multi-line replacement byte for byte (regression: the previous span-check made this converge, but ansible-core 2.19.11 grows the file on every run - live-verified: the multi-line value replaces only the first physical line, whose remaining prefix re-matches the regexp on the next run, appending another copy of the non-first lines each time)" do
     path = PluginSpecHelper.tmp_path("lineinfile-multiline-embedded.txt")
     File.delete(path) if File.exists?(path)
     value = "foo\nbar\nbaz\n"
@@ -106,6 +106,7 @@ describe "lineinfile plugin" do
     })
     first["changed"].as_bool.must_equal(true)
     after_cold = File.read(path)
+    # The append path adds the raw line plus one separator: "foo\nbar\nbaz\n" + "\n".
     after_cold.must_equal("foo\nbar\nbaz\n\n")
 
     second = PluginSpecHelper.run("lineinfile", {
@@ -115,8 +116,10 @@ describe "lineinfile plugin" do
       "state"  => "present",
       "create" => "yes",
     })
-    second["changed"].as_bool.must_equal(false)
-    File.read(path).must_equal(after_cold)
+    second["changed"].as_bool.must_equal(true)
+    after_warm = File.read(path)
+    # First physical line ("foo\n") replaced by the whole value; the rest stays.
+    after_warm.must_equal("foo\nbar\nbaz\nbar\nbaz\n\n")
 
     third = PluginSpecHelper.run("lineinfile", {
       "path"   => path,
@@ -125,8 +128,85 @@ describe "lineinfile plugin" do
       "state"  => "present",
       "create" => "yes",
     })
-    third["changed"].as_bool.must_equal(false)
+    third["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("foo\nbar\nbaz\nbar\nbaz\nbar\nbaz\n\n")
+  end
+
+  it "reports changed on every run against SoftEther's BOM+CRLF lang.config, rewriting the language line LF (round 2600001 softasap.sa-vpn-softether: vpnserver/vpncmd rewrite lang.config BOM+CRLF on every startup; regexp \"^(en|ja|cn)$\" cannot match \"en\\r\\n\", the exact-line fallback finds it, and the byte comparison replaces it - Ansible reports changed on cold AND warm while the old stripped-lines comparison reported ok forever)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-langconfig-crlf.txt")
+    crlf_content = "\xef\xbb\xbf# SoftEther Language Setting\r\nen\r\n\r\n"
+    File.write(path, crlf_content)
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+      "create" => "yes",
+    })
+    first["changed"].as_bool.must_equal(true)
+    first["msg"].as_s.must_equal("line replaced")
+    after_cold = File.read(path)
+    after_cold.must_equal("\xef\xbb\xbf# SoftEther Language Setting\r\nen\n\r\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+      "create" => "yes",
+    })
+    second["changed"].as_bool.must_equal(false)
     File.read(path).must_equal(after_cold)
+
+    # What vpnserver's next startup does: rewrites the file BOM+CRLF again.
+    File.write(path, crlf_content)
+    third = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+      "create" => "yes",
+    })
+    third["changed"].as_bool.must_equal(true)
+  end
+
+  it "normalizes a matching line that lacks its trailing newline (Ansible reports changed once, then converges)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-no-trailing-newline.txt")
+    File.write(path, "en")
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+    })
+    first["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("en\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+    })
+    second["changed"].as_bool.must_equal(false)
+  end
+
+  it "appends the line when the existing one carries trailing whitespace, exactly like Ansible (never converges)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-trailing-space.txt")
+    File.write(path, "en \n")
+
+    first = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+    })
+    first["changed"].as_bool.must_equal(true)
+    File.read(path).must_equal("en \nen\n")
+
+    second = PluginSpecHelper.run("lineinfile", {
+      "path"   => path,
+      "regexp" => "^(en|ja|cn)$",
+      "line"   => "en",
+    })
+    second["changed"].as_bool.must_equal(false)
+    File.read(path).must_equal("en \nen\n")
   end
 
   it "keeps a plain single-line line value byte-stable across repeated runs" do

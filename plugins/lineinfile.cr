@@ -135,13 +135,24 @@ module Krikri
     end
 
     # Reads the file, runs the appropriate LineEditor operation, and writes
-    # the result back (unless check_mode).
+    # the result back (unless check_mode). Lines carry their terminators
+    # (Ansible's binary-mode readlines view) - the joined list IS the new
+    # file content, byte for byte.
     private def apply(path : String, state : String, line : String?, regexp : String?, search_string : String?, firstmatch : Bool, being_created : Bool, check_mode : Bool) : PluginResult
       original_content = File.exists?(path) ? File.read(path) : ""
-      original_lines = original_content.split("\n")
-      original_lines.pop if original_lines.size > 0 && original_lines.last.empty?
-      new_lines, changed = edit_lines(original_content, state, line, regexp, search_string, firstmatch)
-      new_content = render_content(new_lines, original_content, being_created)
+      original_lines = PluginHelpers::LineEditor.split_lines(original_content)
+
+      new_lines, changed, msg, found =
+        if state == "absent"
+          kept, removed, count = PluginHelpers::LineEditor.remove_matching(original_lines, line, regexp, search_string)
+          {kept, removed, removed ? "#{count} line(s) removed" : "", count}
+        else
+          edited, edited_changed, edited_msg = PluginHelpers::LineEditor.ensure_present(
+            original_lines, (line || raise "lineinfile: line is required"), regexp, search_string,
+            @params["insertafter"]?, @params["insertbefore"]?, true?(@params["backrefs"]?), firstmatch)
+          {edited, edited_changed, edited_msg, 0}
+        end
+      new_content = new_lines.join
 
       backup_file, write_failure = persist(path, new_content, being_created, changed, check_mode)
       return write_failure if write_failure
@@ -168,7 +179,7 @@ module Krikri
       end
       changed = changed || !!attrs_changed
 
-      line_result(path, state, changed, line, backup_file, original_lines.size, new_lines.size, !!attrs_changed, diff)
+      line_result(path, state, changed, msg, backup_file, found, !!attrs_changed, diff)
     end
 
     # Ansible's per-branch msg strings (live-verified against
@@ -197,16 +208,7 @@ module Krikri
     private PRESENT_KEY_ORDER = %w[changed msg backup diff failed]
     private ABSENT_KEY_ORDER  = %w[changed found msg backup diff failed]
 
-    private def line_result(path : String, state : String, changed : Bool, line : String?, backup_file : String, original_count : Int32, new_count : Int32, attrs_changed : Bool, diff : JSON::Any?) : PluginResult
-      msg = if !changed
-              ""
-            elsif state == "absent"
-              "#{original_count - new_count} line(s) removed"
-            elsif new_count > original_count
-              "line added"
-            else
-              "line replaced"
-            end
+    private def line_result(path : String, state : String, changed : Bool, msg : String, backup_file : String, found : Int32, attrs_changed : Bool, diff : JSON::Any?) : PluginResult
       if attrs_changed
         msg += " and " unless msg.empty?
         msg += "ownership, perms or SE linux context changed"
@@ -224,7 +226,7 @@ module Krikri
           include_empty_msg: true,
           diff: diff || lineinfile_diff(path),
           backup: backup_file,
-          found: original_count - new_count,
+          found: found,
           key_order: ABSENT_KEY_ORDER
         )
       else
@@ -238,29 +240,6 @@ module Krikri
           key_order: PRESENT_KEY_ORDER
         )
       end
-    end
-
-    private def edit_lines(original_content : String, state : String, line : String?, regexp : String?, search_string : String?, firstmatch : Bool) : {Array(String), Bool}
-      # String#split("\n") always adds one trailing "" artifact when the
-      # content ends with "\n" (or is empty) - drop it to get the real
-      # line list. This must NOT be conditioned on ends_with?("\n"): that
-      # condition can only be true precisely when split already produced
-      # the trailing "" that needs popping, so gating on its negation (as
-      # a previous version of this code did) never actually pops anything.
-      lines = original_content.split("\n")
-      lines.pop if lines.size > 0 && lines.last.empty?
-
-      if state == "absent"
-        PluginHelpers::LineEditor.remove_matching(lines, line, regexp, search_string)
-      else
-        PluginHelpers::LineEditor.ensure_present(lines, (line || raise "lineinfile: line is required"), regexp, true?(@params["backrefs"]?), @params["insertafter"]?, @params["insertbefore"]?, firstmatch, search_string)
-      end
-    end
-
-    private def render_content(new_lines : Array(String), original_content : String, being_created : Bool) : String
-      content = new_lines.join("\n")
-      content += "\n" if original_content.ends_with?("\n") || (being_created && new_lines.size > 0)
-      content
     end
 
     # Backup first (Ansible's backup_local also runs before its own

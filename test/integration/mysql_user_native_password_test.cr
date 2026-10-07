@@ -66,6 +66,9 @@ private def drop_spec_user(server : NamedTuple(host: String, port: Int32, passwo
 end
 
 describe "mysql_user default-plugin password path" do
+  # Both examples share one account on the live server (port 33307):
+  # under -p N they race, so run them one at a time.
+  serial!
   it "matches Ansible's create behavior (native-password account, or Ansible's 1524 failure)" do
     servers = SERVERS.select { |server| daemon_reachable?(server[:host], server[:port]) }
     skip "no MySQL/MariaDB server on 33306/33307" if servers.empty?

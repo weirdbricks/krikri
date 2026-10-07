@@ -3,6 +3,22 @@ module Krikri
     # LineEditor - pure line-matching/insertion logic for the lineinfile
     # plugin, factored out so it can be unit tested without touching the
     # filesystem or going through the plugin's stdin/stdout protocol.
+    #
+    # The lineinfile entry points (ensure_present/remove_matching/split_lines)
+    # work on lines WITH their terminator still attached - the same shape
+    # Ansible's own lineinfile uses, because it reads the file in binary
+    # mode (open(b_dest, 'rb') + f.readlines()), so a "\r\n"-terminated
+    # file yields lines like "en\r\n" and the trailing "\r" is part of the
+    # line the regexp and the replacement comparison see. SoftEther's own
+    # lang.config (written BOM + CRLF by the vpnserver/vpncmd binaries on
+    # every startup - found via softasap.sa-vpn-softether round 2600001,
+    # where Ansible reported changed on both cold and warm runs while
+    # crystal reported ok) is the live case: regexp "^(en|ja|cn)$" cannot
+    # match "en\r\n" ($ has nothing to anchor to before the "\r"), and
+    # Ansible then replaces the whole "en\r\n" line with "en\n" - changed
+    # - while a stripped-lines comparison calls it already correct. The
+    # terminator-less view used here previously made lines_equal? strip()
+    # the "\r" away and report ok forever.
     module LineEditor
       def self.matches_regexp?(line : String, pattern : String?) : Bool
         return false unless pattern
@@ -12,193 +28,249 @@ module Krikri
         false
       end
 
-      def self.lines_equal?(a : String, b : String) : Bool
-        a.strip == b.strip
+      # --- lineinfile entry points: lines carry their terminator ----------
+
+      # Binary-mode readlines: split on "\n" only, keeping the "\n" on
+      # every line it terminates. A trailing "\r" (CRLF files) stays in
+      # the line body; a final line without a newline stays unterminated;
+      # empty content is zero lines (Python's b"".readlines()).
+      def self.split_lines(content : String) : Array(String)
+        return [] of String if content.empty?
+        ends_nl = content.ends_with?("\n")
+        parts = content.split("\n")
+        parts.pop if ends_nl
+        if ends_nl
+          parts.map { |part| part + "\n" }
+        else
+          parts.map_with_index { |part, i| i == parts.size - 1 ? part : part + "\n" }
+        end
+      end
+
+      private def self.compile_pattern(pattern : String?) : Regex?
+        return nil unless pattern
+        Regex.new(pattern)
+      rescue
+        nil
       end
 
       # state: absent - drop every line matching regexp, containing
       # search_string (literal substring - Ansible's own matcher for
-      # state=absent), or - failing both - an exact match against `line`.
-      # firstmatch does NOT apply here: Ansible removes ALL matching
-      # lines regardless (live-verified against ansible-core 2.19.4).
-      # Returns {new_lines, changed}.
-      def self.remove_matching(lines : Array(String), line : String?, regexp : String?, search_string : String? = nil) : {Array(String), Bool}
-        changed = false
-        kept = lines.reject do |existing|
-          should_remove = if regexp
-                            matches_regexp?(existing, regexp)
-                          elsif search_string
-                            existing.includes?(search_string)
-                          elsif line
-                            lines_equal?(existing, line)
-                          else
-                            false
-                          end
-
-          changed ||= should_remove
-          should_remove
+      # state=absent), or - failing both - an exact match against `line`
+      # (Ansible compares `line` to the file line with only its trailing
+      # \r\n stripped - no whitespace normalization). firstmatch does NOT
+      # apply here: Ansible removes ALL matching lines regardless
+      # (live-verified against ansible-core 2.19.4). Kept lines keep their
+      # original terminators. Returns {new_lines, changed, found_count}.
+      def self.remove_matching(lines : Array(String), line : String?, regexp : String?, search_string : String? = nil) : {Array(String), Bool, Int32}
+        regex = compile_pattern(regexp)
+        found = 0
+        kept = lines.select do |existing|
+          matched = if regex
+                      !!(existing =~ regex)
+                    elsif search_string
+                      existing.includes?(search_string)
+                    else
+                      !line.nil? && existing.rstrip("\r\n") == line
+                    end
+          found += 1 if matched
+          !matched
         end
 
-        {kept, changed}
+        {kept, found > 0, found}
       end
 
-      # state: present - ensure `line` (or a regexp-matched line, optionally
-      # rewritten via backrefs) exists, inserting at insertafter/insertbefore
-      # if it's missing. Returns {new_lines, changed}.
+      # state: present - a 1:1 port of Ansible's lineinfile present()
+      # (ansible-core 2.19 modules/lineinfile.py) over terminator-attached
+      # lines. Returns {new_lines, changed, msg} with Ansible's own msg
+      # strings ('line added' / 'line replaced' / '').
       #
-      # `search_string` is the literal-substring alternative to `regexp`
-      # (Ansible's own argument_spec marks them mutually exclusive,
-      # so this only ever sees one of the two). `firstmatch` switches the
-      # replacement/insertion target from Ansible's default LAST
-      # match to the FIRST (live-verified against ansible-core 2.19.4:
-      # both the regexp/search_string replacement target and the
-      # insertafter/insertbefore anchor honor it, state=absent does not -
-      # there it removes every matching line regardless).
+      # Search order mirrors Ansible: regexp match wins (LAST match by
+      # default, first with firstmatch - live-verified benchmarking
+      # geerlingguy.phpmyadmin, whose regexp matches both the populated
+      # config line and a commented template near EOF, and Ansible rewrites
+      # only the final occurrence); then search_string the same way; only
+      # when neither matched does the exact-line scan run (`line` compared
+      # to each file line stripped of trailing \r\n) and, failing that,
+      # the insertafter/insertbefore anchor scan.
       def self.ensure_present(
         lines : Array(String),
         line : String,
         regexp : String?,
-        backrefs : Bool,
+        search_string : String?,
         insertafter : String?,
         insertbefore : String?,
-        firstmatch : Bool = false,
-        search_string : String? = nil,
-      ) : {Array(String), Bool}
+        backrefs : Bool,
+        firstmatch : Bool,
+      ) : {Array(String), Bool, String}
         new_lines = lines.dup
+        index0, index1, match, exact_line_match = scan_present(new_lines, line, regexp, search_string, insertafter, insertbefore, firstmatch)
+        changed, msg = apply_present(new_lines, line, regexp, search_string, insertafter, insertbefore, backrefs, index0, index1, match, exact_line_match)
+        {new_lines, changed, msg}
+      end
 
-        if regexp
-          pattern = regexp
-          # Ansible's lineinfile (state=present) replaces only the LAST
-          # line matching the regexp, not the first. Found live benchmarking
-          # geerlingguy.phpmyadmin: its `Add default username and password`
-          # lineinfile tasks (regexp `^.+\[['"]host['"]\].+$`) target lines
-          # that appear BOTH in the package's populated server block
-          # (`...['host'] = $dbserver;`) and as a commented template near
-          # EOF (`// ...['host'] = 'localhost';`). Ansible rewrites the
-          # final (commented) occurrence, leaving the active one alone;
-          # crystal previously replaced the FIRST, leaving the template
-          # commented and diverging config.inc.php byte-for-byte.
-          # firstmatch: true flips this to the FIRST matching line
-          # (live-verified against ansible-core 2.19.4).
-          found_index = match_index(new_lines, pattern, firstmatch)
-        elsif search_string
-          # search_string: literal substring containment, not a regex -
-          # same last-match-by-default / first-with-firstmatch semantics
-          # as regexp (live-verified against ansible-core 2.19.4).
-          found_index = match_index(new_lines, search_string, firstmatch, literal: true)
-        end
+      # Ansible's three-step scan: regexp match wins (LAST match by
+      # default, first with firstmatch), then search_string the same way,
+      # and only when neither matched does the exact-line scan run
+      # (`line` compared to each file line stripped of trailing \r\n)
+      # together with the insertafter/insertbefore anchor scan.
+      private def self.scan_present(lines : Array(String), line : String, regexp : String?, search_string : String?, insertafter : String?, insertbefore : String?, firstmatch : Bool) : {Int32, Int32, Regex::MatchData?, Bool} # ameba:disable Metrics/CyclomaticComplexity
+        regex = compile_pattern(regexp)
 
-        if found_index
-          if backrefs && pattern
-            # Ansible's lineinfile backrefs mode treats `line:` as
-            # a REPLACEMENT TEMPLATE for the WHOLE line (Python's
-            # `match.expand(line)`, then the entire existing line is
-            # overwritten by that expanded text) - not a per-match
-            # substring substitution. `String#gsub(Regex, String)`
-            # does the latter: it only replaces the SPAN the regexp
-            # actually matched and leaves whatever wasn't matched
-            # (e.g. the rest of the line after a regexp that only
-            # matches a line's leading portion) appended verbatim.
-            # Real bug found benchmarking riemers.gitlab-runner's own
-            # "Set concurrent option": `regexp: ^(\s*)concurrent =`,
-            # `line: \1concurrent = 5`, backrefs: true against the
-            # existing "concurrent = 1" - the regexp only matches the
-            # "concurrent =" prefix, so gsub replaced just that span
-            # and left the un-matched " 1" tail in place, producing
-            # the corrupt "concurrent = 5 1" (invalid TOML - gitlab-
-            # runner itself then failed to parse its own config on
-            # every later run: "expected a top-level item to end with
-            # a newline, comment, or EOF, but got '1' instead").
-            match = Regex.new(pattern).match(new_lines[found_index])
-            expanded = match ? expand_backref_template(line, match) : line
-            parts = multiline_replacement(expanded)
-            changed = !span_matches?(new_lines, found_index, parts)
-            splice(new_lines, found_index, parts) if changed
-            return {new_lines, changed}
-          else
-            parts = multiline_replacement(line)
-            changed = !span_matches?(new_lines, found_index, parts)
-            splice(new_lines, found_index, parts) if changed
-            return {new_lines, changed}
+        # Ansible compiles the insertion anchor ONLY when it is a real
+        # pattern (EOF/BOF/nil spellings are literals, not regexps).
+        anchor_from_insertafter = !insertafter.nil? && insertafter != "BOF" && insertafter != "EOF"
+        anchor_pattern = if anchor_from_insertafter
+                           insertafter
+                         elsif insertbefore && insertbefore != "BOF"
+                           insertbefore
+                         end
+        anchor_regex = compile_pattern(anchor_pattern)
+
+        index0 = -1
+        index1 = -1
+        match : Regex::MatchData? = nil
+        exact_line_match = false
+
+        if regex
+          lines.each_with_index do |existing, lineno|
+            if m = regex.match(existing)
+              index0 = lineno
+              match = m
+              break if firstmatch
+            end
           end
         end
 
-        # backrefs: line contains backreferences that only make sense
-        # against an actual regexp match - Ansible's own documented
-        # behavior for backrefs is "if the regexp does not match anywhere
-        # in the file, the file will be left unchanged" (dev-sec
-        # os_hardening's own `(?!.*no_pass_expiry)` negative-lookahead
-        # regexp is written specifically to stop matching once already
-        # applied, relying on this - without it, a second run inserted a
-        # new line with the literal, unsubstituted text "\1 ..." instead
-        # of leaving the file alone).
-        return {new_lines, false} if backrefs
-
-        # Real bug found benchmarking geerlingguy.jenkins: its own
-        # "Modify variables in init file." task gives a regexp: that
-        # never actually matches the line it (redundantly) also passes
-        # as line: - a real, if unusual, shape a real playbook can
-        # write, and Ansible's own lineinfile module still
-        # recognizes the target line as already present when it finds
-        # it verbatim elsewhere in the file, regardless of whether a
-        # regexp: was given at all. Gating this check behind `!regexp`
-        # meant ANY regexp: that failed to match (whether or not the
-        # target line already existed) skipped straight to insertion -
-        # a fresh duplicate `Environment="JENKINS_OPTS="` line got
-        # appended on literally every single run, never converging.
-        return {new_lines, false} if new_lines.any? { |existing| lines_equal?(existing, line) }
-
-        insert_index = insertion_index(new_lines, insertafter, insertbefore, firstmatch)
-        # Ansible inserts the raw `line` value plus one line
-        # separator, so an embedded/trailing newline inside `line`
-        # lands in the file verbatim (splitting it here keeps this
-        # module's separator-less line list byte-identical to that).
-        line.split("\n").each_with_index do |part, offset|
-          new_lines.insert(insert_index + offset, part)
+        if search_string && match.nil?
+          lines.each_with_index do |existing, lineno|
+            if existing.includes?(search_string)
+              index0 = lineno
+              break if firstmatch
+            end
+          end
         end
-        {new_lines, true}
-      end
 
-      # Maps a `line` value that may contain embedded newlines (typical
-      # of a YAML folded scalar, which always ends with one) onto
-      # Ansible's replace semantics. Ansible compares and writes
-      # whole file lines WITH their separator, ensuring exactly one
-      # trailing separator on the replacement. In this module's
-      # separator-less line list that means: compare against the FULL
-      # value with one trailing newline removed, then split what
-      # remains on the embedded newlines - the join that renders the
-      # file re-adds each separator. Without this, a trailing-newline
-      # value never compared equal to the separator-less stored line,
-      # so every run rewrote it and the rendered file grew one extra
-      # newline per run. Returns the physical lines `line` occupies.
-      private def self.multiline_replacement(line : String) : Array(String)
-        body = line.ends_with?("\n") ? line : line + "\n"
-        body.chomp.split("\n")
-      end
-
-      # True when *parts* already occupies lines[index...index+parts.size]
-      # verbatim - i.e. a previous run's replace/insert already put this
-      # exact multi-line value there, so nothing needs to change. Without
-      # this span check, comparing only the single matched element against
-      # the full multi-line body can never be equal once a value spans more
-      # than one physical line, so every run "replaces" (and, worse, only
-      # ever inserted after that one element instead of removing the old
-      # trailing lines it had previously inserted) - the file grew a fresh
-      # copy of the non-first physical lines on every single run.
-      private def self.span_matches?(lines : Array(String), index : Int32, parts : Array(String)) : Bool
-        return false if index + parts.size > lines.size
-        parts.each_with_index.all? { |part, offset| lines[index + offset] == part }
-      end
-
-      # Replaces the single matched element at *index* with *parts* (one or
-      # more physical lines), shifting any following lines down - only
-      # called when `span_matches?` is false, so this is always a genuine
-      # content change, never a no-op rewrite of an already-stable span.
-      private def self.splice(lines : Array(String), index : Int32, parts : Array(String)) : Nil
-        lines[index] = parts[0]
-        parts[1..].each_with_index do |part, offset|
-          lines.insert(index + 1 + offset, part)
+        if match.nil?
+          lines.each_with_index do |existing, lineno|
+            if line == existing.rstrip("\r\n")
+              index0 = lineno
+              exact_line_match = true
+            elsif anchor_regex && !anchor_regex.match(existing).nil?
+              index1 = anchor_from_insertafter ? lineno + 1 : lineno
+              break if firstmatch
+            end
+          end
         end
+
+        {index0, index1, match, exact_line_match}
+      end
+
+      # The mutation half of Ansible's present(): replacement when a line
+      # was found, otherwise backrefs' deliberate no-op, then the
+      # insertion branches (BOF / EOF-append / after an anchor / at an
+      # anchor). Returns {changed, msg}.
+      private def self.apply_present(lines : Array(String), line : String, regexp : String?, search_string : String?, insertafter : String?, insertbefore : String?, backrefs : Bool, index0 : Int32, index1 : Int32, match : Regex::MatchData?, exact_line_match : Bool) : {Bool, String} # ameba:disable Metrics/CyclomaticComplexity
+        linesep = "\n"
+
+        if index0 != -1
+          # backrefs expands `line` against the match; otherwise the raw
+          # line value is the replacement. The endswith(linesep)
+          # normalization applies ONLY to this replacement comparison -
+          # the insertion branches below append linesep to the raw line
+          # unconditionally (so line "x\n" appended lands as "x\n\n",
+          # live-verified against ansible-core 2.19.11).
+          new_line = if backrefs && (m = match)
+                       expand_backref_template(line, m)
+                     else
+                       line
+                     end
+          new_line += linesep unless new_line.ends_with?(linesep)
+
+          if regexp.nil? && search_string.nil? && match.nil? && !exact_line_match
+            # Dead in Ansible too (index0 can only be set here by an exact
+            # match, which this branch excludes) - ported for fidelity.
+            insert_beside_anchor(lines, line, insertafter, insertbefore, index1)
+          elsif lines[index0] != new_line
+            lines[index0] = new_line
+            {true, "line replaced"}
+          else
+            {false, ""}
+          end
+        elsif backrefs
+          # Do nothing: unsafe to generate the line without a regexp match
+          # to populate the backrefs from (dev-sec os_hardening's
+          # negative-lookahead regexps rely on this to stay idempotent).
+          {false, ""}
+        elsif insertbefore == "BOF" || insertafter == "BOF"
+          lines.insert(0, line + linesep)
+          {true, "line added"}
+        elsif insertafter == "EOF" || index1 == -1
+          append_at_eof(lines, line, linesep)
+        elsif insertafter && index1 != -1
+          insert_after_anchor(lines, line, insertafter, index1)
+        else
+          lines.insert(index1, line + linesep)
+          {true, "line added"}
+        end
+      end
+
+      # Ansible's insertafter/insertbefore insertion branches, compared
+      # against the anchor-adjacent line with only trailing \r\n stripped.
+      private def self.insert_beside_anchor(lines : Array(String), line : String, insertafter : String?, insertbefore : String?, index1 : Int32) : {Bool, String} # ameba:disable Metrics/CyclomaticComplexity
+        linesep = "\n"
+        if insertafter && insertafter != "EOF"
+          if !lines.empty? && !"\n\r".includes?(lines.last[-1])
+            lines[-1] += linesep
+          end
+          if lines.size == index1
+            if lines[index1 - 1].rstrip("\r\n") != line
+              lines << (line + linesep)
+              return {true, "line added"}
+            end
+          elsif lines[index1].rstrip("\r\n") != line
+            lines.insert(index1, line + linesep)
+            return {true, "line added"}
+          end
+        elsif insertbefore && insertbefore != "BOF"
+          if index1 <= 0
+            if lines[index1].rstrip("\r\n") != line
+              lines.insert(index1, line + linesep)
+              return {true, "line added"}
+            end
+          elsif lines[index1 - 1].rstrip("\r\n") != line
+            lines.insert(index1, line + linesep)
+            return {true, "line added"}
+          end
+        end
+        {false, ""}
+      end
+
+      # Append at EOF (the default insertion). Ensure the previous last
+      # line is newline-terminated first, but note the appended value is
+      # the RAW line plus one linesep - a line value that already ends
+      # with "\n" lands with a doubled terminator, byte-identical to
+      # Ansible (live-verified: line "x\n" into a fresh file gives
+      # "x\n\n").
+      private def self.append_at_eof(lines : Array(String), line : String, linesep : String) : {Bool, String}
+        if !lines.empty? && !"\n\r".includes?(lines.last[-1])
+          lines << linesep
+        end
+        lines << (line + linesep)
+        {true, "line added"}
+      end
+
+      private def self.insert_after_anchor(lines : Array(String), line : String, insertafter : String, index1 : Int32) : {Bool, String}
+        linesep = "\n"
+        if lines.size == index1
+          if lines[index1 - 1].rstrip("\r\n") != line
+            lines << (line + linesep)
+            return {true, "line added"}
+          end
+        elsif line != lines[index1].rstrip("\n\r")
+          lines.insert(index1, line + linesep)
+          return {true, "line added"}
+        end
+        {false, ""}
       end
 
       # Expands a backrefs replacement template the way Python's
@@ -314,10 +386,12 @@ module Krikri
         end
       end
 
+      # --- shared with BlockEditor (separator-less lines) -----------------
+
       # Position of the line matching `pattern`: the LAST match by default
       # (Ansible's lineinfile/blockinfile both scan the whole file
       # without breaking), or the FIRST when `firstmatch` is set. With
-      # `literal: true` the pattern is a plain substring to CONTAIN
+      # literal: true the pattern is a plain substring to CONTAIN
       # (Ansible's search_string), not a regex.
       def self.match_index(lines : Array(String), pattern : String, firstmatch : Bool, literal : Bool = false) : Int32?
         matcher = if literal
