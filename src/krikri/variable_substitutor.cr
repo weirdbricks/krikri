@@ -1414,6 +1414,32 @@ module Krikri
     # without aliasing back to the caller.
     private def ensure_magic_vars! : Nil
       return if @magic_vars_added
+      # Copy-on-write fast path: every write below would be a verified
+      # no-op (inventory_hostname already reads exactly @host_name,
+      # ansible_host already present, every fact key already present with
+      # the identical value), so the lazy `ensure_owned!` dup never has
+      # to fire at all. This is the shape every task-executor call site
+      # produces - `build_vars_context` puts these same three magic keys
+      # into vars_context itself, with the same values - and it is the
+      # hot path the controller-profile microbench measured: the
+      # full-`@vars.dup` this skips costs ~3.0us on a ~350-key vars hash,
+      # and the old always-dup-then-write behavior paid it for every
+      # substitutor instance that ever reached an evaluator/renderer.
+      # @vars stays ALIASED to the caller's hash here (never written by
+      # this class - any later real write still goes through the
+      # `ensure_owned!` call sites below, which dup first), so values
+      # the caller mutates after construction (set_fact, register, loop
+      # item binding) are seen live by this instance's reads, exactly
+      # like the fresh-construction-after-mutation discipline every
+      # caller already follows. A vars hash that does NOT already carry
+      # the magic entries (parse-time play vars, raw lookups) fails the
+      # checks and takes the original dup-and-write path unchanged.
+      if @vars["inventory_hostname"]?.try(&.as_s?) == @host_name &&
+         @vars.has_key?("ansible_host") &&
+         (@facts.empty? || @facts.all? { |key, value| @vars["ansible_#{key}"]? == value })
+        @magic_vars_added = true
+        return
+      end
       ensure_owned!
       @vars["inventory_hostname"] = JSON::Any.new(@host_name)
       # ansible_host is inventory-derived (defaults to the inventory name);

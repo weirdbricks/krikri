@@ -45,11 +45,20 @@ defect moves down or gets deleted.
   `~/scratch/perf-profile-report.md`): a warm 304-task SSH run is 2.8 s, 79% of it remote module work in
   the daemon, <1% templating/conditions. Done from that profile: a **local plugin daemon** serves
   `ansible_connection=local` (0.837 s -> 0.348 s on the 30-exec local probe; `--no-persistent-daemon`
-  turns it off), and the **parse phase** lost its one hotspot (the reserved-var warning re-read the whole
-  playbook per task; `--syntax-check` of the 304-task bench 30 ms -> 9 ms). Measured and **not worth
+  turns it off), the **parse phase** lost its one hotspot (the reserved-var warning re-read the whole
+  playbook per task; `--syntax-check` of the 304-task bench 30 ms -> 9 ms), and the **vars-hash dup /
+  second substitutor** went copy-on-write (`ensure_magic_vars!` skips its writes entirely when they
+  would be verified no-ops, so the lazy `ensure_owned!` full-hash dup never fires on the executor's
+  vars_context shape and the jinja resolver's second substitutor aliases the same hash): on a 300-task
+  local template-heavy bench (~350-key vars, release, interleaved paired runs, median) wall
+  128 -> 115 ms (-10%), the templating bucket 41 -> 34.5 ms (-16%); invalidation stays exact because
+  every call site constructs a fresh substitutor after any vars mutation (set_fact, register, loop
+  item, include_vars, until:-retry) and the aliased hash is read live - pinned by
+  `test/unit/var_substitutor_liveness_test.cr` and
+  `test/integration/vars_invalidation_templating_test.cr`. Measured and **not worth
   starting** (each <= ~1% of warm wall): `ip` forks in `gather_network_facts` (~11 ms/gather), the
-  interpreter spawn in `gather_python_facts` (~20 ms), the vars-hash dup / second substitutor (~4% on
-  local template-heavy runs only), `ConditionalEvaluator` re-parsing (5-7 us/call), ENV re-conversion
+  interpreter spawn in `gather_python_facts` (~20 ms), `ConditionalEvaluator` re-parsing (5-7 us/call),
+  ENV re-conversion
   (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
   build (`./build.sh --release --static-podman`); a glibc build fails on the Ubuntu 22.04 perfbench image.
