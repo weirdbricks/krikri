@@ -16,10 +16,6 @@ defect moves down or gets deleted.
 **Currently at `0.9.1527`.**
 
 ## Open gaps
-- **`timedout.frame` deprecation warning:** real ansible-core 2.19.11 prints `[DEPRECATION WARNING]: The
-  `timedout.frame` task result key is deprecated` (stderr, with an Origin block) when a registered
-  timed-out task result is templated. krikri enforces `timeout:` and matches the result values and key
-  order, but does not print that warning. Stderr only; task status and stdout are unaffected.
 
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
@@ -83,6 +79,13 @@ cap - revisit only if it recurs).
 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
 "Open gaps" rather than arguing with the note in place.
+### `timedout.frame` deprecation warning is not printed
+
+Real ansible-core 2.19.11 prints a stderr `[DEPRECATION WARNING]: The `timedout.frame` task result key is
+deprecated` (with an Origin block) when a registered timed-out result is templated. krikri enforces
+`timeout:` and matches the result values and key order but does not emit that warning: stderr only, no
+effect on task status or stdout. Decided 2026-10-07: not worth matching.
+
 
 ### Console-output differences from ansible-core 2.19.11 that cannot be matched
 
