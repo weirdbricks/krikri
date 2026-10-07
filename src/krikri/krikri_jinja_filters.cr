@@ -4,6 +4,7 @@ require "./variable_substitutor/filter_core"
 require "./ipaddr_core"
 require "./jmespath"
 require "./python_lookup_runner"
+require "./python_test_runner"
 require "./jinja_host_context"
 require "./variable_substitutor/filter_engine"
 require "./py_random"
@@ -77,6 +78,30 @@ module Krikri
       true
     end
 
+    # Role-local `test_plugins/*.py` define tests on the controller at run
+    # time, so they are resolved per render (the rendering scope decides
+    # which role's plugin directory applies) and registered on that render's
+    # own engine - the test-side twin of #ensure_python_filter (Aisbergg.
+    # networkmanager's `value is list`, round 2300110).
+    def self.ensure_python_test(name : String, vars : Hash(String, JSON::Any),
+                                engine : KrikriJinja::Engine) : Bool
+      role_path = vars["role_path"]?.try(&.as_s?)
+      playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+      return false unless role_path || playbook_dir
+      return false unless PythonTestRunner.defines_test?(name, PythonTestRunner.find_sources(role_path, playbook_dir))
+
+      engine.register_json_test(name) do |value, args, kwargs|
+        sources = PythonTestRunner.find_sources(
+          vars["role_path"]?.try(&.as_s?), vars["playbook_dir"]?.try(&.as_s?)
+        )
+        if sources.empty? || !PythonTestRunner.defines_test?(name, sources)
+          raise KrikriJinja::TemplateError.new("No test named '#{name}'.", 0)
+        end
+        py_truthy(PythonTestRunner.call_test(name, sources, value, args, kwargs, vars))
+      end
+      true
+    end
+
     private def self.subelements_walk(elements : Array(JSON::Any), fields : Array(String),
                                       skip_missing : Bool, results : Array(JSON::Any)) : Nil
       field = fields[0]? || return
@@ -131,6 +156,44 @@ module Krikri
       message = error.message || return nil
       return nil unless message.includes?("unknown filter")
       message.split('"')[1]?
+    end
+
+    # The test name a krikri-jinja "unknown test" error names, if any -
+    # the test-side twin of #unknown_filter_name.
+    def self.unknown_test_name(error : KrikriJinja::TemplateError) : String?
+      message = error.message || return nil
+      return nil unless message.includes?("unknown test")
+      message.split('"')[1]?
+    end
+
+    # Shared-engine twin of #ensure_python_test, for the `{{ }}` expression
+    # path: the test is registered once on the process-wide default engine,
+    # so it must resolve the rendering scope's plugin sources and variables
+    # from each call's host context, never from the scope that happened to
+    # register it (a later role would otherwise dispatch to the wrong role's
+    # plugin file). Mirrors #ensure_shared_python_filter.
+    def self.ensure_shared_python_test(name : String, vars : Hash(String, JSON::Any)) : Bool
+      role_path = vars["role_path"]?.try(&.as_s?)
+      playbook_dir = vars["playbook_dir"]?.try(&.as_s?)
+      return false unless role_path || playbook_dir
+      return false unless PythonTestRunner.defines_test?(name, PythonTestRunner.find_sources(role_path, playbook_dir))
+
+      KrikriJinja.register_default_test(name) do |value, args, kwargs, ctx|
+        host = ctx.host_context
+        scope = host.is_a?(Krikri::JinjaHostContext) ? host.vars : {} of String => JSON::Any
+        sources = PythonTestRunner.find_sources(
+          scope["role_path"]?.try(&.as_s?), scope["playbook_dir"]?.try(&.as_s?)
+        )
+        if sources.empty? || !PythonTestRunner.defines_test?(name, sources)
+          raise KrikriJinja::TemplateError.new("No test named '#{name}'.", 0)
+        end
+        py_truthy(PythonTestRunner.call_test(
+          name, sources, KrikriJinja.to_json_any(value),
+          args.map { |arg| KrikriJinja.to_json_any(arg) },
+          kwargs.transform_values { |arg| KrikriJinja.to_json_any(arg) }, scope
+        ))
+      end
+      true
     end
 
     # Python's type name for a JSON value, as Ansible's error messages

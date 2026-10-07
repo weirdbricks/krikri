@@ -364,10 +364,14 @@ module Krikri
       # literal is not a test) and checks each name against the ONE set
       # of tests the evaluators can actually resolve - Crinja's own test
       # library, which every special-cased `is` test here either registers
-      # into or mirrors - raising the same UnknownTestError a reached
-      # clause already raises, so the only behavior change is for names
-      # that would fail the task anyway the moment they were evaluated.
-      validate_test_names(condition)
+      # into or mirrors, plus a role-local (or playbook-adjacent)
+      # `test_plugins/*.py` test, which Ansible loads on the controller
+      # at template-compile time (Aisbergg.networkmanager's `value is
+      # list`, round 2300110) - raising the same UnknownTestError a
+      # reached clause already raises, so the only behavior change is for
+      # names that would fail the task anyway the moment they were
+      # evaluated.
+      validate_test_names(condition, vars)
 
       # Handle the Python/Jinja2 conditional (ternary) expression `X if
       # COND else Y` - grammatically the LOWEST-precedence construct
@@ -1804,7 +1808,7 @@ module Krikri
     # validate_filter_names/validate_test_names wording surfaces unchanged.
     def self.compile_time_name_error?(condition : String, vars : Hash(String, JSON::Any)) : Bool
       validate_filter_names(condition, vars)
-      validate_test_names(condition)
+      validate_test_names(condition, vars)
       false
     rescue VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
       true
@@ -1935,9 +1939,14 @@ module Krikri
     # one nothing can resolve - exactly the names the generic
     # REGEX_GENERIC_IS_TEST Crinja delegation would fail on at runtime,
     # just at COMPILE time like Jinja, before short-circuiting can
-    # hide them. An `is` with no identifier after it (`is (`, end of
-    # string) is left alone for the runtime paths to interpret.
-    private def self.validate_test_names(condition : String) : Nil
+    # hide them. Like the filter pre-pass, a name a role-local (or
+    # playbook-adjacent) `test_plugins/*.py` defines is accepted (and
+    # registered on the shared engine for the runtime delegation to find)
+    # instead of hard-failing - Ansible resolves those on the controller
+    # at template-compile time (Aisbergg.networkmanager's `value is
+    # list`, round 2300110). An `is` with no identifier after it (`is (`,
+    # end of string) is left alone for the runtime paths to interpret.
+    private def self.validate_test_names(condition : String, vars : Hash(String, JSON::Any)) : Nil
       bytes = condition.to_slice
       in_quote : UInt8? = nil
       i = 0
@@ -1953,7 +1962,8 @@ module Krikri
           in_quote = byte
         elsif byte == 'i'.ord && (matched = test_name_at(bytes, i))
           name, after = matched
-          unless VariableSubstitutor::JinjaRenderer.known_test?(name)
+          unless VariableSubstitutor::JinjaRenderer.known_test?(name) ||
+                 KrikriJinjaFilters.ensure_shared_python_test(name, vars)
             raise VariableSubstitutor::UnknownTestError.new("No test named '#{name}'.")
           end
           i = after

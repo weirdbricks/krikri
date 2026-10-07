@@ -285,10 +285,20 @@ module Krikri
       rescue ex : KrikriJinja::TemplateError
         # A role-local `filter_plugins/*.py` filter is resolved on demand
         # and registered on this render's own engine, then the render is
-        # retried once with that same engine.
+        # retried once with that same engine. The same one-chance retry
+        # applies to an unknown TEST name - a role-local (or
+        # playbook-adjacent) `test_plugins/*.py` test, which Ansible
+        # loads on the controller at template-compile time the same way
+        # (Aisbergg.networkmanager's `value is list`, round 2300110).
         filter_name = KrikriJinjaFilters.unknown_filter_name(ex)
         if filter_name && KrikriJinjaFilters.ensure_python_filter(filter_name, template_vars, engine)
           render_once(engine, content, template_vars)
+        elsif test_name = KrikriJinjaFilters.unknown_test_name(ex)
+          if KrikriJinjaFilters.ensure_python_test(test_name, template_vars, engine)
+            render_once(engine, content, template_vars)
+          else
+            raise ex
+          end
         else
           raise ex
         end

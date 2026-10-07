@@ -156,6 +156,19 @@ module Krikri
         # Every other failure keeps the lenient give-back-the-text
         # behavior (a lenient-undefined `{% if %}` is deliberate here).
         if test_name = self.class.unknown_feature_name(e, "test")
+          # One last chance before the hard failure: a role-local (or
+          # playbook-adjacent) `test_plugins/*.py` may define it -
+          # Ansible loads those on the controller at template-compile
+          # time (Aisbergg.networkmanager's `value is list`, round
+          # 2300110). Registered on the shared engine, then rendered
+          # once more; still unknown means registration did not take.
+          if KrikriJinjaFilters.ensure_shared_python_test(test_name, @vars)
+            begin
+              return render!(text)
+            rescue ex : KrikriJinja::TemplateError
+              raise ex unless self.class.unknown_feature_name(ex, "test")
+            end
+          end
           raise UnknownTestError.new("No test named '#{test_name}'.")
         end
         if filter_name = KrikriJinjaFilters.unknown_filter_name(e)
@@ -220,8 +233,11 @@ module Krikri
       #
       # An unknown filter gets one chance to be a role-local (or
       # playbook-adjacent) `filter_plugins/*.py` filter: it is registered
-      # on the shared engine and the evaluation retried once. Anything else
-      # is re-raised untouched so the caller's own fallback engages.
+      # on the shared engine and the evaluation retried once. The same
+      # one-chance retry applies to an unknown TEST name (a role-local
+      # `test_plugins/*.py` test - Aisbergg.networkmanager's `value is
+      # list`, round 2300110). Anything else is re-raised untouched so
+      # the caller's own fallback engages.
       # Without this gate a delegated chain's unknown-filter error reached
       # the hand-rolled fallback, whose suffix walk collapsed the whole
       # expression to "undefined" - diodonfrost.vagrant's `{{
@@ -232,8 +248,13 @@ module Krikri
       def evaluate_value!(expr : String) : JSON::Any?
         evaluate_value_once!(expr)
       rescue e : KrikriJinja::TemplateError
-        name = KrikriJinjaFilters.unknown_filter_name(e)
-        raise e unless name && KrikriJinjaFilters.ensure_shared_python_filter(name, @vars)
+        if name = KrikriJinjaFilters.unknown_filter_name(e)
+          raise e unless KrikriJinjaFilters.ensure_shared_python_filter(name, @vars)
+        elsif test_name = KrikriJinjaFilters.unknown_test_name(e)
+          raise e unless KrikriJinjaFilters.ensure_shared_python_test(test_name, @vars)
+        else
+          raise e
+        end
         evaluate_value_once!(expr)
       end
 
