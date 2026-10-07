@@ -253,6 +253,30 @@ describe "task timeout keyword" do
     output.includes?("\"msg\": 2").must_equal(true, output)
   end
 
+  # Atlantic round 3100000's KEYORDER probe: real's registered timed-out
+  # dict (r1 | to_json, observed from 2.19.11 over SSH) reads
+  # [timedout, failed, exception, msg, changed] - TaskTimeoutError's
+  # ContributesToTaskResult payload leads the merged result. krikri used
+  # to mark the generic failed order and let `timedout` fall to the tail
+  # ([failed, msg, exception, changed, timedout]).
+  it "registers the timed-out result in real's key ORDER" do
+    success, output = run_play([
+      "    - name: slow",
+      "      ansible.builtin.shell: sleep 900",
+      "      timeout: 2",
+      "      register: r1",
+      "      ignore_errors: true",
+      "    - ansible.builtin.debug:",
+      "        msg: \"KEYORDER|{{ r1 | to_json }}\"",
+    ])
+
+    success.must_equal(true)
+    output.includes?(FATAL_LINE).must_equal(true, output)
+    # The debug display JSON-escapes the msg body, so the escaped quotes
+    # below are the literal output text (same shape real's stdout shows).
+    output.includes?(%q{KEYORDER|{\"timedout\": {\"frame\": \"Configure `DISPLAY_TRACEBACK` to see a traceback on timeout errors.\", \"period\": 2}, \"failed\": true, \"exception\": \"(traceback unavailable)\", \"msg\": \"Task failed: Timed out after 2 second(s).\", \"changed\": false}}).must_equal(true, output)
+  end
+
   it "never shares a batch group with its neighbors" do
     # A batched task's result only comes back with its whole group's SSH
     # round trip, so a per-task deadline is unenforceable inside one -

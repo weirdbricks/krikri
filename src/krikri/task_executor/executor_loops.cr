@@ -1255,6 +1255,16 @@ module Krikri
       # for it yet.
       return false if task.templated_action
       return false if task.until_condition
+      # A `timeout:` task's deadline is per ITEM in real: its SIGALRM
+      # wraps each iteration's own handler.run (_run_loop calls _execute
+      # per item, so every item gets a fresh full budget - Atlantic round
+      # 3100000 diverged here: the batched loop let a `sleep 30` item run
+      # to completion and print `changed` under `timeout: 4`). One shared
+      # SSH round trip cannot enforce a per-item deadline, so these fall
+      # back to the one-at-a-time path, whose per-item dispatch carries
+      # the deadline (execute_task_once -> PluginManager.execute_plugin,
+      # remote kill included).
+      return false if task.timeout || task.timeout_expr
       return false if PluginManager.local_connection?(exec_host, vars_context)
       true
     end

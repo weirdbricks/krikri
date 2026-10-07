@@ -2449,7 +2449,10 @@ module Krikri
           "period" => period,
         },
       }.to_json)
-      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_MSG_FIRST)
+      # Registered order pinned to real's (TaskTimeoutError's
+      # result_contribution dict leads the merged registered result):
+      # timedout, failed, exception, msg, changed.
+      Krikri.mark_failed_key_order(result, FAILED_KEY_ORDER_TIMEOUT)
       result
     end
 

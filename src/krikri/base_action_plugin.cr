@@ -22,6 +22,12 @@ module Krikri
   # include_vars: the action's own keys lead, and the wrapped msg comes
   # last (Ansible keeps it after changed/exception).
   FAILED_KEY_ORDER_INCLUDE_VARS = ["failed", "message", "ansible_included_var_files", "ansible_facts", "changed", "exception", "msg"]
+  # the task `timeout:` deadline failure: TaskTimeoutError's
+  # ContributesToTaskResult payload (the `timedout` dict) leads the merged
+  # registered dict, ahead of failed/exception/msg/changed (live-verified
+  # against 2.19.11 via `{{ r | to_json }}` - Atlantic round 3100000's
+  # KEYORDER probe).
+  FAILED_KEY_ORDER_TIMEOUT = ["timedout", "failed", "exception", "msg", "changed"]
 
   # Tags *result* with the real key order its registered FAILED form must
   # carry; see FAILED_KEY_ORDER_DEFAULT.
