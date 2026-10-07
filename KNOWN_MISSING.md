@@ -64,7 +64,9 @@ defect moves down or gets deleted.
   `test/unit/var_substitutor_liveness_test.cr` and
   `test/integration/vars_invalidation_templating_test.cr`. Measured and **not worth
   starting** (each <= ~1% of warm wall): `ip` forks in `gather_network_facts` (~11 ms/gather), the
-  interpreter spawn in `gather_python_facts` (~20 ms), `ConditionalEvaluator` re-parsing (5-7 us/call),
+  interpreter spawn in `gather_python_facts` (~20 ms), cold plugin upload (the 14.8 MB fat plugin's rsync is ~0.18 s over a warm ControlMaster, within ~30 ms of the
+  ~0.15 s transport floor; a `tar | ssh` pipe measured slower cold, ~0.22-0.26 s, from a first-bulk-session
+  penalty after a fresh ControlMaster), `ConditionalEvaluator` re-parsing (5-7 us/call),
   ENV re-conversion
   (never hit), daemon config re-serialization (3.6 us). A `{{ var }}` -> `{{ var }}` chain costs ~40
   ms/call - the recursive re-templating bug class, not steady-state. Container targets need the static
