@@ -58,8 +58,8 @@ module Krikri
         # always: (verified against ansible-playbook) - rescue: is
         # left alone since it only ever runs if the block itself
         # actually failed, which can't happen when it never ran at all.
-        print_skipped_tasks(task.block_tasks || [] of Task, host)
-        print_skipped_tasks(task.always_tasks || [] of Task, host)
+        print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition)
+        print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition)
       end
       return if run_hosts.empty?
 
@@ -1437,8 +1437,8 @@ module Krikri
           # aggregate line for the block) - rescue: is left alone since
           # it only ever runs if the block itself actually failed, which
           # can't happen when it never ran at all.
-          print_skipped_tasks(task.block_tasks || [] of Task, host)
-          print_skipped_tasks(task.always_tasks || [] of Task, host)
+          print_skipped_tasks(task.block_tasks || [] of Task, host, task.when_condition)
+          print_skipped_tasks(task.always_tasks || [] of Task, host, task.when_condition)
           return
         end
       end
@@ -2315,12 +2315,12 @@ module Krikri
       # include_role: `vars: {irq: "{{ undef_irq }}"}` report
       # site.yml:<vars line>:<value column>).
       include_role_var_origins = if (irv = task.include_role_vars) && !irv.empty?
-                                    o = Hash(String, VarOrigin).new
-                                    task.vars_origins.each { |key, origin| o[key] = origin if irv.has_key?(key) }
-                                    o
-                                  else
-                                    Hash(String, VarOrigin).new
-                                  end
+                                   o = Hash(String, VarOrigin).new
+                                   task.vars_origins.each { |key, origin| o[key] = origin if irv.has_key?(key) }
+                                   o
+                                 else
+                                   Hash(String, VarOrigin).new
+                                 end
 
       begin
         included_tasks, included_handlers = RoleLoader.load_single_role(

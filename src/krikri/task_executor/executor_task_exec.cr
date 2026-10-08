@@ -681,13 +681,18 @@ module Krikri
 
     # Marks `host` as halted (no further tasks in this play run for it)
     # when `failed` and the task didn't opt out via ignore_errors:.
-    private def print_skipped_tasks(tasks : Array(Task), host : Host) : Nil
+    #
+    # *inherited_when* is the enclosing block:'s own when: text - a block
+    # whose when: was False hands it to every child's skip line, whose -v
+    # dump carries it as false_condition exactly like a task-level
+    # when:-false skip (live-verified vs 2.19.11).
+    private def print_skipped_tasks(tasks : Array(Task), host : Host, inherited_when : String? = nil) : Nil
       tasks.each do |nested_task|
         # A nested block is transparent - like Ansible, it gets no
         # "TASK [...]" banner of its own, only its members do.
         if nested_task.block?
-          print_skipped_tasks(nested_task.block_tasks || [] of Task, host)
-          print_skipped_tasks(nested_task.always_tasks || [] of Task, host)
+          print_skipped_tasks(nested_task.block_tasks || [] of Task, host, inherited_when)
+          print_skipped_tasks(nested_task.always_tasks || [] of Task, host, inherited_when)
           next
         end
 
@@ -704,7 +709,23 @@ module Krikri
         end
 
         Krikri::OutputBanner.banner("#{task_banner_kind} [#{task_role_prefix(nested_task)}#{render_task_name_for_display(nested_task, host)}]")
-        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        # A looped task inside a when:-false block does NOT print the
+        # single bare line a non-looped task gets: the inherited
+        # condition is evaluated per loop item, so real prints ONE
+        # `skipping: [host] => (item=...)` line per item plus the usual
+        # trailing `skipping: [host]` line (live-verified vs 2.19.11).
+        # A looped meta: is the exception - real ignores its loop on the
+        # skip path entirely and prints the single meta skip line (or
+        # nothing at all for the actions that reject a when: outright).
+        if task_has_loop?(nested_task) && nested_task.module_name != "_meta"
+          print_skipped_looped_task(nested_task, host, inherited_when)
+        elsif nested_task.module_name == "_meta"
+          unless meta_when_silent?(nested_task)
+            puts "skipping: [#{connection_host}]#{meta_skip_dump(nested_task, host)}".colorize(:cyan)
+          end
+        else
+          puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(nested_task, host, inherited_when)}".colorize(:cyan)
+        end
         # A skipped meta: task (e.g. a named meta: flush_handlers inside
         # a when:-false block) prints its "skipping:" line but is NOT
         # counted in the PLAY RECAP - ansible-core ignores meta
@@ -714,6 +735,172 @@ module Krikri
           @results[host.name]["skipped"] += 1
           register_skip_result(nested_task, host)
         end
+      end
+    end
+
+    # The skipped display for a looped task inside a when:-false block:
+    # real evaluates the block-inherited condition per loop item, so the
+    # skip prints ONE `skipping: [host] => (item=...)` line per item
+    # followed by the usual trailing `skipping: [host]` line - not the
+    # single bare line a non-looped task gets (live-verified vs
+    # 2.19.11). The loop source is still resolved and rendered here,
+    # exactly like the executed path would, because the per-item labels
+    # show the RENDERED items - with the same two collapses real does
+    # instead of printing per-item lines:
+    #   - a source that resolves to zero items collapses to the single
+    #     "No items in the list" skip line, and
+    #   - a source that cannot resolve/render at all (undefined variable,
+    #     unrenderable item) collapses to the plain false_condition skip
+    #     line - real never fails a task on its loop source once the
+    #     inherited when: is already False (live-verified: undefined
+    #     `loop:` under a False block when prints `skipping:`, rc=0).
+    private def print_skipped_looped_task(task : Task, host : Host, inherited_when : String?) : Nil
+      connection_host = host.name
+      begin
+        vars_context = build_vars_context(task, host, loop_lenient_vars: true)
+      rescue VariableSubstitutor::FilterEngine::UnknownFilterError
+        # Same degrade-to-skip shape as execute_task's own build_vars_
+        # context rescue, scoped to display: the child's own vars: render
+        # failed, but the inherited when: is False anyway, so the task is
+        # skipped - one line, like a non-looped child.
+        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        return
+      end
+      loop_vars_context = loop_source_vars_context(task, host, vars_context)
+      loop_shared_sub = task.loop_fileglob || task.loop_file ? VarSubstitutor.new(vars: loop_vars_context, host_name: host.name) : nil
+      loop_items = begin
+        resolve_loop_items_or_raise(task, host, loop_vars_context) do
+          task.loop_items || resolve_first_found(task, host, loop_vars_context) ||
+            resolve_fileglob(task, host, loop_vars_context, shared: loop_shared_sub) ||
+            resolve_with_file(task, host, loop_vars_context, shared: loop_shared_sub) ||
+            resolve_loop_template(task, loop_vars_context) ||
+            resolve_loop_nested(task, loop_vars_context, host.name) ||
+            resolve_loop_together(task, loop_vars_context, host.name) ||
+            resolve_loop_flattened(task, loop_vars_context, host.name) ||
+            resolve_loop_subelements(task, loop_vars_context) ||
+            resolve_loop_filetree(task, host, loop_vars_context, shared: loop_shared_sub) ||
+            resolve_loop_lookup(task, loop_vars_context)
+        end
+      rescue
+        nil
+      end
+
+      if loop_items.nil?
+        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        return
+      end
+
+      if loop_items.empty?
+        puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_empty_loop}".colorize(:cyan)
+        return
+      end
+
+      rendered_items = begin
+        render_loop_items_strict_or_raise(task, loop_items, loop_vars_context, host.name)
+      rescue
+        nil
+      end
+      if rendered_items.nil?
+        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        return
+      end
+
+      # Only a loop_control.label needs the (expensive) per-item context;
+      # without one the label is just the item's own Python repr.
+      label_base_context = task.loop_label ? build_vars_context(task, host) : nil
+      no_log = resolve_task_no_log(task, vars_context)
+      is_debug = debug_module?(task)
+      rendered_items.each_with_index do |item, idx|
+        shown = no_log ? "(censored due to no_log)" : loop_item_display_label(task, item, idx, rendered_items, label_base_context, host)
+        suffix = skipped_loop_item_suffix_for(task, inherited_when, item, idx)
+        puts "skipping: [#{connection_host}] => (item=#{shown}) #{suffix}".colorize(:cyan)
+      end
+      # Every item is condition-skipped here, so the trailing line is the
+      # all-items-skipped aggregate, same as the executed loop path's
+      # executed_count == 0 branch. Real's dump only carries "changed":
+      # false for non-debug modules (see skip_line_suffix_all_skipped).
+      puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !is_debug)}".colorize(:cyan)
+    end
+
+    # The -v dump appended to a when:-false skipped line. Real keys the
+    # shape on the MODULE, not on how the skip happened: a debug: skip's
+    # displayed dump is just {false_condition[, item]}, while every other
+    # module's is the full cleaned skip result - changed, skip_reason,
+    # false_condition, plus ansible_loop_var + the item for loop items
+    # (live-verified vs 2.19.11 across debug/fail/set_fact/assert/file/
+    # command/include_tasks/include_role). A meta: child gets real's own
+    # meta dump - msg/skip_reason naming the action and what was NOT done
+    # (see meta_skip_dump).
+    private def skipped_line_suffix_for(task : Task, host : Host, inherited_when : String?, item : JSON::Any? = nil) : String
+      if task.module_name == "_meta"
+        meta_skip_dump(task, host)
+      elsif debug_module?(task)
+        Krikri::ResultDisplay.skip_line_suffix(inherited_when, item)
+      else
+        Krikri::ResultDisplay.skip_result_suffix(Krikri::ResultDisplay.skipped_result_dump(inherited_when), item, task.loop_var)
+      end
+    end
+
+    # The meta: actions whose when: real REJECTS outright ("... task does
+    # not support when conditional" warning, the task then simply runs -
+    # printing NO skipping line at all, live-verified vs 2.19.11 for
+    # noop/refresh_inventory/reset_connection at both task level and
+    # inside a when:-false block).
+    private def meta_when_silent?(task : Task) : Bool
+      case task.meta_action
+      when "noop", "refresh_inventory", "reset_connection" then true
+      else                                                      false
+      end
+    end
+
+    # The -v dump real appends to a skipped meta: line - every action
+    # names itself under "msg" and says what was NOT done under
+    # "skip_reason" (live-verified vs 2.19.11 for all six conditional-
+    # capable actions; end_host's msg uniquely carries the lowercase
+    # "evaluated to false" sentence). Actions real rejects outright are
+    # handled by meta_when_silent?; anything unverified keeps the generic
+    # false_condition shape.
+    private def meta_skip_dump(task : Task, host : Host) : String
+      return "" unless RunOptions.verbosity >= 1
+      dump = case task.meta_action
+             when "flush_handlers"
+               {"msg" => "flush_handlers", "skip_reason" => "flush_handlers conditional evaluated to False, not running handlers for #{host.name}"}
+             when "end_play"
+               {"msg" => "end_play", "skip_reason" => "end_play conditional evaluated to False, continuing play"}
+             when "end_host"
+               {"msg"         => "end_host conditional evaluated to false, continuing execution for #{host.name}",
+                "skip_reason" => "end_host conditional evaluated to False, continuing execution for #{host.name}"}
+             when "clear_facts"
+               {"msg" => "clear_facts", "skip_reason" => "clear_facts conditional evaluated to False, not clearing facts and fact cache for #{host.name}"}
+             when "clear_host_errors"
+               {"msg" => "clear_host_errors", "skip_reason" => "clear_host_errors conditional evaluated to False, not clearing host error state for #{host.name}"}
+             when "end_batch"
+               {"msg" => "end_batch", "skip_reason" => "end_batch conditional evaluated to False, continuing current batch"}
+             else
+               return Krikri::ResultDisplay.skip_line_suffix(task.when_condition)
+             end
+      json_dump = {} of String => JSON::Any
+      dump.each { |key, value| json_dump[key] = JSON::Any.new(value) }
+      " => #{Krikri::ResultDisplay.dump_suffix(JSON::Any.new(json_dump))}"
+    end
+
+    private def debug_module?(task : Task) : Bool
+      task.module_name == "debug" || task.module_name.ends_with?(".debug")
+    end
+
+    # The -v dump appended to a when:-false skipped LOOP ITEM line: the
+    # same module-keyed rule as skipped_line_suffix_for, with the loop
+    # bindings - a debug: item shows {false_condition, [loop_var:] item
+    # [, index_var: idx]}, any other module shows the full cleaned
+    # per-item skip result (the exact dict the register path builds via
+    # loop_item_skip_result, minus the private flags skip_result_suffix
+    # strips). Shared by the skipped-block printer and the executed
+    # loop's own aggregation.
+    private def skipped_loop_item_suffix_for(task : Task, when_text : String?, item : JSON::Any, idx : Int32) : String
+      if debug_module?(task)
+        Krikri::ResultDisplay.skip_line_suffix_debug(when_text, item, idx, task.loop_var, task.index_var)
+      else
+        Krikri::ResultDisplay.skip_result_suffix(JSON::Any.new(loop_item_skip_result(task, item, idx, when_text)), item, task.loop_var)
       end
     end
 

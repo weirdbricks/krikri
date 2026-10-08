@@ -1397,6 +1397,59 @@ module Krikri
     # itself, evaluated against THIS item's bindings).
     private record SkippedLoopItem, label : String, false_condition : String?
 
+    # One loop item's display label: the loop_control.label rendered
+    # against a context carrying THIS item (plus loop_var/index_var/
+    # ansible_loop and the task's own vars: re-rendered per item), or the
+    # item's plain Python repr when no label is configured. Shared by the
+    # executed loop's aggregation (finish_looped_task) and the
+    # skipped-block per-item skip printer (print_skipped_looped_task).
+    # *label_base_context* is nil when the task has no loop_control.label
+    # (and then no context is built at all - the common case).
+    private def loop_item_display_label(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), label_base_context : Hash(String, JSON::Any)?, host : Host) : String
+      return item_display(item) unless base = label_base_context
+      label_context = base.dup
+      label_context["item"] = item
+      if loop_var = task.loop_var
+        label_context[loop_var] = item
+      end
+      label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+      # loop_control.index_var is bound during execution -
+      # a label referencing it (`label: "LBL-{{ i }}"`)
+      # rendered as "LBL-undefined" without the binding
+      # here (live-verified vs 2.19.11: the label sees the
+      # index).
+      if index_var = task.index_var
+        label_context[index_var] = JSON::Any.new(idx.to_i64)
+      end
+      # Re-apply + re-render the task's own `vars:` with
+      # this item bound, same as both execution paths do -
+      # base_vars_context's copy was rendered once before
+      # "item" existed (and a task var referencing item was
+      # raise-to-absent deleted there), so a loop_control.
+      # label referencing it rendered as literal "undefined"
+      # (aisbergg.beats' `label: "{{ (state in ['present',
+      # 'latest']) | ternary('install', 'uninstall') }}
+      # {{ item }}"` showed "undefined auditbeat" instead of
+      # Ansible's "uninstall auditbeat").
+      task.vars.each do |key, raw_value|
+        next if key == "item" || key == task.loop_var || key == task.index_var
+        label_context[key] = raw_value
+      end
+      # A filter failure here (item bound, filter still
+      # raised) is swallowed: a loop_control.label is
+      # display-only, and raising out of finish_looped_
+      # task after the items already executed would lose
+      # their results - the label falls back to the raw
+      # text instead. The vars: themselves already got
+      # their real per-item verdict during execution.
+      begin
+        render_task_vars(task, label_context, host.name)
+      rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
+        nil
+      end
+      item_label_for(task, item, label_context, host)
+    end
+
     # Shared aggregation for a completed loop's per-item results (used by
     # both the batched and one-at-a-time paths) so register:/notify:/
     # stats/halt bookkeeping stays byte-identical regardless of which
@@ -1444,7 +1497,11 @@ module Krikri
         if (skipped = skipped_items[idx]?)
           connection_host = host.name
           shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : skipped.label
-          puts "skipping: [#{connection_host}] => (item=#{shown}) #{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
+          # Same module-keyed -v dump rule the skipped-block printer uses
+          # (see skipped_loop_item_suffix_for): debug shows the short
+          # {false_condition, item} dump, everything else the full cleaned
+          # per-item skip result (live-verified vs 2.19.11).
+          puts "skipping: [#{connection_host}] => (item=#{shown}) #{skipped_loop_item_suffix_for(task, skipped.false_condition || task.when_condition, item, idx)}".colorize(:cyan)
           # Real records EVERY iterated item in the registered `results`,
           # the when:-false ones included - dropping them left a later
           # `loop: "{{ registered.results }}"` iterating an empty list and
@@ -1461,51 +1518,7 @@ module Krikri
         # loop_control.label renders against this item, so it needs a
         # context carrying it - this method is handed only the results.
         # No label configured -> no context needed at all.
-        item_label = if base = label_base_context
-                       label_context = base.dup
-                       label_context["item"] = item
-                       if loop_var = task.loop_var
-                         label_context[loop_var] = item
-                       end
-                       label_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
-                       # loop_control.index_var is bound during execution -
-                       # a label referencing it (`label: "LBL-{{ i }}"`)
-                       # rendered as "LBL-undefined" without the binding
-                       # here (live-verified vs 2.19.11: the label sees the
-                       # index).
-                       if index_var = task.index_var
-                         label_context[index_var] = JSON::Any.new(idx.to_i64)
-                       end
-                       # Re-apply + re-render the task's own `vars:` with
-                       # this item bound, same as both execution paths do -
-                       # base_vars_context's copy was rendered once before
-                       # "item" existed (and a task var referencing item was
-                       # raise-to-absent deleted there), so a loop_control.
-                       # label referencing it rendered as literal "undefined"
-                       # (aisbergg.beats' `label: "{{ (state in ['present',
-                       # 'latest']) | ternary('install', 'uninstall') }}
-                       # {{ item }}"` showed "undefined auditbeat" instead of
-                       # Ansible's "uninstall auditbeat").
-                       task.vars.each do |key, raw_value|
-                         next if key == "item" || key == task.loop_var || key == task.index_var
-                         label_context[key] = raw_value
-                       end
-                       # A filter failure here (item bound, filter still
-                       # raised) is swallowed: a loop_control.label is
-                       # display-only, and raising out of finish_looped_
-                       # task after the items already executed would lose
-                       # their results - the label falls back to the raw
-                       # text instead. The vars: themselves already got
-                       # their real per-item verdict during execution.
-                       begin
-                         render_task_vars(task, label_context, host.name)
-                       rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
-                         nil
-                       end
-                       item_label_for(task, item, label_context, host)
-                     else
-                       item_display(item)
-                     end
+        item_label = loop_item_display_label(task, item, idx, loop_items, label_base_context, host)
 
         # A plugin can voluntarily skip a single loop item by returning
         # "skipped": true itself (unarchive's creates:-already-exists
@@ -1583,7 +1596,20 @@ module Krikri
         # vs 2.19.11).
         all_skipped = !skipped_items.empty? ||
                       item_results.any? { |res| res.try { |entry| entry["skipped"]?.try(&.as_bool) == true } }
-        puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix(all_skipped: all_skipped)}".colorize(:cyan)
+        # Real's trailing dump is module-keyed too (see skip_line_suffix_
+        # all_skipped): a debug loop's trailing line carries only
+        # {"msg": "All items skipped"}, every other module's adds
+        # "changed": false. An empty loop source (0 items, so nothing was
+        # ever skipped by condition) gets the distinct "No items in the
+        # list" dump instead (live-verified vs 2.19.11).
+        trailing_suffix = if all_skipped
+                            Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !debug_module?(task))
+                          elsif loop_items.empty?
+                            Krikri::ResultDisplay.skip_line_suffix_empty_loop
+                          else
+                            ""
+                          end
+        puts "skipping: [#{connection_host}]#{trailing_suffix}".colorize(:cyan)
         @results[host.name]["skipped"] += 1
       else
         # Any item that failed at the SSH transport level makes the whole

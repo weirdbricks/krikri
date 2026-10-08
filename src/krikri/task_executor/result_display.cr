@@ -50,6 +50,70 @@ module Krikri
       " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
     end
 
+    # A loop whose source resolved to ZERO items skips with its own dump
+    # shape - {"skipped_reason": "No items in the list"} - distinct from
+    # both the false_condition skip and the All items skipped aggregate
+    # (live-verified vs 2.19.11).
+    def self.skip_line_suffix_empty_loop : String
+      return "" unless RunOptions.verbosity >= 1
+      dump = {"skipped_reason" => JSON::Any.new("No items in the list")} of String => JSON::Any
+      " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
+    end
+
+    # A fully-skipped loop's trailing line dump. Real's shape carries
+    # "changed": false only when the per-item results themselves carried
+    # changed (every module EXCEPT debug does - a skipped debug item's
+    # displayed dump is just {false_condition, item}, live-verified vs
+    # 2.19.11 across debug/fail/set_fact/assert/file/command/include_*).
+    def self.skip_line_suffix_all_skipped(changed : Bool = true) : String
+      return "" unless RunOptions.verbosity >= 1
+      dump = {"msg" => JSON::Any.new("All items skipped")} of String => JSON::Any
+      dump["changed"] = JSON::Any.new(false) if changed
+      " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
+    end
+
+    # The -v dump for a when:-false skipped item of a debug: task: real
+    # shows ONLY {false_condition, item} - with the item under the CUSTOM
+    # loop_var name when loop_control sets one, plus the index_var
+    # binding when loop_control sets one - not the full cleaned skip
+    # result every other module gets (live-verified vs 2.19.11 across
+    # debug/fail/set_fact/assert/file/command/include_tasks/include_role,
+    # with and without loop_control.loop_var/index_var).
+    def self.skip_line_suffix_debug(when_text : String?, item : JSON::Any, idx : Int32, loop_var : String?, index_var : String?) : String
+      return "" unless RunOptions.verbosity >= 1
+      dump = {} of String => JSON::Any
+      if when_text
+        dump["false_condition"] = case when_text
+                                  when "false" then JSON::Any.new(false)
+                                  when "true"  then JSON::Any.new(true)
+                                  else              JSON::Any.new(when_text)
+                                  end
+      end
+      dump[(loop_var && !loop_var.empty? ? loop_var : "item")] = item
+      dump[index_var] = JSON::Any.new(idx.to_i64) if index_var
+      return "" if dump.empty?
+      " => #{ResultDisplay.dump_suffix(JSON::Any.new(dump))}"
+    end
+
+    # The -v dump for a when:-false skipped item/task of a NON-debug
+    # module: the full cleaned skip result - changed, skip_reason, and
+    # false_condition (loop items additionally get ansible_loop_var + the
+    # item via skip_result_suffix) (live-verified vs 2.19.11).
+    def self.skipped_result_dump(false_condition : String?) : JSON::Any
+      dump = {"changed"     => JSON::Any.new(false),
+              "skip_reason" => JSON::Any.new("Conditional result was False")} of String => JSON::Any
+      # Same raw-text convention as skip_line_suffix: a literal `false`
+      # stays a bool, anything else keeps its string form.
+      if false_condition
+        dump["false_condition"] = case false_condition
+                                  when "false" then JSON::Any.new(false)
+                                  when "true"  then JSON::Any.new(true)
+                                  else              JSON::Any.new(false_condition)
+                                  end
+      end
+      JSON::Any.new(dump)
+    end
+
     # Single-line sorted JSON dump at -v/-vv; Ansible's pretty 4-space-indent
     # shape from -vvv up. Shared by every skip suffix helper.
     def self.dump_suffix(value : JSON::Any) : String

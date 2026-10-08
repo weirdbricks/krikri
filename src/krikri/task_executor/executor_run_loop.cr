@@ -952,7 +952,26 @@ module Krikri
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
         suffix = shown ? " => (item=#{shown}) " : ""
-        puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)}".colorize(:cyan)
+        # Same module-keyed -v dump rule the skipped-block printer uses
+        # (see skipped_line_suffix_for): a debug: skip's dump is just
+        # {false_condition[, item]}, every other module's is the full
+        # cleaned skip result (live-verified vs 2.19.11). Identical
+        # output at the default verbosity (both shapes are empty there).
+        # A meta: whose when: was evaluated here follows real's own meta
+        # rules: the actions that reject a when: outright print NO
+        # skipping line at all, the rest print the meta-shaped dump.
+        if task.module_name == "_meta"
+          unless meta_when_silent?(task)
+            puts "skipping: [#{host.name}]#{meta_skip_dump(task, host)}".colorize(:cyan)
+          end
+        else
+          dump_suffix = if debug_module?(task)
+                          Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)
+                        else
+                          Krikri::ResultDisplay.skip_result_suffix(Krikri::ResultDisplay.skipped_result_dump(task.when_condition), item, task.loop_var)
+                        end
+          puts "skipping: [#{host.name}]#{suffix}#{dump_suffix}".colorize(:cyan)
+        end
       end
       register_skip_result(task, host)
       false
