@@ -46,7 +46,10 @@ describe "mysql_user plugin parameter validation" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include("unable to connect to database, check login_user and login_password are correct or /root/.my.cnf has the credentials. Exception message: ")
+    # Real expands the config_file default with os.path.expanduser before
+    # building the msg, so ~ renders as the connecting user's home, not a
+    # literal /root/.my.cnf.
+    result["msg"].as_s.must_include("unable to connect to database, check login_user and login_password are correct or #{ENV["HOME"]}/.my.cnf has the credentials. Exception message: ")
   end
 
   it "fails when both password and plugin are given (mutually exclusive)" do

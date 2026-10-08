@@ -6,8 +6,10 @@ require "socket"
 # "User added" when the account genuinely didn't exist (its own user_add
 # branch) - and, live-verified against Ansible 2.19.11 + community.mysql
 # 5.0.2 on MySQL 8.4, the wording Ansible also uses in check mode. The
-# update/idempotent wording ("User updated" / "User unchanged") and the
-# absent wording ("User deleted" / "User doesn't exist") match real too;
+# idempotent wording ("User unchanged") and the absent wording ("User
+# deleted" / "User doesn't exist") match real too; the update-path wording
+# is branch-specific ("Password updated (new style)", the privilege-loop
+# msgs - see mysql_user_priv_msgs_test.cr);
 # see mysql_result_shape_test.cr for the registered-result shape.
 # Needs a real
 # MySQL/MariaDB server, same convention as the other live-server specs.

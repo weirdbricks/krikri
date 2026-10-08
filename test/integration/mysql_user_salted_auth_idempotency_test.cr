@@ -107,7 +107,10 @@ describe "mysql_user server-side comparison reads" do
       rotated = run_salted_user(server, password, "krikri9876543210zyxw")
       failed?(rotated).must_equal(false)
       rotated["changed"].as_bool.must_equal(true)
-      rotated["msg"].as_s.must_equal("User updated")
+      # Real's plugin/auth ALTER branch never touches msg - the "User
+      # unchanged" default stands even though changed is true
+      # (live-verified, MySQL 8.0).
+      rotated["msg"].as_s.must_equal("User unchanged")
 
       warm_again = run_salted_user(server, password, "krikri9876543210zyxw")
       failed?(warm_again).must_equal(false)

@@ -128,7 +128,9 @@ describe "mysql_user default-plugin password path" do
         }.merge(login_args(server)))
         failed?(updated).must_equal(false)
         updated["changed"].as_bool.must_equal(true)
-        updated["msg"].as_s.must_equal("User updated")
+        # Real's user_mod wording for the ALTER it issues on a current
+        # server (old_user_mgmt false) - live-verified MySQL 8.0.
+        updated["msg"].as_s.must_equal("Password updated (new style)")
 
         row = mysql_query(server, "SELECT (plugin = 'mysql_native_password') AND (CONCAT('*', UCASE(SHA1(UNHEX(SHA1('krikri-np-two'))))) = authentication_string) AS ok FROM mysql.user WHERE User = '#{SPEC_USER}' AND Host = '%'")
         row["query_result"][0][0]["ok"].as_i64.must_equal(1)

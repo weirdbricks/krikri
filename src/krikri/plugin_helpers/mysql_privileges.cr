@@ -91,22 +91,36 @@ module Krikri
       #   grant option (real's own shortcut);
       # - WITH GRANT OPTION cannot stand alone, so a grant of only the
       #   GRANT pseudo-privilege becomes USAGE + WITH GRANT OPTION.
+      # `module_user` mirrors real's `user != "root"` guard: for an
+      # account literally named root the revoke-everything loop is skipped
+      # entirely (live-verified, MySQL 8.0 - real never revokes the
+      # unmentioned grants of an account called root).
+      #
+      # The grant-option handling inside the revoke loop reproduces real's
+      # own leak: its grant_option flag is set once any iterated target
+      # carries GRANT and is never reset, so the REVOKE GRANT OPTION for a
+      # later target fires even when that target itself holds no option -
+      # live-verified on MySQL 8.4, where the server then rejects the
+      # statement with error 1141 and the task fails, while 8.0 tolerates
+      # it (krikri used to plan the option revoke only for targets that
+      # actually hold it, which diverges from real on MariaDB and 8.4).
+      # Iteration is in SHOW GRANTS row order (real iterates the dict
+      # privileges_get built in exactly that order), not sorted.
       # Returns [] when the account already matches - mysql_user's
       # idempotency test is exactly "is the plan empty".
       def self.plan_changes(
         desired : Hash(String, Set(String)), current : Hash(String, Set(String)), append_privs : Bool,
+        module_user : String? = nil,
       ) : Array(Op)
         ops = Array(Op).new
 
         unless append_privs
-          (current.keys - desired.keys).sort!.each do |target|
-            # GRANT OPTION is revoked first (real's privileges_revoke
-            # order) and only when the account actually holds it -
-            # MariaDB rejects a bare `REVOKE GRANT OPTION ON ...` with
-            # "no such grant defined" (error 1141) otherwise.
-            if current[target]?.try(&.includes?("GRANT"))
-              ops << Op.new(:revoke_grant_option, target, [] of String)
-            end
+          leaked_grant_option = false
+          current.each do |target, privs|
+            leaked_grant_option = true if privs.includes?("GRANT")
+            next if desired.has_key?(target)
+            next if module_user == "root"
+            ops << Op.new(:revoke_grant_option, target, [] of String) if leaked_grant_option
             ops << Op.new(:revoke_all, target, [] of String)
           end
         end
@@ -135,7 +149,12 @@ module Krikri
         ops << Op.new(:revoke, target, revoked) unless revoked.empty? || (grant_option && revoked == ["USAGE"])
 
         grant_privs = grant_privs.add("USAGE") if grant_privs == Set{"GRANT"}
-        granted = grant_privs.to_a.sort
+        # A brand-new target is granted the privileges in spec order (real
+        # grants new_priv[db_table], the list its privileges_unpack built
+        # straight from the priv: string - live-stable "GRANT SELECT,INSERT").
+        # On a shared target the list comes out of Python set arithmetic in
+        # real, so krikri's deterministic sorted order stands in there.
+        granted = current_privs.nil? ? grant_privs.to_a : grant_privs.to_a.sort
         ops << Op.new(:grant, target, granted) unless granted.empty?
       end
 
@@ -147,6 +166,68 @@ module Krikri
         list = privileges.reject("GRANT")
         list = ["USAGE"] if list.empty?
         {list.join(", "), privileges.includes?("GRANT") ? " WITH GRANT OPTION" : ""}
+      end
+
+      # Python's repr of a list of strings, the exact shape real
+      # community.mysql interpolates into its "Privileges updated: granted
+      # [...], revoked [...]" msg (its own lists come out of Python set
+      # arithmetic, so it renders them with repr()).
+      def self.pylist(items : Enumerable(String)) : String
+        "[" + items.map { |item| "'#{item}'" }.join(", ") + "]"
+      end
+
+      # The success msg real community.mysql's user_mod produces for the
+      # privilege part of an update, derived from the same three loops its
+      # privilege handling runs (in the same order - last assignment wins,
+      # which is what makes a combined revoke+grant report the intersect
+      # branch's wording):
+      # - targets the spec drops entirely (replace mode): "Privileges
+      #   updated" - skipped for an account literally named root (its
+      #   `user != "root"` guard) and for PROXY-only grants (krikri never
+      #   parses GRANT PROXY lines, so that leg cannot fire);
+      # - targets the spec adds: "New privileges granted";
+      # - shared targets with a diff: "Privileges updated: granted [...],
+      #   revoked [...]" - the lists are real's own grant_privs/revoke_privs
+      #   BEFORE execution filtering: GRANT stays in the lists (live: "granted
+      #   ['GRANT', 'USAGE']" / "revoked ['GRANT']"), a GRANT-only grant
+      #   shows the appended USAGE, and the ALL shortcut empties the revokes
+      #   down to the grant option.
+      # nil means no privilege wording - the caller keeps whatever earlier
+      # branch (password/plugin/auth) produced. The element order inside the
+      # lists is krikri's deterministic sorted order; real's comes from
+      # Python set iteration and varies between its own runs, so sorted is
+      # one of the orders real itself can produce.
+      def self.priv_change_msg(
+        desired : Hash(String, Set(String)), current : Hash(String, Set(String)),
+        append_privs : Bool, module_user : String,
+      ) : String?
+        msg = nil
+
+        unless append_privs
+          (current.keys - desired.keys).sort!.each do |target|
+            next if module_user == "root"
+            msg = "Privileges updated"
+          end
+        end
+
+        (desired.keys - current.keys).sort!.each do |target|
+          msg = "New privileges granted"
+        end
+
+        (desired.keys.select { |target| current.has_key?(target) }).sort!.each do |target|
+          current_privs = current[target]
+          desired_privs = desired[target]
+          grant_privs = desired_privs - current_privs
+          revoke_privs = append_privs ? Set(String).new : current_privs - desired_privs
+          revoke_privs = revoke_privs & Set{"GRANT"} if grant_privs.includes?("ALL")
+          grant_list = grant_privs.to_a.sort
+          grant_list = ["GRANT", "USAGE"] if grant_privs == Set{"GRANT"}
+          revoke_list = revoke_privs.to_a.sort
+          next if grant_list.empty? && revoke_list.empty?
+          msg = "Privileges updated: granted #{pylist(grant_list)}, revoked #{pylist(revoke_list)}"
+        end
+
+        msg
       end
 
       private def self.normalize_privileges(raw : Enumerable(String)) : Set(String)

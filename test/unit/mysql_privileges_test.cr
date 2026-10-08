@@ -204,7 +204,7 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
     it "grants everything on a target the account has nothing on" do
       current = {"*.*" => Set{"USAGE"}}
       ALIAS.plan_changes(ALIAS.desired_grants("db.*:SELECT,INSERT"), current, false)
-        .must_equal([Krikri::PluginHelpers::MysqlPrivileges::Op.new(:grant, "db.*", ["INSERT", "SELECT"])])
+        .must_equal([Krikri::PluginHelpers::MysqlPrivileges::Op.new(:grant, "db.*", ["SELECT", "INSERT"])])
     end
 
     it "keeps only the grant option to revoke when ALL is granted" do
@@ -241,6 +241,108 @@ describe Krikri::PluginHelpers::MysqlPrivileges do
         "GRANT INSERT ON *.* TO `u`@`%` WITH GRANT OPTION",
       ])
       current.must_equal({"*.*" => Set{"USAGE", "SELECT", "INSERT", "GRANT"}})
+    end
+
+    it "leaks real's grant_option flag from an earlier target onto a later revoke" do
+      # SHOW GRANTS row order (dict insertion order): db1 holds the option,
+      # db3 doesn't - real's grant_option variable is set by the db1
+      # iteration and never reset, so the db3 revoke carries
+      # REVOKE GRANT OPTION. On MySQL 8.4 the server rejects that
+      # statement with 1141 and real fails the task (live-verified); 8.0
+      # tolerates it. Sorted iteration would wrongly skip the option here.
+      current = ALIAS.current_grants([
+        "GRANT USAGE ON *.* TO `u`@`localhost`",
+        "GRANT SELECT ON `db1`.* TO `u`@`localhost` WITH GRANT OPTION",
+        "GRANT INSERT ON `db3`.* TO `u`@`localhost`",
+      ])
+      ALIAS.plan_changes(ALIAS.desired_grants("db1.*:SELECT"), current, false)
+        .must_equal([
+          Krikri::PluginHelpers::MysqlPrivileges::Op.new(:revoke_grant_option, "db3.*", [] of String),
+          Krikri::PluginHelpers::MysqlPrivileges::Op.new(:revoke_all, "db3.*", [] of String),
+          Krikri::PluginHelpers::MysqlPrivileges::Op.new(:revoke_grant_option, "db1.*", [] of String),
+        ])
+    end
+
+    it "never plans the revoke-everything loop for an account named root" do
+      current = {"olddb.*" => Set{"SELECT", "GRANT"}, "*.*" => Set{"USAGE"}}
+      ALIAS.plan_changes(ALIAS.desired_grants("newdb.*:SELECT"), current, false, "root")
+        .must_equal([Krikri::PluginHelpers::MysqlPrivileges::Op.new(:grant, "newdb.*", ["SELECT"])])
+      # A target the spec adds is still granted for root (real's guard
+      # only covers the revoke-everything loop); the shared targets
+      # already match, so nothing else is planned.
+      shared = {"db1.*" => Set{"SELECT"}, "*.*" => Set{"USAGE"}}
+      ALIAS.plan_changes(ALIAS.desired_grants("db1.*:SELECT"), shared, false, "root")
+        .must_equal([] of Krikri::PluginHelpers::MysqlPrivileges::Op)
+    end
+  end
+
+  describe ".pylist" do
+    it "renders Python's list repr shape" do
+      Krikri::PluginHelpers::MysqlPrivileges.pylist(["GRANT", "USAGE"]).must_equal("['GRANT', 'USAGE']")
+      Krikri::PluginHelpers::MysqlPrivileges.pylist([] of String).must_equal("[]")
+    end
+  end
+
+  describe ".priv_change_msg" do
+    ALIAS2 = Krikri::PluginHelpers::MysqlPrivileges
+
+    it "returns nil when the grants already match" do
+      current = {"*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("*.*:USAGE"), current, false, "u").must_be_nil
+    end
+
+    it "says Privileges updated for a dropped target (replace mode)" do
+      current = ALIAS2.current_grants([
+        "GRANT USAGE ON *.* TO `u`@`localhost`",
+        "GRANT SELECT ON `db1`.* TO `u`@`localhost`",
+        "GRANT INSERT ON `db2`.* TO `u`@`localhost`",
+      ])
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:SELECT"), current, false, "u")
+        .must_equal("Privileges updated")
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:SELECT"), current, true, "u")
+        .must_be_nil
+    end
+
+    it "says New privileges granted for a target the spec adds" do
+      current = {"*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:SELECT"), current, false, "u")
+        .must_equal("New privileges granted")
+    end
+
+    it "says the granted/revoked repr for a shared target diff" do
+      current = {"*.*" => Set{"USAGE"}, "db1.*" => Set{"SELECT", "DELETE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:SELECT,INSERT"), current, false, "u")
+        .must_equal("Privileges updated: granted ['INSERT'], revoked ['DELETE']")
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:SELECT,INSERT"), current, true, "u")
+        .must_equal("Privileges updated: granted ['INSERT'], revoked []")
+    end
+
+    it "keeps GRANT in the repr lists and appends USAGE to a GRANT-only grant" do
+      current = {"*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:ALL,GRANT"), current, false, "u")
+        .must_equal("New privileges granted")
+      current_opt = {"db1.*" => Set{"ALL"}, "*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:ALL,GRANT"), current_opt, false, "u")
+        .must_equal("Privileges updated: granted ['GRANT', 'USAGE'], revoked []")
+      current_with_opt = {"db1.*" => Set{"ALL", "GRANT"}, "*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("db1.*:ALL"), current_with_opt, false, "u")
+        .must_equal("Privileges updated: granted [], revoked ['GRANT']")
+    end
+
+    it "lets the intersect wording win over the revoke-all wording" do
+      current = ALIAS2.current_grants([
+        "GRANT USAGE ON *.* TO `u`@`localhost`",
+        "GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO `u`@`localhost`",
+        "GRANT SELECT ON `mysql`.* TO `u`@`localhost`",
+      ])
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("*.*:USAGE"), current, false, "u")
+        .must_equal("Privileges updated: granted [], revoked ['APPLICATION_PASSWORD_ADMIN']")
+    end
+
+    it "skips the revoke-all wording for an account named root" do
+      current = {"olddb.*" => Set{"SELECT"}, "*.*" => Set{"USAGE"}}
+      ALIAS2.priv_change_msg(ALIAS2.desired_grants("newdb.*:SELECT"), current, false, "root")
+        .must_equal("New privileges granted")
     end
   end
 end

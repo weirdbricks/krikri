@@ -66,9 +66,9 @@ module Krikri
   # #apply_priv_if_needed), resource_limits:, locked:, config_file:.
   class MysqlUserPlugin < BasePlugin
     # Carries the fail_json msg Ansible's module would produce for a server
-    # rejection of a password/plugin auth statement, out of the deep
+    # rejection of a password/plugin/privilege statement, out of the deep
     # statement helpers to #execute's rescue.
-    private class AuthStatementError < Exception; end
+    private class ModuleFailError < Exception; end
 
     # Ansible 2.19.11 + community.mysql 5.0.2 (live-verified, `{{ r |
     # to_json }}`, MySQL 8.4): the module's own exit_json kwargs, in its
@@ -150,21 +150,32 @@ module Krikri
           plugin_hash_string, plugin_auth_string, check_mode, host_all),
         name
       )
-    rescue ex : AuthStatementError
+    rescue ex : ModuleFailError
       PluginResult.new(changed: false, failed: true, msg: ex.message || "")
     rescue ex : DB::ConnectionRefused
       # community.mysql's own connection-failure wrapper (live-verified
       # against bookworm's community.mysql 3.x via the W9 harness case,
       # where this engine printed the generic DbErrors shape with an
-      # EMPTY detail tail). The Exception-message tail after the
-      # wrapper is PyMySQL-specific (an (errno, "...") repr) and is not
-      # replicated; the deterministic wrapper is the parity that
-      # matters. mysql_db/mysql_info/mysql_variables keep DbErrors's
-      # generic shape until their own harness cases say otherwise.
+      # EMPTY detail tail). The config_file position is os.path.expanduser'd
+      # by the module before the msg is built, so ~ renders as the
+      # connecting user's home, not the literal "/root/.my.cnf" this used
+      # to hardcode. The Exception-message tail after the wrapper is
+      # PyMySQL-specific (an (errno, "...") repr) and is not replicated;
+      # the deterministic wrapper is the parity that matters.
+      # mysql_db/mysql_info/mysql_variables keep DbErrors's generic shape
+      # until their own harness cases say otherwise.
       PluginResult.new(changed: false, failed: true,
-        msg: "unable to connect to database, check login_user and login_password are correct or /root/.my.cnf has the credentials. Exception message: #{ex.message}")
+        msg: "unable to connect to database, check login_user and login_password are correct or #{option_file_display} has the credentials. Exception message: #{ex.message}")
     rescue ex : MySql::Connection::PacketError
       PluginHelpers::DbErrors.query_failed(ex, "MySQL")
+    end
+
+    # The config_file path as real's module shows it in the
+    # connection-failure wrapper: os.path.expanduser'd before the msg is
+    # built (so the default "~/.my.cnf" renders as $HOME/.my.cnf).
+    private def option_file_display : String
+      raw = @params["config_file"]? || PluginHelpers::MysqlConnection::DEFAULT_OPTION_FILE
+      raw.starts_with?("~") ? raw.sub("~", ENV["HOME"]? || raw) : raw
     end
 
     # Re-emits a result with Ansible's registered keys attached. Only the
@@ -285,49 +296,56 @@ module Krikri
       password : String?, update_password : String, priv : String?, append_privs : Bool,
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
     ) : PluginResult
-      early, changed, created = create_or_update_account(db, name, host, exists, password, update_password,
-        plugin, plugin_hash_string, plugin_auth_string, check_mode)
+      early, changed, created, auth_msg = create_or_update_account(db, name, host, exists, password,
+        update_password, plugin, plugin_hash_string, plugin_auth_string, check_mode)
       return early if early
 
-      early, changed = apply_priv_if_needed(db, name, host, exists, changed, priv, append_privs, check_mode)
+      early, changed, priv_msg = apply_priv_if_needed(db, name, host, exists, changed, priv, append_privs, check_mode)
       return early if early
 
       # Ansible branches the success msg on create-vs-modify (its own
       # user_add sets msg to "User added" when the account genuinely didn't
       # exist), not on `changed` - a brand-new create is not an "update".
+      # On an update its user_mod starts from "User unchanged": the
+      # password branch reports "Password updated (new style)" (check mode:
+      # "Password updated"), the plugin/auth branch leaves the default even
+      # when it ALTERed, and a privilege change overwrites with the wording
+      # from its privilege loops (MysqlPrivileges.priv_change_msg).
       msg = if created
               "User added"
-            elsif changed
-              "User updated"
             else
-              "User unchanged"
+              priv_msg || auth_msg || "User unchanged"
             end
       PluginResult.new(changed: changed, failed: false, msg: msg)
     end
 
     # Creates the account if it doesn't exist yet, or updates its
     # password if it does (and update_password: is "always"). Returns
-    # {early_result, changed} - early_result is non-nil only for a
-    # check-mode short-circuit, which the caller returns immediately.
+    # {early_result, changed, created, auth_msg} - early_result is non-nil
+    # only for a check-mode short-circuit, which the caller returns
+    # immediately; auth_msg is the msg real's password branch leaves behind
+    # (nil for the plugin/auth branch, whose ALTER real performs without
+    # touching msg - live-verified MySQL 8.0: changed=true, msg stays
+    # "User unchanged").
     private def create_or_update_account(
       db : DB::Database, name : String, host : String, exists : Bool,
       password : String?, update_password : String,
       plugin : String?, plugin_hash_string : String?, plugin_auth_string : String?, check_mode : Bool,
-    ) : {PluginResult?, Bool, Bool}
+    ) : {PluginResult?, Bool, Bool, String?}
       unless exists
         if check_mode
           @password_changed = JSON::Any.new(nil)
-          return {PluginResult.new(changed: true, failed: false, msg: "User added"), false, true}
+          return {PluginResult.new(changed: true, failed: false, msg: "User added"), false, true, nil}
         end
 
         clause = build_auth_clause(db, password, plugin, plugin_hash_string, plugin_auth_string)
         exec_auth_statement db, "CREATE USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
-        return {nil, true, true}
+        return {nil, true, true, nil}
       end
 
-      return {nil, false, false} unless update_password == "always"
-      return {nil, false, false} unless password || plugin
+      return {nil, false, false, nil} unless update_password == "always"
+      return {nil, false, false, nil} unless password || plugin
 
       if password
         plugin_or_password_update(db, name, host, password, update_password, check_mode)
@@ -337,24 +355,24 @@ module Krikri
         # desired value, ALTERing only on a real change - matching
         # Ansible's own plugin idempotency. Bare `plugin: unix_socket`/`auth_socket`
         # (the auth_socket account pattern) compares the plugin column only.
-        pl = plugin || return {nil, false, false}
-        return {nil, false, false} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
+        pl = plugin || return {nil, false, false, nil}
+        return {nil, false, false, nil} if plugin_matches?(db, name, host, pl, plugin_hash_string, plugin_auth_string)
 
         if check_mode
-          return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false}
+          return {nil, true, false, nil}
         end
 
         clause = build_auth_clause(db, nil, plugin, plugin_hash_string, plugin_auth_string)
         exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
-        {nil, true, false}
+        {nil, true, false, nil}
       end
     end
 
     private def plugin_or_password_update(
       db : DB::Database, name : String, host : String, password : String,
       update_password : String, check_mode : Bool,
-    ) : {PluginResult?, Bool, Bool}
+    ) : {PluginResult?, Bool, Bool, String?}
       # Real bug found benchmarking robertdebock.mysql's own "Create
       # users" task (round 18): update_password: always (the default,
       # matching Ansible - the role leaves it unset) previously
@@ -371,14 +389,20 @@ module Krikri
       # needed.
       hash = native_password_hash(db, password)
       if password_already_matches?(db, name, host, hash)
-        return {nil, false, false}
+        return {nil, false, false, nil}
       end
 
-      return {PluginResult.new(changed: true, failed: false, msg: "User updated"), false, false} if check_mode
+      # Real's wording for the ALTER it actually issues on a current
+      # server (old_user_mgmt false): "Password updated (new style)";
+      # in check mode nothing is issued and the branch's earlier
+      # "Password updated" stands (live-verified, MySQL 8.0).
+      auth_msg = check_mode ? "Password updated" : "Password updated (new style)"
+
+      return {PluginResult.new(changed: true, failed: false, msg: auth_msg), false, false, nil} if check_mode
 
       exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)} IDENTIFIED WITH mysql_native_password AS #{quote_str(hash)}"
       @password_changed = JSON::Any.new(true)
-      {nil, true, false}
+      {nil, true, false, auth_msg}
     end
 
     # Builds the CREATE/ALTER USER auth clause, matching Ansible's
@@ -521,24 +545,64 @@ module Krikri
     end
 
     # "Plugin '<name>' is not loaded" is ER_PLUGIN_IS_NOT_LOADED, always
-    # this errno, on every MySQL/MariaDB server.
+    # this errno, on every MySQL/MariaDB server. The other two constants
+    # pin the errno reconstruction below the same way: the vendored driver
+    # drops the server's errno when it raises (handle_err_packet keeps
+    # only the message), so it is reconstructed from the server's own -
+    # version-stable, user-visible - message text, the same way the
+    # plugin-not-loaded case was originally handled.
     private ER_PLUGIN_IS_NOT_LOADED = 1524
+    private ER_NO_SUCH_TABLE        = 1146
+    private ER_PASSWORD_FORMAT      = 1827
+    private ER_NO_SUCH_GRANT        = 1141
+
+    # pymysql's str(Exception) shape for a server error:
+    # "(<errno>, \"<server message>\")". nil when the message is not one
+    # whose errno can be reconstructed deterministically (the caller then
+    # keeps the generic DbErrors shape rather than inventing an errno).
+    private def pymysql_error(ex : MySql::Connection::PacketError) : String?
+      message = ex.message || ""
+      errno = case message
+              when /\ATable '.+' doesn't exist\z/
+                ER_NO_SUCH_TABLE
+              when /\AThe password hash doesn't have the expected format\.\z/
+                ER_PASSWORD_FORMAT
+              when /\AThere is no such grant defined for user '.+' on host '.+'\z/
+                # MySQL 8.4 (unlike 8.0) rejects a bare `REVOKE GRANT OPTION
+                # ON db.*` with this even when the account holds the option -
+                # where real's own privilege handling hits the same server
+                # rejection and fails the task (live-verified both servers).
+                ER_NO_SUCH_GRANT
+              when /\APlugin '.+' is not loaded\z/
+                ER_PLUGIN_IS_NOT_LOADED
+              end
+      return nil unless errno
+      "(#{errno}, #{python_str_repr(message)})"
+    end
+
+    # Python's repr of a str, the quoting pymysql's tuple form carries:
+    # double-quoted with backslash escaping.
+    private def python_str_repr(s : String) : String
+      "\"#{s.gsub("\\", "\\\\").gsub('"', "\\\"")}\""
+    end
+
+    # Python's repr of a str in its single-quote form - what repr() of a
+    # (user, host) params tuple renders ("('u6', 'localhost')").
+    private def python_str_repr_single(s : String) : String
+      "'#{s.gsub("\\", "\\\\").gsub('\'', "\\'")}'"
+    end
 
     # Wraps a driver PacketError in Ansible's failure shape when the errno
     # is recoverable, re-raises it unchanged otherwise (the generic
-    # DbErrors shape stays for everything the harness has not pinned).
+    # DbErrors shape stays for everything this path cannot pin).
     #
-    # The vendored driver drops the server's errno when it raises
-    # (handle_err_packet keeps only the message), but the message itself
-    # pins the error for the one rejection this path expects - that is
-    # exactly how a server without mysql_native_password loaded
+    # That is exactly how a server without mysql_native_password loaded
     # (MySQL 8.4+ ships it disabled by default) rejects the
     # IDENTIFIED WITH mysql_native_password statement above, so the errno
     # is reconstructed rather than version-sniffed.
     private def mysql_auth_statement_error(ex : MySql::Connection::PacketError) : Exception
-      message = ex.message || ""
-      if plugin = message[/\APlugin '(.+)' is not loaded\z/, 1]?
-        AuthStatementError.new("(#{ER_PLUGIN_IS_NOT_LOADED}, \"Plugin '#{plugin}' is not loaded\")")
+      if msg = pymysql_error(ex)
+        ModuleFailError.new(msg)
       else
         ex
       end
@@ -579,25 +643,30 @@ module Krikri
     # real community.mysql's privilege diffing); an empty plan means the
     # account already matches and nothing is reported changed - notably
     # the baseline "*.*:USAGE" spec, whose desired entry equals the
-    # identity USAGE row every account carries. Returns {early_result,
-    # changed} the same way #create_or_update_account does - changed
-    # carries forward the value the caller already had if nothing here
-    # needed to change.
+    # identity USAGE row every account carries. The success msg comes from
+    # MysqlPrivileges.priv_change_msg (real's own privilege-loop wording).
+    # Returns {early_result, changed, priv_msg} the same way
+    # #create_or_update_account does - changed carries forward the value
+    # the caller already had if nothing here needed to change, and
+    # priv_msg is the privilege wording for the caller's msg composition.
     private def apply_priv_if_needed(
       db : DB::Database, name : String, host : String, exists : Bool, changed : Bool, priv : String?,
       append_privs : Bool, check_mode : Bool,
-    ) : {PluginResult?, Bool}
-      return {nil, changed} unless priv
+    ) : {PluginResult?, Bool, String?}
+      return {nil, changed, nil} unless priv
 
       desired = PluginHelpers::MysqlPrivileges.desired_grants(priv)
       current = exists ? current_grants(db, name, host) : Hash(String, Set(String)).new
-      ops = PluginHelpers::MysqlPrivileges.plan_changes(desired, current, append_privs)
-      return {nil, changed} if ops.empty?
+      ops = PluginHelpers::MysqlPrivileges.plan_changes(desired, current, append_privs, name)
+      return {nil, changed, nil} if ops.empty?
 
-      return {PluginResult.new(changed: true, failed: false, msg: "User updated"), changed} if check_mode
+      msg = PluginHelpers::MysqlPrivileges.priv_change_msg(desired, current, append_privs, name) ||
+            "User unchanged"
+
+      return {PluginResult.new(changed: true, failed: false, msg: msg), changed, nil} if check_mode
 
       execute_grant_plan(db, name, host, ops)
-      {nil, true}
+      {nil, true, msg}
     end
 
     private def ensure_absent(db : DB::Database, name : String, host : String, exists : Bool, check_mode : Bool) : PluginResult
@@ -635,18 +704,29 @@ module Krikri
       end
 
       changed = false
+      auth_msg = nil
       hash = password ? native_password_hash(db, password) : nil
       existing_hosts.each do |host|
         next unless needs_auth_update?(db, name, host, password, hash, update_password, plugin, plugin_hash_string, plugin_auth_string)
-        return PluginResult.new(changed: true, failed: false, msg: "User updated") if check_mode
+        # Real's user_mod loops the account's hostnames and its password
+        # branch leaves "Password updated (new style)" behind on each
+        # ALTER it issues (check mode: "Password updated"); the
+        # plugin/auth branch leaves the "User unchanged" default even
+        # when it ALTERs - so only a password change contributes wording
+        # here, and the last changed host's wording wins.
+        if check_mode
+          auth_msg = "Password updated" if password
+          return PluginResult.new(changed: true, failed: false, msg: auth_msg || "User unchanged")
+        end
 
         clause = build_auth_clause(db, password, plugin, plugin_hash_string, plugin_auth_string)
         exec_auth_statement db, "ALTER USER #{quote_str(name)}@#{quote_str(host)}#{clause}"
         @password_changed = JSON::Any.new(true)
         changed = true
+        auth_msg = "Password updated (new style)" if password
       end
 
-      PluginResult.new(changed: changed, failed: false, msg: changed ? "User updated" : "User unchanged")
+      PluginResult.new(changed: changed, failed: false, msg: auth_msg || "User unchanged")
     end
 
     private def needs_auth_update?(db : DB::Database, name : String, host : String,
@@ -691,16 +771,52 @@ module Krikri
           # rejects that combined form outside the global *..* scope
           # (error 1064), so the option is a separate :revoke_grant_option
           # op planned only when the account holds it.
-          db.exec "REVOKE ALL PRIVILEGES ON #{target} FROM #{account}"
+          exec_revoke_statement db, "REVOKE ALL PRIVILEGES ON #{target} FROM #{account}"
         when :revoke_grant_option
-          db.exec "REVOKE GRANT OPTION ON #{target} FROM #{account}"
+          exec_revoke_statement db, "REVOKE GRANT OPTION ON #{target} FROM #{account}"
         when :revoke
-          db.exec "REVOKE #{op.privileges.join(", ")} ON #{target} FROM #{account}"
+          exec_revoke_statement db, "REVOKE #{op.privileges.join(", ")} ON #{target} FROM #{account}"
         when :grant
           list, clause = PluginHelpers::MysqlPrivileges.grant_parts(op.privileges)
-          db.exec "GRANT #{list} ON #{target} TO #{account}#{clause}"
+          exec_grant_statement db, "GRANT #{list} ON #{target} TO #{account}#{clause}",
+            list, target, name, host
         end
       end
+    end
+
+    # Runs one REVOKE, surfacing a server rejection the way real's module
+    # does: privileges_revoke has no wrapper of its own, so the raw
+    # pymysql error string reaches fail_json ("(errno, \"message\")").
+    private def exec_revoke_statement(db : DB::Database, sql : String) : Nil
+      db.exec sql
+    rescue ex : MySql::Connection::PacketError
+      if msg = pymysql_error(ex)
+        raise ModuleFailError.new(msg)
+      end
+      raise ex
+    end
+
+    # Runs one GRANT, surfacing a server rejection through real's
+    # privileges_grant wrapper (user.py): "Error granting privileges,
+    # invalid priv string: <privs> , params: <params>, query: <query> ,
+    # exception: <pymysql error>." - where privs is the comma-joined list
+    # WITHOUT spaces that real interpolates, params is the Python tuple
+    # repr of (user, host), and query is real's raw statement with %s
+    # placeholders for the account. Only ProgrammingError,
+    # OperationalError and InternalError hit the wrapper; anything else
+    # re-raises raw.
+    private def exec_grant_statement(db : DB::Database, sql : String, priv_list : String,
+                                     target : String, name : String, host : String) : Nil
+      db.exec sql
+    rescue ex : MySql::Connection::PacketError
+      if py = pymysql_error(ex)
+        priv_string = priv_list.gsub(", ", ",")
+        params = "(#{python_str_repr_single(name)}, #{python_str_repr_single(host)})"
+        query = "GRANT #{priv_string} ON #{target} TO %s@%s"
+        raise ModuleFailError.new("Error granting privileges, invalid priv string: #{priv_string} , " \
+                                  "params: #{params}, query: #{query} , exception: #{py}.")
+      end
+      raise ex
     end
 
     private def quote_str(s : String) : String
