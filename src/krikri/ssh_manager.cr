@@ -313,6 +313,8 @@ module Krikri
       "kex_exchange_identification",  # banner exchange failed/reset
       "ssh_exchange_identification",
       "Host key verification failed",
+      "Received disconnect from",     # ssh client's own line when the server drops the session (auth phase)
+      "Too many authentication failures", # MaxAuthTries hit: the agent/keys offered before the right one
       "SSH command timed out",       # run_with_timeout's own hung-connection synthesis
       "SSH execution failed",        # exec's rescue path
       "SSH script execution failed", # exec_script's rescue path

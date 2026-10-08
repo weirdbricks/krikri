@@ -29,6 +29,8 @@ describe "Krikri::SSHManager (ssh_connection_failure_test.cr)" do
         "kex_exchange_identification: read: Connection reset by peer",
         "ssh_exchange_identification: Connection closed by remote host",
         "Host key verification failed.",
+        "Received disconnect from 209.208.110.195 port 22:2: Too many authentication failures\nDisconnected from 209.208.110.195 port 22",
+        "Too many authentication failures",
       }.each do |stderr|
         Krikri::SSHManager.connection_level_failure?(255, stderr).must_equal(true, "#{stderr.inspect} should classify as a connection-level failure")
       end
