@@ -26,6 +26,43 @@ module Krikri
     # seconds). `0` means never expire, same as Ansible.
     DEFAULT_TIMEOUT = 86400
 
+    # Cache plugins whose required `_uri` config (the
+    # fact_caching_connection) makes ansible-core warn at startup when
+    # it is missing - live-verified vs 2.19.11 for both:
+    #   [WARNING]: Required config '_uri' for 'jsonfile' cache plugin not provided.
+    # The warning fires whenever the plugin is CONFIGURED without a
+    # connection, even when no play gathers facts (the plugin load is
+    # not gated on gathering), and a collection plugin renders fully
+    # qualified (ansible_collections.<ns>.<collection>.plugins.cache.<name>).
+    # Only these two are listed because they are the only plugins whose
+    # _uri requirement this engine has verified; other backends would
+    # need their own option specs to warn about correctly.
+    URI_REQUIRED_PLUGINS = {"jsonfile", "community.general.pickle"}
+
+    @@connection_warning_emitted = false
+
+    # Test hook: forget that the warning was already emitted.
+    def self.reset_connection_warning : Nil
+      @@connection_warning_emitted = false
+    end
+
+    # Startup-time configuration warning, shared by both drivers (the
+    # `ansible` ad-hoc binary warns the same way). Idempotent per
+    # process. *io* injectable for specs.
+    def self.warn_missing_connection(io : IO = STDERR) : Nil
+      return if @@connection_warning_emitted
+      @@connection_warning_emitted = true
+      plugin = ENV["ANSIBLE_CACHE_PLUGIN"]?
+      return unless plugin && URI_REQUIRED_PLUGINS.includes?(plugin)
+      return unless (ENV["ANSIBLE_CACHE_PLUGIN_CONNECTION"]? || "").empty?
+      display_name = plugin
+      if plugin.split('.').size == 3
+        ns, collection, name = plugin.split('.')
+        display_name = "ansible_collections.#{ns}.#{collection}.plugins.cache.#{name}"
+      end
+      io.puts "[WARNING]: Required config '_uri' for '#{display_name}' cache plugin not provided."
+    end
+
     def self.enabled? : Bool
       backend == "jsonfile" && !connection_dir.nil?
     end

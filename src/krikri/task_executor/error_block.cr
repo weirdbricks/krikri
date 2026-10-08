@@ -68,9 +68,17 @@ module Krikri
     # failures with identical text, or the same failure on several hosts,
     # display the block once). Returns true when printed.
     def self.emit(node : Node) : Bool
+      emit_to(STDOUT, node)
+    end
+
+    # emit variant capturing to an IO instead of printing: TaskExecutor's
+    # unreachable report buffers its block (run_task_batch books
+    # unreachable hosts before it knows the task banner is coming, and
+    # ansible prints the report under that banner).
+    def self.emit_to(io : IO, node : Node) : Bool
       text = "[ERROR]: " + format_event(node)
       return false unless @@seen.add?(text)
-      print text
+      io.print text
       true
     end
 

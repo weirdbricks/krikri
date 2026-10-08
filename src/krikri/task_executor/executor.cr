@@ -441,6 +441,15 @@ module Krikri
       # unreachable result - which is what makes per-task
       # `ignore_unreachable:` possible at all.
       @unreachable_hosts = Set(String).new,
+      # The SSH transport's own error detail per host in
+      # @unreachable_hosts that the pre-upload pass discovered
+      # (PluginManager.batch_upload_plugins_for_playbook's return value).
+      # The task-level UNREACHABLE! reports embed it in the fatal msg the
+      # way ansible-playbook embeds the transport error ("Failed to
+      # connect to the host via ssh: ssh: connect to host ...: ...");
+      # hosts unreachable for other reasons fall back to the connection
+      # host as before.
+      @unreachable_ssh_errors = {} of String => String,
       # `strategy:` - see Play#strategy. Only "free" changes anything
       # here; linear is this engine's existing behavior, and
       # host_pinned is treated as free (its only difference is worker

@@ -466,7 +466,15 @@ playbook.plays = [play]
 # uses. Discarding this return value used to leave the host in `hosts`,
 # where the per-task lazy-upload path raised an uncaught exception that
 # killed the whole process instead of reporting and skipping.
-unreachable_hosts = Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+# The pass no longer prints the UNREACHABLE! fatal itself (it used to
+# come out before any play/task output); the executor's per-task
+# unreachable report now does, carrying the ssh error detail returned
+# here.
+unreachable_ssh_errors = Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
+unreachable_hosts = unreachable_ssh_errors.keys
+# Same startup cache-configuration warning ansible warns with (see
+# krikri-playbook.cr).
+Krikri::FactCache.warn_missing_connection
 
 # The override var is captured by the OptionParser closure, so its type
 # isn't narrowed here - copy it into a plain local first.
@@ -490,6 +498,7 @@ executor = Krikri::TaskExecutor.new(
   # substitutes it explicitly.
   playbook_dir: playbook_dir_effective,
   unreachable_hosts: unreachable_hosts.to_set,
+  unreachable_ssh_errors: unreachable_ssh_errors,
   adhoc: true
 )
 

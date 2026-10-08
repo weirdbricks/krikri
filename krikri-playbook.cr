@@ -1090,8 +1090,15 @@ end
 Krikri::PluginManager.daemon_enabled = persistent_daemon
 
 # Batch upload plugins to all remote hosts before execution
+# Ansible warns at startup when a cache plugin requiring a connection
+# is configured without one - not gated on any play gathering facts.
+Krikri::FactCache.warn_missing_connection
 # This is much more efficient than uploading during task execution
 unreachable_hosts = Set(String).new
+# SSH transport error detail per host the pre-upload pass could not
+# reach - consumed by the task-level UNREACHABLE! reports so the fatal
+# line carries the real ssh error (ansible-playbook embeds it too).
+unreachable_ssh_errors = Hash(String, String).new
 if playbook && inventory
   # A host that cannot be reached is reported and EXCLUDED, not fatal:
   # ansible-playbook carries on with every other host and exits 4.
@@ -1099,8 +1106,9 @@ if playbook && inventory
   # discarding the reachable hosts' results entirely.
   Krikri::TimingProfile.measure("upload.plugins") do
     Krikri::PluginManager.batch_upload_plugins_for_playbook(playbook, inventory, forks)
-  end.each do |name|
+  end.each do |name, detail|
     unreachable_hosts << name
+    unreachable_ssh_errors[name] = detail
   end
 end
 
@@ -1361,6 +1369,7 @@ playbook.plays.each_with_index do |play, _play_index|
       any_errors_fatal: play.any_errors_fatal?,
       max_fail_percentage: play.max_fail_percentage,
       unreachable_hosts: unreachable_hosts,
+    unreachable_ssh_errors: unreachable_ssh_errors,
       strategy: play.strategy,
       gather_subset: play.gather_subset,
       gather_timeout: play.gather_timeout,

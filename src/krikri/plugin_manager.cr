@@ -369,11 +369,23 @@ module Krikri
     # Pre-upload all plugins needed for a playbook to all remote hosts
     # This is called once before task execution begins
     # Much more efficient than uploading plugins one at a time during execution
+    #
+    # Returns host name -> the SSH transport's own error detail for every
+    # host the pass could not reach. It deliberately does NOT print the
+    # UNREACHABLE! fatal line itself: ansible-playbook reports an
+    # unreachable host only at the task that fails (the implicit Gathering
+    # Facts task, or the play's first task when the play doesn't gather),
+    # under that task's banner - a fatal printed here came out BEFORE the
+    # `PLAY [` banner and a second time at the task (live-verified vs
+    # ansible-core 2.19.11). The task-level reporting paths consume the
+    # returned details via TaskExecutor's `unreachable_ssh_errors` so the
+    # fatal line carries the real ssh error instead of a bare connection
+    # host.
     def self.batch_upload_plugins_for_playbook(
       playbook : Playbook,
       inventory : Inventory,
       forks : Int32 = 5,
-    ) : Array(String)
+    ) : Hash(String, String)
       # Collect all unique module names used in the playbook
       required_plugins = Set(String).new
 
@@ -401,7 +413,7 @@ module Krikri
       # Add facts plugin if any play needs it
       required_plugins.add("facts") if needs_facts
 
-      return [] of String if required_plugins.empty?
+      return {} of String => String if required_plugins.empty?
 
       # Collect all unique remote hosts from the playbook
       remote_hosts = [] of Host
@@ -457,7 +469,7 @@ module Krikri
         end
       end
 
-      return [] of String if remote_hosts.empty?
+      return {} of String => String if remote_hosts.empty?
 
       puts "Preparing plugins for remote execution...".colorize(:cyan) if @@verbose
 
@@ -533,7 +545,17 @@ module Krikri
       # results of every reachable host were lost. ansible-playbook
       # reports the host UNREACHABLE!, keeps going for the others, and
       # exits 4. Returning the names lets the caller do the same.
-      unreachable = [] of String
+      #
+      # The UNREACHABLE! fatal line itself is NOT printed here: it used
+      # to come out before the first `PLAY [` banner (this pass runs
+      # before any play executes) and then again from the task-level
+      # unreachable report - ansible-playbook prints it exactly once,
+      # under the failing task's banner, with the ssh transport's own
+      # error text in the msg. The extracted detail (the `ssh: ...`
+      # portion of the upload error; the raw message leads with this
+      # pass's own "Failed to upload <local> to <remote>: " prefix) is
+      # returned per host so the task-level paths can embed it.
+      unreachable = {} of String => String
       remote_hosts.each do |host|
         next unless ex = failures[host.name]?
         if ex.is_a?(PluginArchUnsupportedError)
@@ -550,13 +572,9 @@ module Krikri
           puts %(fatal: [#{host.name}]: FAILED! => #{msg}).colorize(:red)
           next
         end
-        unreachable << host.name
-        # .to_json, not hand-built pseudo-JSON - a hand-escaped message
-        # (backslashes, control chars in an ssh error) could produce
-        # malformed output; the ansible-playbook line this matches
-        # emits properly-encoded JSON too.
-        msg = {"changed" => false, "msg" => ex.message.to_s.lines.first?.to_s, "unreachable" => true}.to_json
-        puts %(fatal: [#{host.name}]: UNREACHABLE! => #{msg}).colorize(:red)
+        message = ex.message.to_s
+        detail = message[/\bssh: .*$/]?.try(&.lines.first?) || message.lines.first? || ""
+        unreachable[host.name] = detail
       end
 
       puts "" if @@verbose
