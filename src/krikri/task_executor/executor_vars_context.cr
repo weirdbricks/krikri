@@ -887,9 +887,17 @@ module Krikri
         # cross-host read of a PER-HOST magic var (group_names most
         # prominently) silently returned the reading host's value. The
         # add_host path diverged hardest (the new host's groups are
-        # invisible to every other host's hostvars read) and is the slice
-        # enriched here; ordinary inventory hosts keep the fallback.
-        enrich_add_host_entry(entry, other_host) if other_host.from_add_host?
+        # invisible to every other host's hostvars read) and was enriched
+        # first; ordinary inventory hosts kept the fallback - but the
+        # fallback only exists for the hand-rolled evaluators. The JINJA
+        # template path turns each hostvars entry into a plain dict
+        # (prepare_hostvars), so `hostvars[inventory_hostname].
+        # group_names[0]` on an ordinary inventory host died with
+        # "object of type 'dict' has no attribute 'group_names'"
+        # (bilalcaliskan.redis's redis.conf.j2, round 5210000). Every
+        # host's entry now carries the full play-magic set, exactly like
+        # real's hostvars view.
+        enrich_add_host_entry(entry, other_host)
         # No synthesized ansible_host here: Ansible's hostvars magic
         # view carries ONLY actually-defined vars (inventory + facts +
         # registered), and `{{ ansible_host }}` falls back to the
