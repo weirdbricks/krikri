@@ -1467,13 +1467,39 @@ module Krikri
       }.to_json)
     end
 
-    # The failed-task result the solo daemon path returns when a request
-    # was dispatched but its response was lost or unparseable. Public
-    # (spec seam) because the SHAPE is the contract: `failed: true` plus
-    # `_connection_failure` - the latter keeps failed_when:/changed_when:
-    # from reinterpreting a result no module produced, and the msg says
-    # explicitly why the task was not retried.
+    # The result the solo daemon path returns when a request was
+    # dispatched but its response was lost or unparseable. Public
+    # (spec seam) because the SHAPE is the contract, and the shape splits
+    # by HOW the response was lost, mirroring Ansible:
+    #
+    # - the pipe/transport itself died or timed out on a cached daemon
+    #   (ex.transport_lost?) - Ansible books a connection that dies while
+    #   its module runs as UNREACHABLE: the host is dropped from the rest
+    #   of the play and the run exits 4. Verified live against 2.19.11
+    #   (probe role kop_sshd_solo, Atlantic.net, 2026-10-08): real
+    #   printed `fatal: [host]: UNREACHABLE!` with rc=4 and recap
+    #   `ok=2 unreachable=1`, this engine printed a FAILED task with
+    #   `_connection_failure: true` that `ignore_errors: true` then
+    #   reduced to `ignored=1`, kept running every later task on the
+    #   host, and exited 0. The task is still never re-executed (the
+    #   unreachable result replaces it outright; nothing falls through to
+    #   the one-shot path), so the double-apply guard holds.
+    # - a live daemon answered with unusable bytes - `failed: true` plus
+    #   `_connection_failure` (the latter keeps failed_when:/changed_when:
+    #   from reinterpreting a result no module produced), and the msg
+    #   says explicitly why the task was not retried. `ignore_errors:`
+    #   applies to this shape exactly as Ansible's own module-produced-
+    #   garbage failure would.
     def self.daemon_dispatch_unknown_result(ex : SSHManager::DaemonDispatchUnknownError) : JSON::Any
+      if ex.transport_lost?
+        detail = ex.message.to_s.lines.first?.to_s
+        return JSON.parse({
+          "changed"     => false,
+          "msg"         => "Failed to connect to the host via ssh: #{detail}",
+          "stderr"      => detail,
+          "unreachable" => true,
+        }.to_json)
+      end
       JSON.parse({
         "changed"             => false,
         "failed"              => true,

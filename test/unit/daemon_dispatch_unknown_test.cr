@@ -86,6 +86,58 @@ describe "solo daemon path dispatch-vs-response-lost classification" do
     end
   end
 
+  it "flags a CACHED daemon's timed-out response as transport-level (UNREACHABLE class)" do
+    # The read hits the wall-clock timeout: the synthesized message
+    # itself says "host likely unreachable", the same verdict a real ssh
+    # exec that hangs past its timeout gets, so the loss must carry
+    # transport_lost (the caller books UNREACHABLE, not a failed task).
+    seed_daemon(fake_daemon("sleep 5"))
+    begin
+      ex = assert_raises(Krikri::SSHManager::DaemonDispatchUnknownError) do
+        spec_send(timeout: 1)
+      end
+      ex.transport_lost?.must_equal(true)
+    ensure
+      clear_daemon
+    end
+  end
+
+  it "flags a CACHED daemon that dies mid-request as transport-level (UNREACHABLE class)" do
+    # The fake daemon exits shortly after spawn without reading: the
+    # controller's write lands in the pipe buffer, then the read gets
+    # EOF - exactly what a real ssh transport death behind a cached
+    # daemon looks like (sshd session killed mid-play). Found live on
+    # Atlantic.net (probe role kop_sshd_solo, round 4250001): real
+    # ansible 2.19.11 booked the task UNREACHABLE (rc=4, host dropped,
+    # recap `unreachable=1`), this engine booked a FAILED task that
+    # `ignore_errors:` reduced to `ignored=1` and kept the host alive,
+    # running every later task and exiting 0.
+    seed_daemon(fake_daemon("sleep 0.3; exit 0"))
+    begin
+      ex = assert_raises(Krikri::SSHManager::DaemonDispatchUnknownError) do
+        spec_send(timeout: 5)
+      end
+      ex.transport_lost?.must_equal(true)
+      ex.cause.class.name.must_equal("IO::EOFError")
+    ensure
+      clear_daemon
+    end
+  end
+
+  it "does NOT flag a garbage-frame response as transport-level (stays a failed task)" do
+    # The daemon is alive and answered - with unframeable bytes. The
+    # transport never died, so this stays in the failed-task class.
+    seed_daemon(fake_daemon("echo junkjunkjunkjunkjunk; sleep 5"))
+    begin
+      ex = assert_raises(Krikri::SSHManager::DaemonDispatchUnknownError) do
+        spec_send(timeout: 5)
+      end
+      ex.transport_lost?.must_equal(false)
+    ensure
+      clear_daemon
+    end
+  end
+
   it "raises DaemonDispatchUnknownError when a CACHED daemon answers with garbage (unframeable bytes)" do
     # Echoes raw bytes with no length prefix, then stays alive so the
     # write cannot race its exit: the controller reads 'junk...' as a
@@ -152,5 +204,24 @@ describe "PluginManager.daemon_dispatch_unknown_result" do
     result["_connection_failure"].as_bool.must_equal(true)
     result["msg"].as_s.must_include("NOT re-executed")
     result["msg"].as_s.must_include("may already have run")
+  end
+
+  it "builds an UNREACHABLE result when the response loss was transport-level" do
+    # Real ansible 2.19.11 books a connection death mid-module as
+    # UNREACHABLE (host dropped, rc=4), never as an ignorable failed
+    # task - live-verified via the kop_sshd_solo probe role on
+    # Atlantic.net. The unreachable shape flows into
+    # finish_single_task's existing unreachable booking, which ignores
+    # ignore_errors: (only ignore_unreachable: applies) and halts the
+    # host, and the task is still never re-executed.
+    cause = IO::EOFError.new("End of file reached")
+    ex = Krikri::SSHManager::DaemonDispatchUnknownError.new("daemon request for 'shell' was sent but its response was lost (IO::EOFError: End of file reached)", cause, transport_lost: true)
+    result = Krikri::PluginManager.daemon_dispatch_unknown_result(ex)
+    result["unreachable"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+    result["failed"]?.nil?.must_equal(true)
+    result["_connection_failure"]?.nil?.must_equal(true)
+    result["msg"].as_s.must_include("Failed to connect to the host via ssh")
+    result["msg"].as_s.must_include("response was lost")
   end
 end

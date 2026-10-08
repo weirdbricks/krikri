@@ -1577,6 +1577,25 @@ module Krikri
         end
       end
 
+      # A batch script that COMPLETED always exits 0 (a failing step
+      # dumps and exits 0; the staging-safety refusals exit 75), so an
+      # ssh-level 255 means the TRANSPORT died mid-script. Per-step
+      # results are streamed as they complete (see BatchScript.build),
+      # so the steps that finished before the death are already in the
+      # captured stdout and #parse recovers them - real Ansible, which
+      # runs every task as its own ssh round trip, books those completed
+      # tasks as ok (live-verified on Atlantic.net, probe role
+      # kop_sshd_batch vs ansible-core 2.19.11, 2026-10-08: real recapped
+      # `ok=2 unreachable=1` - gather_facts plus the pre-death task -
+      # while this engine recapped `ok=1`, having lost the completed
+      # step with the dead transport). Only the steps whose results
+      # never arrived get the transport's own evidence as a synthetic
+      # StepResult, which interpret_remote_result classifies as
+      # UNREACHABLE - without this they would have no cache entry at
+      # all, which execute_batch_group's contract reads as "skipped",
+      # silently NOT running tasks the playbook asked for.
+      BatchScript.stamp_missing_on_transport_death(parsed, raw[:exit_code], raw[:stderr], steps.size)
+
       parsed
     end
 

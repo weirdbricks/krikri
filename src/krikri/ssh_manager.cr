@@ -671,8 +671,24 @@ module Krikri
     # non-idempotent module (a bare command:, an append, an email) would
     # apply twice. See PluginManager#execute_remote_plugin_transport,
     # which turns this into a failed-task result instead of its usual
-    # fall-through to the one-shot path.
+    # fall-through to the one-shot path - or, when #transport_lost? is
+    # set (the pipe itself died or timed out on a cached daemon), into an
+    # UNREACHABLE result, which is how Ansible classifies a connection
+    # that dies while its module runs.
     class DaemonDispatchUnknownError < Exception
+      # True when the response was lost because the pipe/transport itself
+      # died or timed out on an already-cached daemon (EOF on the read, a
+      # hung read hitting the wall-clock timeout). Real Ansible books a
+      # connection that dies while its module runs as UNREACHABLE - the
+      # host is dropped from the play and the run exits 4 - not as a
+      # failed (ignorable) task. False for a daemon that answered with
+      # unusable bytes (framing garbage): there the transport is alive,
+      # the module ran and produced garbage, which stays a failed task.
+      getter? transport_lost : Bool
+
+      def initialize(message : String? = nil, cause : Exception? = nil, @transport_lost : Bool = false)
+        super(message, cause)
+      end
     end
 
     # Sends one request and returns the plugin's own JSON result,
@@ -741,7 +757,8 @@ module Krikri
           @@daemon_failures[key] += 1
           kill_daemon(host, user, port, become_user)
           raise ex if fresh_spawn
-          raise DaemonDispatchUnknownError.new("daemon request for '#{module_name}' was sent but its response was lost (#{ex.class.name}: #{ex.message})", ex)
+          raise DaemonDispatchUnknownError.new("daemon request for '#{module_name}' was sent but its response was lost (#{ex.class.name}: #{ex.message})", ex,
+            transport_lost: daemon_response_loss_is_transport?(ex))
         end
       end
 
@@ -756,6 +773,18 @@ module Krikri
         # unusable. Whatever produced it already ran - never re-execute.
         raise DaemonDispatchUnknownError.new("daemon response for '#{module_name}' was not valid JSON (#{ex.message})", ex)
       end
+    end
+
+    # A lost daemon response is a TRANSPORT death when the pipe itself
+    # gave nothing usable because it went away - EOF (the ssh process
+    # behind the daemon exited: connection dropped, host rebooted, sshd
+    # killed) - or when the read hit the wall-clock timeout ("host likely
+    # unreachable"). A daemon that answered with garbage frames ("daemon
+    # frame too large") did NOT lose the transport - it produced unusable
+    # output while alive, which stays a failed task, not an unreachable
+    # host.
+    private def self.daemon_response_loss_is_transport?(ex : Exception) : Bool
+      ex.is_a?(IO::Error) || ex.message.to_s.includes?("timed out")
     end
 
     # Perf item 3: send a whole batch of

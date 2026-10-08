@@ -216,6 +216,24 @@ module Krikri
             io << "  exit 0\n"
             io << "fi\n"
           end
+
+          # Stream each step's result out as soon as it completes (AFTER
+          # the fail-fast check above, which reads the step's .rc file -
+          # dump_one deletes it), instead of holding every result until
+          # the end-of-script dump. The SSH transport carrying this
+          # script can die mid-script (sshd session killed mid-play,
+          # network drop, host reboot) - with end-only dumping the
+          # transport death then destroys the results of steps that
+          # COMPLETED, and the controller books the whole group
+          # unreachable. Real Ansible runs every task as its own ssh
+          # round trip, so its completed tasks stay ok (live-verified on
+          # Atlantic.net, probe role kop_sshd_batch vs ansible-core
+          # 2.19.11, 2026-10-08: real recapped `ok=2 unreachable=1` -
+          # gather_facts + the pre-death task - while this engine
+          # recapped `ok=1`). Streaming keeps the already-transmitted
+          # results in the captured stdout, where #parse recovers them
+          # byte-identically.
+          io << "dump_one #{idx}\n"
         end
 
         io << "dump\n"
@@ -225,17 +243,22 @@ module Krikri
 
     private def self.dump_function : String
       <<-BASH
+      dump_one() {
+        n=$1
+        [ -e "$D/$n.rc" ] || return 0
+        rc=$(cat "$D/$n.rc")
+        printf 'OUT %s %s ' "$n" "$rc"
+        base64 -w0 "$D/$n.out"
+        printf '\\n'
+        printf 'ERR %s ' "$n"
+        base64 -w0 "$D/$n.err"
+        printf '\\n'
+        rm -f "$D/$n.rc" "$D/$n.out" "$D/$n.err"
+      }
       dump() {
         for f in "$D"/*.rc; do
           [ -e "$f" ] || continue
-          n=$(basename "$f" .rc)
-          rc=$(cat "$f")
-          printf 'OUT %s %s ' "$n" "$rc"
-          base64 -w0 "$D/$n.out"
-          printf '\\n'
-          printf 'ERR %s ' "$n"
-          base64 -w0 "$D/$n.err"
-          printf '\\n'
+          dump_one "$(basename "$f" .rc)"
         done
         rm -rf "$D"
       }
@@ -260,9 +283,20 @@ module Krikri
 
       raw_stdout.each_line do |line|
         if m = line.match(/\AOUT (\d+) (-?\d+) (.*)\z/)
-          outs[m[1].to_i] = {m[2].to_i, Base64.decode_string(m[3])}
+          begin
+            outs[m[1].to_i] = {m[2].to_i, Base64.decode_string(m[3])}
+          rescue
+            # Per-step results are streamed as they complete (see build),
+            # so a transport death mid-script can truncate the FINAL
+            # line mid-base64. An un-decodable payload is not a step
+            # result - leave the step missing so callers classify it
+            # (unreachable) instead of crashing the parse.
+          end
         elsif m = line.match(/\AERR (\d+) (.*)\z/)
-          errs[m[1].to_i] = Base64.decode_string(m[2])
+          begin
+            errs[m[1].to_i] = Base64.decode_string(m[2])
+          rescue
+          end
         end
       end
 
@@ -271,6 +305,32 @@ module Krikri
         results[step_index] = StepResult.new(rc, stdout, errs[step_index]? || "")
       end
       results
+    end
+
+    # Stamps the steps whose results never arrived when the SSH
+    # transport died mid-script (ssh's own 255 exit), leaving the steps
+    # that DID complete - their streamed results are in *parsed* via
+    # #parse - untouched. Real Ansible runs every task as its own ssh
+    # round trip, so a mid-play sshd death books the already-completed
+    # tasks as ok and only the task in flight as UNREACHABLE; without
+    # this stamping the missing steps would have no entry at all, which
+    # execute_batch_group's contract reads as "skipped", silently NOT
+    # running tasks the playbook asked for.
+    #
+    # The 255 gate is what makes this safe: a batch script that COMPLETED
+    # always exits 0 (a failing step dumps and exits 0; the staging-
+    # safety refusals exit 75), so 255 can only come from ssh itself.
+    # Public (spec seam) because run_batch_script applies it to live
+    # transport output and the partial-recovery contract is worth pinning
+    # down directly.
+    def self.stamp_missing_on_transport_death(parsed : Hash(Int32, StepResult), exit_code : Int32, stderr : String, step_count : Int32) : Hash(Int32, StepResult)
+      return parsed unless exit_code == 255
+      (0...step_count).each do |idx|
+        unless parsed.has_key?(idx)
+          parsed[idx] = StepResult.new(exit_code, "", stderr)
+        end
+      end
+      parsed
     end
   end
 end
