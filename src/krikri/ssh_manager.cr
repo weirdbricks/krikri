@@ -148,34 +148,26 @@ module Krikri
       @@sshpass_available = available
     end
 
-    # The loud failure for a password without sshpass: raised as soon as
-    # a password is registered (i.e. before the first connection is even
-    # attempted) so the run aborts with one clear message instead of
-    # reporting every host unreachable. Mirrors ansible-core's own
-    # "to use the password_mechanism=sshpass, you must install the
-    # sshpass program".
-    def self.ensure_sshpass! : Nil
-      return if sshpass_available?
-      raise "a connection password is set (ansible_password/ansible_ssh_pass, -k/--ask-pass or --connection-password-file) but the sshpass program is not installed - install sshpass to use SSH password authentication"
-    end
-
-    # Idempotent; a nil password is a no-op (never erases a password
-    # registered elsewhere for the same triple). Raises via
-    # #ensure_sshpass! when a real password is registered without sshpass.
+    # A registered connection password is delivered to ssh by one of two
+    # mechanisms, mirroring ansible-core 2.19's connection plugin (whose
+    # default password_mechanism is ssh_askpass): `sshpass -e` when the
+    # sshpass program is installed, and OpenSSH's own SSH_ASKPASS
+    # mechanism when it is not. Registration therefore never raises - a
+    # password without sshpass is not an error (ansible-core succeeds in
+    # exactly this situation), the askpass fallback covers it.
     def self.register_connection_password(host : String, user : String, port : Int32?, password : String?) : Nil
       return unless password
-      ensure_sshpass!
       @@connection_passwords[{host, user, port}] = password
     end
 
-    # Resolves the connection password for one target. A found password
-    # re-checks sshpass (memoized), so any spawn path that never went
-    # through registration still fails loudly rather than silently
-    # falling back to key-only auth.
+    # Resolves the connection password for one target. A nil password is
+    # the only no-op (never erases a password registered elsewhere for
+    # the same triple); a found password is delivered by whichever
+    # mechanism the spawn sites pick - `sshpass -e` when sshpass is
+    # available, the askpass env overlay otherwise (see #sshpass_prefix
+    # and #sshpass_env).
     def self.password_for(host : String, user : String, port : Int32?) : String?
-      password = @@connection_passwords[{host, user, port}]?
-      ensure_sshpass! if password
-      password
+      @@connection_passwords[{host, user, port}]?
     end
 
     # Spec seam - the registry is process-global, so tests clear it
@@ -184,16 +176,81 @@ module Krikri
       @@connection_passwords.clear
     end
 
-    # argv prefix for ssh/scp when a password is set. The password itself
-    # travels only in SSHPASS (see #sshpass_env) - `sshpass -e` reads it
-    # from its own environment, so it is visible neither on argv nor on
-    # disk.
+    # argv prefix for ssh/scp when a password is set. With sshpass
+    # installed the password travels only in SSHPASS (`sshpass -e` reads
+    # it from its own environment) - never on argv, where any local
+    # user's `ps` could read it. Without sshpass the argv stays
+    # unwrapped and the askpass overlay in #sshpass_env carries the
+    # password instead (also env-only).
     def self.sshpass_prefix(password : String?) : Array(String)
-      password ? ["sshpass", "-e"] : [] of String
+      return [] of String unless password
+      sshpass_available? ? ["sshpass", "-e"] : [] of String
     end
 
     def self.sshpass_env(password : String?) : Hash(String, String)?
-      password ? {"SSHPASS" => password} : nil
+      password ? connection_password_env(password) : nil
+    end
+
+    # *password* is already narrowed to String by #sshpass_env's own nil
+    # filter (kept as a separate method so a nil instantiation of
+    # #sshpass_env never types the dead branch against String).
+    private def self.connection_password_env(password : String) : Hash(String, String)
+      if sshpass_available?
+        {"SSHPASS" => password}
+      else
+        env = {
+          "SSHPASS"             => password,
+          "SSH_ASKPASS"         => askpass_helper_path,
+          "SSH_ASKPASS_REQUIRE" => "force",
+        } of String => String
+        env["DISPLAY"] = "-" unless ENV.has_key?("DISPLAY")
+        env
+      end
+    end
+
+    # The extra ssh option the askpass mechanism needs on every ssh/scp
+    # invocation - the same one ansible-core adds under its ssh_askpass
+    # password_mechanism - bounding the password prompts to one so a
+    # wrong password fails fast instead of cycling through the helper.
+    def self.askpass_args(password : String?) : Array(String)
+      (password && !sshpass_available?) ? ["-o", "NumberOfPasswordPrompts=1"] : [] of String
+    end
+
+    # The SSH_ASKPASS helper for the no-sshpass fallback: a tiny shell
+    # script that answers ssh's password prompt with SSHPASS from the
+    # environment - the same env-only channel `sshpass -e` uses, so the
+    # password never lands on argv or in a world-readable file. Written
+    # once per process (owner-executable only, staged through a private
+    # temp name + atomic rename so concurrent ssh spawns never see a
+    # half-written file) and removed at exit.
+    @@askpass_helper : String? = nil
+    @@askpass_cleanup_registered = false
+
+    def self.askpass_helper_path : String
+      cached = @@askpass_helper
+      return cached if cached
+
+      # A fresh, unpredictable, owner-only (0700) directory created with
+      # mkdir (which fails if the name exists): the helper receives the
+      # connection password in its environment, so another local user must
+      # not be able to pre-create the path (a predictable /tmp name that is
+      # skipped when it already exists would let them run their own script
+      # with the password) or swap the file.
+      dir = File.join(Dir.tempdir, "krikri-askpass-#{Random::Secure.hex(12)}")
+      Dir.mkdir(dir, 0o700)
+      path = File.join(dir, "askpass.sh")
+      File.write(path, "#!/bin/sh\nprintf '%s\\n' \"$SSHPASS\"\n", perm: 0o700)
+      unless @@askpass_cleanup_registered
+        @@askpass_cleanup_registered = true
+        at_exit do
+          File.delete(path) if File.exists?(path)
+          Dir.delete(dir) if Dir.exists?(dir)
+        rescue
+          nil
+        end
+      end
+      @@askpass_helper = path
+      path
     end
 
     # Runs *block* (given the just-spawned *process*) on a separate fiber
@@ -344,11 +401,11 @@ module Krikri
       "kex_exchange_identification",  # banner exchange failed/reset
       "ssh_exchange_identification",
       "Host key verification failed",
-      "Received disconnect from",     # ssh client's own line when the server drops the session (auth phase)
+      "Received disconnect from",         # ssh client's own line when the server drops the session (auth phase)
       "Too many authentication failures", # MaxAuthTries hit: the agent/keys offered before the right one
-      "SSH command timed out",       # run_with_timeout's own hung-connection synthesis
-      "SSH execution failed",        # exec's rescue path
-      "SSH script execution failed", # exec_script's rescue path
+      "SSH command timed out",            # run_with_timeout's own hung-connection synthesis
+      "SSH execution failed",             # exec's rescue path
+      "SSH script execution failed",      # exec_script's rescue path
     ]
 
     # True when *exit_code*/*stderr* look like the SSH transport itself
@@ -1311,7 +1368,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
+      ] + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
         "#{user}@#{host}",
       ] + remote_args
     end
@@ -1339,24 +1396,28 @@ module Krikri
         "-o", "ControlPersist=600",
       ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) + [
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
+      ] + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
         (port ? ["-P", port.to_s] : [] of String) +
         CliOptions.extra_scp_args + local_args
     end
 
     # The `-e` value both rsync paths in this file build - shared so the
     # nil-port omission (no -p; ssh's own config resolution applies)
-    # stays identical in both. With a password the ssh it names is
-    # itself wrapped in `sshpass -e` (rsync word-splits this string into
-    # argv itself, so no shell quoting is involved and the password
-    # still only ever travels in SSHPASS - which rsync passes down to
-    # the sshpass child from the env this file's Process.run spawned
-    # rsync with). Public as a spec seam.
+    # stays identical in both. With a password and sshpass installed the
+    # ssh it names is itself wrapped in `sshpass -e` (rsync word-splits
+    # this string into argv itself, so no shell quoting is involved and
+    # the password still only ever travels in SSHPASS - which rsync
+    # passes down to the sshpass child from the env this file's
+    # Process.run spawned rsync with). Without sshpass the ssh stays
+    # unwrapped and inherits the askpass overlay env from rsync, plus
+    # the same single-prompt bound the other builders carry. Public as a
+    # spec seam.
     def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil) : String
       base = "ssh -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
-             " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}" \
-             "#{identity_ssh_opt(identity_file)}"
-      base = "sshpass -e #{base}" if password
+             " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}"
+      base = "sshpass -e #{base}" if password && sshpass_available?
+      base += " -o NumberOfPasswordPrompts=1" if password && !sshpass_available?
+      base = "#{base}#{identity_ssh_opt(identity_file)}"
       port ? "#{base} -p #{port}" : base
     end
 

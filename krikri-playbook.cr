@@ -921,10 +921,12 @@ end
 # Register every host's connection password with the SSH layer, keyed on
 # the same (host, user, port) triple all of its ssh/scp/rsync calls
 # resolve - this is what turns -k/--connection-password-file (and an
-# inventory ansible_password/ansible_ssh_pass) into real sshpass-backed
-# password auth instead of an inert var. Registration also fails HERE,
-# before the first connection, when a password is set but sshpass is not
-# installed, rather than letting every host come back unreachable.
+# inventory ansible_password/ansible_ssh_pass) into real password auth
+# instead of an inert var. Registration never raises: like ansible-core
+# 2.19 (whose default password_mechanism is ssh_askpass), a password
+# without an installed sshpass is not an error - SSHManager delivers it
+# through sshpass when available and through the SSH_ASKPASS fallback
+# when it is not.
 inventory.hosts.each_value do |reg_host|
   conn_pw = Krikri::Passwords.connection(reg_host.vars, reg_host)
   next unless conn_pw

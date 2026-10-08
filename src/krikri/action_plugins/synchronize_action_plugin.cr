@@ -194,7 +194,7 @@ module Krikri
 
       dest_port = resolve_dest_port
 
-      argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password)
+      argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password, wrap_rsh_sshpass: SSHManager.sshpass_available?)
       finish(argv, conn_password)
     end
 
@@ -208,7 +208,7 @@ module Krikri
             dest = SynchronizeRsync.format_rsh_target(task_host.connection_host, dest, user)
           end
           dest_port = resolve_dest_port(task_host)
-          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password)
+          argv = SynchronizeRsync.build_argv(src, dest, @params, private_key, dest_port, conn_password, wrap_rsh_sshpass: SSHManager.sshpass_available?)
           return finish(argv, conn_password)
         end
       end

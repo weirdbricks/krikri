@@ -1,6 +1,7 @@
 require "../minitest_helper"
 require "../../src/krikri/ssh_manager"
 require "../../src/krikri/passwords"
+require "../../src/krikri/plugin_helpers/synchronize_rsync"
 
 # -k/--ask-pass/--connection-password-file (and an inventory
 # ansible_password/ansible_ssh_pass) must reach every ssh/scp/rsync
@@ -21,30 +22,67 @@ describe "SSHManager sshpass wrapping (sshpass_wrapping_test.cr)" do
     end
 
     it "prefixes sshpass -e when a password is set, without the password itself" do
-      password = "s3cr3t-value"
-      argv = Krikri::SSHManager.ssh_argv("/tmp/cp", nil, nil, "root", "192.0.2.1", ["bash", "-s"], password)
-      argv[0].must_equal("sshpass")
-      argv[1].must_equal("-e")
-      argv[2].must_equal("ssh")
-      argv.includes?("-p").must_equal(false) # nil port still omits -p
-      argv.any? { |arg| arg.includes?(password) }.must_equal(false)
+      Krikri::SSHManager.sshpass_available_for_spec = true
+      begin
+        password = "s3cr3t-value"
+        argv = Krikri::SSHManager.ssh_argv("/tmp/cp", nil, nil, "root", "192.0.2.1", ["bash", "-s"], password)
+        argv[0].must_equal("sshpass")
+        argv[1].must_equal("-e")
+        argv[2].must_equal("ssh")
+        argv.includes?("-p").must_equal(false) # nil port still omits -p
+        argv.any? { |arg| arg.includes?(password) }.must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
+    end
+
+    it "runs unwrapped ssh with the askpass single-prompt option when a password is set but sshpass is missing" do
+      Krikri::SSHManager.sshpass_available_for_spec = false
+      begin
+        password = "s3cr3t-value"
+        argv = Krikri::SSHManager.ssh_argv("/tmp/cp", nil, nil, "root", "192.0.2.1", ["bash", "-s"], password)
+        argv[0].must_equal("ssh")
+        argv.includes?("sshpass").must_equal(false)
+        argv.includes?("NumberOfPasswordPrompts=1").must_equal(true)
+        argv.any? { |arg| arg.includes?(password) }.must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
     end
   end
 
   describe ".scp_argv" do
     it "wraps scp the same way, keeping the upload/download shapes intact" do
-      upload = Krikri::SSHManager.scp_argv("/tmp/cp", nil, 22, "root", "h", ["/l", "h:/r"], recursive: true, connect_timeout: true, password: "pw")
-      upload[0].must_equal("sshpass")
-      upload.includes?("-e").must_equal(true)
-      upload.includes?("scp").must_equal(true)
-      upload.includes?("-r").must_equal(true)
-      upload.includes?("ConnectTimeout=#{Krikri::CliOptions.timeout}").must_equal(true)
-      upload.any? { |arg| arg.includes?("pw") }.must_equal(false)
+      Krikri::SSHManager.sshpass_available_for_spec = true
+      begin
+        upload = Krikri::SSHManager.scp_argv("/tmp/cp", nil, 22, "root", "h", ["/l", "h:/r"], recursive: true, connect_timeout: true, password: "pw")
+        upload[0].must_equal("sshpass")
+        upload.includes?("-e").must_equal(true)
+        upload.includes?("scp").must_equal(true)
+        upload.includes?("-r").must_equal(true)
+        upload.includes?("ConnectTimeout=#{Krikri::CliOptions.timeout}").must_equal(true)
+        upload.any? { |arg| arg.includes?("pw") }.must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
 
       download = Krikri::SSHManager.scp_argv("/tmp/cp", nil, nil, "root", "h", ["h:/r", "/l"], recursive: false, connect_timeout: false)
       download.first.must_equal("scp")
       download.includes?("-r").must_equal(false)
       download.includes?("ConnectTimeout=#{Krikri::CliOptions.timeout}").must_equal(false)
+    end
+
+    it "leaves scp unwrapped with the askpass option when a password is set but sshpass is missing" do
+      Krikri::SSHManager.sshpass_available_for_spec = false
+      begin
+        upload = Krikri::SSHManager.scp_argv("/tmp/cp", nil, 22, "root", "h", ["/l", "h:/r"], recursive: true, connect_timeout: true, password: "pw")
+        upload[0].must_equal("scp")
+        upload.includes?("sshpass").must_equal(false)
+        upload.includes?("NumberOfPasswordPrompts=1").must_equal(true)
+        upload.any? { |arg| arg.includes?("pw") }.must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
     end
   end
 
@@ -54,33 +92,85 @@ describe "SSHManager sshpass wrapping (sshpass_wrapping_test.cr)" do
       plain.starts_with?("ssh -o ControlMaster=auto").must_equal(true)
       plain.includes?("sshpass").must_equal(false)
 
-      wrapped = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil, "pw123")
-      wrapped.starts_with?("sshpass -e ssh -o ControlMaster=auto").must_equal(true)
-      wrapped.includes?("pw123").must_equal(false)
+      Krikri::SSHManager.sshpass_available_for_spec = true
+      begin
+        wrapped = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil, "pw123")
+        wrapped.starts_with?("sshpass -e ssh -o ControlMaster=auto").must_equal(true)
+        wrapped.includes?("pw123").must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
+    end
+
+    it "leaves the -e ssh command unwrapped with the askpass option when a password is set but sshpass is missing" do
+      Krikri::SSHManager.sshpass_available_for_spec = false
+      begin
+        wrapped = Krikri::SSHManager.rsync_ssh_command("/tmp/cp", nil, nil, "pw123")
+        wrapped.starts_with?("ssh -o ControlMaster=auto").must_equal(true)
+        wrapped.includes?("NumberOfPasswordPrompts=1").must_equal(true)
+        wrapped.includes?("sshpass").must_equal(false)
+        wrapped.includes?("pw123").must_equal(false)
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
     end
   end
 
   describe "sshpass plumbing" do
     it "hands the password to sshpass only via SSHPASS" do
-      Krikri::SSHManager.sshpass_env(nil).must_be_nil
-      env = Krikri::SSHManager.sshpass_env("hunter2")
-      env.nil?.must_equal(false)
-      (env || {} of String => String)["SSHPASS"].must_equal("hunter2")
-      Krikri::SSHManager.sshpass_prefix(nil).must_equal([] of String)
-      Krikri::SSHManager.sshpass_prefix("x").must_equal(["sshpass", "-e"])
+      Krikri::SSHManager.sshpass_available_for_spec = true
+      begin
+        Krikri::SSHManager.sshpass_env(nil).must_be_nil
+        env = Krikri::SSHManager.sshpass_env("hunter2")
+        env.nil?.must_equal(false)
+        (env || {} of String => String)["SSHPASS"].must_equal("hunter2")
+        Krikri::SSHManager.sshpass_prefix(nil).must_equal([] of String)
+        Krikri::SSHManager.sshpass_prefix("x").must_equal(["sshpass", "-e"])
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
     end
 
-    it "refuses to register a connection password when sshpass is missing" do
+    it "registers the password anyway when sshpass is missing (askpass fallback, no raise)" do
       Krikri::SSHManager.sshpass_available_for_spec = false
       begin
-        ex = assert_raises(Exception) do
-          Krikri::SSHManager.register_connection_password("192.0.2.1", "root", 22, "pw")
-        end
-        ex.message.to_s.includes?("sshpass").must_equal(true)
-        Krikri::SSHManager.password_for("192.0.2.1", "root", 22).must_be_nil
+        Krikri::SSHManager.register_connection_password("192.0.2.1", "root", 22, "pw")
+        Krikri::SSHManager.password_for("192.0.2.1", "root", 22).must_equal("pw")
+        Krikri::SSHManager.sshpass_prefix("pw").must_equal([] of String)
       ensure
-        Krikri::SSHManager.sshpass_available_for_spec = true
+        Krikri::SSHManager.clear_connection_passwords_for_spec
+        Krikri::SSHManager.sshpass_available_for_spec = nil
       end
+    end
+
+    it "builds the askpass env overlay when a password is set but sshpass is missing" do
+      Krikri::SSHManager.sshpass_available_for_spec = false
+      begin
+        env = Krikri::SSHManager.sshpass_env("hunter2")
+        env.nil?.must_equal(false)
+        overlay = env || {} of String => String
+        overlay["SSHPASS"].must_equal("hunter2")
+        overlay["SSH_ASKPASS_REQUIRE"].must_equal("force")
+        overlay["SSH_ASKPASS"].must_equal(Krikri::SSHManager.askpass_helper_path)
+        if ENV.has_key?("DISPLAY")
+          overlay.has_key?("DISPLAY").must_equal(false)
+        else
+          overlay["DISPLAY"].must_equal("-")
+        end
+      ensure
+        Krikri::SSHManager.sshpass_available_for_spec = nil
+      end
+    end
+
+    it "keeps the askpass helper env-only: file exists, is owner-executable, and never embeds the password" do
+      path = Krikri::SSHManager.askpass_helper_path
+      File.exists?(path).must_equal(true)
+      (File.info(path).permissions.value & 0o100).must_equal(0o100)
+      content = File.read(path)
+      content.starts_with?("#!/bin/sh").must_equal(true)
+      content.includes?("SSHPASS").must_equal(true)
+      content.includes?("hunter2").must_equal(false)
+      content.includes?("s3cr3t").must_equal(false)
     end
 
     it "round-trips a registered password and treats nil as a no-op" do
@@ -98,6 +188,29 @@ describe "SSHManager sshpass wrapping (sshpass_wrapping_test.cr)" do
         Krikri::SSHManager.sshpass_available_for_spec = nil
       end
     end
+  end
+end
+
+# The controller-side synchronize action plugin passes SSHManager's
+# sshpass availability into the rsh decision, so a password with no
+# sshpass leaves the rsh ssh unwrapped (it inherits the askpass overlay
+# from the run env) instead of pointing at a missing sshpass binary.
+describe "SynchronizeRsync rsh sshpass decision (sshpass_wrapping_test.cr)" do
+  it "wraps the rsh ssh in sshpass -e by default and unwraps it on the askpass path" do
+    params = {} of String => String
+    wrapped = Krikri::SynchronizeRsync.build_argv("/tmp/src", "root@h:/tmp/dest", params, password: "pw")
+    rsh = wrapped.find(&.starts_with?("--rsh="))
+    rsh.nil?.must_equal(false)
+    (rsh || "").includes?("sshpass -e ssh -S none").must_equal(true)
+
+    unwrapped = Krikri::SynchronizeRsync.build_argv("/tmp/src", "root@h:/tmp/dest", params, password: "pw", wrap_rsh_sshpass: false)
+    rsh2 = unwrapped.find(&.starts_with?("--rsh="))
+    (rsh2 || "").includes?("sshpass").must_equal(false)
+    (rsh2 || "").includes?("ssh -S none").must_equal(true)
+
+    no_password = Krikri::SynchronizeRsync.build_argv("/tmp/src", "root@h:/tmp/dest", params)
+    rsh3 = no_password.find(&.starts_with?("--rsh="))
+    (rsh3 || "").includes?("sshpass").must_equal(false)
   end
 end
 

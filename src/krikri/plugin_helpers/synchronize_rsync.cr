@@ -52,11 +52,16 @@ module Krikri
     # inventory vars) that feed the `--rsh=` ssh command when either path
     # is remote (contains ':'). *password* (the caller-resolved
     # ansible_password/ansible_ssh_pass - controller-side rsync only) wraps
-    # that rsh ssh in `sshpass -e`; the password itself travels in
-    # SSHPASS (see #run's *env*), never in the argv or the rsh string.
+    # that rsh ssh in `sshpass -e` - but only when *wrap_rsh_sshpass* is
+    # also true (the controller-side caller passes
+    # SSHManager.sshpass_available?; without sshpass the ssh stays
+    # unwrapped and inherits the askpass env overlay from #run's *env*,
+    # matching the delivery mechanism every other spawn site picks); the
+    # password itself travels in SSHPASS (see #run's *env*), never in
+    # the argv or the rsh string.
     def self.build_argv(src : String, dest : String, params : Hash(String, String),
                         private_key : String? = nil, dest_port : Int32? = nil,
-                        password : String? = nil) : Array(String)
+                        password : String? = nil, wrap_rsh_sshpass : Bool = true) : Array(String)
       argv = ["rsync"]
 
       # delay_updates defaults true, compress defaults true (Ansible module
@@ -104,7 +109,7 @@ module Krikri
         # private key, the port, and - unless verify_host: - the same
         # no-host-key-check pair its own non-interactive runs use.
         unless has_rsh_opt
-          ssh_cmd = password ? "sshpass -e ssh -S none" : "ssh -S none"
+          ssh_cmd = (password && wrap_rsh_sshpass) ? "sshpass -e ssh -S none" : "ssh -S none"
           ssh_cmd += " -i #{private_key}" if private_key
           ssh_cmd += " -o Port=#{dest_port}" if dest_port
           unless bool(params["verify_host"]?)
