@@ -73,5 +73,53 @@ describe "Krikri::SSHManager (ssh_connection_failure_test.cr)" do
       Krikri::SSHManager.connection_level_failure?(7, "curl: (7) Failed to connect to 10.0.0.1 port 80: Connection refused").must_equal(false)
       Krikri::SSHManager.connection_level_failure?(7, "nc: connect to 10.0.0.1 port 22 (tcp) failed: Connection timed out").must_equal(false)
     end
+
+    it "classifies a silent mid-execution ssh death (bare 255, both streams empty) as a connection failure" do
+      # Live shape (2026-10-07, throwaway podman sshd killed mid-`sleep`):
+      # a clean TCP close mid-execution makes ssh exit 255 with NO text
+      # at all - no "Connection closed by", no reset notice. Real
+      # ansible-playbook books the task UNREACHABLE; without this rule
+      # the engine booked a generic FAILED task (solo path) or silently
+      # skipped the whole batch (batch path).
+      Krikri::SSHManager.connection_level_failure?(255, "", "").must_equal(true)
+      # ssh's own first-contact "Warning: Permanently added" line is not
+      # remote output - a first-connection host-key acceptance followed
+      # by a mid-execution death lands here.
+      Krikri::SSHManager.connection_level_failure?(255, "Warning: Permanently added '[127.0.0.1]:22991' (ED25519) to the list of known hosts.\n", "").must_equal(true)
+    end
+
+    it "keeps evidence-bearing nonzero exits out of the silent-death rule" do
+      # A plugin that produced output ran - its death is not provably
+      # transport-level.
+      Krikri::SSHManager.connection_level_failure?(255, "", "some plugin output").must_equal(false)
+      # A remote signal death arrives through sshd as 128+N, never bare 255.
+      Krikri::SSHManager.connection_level_failure?(137, "", "").must_equal(false)
+      # A plain nonzero remote exit status is the plugin's own.
+      Krikri::SSHManager.connection_level_failure?(3, "", "").must_equal(false)
+      # ssh's warning lines don't launder real remote stderr through the rule.
+      Krikri::SSHManager.connection_level_failure?(255, "Warning: Permanently added '[127.0.0.1]:22991' (ED25519) to the list of known hosts.\nerror while loading shared libraries: libyaml-0.so.2\n", "").must_equal(false)
+    end
+
+    it "classifies ssh's own mid-session drop line (Connection closed by) as a connection failure" do
+      # Live shape (2026-10-07, podman socket that accepts TCP and closes):
+      # ssh prints "Connection closed by <ip> port <n>" and exits 255.
+      # The words alone stay out of CONNECTION_FAILURE_PATTERNS (a remote
+      # command's stderr can carry them) - the guarded tier requires
+      # ssh's 255 exit and empty plugin stdout.
+      Krikri::SSHManager.connection_level_failure?(255, "Connection closed by 127.0.0.1 port 22993\r\n", "").must_equal(true)
+      Krikri::SSHManager.connection_level_failure?(255, "Connection reset by 127.0.0.1 port 22993\r\n", "").must_equal(true)
+      Krikri::SSHManager.connection_level_failure?(255, "Connection reset by peer", "").must_equal(true)
+    end
+
+    it "keeps the mid-session drop guard one-sided against remote command output" do
+      # Plugin produced output -> it ran; its stderr text (even
+      # transport-adjacent) is its own, not the transport's.
+      Krikri::SSHManager.connection_level_failure?(255, "Connection closed by 127.0.0.1 port 22993\r\n", "some plugin output").must_equal(false)
+      # A remote command's own ssh failure arrives inside the plugin's
+      # JSON result (ssh exit 0) - the exit gate already keeps it out.
+      Krikri::SSHManager.connection_level_failure?(0, "Connection closed by 10.0.0.1 port 22", "").must_equal(false)
+      # Non-255 exits never enter either guarded tier.
+      Krikri::SSHManager.connection_level_failure?(3, "Connection closed by 127.0.0.1 port 22993\r\n", "").must_equal(false)
+    end
   end
 end

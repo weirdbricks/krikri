@@ -1811,7 +1811,7 @@ module Krikri
         # remote failure (a loader error, a traceback), never one of
         # SSHManager.connection_level_failure?'s transport-only shapes,
         # so it keeps the generic failed-task booking.
-        failure["unreachable"] = true if SSHManager.connection_level_failure?(exit_code, stderr)
+        failure["unreachable"] = true if SSHManager.connection_level_failure?(exit_code, stderr, stdout)
         return JSON.parse(failure.to_json)
       end
 

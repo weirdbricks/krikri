@@ -1414,7 +1414,7 @@ module Krikri
       # via the shared pattern list - stamps it unreachable like the
       # solo path does. A batch that RAN (any step has a result) is left
       # untouched: its per-step rc/stdout/stderr are the real evidence.
-      if parsed.empty? && SSHManager.connection_level_failure?(raw[:exit_code], raw[:stderr])
+      if parsed.empty? && SSHManager.connection_level_failure?(raw[:exit_code], raw[:stderr], raw[:stdout])
         steps.each_index do |idx|
           parsed[idx] = BatchScript::StepResult.new(raw[:exit_code], raw[:stdout], raw[:stderr])
         end
