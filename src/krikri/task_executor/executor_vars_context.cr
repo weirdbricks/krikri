@@ -2900,6 +2900,7 @@ module Krikri
     # shows the chain once for the whole loop (round 5460184's looped
     # ucs_timezone items).
     @@finalization_error_chain_seen = Set(String).new
+    @@loop_error_chain_seen = Set(String).new
 
     private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any)) : Nil
       conditional = raw.strip
@@ -3174,6 +3175,58 @@ module Krikri
       # file:line makes the text task-unique, so a looped task's failing
       # items display the chain once.
       return unless @@when_error_chain_seen.add?(text)
+      puts text
+    end
+
+    # The `[ERROR]:` chain block real 2.19.11 prints on stdout for a
+    # loop-source / loop-item templating failure (live-captured):
+    #
+    #   [ERROR]: Task failed: 'nosuch' is undefined
+    #
+    #   Task failed.
+    #   Origin: <the task's name key>
+    #
+    #   <<< caused by >>>
+    #
+    #   'nosuch' is undefined
+    #   Origin: <the defining site of the value that referenced it>
+    #
+    # The cause's Origin comes from the same value-failure scan the
+    # arg-finalization chain uses (undef_chain_var_origin); when no unique
+    # defining var qualifies, the cause stanza prints without an Origin
+    # rather than a mislabeled one. The caller marks the failed result
+    # (_ansible_loop_error_emitted) so ResultDisplay does not print a
+    # second, differently-shaped block for the same failure.
+    private def emit_loop_error_chain(task : Task, msg : String) : Nil
+      inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+
+      cause_context = nil
+      if (m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
+         (origin = undef_chain_var_origin(task, m[1]))
+        cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      end
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << inner << "\n"
+        io << "\nTask failed.\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
+        io << "\n<<< caused by >>>\n\n"
+        io << inner << "\n"
+        io << cause_context if cause_context
+        io << "\n"
+      end
+      return unless @@loop_error_chain_seen.add?(text)
       puts text
     end
 

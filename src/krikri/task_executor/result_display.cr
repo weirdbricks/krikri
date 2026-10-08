@@ -641,6 +641,11 @@ module Krikri
       # args for ...") get their own multi-level block from the executor
       # (emit_finalization_error_block) before the fatal line.
       return if msg.starts_with?("Task failed: Finalization of task args for")
+      # Loop-source / loop-item templating failures get their chain block
+      # straight from the executor (emit_loop_error_chain), whose cause
+      # stanza points at the failing value's own defining site - not a
+      # shape this generic display path can rebuild.
+      return if result["_ansible_loop_error_emitted"]?.try(&.as_bool?) == true
       # A task `timeout:` deadline kill (the executor's task_timeout_
       # result) or an out-of-range timeout value (its
       # task_timeout_invalid_result): real's chain is the COLLAPSED

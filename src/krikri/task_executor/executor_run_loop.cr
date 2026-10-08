@@ -612,8 +612,8 @@ module Krikri
         # no_such_list }}"` on an undefined var → fatal {"changed": false,
         # "msg": "Task failed: 'no_such_list' is undefined"}).
         prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
-        emit_when_error_chain(task, prefixed, host)
-        finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task, host), vars_context: vars_context)
+        emit_loop_error_chain(task, prefixed)
+        finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
         return
       end
 
@@ -631,8 +631,8 @@ module Krikri
           # Same "Task failed: " prefix + chain treatment as the loop-
           # source rescue above.
           prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
-          emit_when_error_chain(task, prefixed, host)
-          finish_single_task(task, host, when_error_result(WhenEvaluationError.new(prefixed), task, host), vars_context: vars_context)
+          emit_loop_error_chain(task, prefixed)
+          finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
           return
         end
         return
@@ -1094,6 +1094,18 @@ module Krikri
       fields = {"changed" => false, "failed" => true, "msg" => msg}
       fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
       JSON.parse(fields.to_json)
+    end
+
+    # A loop-source / loop-item templating failure's result: the same
+    # task-level shape as when_error_result, plus a marker telling
+    # ResultDisplay the [ERROR] chain block was already printed by
+    # emit_loop_error_chain (its shape - "Task failed." + the value's own
+    # defining Origin - is not what the generic failure display builds).
+    private def loop_error_result(ex : WhenEvaluationError, task : Task? = nil) : JSON::Any
+      result = when_error_result(ex, task)
+      hash = result.as_h.dup
+      hash["_ansible_loop_error_emitted"] = JSON::Any.new(true)
+      JSON.parse(hash.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
