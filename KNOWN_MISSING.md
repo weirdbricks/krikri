@@ -76,6 +76,17 @@ one cold `dnf` stall (not reproducible in podman with the same commands, treated
 the only ceiling on a stalled package-manager child is the 3600 s transport timeout, above the harness
 cap - revisit only if it recurs).
 
+Follow-up fixes found while closing that round out (all re-run on Atlantic.net or against real
+`ansible-playbook` 2.19.11 before landing): MySQL 8.0/8.4 `mysql_user` parity (message wording, errno
+reconstruction, bare `REVOKE GRANT OPTION` rejected on 8.4); the template-error warning block and banner
+markers (an independent 25-case re-verification found the first pass was only 2/25 correct - fixed to
+25/25, then a 30-role real-host regression of the evaluator change came back 29 clean + 1 Galaxy
+download failure); a mid-play SSH death or auth-phase disconnect is now UNREACHABLE (rc=4) instead of a
+failed/skipped task - on the default batch path it had been silently `skipped` with exit 0; connection
+passwords without `sshpass` fall back to OpenSSH `SSH_ASKPASS` like real 2.19's default
+`password_mechanism`; and tasks inside a block skipped by `when:` print one `skipping` line per loop item.
+
+
 ## Deliberate limits (decided, not defects)
 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
