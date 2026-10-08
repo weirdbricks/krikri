@@ -106,8 +106,63 @@ module Krikri
       combined = "#{result[:stdout]}#{result[:stderr]}"
       combined.includes?("Err:") ||
         combined.includes?("W: Failed to fetch") ||
-        combined.includes?("W: Some index files failed to download")
+        combined.includes?("W: Some index files failed to download") ||
+        apt_fetch_signature_failure?(result)
     end
+
+    # The SECOND FetchFailedException shape python-apt raises:
+    # `raise FetchFailedException(e)` around the SystemError apt_pkg throws
+    # for repository-level errors - a signature that can't be verified
+    # ("W: GPG error ... NO_PUBKEY ...", "E: The repository ... is not
+    # signed."). Unlike the bare `raise FetchFailedException()` a plain
+    # network fetch failure takes, this one CARRIES the diagnostic lines as
+    # its str() text, so the retry warnings and the final failure message
+    # quote them (round 5210000, artem_shestakov.nginx: real ansible-core
+    # 2.19.11 warned five times with the GPG/E: text and failed with
+    # "Failed to update apt cache after 5 retries: W:... , E:..." while
+    # krikri classified the case as a plain nonzero-exit failure and failed
+    # fast). Detected the same way the CLI shows it: a top-level "E: "
+    # diagnostic line, or apt's own GPG-failure wording.
+    def apt_fetch_signature_failure?(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : Bool
+      combined = "#{result[:stdout]}\n#{result[:stderr]}"
+      return true if combined.includes?("GPG error") ||
+                      combined.includes?("is not signed")
+      # A bare top-level "E: " diagnostic line is python-apt's
+      # SystemError-wrapped shape - EXCEPT the lock-contention one
+      # ("E: Could not get lock /var/lib/dpkg/lock-frontend ..."), which
+      # apt-lock_held? already owns and which the caller's
+      # (exit==0 || !lock_held) gate excludes anyway; classifying it as a
+      # fetch failure would retry lock contention as if the repo were
+      # broken.
+      combined.split('\n').any? do |line|
+        (line.starts_with?("E: ") || line.starts_with?("E:")) &&
+          !line.includes?("lock")
+      end
+    end
+
+    # The str() text of python-apt's SystemError-wrapped FetchFailedException:
+    # the W:/E: diagnostic lines of that update attempt, with the space
+    # after the letter marker stripped (python-apt reports "W:GPG error ...",
+    # the CLI prints "W: GPG error ..." - verified live in a jammy container:
+    # attempt 0's exception text was exactly the two CLI W:/E: lines so
+    # transformed), joined with ", ". Empty for the bare-exception class
+    # (plain fetch failures), whose warnings and final msg stay empty - the
+    # round-1100002-verified shape.
+    def apt_fetch_failure_reason(result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : String
+      return "" unless apt_fetch_signature_failure?(result)
+      combined = "#{result[:stdout]}\n#{result[:stderr]}"
+      combined.split('\n').select { |line| line.starts_with?("W:") || line.starts_with?("E:") }
+        .map(&.sub(/\A([WE]): /, "\\1:"))
+        .join(", ")
+    end
+
+    # After a signature-failed attempt, apt marks the repo untrusted and
+    # every LATER python-apt update failure prepends these two diagnostic
+    # lines to the exception text (verified live: attempt 0 = GPG+E: lines
+    # only, attempts 1+ = the two secure-repo lines then the same GPG+E:
+    # lines, all ", "-joined). Emitted in python-apt's own marker form
+    # (no space after "W:").
+    APT_FETCH_SECURE_REPO_PREPEND = "W:Updating from such a repository can't be done securely, and is therefore disabled by default., W:See apt-secure(8) manpage for repository creation and user configuration details."
 
     # apt.py's FetchFailedException retry loop verbatim: `for retry in
     # range(update_cache_retries)` around cache.update(), exponential
@@ -121,16 +176,28 @@ module Krikri
     # 'unknown reason' fallback in apt.py's msg only fires when no
     # attempt ever raised (update_cache_retries=0 leaves err == '').
     # The caller only enters here after an attempt already failed, so
-    # iteration 0's "after 1 retries" warn refers to that attempt.
+    # iteration 0's "after 1 retries" warn refers to that attempt - and
+    # quotes ITS exception text when the failure was the SystemError-
+    # wrapped signature class (see apt_fetch_failure_reason). Each later
+    # failed attempt warns with its own text, and once a signature
+    # failure has happened apt prepends the two untrusted-repo lines to
+    # every later attempt's text (APT_FETCH_SECURE_REPO_PREPEND).
     # Returns recovered: true as soon as an attempt succeeds, with the
     # warnings emitted so far (they persist in the registered result
-    # exactly like module.warn() texts do in Ansible).
+    # exactly like module.warn() texts do in Ansible) and last_reason -
+    # the final attempt's exception text, which apt.py's final msg
+    # quotes ("Failed to update apt cache after N retries: <reason>",
+    # empty for the bare-exception class).
     def apt_fetch_failed_update_retry(retries : Int32, retry_max_delay : Int32,
-                                      exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)))
+                                      exec_remote : Proc(String, NamedTuple(exit_code: Int32, stdout: String, stderr: String)),
+                                      initial_reason : String = "", initial_signature_failed : Bool = false)
       warnings = [] of String
       recovered = false
+      signature_failed = initial_signature_failed
+      last_reason = initial_reason
+      warned_reason = initial_reason
       retries.times do |attempt|
-        warnings << "Failed to update cache after #{attempt + 1} retries due to , retrying"
+        warnings << "Failed to update cache after #{attempt + 1} retries due to #{warned_reason}, retrying"
         delay = 2.0 ** attempt + (rand(1000) / 1000.0)
         delay = retry_max_delay + (rand(1000) / 1000.0) if delay > retry_max_delay
         ::sleep(delay.seconds)
@@ -140,8 +207,14 @@ module Krikri
           recovered = true
           break
         end
+        reason = apt_fetch_failure_reason(result)
+        signature_failed = true unless reason.empty?
+        # the initial attempt's exception text never carries the prepend -
+        # apt marks the repo untrusted only AFTER its first failed update
+        last_reason = signature_failed && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+        warned_reason = last_reason
       end
-      {recovered: recovered, warnings: warnings}
+      {recovered: recovered, warnings: warnings, last_reason: last_reason}
     end
 
     # Detects the CLI-observable signature of a genuinely corrupt/

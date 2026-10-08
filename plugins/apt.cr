@@ -2484,15 +2484,18 @@ module Krikri
       fetch_failed = apt_fetch_failed?(update_result) &&
                      (update_result[:exit_code] == 0 || !apt_lock_held?(update_result[:stderr]))
       if fetch_failed
-        outcome = apt_fetch_failed_update_retry(update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String))
+        initial_reason = apt_fetch_failure_reason(update_result)
+        outcome = apt_fetch_failed_update_retry(update_cache_retries, update_cache_retry_max_delay, ->remote_exec(String),
+          initial_reason: initial_reason, initial_signature_failed: !initial_reason.empty?)
         return nil if outcome[:recovered]
         # a fail_json exit carries no cache keys (the retvals assignment
         # in main() never runs) - suppress the engine-wide backfill
         @omit_cache_updated = true
+        reason = outcome[:warnings].empty? ? "unknown reason" : outcome[:last_reason]
         result = PluginResult.new(
           changed: false,
           failed: true,
-          msg: "Failed to update apt cache after #{update_cache_retries} retries: #{outcome[:warnings].empty? ? "unknown reason" : ""}",
+          msg: "Failed to update apt cache after #{update_cache_retries} retries: #{reason}",
         )
         result.extra["warnings"] = JSON.parse(outcome[:warnings].to_json) unless outcome[:warnings].empty?
         return result

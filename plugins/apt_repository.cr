@@ -120,6 +120,7 @@ module Krikri
     end
 
     include AptRepositoryCacheRetry
+    include AptLockRetry
 
     SOURCES_LIST       = "/etc/apt/sources.list"
     SOURCES_LIST_D     = "/etc/apt/sources.list.d"
@@ -256,8 +257,9 @@ module Krikri
       apply_owner_group_mode(target, nil, nil, @params["mode"]?)
 
       if update_cache
-        cache_result = run_update_cache
-        if cache_result[:exit_code] != 0 || gpg_signature_failure?(cache_result[:stdout], cache_result[:stderr])
+        retries = int_param("update_cache_retries", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRIES)
+        outcome = update_cache_with_repo_retry(retries)
+        if outcome[:failed]
           # ansible-playbook's own apt_repository module rolls back
           # the line it just wrote when the post-add cache update fails,
           # rather than leaving a broken repo definition behind - found
@@ -273,28 +275,28 @@ module Krikri
           # set for option Signed-By"), turning one recoverable failure
           # into two.
           #
-          # The `gpg_signature_failure?` half of this check is itself a
-          # second, deeper bug in the SAME task found live-verifying the
-          # fix above: plain `apt-get update`'s own exit code is 0 even
-          # when a repo's signature can't be verified (apt only WARNs to
-          # stderr, "GPG error ... NO_PUBKEY ...", and still exits
-          # success using the previous cached index) - so the bare
-          # exit_code check above never even detected the failure
-          # Ansible's own module DOES treat as fatal. Ansible
-          # doesn't shell out to `apt-get` at all - it uses the
-          # `python-apt` library's `Cache().update()`, which raises
-          # `FetchFailedException` for exactly this case, a stricter
-          # check than the CLI tool's own exit code. Matched here by
-          # scanning both streams for apt's own GPG-failure wording
-          # rather than trusting exit_code alone.
+          # The retry loop itself (and the "Failed to update apt cache
+          # after N retries" final wording) is ansible-core 2.19.11's
+          # own update_cache block: python-apt's Cache().update() inside
+          # `for retry in range(update_cache_retries)`, one warn pair per
+          # failed attempt, revert_sources_list before the final
+          # fail_json. The GPG signature case is one of the
+          # FetchFailedException shapes that loop catches (see
+          # AptLockRetry.apt_fetch_signature_failure?) - previously this
+          # plugin classified it as a plain nonzero-exit failure and
+          # failed fast with no retries where real warned five times
+          # with the GPG/E: text first (round 5210000,
+          # artem_shestakov.nginx).
           rollback_line(target, normalized)
-          return PluginResult.new(
+          result = PluginResult.new(
             changed: true,
             failed: true,
-            msg: "Failed to update apt cache: #{cache_result[:stderr]}",
+            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}",
             repo: normalized,
             state: "present"
           )
+          result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
+          return result
         end
       end
 
@@ -311,6 +313,7 @@ module Krikri
 
       remaining_lines = File.read_lines(file).reject { |line| line == normalized }
       file_would_lose_sources = remaining_lines.none? { |line| valid_source_line?(line) }
+      original_content = File.read(file)
 
       if check_mode
         return PluginResult.new(changed: true, failed: false, repo: normalized, state: "absent", sources_added: [] of String, sources_removed: file_would_lose_sources ? [file] : [] of String, diff: empty_diff_list, key_order: APT_REPO_ORDER)
@@ -320,15 +323,23 @@ module Krikri
       File.delete?(file) if remaining_lines.none? { |line| !line.empty? } && file != sources_list
 
       if update_cache
-        cache_result = run_update_cache
-        if cache_result[:exit_code] != 0 || gpg_signature_failure?(cache_result[:stdout], cache_result[:stderr])
-          return PluginResult.new(
+        retries = int_param("update_cache_retries", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRIES)
+        outcome = update_cache_with_repo_retry(retries)
+        if outcome[:failed]
+          # Same revert_sources_list semantics as the add() path above:
+          # ansible-core 2.19.11's shared update_cache block reverts the
+          # sources list before its final fail_json regardless of which
+          # direction the change went.
+          File.write(file, original_content)
+          result = PluginResult.new(
             changed: true,
             failed: true,
-            msg: "Failed to update apt cache: #{cache_result[:stderr]}",
+            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}",
             repo: normalized,
             state: "absent"
           )
+          result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
+          return result
         end
       end
 
@@ -394,38 +405,48 @@ module Krikri
     # ("Unable to locate package nomad") - a real divergence from
     # Ansible, which recovers via the rescue: at the point it's supposed
     # to. Found benchmarking robertdebock.nomad.
-    # ansible-playbook's own apt_repository module retries a failed
-    # `apt-get update` (python-apt's FetchFailedException) up to
-    # `update_cache_retries` total attempts with an exponential backoff
-    # (`2**retry + jitter`, capped at `update_cache_retry_max_delay +
-    # jitter`) before giving up - wired through
-    # PluginHelpers::AptRepositoryCacheRetry so the loop and the delay
-    # formula are both spec-testable via an injected exec proc.
-    private def run_update_cache : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
-      retries = int_param("update_cache_retries", DEFAULT_UPDATE_CACHE_RETRIES)
-      max_delay = int_param("update_cache_retry_max_delay", DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
-      apt_repository_cache_update_with_retry(retries, max_delay, ->(command : String) { remote_exec(command) })
+    # ansible-core 2.19.11's apt_repository update_cache block verbatim:
+    # `for retry in range(update_cache_retries)` around python-apt's
+    # Cache().update(), one warn pair per failed attempt (the fail warn
+    # - apt_repository's own wording, without apt.py's "retries" - then
+    # the exponential backoff sleep, then the sleeping warn), and after
+    # the budget is exhausted a final "Failed to update apt cache after
+    # N retries: <err or 'unknown reason'>" fail_json. Every
+    # FetchFailedException shape counts as a failed attempt: nonzero
+    # exit, the bare fetch-failure markers, AND the signature class
+    # (GPG error / unsigned repo) that apt-get itself only WARNs about
+    # while exiting 0 - python-apt raises for it (verified live in a
+    # jammy container: Cache().update() raises FetchFailedException(e)
+    # with the W:/E: diagnostic lines as str()), and each failed
+    # attempt's exception text becomes the next warning's reason, with
+    # apt's two untrusted-repo lines prepended once a signature failure
+    # has happened (AptLockRetry helpers).
+    private def update_cache_with_repo_retry(retries : Int32) : NamedTuple(failed: Bool, last_reason: String)
+      max_delay = int_param("update_cache_retry_max_delay", AptRepositoryCacheRetry::DEFAULT_UPDATE_CACHE_RETRY_MAX_DELAY)
+      attempt = 0
+      last_reason = ""
+      signature_failed = false
+      while attempt < retries
+        cache_result = remote_exec("apt-get update")
+        if cache_result[:exit_code] == 0 && !apt_fetch_failed?(cache_result)
+          return {failed: false, last_reason: ""}
+        end
+        reason = apt_fetch_failure_reason(cache_result)
+        signature_failed = true unless reason.empty?
+        last_reason = signature_failed && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+        @warnings << "Failed to update cache after #{attempt + 1} due to #{last_reason} retry, retrying"
+        delay = apt_repository_retry_delay(attempt, max_delay)
+        ::sleep(delay.seconds)
+        @warnings << "Sleeping for #{delay.round.to_i} seconds, before attempting to update the cache again"
+        attempt += 1
+      end
+      {failed: true, last_reason: last_reason}
     end
 
     private def int_param(name : String, default : Int32) : Int32
       raw = @params[name]?
       return default unless raw
       raw.to_i? || default
-    end
-
-    # `apt-get update`'s own exit code stays 0 even when a repo's
-    # signature can't be verified - apt only warns and falls back to the
-    # previously cached index for that one repo. Ansible's own
-    # module uses python-apt's `Cache().update()` instead, which raises
-    # for exactly this case - matched here by scanning for apt's own
-    # GPG-failure wording (checked on both streams; apt puts some lines
-    # on stdout, some on stderr).
-    private def gpg_signature_failure?(stdout : String, stderr : String) : Bool
-      combined = "#{stdout}\n#{stderr}"
-      combined.includes?("NO_PUBKEY") ||
-        combined.includes?("GPG error") ||
-        combined.includes?("is not signed") ||
-        combined.includes?("couldn't be verified")
     end
 
     # Reads VERSION_CODENAME= from /etc/os-release - matches
