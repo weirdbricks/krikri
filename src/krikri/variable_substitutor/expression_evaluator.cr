@@ -2125,6 +2125,24 @@ module Krikri
         end
 
         return nil unless raw.includes?("{{")
+        # Strict-span parity (live-verified vs 2.19.11, p12 probe): a
+        # whole-single-span templated value read through this plain-lookup
+        # fallback under an active strict span re-renders STRICTLY - a
+        # `vars:` value of `{{ undefined_deep }}` consumed by
+        # `"{{ 'a' ~ badvar ~ 'b' }}"` fails at the use site
+        # ("'undefined_deep' is undefined"), exactly like the
+        # VariableLookup whole-span path already does; the old lenient
+        # `evaluate(inner)` here silently collapsed the value to "" and
+        # both a task NAME's warning block and a module arg's strict
+        # finalization never saw the failure. Multi-part and block-tag
+        # values keep the lenient render: real renders those with inline
+        # error markers instead of raising (p6 probe).
+        if VarSubstitutor.strict_span_active? &&
+           (ws = raw.strip).starts_with?("{{") && ws.ends_with?("}}") &&
+           (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
+          rendered = VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
         inner = raw.strip
         inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
         rendered = render_vars.same?(@vars) ? evaluate(inner) : ExpressionEvaluator.new(render_vars, @decode).evaluate(inner)

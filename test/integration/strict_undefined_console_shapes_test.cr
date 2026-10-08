@@ -33,4 +33,32 @@ describe "strict undefined / mandatory / when-error console shapes" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "fails a chained failing value at arg finalization but tolerates it through default()" do
+    playbook = File.tempname("strict-chain", ".yml")
+    File.write(playbook, <<-YAML)
+      ---
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          badvar: "{{ undefined_deep }}"
+        tasks:
+          - debug: msg="{{ 'a' ~ badvar ~ 'b' }}"
+            ignore_errors: true
+          - debug: msg="{{ 'a' ~ (badvar | default('x')) ~ 'b' }}"
+          - debug: msg="{{ badvar | default('x') }}"
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+
+    # Live-verified vs 2.19.11: the consumed chain fails at the use site
+    # with the INNERMOST name (not the variable holding the template),
+    # while default()-guarded reads of the same value stay tolerated.
+    text.must_include("Error while resolving value for 'msg': 'undefined_deep' is undefined")
+    text.must_include("\"msg\": \"axb\"")
+    text.must_include("\"msg\": \"x\"")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

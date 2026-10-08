@@ -1849,7 +1849,7 @@ describe Krikri::ConditionalEvaluator do
     it "raises with the innermost name when a filter chain renders the value" do
       v = Hash(String, JSON::Any).new
       v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
-      assert_raises_message(Krikri::UndefinedVariableError, /'system_user' is undefined/) do
+      assert_raises_message(Krikri::ConditionalEvaluator::UndefinedVariableError, /'system_user' is undefined/) do
         Krikri::ConditionalEvaluator.evaluate(
           "site_errorlog | length > 0", v, raise_undefined: true
         )
@@ -1859,7 +1859,7 @@ describe Krikri::ConditionalEvaluator do
     it "raises with the innermost name on a bare truthiness check" do
       v = Hash(String, JSON::Any).new
       v["site_errorlog"] = JSON::Any.new("/home/{{ system_user }}/logs/site.error.log")
-      assert_raises_message(Krikri::UndefinedVariableError, /'system_user' is undefined/) do
+      assert_raises_message(Krikri::ConditionalEvaluator::UndefinedVariableError, /'system_user' is undefined/) do
         Krikri::ConditionalEvaluator.evaluate("site_errorlog", v, raise_undefined: true)
       end
     end

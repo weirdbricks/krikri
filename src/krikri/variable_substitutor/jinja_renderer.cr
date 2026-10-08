@@ -456,7 +456,7 @@ module Krikri
       def self.evaluate_structured(source : String, vars : Hash(String, JSON::Any), strict : Bool = false) : JSON::Any?
         value = KrikriJinja.default_engine.evaluate_parsed(
           KrikriJinja.parse_expression(source),
-          resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars)),
+          resolver: JinjaVarResolver.new(vars, VarSubstitutor.new(vars: vars), strict),
           # ansible_strict_undefined (CHAINABLE, like ansible-core's own
           # StrictUndefined): a missing attribute on an undefined value
           # stays undefined until CONSUMED - `nope.x is defined` answers

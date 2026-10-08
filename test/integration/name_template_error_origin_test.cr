@@ -544,4 +544,214 @@ describe "task name template error warning blocks" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "propagates a chained failing value inside a complex name span, then truncates" do
+    src_dir = File.tempname("name-warn-chain-complex")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          badvar: "{{ undefined_deep }}"
+        tasks:
+          - name: "{{ 'pre-' ~ badvar ~ '-post' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    pb = File.expand_path(File.join(src_dir, "pb.yml"))
+    # Live-verified vs 2.19.11 (c03 probe): the value's own error numbers
+    # first at its defining site, then the aborted name run adds one
+    # "template potentially truncated" error at the name's own site - two
+    # blocks, because the origins differ - and the whole name becomes the
+    # two markers.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'undefined_deep' is undefined\nOrigin: #{pb}:6:13\n\n4   gather_facts: false\n5   vars:\n6     badvar: \"{{ undefined_deep }}\"\n              ^ column 13\n\n")
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 2 - template potentially truncated\nOrigin: #{pb}:8:13\n\n6     badvar: \"{{ undefined_deep }}\"\n7   tasks:\n8     - name: \"{{ 'pre-' ~ badvar ~ '-post' }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [<< error 1 - 'undefined_deep' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "truncates a complex name span whose plain undefined aborts the run" do
+    src_dir = File.tempname("name-warn-truncate-plain")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "{{ 'pre-' ~ badone ~ '-mid-' ~ badtwo ~ '-post' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (c21 probe): the abort at badone means
+    # badtwo is never evaluated - one block, two errors, markers-only
+    # name.
+    text.must_include("[WARNING]: Encountered 2 template errors.\nerror 1 - 'badone' is undefined\nerror 2 - template potentially truncated\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13\n\n4   gather_facts: false\n5   tasks:\n6     - name: \"{{ 'pre-' ~ badone ~ '-mid-' ~ badtwo ~ '-post' }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [<< error 1 - 'badone' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "keeps output rendered before an aborting span and skips the rest" do
+    src_dir = File.tempname("name-warn-abort-order")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: "{{ 'ok' }} {{ 'a' ~ u1 ~ 'b' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (p14 probe): prior spans' output survives
+    # the abort, the failing span contributes its error plus the
+    # truncation error in one same-origin block.
+    text.must_include("[WARNING]: Encountered 2 template errors.\nerror 1 - 'u1' is undefined\nerror 2 - template potentially truncated\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13")
+    text.must_include("TASK [ok << error 1 - 'u1' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "renders a multi-part failing value inline inside a complex span without truncating" do
+    src_dir = File.tempname("name-warn-multipart-complex")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          badvar: "{{ undef_a }} {{ undef_b }}"
+        tasks:
+          - name: "{{ 'x-' ~ badvar ~ '-y' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (p6 probe): the multi-part value renders
+    # chunk-wise with inline markers, the enclosing span's literals
+    # survive, and there is NO truncation error.
+    text.must_include("[WARNING]: Encountered 2 template errors.\nerror 1 - 'undef_a' is undefined\nerror 2 - 'undef_b' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13\n\n4   gather_facts: false\n5   vars:\n6     badvar: \"{{ undef_a }} {{ undef_b }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [x-<< error 1 - 'undef_a' is undefined >> << error 2 - 'undef_b' is undefined >>-y]")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "numbers a registered attribute miss and the truncation error in one block" do
+    src_dir = File.tempname("name-warn-register-truncate")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: hello
+            register: reginfo
+          - name: "{{ 'pre-' ~ reginfo.missing_field ~ '-post' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (c25 probe): both errors originate at the
+    # name itself, so they share one block.
+    text.must_include("[WARNING]: Encountered 2 template errors.\nerror 1 - object of type 'dict' has no attribute 'missing_field'\nerror 2 - template potentially truncated\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:9:13\n\n7         msg: hello\n8       register: reginfo\n9     - name: \"{{ 'pre-' ~ reginfo.missing_field ~ '-post' }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [<< error 1 - object of type 'dict' has no attribute 'missing_field' >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "keeps a two-level single-expression chain pointing at the failing definition" do
+    src_dir = File.tempname("name-warn-chain-two-level")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          badvar: "{{ midvar }}"
+          midvar: "{{ undef_x }}"
+        tasks:
+          - name: "{{ badvar }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (p8 probe): the origin is the DEFINITION
+    # whose value failed to render (midvar's), one error, no truncation.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'undef_x' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:7:13\n\n5   vars:\n6     badvar: \"{{ midvar }}\"\n7     midvar: \"{{ undef_x }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [<< error 1 - 'undef_x' is undefined >>]")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "treats a handler name chaining through a failing play var as unusable" do
+    src_dir = File.tempname("name-warn-handler-chain")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      ---
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          badvar: "{{ undefined_deep }}"
+        tasks:
+          - ansible.builtin.debug:
+              msg: trigger
+            changed_when: true
+            notify: myhandler
+        handlers:
+          - name: "{{ 'pre-' ~ badvar ~ '-post' }}"
+            ansible.builtin.debug:
+              msg: handled
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (c20 probe): the chained play var's
+    # failure surfaces as real's unusable-handler warning with the
+    # INNERMOST error named, then the not-found abort.
+    text.must_include("Handler '{{ 'pre-' ~ badvar ~ '-post' }}' is unusable because it has no listen topics and the name could not be templated (host-specific variables are not supported in handler names). The error: 'undefined_deep' is undefined")
+    text.must_include("[ERROR]: The requested handler 'myhandler' was not found in either the main handlers list nor in the listening handlers list")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end

@@ -736,9 +736,56 @@ module Krikri
     # templar words the same failure "object of type 'dict' has no
     # attribute 'x'" (live-verified matrix, all of arg/when/loop/
     # template contexts).
-    msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+    msg = msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+    # A consumed undefined the engine blames on a name that IS defined
+    # means the name's own stored value is a template that fails to
+    # render (`badvar: "{{ undefined_deep }}"` consumed by
+    # `"{{ 'a' ~ badvar ~ 'b' }}"`): the engine saw the demoted
+    # Undefined prepare_var hands it for the failing value, but real
+    # reports the INNERMOST failure ("'undefined_deep' is undefined",
+    # live-verified vs 2.19.11, arg-finalization p12 probe and the
+    # handler-name warning), so follow the chain into the value before
+    # settling for the outer name.
+    chain_failure_message(msg, vars) || msg
   rescue
     nil
+  end
+
+  # The innermost strict-failure message of the templated value owned by
+  # the name a strict probe blamed, or nil when the name's value renders
+  # fine (the outer message was a genuine miss) or the name is not a
+  # plain `{{ }}` template at all.
+  def self.chain_failure_message(msg : String, vars : Hash(String, JSON::Any)) : String?
+    m = msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+    return nil unless m
+    raw = vars[m[1]]?.try(&.as_s?)
+    return nil unless raw && raw.includes?("{{") && !raw.includes?("{%") && !raw.includes?("{#")
+    return nil if UnsafeValues.unsafe_text?(raw)
+    begin
+      VarSubstitutor.new(vars: vars).substitute(raw, strict: true)
+      nil
+    rescue e : UndefinedVariableError
+      e.message
+    end
+  end
+
+  # Whether *expr* references any variable whose stored value is itself
+  # template text - a cheap syntactic pre-filter for the strict probe's
+  # second trigger. The engine's miss signal does not fire when a
+  # demoted Undefined flows through `~`/arithmetic (the resolver hands
+  # the engine its own Undefined without the context's miss counter), so
+  # a chained failing value (`badvar: "{{ undefined_deep }}"` consumed by
+  # `"{{ 'a' ~ badvar ~ 'b' }}"`) must be probed even on a clean signal:
+  # the probe's own strict evaluation is what raises, and a tolerated
+  # shape (`badvar | default('x')`, live-verified vs 2.19.11) probes
+  # clean and costs one extra evaluation.
+  def self.strict_probe_candidate?(expr : String, vars : Hash(String, JSON::Any)) : Bool
+    scan = expr.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
+    scan.scan(/[A-Za-z_][A-Za-z0-9_]*/).each do |ref|
+      raw = vars[ref[0]]?.try(&.as_s?)
+      return true if raw && raw.includes?("{{")
+    end
+    false
   end
 
   # Whether *expr* must NOT be probed because a second evaluation would
@@ -903,7 +950,7 @@ module Krikri
           # matrix vs 2.19.11). The probe runs BEFORE the memo write so a
           # raising evaluation is never cached as a value.
           if VarSubstitutor.strict_span_active? && value_has_no_probe_side_effect?(inner_expr) &&
-             KrikriJinja.miss_count > signal_before &&
+             (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(inner_expr, vars)) &&
              (msg = Krikri.strict_undefined_probe_message(inner_expr, vars))
             raise UndefinedVariableError.new(msg)
           end
@@ -1370,7 +1417,7 @@ module Krikri
       ensure
         self.class.exit_strict_span
       end
-      if KrikriJinja.miss_count > signal_before &&
+      if (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(expr, @vars)) &&
          !Krikri.probe_has_side_effecting_call?(expr) &&
          (msg = Krikri.strict_undefined_probe_message(expr, @vars))
         raise UndefinedVariableError.new(msg)
@@ -1562,7 +1609,7 @@ module Krikri
         ensure
           self.class.exit_strict_span
         end
-        if KrikriJinja.miss_count > signal_before &&
+        if (KrikriJinja.miss_count > signal_before || Krikri.strict_probe_candidate?(stripped, @vars)) &&
            !Krikri.probe_has_side_effecting_call?(stripped) &&
            (msg = Krikri.strict_undefined_probe_message(stripped, @vars))
           raise UndefinedVariableError.new(msg)

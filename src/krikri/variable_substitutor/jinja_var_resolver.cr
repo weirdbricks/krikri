@@ -17,7 +17,18 @@ module Krikri
     class JinjaVarResolver < KrikriJinja::VariableResolver
       @cache = {} of String => KrikriJinja::AnyValue
 
-      def initialize(@raw_vars : Hash(String, JSON::Any), @substitutor : VarSubstitutor)
+      # *strict*: the probe-style engine evaluations (evaluate_structured
+      # with strict: true) need a demoted unresolvable value to reach the
+      # engine as a STRICT Undefined, so consuming it (`~` concat,
+      # arithmetic) raises there the way real Jinja's strict undefined
+      # does - the lenient render path must keep stringifying to "",
+      # and `default()`-tolerated shapes must stay tolerated
+      # (live-verified vs 2.19.11: `badvar: "{{ undefined_deep }}"`
+      # fails `"{{ 'a' ~ badvar ~ 'b' }}"` arg finalization but renders
+      # `"{{ badvar | default('x') }}"` fine). Without the flag the probe
+      # evaluation silently stringified the demoted value and the chain
+      # failure never surfaced.
+      def initialize(@raw_vars : Hash(String, JSON::Any), @substitutor : VarSubstitutor, @strict : Bool = false)
       end
 
       def resolve(name : String) : KrikriJinja::AnyValue?
@@ -42,7 +53,11 @@ module Krikri
                    else
                      JinjaRenderer.prepare_var(raw, @substitutor, name)
                    end
-        return KrikriJinja::AnyValue.new(KrikriJinja::Undefined.new(name)) unless prepared
+        if @strict
+          return KrikriJinja::AnyValue.new(KrikriJinja::StrictUndefined.new(name, chainable: true)) unless prepared
+        else
+          return KrikriJinja::AnyValue.new(KrikriJinja::Undefined.new(name)) unless prepared
+        end
         KrikriJinja.from_json_any(prepared)
       end
 

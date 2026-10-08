@@ -120,52 +120,136 @@ module Krikri
     private def marker_render_chunks(text : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32, error_origin : VarOrigin?) : String
       pieces = [] of String
       pos = 0
-      while (start = text.index("{{", pos))
+      aborted = false
+      while !aborted && (start = text.index("{{", pos))
         stop = text.index("}}", start) || break
         pieces << text[pos...start]
         span = text[start..stop + 1]
-        begin
-          pieces << substitutor.substitute(span, strict: true)
-        rescue e : UndefinedVariableError
-          # Recurse into the failed span's underlying variable value
-          # when that value is itself plain `{{ }}` template text -
-          # partial results and sibling expressions survive there.
-          # Anything else (non-bare reference, non-template value,
-          # depth exhausted) keeps the single collapsed marker.
-          raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
-          if raw_template && (m = span.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/))
-            origin = var_origin_for(task, host, m[1])
-            if single_span_template?(raw_template)
-              # A value that IS exactly one expression renders without a
-              # context of its own (Ansible's single-expression
-              # short-circuit): its failures join THIS context but carry
-              # the nested value's own origin - and a chain of
-              # single-expression values keeps re-pointing the override
-              # at the immediately failing definition.
-              pieces << marker_render_chunks(raw_template, substitutor, vars_context, task, host, ctx, state, depth + 1, origin || error_origin)
-            else
-              child = NameTemplateContext.new
-              child.origin = origin
-              child_out = marker_render_chunks(raw_template, substitutor, vars_context, task, host, child, state, depth + 1, nil)
-              # The nested context completes (numbers its errors, emits
-              # its warning blocks) BEFORE the enclosing one - verified:
-              # nats' nats_name errors numbered 1,2 while the enclosing
-              # nats_install_dir context's own error numbered 3.
-              pieces << complete_name_context(child, state, child_out)
-            end
-          else
-            idx = ctx.push(e.message.to_s, error_origin || ctx.origin)
-            pieces << "#{state.placeholder_prefix}#{idx}\uE001"
-          end
-        rescue
-          # A non-undefined span failure (bad filter, syntax) is not a
-          # Marker in real either - keep the old lenient render for it.
-          pieces << (substitutor.substitute(span) rescue span)
+        if (m = span.match(/\A\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\z/))
+          pieces << render_bare_name_span(m[1], span, substitutor, vars_context, task, host, ctx, state, depth, error_origin)
+        else
+          span_text, aborted = render_complex_name_span(span, substitutor, vars_context, task, host, ctx, state, depth, error_origin)
+          pieces << span_text
         end
         pos = stop + 2
       end
-      pieces << text[pos..]
+      # An aborting span ends the template run mid-render (live-verified
+      # vs 2.19.11, p20 probe): the trailing text is never rendered and
+      # later spans are never even evaluated.
+      pieces << text[pos..] unless aborted
       pieces.join
+    end
+
+    # A bare `{{ name }}` span. Its failure never aborts the enclosing
+    # template run - the span is replaced by its error marker(s) and
+    # rendering continues (live-verified: `{{ a }}{{ b }}` yields two
+    # markers, no truncation).
+    private def render_bare_name_span(name : String, span : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32, error_origin : VarOrigin?) : String
+      begin
+        return substitutor.substitute(span, strict: true)
+      rescue e : UndefinedVariableError
+        raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
+        if raw_template
+          origin = var_origin_for(task, host, name)
+          if single_span_template?(raw_template)
+            inner = raw_template.strip[2..-3].strip
+            if inner.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+              # A value that IS exactly one bare-variable reference keeps
+              # the propagation semantics: its failure joins THIS context
+              # carrying the nested value's own origin, and a chain of
+              # them keeps re-pointing the override at the immediately
+              # failing definition (live-verified: p2/p8 shapes).
+              return marker_render_chunks(raw_template, substitutor, vars_context, task, host, ctx, state, depth + 1, origin || error_origin)
+            end
+            # A value that is one COMPLEX expression fails as its own
+            # self-truncating run (live-verified p16: error 1 is the
+            # expression's own error and error 2 "template potentially
+            # truncated", both at the value's defining site) and the
+            # marker text it leaves behind is consumed LENIENTLY by the
+            # enclosing template - p17: the outer name's literals
+            # survive and the outer run adds no truncation of its own.
+            child = NameTemplateContext.new
+            child.origin = origin
+            child_out = marker_render_chunks(raw_template, substitutor, vars_context, task, host, child, state, depth + 1, nil)
+            return complete_name_context(child, state, child_out)
+          end
+          # A multi-part value (`"{{ a }} {{ b }}"`) renders chunk-wise
+          # with each failing span annotated individually; the enclosing
+          # template continues with the marker text inline (p7/p21).
+          child = NameTemplateContext.new
+          child.origin = origin
+          child_out = marker_render_chunks(raw_template, substitutor, vars_context, task, host, child, state, depth + 1, nil)
+          return complete_name_context(child, state, child_out)
+        end
+        idx = ctx.push(e.message.to_s, error_origin || ctx.origin)
+        return "#{state.placeholder_prefix}#{idx}\uE001"
+      rescue
+        # A non-undefined span failure (bad filter, syntax) is not a
+        # Marker in real either - keep the old lenient render for it.
+        return (substitutor.substitute(span) rescue span)
+      end
+    end
+
+    # Any non-bare span. Real evaluates it as an expression that can
+    # ABORT the whole template run: the errors the span produced are
+    # followed by one final "template potentially truncated" error
+    # (live-verified p1/p4/p9/p10/p11/p14/p15/p18/p20), the span's own
+    # partial output is discarded (p18: earlier pre-rendered markers of
+    # the same span vanish from the name, their warning block does not),
+    # prior spans' output survives (p14) and later spans are never
+    # evaluated (p10/p11). A failure of a referenced variable's OWN
+    # single-bare-reference value propagates the same way (c03-class:
+    # the value's error carries the value's defining origin), while a
+    # multi-part or complex-expression value renders leniently with
+    # inline markers and does NOT abort (p6/p17).
+    private def render_complex_name_span(span : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32, error_origin : VarOrigin?) : {String, Bool}
+      err_start = ctx.errors.size
+      span_vars = vars_context
+      active_substitutor = substitutor
+      abort = false
+
+      # Quoted segments are literals, not references - strip them before
+      # scanning so `{{ 'badvar' ~ x }}` does not pre-render badvar.
+      scan_text = span.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
+      scan_text.scan(/[A-Za-z_][A-Za-z0-9_]*/).map(&.[0]).uniq!.each do |ident|
+        raw = span_vars[ident]?.try(&.as_s?) || next
+        next unless raw.includes?("{{") && !raw.includes?("{%") && !raw.includes?("{#")
+        origin = var_origin_for(task, host, ident)
+        if single_span_template?(raw)
+          inner = raw.strip[2..-3].strip
+          if inner.match(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+            out = marker_render_chunks(raw, active_substitutor, span_vars, task, host, ctx, state, depth + 1, origin || error_origin)
+            if out.includes?(state.placeholder_prefix)
+              abort = true
+              break
+            end
+            next
+          end
+        end
+        child = NameTemplateContext.new
+        child.origin = origin
+        child_out = marker_render_chunks(raw, active_substitutor, span_vars, task, host, child, state, depth + 1, nil)
+        finalized = complete_name_context(child, state, child_out)
+        span_vars = span_vars.dup
+        span_vars[ident] = JSON::Any.new(finalized)
+        active_substitutor = VarSubstitutor.new(vars: span_vars, host_name: host.name)
+      end
+
+      unless abort
+        begin
+          return {active_substitutor.substitute(span, strict: true), false}
+        rescue e : UndefinedVariableError
+          ctx.push(e.message.to_s, error_origin || ctx.origin)
+        rescue e
+          ctx.push("Error rendering template: #{e.message}", error_origin || ctx.origin)
+        end
+        abort = true
+      end
+      ctx.push("template potentially truncated", ctx.origin)
+      markers = (err_start...ctx.errors.size).map do |i|
+        "#{state.placeholder_prefix}#{i}\uE001"
+      end.join
+      {markers, true}
     end
 
     # A value consisting of exactly one `{{ ... }}` construct (no

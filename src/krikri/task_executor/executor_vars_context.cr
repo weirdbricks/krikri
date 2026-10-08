@@ -2388,6 +2388,14 @@ module Krikri
 
       param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || {module_idx, module_col})
 
+      # When the fourth chained stanza is emitted, the third level's text
+      # shortens to the prefix alone - the inner message moves entirely
+      # into the chained stanza (live-verified p12 vs 2.19.11).
+      chain_stanza = chain_value_failure_stanza(task, msg)
+      if chain_stanza && (cm = msg.match(/\A(Error while resolving value for '[^']+'): /))
+        l3 = cm[1] + "."
+      end
+
       text = String.build do |io|
         io << "[ERROR]: " << l1 << "\n"
         if two_level
@@ -2407,11 +2415,75 @@ module Krikri
           io << "\n<<< caused by >>>\n\n"
           io << cause << "\n"
           io << "\n"
+        elsif chain_stanza
+          io << "\n<<< caused by >>>\n\n"
+          io << chain_stanza
+          io << "\n"
         else
           io << "\n"
         end
       end
       puts text
+    end
+
+    # The fourth chain stanza real 2.19.11 appends when the arg's
+    # undefined failure came from a VARIABLE'S OWN template value
+    # bottoming out at a missing name (`badvar: "{{ undefined_deep }}"`
+    # consumed by `msg: "{{ 'a' ~ badvar ~ 'b' }}"`, live-verified p12
+    # probe): the bare innermost message with its own Origin at the
+    # DEFINITION whose value failed to render. The stanza is only
+    # emitted when exactly one host-independent var layer holds a plain
+    # `{{ }}`-text value that both references the missing name and
+    # strictly fails WITH that name's message - anything ambiguous (or a
+    # direct, non-chained undefined) keeps the three-stanza block, never
+    # a mislabeled Origin.
+    private def chain_value_failure_stanza(task : Task, msg : String) : String?
+      m = msg.match(/\A(Error while resolving value for '[^']+': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+      return nil unless m
+      missing = m[2]
+      word = /(^|[^A-Za-z0-9_])#{Regex.escape(missing)}($|[^A-Za-z0-9_])/
+
+      merged = {} of String => JSON::Any
+      origins = {} of String => VarOrigin
+      merge_var_layer(merged, origins, @play_vars, @play_var_origins)
+      merge_var_layer(merged, origins, task.role_defaults, task.role_default_origins)
+      merge_var_layer(merged, origins, @all_role_defaults, @all_role_default_origins)
+      merge_var_layer(merged, origins, task.role_vars, task.role_var_origins)
+      merge_var_layer(merged, origins, @all_role_vars, @all_role_var_origins)
+      merge_var_layer(merged, origins, task.vars, task.vars_origins)
+      merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
+
+      matches = [] of FileVarOrigin
+      merged.each do |key, value|
+        next if key == missing
+        raw = value.raw
+        next unless raw.is_a?(String) && raw.includes?("{{") &&
+                    !raw.includes?("{%") && !raw.includes?("{#") &&
+                    raw.match(word) && !UnsafeValues.unsafe_text?(raw)
+        next if raw.includes?("lookup(") || raw.includes?("query(")
+        origin = origins[key]?
+        next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
+        begin
+          VarSubstitutor.new(vars: merged).substitute(raw, strict: true)
+        rescue e : UndefinedVariableError
+          next unless e.message == "'#{missing}' is undefined"
+          matches << origin
+        end
+      end
+      return nil unless matches.size == 1
+      origin = matches[0]
+      "'#{missing}' is undefined\n" +
+        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+    end
+
+    private def merge_var_layer(merged : Hash(String, JSON::Any), origins : Hash(String, VarOrigin), values : Hash(String, JSON::Any)?, layer_origins : Hash(String, VarOrigin)?) : Nil
+      return unless values
+      values.each do |key, value|
+        merged[key] = value
+        if (lo = layer_origins) && (o = lo[key]?)
+          origins[key] = o
+        end
+      end
     end
 
     # ansible-core 2.19.11 warns whenever a groupby result (a
