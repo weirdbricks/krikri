@@ -2785,7 +2785,16 @@ module Krikri
       # instead, which has no concept of a parenthesized method call at
       # all - it just tried (and failed) to treat `split(" ")` as a
       # literal, nonexistent hash key, always undefined.
-      if expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
+      # A Python-style slice index (`item[8:]`, `list[:5]`, `list[1:3]`,
+      # `list[:-2]`) - the naive dotted/indexed splitter below can't
+      # parse a `:`-bearing bracket at all (VariableLookup#resolve treats
+      # it as a literal hash key, misses, and under raise_undefined
+      # raises "'item' is undefined"), but ExpressionEvaluator's
+      # ArraySlicer handles slices on both lists and strings. Found via
+      # sdarwin.nagios's own `when: item[8:] not in query('varnames',
+      # '.*')` looped set_fact (round 5210000): every item failed with
+      # "'item' is undefined" while Ansible set the fact (ok=1).
+      if expr.matches?(/\[[^\[\]]+\s*:\s*[^\[\]]*\]/) || expr.includes?("|") || expr.includes?("(") || expr.includes?(" - ") || expr.includes?("~") ||
          expr.includes?("*") || expr.includes?("/") || expr.includes?("+")
         # A filter chain fed by a genuinely undefined variable is fatal
         # for a `when:`/`assert:` in Ansible exactly as a bare

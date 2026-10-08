@@ -358,6 +358,14 @@ module Krikri
     "true", "false", "none", "omit",
     "lookup", "query", "q", "url", "range", "dict", "list", "tuple",
     "namespace", "now",
+    # Jinja operator keywords: `not(...)` (no space before the paren -
+    # rubyisbeautiful.proxy-common's `{{ not((x is undefined) or ...) }}`,
+    # round 5210000) matched undefined_access_chain_source's root-then-
+    # call regex as a variable named "not" being "called", and the strict
+    # probe then raised "'not' is undefined" where Ansible evaluates the
+    # negation fine. The same applies to every operator keyword - none
+    # can ever begin a real variable reference.
+    "not", "and", "or", "in", "is", "if",
   }
 
   # The ATTRIBUTE/SUBSCRIPT/CALL companion to
