@@ -649,6 +649,23 @@ describe "pip plugin" do
     result["msg"].as_s.must_equal("version is incompatible with state=latest")
   end
 
+  it "does not trip the version guard on an explicit null version, like Ansible's None" do
+    # `expr | default(omit)` does NOT replace a None value - a null
+    # version: reaches the module as Python None, and pip.py's
+    # `version is not None` is False for it, so the install proceeds
+    # (rolehippie.mongodb round 5210000: real proceeded, krikri failed
+    # with "version is incompatible with state=latest"). BasePlugin
+    # records such a null param with a demoted "" value, so the wire
+    # form this test pins is an explicit JSON null on the version key.
+    result = PluginSpecHelper.run_raw("pip", {
+      "name"    => JSON::Any.new("somepkg"),
+      "state"   => JSON::Any.new("latest"),
+      "version" => JSON::Any.new(nil),
+    })
+
+    result["msg"].as_s.wont_equal("version is incompatible with state=latest")
+  end
+
   it "rejects version: at state: latest after a bad umask, matching pip.py's order" do
     result = PluginSpecHelper.run("pip", {
       "name"    => "somepkg",

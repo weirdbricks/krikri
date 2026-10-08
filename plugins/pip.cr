@@ -188,8 +188,18 @@ module Krikri
       # virtualenv/pip resolution - so a version: pinned at state: latest
       # fails here rather than deeper in (e.g. on a missing virtualenv
       # command). `version is not None` is a presence check, so an empty
-      # version: string trips it too (live-verified vs 2.19.11).
-      if (@params["state"]? || "present") == "latest" && @params["version"]?
+      # version: string trips it too (live-verified vs 2.19.11). An
+      # EXPLICIT NULL version does not: python's `version is not None`
+      # is False for the None that `expr | default(omit)` does NOT
+      # replace (default() only substitutes for undefined, never for
+      # None - rolehippie.mongodb's own
+      # `version: "{{ mongodb_pymongo_version | default(omit) }}"` with
+      # a null default, round 5210000: real proceeded to the install,
+      # krikri failed with this exact message). BasePlugin records such
+      # a null param in @null_params with a demoted "" value, so the
+      # presence check must exclude it - "" from a real empty string
+      # still trips, as before.
+      if (@params["state"]? || "present") == "latest" && @params["version"]? && !@null_params.includes?("version")
         return PluginResult.new(changed: false, failed: true,
           msg: "version is incompatible with state=latest")
       end
