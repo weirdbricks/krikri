@@ -159,6 +159,14 @@ module Krikri
       # Same fix shape as ansible.builtin.authorized_key above.
       "ansible.builtin.mount",
       "ansible.posix.sysctl",
+      # ansible.builtin.sysctl (0.9.1552): same legacy-redirect shape as
+      # ansible.builtin.mount above - sysctl lives in ansible.posix, and
+      # ansible-core's own ansible_builtin_runtime.yml transparently
+      # redirects the builtin spelling, so a task written as
+      # `ansible.builtin.sysctl:` reached the graceful unavailable-module
+      # skip instead of the implemented sysctl plugin (artem_shestakov.
+      # nginx round 5214000: real ran the task, krikri skipped it).
+      "ansible.builtin.sysctl",
       "community.general.ufw",
       "ansible.posix.firewalld",
       "ansible.builtin.iptables",
