@@ -895,7 +895,7 @@ module Krikri
     # its elements. Only called when task.loop_items_needs_flatten? (set
     # at parse time only for a literal with_items: array, never for
     # loop:, which has no such behavior).
-    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false, item : JSON::Any? = nil) : Bool
+    private def when_passes?(task : Task, vars_context : Hash(String, JSON::Any), host : Host, item_label : String? = nil, shared : VarSubstitutor? = nil, defer_stats : Bool = false, defer_display : Bool = false, item : JSON::Any? = nil, defer_unavailable_module : Bool = false) : Bool
       # Ansible evaluates a non-looped task's `when:` BEFORE it ever
       # attempts to resolve the task's module - so a `when:` that itself
       # raises (an undefined variable, a bad attribute access) is a fatal
@@ -925,6 +925,17 @@ module Krikri
       if (module_name = task.unavailable_module) && python_module_source_for(task).nil?
         if task.when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
           reachable_unavailable_modules << module_name
+          # Ansible finalizes a task's args AFTER its when: evaluates and
+          # BEFORE it ever resolves the module - so a genuinely-reached
+          # unavailable module must not skip yet when the caller still
+          # finalizes args (the solo path passes defer_unavailable_module):
+          # an undefined variable in the args is a "Finalization of task
+          # args ... failed" fatal there, not a silent skip (round 5210000:
+          # centralpayment.rhel-subscription's community.general.
+          # redhat_subscription with an undefined redhat_password - krikri
+          # skipped, ansible failed the task). Callers that never finalize
+          # (loops, batch groups, block includes) keep the in-place skip.
+          return true if defer_unavailable_module
         end
       else
         return true unless task.when_condition
@@ -932,6 +943,18 @@ module Krikri
         return true if evaluate_when_items(task, vars_context, host, shared)
       end
 
+      perform_skip(task, host, item_label, defer_stats, defer_display, item)
+      false
+    end
+
+    # The skip bookkeeping when_passes? performs for a task whose when:
+    # didn't pass (or whose module is unavailable and the caller didn't
+    # defer): bump the skipped counter (unless deferred), print the
+    # skipping line (unless deferred), register the skipped result.
+    # Extracted verbatim from when_passes?'s old bottom half so the
+    # deferred unavailable-module skip in execute_task_once performs the
+    # identical bookkeeping after arg finalization.
+    private def perform_skip(task : Task, host : Host, item_label : String?, defer_stats : Bool, defer_display : Bool, item : JSON::Any?) : Nil
       # defer_stats: loop items and batch members pass this to only skip
       # the *counter* bump (aggregation happens once at the task level).
       # It does NOT suppress the print: loop items must still print their
@@ -974,7 +997,6 @@ module Krikri
         end
       end
       register_skip_result(task, host)
-      false
     end
 
     # Builds the `failed: true` result shape a raised when: evaluation
@@ -1735,7 +1757,7 @@ module Krikri
       substitutor = shared || VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
       begin
-        return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats)
+        return nil unless when_passes?(task, vars_context, host, item_label, shared: substitutor, defer_stats: defer_loop_stats, defer_unavailable_module: true)
       rescue ex : WhenEvaluationError
         # Returning a real `failed: true` result here (not swallowing
         # and returning `false`/nil) lets it flow through the exact same
@@ -1817,6 +1839,17 @@ module Krikri
         # downstream (Ansible honors it here: ignored=1, play
         # continues), which this plain failed result preserves.
         return result
+      end
+
+      # A genuinely-reached unavailable module whose when: passed and whose
+      # arg finalization was clean skips HERE, not inside when_passes? -
+      # ansible's order is when: -> arg finalization -> module resolution,
+      # so an undefined variable in the args had to fail above (see
+      # when_passes?'s defer_unavailable_module comment) before this skip
+      # could happen. Same bookkeeping when_passes? would have performed.
+      if task.unavailable_module && python_module_source_for(task).nil?
+        perform_skip(task, host, item_label, defer_stats: defer_loop_stats, defer_display: false, item: nil)
+        return nil
       end
 
       # `timeout:` - the task's wall-clock limit (ansible-core's
