@@ -288,12 +288,15 @@ module Krikri
           # with the GPG/E: text first (round 5210000,
           # artem_shestakov.nginx).
           rollback_line(target, normalized)
+          # Real fail_json(msg=...) carries ONLY changed=false + msg - no
+          # repo/state keys, and changed stays false (the file was
+          # reverted before failing, live-verified vs 2.19.11, round
+          # 5215000 confirm: real changed=8 vs krikri changed=9 in the
+          # recap came from this +1).
           result = PluginResult.new(
-            changed: true,
+            changed: false,
             failed: true,
-            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}",
-            repo: normalized,
-            state: "present"
+            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}"
           )
           result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
           return result
@@ -332,11 +335,9 @@ module Krikri
           # direction the change went.
           File.write(file, original_content)
           result = PluginResult.new(
-            changed: true,
+            changed: false,
             failed: true,
-            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}",
-            repo: normalized,
-            state: "absent"
+            msg: "Failed to update apt cache after #{retries} retries: #{outcome[:last_reason].empty? ? "unknown reason" : outcome[:last_reason]}"
           )
           result.extra["warnings"] = JSON.parse(@warnings.to_json) unless @warnings.empty?
           return result
