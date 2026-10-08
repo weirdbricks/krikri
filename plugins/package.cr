@@ -3,6 +3,7 @@
 require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
+require "../src/krikri/plugin_helpers/apt_deb_install"
 
 module Krikri
   # Package Plugin - OS-agnostic package management
@@ -56,6 +57,7 @@ module Krikri
     end
 
     include AptLockRetry
+    include AptDebInstall
     property? check_mode : Bool
     # Resolved remote path of apt-get (see #apt_get_bin), nil until first
     # needed.
@@ -119,6 +121,27 @@ module Krikri
       name = @params["name"]? || @params["pkg"]?
       update_cache = true?(@params["update_cache"]?)
       unless name
+        # A `deb:` install (URL or local .deb) carries no name: - ansible's
+        # package action plugin forwards deb: verbatim to the apt module,
+        # whose main() dispatches it before any name handling. This entry
+        # gate previously returned "Nothing to do" first, so the .deb
+        # never landed (rchouinard.mysql-community-repo round 5210000:
+        # real installed it (changed=1), krikri reported ok). A deb: on a
+        # non-apt backend is an unknown-param failure there (dnf's own
+        # argspec has no deb:).
+        if deb_param = @params["deb"]?
+          if (requested_package_manager || detect_package_manager()) != "apt"
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Unsupported parameters for (#{requested_package_manager || detect_package_manager()}) module: deb"
+            )
+          end
+          if (@params["state"]? || "present") != "present"
+            return PluginResult.new(changed: false, failed: true, msg: "deb only supports state=present")
+          end
+          return handle_deb(deb_param, [] of String, false, @params["lock_timeout"]?.try(&.to_i) || 60)
+        end
         return update_cache ? update_cache_only : PluginResult.new(
           changed: false,
           failed: false,
@@ -234,7 +257,12 @@ module Krikri
       # run `apt-get remove` on the empty token and report "Package
       # removed" (double space) as changed on every run, breaking
       # idempotency.
-      return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if names.empty?
+      # A `deb:` install (URL or local .deb) carries no name: - exempt it
+      # from the empty-name no-op gate so the apt backend's deb: dispatch
+      # below can run (rchouinard.mysql-community-repo round 5210000:
+      # real installed the mysql-apt-config deb, krikri reported ok and
+      # the .deb never landed).
+      return PluginResult.new(changed: false, failed: false, msg: "Nothing to do") if names.empty? && !@params["deb"]?
 
       # Per-element shell quoting for the actual package-manager command
       # line - each element quoted as its own atomic token, since a
@@ -764,7 +792,59 @@ module Krikri
       )
     end
 
+    # AptDebInstall hook - the .deb dependency pre-install. apt.cr's own
+    # handle_install provides the full python-apt-fidelity path; this
+    # backend mirrors the essentials: a noninteractive apt-get install of
+    # the resolved dep names behind the same lock/implicit-cache retry,
+    # changed only when apt's own summary says something was installed.
+    private def handle_install(packages : Array(String), messages : Array(String), changed : Bool, lock_timeout : Int32, build_dep : Bool = false, fixed_state : Bool = false, deb_deps : Bool = false) : PluginResult
+      pkg_list = packages.map { |pkg| Process.quote(pkg) }.join(" ")
+      cmd = "DEBIAN_FRONTEND=noninteractive #{apt_get_bin} -y #{expand_dpkg_options} install #{pkg_list}".squeeze(' ')
+      result = apt_install_with_implicit_cache_retry(cmd, lock_timeout, ->remote_exec(String))
+      if result[:exit_code] != 0
+        failed_result = PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "#{cmd.chomp(' ')} failed: #{result[:stderr]}"
+        )
+        failed_result.extra["stdout"] = JSON::Any.new(result[:stdout])
+        failed_result.extra["stderr"] = JSON::Any.new(result[:stderr])
+        failed_result.extra["rc"] = JSON::Any.new(result[:exit_code].to_i64)
+        return failed_result
+      end
+      # apt's "0 upgraded, 0 newly installed" summary = a genuine no-op
+      # (all deps already installed); unparseable output defaults to
+      # had-an-effect, the fail-toward-changed bias apt.cr uses too.
+      summary_match = result[:stdout].match(/(\d+) upgraded, (\d+) newly installed/)
+      had_effect = summary_match.nil? || summary_match[1] != "0" || summary_match[2] != "0"
+      ok_result = PluginResult.new(changed: had_effect, failed: false)
+      ok_result.extra["stdout"] = JSON::Any.new(result[:stdout])
+      ok_result.extra["stderr"] = JSON::Any.new(result[:stderr])
+      ok_result
+    end
+
     private def handle_apt(name : String, state : String, names : Array(String), pkg_tokens : String) : PluginResult
+      # A `deb:` install (URL or local .deb) carries no name: - ansible's
+      # package action plugin forwards deb: verbatim to apt.py, whose
+      # main() dispatches it before the name path ("deb only supports
+      # state=present" for any other state). This backend never had the
+      # dispatch at all, so the task fell through to the empty-name path
+      # and silently reported ok without installing anything
+      # (rchouinard.mysql-community-repo round 5210000: real installed
+      # the mysql-apt-config deb (changed=1), krikri reported ok and the
+      # .deb never landed). Shared with apt.cr verbatim via
+      # AptDebInstall; `deb: + update_cache:` still refreshes the cache
+      # first through the update_cache block below, exactly like
+      # apt.py's main() ordering.
+      if deb_param = @params["deb"]?
+        if state != "present"
+          return PluginResult.new(changed: false, failed: true, msg: "deb only supports state=present")
+        end
+        messages = [] of String
+        lock_timeout = @params["lock_timeout"]?.try(&.to_i) || 60
+        return handle_deb(deb_param, messages, false, lock_timeout)
+      end
+
       # Ansible's `package:` action plugin delegates to the apt
       # module on Debian-family hosts, and apt.py's main() runs the cache
       # refresh BEFORE install() whenever update_cache: is set (or any
