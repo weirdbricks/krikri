@@ -80,6 +80,16 @@ cap - revisit only if it recurs).
 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
 "Open gaps" rather than arguing with the note in place.
+### `password_mechanism=sshpass` is not implemented (askpass is always the fallback)
+
+ansible-core 2.19 defaults `password_mechanism` to `ssh_askpass` and only needs the `sshpass` program when
+the option is set to `sshpass` explicitly (without it installed, real fails the host with `to use the
+password_mechanism=sshpass, you must install the sshpass program`). krikri has no such option: with a
+connection password it uses `sshpass -e` when the program exists and otherwise OpenSSH's `SSH_ASKPASS`
+(helper in a fresh 0700 directory, password via `SSHPASS` in the environment only), so a play that sets
+`ansible_ssh_password_mechanism: sshpass` without `sshpass` installed succeeds here where real fails.
+Decided 2026-10-08: lenient direction, not worth emulating.
+
 ### `timedout.frame` deprecation warning is not printed
 
 Real ansible-core 2.19.11 prints a stderr `[DEPRECATION WARNING]: The `timedout.frame` task result key is
