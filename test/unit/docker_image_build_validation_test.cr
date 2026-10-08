@@ -193,6 +193,13 @@ describe "docker_image_build plugin argument validation" do
   end
 
   it "fails a nonexistent path directory only after validation passed" do
+    # With `docker` being podman's shim the CLI probe (community.docker's
+    # "Cannot determine Docker client information. Are you maybe using
+    # podman instead of docker?") fails first - same as real - so the
+    # path check is only reachable against a real Docker CLI.
+    docker_version = (`docker --version 2>&1` rescue "")
+    skip "docker CLI is podman here; the path check is behind the CLI probe" if docker_version.downcase.includes?("podman")
+
     result = PluginSpecHelper.run("docker_image_build", {
       "name" => "krikri/test",
       "path" => "/tmp/krikri-no-such-dir",

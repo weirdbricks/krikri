@@ -51,10 +51,11 @@ defect moves down or gets deleted.
   never as an SDK APIError. The one DockerException this module can raise,
   resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
   unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
-- **Test suite on a host without a container daemon:** six tests fail or flake without Docker/podman:
-  `docker_compose_v2` (3: missing project dir wording), `docker_image_build` argument validation (1), the
-  `--check` mode Docker end-to-end test (1) and one `statvfs` test that flakes under parallel workers (passes
-  alone). They need a reachable daemon socket; everything else in `scripts/minitest.sh -- -p 4` passes.
+- **Test suite needs a reachable container socket:** the Docker plugin tests (`docker_compose_v2`, the
+  `--check` mode Docker end-to-end test) talk to the user's podman API socket. If `podman.socket` is
+  "listening" but `/run/user/$UID/podman/podman.sock` is missing (seen after a tmpfiles sweep), restart it
+  with `systemctl --user restart podman.socket`. One `statvfs` test can flake under parallel workers
+  (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
 ## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
 
