@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1564`.**
+**Currently at `0.9.1567`.**
 
 ## Open gaps
 
@@ -51,11 +51,6 @@ defect moves down or gets deleted.
   never as an SDK APIError. The one DockerException this module can raise,
   resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
   unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
-- **Non-boolean conditional errors lack the value's `at '<file>:<line>:<col>'` origin suffix when
-  the value comes from a role's `defaults/`/`vars/` (or any file other than the playbook's own
-  play vars).** krikri annotates the playbook-vars case (decorate_conditional_value_origin);
-  real also annotates e.g. `defaults/main.yml:9:11` for a role-default string fed to a bare
-  `when: user`. Message-only: verdicts, skip/run/failed outcomes and recaps match.
 - **`version_type='pep440'` compares with LooseVersion semantics, not PEP-440.** The `version`
   test's `strict=True`/`version_type='strict'|'semver'|'semantic'` schemes (plus every
   validation wording, positional binding and the empty-operand checks) are byte-pinned against
@@ -68,15 +63,45 @@ defect moves down or gets deleted.
   with `systemctl --user restart podman.socket`. One `statvfs` test can flake under parallel workers
   (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
-- **Round 5210000's remaining divergences** (each seen on real Atlantic.net hosts against
-  ansible-core 2.19.11; the round's other 22 divergences are fixed or dispositioned, see the round
-  narrative below):
-  - Facts-gathering crash with a bare "Index out of bounds" (ktechmidas.openvpn, warm run - after
-    the role changed the host's network state). The gatherer now annotates the failing section
-    ("... (while gathering network)") so the next occurrence pinpoints itself; root cause pending a
-    recurrence.
-  - Readiness timing: `wait_for` port 80 timed out at 305s on the cr host where real succeeded in
-    27s (clouddrove.docker_nginx - the role's docker/nginx container start under krikri).
+- **Facts-gathering crash with a bare "Index out of bounds"** (ktechmidas.openvpn, round 5210000's
+  warm run - after the role changed the host's network state). The gatherer now annotates the
+  failing section ("... (while gathering network)") so the next occurrence pinpoints itself;
+  root cause pending a recurrence.
+
+## Round 5240000/5241000 (confirm round: 0.9.1540s fixes, flake re-runs, docker_nginx, 2026-10-09)
+
+Ten-role confirm round (five 0.9.1540s fixes + three round-5210000 infra flakes +
+clouddrove.ansible_role_docker_nginx), 0.9.1567: **7 CLEAN, 2 py-side infra flakes, 1 queue-file
+role-name typo re-run CLEAN as 5241000**.
+
+All five 0.9.1540s fixes are now live-confirmed CLEAN with identical recaps: package-deb install
+(rchouinard.mysql-community-repo), hostvars play-magic vars (bilalcaliskan.redis), template
+owner/group (gokev.motd-splash), the removed-module exit-1 (sorrowless.prometheus_server and
+sorrowless.victoriametrics, rc=1 both engines), and first_found errors=ignore
+(lotusnoir.apps_consul_exporter).
+
+The two earlier flake roles flaked AGAIN, but this time on the PYTHON side - strong evidence of
+host noise, not engine bugs: mtze.docker_swap_grub's own reboot handler left the py host's SSH
+unreachable after reboot (crystal finished cold; 5240006), and bodsch.dnsmasq's py warm run hung
+in `apt update` to the harness timeout (rc=124; its COLD run was CLEAN with identical counters).
+webarchitect609.php_versions came back CLEAN with identical counters cold and warm (5240007).
+
+clouddrove.ansible_role_docker_nginx: the round-5210000 "wait_for timed out at 305s" divergence
+was never a wait_for problem - the role's `with_fileglob: ../templates/config/site.d/*.*`
+resolved to NOTHING under krikri (cwd-relative pattern), all four config-transfer tasks skipped,
+and nginx ran without its config. Fixed in 0.9.1566 (search-stack dwim, each shape live-verified
+byte-identical against 2.19.11); confirm round 5241000 came back CLEAN with identical counters
+cold and warm, crystal 9.4s vs py 72.3s cold.
+
+0.9.1565 (same session): the non-boolean conditional error's value origin now covers every
+defining layer real annotates - role defaults/vars, vars_files, set_fact values (recorded at
+merge time), registered results and gathered facts (real reports the when: token itself for
+those), and CLI -e values (`at "<CLI option '-e'>"`) - each shape live-verified byte-identical
+against 2.19.11; the layer resolution reuses var_origin_for so a shadowed value is never
+mislabeled. 0.9.1567: build.sh links a hidden fmod shim pinning libm's fmod to the pre-2.38
+symbol version - the v0.4.31 engine bump's float `%` had made every binary built on this glibc
+2.41 machine refuse to start on the Ubuntu 22.04 targets (round 5230000's four instant
+ok=0 failed=2 crystal runs were this, not engine bugs; that round is discarded).
 
 ## Round 5210000 (357 roles re-run after invalid 5200000, 2026-10-08; per-role triage)
 
@@ -124,10 +149,10 @@ records it in changed_when_result/failed_when_result (0.9.1562), and apt_reposit
 failures weren't wrapped in real's "failed to fetch PPA information, error was: ..." wording
 (0.9.1564, live-confirmed on 5223000's cold run). Two message-only gaps were opened instead
 (PEP440 version_type approximated as loose; the missing `at '<origin>'` suffix for role-sourced
-values in non-boolean conditional errors). Still owed: docker_nginx readiness timing and the
-facts-gather crash (both in Open gaps), the three infra-flake re-runs, this round's
-`ROLES_TESTED.md` rows, and a confirm round for the 0.9.1540s fixes (package deb, hostvars,
-template owner/group, rc=1, first_found).
+values in non-boolean conditional errors). Still owed after this paragraph was written: all of
+it got closed by the round 5240000/5241000 confirm round above (docker_nginx's root cause was
+the with_fileglob skip, fixed 0.9.1566; the 0.9.1540s fixes confirmed CLEAN; php_versions clean,
+the other two flakes re-flaked on the py side; this round's `ROLES_TESTED.md` rows are in).
 
 ## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
 
