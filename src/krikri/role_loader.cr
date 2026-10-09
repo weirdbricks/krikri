@@ -330,6 +330,18 @@ module Krikri
       # contain 2+ dots - vanishingly rare in practice).
       collection_name = (parts = name.split('.')).size >= 3 ? "#{parts[0]}.#{parts[1]}" : nil
 
+      # ansible-core's add_all_plugin_dirs(self._role_path) at Role.load:
+      # every LEGACY role loaded this run (play roles, meta dependencies,
+      # include_role:) contributes its filter_plugins//test_plugins/ to
+      # the controller's plugin search path for the rest of the run -
+      # which is how a meta dependency's custom filters serve the
+      # depending role's own templates (nephelaiio.plugins' sorted_get
+      # used by nephelaiio.i3, round 5250000). Collection-hosted roles
+      # are excluded, matching Ansible's own gate (the nil check lives
+      # in the registrar to keep this loader's cyclomatic complexity
+      # where it was).
+      PythonFilterRunner.register_role_plugin_roots(role_dir, collection_name)
+
       # meta/main.yml dependencies run BEFORE this role's own tasks - they
       # get the SAME parent_names as the declaring role itself (not
       # extended further), matching Ansible: a dependency isn't

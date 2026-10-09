@@ -61,15 +61,52 @@ module Krikri
     class FilterError < Exception
     end
 
-    # Finds every `.py` file under the role's own `filter_plugins/` and
-    # the playbook-adjacent `filter_plugins/` (nearest-first order;
-    # Ansible loads ALL files in a plugin directory, not
-    # name-matched ones, so there is no per-filter filename check here
-    # the way a module's `library/<name>.py` lookup has). Empty when
-    # neither root exists - the overwhelmingly common case.
+    # Every legacy role LOADED this run contributes its plugin directories
+    # to the search path for the REST of the run, matching ansible-core's
+    # `add_all_plugin_dirs(self._role_path)` at Role.load: a meta
+    # dependency's filters (nephelaiio.plugins' `sorted_get` serving
+    # nephelaiio.i3's own defaults, round 5250000) stay reachable from
+    # every later task, not only from the dependent role's own. Populated
+    # by RoleLoader.load_role for non-collection roles; load order kept
+    # (deduped) so the nearest role's plugin wins a name conflict, like
+    # the loader's own append order.
+    @@loaded_role_plugin_roots = {} of String => Array(String)
+    @@plugin_roots_mutex = Mutex.new
+
+    def register_role_plugin_roots(role_path : String, collection_name : String? = nil) : Nil
+      # Collection-hosted roles resolve plugins through their collection,
+      # not role-adjacent directories - Ansible's own gate at Role.load.
+      return if collection_name
+      @@plugin_roots_mutex.synchronize do
+        {"filter_plugins", "test_plugins"}.each do |subdir|
+          dir = File.join(role_path, subdir)
+          next unless Dir.exists?(dir)
+          roots = @@loaded_role_plugin_roots[subdir] ||= [] of String
+          roots << dir unless roots.includes?(dir)
+        end
+      end
+    end
+
+    def loaded_role_roots(subdir : String) : Array(String)
+      @@plugin_roots_mutex.synchronize do
+        @@loaded_role_plugin_roots[subdir]?.try(&.dup) || [] of String
+      end
+    end
+
+    # Finds every `.py` file under the role's own `filter_plugins/`, the
+    # `filter_plugins/` of every role LOADED so far this run (Ansible's
+    # add_all_plugin_dirs at Role.load - a meta dependency's filters stay
+    # reachable from every later task, which is how nephelaiio.plugins'
+    # `sorted_get` served nephelaiio.i3's own defaults, round 5250000),
+    # and the playbook-adjacent `filter_plugins/` (nearest-first order;
+    # Ansible loads ALL files in a plugin directory, not name-matched
+    # ones, so there is no per-filter filename check here the way a
+    # module's `library/<name>.py` lookup has). Empty when no root exists
+    # - the overwhelmingly common case.
     def find_sources(role_path : String?, playbook_dir : String?) : Array(String)
       roots = [] of String
       roots << File.join(role_path, "filter_plugins") if role_path && !role_path.empty?
+      roots.concat(loaded_role_roots("filter_plugins"))
       roots << File.join(playbook_dir, "filter_plugins") if playbook_dir && !playbook_dir.empty?
 
       sources = [] of String

@@ -39,14 +39,16 @@ module Krikri
     class TestError < Exception
     end
 
-    # Finds every `.py` file under the role's own `test_plugins/` and
-    # the playbook-adjacent `test_plugins/` (nearest-first order;
-    # Ansible loads ALL files in a plugin directory, not name-matched
-    # ones). Empty when neither root exists - the overwhelmingly common
-    # case.
+    # Finds every `.py` file under the role's own `test_plugins/`, the
+    # `test_plugins/` of every role LOADED so far this run (same
+    # loaded-role registry as PythonFilterRunner#find_sources), and the
+    # playbook-adjacent `test_plugins/` (nearest-first order; Ansible
+    # loads ALL files in a plugin directory, not name-matched ones).
+    # Empty when no root exists - the overwhelmingly common case.
     def find_sources(role_path : String?, playbook_dir : String?) : Array(String)
       roots = [] of String
       roots << File.join(role_path, "test_plugins") if role_path && !role_path.empty?
+      roots.concat(PythonFilterRunner.loaded_role_roots("test_plugins"))
       roots << File.join(playbook_dir, "test_plugins") if playbook_dir && !playbook_dir.empty?
 
       sources = [] of String
