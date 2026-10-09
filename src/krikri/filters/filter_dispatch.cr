@@ -129,7 +129,22 @@ module Krikri
         when "basename"
           JSON::Any.new(FilterCore.basename(as_string(value)))
         when "length", "count"
-          JSON::Any.new(length_of(value).to_i64)
+          # Python's len() on a None/float/int/bool input raises
+          # TypeError, which Ansible wraps as "The filter plugin
+          # 'ansible.builtin.length' failed: object of type 'NoneType'
+          # has no len()" (lotusnoir.apps_consul_exporter round 5210000:
+          # first_found errors='ignore' no-match -> None -> `params |
+          # length > 0` in a when:, real fails the task, krikri's raw
+          # raise got the generic "Error while evaluating conditional:"
+          # prefix instead of the filter-plugin wrapper).
+          begin
+            JSON::Any.new(length_of(value).to_i64)
+          rescue ex : FilterPluginError
+            raise ex
+          rescue ex
+            raise Krikri::FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.length' failed: #{ex.message}", ex.message || "filter failed")
+          end
         when "replace"
           args = parse_filter_args(filter_args)
           transform_string(value) { |text| args.size >= 2 ? text.gsub(args[0], args[1]) : text }

@@ -184,7 +184,7 @@ module Krikri
           AnyValue.new(lines.join(","))
         end
       when "first_found"
-        lookup_first_found(ctx, first, role_path)
+        lookup_first_found(ctx, first, kwargs, role_path)
       when "sequence"
         AnyValue.new(LookupPlugins.sequence_lookup(text(first)).map { |value| AnyValue.new(value) })
       when "csvfile"
@@ -218,8 +218,17 @@ module Krikri
 
     # `first_found` with a `{files:, paths:, skip:}` term: the first
     # existing file under the (rendered) search paths; no match raises
-    # unless skip is set.
-    private def self.lookup_first_found(ctx : KrikriJinja::Context, term : AnyValue, role_path : String?) : AnyValue
+    # unless skip is set OR the caller passed `errors='ignore'` - the
+    # generic lookup errors option (first_found's own `errors:` sub-key
+    # aside), which makes Ansible's plugin return None instead of
+    # raising. That None matters: `params: "{{ lookup('first_found',
+    # params_, errors='ignore') }}"` + `when: params | length > 0`
+    # (lotusnoir.apps_consul_exporter, round 5210000) fails on real
+    # ansible with "object of type 'NoneType' has no len()", while the
+    # old raise here degraded downstream to an empty STRING whose
+    # length is 0 - the task silently skipped. An errors= kwarg value
+    # other than 'ignore' keeps the raise (Ansible re-raises there).
+    private def self.lookup_first_found(ctx : KrikriJinja::Context, term : AnyValue, kwargs : Hash(String, AnyValue), role_path : String?) : AnyValue
       hash = term.raw.as?(Hash(String, AnyValue))
       files = first_found_param(ctx, hash.try(&.["files"]?)) || [] of String
       paths = first_found_param(ctx, hash.try(&.["paths"]?)) || ["files", "templates", "vars", "."]
@@ -232,6 +241,9 @@ module Krikri
         end
       end
       return AnyValue.new([] of AnyValue) if truthy?(hash.try(&.["skip"]?))
+      if (errors_val = kwargs["errors"]?) && text(errors_val).strip.downcase == "ignore"
+        return AnyValue.new(nil)
+      end
       raise Krikri::FirstFoundLookupError.new(
         "The lookup plugin 'first_found' failed: No file was found when using first_found."
       )

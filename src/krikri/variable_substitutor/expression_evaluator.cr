@@ -2819,6 +2819,32 @@ module Krikri
         # fallback path.
         value = render_via_jinja_value(expr)
         value ? @lookup.format_value(value) : "undefined"
+      rescue ex : KrikriJinja::TemplateError
+        # A filter's OWN runtime TypeError (Python's len(None) ->
+        # "object of type ... has no length") is the CORRECT semantic
+        # failure, not a Crinja capability gap - falling back to the
+        # hand-rolled chain there re-resolves the head leniently (a
+        # first_found errors='ignore' no-match renders as "") and
+        # silently answers 0, skipping a task real ansible fails
+        # (lotusnoir.apps_consul_exporter round 5210000). Only that
+        # TypeError class re-raises here (wrapped in Ansible's filter-
+        # plugin wording, NoneType spelled Python's way); every other
+        # engine failure keeps the existing hand-rolled fallback.
+        if ex.message.try(&.includes?("has no length"))
+          # Python's own TypeError text for len() on a non-sized value:
+          # "object of type 'NoneType' has no len()" - the engine words
+          # it "object of type Nil has no length" with its own "line N:"
+          # prefix, neither of which Ansible ever prints.
+          cause = ex.message.not_nil!
+            .sub(/\Aline \d+: /, "")
+            .sub("object of type Nil", "object of type 'NoneType'")
+            .sub("object of type Float64", "object of type 'float'")
+            .sub("object of type Int64", "object of type 'int'")
+            .sub(" has no length", " has no len()")
+          raise Krikri::FilterPluginError.new(
+            "The filter plugin 'ansible.builtin.length' failed: #{cause}", cause)
+        end
+        evaluate_with_filter_fallback(expr)
       rescue
         evaluate_with_filter_fallback(expr)
       end

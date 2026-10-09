@@ -800,6 +800,12 @@ module Krikri
         # "Error while evaluating conditional: " shape (assert:'s own
         # identical split lives in assert_action_plugin.cr).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
+      rescue ex : Krikri::FilterPluginError
+        # A FILTER plugin's runtime failure (e.g. length on None) - real
+        # prints its wrapper message with the plain "Task failed: " prefix
+        # and NO "Error while evaluating conditional: " (live-verified
+        # against 2.19.11 for the mandatory twin).
+        raise WhenEvaluationError.new("Task failed: #{ex.message}")
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # A compile-time-rejected filter/test name gets Ansible's own
         # "Syntax error in expression: " wording - Jinja's compiler
