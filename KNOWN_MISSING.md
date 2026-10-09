@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1559`.**
+**Currently at `0.9.1560`.**
 
 ## Open gaps
 
@@ -66,10 +66,6 @@ defect moves down or gets deleted.
   - Conditional-on-str split: both engines fail a `when:` whose result is a non-boolean string, but
     krikri fails per loop item where real fails the whole task (clouddrove.ansible_role_common -
     recap ok/skip counts differ by item).
-  - `failed_when:` on failing command output doesn't trigger: krikri ran the task ok where real
-    failed it (call_learning.moodle's php-not-found status check).
-  - `copy:`/`template:` missing dest directory: krikri fails with "Destination directory
-    /etc/yum.repos.d does not exist" where real creates it (Azulinho.azulinho-yum-repo-epel).
   - Readiness timing: `wait_for` port 80 timed out at 305s on the cr host where real succeeded in
     27s (clouddrove.docker_nginx - the role's docker/nginx container start under krikri).
   - Jinja test call with kwargs: `is version('2.11', '<=', strict=True)` parses as a garbage
