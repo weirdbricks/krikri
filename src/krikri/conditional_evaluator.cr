@@ -689,16 +689,27 @@ module Krikri
       # every run, leaving the variable genuinely undefined by the time
       # a template referenced it (a crash three tasks later, nowhere
       # near this one).
-      if condition.includes?(" is not undefined")
+      #
+      # A CALL on the test's left side (`lookup('vars', name) is
+      # defined`, round 5250000 sscheib.openwrt_extroot's assert loop)
+      # is not a variable-name existence check - gsub-ing the suffix off
+      # and treating the call text as a name answered False for every
+      # existing variable. A call-shaped operand falls through to the
+      # bare-call delegation further down instead, whose engine render
+      # answers the test on the call's real result (verified against
+      # ansible-playbook 2.19.11: an existing name -> True/task runs, a
+      # missing one -> False/task skips).
+      call_shaped_operand = condition.includes?("(")
+      if condition.includes?(" is not undefined") && !call_shaped_operand
         var_name = condition.gsub(" is not undefined", "").strip
         return defined?(vars, var_name)
-      elsif condition.includes?(" is undefined")
+      elsif condition.includes?(" is undefined") && !call_shaped_operand
         var_name = condition.gsub(" is undefined", "").strip
         return !defined?(vars, var_name)
-      elsif condition.includes?(" is defined")
+      elsif condition.includes?(" is defined") && !call_shaped_operand
         var_name = condition.gsub(" is defined", "").strip
         return defined?(vars, var_name)
-      elsif condition.includes?(" is not defined")
+      elsif condition.includes?(" is not defined") && !call_shaped_operand
         var_name = condition.gsub(" is not defined", "").strip
         return !defined?(vars, var_name)
       end
