@@ -743,9 +743,26 @@ module Krikri
       end
     end
 
+    # Raised when a loop_control.label fails to template: ansible-core
+    # fails the ITEM with "Failed to template loop_control.label: <err>"
+    # (round 5250000, veselahouba.openvpn's label `{{ openvpn_client.name
+    # }}` over a dict item) - the old silent fallback rendered the label
+    # as the "undefined" sentinel text and let the task sail through as
+    # ok/skipped where real fails it.
+    class LoopLabelError < Exception
+    end
+
     private def item_label_for(task : Task, item : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : String
       if label = task.loop_label
-        rendered = VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(label) rescue nil
+        # Strict, like real's templar: a missing attribute on the item
+        # ("object of type 'dict' has no attribute 'name'") or an
+        # undefined reference fails the label (and through the callers,
+        # the item) instead of silently rendering the sentinel text.
+        begin
+          rendered = VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(label, strict: true)
+        rescue ex : UndefinedVariableError | VariableSubstitutor::TemplateSyntaxError
+          raise LoopLabelError.new("Failed to template loop_control.label: #{ex.message}")
+        end
         return rendered if rendered
       end
       item_display(item)

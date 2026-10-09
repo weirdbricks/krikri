@@ -1193,7 +1193,22 @@ module Krikri
                          fact_hosts[idx] = item_exec_host if task.delegate_facts? && task.delegate_to
                          delegate_hosts[idx] = item_exec_host if task.delegate_to
 
-                         item_label = item_label_for(task, item, vars_context, host)
+                         # A label that fails to template turns the item into
+                         # a FAILED result (ansible-core templats the label
+                         # for the item's result line and surfaces the
+                         # failure there); the when: still evaluates first,
+                         # and a False conditional's skip context rides
+                         # along in the failed result (observed real shape:
+                         # `failed: [h] (item=None) => {..., skip_reason,
+                         # false_condition}`; round 5250000,
+                         # veselahouba.openvpn).
+                         label_error = nil.as(Krikri::TaskExecutor::LoopLabelError?)
+                         item_label = begin
+                           item_label_for(task, item, vars_context, host)
+                         rescue ex : Krikri::TaskExecutor::LoopLabelError
+                           label_error = ex
+                           "None"
+                         end
                          # A when:-false item defers its "skipping:" line to
                          # finish_looped_task like the batched path does: the
                          # executed items are displayed there too, so printing the
@@ -1206,9 +1221,15 @@ module Krikri
                              true # execute_task_once re-evaluates and turns the raise into a real failed result
                            end
                            unless passes
+                             if label_error
+                               next loop_label_failure_result(task, item, label_error, skip_condition: @last_false_condition)
+                             end
                              skipped_items[idx] = SkippedLoopItem.new(item_label, @last_false_condition)
                              next nil
                            end
+                         end
+                         if label_error
+                           next loop_label_failure_result(task, item, label_error)
                          end
                          result = if (until_condition = task.until_condition) && !resolve_task_check_mode(task, vars_context)
                                     # Ansible retries each loop item
@@ -1344,7 +1365,15 @@ module Krikri
         item_substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
         begin
-          item_lbl = item_label_for(task, item, vars_context, host)
+          item_lbl = begin
+            item_label_for(task, item, vars_context, host)
+          rescue ex : Krikri::TaskExecutor::LoopLabelError
+            # Same label-failure-to-failed-item conversion as the
+            # one-at-a-time path above; the batched path's when: runs
+            # after the label, so the skip context never merges here.
+            item_results[idx] = loop_label_failure_result(task, item, ex)
+            next
+          end
           unless when_passes?(task, vars_context, host, item_label: item_lbl, shared: item_substitutor, defer_stats: true, defer_display: true, item: item)
             # Defer the "skipping:" print to finish_looped_task so it lands
             # in iteration order with the executed items (Ansible's ordering);
@@ -1461,7 +1490,49 @@ module Krikri
       rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
         nil
       end
-      item_label_for(task, item, label_context, host)
+      begin
+        item_label_for(task, item, label_context, host)
+      rescue Krikri::TaskExecutor::LoopLabelError
+        # Re-raised label failures after execution fall back to real's
+        # own display label for a label that couldn't render: the item
+        # shows as `(item=None)` (round 5250000, veselahouba.openvpn).
+        "None"
+      end
+    end
+
+    # The failed result a loop_control.label templating failure becomes:
+    # `{"changed": false, "msg": "Failed to template loop_control.label:
+    # ..."}` plus the loop-var binding, and - when the item's own when:
+    # was False (real evaluates it before the label surfaces) - the skip
+    # context keys real's failed result carries. Keys in real's own
+    # sorted-dict order.
+    private def loop_label_failure_result(task : Task, item : JSON::Any, ex : Krikri::TaskExecutor::LoopLabelError, skip_condition : String? = nil) : JSON::Any
+      # Two observed real shapes: with the item's own when: False (real
+      # evaluates it before the label surfaces) the failed result carries
+      # the skip context and the loop-var binding, dumped single-line
+      # sorted; otherwise the result is just the msg (dumped pretty).
+      # "failed" and the marker ride along for the bookkeeping/display
+      # conventions and are stripped on display/registration like every
+      # _ansible_*/failed key.
+      hash = {
+        "failed" => JSON::Any.new(true),
+        # Label-failure marker: the failure happens before any module ran,
+        # so the aggregate fatal `{"msg": "One or more items failed"}`
+        # prints (finish_looped_task), but real's per-item line carries
+        # NO [ERROR] block - a different display shape from the when:-
+        # error marker this would otherwise share.
+        "_ansible_loop_label_failed" => JSON::Any.new(true),
+        "msg"    => JSON::Any.new(ex.message || "Failed to template loop_control.label"),
+      } of String => JSON::Any
+      if skip_condition
+        loop_var = task.loop_var || "item"
+        hash["ansible_loop_var"] = JSON::Any.new(loop_var)
+        hash["changed"] = JSON::Any.new(false)
+        hash["false_condition"] = JSON::Any.new(skip_condition)
+        hash["skip_reason"] = JSON::Any.new("Conditional result was False")
+        hash[loop_var] = item
+      end
+      JSON::Any.new(hash.keys.sort!.map { |key| {key, hash[key]} }.to_h)
     end
 
     # Shared aggregation for a completed loop's per-item results (used by
@@ -1561,7 +1632,8 @@ module Krikri
           any_changed ||= changed
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
-          any_when_failed ||= failed && result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
+          any_when_failed ||= failed && (result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true ||
+            result["_ansible_loop_label_failed"]?.try(&.as_bool) == true)
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil

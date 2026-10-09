@@ -448,7 +448,24 @@ module Krikri
         # Ansible's default callback runs its exception handling (the error
         # block) once per failed ITEM result, before that item's line;
         # ErrorBlock's Display-level dedup collapses identical repeats.
-        emit_task_error_block(source_task, result, msg)
+        # A loop_control.label failure's failed item is the exception:
+        # real prints only the failed line (full result JSON) - no error
+        # block (round 5250000, veselahouba.openvpn).
+        unless result["_ansible_loop_label_failed"]?.try(&.as_bool) == true
+          emit_task_error_block(source_task, result, msg)
+        end
+        if result["_ansible_loop_label_failed"]?.try(&.as_bool) == true
+          # Real's two label-failure shapes: the when:-False case dumps
+          # the full skip-context result single-line sorted, the plain
+          # case dumps just the msg pretty (live-verified, round 5250000
+          # veselahouba.openvpn + local repro).
+          if result["skip_reason"]?
+            puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(clean_for_display(result))}".colorize(:red)
+          else
+            puts "failed: [#{host_label}] (item=#{item_label}) => #{dump_pretty(JSON::Any.new({"msg" => result["msg"]? || JSON::Any.new(nil)} of String => JSON::Any))}".colorize(:red)
+          end
+          return
+        end
         if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
           # A when:-failed loop item is a task-level failure: real dumps
           # the msg alone, with no changed key and no loop-item keys
