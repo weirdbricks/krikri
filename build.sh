@@ -282,6 +282,26 @@ if [ "$STATIC" = true ]; then
 fi
 echo ""
 
+# fmod symbol-version shim (dynamic Linux builds only): a binary linked
+# on a glibc >= 2.38 host binds libm's fmod to the new fmod@GLIBC_2.38
+# node and refuses to start on older targets (the Ubuntu 22.04
+# benchmark-round hosts: "version `GLIBC_2.38' not found", round
+# 5230000). The reference comes from krikri-jinja's Python-parity float
+# `%`/floor-divide. scripts/fmod_compat.s defines fmod strongly and
+# tail-jumps to the GLIBC_2.2.5 node - which is also what Python on the
+# targets runs, so parity is preserved, not just compatibility. musl
+# static builds have no symbol versioning; macOS has no version nodes.
+LINK_SHIM_ARGS=""
+if [ "$STATIC" = false ] && [ "$IS_DARWIN" = false ] && [ -f "scripts/fmod_compat.s" ]; then
+    SHIM_OBJ="$PWD/$CACHE_ROOT/fmod_compat.o"
+    mkdir -p "$CACHE_ROOT"
+    if [ ! -f "$SHIM_OBJ" ] || [ "scripts/fmod_compat.s" -nt "$SHIM_OBJ" ]; then
+        cc -c scripts/fmod_compat.s -o "$SHIM_OBJ" || { echo -e "${RED}❌ Failed to assemble the fmod shim${NC}"; exit 1; }
+    fi
+    LINK_SHIM_ARGS="--link-flags=$SHIM_OBJ"
+    BUILD_FLAGS="$BUILD_FLAGS $LINK_SHIM_ARGS"
+fi
+
 # The flavor this run asks for, as recorded in the stamp file.
 STATIC_WORD="dynamic"
 WANT_STATIC_LINKAGE="no"
