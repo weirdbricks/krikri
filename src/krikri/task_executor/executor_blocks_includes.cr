@@ -2389,10 +2389,13 @@ module Krikri
         import_when_list = task.when_condition_list
         included_tasks.each do |included_task|
           included_task.when_condition = included_task.when_condition ? "(#{import_when}) and (#{included_task.when_condition})" : import_when
-          if import_when_list
-            own_items = included_task.when_condition_list || (included_task.when_condition ? [included_task.when_condition.as(String)] : [] of String)
-            included_task.when_condition_list = import_when_list + own_items
-          end
+          # Same always-list rule as the parser's import_tasks: path
+          # (round 5210000, clouddrove.ansible_role_common): import-when
+          # and child-when are separate strict conditionals in real, so
+          # the scalar+scalar case must not ride the joined string.
+          parent_items = import_when_list || [import_when]
+          own_items = included_task.when_condition_list || (included_task.when_condition ? [included_task.when_condition.as(String)] : [] of String)
+          included_task.when_condition_list = parent_items + own_items
         end
       end
 

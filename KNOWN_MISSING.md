@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1562`.**
+**Currently at `0.9.1563`.**
 
 ## Open gaps
 
@@ -51,6 +51,11 @@ defect moves down or gets deleted.
   never as an SDK APIError. The one DockerException this module can raise,
   resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
   unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
+- **Non-boolean conditional errors lack the value's `at '<file>:<line>:<col>'` origin suffix when
+  the value comes from a role's `defaults/`/`vars/` (or any file other than the playbook's own
+  play vars).** krikri annotates the playbook-vars case (decorate_conditional_value_origin);
+  real also annotates e.g. `defaults/main.yml:9:11` for a role-default string fed to a bare
+  `when: user`. Message-only: verdicts, skip/run/failed outcomes and recaps match.
 - **`version_type='pep440'` compares with LooseVersion semantics, not PEP-440.** The `version`
   test's `strict=True`/`version_type='strict'|'semver'|'semantic'` schemes (plus every
   validation wording, positional binding and the empty-operand checks) are byte-pinned against
@@ -69,9 +74,6 @@ defect moves down or gets deleted.
     the role changed the host's network state). The gatherer now annotates the failing section
     ("... (while gathering network)") so the next occurrence pinpoints itself; root cause pending a
     recurrence.
-  - Conditional-on-str split: both engines fail a `when:` whose result is a non-boolean string, but
-    krikri fails per loop item where real fails the whole task (clouddrove.ansible_role_common -
-    recap ok/skip counts differ by item).
   - Readiness timing: `wait_for` port 80 timed out at 305s on the cr host where real succeeded in
     27s (clouddrove.docker_nginx - the role's docker/nginx container start under krikri).
 

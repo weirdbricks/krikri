@@ -2479,11 +2479,25 @@ module Krikri
           # identically to the joined string; when both sides are
           # scalars, when_condition_list stays nil for both, same as
           # before.
-          if import_when_list || own_when_condition_list
-            parent_items = import_when_list || [import_when]
-            own_items = own_when_condition_list || (own_when_condition ? [own_when_condition.as(String)] : [] of String)
-            task.when_condition_list = parent_items + own_items
-          end
+          # ALWAYS a list, even scalar+scalar (round 5210000,
+          # clouddrove.ansible_role_common): real applies the import's
+          # when: and the child's own when: as two SEPARATE strict
+          # conditionals - each one type-checked for a boolean result on
+          # its own. The joined "(import) and (child)" string loses that
+          # per-clause boundary: `when: user` (a truthy string var) ANDed
+          # with the child's comparison short-circuits into a BOOLEAN
+          # result, so the apt task passed the non-bool check and ran
+          # where real failed the whole import at its first task -
+          # while the child-less git task (bare `user`) DID hit the
+          # strict check and failed per loop item. The old
+          # list-only-when-either-side-is-a-list guard kept scalar+
+          # scalar on the joined string for skip-line-shape reasons;
+          # the per-item list path renders the same skipping lines
+          # (last_false_condition is the failing clause itself) and is
+          # the semantically correct model.
+          parent_items = import_when_list || [import_when]
+          own_items = own_when_condition_list || (own_when_condition ? [own_when_condition.as(String)] : [] of String)
+          task.when_condition_list = parent_items + own_items
         end
         task.tags = (task.tags + import_tags).uniq
         # The import's tags are a STATIC context push (Ansible gives them
