@@ -128,6 +128,32 @@ describe Krikri::TaskBatcher do
     groups.map { |group| group.map(&.name) }.must_equal([["a"], ["b"], ["c"]])
   end
 
+  it "ends the run at a collection-qualified deploy_helper: task whose fact a later task reads bare" do
+    # Real bug found over SSH in mbaran0v.ansible_role_prometheus_redis_
+    # exporter (round 5250314): it runs deploy_helper: state=present
+    # then file: dest={{ deploy_helper.new_release_path }}. A batch
+    # group's args are all rendered up front, so the file: task's dest
+    # got rendered before deploy_helper: had run and failed with
+    # "'deploy_helper' is undefined" - local (connection=local) runs go
+    # solo so it only ever showed over SSH. deploy_helper: publishes
+    # ansible_facts.deploy_helper with no register: name, exactly like
+    # the getent/package_facts/service_facts/set_fact cases, but the
+    # whitelist only covered the gather-modules and missed it (and
+    # hostname:, mount_facts:, virt_net:, ec2_metadata_facts:,
+    # current_container_facts: too). Here the module name is
+    # collection-qualified to also pin the ends_with? matching for
+    # community.general.deploy_helper-style names.
+    a = task("a")
+    b = Krikri::Task.new("b", "community.general.deploy_helper")
+    c = task("c")
+    c.when_condition = "deploy_helper.new_release_path is defined"
+    tasks = [a, b, c]
+
+    groups = Krikri::TaskBatcher.plan(tasks)
+
+    groups.map { |group| group.map(&.name) }.must_equal([["a"], ["b"], ["c"]])
+  end
+
   it "ends the run at a block: task" do
     a = task("a")
     b = Krikri::Task.new("b", "_block")
