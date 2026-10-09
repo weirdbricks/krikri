@@ -3172,7 +3172,14 @@ module Krikri
         # so a role setting `environment: "{{ proxy_env }}"` never had
         # the variable substituted - and never failed the way
         # Ansible fails when that variable is undefined.
-        task.environment_raw = safe_yaml_to_string(env_raw)
+        # A bare `environment:` key with no value (lifeofguenter.nginx
+        # round 5250092's "Configure" task) must NOT be stringified into
+        # an empty environment_raw either: the executor's env finalization
+        # JSON.parses that raw value, so the empty string crashed with
+        # "unexpected token '<EOF>' at line 1, column 1" before the task
+        # ever ran. ansible-playbook 2.19.11 treats a null environment as
+        # "no environment" and runs the task normally.
+        task.environment_raw = safe_yaml_to_string(env_raw) unless env_raw.raw.nil?
       end
 
       # Parse tags

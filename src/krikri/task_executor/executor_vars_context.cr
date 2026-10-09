@@ -3058,6 +3058,14 @@ module Krikri
           substituted
         elsif raw = task.environment_raw
           stripped = raw.strip
+          # Ansible never fails a task over an environment value it cannot
+          # turn into a dict - it warns "could not parse environment value,
+          # skipping" and runs the task with no extra env (same reason the
+          # non-dict branch below returns nil). An empty raw used to reach
+          # JSON.parse("") and crash finalization with "unexpected token
+          # '<EOF>' at line 1, column 1" before the task ever ran
+          # (lifeofguenter.nginx round 5250092's bare `environment:` key).
+          return nil if stripped.empty?
           native = if stripped.starts_with?("{{") && stripped.ends_with?("}}") && stripped.scan("{{").size == 1
                      VariableSubstitutor::VariableLookup.new(substitutor.vars).resolve(stripped[2..-3].strip)
                    end
