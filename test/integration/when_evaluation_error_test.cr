@@ -189,4 +189,119 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Same lineage decoration for the other defining layers, each
+  # live-verified against 2.19.11 (round 5210000's ktechmidas.openvpn
+  # bare `when:` on a role default was the reported shape): a role
+  # defaults/vars file reports the VALUE token in that file; a set_fact
+  # value reports the value token in the set_fact task's own file; a
+  # registered result or gathered fact has no defining site and reports
+  # the when: token itself; a CLI -e value reports the option label in
+  # DOUBLE quotes with no position.
+  it "labels a role-default-sourced conditional value with its role-file position" do
+    dir = File.tempname("when-role-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), "user: \"hello\"\n")
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: bare var conditional
+        ansible.builtin.debug:
+          msg: hi
+        when: user
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    expected = "was derived from value of type 'str' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:7'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "labels a set_fact-sourced conditional value with the set_fact value's position" do
+    playbook = File.tempname("when-setfact-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - ansible.builtin.set_fact:
+              sfv: notbool
+          - name: set_fact conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: sfv
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # The value token's position (`sfv: notbool`, value at col 14) -
+    # live-verified against 2.19.11 on the identical file.
+    output.to_s.must_include("was derived from value of type 'str' at '#{File.expand_path(playbook)}:6:14'", output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "labels a registered-result conditional value with the when: token position" do
+    playbook = File.tempname("when-registered-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: make reg
+            ansible.builtin.command: "true"
+            register: regout
+          - name: reg conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: regout
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # A registered result has no defining site; real reports the when:
+    # token itself (`when: regout`, col 13), type 'dict' - live-verified
+    # against 2.19.11 on the identical file.
+    output.to_s.must_include("was derived from value of type 'dict' at '#{File.expand_path(playbook)}:11:13'", output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "labels a CLI -e conditional value with the option label" do
+    playbook = File.tempname("when-ivar-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: -e conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: ev
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, "-e", "ev=notbool", playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    output.to_s.must_include(%(was derived from value of type 'str' at "<CLI option '-e'>".), output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end

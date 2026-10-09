@@ -14,7 +14,15 @@ module Krikri
     # values - registered results, facts, set_fact - and definitions no
     # source map covers): the warning block for such a context is then
     # omitted, never mislabeled.
-    private def var_origin_for(task : Task, host : Host, name : String) : VarOrigin?
+    #
+    # runtime_marker (used only by the conditional-value origin
+    # decoration): the runtime layers report RuntimeVarOrigin instead of
+    # nil - real's data lineage for those values labels the conditional
+    # error with the when: token itself (live-verified 2.19.11), which
+    # the caller resolves from the marker - and a set_fact value rides
+    # its recorded @set_fact_origins entry. The name-template warning
+    # callers keep the default (nil), so their behavior is untouched.
+    private def var_origin_for(task : Task, host : Host, name : String, runtime_marker : Bool = false) : VarOrigin?
       winner : VarOrigin? = nil
       have = false
       set = ->(origin : VarOrigin?) do
@@ -32,10 +40,10 @@ module Krikri
       end
       registered = @registered_vars[host.name]
       if registered.has_key?(name)
-        set.call(nil)
+        set.call(runtime_marker ? RuntimeVarOrigin.new : nil)
       end
       if !have && @facts[host.name].has_key?(name)
-        set.call(nil)
+        set.call(runtime_marker ? RuntimeVarOrigin.new : nil)
       end
 
       # The two fill-only defaults layers: task.role_defaults applied
@@ -74,7 +82,10 @@ module Krikri
       # live-verified vs 2.19.11) and an `-e @file` value (origin: the
       # file's value position).
       if base_context_b_for(host).has_key?(name)
-        set.call(nil)
+        # A set_fact value carries its own origin (the value token in the
+        # set_fact task's source file); the other baseB members with no
+        # recorded origin (failure_vars) get the runtime marker.
+        set.call(@set_fact_origins[host.name]?.try(&.[name]?) || (runtime_marker ? RuntimeVarOrigin.new : nil))
       end
       if (iv = @included_vars[host.name]?) && iv.has_key?(name)
         set.call(@included_var_origins[host.name]?.try(&.[name]?))
@@ -2790,19 +2801,49 @@ module Krikri
     #   "Conditional result (True) was derived from value of type 'str'
     #   at '/path/playbook.yml:5:12'. Conditionals must have a boolean
     #   result."
-    # Full lineage (set_fact/registered/inventory/hostvars sources,
-    # compound conditions) needs origin tracking through the whole
-    # templating pipeline; this covers the common narrow shape: a `when:`
-    # that is a single bare variable defined in the playbook file's own
-    # play-level `vars:`. The definition position comes from
-    # YamlSourceMap (the same libyaml pass that labels task origins);
-    # when the variable isn't found there the message is returned
+    # With a host in scope the position comes from var_origin_for - the
+    # same layer-resolution the template-error warning block already
+    # uses, so a role defaults/vars definition (round 5210000,
+    # ktechmidas.openvpn's `when:` on a role default) is labeled just
+    # like a play-var one, and a value whose winning layer has no file
+    # origin (registered result, fact, set_fact, CLI -e, inventory line)
+    # stays undecorated rather than mislabeled with a file position real
+    # wouldn't print. The host-less fallback keeps the original narrow
+    # shape (the playbook file's own play vars, via YamlSourceMap).
+    # Full lineage (compound conditions, deeper chains) is still not
+    # tracked; when the variable isn't found the message is returned
     # unchanged, never guessed at.
-    private def decorate_conditional_value_origin(task : Task, msg : String) : String
+    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
-      return msg if msg.includes?(" at '")
+      return msg if msg.includes?(" at '") || msg.includes?(" at \"")
       raw = task.when_condition.to_s.strip
       return msg unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      if h = host
+        origin = var_origin_for(task, h, raw, runtime_marker: true)
+        case origin
+        when FileVarOrigin
+          return msg if origin.column <= 0
+          return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
+            "was derived from value of type '#{$1}' at '#{origin.path}:#{origin.line}:#{origin.column}'"
+          end
+        when TextVarOrigin
+          # Real's CLI-extra-var lineage: `at "<CLI option '-e'>"` -
+          # double quotes, no position (live-verified 2.19.11).
+          return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
+            "was derived from value of type '#{$1}' at \"#{origin.label}\""
+          end
+        when RuntimeVarOrigin
+          # Registered result or gathered fact: real's lineage labels
+          # the conditional's own when: token position (live-verified
+          # 2.19.11).
+          return msg unless (tok = when_token_position(task))
+          return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
+            "was derived from value of type '#{$1}' at '#{tok[0]}:#{tok[1]}:#{tok[2]}'"
+          end
+        else
+          return msg
+        end
+      end
       path = @playbook_file
       return msg unless path && File.file?(path)
       return msg unless pos = bare_var_definition_pos(path, task, raw)
@@ -2830,6 +2871,24 @@ module Krikri
       end
       return nil unless play_idx
       map.at?("#{play_idx}/vars/#{name}")
+    end
+
+    # The when: value token's own position in the task's source file -
+    # the position real's data lineage reports for a RUNTIME-sourced
+    # value (registered result, gathered fact; live-verified 2.19.11).
+    # Same best-effort name-line location emit_when_error_chain uses.
+    private def when_token_position(task : Task) : {String, Int32, Int32}?
+      path = task.source_file || @playbook_file
+      return nil unless path && File.file?(path)
+      lines = File.read_lines(path)
+      name_idx = if (located = locate_name_line(lines, task))
+                   located[0]
+                 else
+                   return nil unless task.source_line > 0 && task.source_line <= lines.size
+                   task.source_line - 1
+                 end
+      locate_conditional_origin(lines, name_idx, "when", task.when_condition.to_s)
+        .try { |(idx, col)| {File.expand_path(path), idx + 1, col} }
     end
 
     # Whether a WhenEvaluationError message is a conditional-EVALUATION
@@ -2868,8 +2927,8 @@ module Krikri
     # located by its `- name:` line (same approach as
     # emit_finalization_error_block); when either origin can't be located
     # (role/include-sourced task, folded when: list), no block is printed.
-    private def emit_when_error_chain(task : Task, msg : String) : Nil
-      msg = decorate_conditional_value_origin(task, msg)
+    private def emit_when_error_chain(task : Task, msg : String, host : Host? = nil) : Nil
+      msg = decorate_conditional_value_origin(task, msg, host)
       inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
       return unless conditional_evaluation_failure?(msg)
       path = task.source_file || @playbook_file

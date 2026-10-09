@@ -319,7 +319,7 @@ module Krikri
     end
 
     # Show execution recap
-    private def merge_ansible_facts(host : Host, result : JSON::Any, high_precedence : Bool = false) : Nil
+    private def merge_ansible_facts(host : Host, result : JSON::Any, high_precedence : Bool = false, task : Task? = nil) : Nil
       return unless ansible_facts = result["ansible_facts"]?
       return unless facts_hash = ansible_facts.as_h?
 
@@ -333,10 +333,21 @@ module Krikri
       # first time anything delegated a fact to it.
       @facts[host.name] ||= {} of String => JSON::Any
       @set_facts[host.name] ||= {} of String => JSON::Any
+      @set_fact_origins[host.name] ||= {} of String => VarOrigin
 
       facts_hash.each do |key, value|
         @facts[host.name][key] = value
-        @set_facts[host.name][key] = value if high_precedence
+        if high_precedence
+          @set_facts[host.name][key] = value
+          # The value token's position in the set_fact task's own source
+          # file - real's data lineage for a set_fact-sourced value
+          # points there (unlike a gathered fact or registered result,
+          # which get the conditional's own token). A key the scan cannot
+          # locate simply gets no origin.
+          if task && (origin = set_fact_value_origin(task, key))
+            @set_fact_origins[host.name][key] = origin
+          end
+        end
         # Write-time unsafe marking (the per-task context build marks these
         # stores too, but a host that never executes again would otherwise
         # never get its write marked - see VarSubstitutor.
@@ -356,5 +367,45 @@ module Krikri
     # that exists on the *controller* - or none at all when nothing
     # matched. Candidates are templated, so they can only be resolved
     # here, not at parse time.
+
+    # The VALUE token's position for a set_fact mapping key named `key`:
+    # the first character after the key's colon, quote included - the
+    # position real's data lineage reports for a set_fact-sourced value
+    # (live-verified 2.19.11: `user: setfact_value` reports the value's
+    # column, not the key's). Same best-effort line scan as
+    # ResultDisplay's set_fact_key_origin (quoted keys carry their colon
+    # after the closing quote; only a whitespace-prefixed mapping key
+    # matches), but pointing at the value like task_param_value_origin.
+    private def set_fact_value_origin(task : Task, key : String) : FileVarOrigin?
+      path = task.source_file
+      return nil unless path && task.source_line > 0 && File.file?(path)
+
+      lines = File.read_lines(path)
+      needles = {"\"#{key}\":", "'#{key}':", "#{key}:"}
+      ((task.source_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        at = needles.compact_map { |needle| line.index(needle) }.min?
+        next unless at
+        # only a mapping key: nothing but whitespace before it
+        next unless line[0...at].strip.empty?
+        col = at + line[at..].index!(':') + 1
+        while col < line.size && line[col] == ' '
+          col += 1
+        end
+        if col < line.size && line[col] != '\n'
+          return FileVarOrigin.new(File.expand_path(path), idx + 1, col + 1)
+        end
+        # Folded form (`key:` with the value on the next line): the first
+        # non-blank character of that line.
+        ((idx + 1)...lines.size).each do |value_idx|
+          value_line = lines[value_idx]
+          stripped = value_line.lstrip
+          next if stripped.empty?
+          return FileVarOrigin.new(File.expand_path(path), value_idx + 1, value_line.size - stripped.size + 1)
+        end
+        return nil
+      end
+      nil
+    end
   end
 end

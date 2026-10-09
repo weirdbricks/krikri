@@ -1344,7 +1344,7 @@ module Krikri
           # a real failed result here (not a silent skip) lets
           # finish_looped_task's aggregation correctly count this as
           # failed=1, not skipped=1.
-          item_results[idx] = when_error_result(ex, task)
+          item_results[idx] = when_error_result(ex, task, host)
           next
         end
 
@@ -1540,7 +1540,7 @@ module Krikri
           puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
         else
           executed_count += 1
-          merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"))
+          merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"), task)
 
           changed = result["changed"]?.try(&.as_bool) || false
           failed = Krikri.result_failed_flag(result)

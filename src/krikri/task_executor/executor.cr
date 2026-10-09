@@ -119,6 +119,14 @@ module Krikri
     # ansible-playbook never does (a play var always wins over
     # ordinary gathered facts).
     @set_facts : Hash(String, Hash(String, JSON::Any))
+    # Per-host origins (see VarOrigin) of the values @set_facts holds:
+    # the set_fact mapping key's VALUE token in the set_fact task's own
+    # source file - real's data lineage labels a non-boolean conditional
+    # error with that position (live-verified 2.19.11: a set_fact var fed
+    # to a bare `when:` reports the value's file:line:col, unlike a
+    # gathered fact or registered result, which report the when: token
+    # itself). Recorded at merge time; cleared wherever @set_facts is.
+    @set_fact_origins : Hash(String, Hash(String, VarOrigin))
     # The "ansible_facts.*" dict form of @facts[host.name] (unprefixed
     # keys - `os_family` alongside the flat `ansible_os_family`), memoized
     # per host so build_vars_context doesn't re-walk every fact on every
@@ -465,6 +473,7 @@ module Krikri
       # default), this is per-play exactly as before (specs, ad-hoc use).
       @facts = fact_store || Hash(String, Hash(String, JSON::Any)).new
       @set_facts = set_fact_store || Hash(String, Hash(String, JSON::Any)).new
+      @set_fact_origins = Hash(String, Hash(String, VarOrigin)).new
       # Registered vars share the run the same way (Ansible keeps a
       # register: result visible to every later play, directly and via
       # hostvars).
@@ -503,6 +512,7 @@ module Krikri
         @facts[host.name] ||= {} of String => JSON::Any
         # ||= for set_facts too - same reasoning, same run scope (Ansible keeps a play-1 set_fact above play vars in play 2).
         @set_facts[host.name] ||= {} of String => JSON::Any
+        @set_fact_origins[host.name] ||= {} of String => VarOrigin
       end
 
       # See flatten_handler_blocks's own comment: a block:-wrapped

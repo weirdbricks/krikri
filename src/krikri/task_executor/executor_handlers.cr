@@ -309,7 +309,7 @@ module Krikri
       end
 
       result = if ex = when_error
-                 when_error_result(ex, handler)
+                 when_error_result(ex, handler, host)
                elsif items = loop_items
                  if handler.include_tasks?
                    execute_handler_include_loop(handler, host, vars_context, items)
@@ -331,7 +331,7 @@ module Krikri
       # is a no-op for every non-set_fact module result (no
       # "ansible_facts" key), so this is safe unconditionally; looped
       # handlers merge per item inside #execute_handler_loop.
-      merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"))
+      merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"), handler)
 
       # A handler can itself notify: further handlers (robertdebock.
       # auditd's own "Run augenrules" -> notify: "Load rules" ->
@@ -431,7 +431,7 @@ module Krikri
         vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
 
         result = execute_handler_plugin_once(handler, host, vars_context)
-        merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"))
+        merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"), handler)
         next if result["skipped"]?.try(&.as_bool)
 
         executed_count += 1
@@ -715,7 +715,7 @@ module Krikri
           begin
             reached = evaluate_when_items(handler, vars_context, host)
           rescue ex : WhenEvaluationError
-            return when_error_result(ex, handler)
+            return when_error_result(ex, handler, host)
           end
         end
         reachable_unavailable_modules << module_name if reached
@@ -756,7 +756,7 @@ module Krikri
           # handler) exactly like the substitute_task_params rescue just
           # below - same shape when_error_result already builds for
           # execute_task_once.
-          return when_error_result(ex, handler)
+          return when_error_result(ex, handler, host)
         end
 
         unless when_result

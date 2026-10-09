@@ -942,6 +942,7 @@ module Krikri
         # getting injected at the high tier after the clear).
         @facts[host.name].clear
         @set_facts[host.name].clear
+        @set_fact_origins[host.name]?.try(&.clear)
         @facts_dict_cache.delete(host.name)
         @hv_generation += 1
       end

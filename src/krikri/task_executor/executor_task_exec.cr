@@ -613,7 +613,7 @@ module Krikri
     private def finish_single_task(task : Task, host : Host, result : JSON::Any, fact_host : Host = host,
                                    vars_context : Hash(String, JSON::Any)? = nil, exec_host : Host? = nil) : Nil
       result = debug_if_requested(task, host, result)
-      merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"))
+      merge_ansible_facts(fact_host, result, task.module_name.ends_with?("set_fact"), task)
 
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?

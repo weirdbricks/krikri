@@ -71,4 +71,19 @@ module Krikri
       "#{label}\u0000#{text}"
     end
   end
+
+  # A value that exists only at runtime - a registered result or a
+  # gathered fact. Real's data lineage has no defining site for these and
+  # labels a non-boolean conditional error with the conditional
+  # expression's OWN token position instead (live-verified 2.19.11:
+  # `when: regout` on a registered dict and `when: ansible_distribution`
+  # on a gathered fact both report the when: value's file:line:col, not
+  # any defining site). Not emitted to the name-template warning-block
+  # callers of var_origin_for - those keep receiving nil for runtime
+  # layers, exactly as before this class existed.
+  class RuntimeVarOrigin < VarOrigin
+    def group_key : String
+      "runtime"
+    end
+  end
 end
