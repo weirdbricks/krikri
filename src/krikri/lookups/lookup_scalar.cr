@@ -400,7 +400,15 @@ module Krikri
         return "undefined" unless var_name
         resolved = @lookup.resolve(var_name)
         if resolved
-          @lookup.format_value(resolved)
+          # Ansible's vars lookup runs the found value through the templar
+          # before returning it, so a lazily-templated role var
+          # (`vars/main.yml: "_quiet: '{{ ext_quiet | default(...) }}'"`)
+          # renders AT the lookup instead of surfacing as raw `{{ }}` text -
+          # the direct `{{ _quiet }}` reference path already re-rendered,
+          # only the by-name fetch skipped it (round 5250000,
+          # sscheib.openwrt_extroot's assert loop validating
+          # `lookup('ansible.builtin.vars', '_ext_quiet_assert')`).
+          @lookup.format_value(@lookup.rerender_var_value(resolved))
         elsif default_kwarg = kwargs.find(&.strip.downcase.starts_with?("default="))
           # `lookup('vars', key, default=...)` - the real plugin's own
           # escape hatch for a missing key: an explicit default is

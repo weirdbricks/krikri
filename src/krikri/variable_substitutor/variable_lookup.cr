@@ -81,6 +81,17 @@ module Krikri
       # by FilterEngine so a filter chain (`{{ x | sort | join(',') }}`) can
       # carry real array/hash structure from one filter to the next instead
       # of collapsing to a string after every single filter.
+      # Public re-render entry for consumers that fetch a value by NAME at
+      # runtime (the vars lookup plugin) rather than through a written
+      # `{{ }}` reference: Ansible's vars lookup runs the found value
+      # through the templar, so a lazily-templated role var renders at the
+      # lookup instead of surfacing as raw `{{ }}` text (round 5250000,
+      # sscheib.openwrt_extroot's assert loop validating
+      # `lookup('ansible.builtin.vars', '_ext_quiet_assert')`).
+      def rerender_var_value(value : JSON::Any) : JSON::Any
+        rerender_if_templated(value)
+      end
+
       def resolve(expr : String) : JSON::Any?
         saved = @origin
         @origin = nil
