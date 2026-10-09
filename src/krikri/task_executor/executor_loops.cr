@@ -539,7 +539,21 @@ module Krikri
         end
         result = expression_evaluator_for(vars_context).evaluate(bare)
         parsed = parse_list_result(result, vars_context)
-        return nil if parsed.nil?
+        # A dict source is legal subelements input too - real's subelements
+        # lookup accepts "a dict or a list" and iterates the dict's VALUES -
+        # and an empty dict means zero iterations (correctly `skipped:`),
+        # not a run-once with `item` unbound ("'item' is undefined"). Found
+        # via veselahouba.ufw's `with_subelements: ["{{ vars[_ufw_multi_
+        # rule] }}", "from_ips"]` over its empty-dict default
+        # `ufw_multi_ip_rules: {}` (round 5250000); parse_list_result only
+        # sees lists, so the dict shape fell all the way out of the loop-
+        # resolver chain.
+        if parsed.nil?
+          if (dict = (JSON.parse(result.strip) rescue nil)) && (h = dict.as_h?)
+            return LoopResolver.with_subelements(h.values, key)
+          end
+          return nil
+        end
         return LoopResolver.with_subelements(parsed, key)
       end
 
