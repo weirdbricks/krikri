@@ -330,15 +330,15 @@ module Krikri
       # the user, the clock and the environment. This is what
       # Ansible's "min" subset covers.
       if families.includes?("min")
-        gather_hostname(facts)
-        gather_os_facts(facts)
-        gather_python_facts(facts, remote_connection)
-        gather_user_facts(facts)
-        gather_date_time_facts(facts)
-        gather_environment_facts(facts)
-        gather_cmdline_facts(facts)
-        gather_dns_facts(facts)
-        gather_system_capabilities_facts(facts)
+        gather_section(facts, "hostname") { gather_hostname(facts) }
+        gather_section(facts, "os_facts") { gather_os_facts(facts) }
+        gather_section(facts, "python_facts") { gather_python_facts(facts, remote_connection) }
+        gather_section(facts, "user_facts") { gather_user_facts(facts) }
+        gather_section(facts, "date_time_facts") { gather_date_time_facts(facts) }
+        gather_section(facts, "environment_facts") { gather_environment_facts(facts) }
+        gather_section(facts, "cmdline_facts") { gather_cmdline_facts(facts) }
+        gather_section(facts, "dns_facts") { gather_dns_facts(facts) }
+        gather_section(facts, "system_capabilities_facts") { gather_system_capabilities_facts(facts) }
       end
 
       # ansible_local - custom *.fact files under fact_path. Part of
@@ -352,7 +352,7 @@ module Krikri
       # collector takes no gather_timeout (only hardware/mounts do, via
       # the Ansible module's GATHER_TIMEOUT reads and
       # timeout decorator), so neither does this.
-      gather_network_facts(facts) if families.includes?("network")
+      gather_section(facts, "network") { gather_network_facts(facts) } if families.includes?("network")
       gather_family_timed(facts, "hardware", gather_timeout) { |scratch| gather_hardware_facts(scratch) } if families.includes?("hardware")
       # mounts rides along with hardware: Ansible's LinuxHardware
       # collector gathers mount facts itself, so `gather_subset:
@@ -1035,6 +1035,20 @@ module Krikri
       end
 
       nil
+    end
+
+
+    # Section-annotation wrapper: a crash inside one gatherer's parsing
+    # (e.g. the round-5210000 ktechmidas.openvpn warm run's bare
+    # "Index out of bounds" from somewhere in the network section after
+    # the role's own tun interface/service state changed the host)
+    # surfaces as "Facts gathering failed: <msg>" with no hint which
+    # section died. Annotate the message with the section name so the
+    # next occurrence pinpoints itself.
+    private def gather_section(facts, section : String, &) : Nil
+      yield
+    rescue ex
+      raise Exception.new("#{ex.message} (while gathering #{section})", ex)
     end
 
     def gather_network_facts(facts)
