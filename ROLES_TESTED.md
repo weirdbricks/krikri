@@ -338,6 +338,372 @@ module cost per task on every run regardless of whether anything changes;
 krikri-playbook's compiled-binary-plus-persistent-connection model is why
 its warm numbers drop so far below its own cold.
 
+## Round 5250000-5250356 (357 new Galaxy top-download roles, 0.9.1567, Atlantic/Ubuntu 22.04)
+
+288 CLEAN, 19 DIVERGENT, 50 Galaxy-missing. Seven of the divergences were fixed and
+live-confirmed (0.9.1568-0.9.1576, confirm rounds 5260000/5270000); the rest are
+dispositioned per row below.
+
+| Role | Status |
+|---|---|
+| `aaronpederson_fish` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `algosec_algosec` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `Amygos.nethserver_accounts_provider` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.8s vs cr 4.0s; warm py 4.7s vs cr 0.3s. |
+| `Amygos.nethserver_install_packages` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.7s vs cr 3.4s; warm py 3.7s vs cr 0.3s. |
+| `andrewrothstein.elasticsearch` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 51.0s vs cr 25.0s; warm py 12.2s vs cr 0.7s. |
+| `andrewrothstein.fluxctl` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 9.8s vs cr 5.9s; warm py 6.0s vs cr 0.9s. |
+| `andrewrothstein.gcloud` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 20.7s vs cr 17.5s; warm py 7.4s vs cr 0.4s. |
+| `andrewrothstein.hub` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 14.1s vs cr 3.8s; warm py 18.1s vs cr 0.5s. |
+| `andrewrothstein.java-build-tools` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `andrewrothstein.kubesec` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 25.9s vs cr 17.7s; warm py 6.0s vs cr 0.4s. |
+| `andrewrothstein.prometheus_jmx_exporter` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 9.6s vs cr 4.5s; warm py 6.9s vs cr 0.5s. |
+| `andrewrothstein.step` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 28.0s vs cr 18.0s; warm py 8.2s vs cr 0.7s. |
+| `ansible-lockdown_windows_2016_cis` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `ansiblebit.awscli` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `apkawa.nfs` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `apolloclark.elasticsearch` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 64.9s vs cr 42.8s; warm py 16.0s vs cr 4.4s. |
+| `armov.trellis-purge-wp-rocket-cache-during-deploy_custom` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.3s vs cr 3.7s; warm py 2.8s vs cr 0.4s. |
+| `arruko.metricbeat` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 63.9s vs cr 42.5s; warm py 19.1s vs cr 5.2s. |
+| `AsavarTzeth.users` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `AttestationLegale.apt-sources` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.0s vs cr 3.8s; warm py 4.2s vs cr 0.3s. |
+| `AustinCloudGuru.codedeploy-agent` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 31.6s vs cr 21.6s; warm py 12.9s vs cr 0.6s. |
+| `avelis_dome9` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `ayltai.adoptopenjdk` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.5s vs cr 8.2s; warm py 8.9s vs cr 4.1s. |
+| `azavea.celery` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.2s vs cr 5.3s; warm py 7.8s vs cr 1.1s. |
+| `azavea.mercurial` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.5s vs cr 7.0s; warm py 8.4s vs cr 2.3s. |
+| `azavea.spark` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 46.0s vs cr 42.9s; warm py 9.0s vs cr 2.0s. |
+| `basho-labs_riak-kv` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `bassinator.autoarchive` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 13.8s vs cr 4.3s; warm py 10.9s vs cr 0.5s. |
+| `bassinator.simplehttp` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.2s vs cr 4.3s; warm py 4.3s vs cr 0.4s. |
+| `bassinator.tigerjython` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 43.9s vs cr 37.7s; warm py 10.0s vs cr 1.4s. |
+| `baztian.joplin` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5270002 CLEAN). fixed (0.9.1574: state=link's relative src is existence-checked against the DEST's directory like real, not the module process's cwd). Times: cold py 22.9s vs cr 10.0s; warm py 12.7s vs cr 1.1s |
+| `bdellegrazie.jmx_exporter` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 21.3s vs cr 16.1s; warm py 7.3s vs cr 0.6s. |
+| `beetboxvm.selenium` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 40.2s vs cr 25.3s; warm py 15.5s vs cr 1.3s. |
+| `bingo_soft.rabbitmq` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `bodsch.influxdb` | ⚠️ Divergent by design (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). every bodsch.* role diverges by design: real hard-fails on the unresolvable bodsch.core/bodsch.systemd collection modules, krikri skips unported collection modules (deliberate limit). Times: cold py 7.9s vs cr 5.5s; warm py 5.9s vs cr 0.5s |
+| `bradfordwagner.wiz` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 30.2s vs cr 25.1s; warm py 8.5s vs cr 1.3s. |
+| `calvinbui.ansible_nfs_client` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 28.6s vs cr 23.0s; warm py 9.2s vs cr 0.6s. |
+| `calvinbui.ansible_traefik` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 15.1s vs cr 3.6s; warm py 11.3s vs cr 0.4s. |
+| `cans.package-install` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5260000 CLEAN). fixed (0.9.1568: a trailing comma in a list literal (`['Debian', 'Ubuntu', ]`) evaluated an empty element as the variable '' and failed the whole conditional). Times: cold py 6.2s vs cr 5.0s; warm py 3.0s vs cr 0.4s |
+| `capitanh.oraclexe-ansible-role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.9s vs cr 4.6s; warm py 3.4s vs cr 0.4s. |
+| `caseraw.ansible_role_ad_membership` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.7s vs cr 4.6s; warm py 8.5s vs cr 1.8s. |
+| `cdelgehier.XtraDB-Cluster` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 82.1s vs cr 80.0s; warm py 73.4s vs cr 72.6s. |
+| `cevich.touchstone` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.4s vs cr 4.1s; warm py 3.4s vs cr 0.4s. |
+| `chadek.ufw` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 39.6s vs cr 22.1s; warm py 20.0s vs cr 5.8s. |
+| `chris1984.motd` | ⚠️ Both fail differently (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). real 2.19.11 itself crashes on the role's motd_content default (`object of type 'dict' has no attribute 'iteritems'` - an ansible-core-side failure); krikri succeeds. Parity would mean emulating real's own crash; not yet dispositioned. Times: cold py 4.3s vs cr 3.8s; warm py 3.1s vs cr 0.4s |
+| `chubchubsancho.pi_hole` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 52.6s vs cr 38.0s; warm py 18.6s vs cr 4.7s. |
+| `cimnine.jitsi_meet` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 69.3s vs cr 52.4s; warm py 18.4s vs cr 9.9s. |
+| `City-of-Bloomington.winbind` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 428.5s vs cr 413.0s; warm py 30.6s vs cr 13.6s. |
+| `cloudlabsinfra_etcd_cluster` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `cloudlabsinfra_etcd_cluster_certificates` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `codecap.kubectl` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.6s vs cr 0.0s. |
+| `CyVerse-Ansible.ansible_jupyterhub_docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `damex_package` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `danbohea.cask-app` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.2s vs cr 4.0s; warm py 4.8s vs cr 0.6s. |
+| `darexsu.molecule` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.1s vs cr 4.5s; warm py 2.8s vs cr 0.4s. |
+| `davidalger.multi_redis` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.4s vs cr 4.5s; warm py 5.2s vs cr 1.3s. |
+| `dblenkus.postfix-aws` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.4s vs cr 3.5s; warm py 2.8s vs cr 0.3s. |
+| `deimosfr.coreos-ansible` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `delphix.package-caching-proxy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `devoperate_gcloud` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `devoperate_kubectl` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `dgnest.cloudflare` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `dhellmann.python-dev` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=4 cr=4, warm py=4 cr=4. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `dmanto.plenv-and-carton` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `dottgonzo.ansible_ubuntu_uk8s` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.6s vs cr 7.0s; warm py 5.4s vs cr 1.8s. |
+| `dudefellah_zookeeper` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `dwagelaar.auditd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 32.4s vs cr 20.3s; warm py 11.6s vs cr 0.4s. |
+| `dzangolab.awscli2` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `ElaoInfra.git` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `ElaoInfra.ohmyzsh` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `ElaoInfra.supervisor` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `ElaoInfra.timezone` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `ElaoInfra.zsh` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `entercloudsuite.backup` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `escalate.cmdline` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.3s vs cr 5.0s; warm py 4.5s vs cr 0.4s. |
+| `escalate.loki` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 15.6s vs cr 4.6s; warm py 13.6s vs cr 0.6s. |
+| `escalate.promtail` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 16.6s vs cr 5.2s; warm py 14.1s vs cr 0.4s. |
+| `escalate.remote_backup` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 10.1s vs cr 4.6s; warm py 6.8s vs cr 0.6s. |
+| `escalate.smb_mount` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 21.3s vs cr 18.1s; warm py 8.5s vs cr 3.7s. |
+| `exphost.mysql` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5270003 CLEAN). fixed (0.9.1575: block:/rescue:/always: children inherited a hardcoded ignore_errors=true - the create_user block's `ignore_errors: "{{ ignore_erros|default(False) }}"` (resolved False) silently ignored member failures and kept executing tasks on a halted host). Times: cold py 4.1s vs cr 3.7s; warm py 2.9s vs cr 0.4s |
+| `f500.mariadb55` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 55.4s vs cr 53.3s; warm py 53.7s vs cr 46.5s. |
+| `f500.php` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.2s vs cr 3.9s; warm py 3.0s vs cr 0.3s. |
+| `f500.php7` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 72.7s vs cr 42.0s; warm py 21.9s vs cr 1.3s. |
+| `f500.php_cli` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 3.6s vs cr 3.6s; warm py 2.8s vs cr 0.3s. |
+| `f5devcentral.register_dcd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.7s vs cr 3.5s; warm py 3.2s vs cr 0.5s. |
+| `FGtatsuro_anyenv` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `FGtatsuro_packer` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `FGtatsuro_ruby` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `fiaasco.chrony` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 54.8s vs cr 40.1s; warm py 22.9s vs cr 4.6s. |
+| `fiaasco.locale` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.1s vs cr 6.0s; warm py 8.0s vs cr 1.1s. |
+| `fourforbusiness.dev-lamp` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 96.9s vs cr 66.3s; warm py 24.1s vs cr 0.9s. |
+| `frank6866_cobbler` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `freehck.docker_registry` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.6s vs cr 0.0s. |
+| `freehck.gitlab_runner` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.9s vs cr 3.2s; warm py 8.3s vs cr 0.5s. |
+| `galaxyproject.galaxy-tools` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.8s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `gbraad.docker-registry` | ⚠️ Both fail differently (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). not a krikri bug: real refuses the whole playbook rc=4 (`couldn't resolve module/action 'docker'` - the host has no community.docker collection) while krikri implements the module natively and continues (same class as the round-2300000 community.crypto precedent). Times: cold py 0.5s vs cr 4.6s; warm py 0.5s vs cr 0.5s |
+| `gbraad.kubernetes-client` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.0s vs cr 3.5s; warm py 6.2s vs cr 0.3s. |
+| `gbraad.kubernetes-node` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `gcoop-libre.apt_pin` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.1s vs cr 3.4s; warm py 3.6s vs cr 0.4s. |
+| `geerlingguy_awx-container` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `gepaplexx_haproxy` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `gepaplexx_tftp` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `gepaplexx_unattended_upgrades` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `girder.girder-worker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `grofers.rds-alarms` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.7s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `grycap.torque` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 33.7s vs cr 18.6s; warm py 11.7s vs cr 0.7s. |
+| `gzm55.require_local_command` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 6.0s vs cr 4.8s; warm py 3.2s vs cr 0.5s. |
+| `hadrienpatte.base` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 40.8s vs cr 28.0s; warm py 13.7s vs cr 0.9s. |
+| `hadrienpatte.grub` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 10.4s vs cr 5.2s; warm py 7.7s vs cr 0.4s. |
+| `hadrienpatte.stepmania` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=124 cr=124, warm py=2 cr=2. Times: cold py 900.0s vs cr 900.0s; warm py 14.2s vs cr 14.6s. |
+| `hadrienpatte.subsonic` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 63.3s vs cr 50.3s; warm py 25.5s vs cr 4.7s. |
+| `henriklynggaard.pycharm` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `hpcloud-mon.monasca-ui` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 47.1s vs cr 45.2s; warm py 8.2s vs cr 4.4s. |
+| `huypn12.azure_devops_agent` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.7s vs cr 4.7s; warm py 4.6s vs cr 0.4s. |
+| `hybridadmin.strongswan` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `iamenr0s.ansible_role_firewalld` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.8s vs cr 4.1s; warm py 3.3s vs cr 0.4s. |
+| `iancleary.caddy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 66.3s vs cr 61.3s; warm py 61.1s vs cr 45.9s. |
+| `idealista.prom2teams_role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 78.4s vs cr 66.0s; warm py 60.7s vs cr 47.3s. |
+| `indexyz.cloudinit` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `indigo-dc.htcondor_config` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `infOpen.mongodb` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `infothrill.datadog_check_nsd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 14.7s vs cr 5.3s; warm py 14.9s vs cr 0.6s. |
+| `inofix.acme-setup` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 15.6s vs cr 5.8s; warm py 11.7s vs cr 0.5s. |
+| `j00bar.nginx-container` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.6s vs cr 3.8s; warm py 5.2s vs cr 0.5s. |
+| `japm94.ansible_role_aws_inspector` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 221.0s vs cr 384.0s; warm py 462.8s vs cr 604.0s. |
+| `javiergayala.security_server_config` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `jebovic.php` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `jebovic.ufw` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `jetune.nexus` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 15.1s vs cr 4.2s; warm py 9.4s vs cr 0.7s. |
+| `jheimbach.apache_envvars` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 11.1s vs cr 3.6s; warm py 7.3s vs cr 0.4s. |
+| `jlund.ufw` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 20.1s vs cr 7.0s; warm py 12.1s vs cr 0.6s. |
+| `JohnPreston.awslogs` | ⚠️ Both fail differently (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). not a krikri bug: real refuses the whole playbook rc=4 (the removed ec2_facts module no longer resolves); krikri continues and then fails on the role's `| failed` test usage. Times: cold py 0.5s vs cr 3.6s; warm py 0.5s vs cr 0.8s |
+| `jony321.ansible_vaultwarden` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.4s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `jpmat296_win_pending_reboot` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `juju4.golang` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 29.5s vs cr 16.2s; warm py 11.4s vs cr 0.9s. |
+| `juju4.lxd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 118.1s vs cr 56.1s; warm py 42.4s vs cr 3.5s. |
+| `justereseau.docker_compose` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `kbrebanov.openvpn` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `kbrebanov.selinux` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.6s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `kkolk.mssql` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). divergent - open: real aborts the play rc=1 on the REMOVED community.windows.win_domain_user module's removal error; krikri skips it and later fails on the role's undefined `ansible_reboot_pending` conditional - removed-collection-module handling parity is an open edge. Times: cold py 0.5s vs cr 3.3s; warm py 0.6s vs cr 0.3s |
+| `ktosiek.nix` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.1s vs cr 4.0s; warm py 3.6s vs cr 0.5s. |
+| `kurron.block-device` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 37.3s vs cr 15.8s; warm py 24.3s vs cr 0.8s. |
+| `kyxap1.kafka_exporter` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 17.7s vs cr 6.4s; warm py 10.4s vs cr 0.5s. |
+| `l3d.dotfiles` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). divergent - open: krikri's template for item=root ran ("Destination directory /home/root does not exist") where real skipped it; the local list-comparison repro matches, so the role-context difference is not yet pinned. Times: cold py 18.9s vs cr 4.2s; warm py 12.9s vs cr 0.7s |
+| `l3d.i3wm` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 124.6s vs cr 66.5s; warm py 47.2s vs cr 1.1s. |
+| `laggyluke.direnv` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=4 cr=4, warm py=4 cr=4. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `laniakea.galaxy_interactive_tools` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 66.6s vs cr 40.4s; warm py 25.7s vs cr 1.3s. |
+| `leanbit.netdata` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 124.7s vs cr 92.3s; warm py 40.2s vs cr 3.8s. |
+| `leucos.s3cmd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `levonet.sonarqube-scanner` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.5s vs cr 5.3s; warm py 10.1s vs cr 1.9s. |
+| `libre_ops.debezium` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 26.3s vs cr 18.7s; warm py 8.5s vs cr 0.6s. |
+| `libyanspider.opsview_agent_role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 15.7s vs cr 5.7s; warm py 14.8s vs cr 2.6s. |
+| `libyanspider.snmpd_role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 25.0s vs cr 19.7s; warm py 6.9s vs cr 0.6s. |
+| `lifeofguenter.mysql` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 32.2s vs cr 26.8s; warm py 17.8s vs cr 11.6s. |
+| `lifeofguenter.nginx` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). divergent - open: early tasks byte-identical (both engines fail the same ignored nginx-version probe); krikri's warm "Configure" task fails `unexpected token '<EOF>'` parsing the role's multi-line shell command - not yet root-caused. Times: cold py 275.0s vs cr 63.7s; warm py 49.8s vs cr 32.3s |
+| `lkiesow.apt_autoupdate` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 22.5s vs cr 4.7s; warm py 15.6s vs cr 0.8s. |
+| `loelkes.octoprint` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.5s vs cr 4.7s; warm py 4.5s vs cr 0.5s. |
+| `lotusnoir_apps_domain_exporter` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `Lusitaniae.ansible_dnsmasq` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `malk.java8-oracle` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 64.1s vs cr 64.0s; warm py 59.3s vs cr 52.0s. |
+| `manala.logentries` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.3s vs cr 4.3s; warm py 6.0s vs cr 0.7s. |
+| `marcusianlevine.cifs-mount` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.5s vs cr 5.0s; warm py 8.0s vs cr 0.5s. |
+| `martinmicunda.common` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.7s vs cr 5.7s; warm py 8.3s vs cr 2.0s. |
+| `marvel-nccr.aiidalab` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 35.8s vs cr 17.6s; warm py 19.7s vs cr 1.0s. |
+| `marvel-nccr.ansible_prerequisites` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.6s vs cr 8.2s; warm py 8.0s vs cr 4.4s. |
+| `marvel-nccr.fleur` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.7s vs cr 3.5s; warm py 5.7s vs cr 0.5s. |
+| `marvel-nccr.siesta` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 78.1s vs cr 63.9s; warm py 22.4s vs cr 5.3s. |
+| `marvel-nccr.wannier90` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 53.3s vs cr 38.3s; warm py 19.7s vs cr 4.6s. |
+| `marvel-nccr.yambo` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 355.4s vs cr 346.0s; warm py 17.9s vs cr 1.7s. |
+| `matic-insurance.hostname` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.2s vs cr 4.2s; warm py 3.2s vs cr 0.3s. |
+| `mbaran0v.ansible_role_prometheus_redis_exporter` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). divergent - open: `deploy_helper` (implemented in krikri) is undefined reading `deploy_helper.new_release_path` after the module task; needs a live repro. Times: cold py 44.2s vs cr 5.1s; warm py 34.0s vs cr 0.4s |
+| `mergermarket.logentries` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.6s vs cr 4.5s; warm py 5.7s vs cr 0.6s. |
+| `mglantz.eda-ha` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 37.2s vs cr 35.1s; warm py 35.3s vs cr 30.6s. |
+| `micko920.role_createservice` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 57.9s vs cr 40.7s; warm py 35.7s vs cr 11.8s. |
+| `micko920.role_java` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.3s vs cr 5.8s; warm py 3.4s vs cr 0.3s. |
+| `mikecher.backup_files_ansible_role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 61.5s vs cr 41.5s; warm py 22.6s vs cr 2.9s. |
+| `mila.cvmfs` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.1s vs cr 3.4s; warm py 3.0s vs cr 0.3s. |
+| `mimacom.selfservice` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.2s vs cr 3.7s; warm py 4.3s vs cr 0.4s. |
+| `mjanser_powerline` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `mkaag_coreos-timezone` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `mmagonde.jenkins-swarm` | ⚠️ Divergent by design (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). win_file/win_get_url are unsupported community modules krikri skips; real runs them and fails at the Windows become wrapper ("Become plugin sudo is not supported by the Windows exec wrapper") - unsupported-community-module class. Times: cold py 5.2s vs cr 4.6s; warm py 4.8s vs cr 0.5s |
+| `mmannerm.bash_it` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 21.6s vs cr 10.1s; warm py 17.3s vs cr 3.7s. |
+| `mmul_kpa_generator` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `modulusx.ping` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `Mohitsharma44.nfs-client` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 26.5s vs cr 22.9s; warm py 5.1s vs cr 0.6s. |
+| `mplachter.flume` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=4 cr=4, warm py=4 cr=4. Times: cold py 1.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `mrlesmithjr.isc-dhcp` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `mrlesmithjr.motd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 35.1s vs cr 16.1s; warm py 21.4s vs cr 1.0s. |
+| `mrlesmithjr.redis` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 41.2s vs cr 32.3s; warm py 11.0s vs cr 0.8s. |
+| `mrlesmithjr.snort` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 63.6s vs cr 38.2s; warm py 26.0s vs cr 2.7s. |
+| `mrlesmithjr.telegraf` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `mtlynch.storj` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 68.0s vs cr 63.8s; warm py 10.6s vs cr 1.1s. |
+| `mullholland.repository_rpmfusion` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.6s vs cr 3.4s; warm py 3.9s vs cr 0.4s. |
+| `mullholland.users` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.7s vs cr 3.5s; warm py 2.8s vs cr 0.4s. |
+| `naftulikay.vagrant-docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 88.3s vs cr 75.4s; warm py 57.0s vs cr 45.0s. |
+| `nathanielks_newrelic-php` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `nephelaiio.debian_installer` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 25.8s vs cr 20.2s; warm py 11.2s vs cr 0.6s. |
+| `nephelaiio.i3` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5270001 CLEAN). fixed (0.9.1573: role-private filter/test plugin dirs of every role LOADED this run join the search path, ansible-core's add_all_plugin_dirs at Role.load - the sorted_get filter ships in the meta dependency nephelaiio.plugins). Times: cold py 130.4s vs cr 30.4s; warm py 32.2s vs cr 0.6s |
+| `nephelaiio.rbenv` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 10.2s vs cr 9.1s; warm py 9.8s vs cr 5.1s. |
+| `nephelaiio.vagrant` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 20.1s vs cr 9.7s; warm py 13.4s vs cr 2.0s. |
+| `nephelaiio.vim` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.4s vs cr 3.6s; warm py 3.1s vs cr 0.4s. |
+| `New-Edge-Engineering_rundeck` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `nextpertise.supervisord` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 29.6s vs cr 22.8s; warm py 14.3s vs cr 4.5s. |
+| `NINEJKH.ruby` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.2s vs cr 3.4s; warm py 3.3s vs cr 0.3s. |
+| `nkinder.keycloak` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.5s vs cr 4.4s; warm py 3.1s vs cr 0.5s. |
+| `noobient.servicecheck` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 24.1s vs cr 21.9s; warm py 10.1s vs cr 4.8s. |
+| `novomatic-tech_common_pkgs` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `OCA.odoo` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.1s vs cr 4.3s; warm py 2.3s vs cr 0.5s. |
+| `Oefenweb.mariadb_client` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 25.5s vs cr 17.8s; warm py 11.8s vs cr 2.1s. |
+| `onaio.courier` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 22.2s vs cr 7.7s; warm py 14.5s vs cr 2.3s. |
+| `onaio.mailroom` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 11.6s vs cr 4.8s; warm py 8.5s vs cr 1.1s. |
+| `one_mind_ansible_mongo_backup` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `ops-guru.godaddy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `opsta.automated_docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `opsta.docker_machine` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `opsta.elasticsearch` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 138.4s vs cr 116.0s; warm py 23.3s vs cr 8.9s. |
+| `opsta.erlang` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 8.2s vs cr 5.7s; warm py 6.0s vs cr 0.7s. |
+| `opsta.grafana` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.2s vs cr 4.5s; warm py 5.7s vs cr 1.0s. |
+| `opsta.graylog` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5260000 CLEAN). fixed (0.9.1570: a multi-span variable value read through a `+` operand was evaluated as an expression - its literal `/` chars parsed as division; and a mixed-text set_fact value now stores real's Python-repr list form). Times: cold py 116.7s vs cr 80.6s; warm py 50.5s vs cr 8.5s |
+| `opsta.influxdb` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 80.2s vs cr 87.9s; warm py 74.6s vs cr 81.6s. |
+| `opsta.keepalived` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `opsta.letsencrypt` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 25.1s vs cr 22.3s; warm py 9.3s vs cr 3.8s. |
+| `opsta.mariadb` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `opsta.openstack_launch_instances` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `opsta.pdns_admin` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `opsta.redis` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 53.3s vs cr 52.7s; warm py 49.9s vs cr 47.8s. |
+| `opsta.telegraf` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 94.4s vs cr 94.9s; warm py 87.0s vs cr 85.9s. |
+| `opsta_sensu` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `pacifica.ansible_keycloak` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.0s vs cr 6.2s; warm py 5.2s vs cr 1.4s. |
+| `palkan-ansible.aws_cli` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `pandemonium1986.k9s` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 14.0s vs cr 5.8s; warm py 13.8s vs cr 2.5s. |
+| `paulfantom.raspberry` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.0s vs cr 4.2s; warm py 6.0s vs cr 0.4s. |
+| `paulfantom.rpi_exporter` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 10.4s vs cr 14.5s; warm py 9.7s vs cr 10.9s. |
+| `pellepelster.springboot-role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 1.2s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `pluggero.ufw` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 20.2s vs cr 6.6s; warm py 16.5s vs cr 1.8s. |
+| `plumelo_mysql` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `plumelo_nginx_src` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `pogosoftware.self_signed_cert` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `pyguy.hpe_software` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `rarrais.ros2` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `realloc.tini` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 6.6s vs cr 5.7s; warm py 4.9s vs cr 0.6s. |
+| `redirectionio.agent` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 75.0s vs cr 51.0s; warm py 16.9s vs cr 6.0s. |
+| `repleo.sudo` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `revenni.zabbix_agent2` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.7s vs cr 0.0s; warm py 1.2s vs cr 0.0s. |
+| `Rheinwerk.apache` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 46.3s vs cr 28.0s; warm py 18.6s vs cr 0.9s. |
+| `Rheinwerk.mysql` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 53.4s vs cr 43.6s; warm py 8.9s vs cr 0.6s. |
+| `rhtps_800-53` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `rlenferink.transip` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.3s vs cr 3.7s; warm py 3.4s vs cr 0.4s. |
+| `rmarshall31.ovftool` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.9s vs cr 4.1s; warm py 3.0s vs cr 0.6s. |
+| `robertdebock.bareos_fd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.9s vs cr 5.1s; warm py 6.4s vs cr 2.0s. |
+| `robertdebock.cve_2021_44228` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 18.1s vs cr 6.0s; warm py 15.3s vs cr 0.7s. |
+| `robertdebock.cve_2024_3094` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.6s vs cr 3.6s; warm py 4.1s vs cr 0.5s. |
+| `robertdebock.keepalived` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 118.9s vs cr 108.7s; warm py 101.9s vs cr 91.0s. |
+| `robertdebock.nomad` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.8s vs cr 4.4s; warm py 5.8s vs cr 1.5s. |
+| `robertdebock.powertop` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 29.2s vs cr 17.6s; warm py 13.1s vs cr 0.8s. |
+| `robertdebock.zabbix_proxy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 55.0s vs cr 44.8s; warm py 12.5s vs cr 0.6s. |
+| `robertdebock_azure_cli` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `rodrigoechaide.insecure_registries_docker_role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 67.3s vs cr 42.3s; warm py 24.0s vs cr 1.1s. |
+| `rolehippie.sudo` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 13.9s vs cr 4.5s; warm py 13.2s vs cr 0.5s. |
+| `rolehippie.traefik` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 21.3s vs cr 3.9s; warm py 18.3s vs cr 0.4s. |
+| `roles-ansible.etebase` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=0 cr=0. Times: cold py 99.8s vs cr 77.5s; warm py 61.1s vs cr 7.5s. |
+| `roles-ansible.i3wm` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 103.1s vs cr 62.1s; warm py 38.0s vs cr 1.5s. |
+| `rubrik-devops_rubrik-connector` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `ryanolson.docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `ryanolson.nvidia-docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `ryanrennoir.inah_module` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 9.0s vs cr 3.9s; warm py 6.6s vs cr 0.4s. |
+| `sansible.grafana` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `sbaerlocher.yaourt` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.3s vs cr 3.2s; warm py 2.8s vs cr 0.4s. |
+| `ScorpionResponse.git` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `sh0shin.base_debian` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.0s vs cr 3.6s; warm py 3.0s vs cr 0.4s. |
+| `sh0shin.base_freebsd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.9s vs cr 5.8s; warm py 5.0s vs cr 0.6s. |
+| `shaneboulden.fapolicyd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.9s vs cr 3.6s; warm py 4.8s vs cr 0.4s. |
+| `shrikeh-ansible-roles.curl` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.3s vs cr 3.5s; warm py 6.4s vs cr 0.5s. |
+| `shrikeh-ansible-roles.papertrail-rsyslog` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `SimpliField.haproxy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.7s vs cr 5.3s; warm py 3.3s vs cr 0.3s. |
+| `SimpliField.minio` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.3s vs cr 4.3s; warm py 10.0s vs cr 0.9s. |
+| `SimpliField.npm` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.0s vs cr 3.7s; warm py 3.4s vs cr 0.5s. |
+| `siw36.ansible_steamcmd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 295.3s vs cr 284.8s; warm py 11.9s vs cr 2.5s. |
+| `SlingNode.ethereum` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 20.5s vs cr 8.2s; warm py 95.8s vs cr 27.7s. |
+| `softasap.sa-publishing-kindlegen` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.8s vs cr 5.1s; warm py 5.7s vs cr 0.5s. |
+| `softasap.sa-vnc-remote-desktop` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `soplakanets.hosts` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.8s vs cr 3.6s; warm py 2.9s vs cr 0.3s. |
+| `sorrowless.apprise` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.4s vs cr 4.3s; warm py 2.9s vs cr 0.3s. |
+| `sorrowless.rsnapshot` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.6s vs cr 3.9s; warm py 4.2s vs cr 0.4s. |
+| `sorrowless.ssh_trust` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.4s vs cr 4.1s; warm py 3.2s vs cr 0.4s. |
+| `sorrowless.syslog` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 38.3s vs cr 23.9s; warm py 21.1s vs cr 2.5s. |
+| `sorrowless.wireguard` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `spk83_jupyter-supervisord` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `ssachtleben.shopware` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 92.7s vs cr 65.4s; warm py 20.3s vs cr 1.1s. |
+| `sscheib.openwrt_extroot` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5260001 still divergent on the assert's is-defined check, round 5270000 CLEAN). fixed (0.9.1569: the vars lookup now renders the found value like real's templar; 0.9.1572: `lookup('vars', x) is defined` on a call operand no longer answers a name-existence check). Times: cold py 5.0s vs cr 4.7s; warm py 3.2s vs cr 0.4s |
+| `stackhpc.monasca-rsyslog` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 68.9s vs cr 54.2s; warm py 18.9s vs cr 1.6s. |
+| `STEAMULO.backupmanager` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 32.5s vs cr 16.6s; warm py 16.5s vs cr 1.2s. |
+| `stiliajohny_ansible_role_ansible_pull` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `stiliajohny_ansible_role_docker` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `Stouts.statsd` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.4s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `suzuki-shunsuke.gvm-module` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 4.8s vs cr 4.8s; warm py 2.7s vs cr 0.4s. |
+| `sweet-tooth-clojure.clojure-uberjar-webapp-common` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 3.9s vs cr 3.8s; warm py 2.9s vs cr 0.4s. |
+| `tehtbl.base_packages` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 304.8s vs cr 291.8s; warm py 8.8s vs cr 2.7s. |
+| `telus_certbot` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `telusdigital-archive.consul` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `Temelio.maxmind-geoip` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=4 cr=4, warm py=4 cr=4. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `Thulium-Drake.podman` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 37.7s vs cr 25.7s; warm py 12.1s vs cr 0.7s. |
+| `thulium_drake.podman` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 34.3s vs cr 25.5s; warm py 9.6s vs cr 0.5s. |
+| `tkimball83_adguard` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_appzapper` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_bash_proxy` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_hermes` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_irssi` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_liquidprompt` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_privoxy` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_protonvpn` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tkimball83_sizeup` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `tmiller02.neofetch` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 13.9s vs cr 5.6s; warm py 6.0s vs cr 0.5s. |
+| `tmiller02.yarn` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 57.2s vs cr 34.8s; warm py 14.1s vs cr 1.6s. |
+| `tobias_richter.librenms` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 92.3s vs cr 65.4s; warm py 25.6s vs cr 2.0s. |
+| `tobias_richter.librenms_agent` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 44.3s vs cr 33.6s; warm py 19.1s vs cr 1.1s. |
+| `tobias_richter.proxmox` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 12.6s vs cr 4.4s; warm py 9.8s vs cr 0.4s. |
+| `tobias_richter.rrdtool` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.4s vs cr 4.0s; warm py 4.0s vs cr 0.5s. |
+| `trombik.php_fpm` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 7.3s vs cr 5.6s; warm py 6.3s vs cr 1.6s. |
+| `tschifftner.datetime` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `tschifftner.modman` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 7.0s vs cr 5.2s; warm py 4.4s vs cr 0.5s. |
+| `usegalaxy_eu.cuda` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 12.6s vs cr 5.0s; warm py 9.6s vs cr 1.0s. |
+| `usegalaxy_eu.nvidia_container` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 6.4s vs cr 4.8s; warm py 4.7s vs cr 0.4s. |
+| `usegalaxy_eu.tiaas2` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 18.0s vs cr 5.8s; warm py 14.4s vs cr 1.3s. |
+| `v0rts_java` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `vbotka.ansible_lib` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 5.8s vs cr 4.6s; warm py 3.0s vs cr 0.3s. |
+| `vbotka.linux_postinstall` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.6s vs cr 0.0s; warm py 0.6s vs cr 0.0s. |
+| `veselahouba.ncdu` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 21.3s vs cr 16.1s; warm py 8.6s vs cr 0.6s. |
+| `veselahouba.openvpn` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). partially fixed (0.9.1576: a loop_control.label that cannot template now fails the item on MODULE loops); the role's remaining shape - a looped include_tasks inside a block whose own when: was False, where real still templates the child's label and fails on it - re-confirmed DIVERGENT on round 5280000; open edge. Times: cold py 22.4s vs cr 17.2s; warm py 6.1s vs cr 0.4s |
+| `veselahouba.sftp` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 23.6s vs cr 5.5s; warm py 15.7s vs cr 1.1s. |
+| `veselahouba.ufw` | ✅ Fixed and confirmed clean (divergent in round 5250000, 0.9.1567; confirm round 5260003 CLEAN). fixed (0.9.1571: with_subelements over a dict source ran the task once with `item` unbound instead of iterating the dict's values - zero for the role's empty default). Times: cold py 19.3s vs cr 4.2s; warm py 11.9s vs cr 0.9s |
+| `vmichel95.gosec` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 32.8s vs cr 17.1s; warm py 18.7s vs cr 1.1s. |
+| `waco_org.waco_python` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 32.1s vs cr 19.4s; warm py 12.6s vs cr 0.8s. |
+| `warhorse.evilginx2_docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 67.1s vs cr 40.7s; warm py 25.9s vs cr 1.2s. |
+| `warhorse.gophish_docker` | ⚠️ Infra flake (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). crystal COLD died in the known plugin-upload UNREACHABLE race (SSH Too many authentication failures); warm CLEAN with identical counters both engines. Times: cold py 65.7s vs cr 6.5s; warm py 21.9s vs cr 40.8s |
+| `warhorse.nginx_docker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 71.8s vs cr 40.5s; warm py 26.6s vs cr 1.0s. |
+| `wayofdev.homebrew` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 17.8s vs cr 51.2s; warm py 13.5s vs cr 45.7s. |
+| `webarchitect609.flameshot` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 104.9s vs cr 78.6s; warm py 41.4s vs cr 11.5s. |
+| `webbylab.logrotate` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 10.6s vs cr 3.6s; warm py 9.3s vs cr 0.8s. |
+| `webofmars.xfce4-desktop` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 374.9s vs cr 370.9s; warm py 16.0s vs cr 2.1s. |
+| `wgregorian_sumocollector` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `wittdennis_install_kubeadm` | ❌ Galaxy install failed (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). |
+| `wtanaka.dropbox` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.4s vs cr 0.0s. |
+| `wunzeco.nginx` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `wunzeco.nodejs` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 51.8s vs cr 54.6s; warm py 79.7s vs cr 60.7s. |
+| `wurbanski.jenkins-swarm-agent` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=1 cr=1, warm py=1 cr=1. Times: cold py 0.5s vs cr 0.0s; warm py 0.5s vs cr 0.0s. |
+| `xanmanning.kubectl` | ⚠️ Divergent (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). cold CLEAN with identical counters (both engines fail the role's own broken strict conditional identically); warm divergent: the kubectl binary the cold run downloaded rejects the role's `--short` flag - both engines fail, at different tasks; host-state timing, not an engine bug. Times: cold py 18.6s vs cr 6.8s; warm py 13.0s vs cr 0.7s |
+| `XavierCanadas.firecracker` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 25.7s vs cr 7.3s; warm py 10.3s vs cr 0.9s. |
+| `Yannik.freepbx` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 76.3s vs cr 53.0s; warm py 32.2s vs cr 2.5s. |
+| `Yannik.relaymail` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 36.4s vs cr 37.9s; warm py 10.3s vs cr 0.5s. |
+| `ypsman.aws_credentials` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 4.5s vs cr 4.1s; warm py 3.3s vs cr 0.5s. |
+| `ypsman.docker_compose` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 23.9s vs cr 21.0s; warm py 6.9s vs cr 1.9s. |
+| `ypsman.nginx_proxy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 38.4s vs cr 21.1s; warm py 13.8s vs cr 0.9s. |
+| `ypsman.systemd_cifs_mount` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=2 cr=2, warm py=2 cr=2. Times: cold py 5.1s vs cr 4.7s; warm py 3.4s vs cr 0.3s. |
+| `ypsman.systemd_mounts` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 3.9s vs cr 3.6s; warm py 3.2s vs cr 0.3s. |
+| `zaxos.ntopng-ansible-role` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 98.5s vs cr 64.7s; warm py 28.1s vs cr 1.2s. |
+| `zorlin.haproxy` | ✅ Clean (round 5250000, 0.9.1567, Atlantic/Ubuntu 22.04). rc cold py=0 cr=0, warm py=0 cr=0. Times: cold py 33.4s vs cr 18.8s; warm py 13.4s vs cr 0.5s. |
+
 ## Per-role status
 
 | Role | Status |

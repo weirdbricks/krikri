@@ -13,9 +13,29 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1567`.**
+**Currently at `0.9.1576`.**
 
 ## Open gaps
+
+- **`loop_control.label` templating on a task skipped by an enclosing block's `when:`.**
+  ansible-core templates a looped task's label even when the task is being skipped by an
+  enclosing block's false condition, and a label that cannot template (`{{ openvpn_client.name
+  }}` over the `{}` item of `with_items: "{{ openvpn_clients }}"` with `openvpn_clients: {}`)
+  converts the skip into a task FAILURE carrying the enclosing chain's `false_condition`
+  (`openvpn_ca_master`). krikri skips the block's children before their loops run, so the label
+  never templates: veselahouba.openvpn stays divergent (0.9.1576 fixed the MODULE-loop half -
+  a label failure inside a loop that does run now fails the item like real; confirm round
+  5280000 still DIVERGENT on the block-skip shape). Narrow ansible-internal display edge;
+  closing it would mean templating labels of block-skipped children.
+- **Removed collection modules abort real's play; krikri skips them.** A module removed from a
+  collection (kkolk.mssql's `community.windows.win_domain_user`, removal message and all) makes
+  real 2.19.11 abort the whole play rc=1 at that task; krikri skips the task and continues, then
+  fails later on the role's own undefined `ansible_reboot_pending` conditional. Related shape,
+  same class: a module real cannot resolve AT ALL (bare `docker:` with no community.docker on
+  the controller, removed `ec2_facts`) refuses the whole playbook at parse time rc=4 while
+  krikri - which implements community modules natively - runs on (gbraad.docker-registry,
+  JohnPreston.awslogs; the community.crypto precedent from round 2300000 covers the
+  host-lacks-the-collection half).
 
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
@@ -67,6 +87,53 @@ defect moves down or gets deleted.
   warm run - after the role changed the host's network state). The gatherer now annotates the
   failing section ("... (while gathering network)") so the next occurrence pinpoints itself;
   root cause pending a recurrence.
+
+## Round 5250000-5250356 (357 new Galaxy top-download roles, 0.9.1567 -> 0.9.1576, 2026-10-09)
+
+357 roles never tested before (Galaxy top-download list, deep-paged past the ~6000-role
+already-tested frontier): **288 CLEAN, 19 DIVERGENT, 50 Galaxy-missing**. Eight fixes landed
+from this round (each with a regression test, each repro'd byte-identical against local
+ansible-playbook 2.19.11 before landing), seven of them live-confirmed on Atlantic.net:
+
+- 0.9.1568: a trailing comma in a list literal (`['Debian', 'Ubuntu', ]`) evaluated an empty
+  element as the variable `''` and failed the whole conditional (cans.package-install).
+- 0.9.1569 + 0.9.1572: the vars lookup now renders the found value like real's templar
+  (sscheib.openwrt_extroot's assert loop), and `lookup('vars', x) is defined` on a call operand
+  no longer answers a name-existence check (always False for an existing variable).
+- 0.9.1570: a variable whose own value is multi-span template text (`{{ playbook_dir }}/x{{
+  item }}/y`) was evaluated as an EXPRESSION when read through a `+` operand - its literal `/`
+  chars parsed as division - and a mixed-text set_fact value now stores real's Python-repr list
+  form, not JSON quoting (opsta.graylog).
+- 0.9.1571: with_subelements over a dict source ran the task once with `item` unbound instead
+  of iterating the dict's values (veselahouba.ufw).
+- 0.9.1573: role-private filter/test plugin dirs of every role LOADED this run join the search
+  path (ansible-core's add_all_plugin_dirs at Role.load) - a meta dependency's filters serve
+  the depending role (nephelaiio.plugins' sorted_get for nephelaiio.i3).
+- 0.9.1574: state=link's relative src is existence-checked against the DEST's directory like
+  real, not the module process's cwd (baztian.joplin).
+- 0.9.1575: block:/rescue:/always: children inherited a hardcoded ignore_errors=true - a block
+  whose ignore_errors resolved False silently ignored member failures and kept executing tasks
+  on a host real had already halted (exphost.mysql; the no-context ignore_errors resolution
+  sites got the real scope too).
+- 0.9.1576: a loop_control.label that cannot template fails the item on module loops like real
+  (the veselahouba.openvpn module-loop half).
+
+Confirm rounds: 5260000 (cans.package-install, opsta.graylog, veselahouba.ufw CLEAN;
+sscheib.openwrt_extroot still divergent), 5270000 (sscheib.openwrt_extroot, nephelaiio.i3,
+baztian.joplin, exphost.mysql all CLEAN), 5280000 (veselahouba.openvpn still DIVERGENT - the
+remaining shape is the block-skipped label templating edge in Open gaps).
+
+Dispositioned without a fix: gbraad.docker-registry and JohnPreston.awslogs (real refuses the
+playbook rc=4 on unresolvable modules - host-lacks-the-collection / removed-module class, not
+a krikri bug), mmagonde.jenkins-swarm (win_* unsupported community modules, by design),
+bodsch.influxdb (bodsch.* collections, by design), warhorse.gophish_docker (crystal cold died
+in the known plugin-upload UNREACHABLE race; warm CLEAN identical), xanmanning.kubectl (cold
+identical; warm kubectl `--short` host-state timing). Still open with root causes noted:
+lifeofguenter.nginx (krikri `unexpected token '<EOF>'` on the role's multi-line shell command),
+l3d.dotfiles (template for item=root ran here, skipped in real), mbaran0v.prometheus_redis_
+exporter (deploy_helper fact not visible after the module runs), chris1984.motd (real itself
+crashes on the role's default - parity would mean emulating real's own crash), kkolk.mssql
+(removed-collection-module abort, Open gaps).
 
 ## Round 5240000/5241000 (confirm round: 0.9.1540s fixes, flake re-runs, docker_nginx, 2026-10-09)
 
