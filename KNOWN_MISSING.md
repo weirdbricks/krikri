@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1560`.**
+**Currently at `0.9.1561`.**
 
 ## Open gaps
 
@@ -51,6 +51,12 @@ defect moves down or gets deleted.
   never as an SDK APIError. The one DockerException this module can raise,
   resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
   unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
+- **`version_type='pep440'` compares with LooseVersion semantics, not PEP-440.** The `version`
+  test's `strict=True`/`version_type='strict'|'semver'|'semantic'` schemes (plus every
+  validation wording, positional binding and the empty-operand checks) are byte-pinned against
+  2.19.11, but packaging's `PEP440Version` (epochs, post/dev releases) is not implemented:
+  `version_type='pep440'` falls back to the LooseVersion component scan. No benchmarked role has
+  used pep440 yet; it gets implemented on first live hit.
 - **Test suite needs a reachable container socket:** the Docker plugin tests (`docker_compose_v2`, the
   `--check` mode Docker end-to-end test) talk to the user's podman API socket. If `podman.socket` is
   "listening" but `/run/user/$UID/podman/podman.sock` is missing (seen after a tmpfiles sweep), restart it
@@ -68,9 +74,6 @@ defect moves down or gets deleted.
     recap ok/skip counts differ by item).
   - Readiness timing: `wait_for` port 80 timed out at 305s on the cr host where real succeeded in
     27s (clouddrove.docker_nginx - the role's docker/nginx container start under krikri).
-  - Jinja test call with kwargs: `is version('2.11', '<=', strict=True)` parses as a garbage
-    identifier ("Error while evaluating conditional: '', strict=True)' is undefined") instead of
-    calling the test with the kwarg (bodsch.icingaweb2 - locally reproduced against 2.19.11).
 
 ## Round 5210000 (357 roles re-run after invalid 5200000, 2026-10-08; per-role triage)
 

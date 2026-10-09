@@ -578,7 +578,43 @@ module Krikri
         # end-anchored regex's non-match did).
         if rest.ends_with?(')')
           args = split_by_operator(rest[0...-1], ",")
-          return evaluate_version_test(version_test[1], version_test[2], args[0], args[1], vars, raise_undefined) if args.size == 2
+          # Trailing kwargs (`is version('2.11', '<=', strict=True)`,
+          # bodsch.icingaweb2 - round 5210000): previously any
+          # non-two-argument shape fell through to the generic
+          # comparison splitter, which split the WHOLE condition on the
+          # `<=` INSIDE the quoted operator literal and hard-failed with
+          # a nonsensical "'', strict=True)' is undefined". Python's
+          # call binding fills positionals into the signature
+          # (version, operator, strict, version_type) in order, so a
+          # 3rd/4th positional is NOT an error - `version('2.11', '<=',
+          # 'extra')` binds 'extra' as strict. A kwarg appearing BEFORE
+          # a positional is a Jinja SyntaxError in real (different error
+          # path, no test-plugin framing) - left falling through to the
+          # legacy behavior, which still fails the task.
+          positional = [] of String
+          kwargs = {} of String => String
+          saw_kwarg = false
+          malformed = false
+          args.each do |arg|
+            stripped = arg.strip
+            if (kw = stripped.match(/\A([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)/))
+              saw_kwarg = true
+              kwargs[kw[1]] = stripped[kw[0].size..].strip
+            elsif saw_kwarg
+              # kwargs-then-positional: real raises Jinja's generic
+              # "Syntax error in expression: invalid syntax for function
+              # call expression" from the templar, before any test runs.
+              # This evaluator has no such framing, so keep the legacy
+              # fall-through rather than inventing a third error shape.
+              malformed = true
+              break
+            else
+              positional << stripped
+            end
+          end
+          if !malformed
+            return evaluate_version_test(version_test[1], version_test[2], positional, kwargs, vars, raise_undefined)
+          end
         end
       end
 
@@ -2208,7 +2244,18 @@ module Krikri
       end
     end
 
-    private def self.evaluate_version_test(left_expr : String, test_name : String, compare_to_expr : String, operator_expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
+    # The uniform test-failure framing for every version-test validation
+    # error: ansible-core wraps test exceptions as "The test plugin
+    # 'ansible.builtin.<name>' failed: <inner>", with the inner text as
+    # the cause.
+    private def self.version_test_fail(test_name : String, inner : String) : NoReturn
+      raise TestPluginError.new(
+        "The test plugin 'ansible.builtin.#{test_name}' failed: #{inner}",
+        inner
+      )
+    end
+
+    private def self.evaluate_version_test(left_expr : String, test_name : String, positional : Array(String), kwargs : Hash(String, String), vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool
       # A structured (Hash) left operand - the bare `ansible_version`
       # magic-var dict itself instead of its `ansible_version.string` /
       # `.full` dotted field - is a task-failing templating error in
@@ -2231,43 +2278,165 @@ module Krikri
       if (resolved = resolve_json(left_expr, vars)) && resolved.raw.is_a?(Hash)
         raise "Version comparison failed: unsupported operand type (dict, not a scalar version string)"
       end
-      left = evaluate_value(left_expr.strip, vars, raise_undefined).to_s
-      # The compare-to argument may be a VARIABLE, not just a quoted
-      # literal - `x is version(role_min_version, '>=')` is the standard
-      # version-gate idiom in real roles. Previously this was only
-      # unquoted, so a variable argument stayed the literal string
-      # "role_min_version" and got version-compared as garbage (which,
-      # depending on the name, silently produced either answer).
-      # Live-verified against ansible-core 2.19.12 (round173): a var
-      # compare-to resolves and compares exactly like the equivalent
-      # literal. The operator argument is left as a literal - real
-      # playbooks always spell it inline ('>=', 'ge', ...), and
-      # resolving it would make an unquoted `ge` look like a variable.
-      compare_to_raw = compare_to_expr.strip
-      compare_to = if quoted_literal?(compare_to_raw)
-                     unquote_literal(compare_to_raw)
-                   else
-                     evaluate_value(compare_to_raw, vars, raise_undefined).to_s
-                   end
-      operator = unquote_literal(operator_expr.strip)
-      cmp = compare_versions(left, compare_to, test_name)
 
-      case operator
-      when "==", "="
-        cmp == 0
-      when "!="
-        cmp != 0
-      when "<", "lt"
-        cmp < 0
-      when "<=", "le"
-        cmp <= 0
-      when ">", "gt"
-        cmp > 0
-      when ">=", "ge"
-        cmp >= 0
-      else
-        false
+      # ansible-core 2.19.11's version_compare validation order, each
+      # message byte-pinned against the live engine: unknown kwargs,
+      # binding conflicts, missing version, the strict/version_type
+      # mutual exclusion, empty operands, the version-type map, the
+      # operator map, and only then the comparison itself.
+      if unknown = kwargs.keys.find { |k| !{"operator", "version", "strict", "version_type"}.includes?(k) }
+        version_test_fail(test_name, "version_compare() got an unexpected keyword argument '#{unknown}'")
       end
+      compare_to_expr = positional[0]?
+      if kwargs.has_key?("version")
+        version_test_fail(test_name, "version_compare() got multiple values for argument 'version'") if compare_to_expr
+        compare_to_expr = kwargs["version"]
+      end
+      operator_expr = positional[1]?
+      if kwargs.has_key?("operator")
+        version_test_fail(test_name, "version_compare() got multiple values for argument 'operator'") if operator_expr
+        operator_expr = kwargs["operator"]
+      end
+      operator_expr ||= "eq"
+      # Positionals past the operator bind to strict/version_type, in
+      # signature order - `version('2.11', '<=', 'extra')` really does
+      # treat 'extra' as strict (live-verified: condition true).
+      strict_expr = positional[2]?
+      version_type_expr = positional[3]?
+      if positional.size > 4
+        version_test_fail(test_name, "version_compare() takes from 2 to 5 positional arguments but #{positional.size + 1} were given")
+      end
+      strict_expr = kwargs["strict"] if kwargs.has_key?("strict") && !strict_expr
+      version_type_expr = kwargs["version_type"] if kwargs.has_key?("version_type") && !version_type_expr
+
+      resolve_arg = ->(expr : String) : JSON::Any {
+        if quoted_literal?(expr)
+          JSON::Any.new(unquote_literal(expr))
+        elsif expr == "True" || expr == "False" || expr == "None"
+          JSON::Any.new(expr == "True" ? true : (expr == "False" ? false : nil))
+        else
+          # evaluate_value returns a union of scalar/list values, not
+          # JSON::Any - re-wrap it for the truthiness helpers below.
+          case v = evaluate_value(expr, vars, raise_undefined)
+          when Array(String)
+            JSON::Any.new(v.map { |part| JSON::Any.new(part) })
+          when Nil
+            JSON::Any.new(nil)
+          else
+            JSON::Any.new(v)
+          end
+        end
+      }
+
+      strict_value = strict_expr.try { |e| resolve_arg.call(e) }
+      strict_given = !strict_value.nil? && !strict_value.raw.nil?
+      version_type_value = version_type_expr.try { |e| resolve_arg.call(e) }
+      version_type_given = !version_type_value.nil? && !version_type_value.raw.nil?
+      if strict_given && version_type_given
+        version_test_fail(test_name, "Cannot specify both 'strict' and 'version_type'")
+      end
+
+      left_value = evaluate_value(left_expr.strip, vars, raise_undefined)
+      left = left_value.to_s
+      if left_value.nil? || left.empty?
+        version_test_fail(test_name, "Input version value cannot be empty")
+      end
+      compare_to_raw = compare_to_expr.try(&.strip)
+      if compare_to_raw.nil?
+        version_test_fail(test_name, "version_compare() missing 1 required positional argument: 'version'")
+      end
+      compare_to = resolve_arg.call(compare_to_raw)
+      if compare_to.raw.nil? || compare_to.to_s.empty?
+        version_test_fail(test_name, "Version parameter to compare against cannot be empty")
+      end
+
+      mode = "loose"
+      if (strict_resolved = strict_value) && strict_given && python_truthy?(strict_resolved)
+        mode = "strict"
+      elsif (version_type_resolved = version_type_value) && version_type_given
+        vt = version_type_resolved.to_s
+        case vt
+        when "loose"
+          mode = "loose"
+        when "strict"
+          mode = "strict"
+        when "semver", "semantic"
+          mode = "semver"
+        when "pep440"
+          # packaging's PEP440Version (epochs, post/dev releases) is not
+          # implemented - LooseVersion's component scan is the standing
+          # approximation, tracked in KNOWN_MISSING.md's Open gaps.
+          mode = "loose"
+        else
+          version_test_fail(test_name, "Invalid version type (#{vt}). Must be one of 'loose', 'strict', 'semver', 'semantic', 'pep440'")
+        end
+      end
+
+      # The operator map is validated AFTER the version-type selection
+      # (an invalid version_type wins over an invalid operator, as in
+      # real's own ordering).
+      op_map = {
+        "==" => "eq", "=" => "eq", "eq" => "eq",
+        "<" => "lt", "lt" => "lt",
+        "<=" => "le", "le" => "le",
+        ">" => "gt", "gt" => "gt",
+        ">=" => "ge", "ge" => "ge",
+        "!=" => "ne", "<>" => "ne", "ne" => "ne",
+      }
+      # The operator is always spelled inline (quoted literal or bare
+      # identifier like `ge`) - resolve a quoted literal but never treat
+      # a bare word as a variable reference.
+      op_text = quoted_literal?(operator_expr.strip) ? unquote_literal(operator_expr.strip) : operator_expr.strip
+      op = op_map[op_text]?
+      unless op
+        version_test_fail(test_name, "Invalid operator type (#{op_text}). Must be one of '==', '=', 'eq', '<', 'lt', '<=', 'le', '>', 'gt', '>=', 'ge', '!=', '<>', 'ne'")
+      end
+
+      cmp = case mode
+            when "strict" then strict_version_cmp(left, compare_to.to_s)
+            when "semver" then semver_cmp(left, compare_to.to_s)
+            else               loose_version_cmp(left, compare_to.to_s)
+            end
+
+      case op
+      when "eq" then cmp == 0
+      when "ne" then cmp != 0
+      when "lt" then cmp < 0
+      when "le" then cmp <= 0
+      when "gt" then cmp > 0
+      else           cmp >= 0
+      end
+    rescue ex : VariableSubstitutor::FilterCore::VersionCompareError
+      # Everything FilterCore's comparison cores raise arrives wrapped
+      # in Ansible's own "Version comparison failed: ..." framing.
+      version_test_fail(test_name, "Version comparison failed: #{ex.message}")
+    end
+
+    # Python truthiness for a resolved kwarg value (None/False/0/"" are
+    # falsy, everything else truthy) - `strict=""` really does select
+    # StrictVersion in real, because the test's body is a plain `if
+    # strict:`, not Ansible's boolean() coercion.
+    private def self.python_truthy?(value : JSON::Any) : Bool
+      case raw = value.raw
+      when Nil          then false
+      when Bool         then raw
+      when Int64, Int32 then raw != 0
+      when Float64      then raw != 0.0
+      when String       then !raw.empty?
+      else                   true
+      end
+    end
+
+    private def self.strict_version_cmp(a : String, b : String) : Int32
+      VariableSubstitutor::FilterCore.strict_version_cmp(a, b)
+    end
+
+    private def self.semver_cmp(a : String, b : String) : Int32
+      VariableSubstitutor::FilterCore.semver_cmp(a, b)
+    end
+
+    private def self.loose_version_cmp(a : String, b : String) : Int32
+      VariableSubstitutor::FilterCore.loose_version_cmp(a, b)
     end
 
     private def self.quoted_literal?(expr : String) : Bool
@@ -2359,42 +2528,16 @@ module Krikri
     # regardless of whether any template rendering is even involved) for
     # ten lines of arithmetic.
     private def self.compare_versions(a : String, b : String, test_name : String) : Int32
-      # LooseVersion component semantics, same as JinjaFilters'
-      # compare_versions (kept duplicated - this file must not pull the
-      # engine dependency): digit runs are ints, [a-z]+ runs are strings,
-      # literal dots are components, everything else is dropped; a
-      # prefix-exhausted list is less, and the first int-vs-str mismatch
-      # raises Ansible's TypeError text (always '<' - Python list ordering
-      # bottoms out in __lt__ regardless of the operator).
-      a_parts = loose_version_components(a)
-      b_parts = loose_version_components(b)
-      [a_parts.size, b_parts.size].max.times do |i|
-        x = a_parts[i]?
-        y = b_parts[i]?
-        return -1 if x.nil?
-        return 1 if y.nil?
-        x_int = x.is_a?(Int64)
-        y_int = y.is_a?(Int64)
-        cmp = if x_int == y_int
-                x_int ? (x.as(Int64) <=> y.as(Int64)) : (x.as(String) <=> y.as(String))
-              else
-                raise TestPluginError.new(
-                  "The test plugin 'ansible.builtin.#{test_name}' failed: Version comparison failed: '<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'",
-                  "Version comparison failed: '<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'"
-                )
-              end
-        return cmp unless cmp == 0
-      end
-      0
-    end
-
-    private def self.loose_version_components(s : String) : Array(Int64 | String)
-      parts = [] of Int64 | String
-      s.scan(/\d+|[a-z]+|\./).each do |match|
-        text = match[0]
-        parts << (text.matches?(/\d+/) ? text.to_i64 : text)
-      end
-      parts
+      # LooseVersion comparison moved to FilterCore.loose_version_cmp
+      # (shared with the template-file evaluator's own copy - same
+      # drift class this project has hit repeatedly); this wrapper
+      # keeps the test-plugin framing around its error.
+      VariableSubstitutor::FilterCore.loose_version_cmp(a, b)
+    rescue ex : VariableSubstitutor::FilterCore::VersionCompareError
+      raise TestPluginError.new(
+        "The test plugin 'ansible.builtin.#{test_name}' failed: Version comparison failed: #{ex.message}",
+        "Version comparison failed: #{ex.message}"
+      )
     end
 
     private def self.evaluate_in(condition : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : Bool

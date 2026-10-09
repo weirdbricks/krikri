@@ -806,6 +806,16 @@ module Krikri
         # and NO "Error while evaluating conditional: " (live-verified
         # against 2.19.11 for the mandatory twin).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
+      rescue ex : TestPluginError
+        # A TEST plugin's runtime failure (the version test's own
+        # validation errors: unknown kwargs, strict/version_type
+        # conflicts, invalid operators/types, "Version comparison
+        # failed: ...") - same framing as the filter case, real prints
+        # "The test plugin '...' failed: ..." with the plain "Task
+        # failed: " prefix and no conditional wrapper (live-verified
+        # against 2.19.11 for the kwargs matrix, round 5210000
+        # follow-up: bodsch.icingaweb2's strict=True).
+        raise WhenEvaluationError.new("Task failed: #{ex.message}")
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # A compile-time-rejected filter/test name gets Ansible's own
         # "Syntax error in expression: " wording - Jinja's compiler

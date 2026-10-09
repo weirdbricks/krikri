@@ -296,17 +296,99 @@ module Krikri
     def self.register_tests : Nil
       {"version", "version_compare"}.each do |test_name|
         KrikriJinja.register_default_json_test(test_name) do |value, args, kwargs|
-          # A dict operand (the bare `ansible_version` magic var rather than
-          # its `.full` field) is a templating error in Ansible, not a
-          # digit scan over the dict's text (timorunge.pmm_client).
-          if value.raw.is_a?(Hash)
+          begin
+            # A dict operand (the bare `ansible_version` magic var rather than
+            # its `.full` field) is a templating error in Ansible, not a
+            # digit scan over the dict's text (timorunge.pmm_client).
+            if value.raw.is_a?(Hash)
+              raise KrikriJinja::TemplateError.new(
+                "Version comparison failed: unsupported operand type (dict, not a scalar version string)", 0
+              )
+            end
+            # The same kwargs semantics as the `when:`-side evaluator
+            # (conditional_evaluator.cr's evaluate_version_test, which owns
+            # the full validation-order pinning against 2.19.11): trailing
+            # strict=/version_type= kwargs select the comparison scheme,
+            # positionals past the operator bind to strict/version_type in
+            # signature order, and the same error wordings apply - kept in
+            # sync here because a version test inside a template FILE takes
+            # this path, not the conditional one.
+            fail_test = ->(inner : String) {
+              raise KrikriJinja::TemplateError.new(
+                "The test plugin 'ansible.builtin.#{test_name}' failed: #{inner}", 0
+              )
+            }
+            unknown = kwargs.keys.find { |k| !{"operator", "version", "strict", "version_type"}.includes?(k) }
+            fail_test.call("version_compare() got an unexpected keyword argument '#{unknown}'") if unknown
+            compare_to = args[0]? || kwargs["version"]?
+            fail_test.call("version_compare() got multiple values for argument 'version'") if args[0]? && kwargs.has_key?("version")
+            if compare_to.nil?
+              fail_test.call("version_compare() missing 1 required positional argument: 'version'")
+            end
+            operator = args[1]? || kwargs["operator"]?
+            fail_test.call("version_compare() got multiple values for argument 'operator'") if args[1]? && kwargs.has_key?("operator")
+            strict = args[2]? || kwargs["strict"]?
+            version_type = args[3]? || kwargs["version_type"]?
+            if args.size > 4
+              fail_test.call("version_compare() takes from 2 to 5 positional arguments but #{args.size + 1} were given")
+            end
+            strict_given = !strict.nil? && !strict.raw.nil?
+            version_type_given = !version_type.nil? && !version_type.raw.nil?
+            fail_test.call("Cannot specify both 'strict' and 'version_type'") if strict_given && version_type_given
+            left = py_str(value)
+            fail_test.call("Input version value cannot be empty") if left.empty?
+            compare_text = py_str(compare_to)
+            fail_test.call("Version parameter to compare against cannot be empty") if compare_text.empty?
+            mode = "loose"
+            if strict_given && (strict_val = strict) && py_truthy(strict_val)
+              mode = "strict"
+            elsif version_type_given && (version_type_val = version_type)
+              case py_str(version_type_val)
+              when "loose"
+                mode = "loose"
+              when "strict"
+                mode = "strict"
+              when "semver", "semantic"
+                mode = "semver"
+                # packaging's PEP440Version is not implemented - loose is
+                # the standing approximation (see the conditional side).
+              when "pep440"
+                mode = "loose"
+              else
+                fail_test.call("Invalid version type (#{py_str(version_type_val)}). Must be one of 'loose', 'strict', 'semver', 'semantic', 'pep440'")
+              end
+            end
+            op_map = {
+              "==" => "eq", "=" => "eq", "eq" => "eq",
+              "<" => "lt", "lt" => "lt",
+              "<=" => "le", "le" => "le",
+              ">" => "gt", "gt" => "gt",
+              ">=" => "ge", "ge" => "ge",
+              "!=" => "ne", "<>" => "ne", "ne" => "ne",
+            }
+            op_text = py_str(operator || JSON::Any.new("eq"))
+            op = op_map[op_text]?
+            unless op
+              fail_test.call("Invalid operator type (#{op_text}). Must be one of '==', '=', 'eq', '<', 'lt', '<=', 'le', '>', 'gt', '>=', 'ge', '!=', '<>', 'ne'")
+            end
+            cmp = case mode
+                  when "strict" then VariableSubstitutor::FilterCore.strict_version_cmp(left, compare_text)
+                  when "semver" then VariableSubstitutor::FilterCore.semver_cmp(left, compare_text)
+                  else               VariableSubstitutor::FilterCore.loose_version_cmp(left, compare_text)
+                  end
+            case op
+            when "eq" then cmp == 0
+            when "ne" then cmp != 0
+            when "lt" then cmp < 0
+            when "le" then cmp <= 0
+            when "gt" then cmp > 0
+            else           cmp >= 0
+            end
+          rescue ex : VariableSubstitutor::FilterCore::VersionCompareError
             raise KrikriJinja::TemplateError.new(
-              "Version comparison failed: unsupported operand type (dict, not a scalar version string)", 0
+              "The test plugin 'ansible.builtin.#{test_name}' failed: Version comparison failed: #{ex.message}", 0
             )
           end
-          compare_to = args[0]? || kwargs["version"]? || kwargs["compare_to"]? || JSON::Any.new("")
-          operator = args[1]? || kwargs["operator"]? || JSON::Any.new("==")
-          version_test(py_str(value), py_str(compare_to), py_str(operator))
         end
       end
 

@@ -1016,6 +1016,136 @@ module Krikri
         docs = text.split(/^---\s*$/m).map(&.strip).reject(&.empty?)
         JSON::Any.new(docs.map { |doc| JSON.parse(YAML.parse(doc).to_json) })
       end
+
+      # Raised by the version-comparison cores below for everything
+      # ansible-core wraps as `Version comparison failed: <inner>` - the
+      # message carries the INNER text only; each caller prefixes it and
+      # wraps it in its own error type (TestPluginError on the `when:`
+      # side, KrikriJinja::TemplateError on the template-file side).
+      class VersionCompareError < Exception; end
+
+      # LooseVersion component parse shared by the two evaluator copies
+      # that used to be independently-maintained twins (conditional_
+      # evaluator.cr and krikri_jinja_filters.cr): digit runs are ints,
+      # [a-z]+ runs are strings, literal dots are components, everything
+      # else is dropped.
+      def self.loose_version_components(s : String) : Array(Int64 | String)
+        parts = [] of Int64 | String
+        s.scan(/\d+|[a-z]+|\./).each do |match|
+          text = match[0]
+          parts << (text.matches?(/\d+/) ? text.to_i64 : text)
+        end
+        parts
+      end
+
+      # distutils LooseVersion comparison: prefix-exhausted list is less,
+      # first int-vs-str mismatch is Python's TypeError text (always '<' -
+      # list ordering bottoms out in __lt__ regardless of the operator).
+      def self.loose_version_cmp(a : String, b : String) : Int32
+        a_parts = loose_version_components(a)
+        b_parts = loose_version_components(b)
+        [a_parts.size, b_parts.size].max.times do |i|
+          x = a_parts[i]?
+          y = b_parts[i]?
+          return -1 if x.nil?
+          return 1 if y.nil?
+          x_int = x.is_a?(Int64)
+          y_int = y.is_a?(Int64)
+          cmp = if x_int == y_int
+                  x_int ? (x.as(Int64) <=> y.as(Int64)) : (x.as(String) <=> y.as(String))
+                else
+                  raise VersionCompareError.new(
+                    "'<' not supported between instances of '#{x_int ? "int" : "str"}' and '#{y_int ? "int" : "str"}'")
+                end
+          return cmp unless cmp == 0
+        end
+        0
+      end
+
+      # distutils StrictVersion (ansible's `strict=True` /
+      # `version_type='strict'`): two or three numeric components, patch
+      # defaulting to 0 ('0.4' == '0.4.0' - the difference from Loose,
+      # which compares a shorter prefix as LESS), plus an optional
+      # pre-release tag of 'a'/'b' + number that sorts BEFORE the same
+      # version without one ('1.0b1' < '1.0'). Only lowercase a/b are
+      # legal tags ('1.0rc1' is invalid), and anything not matching the
+      # shape fails the task with real's ValueError text.
+      STRICT_VERSION_RE = /\A(\d+)\.(\d+)(?:\.(\d+))?(?:([ab])(\d+))?\z/
+
+      def self.strict_version_cmp(a : String, b : String) : Int32 # ameba:disable Metrics/CyclomaticComplexity
+        parse_strict = ->(s : String) do
+          m = s.match(STRICT_VERSION_RE)
+          raise VersionCompareError.new("invalid version number '#{s}'") unless m
+          nums = {m[1].to_i64, m[2].to_i64, m[3]?.try(&.to_i64) || 0i64}
+          pre = m[4]? ? ({m[4], m[5]?.try(&.to_i64) || 0i64}) : nil
+          {nums, pre}
+        end
+        a_nums, a_pre = parse_strict.call(a)
+        b_nums, b_pre = parse_strict.call(b)
+        return a_nums <=> b_nums if a_nums != b_nums
+        return 0 if a_pre.nil? && b_pre.nil?
+        return -1 if a_pre && !b_pre
+        return 1 if !a_pre && b_pre
+        return 0 if a_pre == b_pre
+        (apre = a_pre) && (bpre = b_pre) ? apre <=> bpre : 0
+      end
+
+      # ansible.utils.version.SemanticVersion (version_type='semver' /
+      # 'semantic'): semver.org's grammar - exactly three numeric
+      # components, optional dot-separated pre-release identifiers after
+      # '-' (numeric identifiers sort BEFORE alphanumeric ones, numbers
+      # by value, letters lexicographically, a shorter identifier list is
+      # LESS), optional '+' build metadata that comparison ignores.
+      # '1.2' is invalid under semver (real: "invalid semantic version
+      # '1.2'").
+      # Note: Crystal interpolates a Regex literal into another as
+      # (?-imsx:...) - NON-capturing - so the three core components get
+      # explicit capture groups here rather than relying on interpolation
+      # numbering (the interpolated variant silently renumbered every
+      # group, making m[1] the prerelease text).
+      SEMVER_RE = /\A((?:0|[1-9]\d*))\.((?:0|[1-9]\d*))\.((?:0|[1-9]\d*))(?:-((?:(?:0|[1-9]\d*)|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:(?:0|[1-9]\d*)|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?\z/
+
+      def self.semver_cmp(a : String, b : String) : Int32 # ameba:disable Metrics/CyclomaticComplexity
+        parse_semver = ->(s : String) do
+          m = s.match(SEMVER_RE)
+          raise VersionCompareError.new("invalid semantic version '#{s}'") unless m
+          core = {m[1].to_i64, m[2].to_i64, m[3].to_i64}
+          pre = m[4]?.try do |pre_text|
+            pre_text.split('.').map do |ident|
+              ident.matches?(/\A\d+\z/) ? (ident.to_i64.as(Int64 | String)) : ident
+            end
+          end
+          {core, pre}
+        end
+        a_core, a_pre = parse_semver.call(a)
+        b_core, b_pre = parse_semver.call(b)
+        return a_core <=> b_core if a_core != b_core
+        return 0 if !a_pre && !b_pre
+        return -1 if a_pre && !b_pre
+        return 1 if !a_pre && b_pre
+        apre = a_pre.as(Array(Int64 | String))
+        bpre = b_pre.as(Array(Int64 | String))
+        [apre.size, bpre.size].max.times do |i|
+          x = apre[i]?
+          y = bpre[i]?
+          return -1 if x.nil?
+          return 1 if y.nil?
+          x_num = x.is_a?(Int64)
+          y_num = y.is_a?(Int64)
+          # _Numeric < _Alpha (semver's "numeric identifiers always have
+          # lower precedence than non-numeric identifiers"); same-kind
+          # pairs compare naturally.
+          cmp = if x_num && y_num
+                  x.as(Int64) <=> y.as(Int64)
+                elsif !x_num && !y_num
+                  x.as(String) <=> y.as(String)
+                else
+                  x_num ? -1 : 1
+                end
+          return cmp unless cmp == 0
+        end
+        0
+      end
     end
   end
 end
