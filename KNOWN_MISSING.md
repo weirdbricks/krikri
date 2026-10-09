@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1527`.**
+**Currently at `0.9.1559`.**
 
 ## Open gaps
 
@@ -56,6 +56,54 @@ defect moves down or gets deleted.
   "listening" but `/run/user/$UID/podman/podman.sock` is missing (seen after a tmpfiles sweep), restart it
   with `systemctl --user restart podman.socket`. One `statvfs` test can flake under parallel workers
   (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+
+- **Round 5210000's remaining divergences** (each seen on real Atlantic.net hosts against
+  ansible-core 2.19.11; the round's other 19 divergences are fixed, see the round narrative below):
+  - Facts-gathering crash with a bare "Index out of bounds" (ktechmidas.openvpn, warm run - after
+    the role changed the host's network state). The gatherer now annotates the failing section
+    ("... (while gathering network)") so the next occurrence pinpoints itself; root cause pending a
+    recurrence.
+  - Conditional-on-str split: both engines fail a `when:` whose result is a non-boolean string, but
+    krikri fails per loop item where real fails the whole task (clouddrove.ansible_role_common -
+    recap ok/skip counts differ by item).
+  - `failed_when:` on failing command output doesn't trigger: krikri ran the task ok where real
+    failed it (call_learning.moodle's php-not-found status check).
+  - `copy:`/`template:` missing dest directory: krikri fails with "Destination directory
+    /etc/yum.repos.d does not exist" where real creates it (Azulinho.azulinho-yum-repo-epel).
+  - Readiness timing: `wait_for` port 80 timed out at 305s on the cr host where real succeeded in
+    27s (clouddrove.docker_nginx - the role's docker/nginx container start under krikri).
+  - Jinja test call with kwargs: `is version('2.11', '<=', strict=True)` parses as a garbage
+    identifier ("Error while evaluating conditional: '', strict=True)' is undefined") instead of
+    calling the test with the kwarg (bodsch.icingaweb2 - locally reproduced against 2.19.11).
+
+## Round 5210000 (357 roles re-run after invalid 5200000, 2026-10-08; per-role triage)
+
+The previous overnight batch (round 5200000, 391 roles) measured nothing: it was launched against a
+bare binary copy at `~/scratch/batch5/` with no `bin/plugins/` beside it, so every crystal run died
+in ~0.02s with "Plugin binary not found: <module>" (278 rounds; its 69 "CLEAN" were both-engines-
+fail-identically parse errors). Re-ran the 357 Galaxy-installable roles with the standard build as
+round 5210000: **318 CLEAN, 29 DIVERGENT, 10 Galaxy-missing**.
+
+Fixes landed for 19 of the 29 (git log is the record, each verified against a local
+`ansible-playbook` 2.19.11 repro before landing): fail-not-skip for undefined args on unported
+modules; the `not(...)` strict-probe false "is undefined" and `when:` slice-index parsing; apt/
+apt_repository GPG-failure retry parity plus the `ansible.builtin.sysctl` redirect and
+apt_repository's failure `changed=false`; pip proceeding with a null `version:` at `state=latest`;
+`package: deb:` actually installing (the deb machinery extracted to a shared `AptDebInstall`);
+play-magic vars on every hostvars entry (`group_names` in templates); template: ownership applied
+through the resolving helper instead of blind shell-outs; exit 1 (not 4) for a removed module with a
+custom removal message; `first_found errors='ignore'` returning None with `length`'s TypeError
+wrapped in Ansible's filter-plugin wording. Real-host confirm rounds 5212000/5213000/5216000/
+5217000 came back CLEAN for centralpayment.rhel-subscription, rubyisbeautiful.proxy-common,
+sdarwin.nagios, artem_shestakov.nginx and rolehippie.mongodb; the later fixes (package deb,
+hostvars, template owner/group, rc=1, first_found) are only verified locally/container so far and
+still owe a confirm round.
+
+What's left, tracked as bullets in Open gaps: six divergences (facts-gather crash, conditional-on-str
+per-item failure, `failed_when:`, copy missing dest dir, docker_nginx readiness timing,
+`version(..., strict=True)` kwargs), three suspected infra flakes pending re-run
+(mtze.docker_swap_grub, webarchitect609.php_versions, bodsch.dnsmasq), and this round's
+`ROLES_TESTED.md` rows (with both engines' cold/warm timings).
 
 ## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
 
