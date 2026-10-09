@@ -492,7 +492,16 @@ module Krikri
       fingerprint = begin
         fetch_ppa_signing_key(ppa)
       rescue ex
-        return PluginResult.new(changed: false, failed: true, msg: ex.message || "failed to fetch PPA information")
+        # Ansible's own wrapper around EVERY Launchpad fetch failure:
+        # "failed to fetch PPA information, error was: <error>" - the
+        # inner text is Python's exception string, so a socket read
+        # timeout reads "Connection failure: The read operation timed
+        # out" (real, round 5222000 warm PPA fetch against a timing-out
+        # network) where this engine's IO::TimeoutError says "Read
+        # timed out". fetch_ppa_signing_key raises the inner text only;
+        # the prefix is added exactly once, here.
+        inner = ex.message == "Read timed out" ? "Connection failure: The read operation timed out" : (ex.message || "unknown error")
+        return PluginResult.new(changed: false, failed: true, msg: "failed to fetch PPA information, error was: #{inner}")
       end
 
       if apt_key = Process.find_executable("apt-key")
@@ -547,7 +556,7 @@ module Krikri
       client.read_timeout = 10.seconds
 
       response = client.get(uri.request_target, headers: HTTP::Headers{"Accept" => "application/json"})
-      raise "failed to fetch PPA information, error was: HTTP #{response.status_code}" unless response.status_code == 200
+      raise "HTTP #{response.status_code}" unless response.status_code == 200
 
       data = JSON.parse(response.body)
       data["signing_key_fingerprint"]?.try(&.as_s?) || raise "PPA response did not include a signing_key_fingerprint"
