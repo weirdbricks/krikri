@@ -675,10 +675,19 @@ module Krikri
         )
       end
       src = expand_tilde(raw)
-      return src if true?(@params["force"]?) || File.exists?(src)
-
+      # Real joins a relative src with the DEST's directory for the
+      # existence check (file.py's absrc = os.path.join(relpath, src),
+      # relpath = dest's dirname unless dest is a non-link directory) -
+      # a symlink's relative target resolves against the link's own
+      # directory, never the module process's cwd. The old
+      # File.exists?(src) checked cwd-relative, so baztian.joplin's
+      # `src: Joplin-<v>.AppImage` + `dest: /opt/Joplin.AppImage` failed
+      # "src file does not exist" on a file that DID exist next to the
+      # dest (round 5250000).
       relpath = !File.symlink?(path) && Dir.exists?(path) ? path : File.dirname(path)
       absrc = src.starts_with?('/') ? src : File.join(relpath, src)
+      return src if true?(@params["force"]?) || File.exists?(absrc)
+
       PluginResult.new(
         changed: false,
         failed: true,
