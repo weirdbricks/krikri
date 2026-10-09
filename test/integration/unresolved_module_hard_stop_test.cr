@@ -125,10 +125,35 @@ describe "unresolvable module names hard-stop the run (UnresolvedModuleError)" d
             ansible.builtin.debug: msg=hi
       YAML
     status.success?.must_equal(false, output)
+    status.exit_code.must_equal(4, output)
     output.must_include("[ERROR]: couldn't resolve module/action 'ec2_remote_facts'", output)
     output.wont_include("PLAY RECAP", output)
     output.wont_include("TASK [", output)
     output.wont_include("Gathering Facts", output)
+  end
+
+  it "exits 1 (not 4) for a removed module whose tombstone carries its own removal message" do
+    # Ansible raises the custom removal message at RUN time (exit 1),
+    # unlike the generic couldn't-resolve playbook-load refusal (exit
+    # 4) - live-verified both against ansible-core 2.19.11
+    # (sorrowless.* round 5210000: real rc=1, this engine used to exit
+    # 4 on the identical message).
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: removed module with custom message
+            community.docker.docker_compose:
+              services: []
+          - name: normal
+            ansible.builtin.debug: msg=hi
+      YAML
+    status.success?.must_equal(false, output)
+    status.exit_code.must_equal(1, output)
+    output.must_include("module has been removed", output)
+    output.wont_include("PLAY RECAP", output)
+    output.wont_include("TASK [", output)
   end
 
   it "runs to completion when a when:-gated unimplemented module's gate is false" do

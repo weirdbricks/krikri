@@ -711,6 +711,14 @@ rescue ex : Krikri::EndRoleOutsideRoleError
   # load_list_of_tasks, verified against ansible-core 2.19.4).
   puts "[ERROR]: #{ex.message}".colorize(:red)
   exit 4
+rescue ex : Krikri::RemovedModuleError
+  # A tombstoned-removed module WITH its own custom removal message
+  # ("The 'X' module has been removed. ...") - Ansible raises that at
+  # RUN time and exits 1, not the playbook-load rc=4 the generic
+  # couldn't-resolve text gets (live-verified both against 2.19.11;
+  # sorrowless.* round 5210000 saw real rc=1 vs this engine's 4).
+  puts "[ERROR]: #{ex.message}".colorize(:red)
+  exit 1
 rescue ex : Krikri::UnresolvedModuleError
   # A module/action name that resolves to nothing this engine can run:
   # a tombstoned-removed module (ec2_remote_facts and friends -
@@ -1288,6 +1296,11 @@ playbook.plays.each_with_index do |play, _play_index|
       # On STDERR, like every other [ERROR] display line (live-verified
       # vs 2.19.11: the not-found handler abort prints on stderr).
       STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+      exit 1
+    rescue ex : Krikri::RemovedModuleError
+      # Same custom-message tombstone split as the parse-time rescue
+      # above: Ansible's removal message exits 1, not 4.
+      puts "[ERROR]: #{ex.message}".colorize(:red)
       exit 1
     rescue ex : Krikri::UnresolvedModuleError
       # Same whole-run abort for a module name Ansible can't

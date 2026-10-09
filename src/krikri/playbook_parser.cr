@@ -1394,6 +1394,17 @@ module Krikri
   class UnresolvedModuleError < Exception
   end
 
+  # A tombstoned-removed module name whose tombstone carries its OWN
+  # custom removal message ("The 'community.docker.docker_compose'
+  # module has been removed. ..."). Ansible prints that message at RUN
+  # time and exits 1, unlike the GENERIC "couldn't resolve
+  # module/action" playbook-load refusal which exits 4 - live-verified
+  # against ansible-core 2.19.11 for both shapes (sorrowless.*
+  # round 5210000: real rc=1, krikri rc=4 on the docker_compose
+  # message; ec2_remote_facts's generic text rc=4 on both).
+  class RemovedModuleError < UnresolvedModuleError
+  end
+
   # Parser for Ansible YAML playbooks
   class PlaybookParser
     # Ansible's load_list_of_blocks displays "statically imported:
@@ -1465,8 +1476,10 @@ module Krikri
 
       return unless REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
 
-      raise UnresolvedModuleError.new(REMOVED_MODULE_TOMBSTONES[as_written] ||
-                                      "couldn't resolve module/action '#{as_written}'. " \
+      if custom = REMOVED_MODULE_TOMBSTONES[as_written]
+        raise RemovedModuleError.new(custom)
+      end
+      raise UnresolvedModuleError.new("couldn't resolve module/action '#{as_written}'. " \
                                       "This often indicates a misspelling, missing collection, or incorrect module path.")
     end
 
