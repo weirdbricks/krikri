@@ -1056,7 +1056,7 @@ module Krikri
     # run this task" signal every caller already treats a when:-skip as.
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional", host)
-      ignore_errors = resolve_task_ignore_errors(task)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
       unless defer_stats
         if ignore_errors
           @results[host.name]["ok"] += 1
@@ -2713,7 +2713,7 @@ module Krikri
     # on unconditionally (live-verified vs 2.19.11: `failed=1 ignored=0`
     # even with ignore_errors: true on the include task).
     private def halt_if_failed(task : Task, host : Host, failed : Bool, result : JSON::Any? = nil, force_halt : Bool = false) : Nil
-      return unless failed && (force_halt || !resolve_task_ignore_errors(task))
+      return unless failed && (force_halt || !resolve_task_ignore_errors(task, host: host))
 
       @failed_task_info[host.name] = {task, result} if result
       @halted_hosts.add(host.name)

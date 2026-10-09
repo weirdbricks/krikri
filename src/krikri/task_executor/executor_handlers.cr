@@ -364,7 +364,7 @@ module Krikri
       # `meta: flush_handlers` that triggered it, diverging from
       # Ansible's own recap (extra ok:/changed:/failed: entries for
       # tasks Ansible never even attempted).
-      halt_if_failed(handler, host, Krikri.result_failed_flag(result)) unless resolve_task_ignore_errors(handler)
+      halt_if_failed(handler, host, Krikri.result_failed_flag(result)) unless resolve_task_ignore_errors(handler, host: host)
 
       result
     end

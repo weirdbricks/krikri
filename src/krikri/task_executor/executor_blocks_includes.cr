@@ -1735,7 +1735,7 @@ module Krikri
           # one per raising item (see run_include_tasks_once's own rescue
           # for why). Same ignore_errors: booking swallow_when_error
           # itself makes when it books directly.
-          if resolve_task_ignore_errors(task)
+          if resolve_task_ignore_errors(task, host: host)
             @results[host.name]["ok"] += 1
             @results[host.name]["ignored"] += 1
           else
@@ -2082,7 +2082,7 @@ module Krikri
     # two-key fatal dump, ignore_errors: DOES apply, and the play halts
     # for that host like any other failed task (rc=2).
     private def fail_include_role_bool_keyword(task : Task, host : Host, failure : RoleBoolKeywords::Failure, item_label : String?) : Nil
-      ignore_errors = resolve_task_ignore_errors(task)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
       if ignore_errors
         @results[host.name]["ok"] += 1
         @results[host.name]["ignored"] += 1

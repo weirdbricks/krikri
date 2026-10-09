@@ -1683,11 +1683,21 @@ module Krikri
     # which is all the dominant idiom needs - an arbitrary-var template
     # that can't resolve falls back to the parse-time guess, no worse
     # than before this existed.
-    private def resolve_task_ignore_errors(task : Task, vars_context : Hash(String, JSON::Any)? = nil) : Bool
+    private def resolve_task_ignore_errors(task : Task, vars_context : Hash(String, JSON::Any)? = nil, host : Host? = nil) : Bool
       expr = task.ignore_errors_expr
       return task.ignore_errors? unless expr
 
-      vars = vars_context || {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any
+      # A caller with no vars_context in hand but a host (halt_if_failed,
+      # swallow_when_error, the include/validate failure bookers) must
+      # still evaluate against the TASK'S REAL scope: the old
+      # ansible_check_mode-only fallback rendered any expression touching
+      # a real variable to the "undefined" sentinel and fell back to
+      # parse_ignore_errors' default-to-true guess - so
+      # `ignore_errors: "{{ ignore_erros|default(False) }}"` (a
+      # parse-time-true guess, real value False) silently IGNORED the
+      # block's failure and kept executing tasks on a host Ansible had
+      # already halted (exphost.create_user's block, round 5250000).
+      vars = vars_context || (host ? build_vars_context(task, host) : {"ansible_check_mode" => JSON::Any.new(@check_mode)} of String => JSON::Any)
       substitutor = VarSubstitutor.new(vars: vars)
       rendered = substitutor.substitute(expr)
       # A reference the given *vars* can't resolve (an expression

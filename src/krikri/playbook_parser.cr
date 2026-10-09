@@ -154,6 +154,12 @@ module Krikri
     # `notify:` above, parsed identically. nil when absent.
     property listen : Array(String)?
     property? ignore_errors : Bool
+    # Whether the task WROTE its own ignore_errors: (vs inheriting the
+    # default) - block: children inherit the block's value only when they
+    # define none of their own, and without this marker an explicit
+    # `ignore_errors: false` on a child is indistinguishable from the
+    # default false, so the block's value would clobber it either way.
+    property? ignore_errors_explicit : Bool = false
     # Raw `{{ ... }}` text when ignore_errors: is a templated expression
     # rather than a literal boolean (`dj-wasabi.telegraf`'s own
     # `ignore_errors: "{{ ansible_check_mode }}"`, whose parse-time
@@ -3409,7 +3415,18 @@ module Krikri
     private def self.inherit_ignore_errors(block : Task) : Nil
       [block.block_tasks, block.rescue_tasks, block.always_tasks].each do |children|
         children.try &.each do |child|
-          child.ignore_errors = true
+          # Inherit the block's ACTUAL value and expression - the old
+          # hardcoded `true` made a block with `ignore_errors:
+          # "{{ ignore_erros|default(False) }}"` (resolved False at
+          # runtime) or a plain `ignore_errors: false` ignore every
+          # member failure and keep executing tasks on a host Ansible
+          # had already halted (exphost.create_user's create_user block,
+          # round 5250000). A child's own ignore_errors: wins (nearest
+          # scope), so children that wrote one are left alone.
+          unless child.ignore_errors_explicit?
+            child.ignore_errors = block.ignore_errors?
+            child.ignore_errors_expr = block.ignore_errors_expr
+          end
           inherit_ignore_errors(child)
         end
       end
@@ -3605,6 +3622,7 @@ module Krikri
       # correctly FAILED on both engines, krikri just ignored it and
       # only died two tasks later on the missing /etc/telegraf).
       task.ignore_errors = parse_ignore_errors(task_hash["ignore_errors"]?)
+      task.ignore_errors_explicit = !task_hash["ignore_errors"]?.nil?
       task.ignore_errors_expr = template_expression(task_hash["ignore_errors"]?)
       task.no_log = parse_become_value(task_hash["no_log"]?) || false
       task.no_log_expr = template_expression(task_hash["no_log"]?)
@@ -4375,7 +4393,7 @@ module Krikri
       # A block's ignore_errors: is inherited by every task inside block:,
       # rescue: and always: (real resolves it through the parent chain), so a
       # failing rescue task under `ignore_errors: true` is ignored too.
-      inherit_ignore_errors(task) if task.ignore_errors?
+      inherit_ignore_errors(task)
       task.become = resolve_become(task_hash, play)
       task.become_expr = become_expr(task_hash)
       task.become_user = task_hash["become_user"]?.try { |v| safe_yaml_to_string(v) } || play.become_user

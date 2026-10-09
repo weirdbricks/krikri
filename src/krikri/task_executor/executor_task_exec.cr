@@ -241,7 +241,7 @@ module Krikri
       # instead of the old multi-line `failed:`/`Message:` shape, and
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
       # identical to the rest of the engine.
-      ignore_errors = resolve_task_ignore_errors(task)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
