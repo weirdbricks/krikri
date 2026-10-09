@@ -1410,41 +1410,75 @@ module Krikri
         if substituted.starts_with?('[')
           parsed = (JSON.parse(substituted).as_a? rescue nil)
           if parsed
-            parsed.each { |item| matches.concat(Dir.glob(fileglob_pattern(task, item.to_s))) }
+            parsed.each { |item| matches.concat(fileglob_matches(task, item.to_s)) }
             next
           end
         end
 
-        matches.concat(Dir.glob(fileglob_pattern(task, substituted)))
+        matches.concat(fileglob_matches(task, substituted))
       end
 
       matches.sort!
       matches.map { |path| JSON::Any.new(path) }
     end
 
-    # Ansible's own fileglob lookup plugin dwims each pattern's
-    # directory part relative to the role's files/ dir (path_dwim_relative
-    # with 'files'), so a BARE pattern (`*.yml`, no "/" in it) inside a role
-    # matches the role's own files/ contents - NOT whatever the process
-    # happens to have as its current working directory. Without this, the
-    # bare pattern globbed cwd directly: a playbook `site.yml` sitting next
-    # to the invocation matched itself instead of the role's
-    # middleware.yml/redirect.yml (mismatch-traefik round repro, confirmed
-    # live against ansible-playbook, which found only the role's own
-    # files). The returned paths stay the FULL resolved paths Dir.glob
-    # yields - the same shape copy:'s src: already receives from
-    # resolve_script_path, which leaves an absolute item path untouched
-    # (File.join with an absolute candidate just can't exist, then
-    # File.expand_path passes it through), so the item never gets
-    # double-resolved. An absolute pattern, or one that already carries a
-    # directory component, is left as-is; a task outside any role
-    # (role_files_dir nil, only set when the role actually ships a files/
-    # dir) keeps the old cwd-relative behavior.
-    private def fileglob_pattern(task : Task, pattern : String) : String
-      return pattern if pattern.starts_with?('/')
-      return pattern unless File.dirname(pattern) == "."
-      role_files_dir = task.role_files_dir
-      role_files_dir ? File.join(role_files_dir, pattern) : pattern
+    # Ansible's fileglob lookup plugin (2.19.11), per term:
+    # - a pattern carrying a directory part dwims that dirname through
+    #   find_file_in_search_path(variables, 'files', dirname) - the first
+    #   EXISTING candidate from the task's search stack in
+    #   path_dwim_relative_stack's candidate order (NeedleLookup's, whose
+    #   message list was live-verified against 2.19.11) - and globs the
+    #   basename under that one dir. clouddrove.ansible_role_docker_nginx
+    #   (round 5210000) is the shape this covers: `with_fileglob:
+    #   ../templates/config/site.d/*.*` inside the role's tasks/ dir
+    #   matched the role's own templates as `<tasks>/../templates/...`
+    #   in real, while krikri left the pattern cwd-relative, globbed
+    #   nothing and skipped every config-transfer task - so nginx ran
+    #   without its config and the role's wait_for timed out at 305s
+    #   where real had already failed the role on an undefined var.
+    # - a bare pattern (no "/" in it) tries `<p>/files` then `<p>` for
+    #   each search-stack path p, and the FIRST path whose glob yields an
+    #   isfile match wins (the plugin breaks out of its found_paths loop
+    #   on the first hit) - the role's files/ dir still wins what it has,
+    #   but a role without one now falls through to the role root and
+    #   the task file's own dir like real, not to the process cwd.
+    # An absolute pattern keeps passing through untouched. Non-file glob
+    # results are filtered (the plugin's os.path.isfile check).
+    private def fileglob_matches(task : Task, pattern : String) : Array(String)
+      if pattern.starts_with?('/')
+        return Dir.glob(pattern).select { |path| File.file?(path) }
+      end
+
+      term_file = File.basename(pattern)
+      found_paths = [] of String
+      dirname = File.dirname(pattern)
+      if dirname != "."
+        stack = Krikri::NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task))
+        basedir = if source_file = task.source_file
+                    File.dirname(File.expand_path(source_file))
+                  else
+                    Dir.current
+                  end
+        candidates = Krikri::NeedleLookup.candidates(stack, basedir, "files", dirname)
+        # find_file_in_search_path returns the first existing candidate,
+        # or nil (with only a stderr warning) when none exists - the
+        # loop then yields no items, exactly like real's `if dwimmed_path`
+        # guard.
+        if found = candidates.find { |candidate| Dir.exists?(candidate) }
+          found_paths << found
+        end
+      else
+        Krikri::NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)).each do |path|
+          found_paths << File.join(path, "files")
+          found_paths << path
+        end
+      end
+
+      found_paths.each do |dir|
+        matches = Dir.glob(File.join(dir, term_file)).select { |path| File.file?(path) }
+        return matches unless matches.empty?
+      end
+      [] of String
     end
 
     # Resolve with_file: entries (if any) - Ansible's `file` lookup
