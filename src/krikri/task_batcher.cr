@@ -248,18 +248,33 @@ module Krikri
       ActionPluginManager.has_action_plugin?(task.module_name)
     end
 
-    # getent:/package_facts:/service_facts:/set_fact: (unlike a plain
-    # register:, which references_register? below already guards) write
-    # new ansible_facts/variables as a normal part of *every* run, with
-    # no register: name for a later group member's params to be caught
-    # referencing. A batch group's member params are all rendered up
-    # front, before the single SSH round trip that actually runs any of
-    # them - a later member referencing one of these facts (dev-sec
-    # os_hardening's own molecule test: `getent: {database: passwd}`
-    # immediately followed by tasks reading `ansible_facts.getent_passwd`)
-    # would render against whatever that fact was *before* this task ran,
-    # not after. Always its own group avoids the whole class of bug, the
-    # same way structural_or_dynamic?'s pseudo-modules are.
+    # The plugins that publish `ansible_facts` (or top-level registered
+    # vars like `services`) as a normal part of *every* run - the full
+    # set is every krikri plugin whose result carries ansible_facts:
+    # current_container_facts, deploy_helper, ec2_metadata_facts,
+    # getent, hostname, mount_facts, package_facts, service_facts,
+    # set_fact, virt_net - (unlike a plain register:, which
+    # references_register? below already guards) write new
+    # facts/variables with no register: name for a later group member's
+    # params to be caught referencing. A batch group's member params are
+    # all rendered up front, before the single SSH round trip that
+    # actually runs any of them - a later member referencing one of
+    # these facts (dev-sec os_hardening's own molecule test: `getent:
+    # {database: passwd}` immediately followed by tasks reading
+    # `ansible_facts.getent_passwd`) would render against whatever that
+    # fact was *before* this task ran, not after. Always its own group
+    # avoids the whole class of bug, the same way
+    # structural_or_dynamic?'s pseudo-modules are.
+    #
+    # The list has to cover EVERY fact-publishing plugin, not just the
+    # obvious gather-modules: mbaran0v.ansible_role_prometheus_redis_
+    # exporter (round 5250314, over SSH) runs `deploy_helper:
+    # state=present` then `file: dest={{ deploy_helper.new_release_path
+    # }}` - deploy_helper: was missing, so the file: task's args got
+    # rendered before deploy_helper: ran and failed with "'deploy_
+    # helper' is undefined". Real Ansible always merges ansible_facts
+    # immediately, so it never batches there; keep this list in sync
+    # whenever a new plugin starts publishing facts.
     #
     # service_facts: was missing from this list entirely - real bug
     # found benchmarking geerlingguy.ntp's own "Disable systemd-
@@ -271,7 +286,10 @@ module Krikri
     # - a real behavioral divergence (Ansible correctly ran it),
     # not just wasted work.
     private def self.produces_ansible_facts?(task : Task) : Bool
-      %w[getent package_facts service_facts set_fact].any? { |name| task.module_name.ends_with?(name) }
+      %w[
+        current_container_facts deploy_helper ec2_metadata_facts getent
+        hostname mount_facts package_facts service_facts set_fact virt_net
+      ].any? { |name| task.module_name.ends_with?(name) }
     end
 
     private def self.structural_or_dynamic?(task : Task) : Bool
