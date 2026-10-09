@@ -365,7 +365,15 @@ module Krikri
       unless Dir.exists?(dest_dir)
         if dest_signaled_dir
           begin
-            Dir.mkdir_p(dest_dir)
+            # Real creates the missing directory through copy.py's
+            # `dest.endswith(os.sep)` makedirs branch (template's action
+            # plugin runs the copy module with _original_basename) and
+            # applies owner:/group:/directory_mode: to what it created -
+            # not a bare mkdir (round 5210220
+            # Azulinho.azulinho-yum-repo-epel).
+            create_missing_dest_dir(dest_dir, @params["owner"]?, @params["group"]?, @params["directory_mode"]?)
+          rescue ex : OwnerLookupFailure
+            raise ex
           rescue ex
             return PluginResult.new(
               changed: false,

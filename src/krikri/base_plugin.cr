@@ -1088,6 +1088,30 @@ module Krikri
       # only the syscalls raise here).
     end
 
+    # Ansible's copy module's `dest.endswith(os.sep)` branch (copy.py):
+    # a dest the task signaled as a directory (trailing "/") gets its
+    # missing directory created with os.makedirs - default umask mode,
+    # NOT the task's `mode:` - and then
+    # adjust_recursive_directory_permissions applies the task's
+    # owner:/group: (and `directory_mode:` when given) to every
+    # directory that call created, not just the leaf. Shared by copy
+    # (content-inlined-src and src paths) and template, whose
+    # dest-signaled branches previously created the directory bare,
+    # leaving owner:/group: unapplied to it (round 5210220
+    # Azulinho.azulinho-yum-repo-epel, dest=/etc/yum.repos.d/).
+    protected def create_missing_dest_dir(dest_dir : String, owner : String?, group : String?, directory_mode : String?) : Nil
+      created = [] of String
+      dir = dest_dir
+      while !Dir.exists?(dir) && dir != "/" && dir != "." && !dir.empty?
+        created << dir
+        dir = File.dirname(dir)
+      end
+      Dir.mkdir_p(dest_dir)
+      created.each do |new_dir|
+        apply_owner_group_mode(new_dir, owner, group, directory_mode)
+      end
+    end
+
     # Generate unified diff
     protected def generate_unified_diff(before : String, after : String, before_header : String = "before", after_header : String = "after") : JSON::Any
       JSON.parse({

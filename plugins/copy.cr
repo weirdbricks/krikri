@@ -218,10 +218,30 @@ module Krikri
         # branch, the raw slash-terminated dest reached the final
         # rename/move and failed with "Not a directory". Same condition
         # in #handle_file_copy below.
-        if (basename = @params["__original_src_basename"]?.presence) && (Dir.exists?(dest) || dest.ends_with?('/'))
+        # A BARE content: (no inlined src) whose dest is a directory -
+        # existing, or signaled by a trailing "/" - fails in Ansible's
+        # copy ACTION plugin before anything runs ("can not use
+        # content with a dir as dest", action/copy.py's arg validation
+        # and its exists-and-isdir branch; live-verified vs 2.19.11).
+        # An INLINED src: never reaches that check - the action saw
+        # src:, not content: - and instead appends the basename and
+        # creates a missing destination directory (copy.py's
+        # `dest.endswith(os.sep)` makedirs branch; round 5210220
+        # Azulinho.azulinho-yum-repo-epel's `dest=/etc/yum.repos.d/`
+        # on a host where that directory doesn't exist yet - krikri
+        # failed "Destination directory does not exist" where real
+        # created it and copied).
+        dest_signaled_dir = dest.ends_with?('/')
+        if (basename = @params["__original_src_basename"]?.presence) && (Dir.exists?(dest) || dest_signaled_dir)
           dest = File.join(dest, basename)
+        elsif dest_signaled_dir || Dir.exists?(dest)
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "can not use content with a dir as dest"
+          )
         end
-        return handle_content_copy(content, dest)
+        return handle_content_copy(content, dest, dest_signaled_dir)
       end
 
       # Handle src-based copy
@@ -288,7 +308,7 @@ module Krikri
     end
 
     # Copy inline content to destination
-    private def handle_content_copy(content : String, dest_param : String) : PluginResult
+    private def handle_content_copy(content : String, dest_param : String, dest_signaled_dir = false) : PluginResult
       dest = resolve_follow(dest_param)
 
       # Calculate the checksums the result fields carry. `checksum:` is
@@ -418,26 +438,50 @@ module Krikri
       end
 
       # Ansible's copy module does NOT create a missing single-file
-      # destination directory - it fails with this exact message. See
-      # plugins/template.cr's identical fix (same bug, same root cause:
-      # a leftover `Dir.mkdir_p` that only diverged from Ansible
-      # once the parent genuinely didn't exist yet) for the repro.
+      # destination's parent directory - it fails with this exact
+      # message - EXCEPT when the dest itself was directory-signaled
+      # (trailing "/"), which copy.py's makedirs branch handles below.
       dest_dir = File.dirname(dest)
       unless Dir.exists?(dest_dir)
-        # The trailing `checksum` is Ansible's copy ACTION plugin injecting
-        # local_checksum into any module result that lacks one, failed
-        # results included (live-verified vs 2.19.11). The action also
-        # seeds `diff: []` before the module runs and `result.update`s
-        # the module's failure into it, so the registered failure leads
-        # with diff, then failed, msg, checksum - changed and exception
-        # trail after (round 994002 kop_misc2 helper_unfinished).
-        return PluginResult.new(
-          changed: false,
-          failed: true,
-          msg: "Destination directory #{dest_dir} does not exist",
-          checksum: content_sha1,
-          key_order: ["diff", "failed", "msg", "checksum"]
-        )
+        # A trailing-"/" dest that was directory-signaled still creates
+        # the missing directory here: the content is an inlined src:
+        # (see #execute's content-path comment), so Ansible's copy
+        # module takes its `dest.endswith(os.sep)` makedirs branch and
+        # creates the directory (owner:/group:/directory_mode: applied
+        # to it, see BasePlugin#create_missing_dest_dir). Only a bare
+        # content: - which already failed "can not use content with a
+        # dir as dest" above - can't get here with a signaled dir.
+        if dest_signaled_dir
+          begin
+            create_missing_dest_dir(dest_dir, @params["owner"]?, @params["group"]?, @params["directory_mode"]?)
+          rescue ex : OwnerLookupFailure
+            # An unresolvable owner:/group: name fails the task with
+            # basic.py's own wording, like everywhere else ownership is
+            # resolved - not the mkdir-failure message below.
+            raise ex
+          rescue ex
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "Failed to create destination directory #{dest_dir}: #{ex.message}"
+            )
+          end
+        else
+          # The trailing `checksum` is Ansible's copy ACTION plugin injecting
+          # local_checksum into any module result that lacks one, failed
+          # results included (live-verified vs 2.19.11). The action also
+          # seeds `diff: []` before the module runs and `result.update`s
+          # the module's failure into it, so the registered failure leads
+          # with diff, then failed, msg, checksum - changed and exception
+          # trail after (round 994002 kop_misc2 helper_unfinished).
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Destination directory #{dest_dir} does not exist",
+            checksum: content_sha1,
+            key_order: ["diff", "failed", "msg", "checksum"]
+          )
+        end
       end
 
       # Write the file (staged + validated first when validate: is given;
@@ -693,7 +737,9 @@ module Krikri
       unless Dir.exists?(dest_dir)
         if dest_signaled_dir
           begin
-            Dir.mkdir_p(dest_dir)
+            create_missing_dest_dir(dest_dir, @params["owner"]?, @params["group"]?, @params["directory_mode"]?)
+          rescue ex : OwnerLookupFailure
+            raise ex
           rescue ex
             return PluginResult.new(
               changed: false,
