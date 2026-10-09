@@ -284,6 +284,25 @@ module Krikri
             end
             return JSON::Any.new(raw.strip)
           else
+            # A container variable's own value may have leaves that are
+            # still unrendered Jinja (`accounts: ["{{ myuser }}"]`):
+            # Ansible's recursive re-templating renders every leaf before
+            # the comparison sees it, so `accounts != ['root']` compares by
+            # the RENDERED list. Returning the raw Array (String leaves
+            # still literal `{{ }}` text) made the same comparison answer
+            # True and, in real roles, ran the gated task instead of
+            # skipping it - l3d.dotfiles, round 5250154.
+            if raw.is_a?(Array) || raw.is_a?(Hash)
+              unless VarSubstitutor.unsafe_root?(@vars, name)
+                # defer_unresolved like the filter-chain head (round
+                # 952484): a leaf bottoming out at an undefined name is
+                # left raw so a comparison that never touches it still
+                # answers the way Ansible's lazy templating does.
+                return JinjaRenderer.rerender_nested_templates(
+                  value, VarSubstitutor.new(vars: @vars), defer_unresolved: true)
+              end
+              return value
+            end
             return value
           end
         end

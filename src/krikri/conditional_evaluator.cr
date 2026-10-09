@@ -1722,6 +1722,30 @@ module Krikri
       VariableSubstitutor::Rerender.render_raw(vars, raw, source_expr)
     end
 
+    # Container variant of #rerender_if_templated (which only sees a
+    # String's own raw form): renders an Array/Hash variable's still-
+    # unrendered Jinja leaves recursively - Ansible's recursive
+    # re-templating reaches every level of a container's value
+    # (l3d.dotfiles round 5250154: `accounts: ["{{ myuser }}"]` compared
+    # in `when: accounts != ['root']` by its literal template text,
+    # running the gated task instead of skipping). Deliberately LENIENT
+    # on failure, matching the filter-chain head's laziness (round
+    # 952484): a leaf that bottoms out at a name set nowhere is left in
+    # its raw form (defer_unresolved) rather than failing a comparison
+    # that never touches it, so the untouched-undefined-sibling cases
+    # live-verified vs ansible-playbook 2.19.11 keep running the task.
+    private def self.rerender_container_templated(vars : Hash(String, JSON::Any), value : JSON::Any, raise_undefined : Bool, source_expr : String? = nil) : JSON::Any
+      return value if VarSubstitutor.unsafe_root?(vars, source_expr) ||
+                      VariableSubstitutor::HostvarsContext.origin_unsafe?(vars, source_expr)
+      begin
+        VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+          value, VarSubstitutor.new(vars: vars), defer_unresolved: true)
+      rescue e : Exception
+        raise e if raise_undefined
+        value
+      end
+    end
+
     # When this evaluation traces back to a task-level `when:`/`assert:`
     # (raise_undefined), a resolved value whose own raw form is still
     # unrendered Jinja must render STRICTLY - Ansible's recursive
@@ -3115,6 +3139,15 @@ module Krikri
           resolved = VariableSubstitutor::VariableLookup.new(vars).resolve(expr)
           strict_probe_templated_value(vars, resolved, raise_undefined, expr)
           resolved = rerender_if_templated(vars, resolved, expr)
+          # Exactly the container variant of the gap just above: a dotted
+          # path whose resolved value is an Array/Hash with still-unrendered
+          # Jinja leaves (`conf.users == ['root']` over
+          # `conf: {users: ["{{ myuser }}"]}`, round 5250154) used to pass
+          # through unrendered here, since Rerender.if_templated handles
+          # only a String's raw form.
+          if resolved && (resolved.raw.is_a?(Array) || resolved.raw.is_a?(Hash))
+            resolved = rerender_container_templated(vars, resolved, raise_undefined, expr)
+          end
           return json_any_to_value(resolved) if resolved
           raise UndefinedVariableError.new(undefined_reference_message(expr, vars)) if raise_undefined
           return nil
@@ -3146,6 +3179,15 @@ module Krikri
           strict_probe_templated_value(vars, value, raise_undefined, expr)
           rendered = render_raw_template_string(vars, raw, expr)
           json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
+        elsif raw.is_a?(Array) || raw.is_a?(Hash)
+          # Ansible's recursive re-templating reaches EVERY level of a
+          # container variable's value, not just a top-level scalar:
+          # `accounts: ["{{ myuser }}"]` compared in a `when:` (`accounts
+          # != ['root']`, l3d.dotfiles round 5250154) must compare the
+          # RENDERED list `['root']`, never the literal template text -
+          # which used to compare unequal and then ran the gated task on
+          # every host instead of skipping it.
+          json_any_to_value(rerender_container_templated(vars, value, raise_undefined, expr))
         else
           json_any_to_value(value)
         end
