@@ -1953,7 +1953,18 @@ module Krikri
             # the flat substitution, which owns those shapes.
             native_typed = native_containers ? native_typed_container_value(substitutor, stripped_value) : nil
           end
-          substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span && !native_containers, native: native_containers)
+          # A MIXED value (literal text around the span) under
+          # native_containers still renders to TEXT in real ansible-core -
+          # native typing requires the whole value to be one span - so it
+          # needs output:true's Python-repr container rendering
+          # (`{{ p0 + [foo2] }}'` stores `['...']'`, not the JSON-compact
+          # `["..."]'`; round 5250000, opsta.graylog's accumulated
+          # graylog_search_config_paths set_fact). A whole-single-span
+          # value keeps output:false in every module: its structured/
+          # native handling owns the shape, and flipping it to text broke
+          # the dict-shaped argsplat params (`args:` loops) that consume
+          # the rendered span as structured data.
+          substituted_value = native_typed || substitutor.substitute(value, strict: true, output: !whole_single_span, native: native_containers)
         rescue e : UndefinedVariableError
           # ansible-core 2.19 wraps every undefined module-arg
           # reference with the param it failed on: the task's fatal msg

@@ -2137,15 +2137,32 @@ module Krikri
         # finalization never saw the failure. Multi-part and block-tag
         # values keep the lenient render: real renders those with inline
         # error markers instead of raising (p6 probe).
-        if VarSubstitutor.strict_span_active? &&
-           (ws = raw.strip).starts_with?("{{") && ws.ends_with?("}}") &&
-           (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1
+        ws = raw.strip
+        whole_span = ws.starts_with?("{{") && ws.ends_with?("}}") &&
+                     (ws.split("{{").size - 1) == 1 && (ws.split("}}").size - 1) == 1
+        if VarSubstitutor.strict_span_active? && whole_span
           rendered = VarSubstitutor.new(vars: render_vars).substitute(raw, strict: true)
           return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
         end
-        inner = raw.strip
-        inner = inner[2..-3].strip if inner.starts_with?("{{") && inner.ends_with?("}}")
-        rendered = render_vars.same?(@vars) ? evaluate(inner) : ExpressionEvaluator.new(render_vars, @decode).evaluate(inner)
+        if whole_span
+          inner = ws[2..-3].strip
+          rendered = render_vars.same?(@vars) ? evaluate(inner) : ExpressionEvaluator.new(render_vars, @decode).evaluate(inner)
+          return (JSON.parse(rendered) rescue JSON::Any.new(rendered))
+        end
+        # A value that is NOT one whole `{{ }}` span (literal text around
+        # spans, or several spans) is TEMPLATE SOURCE, not an expression -
+        # it needs the template renderer, the same hand-rolled substitute
+        # the direct `{{ }}`-arg path uses (its mixed-span rendering keeps
+        # Ansible's native list repr, `['a', 'b']`). The old fall-through
+        # fed such raw text to evaluate() as if it were an expression, and
+        # a value like `{{ playbook_dir }}/groups/{{ item }}/graylog` got
+        # its literal `/` characters parsed as division operators
+        # (`unsupported operand type(s) for /: 'dict' and 'NoneType'`;
+        # round 5250000, opsta.graylog's accumulated
+        # `graylog_search_config_paths + [graylog_search_config_path]`
+        # set_fact, where the operand var's own value is exactly this
+        # multi-span shape).
+        rendered = VarSubstitutor.new(vars: render_vars).substitute(raw)
         (JSON.parse(rendered) rescue JSON::Any.new(rendered))
       end
 
