@@ -36,7 +36,6 @@ defect moves down or gets deleted.
   krikri - which implements community modules natively - runs on (gbraad.docker-registry,
   JohnPreston.awslogs; the community.crypto precedent from round 2300000 covers the
   host-lacks-the-collection half).
-
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
   `testing/keyorder_probes/kop_*` roles, run through `krikri-role-tester run` with `local:` queue
@@ -130,8 +129,9 @@ bodsch.influxdb (bodsch.* collections, by design), warhorse.gophish_docker (crys
 in the known plugin-upload UNREACHABLE race; warm CLEAN identical), xanmanning.kubectl (cold
 identical; warm kubectl `--short` host-state timing). Still open with root causes noted:
 lifeofguenter.nginx (krikri `unexpected token '<EOF>'` on the role's multi-line shell command),
-l3d.dotfiles (template for item=root ran here, skipped in real), mbaran0v.prometheus_redis_
-exporter (deploy_helper fact not visible after the module runs), chris1984.motd (real itself
+l3d.dotfiles (template for item=root ran here, skipped in real),
+mbaran0v.ansible_role_prometheus_redis_exporter (deploy_helper fact not visible after the
+module runs), chris1984.motd (real itself
 crashes on the role's default - parity would mean emulating real's own crash), kkolk.mssql
 (removed-collection-module abort, Open gaps).
 
