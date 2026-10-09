@@ -641,51 +641,20 @@ module Krikri
       secontext_will_change = secontext_changed?(path)
       apply_secontext(path)
 
-      # Set mode (permissions) using native Crystal
-      if mode = @params["mode"]?
-        begin
-          # Ansible parses ANY all-digit mode string as octal,
-          # leading zero or not (`mode: "640"` and `mode: "0640"` are
-          # identical - only a *symbolic* mode like `u+x` isn't valid
-          # octal digits). Real bug found benchmarking robertdebock.redis
-          # (round 40): `mode: "{{ redis_mode }}"` rendered to the plain
-          # string "640" (no leading zero, from a Jinja dict-lookup
-          # default, not a literal YAML octal) - the old `starts_with?
-          # ("0") ? octal : decimal` branch treated it as DECIMAL 640,
-          # producing octal 1200 (`--w------T`) instead of 0640
-          # (`rw-r-----`), leaving redis-server unable to even read its
-          # own config file. Matches file.cr's own `parse_numeric_mode`.
-          #
-          # A genuinely SYMBOLIC mode (`u+x`, `u+x,g+x`, `a+x`, ...) -
-          # real, common idioms for "make this script executable" -
-          # doesn't match that all-digit regex and used to silently do
-          # NOTHING at all (no error, no chmod, mode left at whatever
-          # File.write's own default was) - found via
-          # grzegorznowak.nvm_node's own `template: ... mode="u+x,g+x"`
-          # writing an install script that a later `command:` task then
-          # failed to execute at all ("Permission denied"). file.cr's
-          # own apply_mode already falls back to shelling out to a real
-          # `chmod` for exactly this case; mirrored here instead of
-          # silently dropping the mode.
-          if mode =~ /\A0?[0-7]{3,4}\z/
-            File.chmod(path, mode.to_i(8))
-          else
-            Process.run("chmod", [mode, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
-          end
-        rescue
-          # Mode setting failed, continue anyway
-        end
-      end
-
-      # Owner and group would require chown/chgrp system calls
-      # For now, use shell commands for these (they need root anyway)
-      if owner = @params["owner"]?
-        Process.run("chown", [owner, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
-      end
-
-      if group = @params["group"]?
-        Process.run("chgrp", [group, path], output: Process::Redirect::Close, error: Process::Redirect::Close)
-      end
+      # owner/group/mode - the shared BasePlugin helper: resolves the
+      # names first (so an unknown user/group raises the same
+      # "chown/chgrp failed: failed to look up ..." text Ansible's
+      # basic.py fails with, live-verified vs 2.19.11) and applies via
+      # File.chown/File.chmod, shelling to chmod only for a symbolic
+      # mode (the octal-vs-symbolic split and the all-digit-is-octal
+      # rule it implements are documented on that helper). The old code
+      # here shelled out to chown/chgrp with stdout, stderr AND the exit
+      # status all discarded, so a template task whose group: named a
+      # nonexistent group silently reported changed where real fails the
+      # task (gokev.motd-splash round 5210000: `group: wheel` on Ubuntu
+      # - ansible "chgrp failed: failed to look up group wheel",
+      # krikri changed=1).
+      apply_owner_group_mode(path, @params["owner"]?, @params["group"]?, @params["mode"]?)
 
       # attributes: (chattr flags) runs LAST, matching file.cr's own
       # attribute-application order.
