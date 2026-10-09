@@ -2440,7 +2440,13 @@ module Krikri
       private def split_top_level_commas(expr : String) : Array(String)
         state = PlusSplitState.new
         expr.each_char { |char| split_top_level_commas_step(state, char) }
-        state.parts << state.current.to_s.strip
+        final = state.current.to_s.strip
+        # A trailing comma is legal Python/Jinja syntax for list/dict
+        # literals (and call argument lists), yielding no extra element - the
+        # final buffered part is empty exactly then, and keeping it made each
+        # element parser see a bogus empty operand (`['a', 'b', ]` evaluated
+        # a variable named ''; round 5250000, cans.package-install).
+        state.parts << final unless final.empty? && !state.parts.empty?
         state.parts
       end
 

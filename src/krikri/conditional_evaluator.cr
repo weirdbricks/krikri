@@ -3067,7 +3067,12 @@ module Krikri
         inner = expr[1..-2].strip
         return [] of String if inner.empty?
 
-        items = inner.split(',').map(&.strip)
+        # A trailing comma is legal Python/Jinja list syntax and yields no
+        # element - split(',') alone appends a final empty element that then
+        # got looked up as the variable '' and failed the whole conditional
+        # (`ansible_distribution in ['Debian', 'Ubuntu', ] and ...`; round
+        # 5250000, cans.package-install).
+        items = inner.split(',').map(&.strip).reject(&.empty?)
         return items.map { |item|
           val = evaluate_value(item, vars, raise_undefined)
           val.is_a?(String) ? val : val.to_s
