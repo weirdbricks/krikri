@@ -69,7 +69,8 @@ defect moves down or gets deleted.
   (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
 - **Round 5210000's remaining divergences** (each seen on real Atlantic.net hosts against
-  ansible-core 2.19.11; the round's other 19 divergences are fixed, see the round narrative below):
+  ansible-core 2.19.11; the round's other 22 divergences are fixed or dispositioned, see the round
+  narrative below):
   - Facts-gathering crash with a bare "Index out of bounds" (ktechmidas.openvpn, warm run - after
     the role changed the host's network state). The gatherer now annotates the failing section
     ("... (while gathering network)") so the next occurrence pinpoints itself; root cause pending a
@@ -105,6 +106,28 @@ per-item failure, `failed_when:`, copy missing dest dir, docker_nginx readiness 
 `version(..., strict=True)` kwargs), three suspected infra flakes pending re-run
 (mtze.docker_swap_grub, webarchitect609.php_versions, bodsch.dnsmasq), and this round's
 `ROLES_TESTED.md` rows (with both engines' cold/warm timings).
+
+Follow-up session (2026-10-08/09, 0.9.1560-0.9.1564): four of the six divergences above are closed.
+copy/template's missing dest directory is created like real when the dest is directory-signaled
+(0.9.1560, confirmed CLEAN on round 5219000 with Azulinho.azulinho-yum-repo-epel). The
+`version(..., strict=True)` kwargs parse is fixed with the full validation matrix byte-pinned
+against 2.19.11 (0.9.1561; krikri passes bodsch.icingaweb2's previously-fatal conditional on
+rounds 5220000/5221000 - that role's remaining round-level difference is the missing
+`bodsch.core` collection real hard-fails on while krikri skips unported collection modules by
+design, out of scope). The conditional-on-str split is fixed: an import's when: and the child's own when: are separate strict
+conditionals now (0.9.1563; rounds 5222000/5223000 abort the import at the same task on both
+engines). The `failed_when:` bullet was a misattribution - a four-case `command:` + `failed_when:`
+repro plus the role's own block/rescue shape are byte-identical to real; call_learning.moodle's
+divergence is the role-private action-plugin limit. The confirm rounds also found and fixed two
+new krikri bugs: a raising changed_when:/failed_when: overwrote the module result's msg where real
+records it in changed_when_result/failed_when_result (0.9.1562), and apt_repository's PPA fetch
+failures weren't wrapped in real's "failed to fetch PPA information, error was: ..." wording
+(0.9.1564, live-confirmed on 5223000's cold run). Two message-only gaps were opened instead
+(PEP440 version_type approximated as loose; the missing `at '<origin>'` suffix for role-sourced
+values in non-boolean conditional errors). Still owed: docker_nginx readiness timing and the
+facts-gather crash (both in Open gaps), the three infra-flake re-runs, this round's
+`ROLES_TESTED.md` rows, and a confirm round for the 0.9.1540s fixes (package deb, hostvars,
+template owner/group, rc=1, first_found).
 
 ## Round 2300000 (800 clean roles re-checked, 2026-10-07; per-task status diff)
 
