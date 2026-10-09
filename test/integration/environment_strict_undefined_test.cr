@@ -63,6 +63,40 @@ describe "environment: keyword strict-undefined" do
     output.to_s.must_include("failed=1")
   end
 
+  it "treats a bare environment: key with no value as no environment, not a crash" do
+    # lifeofguenter.nginx round 5250092's "Configure" task has a bare
+    # `environment:` with no value. ansible-playbook 2.19.11 treats a
+    # null environment as "no environment" and runs the task; krikri
+    # used to stringify the null into an empty environment_raw, which
+    # env finalization JSON.parsed and crashed on ("unexpected token
+    # '<EOF>' at line 1, column 1") before the task ever ran.
+    playbook = File.tempname("environment-null-value", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          nginx_compile_modsecurity: ''
+        tasks:
+          - name: Configure
+            ansible.builtin.command: >
+              echo configured
+              {{ nginx_compile_modsecurity }}
+            args:
+              chdir: /tmp
+            environment:
+            changed_when: true
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("failed=0")
+    output.to_s.must_include("changed=1")
+    output.to_s.wont_include("<EOF>")
+  end
+
   it "still applies the env vars when the variable IS defined" do
     playbook = File.tempname("environment-defined", ".yml")
     File.write(playbook, <<-YAML)
