@@ -2432,27 +2432,53 @@ module Krikri
       if changed_when || failed_when
         substitutor = VarSubstitutor.new(vars: eval_context, host_name: host.name)
 
+        # raise_undefined: true - ansible-core 2.19 raises while
+        # EVALUATING a changed_when:/failed_when: that reaches an
+        # undefined reference ("object of type 'dict' has no attribute
+        # 'diff'" for cloudalchemy.pushgateway's own `changed_when`
+        # against a result dict carrying no `diff` key) and fails the
+        # task. This path used to be deliberately lenient - the miss
+        # read as falsy and the task rc=0'd with "no change", which is
+        # the same silent-corruption shape as an unrendered undefined
+        # in a template: no error, wrong verdict, and everything
+        # downstream trusting it. `when:` (Executor#when_passes?) and
+        # `assert:` already own the identical flag; changed_when:/
+        # failed_when: were the last lenient conditional entry point.
+        # Same narrow scope as there: only a BARE or DOTTED reference
+        # reaching evaluate_value's own "not found" exit raises - a
+        # `| default(...)`-guarded chain stays lenient, as it must.
+        # task_executor.py's `except AnsibleError` tail (shared note
+        # for both clauses): a changed_when:/failed_when: evaluation
+        # that RAISES sets failed=True and records the error text -
+        # with Ansible's own "Error while evaluating conditional: "
+        # prefix - in changed_when_result/failed_when_result, and never
+        # touches the module's own msg. This used to overwrite msg with
+        # the evaluation error, so an argspec-violation result
+        # (unsupported parameter) with a broken changed_when: reported
+        # "object of type 'dict' has no attribute 'stat'" as its msg
+        # where real kept "Unsupported parameters for (...) module: ..."
+        # and carried the evaluation error in changed_when_result
+        # (live-verified vs 2.19.11 with stat's removed get_md5, round
+        # 5220000). UnknownFilterError joins the same rescue (jasonheecs.
+        # digitalocean's `changed_when: not python_check.stdout |
+        # search('/bin/python')` - `search` is a real-Ansible TEST, not
+        # a filter, so Ansible fails the task with "No filter named
+        # 'search'.") - previously only the two conditional errors were
+        # caught here and the unknown-filter raise escaped all the way
+        # out of #run, crashing the whole binary with a stack trace.
+        # condname is the clause being evaluated when the error raised
+        # ('changed' first, then 'failed').
         begin
-          # raise_undefined: true - ansible-core 2.19 raises while
-          # EVALUATING a changed_when:/failed_when: that reaches an
-          # undefined reference ("object of type 'dict' has no attribute
-          # 'diff'" for cloudalchemy.pushgateway's own `changed_when`
-          # against a result dict carrying no `diff` key) and fails the
-          # task. This path used to be deliberately lenient - the miss
-          # read as falsy and the task rc=0'd with "no change", which is
-          # the same silent-corruption shape as an unrendered undefined
-          # in a template: no error, wrong verdict, and everything
-          # downstream trusting it. `when:` (Executor#when_passes?) and
-          # `assert:` already own the identical flag; changed_when:/
-          # failed_when: were the last lenient conditional entry point.
-          # Same narrow scope as there: only a BARE or DOTTED reference
-          # reaching evaluate_value's own "not found" exit raises - a
-          # `| default(...)`-guarded chain stays lenient, as it must.
           if changed_when
             maybe_conditional_delimiters_deprecation(task, changed_when, "changed_when", eval_context)
             hash["changed"] = JSON::Any.new(ConditionalEvaluator.evaluate(substitutor.substitute(changed_when), eval_context, strict: true, raise_undefined: true))
           end
+        rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
+          hash["failed"] = JSON::Any.new(true)
+          hash["changed_when_result"] = JSON::Any.new("Error while evaluating conditional: #{e.message || ""}")
+        end
 
+        begin
           if failed_when
             maybe_conditional_delimiters_deprecation(task, failed_when, "failed_when", eval_context)
             failed_when_result = ConditionalEvaluator.evaluate(substitutor.substitute(failed_when), eval_context, strict: true, raise_undefined: true)
@@ -2466,19 +2492,8 @@ module Krikri
             end
           end
         rescue e : ConditionalEvaluator::ConditionalBooleanError | ConditionalEvaluator::UndefinedVariableError | VariableSubstitutor::FilterEngine::UnknownFilterError
-          # Matches Ansible: a changed_when:/failed_when: whose value
-          # resolves to None (not a real boolean), or whose evaluation hits
-          # an undefined variable / missing dict attribute, fails the task
-          # outright rather than being silently truthy-converted to false.
-          # UnknownFilterError joins the same rescue (jasonheecs.
-          # digitalocean's `changed_when: not python_check.stdout |
-          # search('/bin/python')` - `search` is a real-Ansible TEST, not
-          # a filter, so Ansible fails the task with "No filter named
-          # 'search'.") - previously only the two conditional errors were
-          # caught here and the unknown-filter raise escaped all the way
-          # out of #run, crashing the whole binary with a stack trace.
           hash["failed"] = JSON::Any.new(true)
-          hash["msg"] = JSON::Any.new(e.message || "")
+          hash["failed_when_result"] = JSON::Any.new("Error while evaluating conditional: #{e.message || ""}")
         end
       end
 
