@@ -61,6 +61,59 @@ defect moves down or gets deleted.
   docker.io/library/postgres:16` - all three live-test files green against it 2026-10-10).
   `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
+## Round 5410000 (600 new Galaxy roles + fix phase, 0.9.1592 -> 0.9.1603, 2026-10-10/11)
+
+600 NEW roles from Galaxy's top-download list (pages 1-668, 6068 already-tested names skipped),
+prefiltered through the API query ansible-galaxy itself issues (an earlier unfiltered attempt,
+round 5400000, burned 80% of its first slots on GALAXY_MISSING - galaxy's account renames make
+`owner__username=<github_user>` lookups 404 for roles whose canonical username diverged, e.g.
+ednxzu -> ednz_cloud) plus a 236-role CLEAN-row regression backfill: **545 CLEAN, 26 DIVERGENT,
+29 GALAXY_MISSING**. Nine fixes landed (each repro'd byte-identical against local 2.19.11 first,
+each with a regression test):
+
+- 0.9.1593: an assert: `that:` item whose test plugin fails at RUNTIME (the version test's
+  "Version comparison failed: ...") escaped the plugin uncaught and crashed the whole process -
+  bare Crystal stack dump, no [ERROR] chain, no recap, rc=1 (vbotka.freebsd_packages' collection-
+  version sanity assert). Now registers real's "Task failed: The test plugin ... failed: ..."
+  with the task's own Origin, banner byte-identical.
+- 0.9.1594: a failing single-operand span in a task NAME (attribute/subscript/undefined) is an
+  inline marker and the render continues; krikri added a spurious "template potentially
+  truncated" second marker (kieranajp.ansible_beanstalkd_exporter). Truncation stays for failing
+  MULTI-PART (concat) spans - the c03/c21 pins unchanged.
+- 0.9.1595: the community.general cartesian lookup implemented natively in both engines
+  (znerol.ssh_kba's cartesian -> map -> zip chain silently produced [] where real computed the
+  product).
+- 0.9.1596: loop-registered invocation keys sit BEFORE the trailing failed: false
+  (pacifica.ansible_certinfra's nested stat-result loop).
+- 0.9.1597: loop:/with_* resolving to None fails with real's bare-msg shape (badsectorlabs.
+  ludus_vulhub's copy task - krikri's old chain triple-wrapped the wording, no "Provide a
+  list..." tail); with_dict: on None fails with the dict lookup's own refusal (closing
+  ifalatik.docker_project_deployment).
+- 0.9.1598 + krikri-jinja v0.4.32: Python list methods through Jinja attribute access -
+  bilalcaliskan.zookeeper's zoo.cfg.j2 calls groups[...].index().
+- 0.9.1599: with_first_found's role-relative dir order is context-aware (include_vars: vars/ >
+  tasks/, everything else files/ > tasks/ > vars/; dochang.lsbrelease picked the wrong
+  install/default.yml and died on the undefined package var).
+- 0.9.1600: slash-path subdirectory roles (`include_role: name: CiscoUcs.ucs/admin`) resolve,
+  run and banner like real.
+- 0.9.1602: dnf/yum names ending .rpm route through real's _install_remote_rpms wrap ("Error
+  occurred attempting remote rpm operation: Could not open: ...", results=[] rc=1) instead of
+  the failures-list shape (robertdebock.atom).
+- 0.9.1603: the docker SDK modules' import gate is the VENDORED SDK's requests requirement
+  (probed live: collection 5.2.1's container/image/network/network_info/login never import the
+  external docker package - the docker>=5.0.0 gate belongs to the unimplemented docker_swarm*
+  family only). Gate fires in DockerClient.build before any daemon call.
+
+Dispositioned without a fix: iquzart.win_check_network_drive + mrlesmithjr.windows-iis (win_*
+unsupported), nertwork.cumulus-switch (network collection), stackhpc.os-container-infra
+(openstack.cloud), andrewrothstein.docker-couchdb (controller-lacks-collection, Open gaps),
+fgierlinger.docker_swarm (docker_swarm* unimplemented, its gate belongs to that family),
+hudecof.zabbix_repo + kieranajp's delegated get_url ok-vs-changed (host-state: the file already
+on the py side), tumf.docker-compose (warm /tmp state), libyanspider.collectd (py SSH flake),
+nephelaiio.tree (py rc=124 hang), OT-OSM.linux_armour (py-side module deserialization crash +
+largest task-count chaos - revisit on a clean re-run). kieranajp's `.index(missing)` renders
+lenient 'undefined' where real shows an inline error marker - cosmetic-only, parked.
+
 ## Round 5330000/5331000 (gap-closing session: parse-time tombstone abort, pep440, postgres:16 live tests, docker InvalidRepository live, 2026-10-10)
 
 Four Open-gaps entries closed, 0.9.1589 -> 0.9.1592. The lead-off work ran in three parallel
@@ -397,7 +450,8 @@ krikri aims for byte-for-byte identical stdout/stderr/exit code to `ansible-play
   "succeed" with different bytes; clean quoting is identical.
 - Broken `with_*` loop source (`with_subelements:` missing its subkey term): Ansible fails with the
   lookup-plugin error plus a bare `Origin: <unknown>` / `invoke_lookup()` block; krikri degrades the
-  loop to a failed task with the finalization chain.
+  loop to a failed task with the finalization chain. (The with_dict-on-None shape left this class in
+  round 5410000: it now fails with the dict lookup's own refusal wording, byte-identical.)
 - `template:` with `output_encoding:` as a YAML list of plain strings (`[a, b]`) reports Ansible's
   `unknown encoding: a,b` instead of the Python type error: the params wire comma-joins such a list,
   making it indistinguishable from STRING `"a,b"`, which real itself reads as a codec name.
