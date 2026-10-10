@@ -99,6 +99,7 @@ module Krikri
         evaluate_lookup_scalar(lookup_type, parts, kwargs, query_mode) ||
           evaluate_lookup_file(lookup_type, parts, kwargs) ||
           evaluate_lookup_list(lookup_type, parts, kwargs, query_mode) ||
+          evaluate_lookup_cartesian(lookup_type, parts) ||
           evaluate_lookup_misc(lookup_type, parts, kwargs) ||
           evaluate_lookup_file_parsers(lookup_type, parts, kwargs) ||
           evaluate_custom_python_lookup(lookup_type, parts, kwargs, query_mode) ||

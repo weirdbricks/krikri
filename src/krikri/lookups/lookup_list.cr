@@ -90,6 +90,64 @@ module Krikri
         @vars.keys.select { |name| patterns.any?(&.matches?(name)) }.to_json
       end
 
+      # The community.general Cartesian lookup: an itertools.product over
+      # every argument. Each term goes through listify_lookup_plugin_terms
+      # - a LIST iterates as-is, a string or any other non-iterable (int,
+      # bool, None) wraps as a single-element list, and a dict iterates its
+      # keys - so cartesian('ab', ['x','y']) yields [['ab', 'x'],
+      # ['ab', 'y']] rather than iterating the string. Any EMPTY argument
+      # makes the whole product empty (itertools.product semantics), and
+      # zero arguments is the plugin's own hard error
+      # ("with_cartesian requires at least one element in each list"),
+      # which Ansible surfaces as a real task failure - the same
+      # "The lookup plugin '<name>' failed: ..." message shape the generic
+      # lookup routing already expects. Each row is the product tuple put
+      # through LookupBase._flatten: nested LIST (and tuple) elements
+      # spread one level into the row - cartesian([[1, 2], 3], ['x', 'y'])
+      # yields [[1, 2, 'x'], [1, 2, 'y'], [3, 'x'], [3, 'y']] (live-verified
+      # against ansible-core 2.19.11 + community.general 12.5.0). Pulled
+      # out of #evaluate_lookup_list's own case dispatch to keep that
+      # method's cyclomatic complexity under the repo's threshold - it
+      # sits in #evaluate_lookup's dispatch chain instead of a case
+      # there, and returns nil for any other lookup type.
+      private def evaluate_lookup_cartesian(lookup_type : String?, parts : Array(String)) : String?
+        return nil unless lookup_type == "cartesian"
+        cartesian_lists = parts[1..].map { |part| lookup_cartesian_term(evaluate_lookup_term(part.strip)) }
+        if cartesian_lists.empty?
+          raise Krikri::PythonLookupRunner::LookupError.new(
+            "The lookup plugin 'cartesian' failed: with_cartesian requires at least one element in each list"
+          )
+        end
+        cartesian_rows = cartesian_lists.reduce([[] of JSON::Any]) do |acc, cartesian_list|
+          acc.flat_map do |cartesian_row|
+            cartesian_list.flat_map do |item|
+              nested = item.as_a?
+              widened_row = cartesian_row.dup
+              nested ? widened_row.concat(nested) : widened_row << item
+              [widened_row]
+            end
+          end
+        end
+        cartesian_rows.to_json
+      end
+
+      # One cartesian lookup argument through
+      # listify_lookup_plugin_terms: a list iterates as-is (nested lists
+      # left to the row's _flatten), a dict iterates its keys, a string is
+      # ITS OWN element (stripped) rather than iterating its characters,
+      # and every other scalar wraps as a single-element list.
+      private def lookup_cartesian_term(value : JSON::Any) : Array(JSON::Any)
+        if (array = value.as_a?)
+          array
+        elsif (hash = value.as_h?)
+          hash.keys.map { |key| JSON::Any.new(key) }
+        elsif (string = value.as_s?)
+          [JSON::Any.new(string.strip)]
+        else
+          [value]
+        end
+      end
+
       private def lookup_array(value : JSON::Any?) : Array(JSON::Any)
         value.try(&.as_a?) || [] of JSON::Any
       end

@@ -155,6 +155,8 @@ module Krikri
           acc.flat_map { |row| array.map { |item| row + [item] } }
         end
         AnyValue.new(rows.map { |row| AnyValue.new(row) })
+      when "cartesian"
+        lookup_cartesian(terms)
       when "varnames"
         patterns = terms.compact_map { |term| VariableSubstitutor::FilterEngine.cached_regex(text(term)) rescue nil }
         AnyValue.new(visible_names(ctx).select { |var_name| patterns.any?(&.matches?(var_name)) }.map { |var_name| AnyValue.new(var_name) })
@@ -257,6 +259,50 @@ module Krikri
       when String
         rendered = Krikri.parse_json_or_python_literal(render_nested(ctx, raw))
         (rendered.as_a? || [rendered]).map { |item| item.as_s? || item.to_s }
+      end
+    end
+
+    # The community.general cartesian lookup (see the hand-rolled
+    # evaluator's evaluate_lookup_list "cartesian" case for the full
+    # semantics): an itertools.product over every argument, a string or
+    # other non-iterable argument wrapping as a single-element list, a
+    # dict iterating its keys, an empty argument making the whole
+    # product empty and zero arguments the plugin's own hard error -
+    # live-verified against ansible-core 2.19.11 + community.general
+    # 12.5.0 (znerol.ssh_kba, round 5410000).
+    private def self.lookup_cartesian(terms : Array(AnyValue)) : AnyValue
+      if terms.empty?
+        raise Krikri::PythonLookupRunner::LookupError.new(
+          "The lookup plugin 'cartesian' failed: with_cartesian requires at least one element in each list"
+        )
+      end
+      cartesian_lists = terms.map { |term| lookup_cartesian_term(term) }
+      cartesian_rows = cartesian_lists.reduce([[] of AnyValue]) do |acc, cartesian_list|
+        acc.flat_map do |cartesian_row|
+          cartesian_list.flat_map do |item|
+            spread = item.raw.as?(Array) || [item]
+            [cartesian_row + spread]
+          end
+        end
+      end
+      AnyValue.new(cartesian_rows.map { |row| AnyValue.new(row) })
+    end
+
+    # One cartesian lookup argument through
+    # listify_lookup_plugin_terms: a list iterates as-is, a dict
+    # iterates its keys, a string is ITS OWN element (stripped) rather
+    # than iterating its characters, and every other scalar wraps as a
+    # single-element list.
+    private def self.lookup_cartesian_term(term : AnyValue) : Array(AnyValue)
+      case raw = term.raw
+      when Array
+        raw
+      when Hash
+        raw.keys.map { |key| AnyValue.new(key) }
+      when String
+        [AnyValue.new(raw.strip)]
+      else
+        [term]
       end
     end
 
