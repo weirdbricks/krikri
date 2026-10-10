@@ -135,6 +135,26 @@ module Krikri
           "Task failed: Syntax error in expression: #{ex.message}")
         result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
         return ActionResult.final(result)
+      rescue ex : FilterPluginError | TestPluginError
+        # A test/filter plugin's RUNTIME failure inside a `that:` item
+        # (the version test's "Version comparison failed: ..." among
+        # them) - same framing as the when: side's boundary
+        # (executor_run_loop's TestPluginError arm, live-verified there
+        # for the kwargs matrix): real registers
+        # "Task failed: The test plugin '...' failed: <inner>" with the
+        # plain prefix and no conditional wrapper. Probe (real
+        # 2.19.11): `assert: that: "'9.3.0' is version('x.y.z', '>=')"`
+        # -> fatal msg "Task failed: The test plugin
+        # 'ansible.builtin.version' failed: Version comparison failed:
+        # '<' not supported between instances of 'int' and 'str'".
+        # Before this rescue the raise escaped the plugin uncaught and
+        # killed the whole process with a bare Crystal stack dump, no
+        # [ERROR] chain and no recap (found via vbotka.freebsd_packages,
+        # round 5410000 - the role's collection-version sanity assert).
+        result = ActionResult.conditional_error_result_json(
+          "Task failed: #{ex.message}")
+        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+        return ActionResult.final(result)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while

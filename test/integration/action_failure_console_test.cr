@@ -255,3 +255,42 @@ describe "action failure console blocks" do
     output.must_match(/failed=1/)
   end
 end
+
+# A test plugin's RUNTIME failure inside an assert: `that:` item (vbotka.
+# freebsd_packages' collection-version sanity assert, round 5410000): before
+# the TestPluginError/FilterPluginError rescue the raise escaped the plugin
+# uncaught and killed the whole process - bare Crystal stack dump, no [ERROR]
+# chain, no recap, rc=1. Real (2.19.11, probed 2026-10-10) registers
+#   msg: "Task failed: The test plugin 'ansible.builtin.version' failed:
+#         Version comparison failed: '<' not supported between instances of
+#         'int' and 'str'"
+# and prints the same text as the [ERROR] banner (no "Action failed." middle
+# segment).
+describe "assert that: test-plugin runtime failure" do
+  it "fails the task with real's Task failed prefix instead of crashing" do
+    result = registered_dump([
+      "      - assert:",
+      "          that:",
+      "            - \"'9.3.0' is version('x.y.z', '>=')\"",
+      "        ignore_errors: true",
+      "        register: r",
+    ])
+    result["msg"].as_s.must_equal(
+      "Task failed: The test plugin 'ansible.builtin.version' failed: " \
+      "Version comparison failed: '<' not supported between instances of 'int' and 'str'")
+    result["failed"].as_bool.must_equal(true)
+    result["changed"].as_bool.must_equal(false)
+
+    # The [ERROR] banner carries the same one-prefix text (no Action failed
+    # segment), followed by the plain "Task failed." root block.
+    _, output = run_play([
+      "      - assert:",
+      "          that: \"'9.3.0' is version('x.y.z', '>=')\"",
+    ])
+    output.must_include(
+      "[ERROR]: Task failed: The test plugin 'ansible.builtin.version' failed: " \
+      "Version comparison failed: '<' not supported between instances of 'int' and 'str'")
+    output.wont_include("Action failed")
+    output.wont_include("Unhandled exception")
+  end
+end
