@@ -1629,6 +1629,36 @@ module Krikri
     class WhenEvaluationError < Exception
     end
 
+    # A `loop:` source that IS defined but resolves to a non-list (a
+    # null, a scalar string, a dict, ...). Unlike the UNDEFINED case
+    # (whose verdict consults the task's own when:, see
+    # resolve_loop_items_or_raise), real 2.19.11 fails the task at
+    # task-keyword finalization - BEFORE any when: ever evaluates - so
+    # no when: shields it (live-verified vs 2.19.11: `when: false` plus
+    # a defined-null `loop: "{{ nullv }}"` prints the [ERROR] type-error
+    # block + one failed task, where the same when: skips an undefined
+    # source; round 5410000 badsectorlabs.ludus_vulhub). Carries no
+    # "Task failed: " prefix of its own - real's registered fatal msg is
+    # the bare wording ("The `loop` value must resolve to a 'list', not
+    # 'NoneType'.") - and gets its own [ERROR] block (
+    # emit_loop_source_error_block) whose Origin points at the loop
+    # keyword's VALUE token plus a fixed "Provide a list..." tail line,
+    # not at the task name like the conditional-evaluation chain.
+    class LoopTypeError < WhenEvaluationError
+    end
+
+    # A `with_<lookup>:` source whose resolved TERM is of the wrong type
+    # for the lookup (a `with_dict:` over a null/scalar). Real fails the
+    # task with the lookup plugin's own type refusal ("The lookup plugin
+    # 'dict' failed: ... expects a dictionary, got 'None' of type <class
+    # 'NoneType'>)"), a BARE registered msg (no "Task failed:" prefix -
+    # live-verified vs 2.19.11) and a bodyless [ERROR] block whose Origin
+    # is `<unknown>` plus a fixed "invoke_lookup()" line - the
+    # lookup-invocation site never carries source positions. See
+    # emit_loop_source_error_block for the block.
+    class LoopLookupError < WhenEvaluationError
+    end
+
     # Shared substitute+evaluate+strict-undefined-rescue sequence for a
     # when: condition - the one place that owns `raise_undefined: true`
     # (Ansible's strict-undefined case for when:, see

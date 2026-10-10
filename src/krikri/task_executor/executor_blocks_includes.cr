@@ -580,6 +580,18 @@ module Krikri
         loop_items = resolve_loop_items_or_raise(task, host, loop_vars_context) do
           task.loop_items || resolve_loop_template(task, loop_vars_context) || resolve_loop_nested(task, loop_vars_context, host.name) || resolve_loop_together(task, loop_vars_context, host.name) || resolve_fileglob(task, host, loop_vars_context) || resolve_loop_lookup(task, loop_vars_context)
         end
+      rescue ex : LoopTypeError | LoopLookupError
+        # A loop source that IS defined but resolves to a non-list (or a
+        # lookup term of the wrong type): real fails the include_vars:
+        # task itself at keyword finalization with its own [ERROR] block
+        # and a BARE registered msg, before any when: can shield it
+        # (round 5410000, live-verified vs 2.19.11 for the task shape).
+        # The ordinary single-task failure pipeline (emit here,
+        # display/stats/halt via finish_single_task; the include_vars-
+        # specific failure shape above stays for its own classes).
+        emit_loop_source_error_block(task, ex)
+        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        return
       rescue ex : WhenEvaluationError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return

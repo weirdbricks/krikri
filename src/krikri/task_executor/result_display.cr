@@ -616,6 +616,13 @@ module Krikri
     private def self.emit_task_error_block(source_task : Task?, result : JSON::Any, msg : String) : Nil
       return unless source_task
       return if source_task.no_log?
+      # A loop-source typing/lookup failure ("The `loop` value must
+      # resolve to a 'list', not 'X'." / a lookup plugin's type refusal)
+      # gets its own block from the executor's
+      # emit_loop_source_error_block - a bare one-line [ERROR] with the
+      # loop keyword's own Origin, not this "Task failed."/"Module
+      # failed." chain shape (live-verified vs 2.19.11, round 5410000).
+      return if result["_ansible_loop_source_error"]?.try(&.as_bool?) == true
       # Task-arg finalization failures ("Task failed: Finalization of task
       # args for ...") get their own multi-level block from the executor
       # (emit_finalization_error_block) before the fatal line.

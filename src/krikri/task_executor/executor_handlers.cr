@@ -304,6 +304,16 @@ module Krikri
             resolve_loop_subelements(handler, loop_vars_context) ||
             resolve_loop_filetree(handler, host, loop_vars_context)
         end
+      rescue ex : LoopTypeError | LoopLookupError
+        # A loop source that IS defined but resolves to a non-list (or a
+        # lookup term of the wrong type): real fails the handler at task
+        # finalization with its own [ERROR] block and a BARE registered
+        # msg, before any when: can shield it (round 5410000, live-
+        # verified vs 2.19.11 for the task shape; when_error_result's
+        # LoopTypeError/LoopLookupError branch keys the corresponding
+        # result shape for the handler's own failure pipeline below).
+        emit_loop_source_error_block(handler, ex)
+        when_error = ex
       rescue ex : WhenEvaluationError
         when_error = ex
       end
