@@ -264,4 +264,13 @@ describe "template engine canary" do
     crinja_render("{{ x | trim }}", {"x" => false}).must_equal("False")
     crinja_render("{{ x | trim }}", {"x" => "  padded  "}).must_equal("padded")
   end
+  # Python list methods through Jinja attribute access - engine v0.4.32
+  # (bilalcaliksan.zookeeper's zoo.cfg.j2 list.index, round 5410000).
+  it "supports list.index / count / reverse through attribute access" do
+    crinja_render("{{ lst.index('b') }}", {"lst" => ["a", "b", "c"]}).must_equal("1")
+    crinja_render("{{ lst.count(1) }}", {"lst" => [1, 2, 1]}).must_equal("2")
+    crinja_render("{% do lst.reverse() %}{{ lst | join(',') }}", {"lst" => [1, 2]}).must_equal("2,1")
+  end
+
 end
+
