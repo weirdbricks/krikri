@@ -537,6 +537,21 @@ module Krikri
         return {resolves: builtin_target?(kind, leaf), warning: nil}
       end
 
+      # The LEGACY-CORE collections (posix/netcommon/utils/windows) are
+      # part of the ansible.builtin surface this engine implements:
+      # ansible-core's own runtime data binds their names into builtin
+      # resolution, the distro ansible packages ship them with it, and
+      # the batch reference host resolved ansible.builtin.mount's
+      # posix-backed module on a pip-only install (round 5410225's
+      # mount payload carried ansible_collections/ansible/posix).
+      # Treating them as always-resolvable keeps the firewalld/mount/
+      # sysctl family running on controllers with no collections tree
+      # (krikri-only hosts, test containers) while the check keeps its
+      # teeth for the genuinely optional community collections.
+      if ns == "ansible" && {"posix", "netcommon", "utils", "windows", "legacy"}.includes?(coll)
+        return {resolves: true, warning: nil}
+      end
+
       if dirs = collection_dirs["#{ns}.#{coll}"]?
         return installed_collection_resolution(kind, leaf, dirs, fqcn, seen)
       end
