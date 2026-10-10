@@ -327,8 +327,12 @@ module Krikri
       # ansible_collection_name - only set when this role was actually
       # invoked via its full `namespace.collection.role` FQCN (a real
       # collection role, not merely a bare role name that happens to
-      # contain 2+ dots - vanishingly rare in practice).
-      collection_name = (parts = name.split('.')).size >= 3 ? "#{parts[0]}.#{parts[1]}" : nil
+      # contain 2+ dots - vanishingly rare in practice). A slash-
+      # containing name is never an FQCR either way (live-verified vs
+      # 2.19.11: AnsibleCollectionRef.is_valid_fqcr is False for
+      # 'CiscoUcs.ucs/admin' and 'ns.coll.role/sub' alike - real joins
+      # such names under the role search paths as plain legacy roles).
+      collection_name = ansible_collection_name_for(name)
 
       # ansible-core's add_all_plugin_dirs(self._role_path) at Role.load:
       # every LEGACY role loaded this run (play roles, meta dependencies,
@@ -550,6 +554,18 @@ module Krikri
       defaults
     end
 
+    # The collection name stamped into tasks for a role invocation - the
+    # first two dot-segments of a 3+-segment FQCN, nil otherwise. A
+    # slash-containing name is never an FQCR (live-verified vs 2.19.11:
+    # AnsibleCollectionRef.is_valid_fqcr is False for 'CiscoUcs.ucs/admin'
+    # and 'ns.coll.role/sub' alike - real joins such names under the role
+    # search paths as plain legacy roles), so it never yields one.
+    private def self.ansible_collection_name_for(name : String) : String?
+      return nil if name.includes?('/')
+      parts = name.split('.')
+      parts.size >= 3 ? "#{parts[0]}.#{parts[1]}" : nil
+    end
+
     # Copies the role binding into a task's nested block/rescue/always
     # children, recursively - the per-task stamp loop above only reaches
     # each role file's TOP-LEVEL tasks, so a named task inside a role's
@@ -678,11 +694,24 @@ module Krikri
     end
 
     private def self.resolve_role_dir(name : String, playbook_dir : String) : String?
-      # A role name containing a path separator (absolute, or relative like
-      # "../common_roles/foo") is used directly, matching Ansible -
-      # only a bare name ("common") is looked up under roles:/ search paths.
+      # A role name containing a path separator: an absolute path (or a
+      # relative path like "../common_roles/foo") is used directly, but
+      # Ansible ALSO joins slash-containing names under each of its role
+      # search paths like any other name (definition.py's _load_role_path
+      # does os.path.join(path, role_name) for every search path,
+      # slash-containing or not) - live-verified vs 2.19.11: CiscoUcs.ucs
+      # (a Galaxy role whose tasks/main.yml does `include_role: name:
+      # CiscoUcs.ucs/admin`, with admin/ a full sub-role dir INSIDE the
+      # installed CiscoUcs.ucs checkout) resolves <basedir>/roles/
+      # CiscoUcs.ucs/admin and banners `CiscoUcs.ucs/admin` /
+      # `CiscoUcs.ucs/admin/timezone`, while krikri's old
+      # playbook-dir-relative-only lookup failed with "the role
+      # 'CiscoUcs.ucs/admin' was not found".
       if name.includes?('/')
         return name if Dir.exists?(name)
+        if subdir = resolve_subdir_role_name(name, playbook_dir)
+          return subdir
+        end
         joined = File.join(playbook_dir, name)
         return joined if Dir.exists?(joined)
         return nil
@@ -695,6 +724,47 @@ module Krikri
       search_dirs = [File.join(playbook_dir, "roles", name), File.join("roles", name)]
       search_dirs.concat(roles_paths.map { |base| File.join(base, name) })
       search_dirs.find { |dir| Dir.exists?(dir) }
+    end
+
+    # Resolves a slash-containing role name whose literal path exists under
+    # no search root as a whole. The role-name prefix before the '/' is
+    # resolved through the SAME machinery a bare name gets (roles: search
+    # paths, ANSIBLE_ROLES_PATH, collection role dirs), and the remaining
+    # segments are walked as SUBDIRECTORIES inside that role checkout -
+    # each requiring the role marker file the loader itself checks
+    # (tasks/main.yml, find_main_file) at the final directory. Found via
+    # CiscoUcs.ucs (round 5410000), whose nested `include_role: name:
+    # CiscoUcs.ucs/admin/timezone` chain all lives inside the ONE installed
+    # CiscoUcs.ucs checkout; the full-string join above is tried FIRST
+    # everywhere (that is what real resolves), so this walk only ever fires
+    # for the shapes real's own join would miss but a prefix resolves
+    # through a non-plain search root - e.g. a collection-shipped role's
+    # own sub-roles (`ns.coll.role/sub`), whose checkout lives under a
+    # collections path, not under roles/.
+    private def self.resolve_subdir_role_name(name : String, playbook_dir : String) : String?
+      segments = name.split('/')
+      roots = [File.join(playbook_dir, "roles"), "roles"]
+      roots.concat(roles_paths)
+      roots << playbook_dir
+
+      # Real's own move first: join the WHOLE name under each search root
+      # (definition.py's os.path.join(path, role_name) - real never splits
+      # the name, the joined path simply happens to be the sub-role's dir).
+      roots.each do |root|
+        joined = File.join(root, name)
+        return joined if Dir.exists?(joined)
+      end
+
+      (1...segments.size).each do |prefix_len|
+        prefix = segments[0...prefix_len].join('/')
+        prefix_dir = resolve_role_dir(prefix, playbook_dir)
+        next unless prefix_dir
+
+        candidate = File.join([prefix_dir] + segments[prefix_len..])
+        return candidate if find_main_file(File.join(candidate, "tasks"))
+      end
+
+      nil
     end
 
     # Ansible's role search also checks `ANSIBLE_ROLES_PATH` (colon-

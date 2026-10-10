@@ -733,4 +733,57 @@ describe Krikri::RoleLoader do
     defaults["my_network"]?.try(&.as_s).must_equal("10.9.0.0")
     defaults["my_other"]?.try(&.as_s).must_equal("hello")
   end
+
+  it "resolves a slash-containing role name joined under the roles search path (Galaxy sub-role chain)" do
+    # CiscoUcs.ucs (round 5410000): a Galaxy role whose tasks/main.yml
+    # does `include_role: name: CiscoUcs.ucs/admin` - admin/ is a full
+    # sub-role dir (own tasks/, meta/, defaults/) INSIDE the installed
+    # CiscoUcs.ucs checkout. Ansible joins the whole slash-containing
+    # name under each role search path (definition.py _load_role_path),
+    # and the banner keeps the name as written; krikri previously
+    # treated the whole string as one bare name and failed with "the
+    # role 'CiscoUcs.ucs/admin' was not found".
+    build_role("CiscoUcs.ucs") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+    build_role("CiscoUcs.ucs/admin") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+    build_role("CiscoUcs.ucs/admin/timezone") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- CiscoUcs.ucs/admin"), fresh_play, roles_root)
+
+    tasks.map(&.name).must_equal(["t"])
+    tasks[0].role_name.must_equal("CiscoUcs.ucs/admin")
+    tasks[0].role_path.must_equal(File.join(roles_root, "roles", "CiscoUcs.ucs", "admin"))
+    tasks[0].ansible_collection_name.must_be_nil
+
+    nested, _ = Krikri::RoleLoader.load_roles(roles_yaml("- CiscoUcs.ucs/admin/timezone"), fresh_play, roles_root)
+    nested[0].role_name.must_equal("CiscoUcs.ucs/admin/timezone")
+    nested[0].role_path.must_equal(File.join(roles_root, "roles", "CiscoUcs.ucs", "admin", "timezone"))
+  end
+
+  it "resolves a slash-containing name whose full join fails but whose prefix resolves through a collection (subdir walk fallback)" do
+    # The walk: resolve the role-name prefix with the SAME machinery a
+    # bare name gets (here: collection role dirs), then require the
+    # loader's own role marker (tasks/main.yml) at the final subdirectory.
+    collection_dir = File.join(roles_root, "collections", "ansible_collections", "acme", "gadgets", "roles", "installer")
+    write(File.join(collection_dir, "tasks", "main.yml"), "- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+    write(File.join(collection_dir, "sub", "tasks", "main.yml"), "- name: sub t\n  ansible.builtin.debug:\n    msg: hi\n")
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- acme.gadgets.installer/sub"), fresh_play, roles_root)
+
+    tasks.map(&.name).must_equal(["sub t"])
+    tasks[0].role_name.must_equal("acme.gadgets.installer/sub")
+    tasks[0].role_path.must_equal(File.join(collection_dir, "sub"))
+  end
+
+  it "keeps the not-found error unchanged for a genuinely missing subdirectory" do
+    # Live-verified vs 2.19.11: include_role: name: CiscoUcs.ucs/admin/nope
+    # reports the same "was not found in <search paths>" message, with
+    # the slash-containing name verbatim.
+    build_role("outer") { |role| role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n") }
+
+    error = assert_raises(Krikri::RoleNotFoundError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- outer/nope"), fresh_play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "the role 'outer/nope' was not found in #{Krikri::RoleLoader.role_search_display(roles_root)}")
+  end
 end
