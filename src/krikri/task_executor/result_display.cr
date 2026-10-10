@@ -403,10 +403,12 @@ module Krikri
         # neither "failed": true nor any _ansible_* key.
         emit_task_error_block(source_task, result, msg)
         # Ansible 2.19.11's fatal dump has three shapes:
-        # - a task-level when:/loop-source failure (marked by
-        #   when_error_result) dumps ONLY the msg:
-        #   {"msg": "Task failed: ..."} - no changed key (live-verified
-        #   with and without register:/ignore_errors:).
+        # - a task-level when:/loop-source failure is MODULE-KEYED: a
+        #   debug: task is tagged msg-only and dumps ONLY the msg
+        #   ({"msg": "Task failed: ..."} - no changed key, live-verified
+        #   with and without register:/ignore_errors:); every other
+        #   module class rides untagged and keeps changed (see
+        #   when_error_result).
         # - an action failure that tagged its result
         #   _ansible_verbose_always (assert: does, unless quiet:) dumps
         #   the whole result pretty-printed, 4-space indent, sorted keys
@@ -477,10 +479,13 @@ module Krikri
           return
         end
         if result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true
-          # A when:-failed loop item is a task-level failure: real dumps
-          # the msg alone, with no changed key and no loop-item keys
-          # (live-verified: a looped when: failure shows
+          # A when:-failed LOOP item on a DEBUG task is a task-level
+          # failure: real dumps the msg alone, with no changed key and no
+          # loop-item keys (live-verified: a looped when: failure shows
           # `failed: [host] (item=N) => {"msg": "Task failed: ..."}`).
+          # Other modules arrive untagged here (when_error_result keys
+          # this on debug) and keep changed plus the loop bindings in the
+          # generic per-item dump below - also live-verified vs 2.19.11.
           puts "failed: [#{host_label}] (item=#{item_label}) => {\"msg\": #{msg.to_json}}".colorize(:red)
           return
         end
