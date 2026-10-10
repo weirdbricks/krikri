@@ -34,7 +34,7 @@ require "../minitest_helper"
 # drives find_image into resolve_repository_name. The gate-closed variants
 # live in docker_image_build_buildx_test.cr; the lookup-success variants
 # live in docker_image_build_lookup_test.cr.
-describe "docker_image_build DockerException wrap" do
+describe "docker_image_build InvalidRepository escape" do
   # version exits 0 silently, info prints a ClientInfo carrying the buildx
   # plugin, image ls prints nothing (empty lookup), buildx build fails
   # loudly (a build must never run in these tests).
@@ -51,7 +51,7 @@ describe "docker_image_build DockerException wrap" do
     path
   end
 
-  it "fails a scheme-bearing name with the InvalidRepository wrap message" do
+  it "fails a scheme-bearing name with the uncaught-escape fatal message" do
     cli = fake_docker_cli
     result = PluginSpecHelper.run("docker_image_build", {
       "name"       => "http://foo",
@@ -60,10 +60,10 @@ describe "docker_image_build DockerException wrap" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("An unexpected Docker error occurred: Repository name cannot contain a scheme (http://foo)")
+    result["msg"].as_s.must_equal("Task failed: Module failed: Repository name cannot contain a scheme (http://foo)")
   end
 
-  it "fails a hyphen-index name with the InvalidRepository wrap message" do
+  it "fails a hyphen-index name with the uncaught-escape fatal message" do
     cli = fake_docker_cli
     result = PluginSpecHelper.run("docker_image_build", {
       "name"       => "registry.example.com-/thing",
@@ -72,7 +72,7 @@ describe "docker_image_build DockerException wrap" do
     })
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_equal("An unexpected Docker error occurred: Invalid index name (registry.example.com-). Cannot begin or end with a hyphen.")
+    result["msg"].as_s.must_equal("Task failed: Module failed: Invalid index name (registry.example.com-). Cannot begin or end with a hyphen.")
   end
 
   it "does not fire the wrap when the image lookup finds the image" do
@@ -96,7 +96,7 @@ describe "docker_image_build DockerException wrap" do
     result["image"]["Id"].as_s.must_equal("sha256:abc")
   end
 
-  it "registers the wrap shape with exception leading and no stdout_lines" do
+  it "registers the fatal shape: failed/changed/exception/msg order, no stdout_lines" do
     cli = fake_docker_cli
     result = PluginSpecHelper.run("docker_image_build", {
       "name"       => "http://foo",
@@ -105,7 +105,7 @@ describe "docker_image_build DockerException wrap" do
     })
 
     result["exception"].as_s.must_equal("(traceback unavailable)")
-    result.as_h.keys.must_equal(%w[exception failed msg changed])
+    result.as_h.keys.must_equal(%w[failed changed exception msg])
     result.as_h.has_key?("stdout_lines").must_equal(false)
     result.as_h.has_key?("stderr_lines").must_equal(false)
   end
