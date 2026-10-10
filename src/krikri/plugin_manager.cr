@@ -569,7 +569,10 @@ module Krikri
     # `grep -l '@vars\[' plugins/*.cr` -> debug.cr and assert.cr only
     # (debug: `msg: "{{ var }}"` needs live lookup against the full vars
     # context; assert: `that:` conditions evaluate against it the same
-    # way `when:` does). Everyone else gets a pruned config instead of
+    # way `when:` does) - plus the dnf-family wrappers, which get just the
+    # single pkg_mgr fact they need through build_plugin_config's own
+    # carve-out, not the full context (see RpmPackage's backend resolution).
+    # Everyone else gets a pruned config instead of
     # the full vars_context - see build_plugin_config's use of this.
     # Unreachable on the normal execution path, and kept only as the
     # explicit statement of the rule: `debug`/`assert` are the only

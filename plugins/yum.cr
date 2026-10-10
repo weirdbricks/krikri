@@ -95,6 +95,13 @@ module Krikri
     # the executor, not part of Ansible's argument_spec, so they are
     # not rejected.
     private def arg_spec_rejection : PluginResult?
+      # In real (2.19.11) a `yum:` task is only a redirect to the dnf ACTION
+      # plugin, whose backend resolution precedes the module's own argument
+      # validation even here - see RpmPackage#dnf_backend_resolution_failure.
+      if failure = dnf_backend_resolution_failure
+        return failure
+      end
+
       yum_supported = {"allow_downgrade", "autoremove", "bugfix", "cacheonly",
                        "conf_file", "disable_excludes", "disable_gpg_check",
                        "disable_plugin", "disablerepo", "download_dir", "download_only",

@@ -160,6 +160,13 @@ module Krikri
     # accepted here; bookworm's 2.14 rejects it live - a known
     # version difference, left matching upstream's spec.)
     private def arg_spec_rejection : PluginResult?
+      # Real's backend resolution runs before the module's own argument
+      # validation (in real it IS the surrounding code - the dnf ACTION
+      # plugin). Round 5310001: see RpmPackage#dnf_backend_resolution_failure.
+      if failure = dnf_backend_resolution_failure
+        return failure
+      end
+
       dnf_supported = {"allow_downgrade", "allowerasing", "autoremove", "bugfix",
                        "cacheonly", "conf_file", "disable_excludes", "disable_gpg_check",
                        "disable_plugin", "disablerepo", "download_dir", "download_only",

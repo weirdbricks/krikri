@@ -1999,11 +1999,17 @@ module Krikri
       # relative path a module resolves - tempfile's `path:`, for one -
       # is relative to the playbook, not to the shell the playbook was
       # launched from), and tempfile.cr needs it to reproduce that.
+      # `ansible_pkg_mgr` is a fifth carve-out: the dnf/yum plugins' real
+      # controller-side analogue - the dnf ACTION plugin every `dnf:`/`yum:`
+      # task runs through (round 5310001) - resolves its backend dispatch
+      # from the pkg_mgr fact, so the plugin binary needs that one plainly,
+      # not the whole context.
       wire_vars = if PluginManager.needs_full_vars?(task.module_name)
                     vars_context
                   else
                     pruned = Hash(String, JSON::Any).new
-                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file", "playbook_dir"}.each do |key|
+                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file", "playbook_dir",
+                     "ansible_pkg_mgr"}.each do |key|
                       if v = vars_context[key]?
                         pruned[key] = v
                       end
