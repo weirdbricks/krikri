@@ -1391,6 +1391,56 @@ describe Krikri::ConditionalEvaluator do
         %(not xz_version.stdout | regex_search("5\\.6\\.(0|1)")), v, strict: true
       ).must_equal(true)
     end
+
+    # Round 5300002 (kaos2oak.java): `when: lookup('env', 'JAVA_VERSION')
+    # is defined and lookup('env', 'JAVA_VERSION')` with the env var
+    # unset. Real 2.19.11 aborts the play - Python's `and` leaves the
+    # deciding operand's own "" value as the whole condition's result,
+    # and the strict boolean type check rejects the str - while this
+    # engine rendered the call's truthiness as a bool and silently
+    # skipped. Verified live against 2.19.11 on this machine.
+    it "raises for an `X is defined and lookup(...)` chain whose deciding operand is a raw string" do
+      ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /Conditional result \(False\) was derived from value of type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST') is defined and
+            lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST')),
+          Hash(String, JSON::Any).new, strict: true
+        )
+      end
+    end
+
+    it "raises for a bare lookup call whose resolved value is a string" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_java_version"] = JSON::Any.new("hello")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /Conditional result \(True\) was derived from value of type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(lookup('vars', 'kaos_java_version')), v, strict: true
+        )
+      end
+    end
+
+    it "does not raise for a bare lookup call resolving to a real boolean" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_install_java"] = JSON::Any.new(true)
+      Krikri::ConditionalEvaluator.evaluate(
+        "kaos_install_java is defined and lookup('vars', 'kaos_install_java')", v, strict: true
+      ).must_equal(true)
+    end
+
+    it "keeps bare-call truthiness for lenient callers (no raise without strict)" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_java_version"] = JSON::Any.new("hello")
+      Krikri::ConditionalEvaluator.evaluate(
+        %(lookup('vars', 'kaos_java_version')), v
+      ).must_equal(true)
+      v["kaos_java_version"] = JSON::Any.new("")
+      Krikri::ConditionalEvaluator.evaluate(
+        %(lookup('vars', 'kaos_java_version')), v
+      ).must_equal(false)
+    end
   end
 
   # Round 170 (2026-08-23): found via buluma.auditd's assert.yml. A bare
@@ -1441,6 +1491,33 @@ describe Krikri::ConditionalEvaluator do
     it "leaves a ternary nested inside parens for the recursive outer-paren unwrap" do
       v = Hash(String, JSON::Any).new
       Krikri::ConditionalEvaluator.evaluate("true and (false if true else true)", v).must_equal(false)
+    end
+
+    # Same strict-boolean rule as every other final verdict, verified
+    # live against 2.19.11: `when: lookup('env', 'JAVA_VERSION') if true
+    # else false` (empty env result) fails the task with the exact str
+    # wording - the ternary's raw branch VALUE is the condition's result,
+    # not a rendered bool.
+    it "raises under strict for a ternary whose deciding branch value is a string" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_java_version"] = JSON::Any.new("hello")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /Conditional result \(True\) was derived from value of type 'str'/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "lookup('vars', 'kaos_java_version') if true else false", v, strict: true
+        )
+      end
+    end
+
+    it "passes a ternary whose deciding branch value is a real boolean unchanged" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_install_java"] = JSON::Any.new(true)
+      Krikri::ConditionalEvaluator.evaluate(
+        "lookup('vars', 'kaos_install_java') if true else false", v, strict: true
+      ).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate(
+        "lookup('vars', 'kaos_install_java') if false else false", v, strict: true
+      ).must_equal(false)
     end
   end
 

@@ -418,6 +418,16 @@ module Krikri
         if if_parts.size == 2
           else_parts = split_by_operator(if_parts[1], " else ")
           if else_parts.size == 2
+            # The branch VALUE of a Jinja ternary - not a boolean
+            # truthiness of it - is the whole condition's result, so it
+            # goes through the same strict boolean type check every other
+            # final verdict gets (verified live against 2.19.11:
+            # `when: lookup('env', 'JAVA_VERSION') if true else false`
+            # with an empty env value fails the task with the exact str
+            # wording; see strict_conditional_value_type).
+            if strict && !allow_broken_conditionals?
+              strict_conditional_value_type(VariableSubstitutor::JinjaRenderer.new(vars, true), condition)
+            end
             if !condition.includes?("|") && !condition.match(/\bis\s+/)
               converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
               rendered = KrikriJinja.render("{{ 'True' if (#{condition}) else 'False' }}", converted_vars,
@@ -1099,7 +1109,11 @@ module Krikri
       # non-empty-string-ness - rather than reimplementing every lookup
       # plugin's own return shape by hand.
       if condition =~ REGEX_BARE_CALL
-        rendered = VariableSubstitutor::JinjaRenderer.new(vars, true).render("{{ 'True' if (#{condition}) else 'False' }}")
+        renderer = VariableSubstitutor::JinjaRenderer.new(vars, true)
+        if strict && !allow_broken_conditionals?
+          strict_conditional_value_type(renderer, condition)
+        end
+        rendered = renderer.render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
       end
 
@@ -1244,6 +1258,62 @@ module Krikri
         i += 1
       end
       inner
+    end
+
+    # The strict boolean type check for the two `#evaluate` delegation
+    # arms - the bare function-call arm (`lookup(...)`) and the ternary
+    # arm (`X if c else Y`) - where real Jinja2/Python's final verdict is
+    # the expression's own VALUE (`and`/`or` return an operand unchanged,
+    # a ternary returns one branch), not the boolean truthiness those
+    # arms used to render. ansible-core 2.19 type-checks that raw value:
+    # real 2.19.11 fails the task with "Conditional result (False) was
+    # derived from value of type 'str' at \"<environment variable
+    # 'JAVA_VERSION'>\". Conditionals must have a boolean result." on
+    # `when: lookup('env', 'JAVA_VERSION') is defined and
+    # lookup('env', 'JAVA_VERSION')` with the env var unset (kaos2oak.java,
+    # round 5300002: real aborted the play, this engine silently
+    # skipped) - the boolean-truthiness render swallowed the str type
+    # before any check could see it.
+    #
+    # Only a resolved STRING result is type-checked here, the verified
+    # divergence shape. A genuine Bool passes untouched for every
+    # caller, and a value the engine cannot resolve (Undefined) is left
+    # to the arm's own existing lenient path, so the pinned bare-variable
+    # shapes #evaluate_truthiness handles (int/list/dict/NoneType) stay
+    # unaffected. Real labels the value with its lineage origin; lookup
+    # results have no tracked origin, and like every other untracked
+    # origin the message just carries no `at ...` clause rather than
+    # guessing one.
+    private def self.strict_conditional_value_type(renderer : VariableSubstitutor::JinjaRenderer, expr : String) : Nil
+      surrendered = false
+      resolved = begin
+        renderer.evaluate_value!(expr)
+      rescue
+        surrendered = true
+        nil
+      end
+      # An engine-level evaluation failure must never turn an evaluator
+      # capability gap into a task failure - the same declines-and-hands-on
+      # contract #evaluate's own strict-undefined probe follows. The arm's
+      # own render below still decides the real outcome in that case.
+      return if surrendered
+      value = resolved.try(&.raw)
+      return unless value.is_a?(String)
+      if value == Krikri::OMIT_SENTINEL
+        # Same Omit treatment #evaluate_truthiness gives a String result
+        # (live-verified vs 2.19.11 there): the Omit wording, not a
+        # generic type error, is what the task reports.
+        raise ConditionalBooleanError.new("A template was resolved to an Omit scalar.")
+      end
+      # "undefined" is the unresolved-lookup sentinel and "True"/"False"
+      # a preserved-boolean-template's rendering - the same carve-outs
+      # the bare variable's String gate keeps, never typing them as the
+      # call's own non-boolean result.
+      unless value == "undefined" || value == "True" || value == "False"
+        raise ConditionalBooleanError.new(
+          "Conditional result (#{value.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
+          "Conditionals must have a boolean result.")
+      end
     end
 
     private def self.split_progressed?(parts : Array(String), condition : String) : Bool
