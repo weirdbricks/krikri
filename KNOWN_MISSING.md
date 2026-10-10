@@ -104,6 +104,11 @@ each with a regression test):
   external docker package - the docker>=5.0.0 gate belongs to the unimplemented docker_swarm*
   family only). Gate fires in DockerClient.build before any daemon call.
 
+Confirm rounds: 5420000 (badsectorlabs.ludus_vulhub, janneojala.strongswan, dochang.lsbrelease,
+ifalatik.docker_project_deployment, robertdebock.atom all CLEAN) and 5430000 (bilalcaliskan.
+zookeeper + pacifica.ansible_certinfra CLEAN) - every fixable divergence from the batch is
+confirmed against the real hosts.
+
 Dispositioned without a fix: iquzart.win_check_network_drive + mrlesmithjr.windows-iis (win_*
 unsupported), nertwork.cumulus-switch (network collection), stackhpc.os-container-infra
 (openstack.cloud), andrewrothstein.docker-couchdb (controller-lacks-collection, Open gaps),
