@@ -27,7 +27,6 @@ describe "openssl_certificate alias resolution" do
     {% module_names = ["openssl_certificate",
                        "ansible.builtin.openssl_certificate",
                        "ansible.legacy.openssl_certificate",
-                       "community.crypto.openssl_certificate",
                        "community.general.openssl_certificate"] %}
     {% for m in module_names %}
       {% cname = "issues a self-signed certificate via `" + m.id.stringify + ":` end-to-end" %}
@@ -74,4 +73,35 @@ describe "openssl_certificate alias resolution" do
       end
     {% end %}
   {% end %}
+  # The community.crypto FQCN spelling is TOMBSTONED in every current
+  # community.crypto (3.x) meta/runtime.yml - real refuses the whole
+  # playbook at load, and since 0.9.1589's collection-tombstone table so
+  # does this engine (see tombstoned_module_refusal_test.cr). Cannot run
+  # end-to-end through that spelling anymore.
+  it "refuses the tombstoned community.crypto FQCN spelling at load" do
+    key = PluginSpecHelper.tmp_path("server.key")
+    File.write(key, "placeholder")
+
+    playbook = File.tempname("openssl-cert-alias-tomb", ".yml")
+    File.write(playbook, <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: cert under test
+            community.crypto.openssl_certificate:
+              path: #{PluginSpecHelper.tmp_path("server.crt")}
+              csr_path: #{PluginSpecHelper.tmp_path("server.csr")}
+              privatekey_path: #{key}
+              provider: selfsigned
+      YAML
+    )
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.exit_code.must_equal(1, "expected the load-time refusal, got #{output}")
+    output.must_include("The 'community.crypto.openssl_certificate' module has been removed.")
+    output.must_include("This feature was removed from collection 'community.crypto' version 2.0.0.")
+  end
 end
