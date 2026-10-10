@@ -1192,24 +1192,14 @@ module Krikri
 
       ipv4 = nil
       secondaries = [] of JSON::Any
-      capture("ip", ["-o", "-4", "addr", "show", "dev", iface]).each_line do |line|
-        fields = line.split(/\s+/)
-        addr_prefix = fields[3]?
-        next unless fields[2]? == "inet" && addr_prefix
-
-        address, prefix = addr_prefix.split("/", 2)
-        prefix_len = prefix.to_i?
-        next unless prefix_len
-
-        netmask = prefix_to_netmask(prefix_len)
-        entry = {
-          "address" => JSON::Any.new(address),
-          "netmask" => JSON::Any.new(netmask),
-          "network" => JSON::Any.new(u32_to_ipv4(ipv4_to_u32(address) & ipv4_to_u32(netmask))),
-        }
-        if fields[4]? == "brd" && (bcast = fields[5]?)
-          entry["broadcast"] = JSON::Any.new(bcast)
-        end
+      # Round 5300009 (ktechmidas.openvpn recurrence, round 5210000): the
+      # warm run's post-ufw/forwarding host network state crashed the
+      # whole facts gatherer here with a bare "Index out of bounds" -
+      # the old loop indexed the address's octets unguarded, so one
+      # "inet" line of an unexpected shape took down all of gathering.
+      # Real Ansible skips such lines; that is what this extracted
+      # parser now guarantees.
+      parse_ipv4_addr_output(capture("ip", ["-o", "-4", "addr", "show", "dev", iface])).each do |entry|
         if ipv4.nil?
           ipv4 = entry
         else
@@ -1225,20 +1215,8 @@ module Krikri
         iface_facts["ipv4_secondaries"] = JSON::Any.new(secondaries) unless secondaries.empty?
       end
 
-      ipv6_list = [] of JSON::Any
-      capture("ip", ["-o", "-6", "addr", "show", "dev", iface]).each_line do |line|
-        fields = line.split(/\s+/)
-        addr_prefix = fields[3]?
-        next unless fields[2]? == "inet6" && addr_prefix
-
-        address, prefix = addr_prefix.split("/", 2)
-        entry = {"address" => JSON::Any.new(address), "prefix" => JSON::Any.new(prefix)}
-        if scope = fields[5]?
-          entry["scope"] = JSON::Any.new(scope)
-        end
-        ipv6_list << JSON::Any.new(entry)
-      end
-      iface_facts["ipv6"] = JSON::Any.new(ipv6_list) unless ipv6_list.empty?
+      entries6 = parse_ipv6_addr_output(capture("ip", ["-o", "-6", "addr", "show", "dev", iface]))
+      iface_facts["ipv6"] = JSON::Any.new(entries6) unless entries6.empty?
 
       iface_facts
     end
@@ -1249,17 +1227,106 @@ module Krikri
       nil
     end
 
-    private def prefix_to_netmask(prefix : Int32) : String
-      (0..3).map do |i|
-        remaining = prefix - i * 8
-        byte = remaining >= 8 ? 255u8 : remaining > 0 ? ((0xFF_u32 << (8 - remaining)) & 0xFF).to_u8! : 0u8
-        byte.to_s
-      end.join(".")
+    def parse_ipv6_addr_output(output : String) : Array(JSON::Any)
+      entries = [] of JSON::Any
+      output.each_line do |line|
+        fields = line.split(/\s+/)
+        addr_prefix = fields[3]?
+        next unless fields[2]? == "inet6" && addr_prefix
+
+        # Same one-element-split "Index out of bounds" the ipv4 loop
+        # crashed with (rounds 5300009/5210000, ktechmidas.openvpn):
+        # a prefix-less "inet6" line must skip, not kill the gatherer.
+        next unless (slash = addr_prefix.index("/"))
+        address = addr_prefix[0...slash]
+        prefix_str = addr_prefix[slash + 1..]
+        entry = {"address" => JSON::Any.new(address), "prefix" => JSON::Any.new(prefix_str)}
+        if scope = fields[5]?
+          entry["scope"] = JSON::Any.new(scope)
+        end
+        entries << JSON::Any.new(entry)
+      end
+      entries
     end
 
-    private def ipv4_to_u32(ip : String) : UInt32
-      parts = ip.split(".").map(&.to_u32)
-      (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+    private def ipv4_mask_octets(prefix : Int32) : Array(UInt8)
+      (0..3).map do |i|
+        remaining = prefix - i * 8
+        remaining >= 8 ? 255u8 : remaining > 0 ? ((0xFF_u32 << (8 - remaining)) & 0xFF).to_u8! : 0u8
+      end
+    end
+
+    # Parses raw `ip -o -4 addr show` text into the ansible_<iface> per-
+    # address entry hashes (address/netmask/network, broadcast on "brd"
+    # lines). Lives here as a pure text-in/text-out method so the line
+    # shapes that killed the gatherer on the round-5300009 ktechmidas.openvpn
+    # warm run are unit-pinnable without a live `ip` binary: back before
+    # the annotation pinpointed "while gathering network", its only
+    # observable symptom was the bare "Index out of bounds" above -
+    # parse time was the first place a changed-upon-warm-network-state
+    # host could feed unexpected text to crystal's strict indexing.
+    # Every line is parsed OR skipped, never crashed: a line whose
+    # address is not exactly 4 numeric octets (a no-address or
+    # partially-configured tun/bridge/wg left behind by the role's own
+    # changes), or that carries no /prefix at all, is dropped the way
+    # Ansible's own per-line `continue` drops it.
+    def parse_ipv4_addr_output(output : String) : Array(Hash(String, JSON::Any))
+      entries = [] of Hash(String, JSON::Any)
+      output.each_line do |line|
+        fields = line.split(/\s+/)
+        addr_prefix = fields[3]?
+        next unless fields[2]? == "inet" && addr_prefix
+
+        # THE round-5300009/5210000 crash: crystal's multiple assignment
+        # `a, b = arr` indexes arr[1] unconditionally, so a "inet" line
+        # whose address carries no /prefix (one-element split) died with
+        # a bare "Index out of bounds" - and a single such line killed
+        # the WHOLE facts gatherer. Skip the line instead, the way
+        # Ansible's per-line continue does (e.g. point-to-point inet
+        # lines from an openvpn/tun state the role itself created on a
+        # warm run).
+        next unless (slash = addr_prefix.index("/"))
+        address = addr_prefix[0...slash]
+        prefix_len = addr_prefix[slash + 1..].to_i?
+        next unless prefix_len
+
+        netmask_octets = ipv4_mask_octets(prefix_len)
+        octets = ipv4_quad_octets?(address)
+        next unless octets
+
+        entry = {
+          "address" => JSON::Any.new(address),
+          "netmask" => JSON::Any.new(netmask_octets.join(".")),
+          "network" => JSON::Any.new(u32_to_ipv4(ipv4_octets_to_u32(octets) & ipv4_octets_to_u32(netmask_octets))),
+        }
+        if fields[4]? == "brd" && (bcast = fields[5]?)
+          entry["broadcast"] = JSON::Any.new(bcast)
+        end
+        entries << entry
+      end
+      entries
+    end
+
+    private def ipv4_octets_to_u32(octets : Array(UInt8)) : UInt32
+      (octets[0].to_u32 << 24) | (octets[1].to_u32 << 16) | (octets[2].to_u32 << 8) | octets[3].to_u32
+    end
+
+    # The guarded octet split the bare "Index out of bounds" crash
+    # (rounds 5300009/5210000, ktechmidas.openvpn) ultimately lived
+    # behind: any address text that is not exactly four numeric octets
+    # yields nil, so the caller can skip the line the way Ansible skips
+    # an unparsable entry instead of letting the gatherer die.
+    private def ipv4_quad_octets?(ip : String) : Array(UInt8)?
+      parts = ip.split(".")
+      return nil unless parts.size == 4
+
+      octets = [] of UInt8
+      parts.each do |part|
+        octet = part.to_u8?
+        return nil unless octet
+        octets << octet
+      end
+      octets
     end
 
     private def u32_to_ipv4(value : UInt32) : String
