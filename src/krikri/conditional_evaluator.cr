@@ -253,6 +253,23 @@ module Krikri
       # whitespace run OUTSIDE string literals to a single space, before
       # any operator splitting happens.
       condition = normalize_condition_whitespace(condition)
+      # A real Python/Jinja lexer tokenizes `or`/`and` as KEYWORD tokens
+      # wherever they stand, so whitespace-free spellings next to
+      # punctuation (`x != "Y" )or (y != "YES")`, `x)and(`, `x or(y)`)
+      # are all valid - whitespace is grammar-irrelevant around them.
+      # The hand-rolled evaluator splits on literal " or "/" and " only,
+      # so the operands of such a condition survive into later handlers
+      # unsplit, and the mssql EULA roles (dpredhat.ansible_role_mssql and
+      # kyleabenson.mssql, round 5300000) had their `... != "Y" )or
+      # (... != "YES")` failed_when come back True while real returns
+      # False. Normalize each
+      # well-formed keyword token so both sides carry a space; quoted
+      # literals are left alone (a quoted 'or' is a string operand, not
+      # a keyword) and a preceding WORD character always means the
+      # sequence is part of an identifier (`morph`, `approved`), not a
+      # keyword - Python/W3C tokenization agrees, and spaces must never
+      # appear there.
+      condition = normalize_boolean_operator_spacing(condition)
       # A single call only strips ONE layer of enclosing parens. An
       # already-parenthesized when:-list item (`- (a or b)`) gets wrapped
       # in another layer by condition_to_string's per-clause `(#{clause})`
@@ -2146,6 +2163,99 @@ module Krikri
           end
         end
       end
+    end
+
+    # Insert whitespace around JUXTAPOSED `or`/`and` keyword tokens
+    # (`)or(`, `)and(`, `or(`, `or("x")`, `)or "x"`), so the literal "
+    # or "/" and " paddings every downstream split relies on are always
+    # present. Where NOT to touch: inside quoted literals (a quoted
+    # 'or' is an operand, never a keyword), after a word-character side
+    # (letters/digits/underscore on either side mean the sequence is
+    # part of an identifier - `morph`, `approved`, `sort_order` - so the
+    # tokenization contract `1 or 2` may not insert anything there).
+    # Idempotent: re-normalizing an already-spaced copy produces it
+    # unchanged, which matters because evaluate_measured recurses after
+    # splitting and re-enters this whole path.
+    private def self.normalize_boolean_operator_spacing(condition : String) : String
+      return condition unless condition.includes?("or") || condition.includes?("and")
+
+      chars = condition.chars
+      String.build do |buf|
+        in_quote = false
+        quote_char = ' '
+        escaped = false
+        # Last byte emitted into buf; a space that belongs to the input
+        # and one that was inserted here leave the same state, so this
+        # doubles as "no duplicate space" tracking.
+        last_char = ' '
+        i = 0
+        while i < chars.size
+          ch = chars[i]
+          if in_quote
+            buf << ch
+            if escaped
+              escaped = false
+            elsif ch == '\\'
+              escaped = true
+            elsif ch == quote_char
+              in_quote = false
+            end
+            last_char = ch
+            i += 1
+            next
+          end
+
+          if ch == '"' || ch == '\''
+            in_quote = true
+            quote_char = ch
+            escaped = false
+            buf << ch
+            last_char = ch
+            i += 1
+            next
+          end
+
+          keyword_size = 0
+          keyword = ""
+          if i + 2 <= chars.size && chars[i] == 'o' && chars[i + 1] == 'r'
+            keyword = "or"
+            keyword_size = 2
+          elsif i + 3 <= chars.size && chars[i] == 'a' && chars[i + 1] == 'n' && chars[i + 2] == 'd'
+            keyword = "and"
+            keyword_size = 3
+          end
+
+          if keyword_size > 0
+            end_idx = i + keyword_size
+            left_ok = i > 0 && !boolean_word_char?(chars[i - 1])
+            right_ok = end_idx == chars.size ||
+                       !boolean_word_char?(chars[end_idx])
+            if left_ok && right_ok
+              if i > 0 && !chars[i - 1].whitespace? && last_char != ' '
+                buf << ' '
+              end
+              buf << keyword
+              next_char = end_idx < chars.size ? chars[end_idx] : nil
+              if next_char && !next_char.whitespace? && next_char != ')' && next_char != '='
+                buf << ' '
+                last_char = ' '
+              else
+                last_char = keyword[-1]
+              end
+              i = end_idx
+              next
+            end
+          end
+
+          buf << ch
+          last_char = ch
+          i += 1
+        end
+      end
+    end
+
+    private def self.boolean_word_char?(ch : Char) : Bool
+      ch.ascii_alphanumeric? || ch == '_'
     end
 
     private def self.matches_type_test?(vars : Hash(String, JSON::Any), var_name : String, test_name : String) : Bool
