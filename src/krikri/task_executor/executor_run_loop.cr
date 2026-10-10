@@ -2218,7 +2218,24 @@ module Krikri
         args["cmd"] = JSON::Any.new(nil)
       end
       copy = hash.dup
-      copy["invocation"] = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
+      invocation = JSON::Any.new({"module_args" => JSON::Any.new(args)} of String => JSON::Any)
+      # Real's loop-registered stat item orders invocation BEFORE the
+      # trailing failed: false (round 5410000, pacifica.ansible_certinfra's
+      # nested stat-result loop; probed single-stat registers carry NO
+      # invocation at all, which the non-loop path preserves elsewhere) -
+      # insert ahead of an existing `failed` key instead of appending, so
+      # the registered item reads changed/stat/invocation/failed like
+      # real's.
+      if idx = copy.keys.index("failed")
+        new_hash = Hash(String, JSON::Any).new
+        copy.each do |k, v|
+          new_hash["invocation"] = invocation if k == "failed"
+          new_hash[k] = v
+        end
+        copy = new_hash
+      else
+        copy["invocation"] = invocation
+      end
       JSON::Any.new(copy)
     end
 

@@ -61,3 +61,26 @@ describe "looped-task register aggregate shape" do
     output.must_include("msg=One or more items failed")
   end
 end
+
+# Real's loop-registered stat item orders invocation BEFORE the trailing
+# failed: false (round 5410000, pacifica.ansible_certinfra's nested
+# stat-result loop; single-task stat registers carry NO invocation at all,
+# probed 2026-10-10 - krikri's single-task path already matches that).
+describe "stat loop-item register key order" do
+  it "reads changed/stat/invocation/failed like real's loop item" do
+    code, output = run_play(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.stat:
+              path: /nonexistent-kp
+            loop: [a, b]
+            register: rr
+          - ansible.builtin.debug:
+              msg: "KEYS|{{ rr.results[0] | dict2items | map(attribute='key') | join(',') }}"
+      YAML
+
+    code.must_equal(0)
+    output.must_include("KEYS|changed,stat,invocation,failed")
+  end
+end
