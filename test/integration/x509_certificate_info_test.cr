@@ -12,6 +12,10 @@ private def cert_path(name : String) : String
   PluginSpecHelper.tmp_path(name)
 end
 
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+private INVENTORY    = File.join(__DIR__, "..", "fixtures", "inventory-explicit-localhost.ini")
+
 describe "x509_certificate_info plugin" do
   it "reports subject, issuer, validity, serial and version for a self-signed cert" do
     path = cert_path("basic.pem")
@@ -78,5 +82,93 @@ describe "x509_certificate_info plugin" do
     result = PluginSpecHelper.run("x509_certificate_info",
       {"path" => "/dev/null", "content" => "-----BEGIN CERTIFICATE-----"})
     result["failed"].as_bool.must_equal(true)
+  end
+
+  # community.crypto's x509_certificate_info.py: result["valid_at"] is
+  # ALWAYS present ({} when the option is absent), each probe a boolean
+  # from not_before <= point <= not_after with the probe resolved via
+  # _time.py get_relative_time_option. Round 5420006
+  # (pacifica.ansible_certinfra): the role's one-week-validity probe
+  # registers cert_valid_result and the NEXT task reads
+  # result.valid_at.one_week - an absent dict fails that conditional
+  # with "object of type 'dict' has no attribute 'valid_at'".
+  it "answers valid_at probes: relative future true, past notAfter false, absolute before notBefore false" do
+    path = cert_path("validat.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("validat.key")} -out #{path} -days 30 -nodes -subj "/CN=validat.example.com" 2>/dev/null`
+
+    result = PluginSpecHelper.run("x509_certificate_info", {
+      "path"     => path,
+      "valid_at" => %({"one_week": "+1w", "past_not_after": "+40d", "before_not_before": "20200102030405Z"}),
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    valid_at = result["valid_at"].as_h
+    valid_at["one_week"].as_bool.must_equal(true)
+    valid_at["past_not_after"].as_bool.must_equal(false)
+    valid_at["before_not_before"].as_bool.must_equal(false)
+    # One boolean per probe, keyed by the caller's probe names.
+    valid_at.size.must_equal(3)
+  end
+
+  it "carries an empty valid_at dict when the option is absent" do
+    path = cert_path("novalidat.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("novalidat.key")} -out #{path} -days 30 -nodes -subj "/CN=novalidat.example.com" 2>/dev/null`
+
+    result = PluginSpecHelper.run("x509_certificate_info", {"path" => path})
+
+    result["valid_at"].as_h.must_equal({} of String => JSON::Any)
+  end
+
+  # The role's conditional shape end-to-end: the registered result feeds
+  # both a direct `not result.valid_at.one_week` when: (the role's
+  # "Remove the cert if it's not valid in one week") and the
+  # with_nested `item.0.valid_at.one_week` reading its next task does
+  # over the registered result.
+  it "feeds the role's valid_at conditionals end-to-end: direct when and with_nested item.0" do
+    path = cert_path("conditional.pem")
+    `openssl req -x509 -newkey rsa:2048 -keyout #{cert_path("conditional.key")} -out #{path} -days 30 -nodes -subj "/CN=conditional.example.com" 2>/dev/null`
+
+    playbook = File.tempname("x509-valid-at", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Test whether that certificate is valid in one week
+            community.crypto.x509_certificate_info:
+              path: #{path}
+              valid_at:
+                one_week: "+1w"
+            register: result
+          - name: Remove the cert if it's not valid in one week
+            file:
+              path: #{path}
+              state: absent
+            when:
+              - not result.valid_at.one_week
+          - name: Role-shaped nested conditional over the registered result
+            debug:
+              msg: "valid={{ item.0.valid_at.one_week }}"
+            with_nested:
+              - "{{ [result] }}"
+              - "{{ [1] }}"
+            register: nested
+          - name: Everything must agree the cert is valid
+            assert:
+              that:
+                - result.valid_at.one_week
+                - nested.results[0].msg == "valid=True"
+    YAML
+
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.success?.must_equal(true, "playbook failed: #{output}")
+    output.must_include("valid=True")
+    output.wont_include("has no attribute 'valid_at'")
+    # The remove task's when: was false, so the cert survived.
+    File.exists?(path).must_equal(true)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
   end
 end

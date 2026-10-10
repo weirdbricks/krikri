@@ -321,7 +321,7 @@ describe "x509_certificate_info plugin result key order" do
       "subject_alt_name_critical", "not_before", "not_after", "expired",
       "public_key", "public_key_type", "public_key_data",
       "public_key_fingerprints", "fingerprints", "subject_key_identifier",
-      "serial_number", "changed",
+      "serial_number", "valid_at", "changed",
     ])
   end
 end
