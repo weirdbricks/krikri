@@ -176,6 +176,52 @@ module Krikri
         )
       end
 
+      # Backends the `dnf:` ACTION plugin can dispatch to (upstream
+      # plugins/action/dnf.py's VALID_BACKENDS frozenset). Every `dnf:` task
+      # runs through that action plugin, and so does `yum:` - ansible-core
+      # 2.19.11's ansible_builtin_runtime.yml redirects yum to the dnf module,
+      # whose module file was then dropped entirely (no modules/yum.py in
+      # 2.19.11), so yum exists only as this action plugin on modern installs.
+      private VALID_ACTION_BACKENDS = {"yum", "yum4", "dnf", "dnf4", "dnf5"}
+
+      # Real's dnf ACTION plugin resolves which backend module to dispatch to
+      # from an explicit use_backend, falling back to the host's pkg_mgr fact
+      # for auto/yum (2.19.11 round 5310001, kyleabenson.mssql's "Install the
+      # EPEL repo rpm" yum: task on an Ubuntu 22.04 target). When the fact is
+      # not a dnf-family backend (pkg_mgr: apt there), it returns a failed
+      # result carrying its TWO-ELEMENT tuple msg and never dispatches the
+      # module: krikri shelled the yum binary instead and failed differently
+      # ("Failed to install packages", a module-level failure). The tuple
+      # words (including the stray `})` inside the second element - upstream
+      # source's own typo, live-captured) render as the action-level
+      # "Task failed: Action failed: (...)" [ERROR] block via
+      # _ansible_error_detail, while the wire msg keeps the tuple's JSON
+      # array form and ansible_facts mirrors real's on-result setup refresh.
+      private def dnf_backend_resolution_failure : PluginResult?
+        backend = @params["use_backend"]? || "auto"
+        return nil unless backend.in?("auto", "yum")
+        # The resolution only runs from a GATHERED fact here: real falls back
+        # to an on-demand `setup` fact fetch when the fact is missing, which
+        # a remote module binary cannot perform, so a fact-less host keeps
+        # the plugins' previous behavior (dnf.cr's symlink probe, yum.cr's
+        # blind binary call) - a deliberate gap.
+        fact = @vars["ansible_pkg_mgr"]?.try(&.as_s?)
+        return nil if fact.nil? || fact.empty? || fact == "auto"
+        return nil if VALID_ACTION_BACKENDS.includes?(fact)
+        msg1 = "Could not detect which major revision of dnf is in use, " \
+               "which is required to determine module backend."
+        msg2 = "You should manually specify use_backend to tell the module " \
+               "whether to use the dnf4 or dnf5 backend})"
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          native_msg: JSON::Any.new([JSON::Any.new(msg1), JSON::Any.new(msg2)]),
+          ansible_facts: JSON::Any.new({"pkg_mgr" => JSON::Any.new(fact)}),
+          _ansible_action_level: true,
+          _ansible_error_detail: "Action failed: ('#{msg1}', '#{msg2}')"
+        )
+      end
+
       private def early_result_for_empty_names(names : Array(String)) : PluginResult?
         return nil unless names.empty?
 
