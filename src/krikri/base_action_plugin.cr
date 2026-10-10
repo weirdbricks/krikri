@@ -133,10 +133,23 @@ module Krikri
     # Origin, the shape every other crash_failure has today.
     property? error_origin : String?
 
+    # template:'s undefined-variable render failure (see TemplateAction
+    # Plugin): the crash shape PLUS a request for the executor's chained
+    # var-origin lookup. When the missing name is reached through a
+    # VARIABLE whose stored value is itself an unrendered `{{ }}`
+    # (`server_ip: "{{ bind_addr }}"`), real 2.19.11 points the [ERROR]
+    # chain's variable-templating link at that DEFINITION's file:line:col
+    # with a code frame (live-captured) - the executor owns the layers
+    # that carry those origins, so the plugin only asks for the scan (it
+    # falls back to the crash-shape default, the template file, when the
+    # scan finds no unique answer).
+    property? undef_chain : Bool
+
     def initialize(@success : Bool, @modified_params : Hash(String, String)? = nil,
                    @error_message : String? = nil, @changed : Bool = false,
                    @final_result : JSON::Any? = nil, @action_level : Bool = false,
-                   @error_detail : String? = nil, @error_origin : String? = nil)
+                   @error_detail : String? = nil, @error_origin : String? = nil,
+                   @undef_chain : Bool = false)
     end
 
     # Create success result
@@ -165,11 +178,15 @@ module Krikri
     # (whose crash *origin* is the template file - see #error_origin).
     # Ansible's task executor wraps such an exception itself, so the
     # fatal dump's msg keeps the "Task failed: " prefix while the [ERROR]
-    # block shows the bare message (see #error_detail).
-    def self.crash_failure(error_message : String, origin : String? = nil) : ActionResult
+    # block shows the bare message (see #error_detail). *undef_chain* (see
+    # #undef_chain) additionally asks the executor for the failing VALUE's
+    # own chained Origin - its var-definition layers.
+    def self.crash_failure(error_message : String, origin : String? = nil,
+                           undef_chain : Bool = false) : ActionResult
       new(success: false,
         error_message: "Task failed: #{error_message}",
-        action_level: true, error_detail: error_message, error_origin: origin)
+        action_level: true, error_detail: error_message, error_origin: origin,
+        undef_chain: undef_chain)
     end
 
     # Create pass-through result (no modifications)

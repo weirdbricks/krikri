@@ -986,8 +986,20 @@ module Krikri
           }
           # An ACTION-level failure (a bare AnsibleActionFail raised by
           # the plugin itself) renders without the "Module failed." chain
-          # segment - see ActionResult#action_level.
+          # segment - see ActionResult#action_level. Same key set the
+          # run-loop's action-failure builders carry (live-verified
+          # 2.19.11: a handler's template undefined failure prints real's
+          # own two-link chain, nothing handler-special).
+          if detail = action_result.error_detail?
+            failed["_ansible_error_detail"] = detail
+          end
           failed["_ansible_action_level"] = true if action_result.action_level?
+          if err_origin = action_result.error_origin?
+            failed["_ansible_error_origin"] = err_origin
+          end
+          if undef_origin = undef_chain_result_origin(handler, action_result)
+            failed["_ansible_undef_chain_origin"] = undef_origin
+          end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
           return result_json

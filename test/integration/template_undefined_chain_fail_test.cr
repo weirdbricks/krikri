@@ -106,4 +106,82 @@ describe "a .j2 reading a var whose chain bottoms out at an undefined name" do
     File.delete(src) if src && File.exists?(src)
     File.delete(dest) if dest && File.exists?(dest)
   end
+
+  it "prints real's two-link [ERROR] chain (var-definition Origin) plus the prefixed fatal msg" do
+    src = File.tempname("undef-chain-twolink-src", ".j2")
+    dest = File.tempname("undef-chain-twolink-dest")
+    playbook = File.tempname("undef-chain-twolink", ".yml")
+    File.write(src, "BindAddress {{ server_ip }}\n")
+
+    # Live-verified against ansible-core 2.19.11 byte for byte (same
+    # shape as /tmp/repro-fixes/repro_bind_chain.yml): the [ERROR] block
+    # is TWO chain links with the var's DEFINITION as the second Origin
+    # ("Task failed." + task Origin, then "<<< caused by >>>" + the bare
+    # innermost wording + the definition's file:line:col with its code
+    # frame), and the fatal msg keeps the "Task failed: " prefix no
+    # "Failed to render template" wrapper exists anywhere.
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          server_ip: "{{ bind_addr }}"
+        tasks:
+          - template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.exit_code.must_equal(2)
+    text = output.to_s
+    text.must_include("[ERROR]: Task failed: 'bind_addr' is undefined")
+    text.must_include("<<< caused by >>>")
+    # The second link's Origin is the DEFINITION whose rendered value
+    # fails, with its code frame and caret at the value token.
+    text.must_include("'bind_addr' is undefined\nOrigin: #{playbook}:6:16")
+    text.must_include("4   connection: local\n5   vars:\n6     server_ip: \"{{ bind_addr }}\"\n                 ^ column 16")
+    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: 'bind_addr' is undefined"}))
+    text.wont_include("Failed to render template")
+    File.exists?(dest).must_equal(false)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
+  it "keeps the template file as the second link's Origin when the name has no definition" do
+    src = File.tempname("undef-chain-bare-src", ".j2")
+    dest = File.tempname("undef-chain-bare-dest")
+    playbook = File.tempname("undef-chain-bare", ".yml")
+    # Live-verified against 2.19.11 byte for byte: with no definition to
+    # point at, real keeps the two links but the second Origin is the
+    # TEMPLATE file (path only, no line/column, no frame).
+    File.write(src, "{% for ns in missing_nameservers %}\n{% endfor %}\n")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - template:
+              src: #{src}
+              dest: #{dest}
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.exit_code.must_equal(2)
+    text = output.to_s
+    text.must_include("[ERROR]: Task failed: 'missing_nameservers' is undefined")
+    text.must_include("<<< caused by >>>")
+    text.must_include("'missing_nameservers' is undefined\nOrigin: #{src}\n")
+    text.must_include(%(fatal: [localhost]: FAILED! => {"changed": false, "msg": "Task failed: 'missing_nameservers' is undefined"}))
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+    File.delete(src) if src && File.exists?(src)
+    File.delete(dest) if dest && File.exists?(dest)
+  end
 end

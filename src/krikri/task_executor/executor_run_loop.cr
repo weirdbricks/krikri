@@ -1633,6 +1633,9 @@ module Krikri
           if err_origin = action_result.error_origin?
             failed["_ansible_error_origin"] = err_origin
           end
+          if undef_origin = undef_chain_result_origin(task, action_result)
+            failed["_ansible_undef_chain_origin"] = undef_origin
+          end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)
           return apply_changed_failed_when(task, result_json, vars_context, host)
@@ -2022,6 +2025,9 @@ module Krikri
           end
           if err_origin = action_result.error_origin?
             failed["_ansible_error_origin"] = err_origin
+          end
+          if undef_origin = undef_chain_result_origin(task, action_result)
+            failed["_ansible_undef_chain_origin"] = undef_origin
           end
           result_json = JSON.parse(failed.to_json)
           Krikri.mark_failed_key_order(result_json, FAILED_KEY_ORDER_MSG_FIRST)

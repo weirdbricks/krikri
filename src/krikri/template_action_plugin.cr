@@ -14,6 +14,14 @@ module Krikri
   class TemplateActionPlugin < ActionPlugin
     @render_error : String? = nil
 
+    # Set alongside @render_error when the render failed with the engine's
+    # Undefined kind: real 2.19.11 propagates AnsibleUndefinedVariable out
+    # of the template action as the task failure's bare msg - "Task failed:
+    # 'bind_addr' is undefined" (live-verified, round 5300003
+    # wasilak.centos-hashiui's chain-undefined template var) - with NO
+    # "Failed to render template" wrapper and no line prefix.
+    @render_error_undefined : Bool = false
+
     # Set when the template's own leading `#jinja2:` directive line
     # failed Ansible's literal_eval/type validation (see
     # #extract_jinja2_directive): the crash's Origin is the TEMPLATE
@@ -133,6 +141,21 @@ module Krikri
         # dataclass demands a bool).
         if directive = @directive_error
           return ActionResult.crash_failure(directive, src)
+        end
+        if @render_error_undefined && (msg = @render_error)
+          # Real's undefined-variable failure is an UNCAUGHT
+          # AnsibleUndefinedVariable unwinding out of the action plugin -
+          # the crash shape (fatal msg "Task failed: 'bind_addr' is
+          # undefined", live-verified, round 5300003
+          # wasilak.centos-hashiui), the [ERROR] block's cause carrying
+          # the bare wording (no "Failed to render template" wrapper) and
+          # the TEMPLATE file as its Origin... which real REPLACES with
+          # the failing VALUE's definition when that value is itself an
+          # unrendered `{{ }}` template (the executor's
+          # _ansible_undef_chain_origin looks it up - see #undef_chain).
+          # The engine's own "line N: " prefix is dropped: the bare
+          # ansible-core wording carries no line info.
+          return ActionResult.crash_failure(msg, src, undef_chain: true)
         end
         detail = @render_error ? ": #{@render_error}" : ""
         return ActionResult.failure("Failed to render template#{detail}")
@@ -312,7 +335,8 @@ module Krikri
       @directive_error = ex.message
       nil
     rescue ex : KrikriJinja::TemplateError
-      @render_error = jinja_error_message(ex)
+      @render_error_undefined = ex.kind == KrikriJinja::ErrorKind::Undefined
+      @render_error = ansible_wording(ex, line_prefix: !@render_error_undefined)
       nil
     rescue ex
       @render_error = ex.message
@@ -402,8 +426,16 @@ module Krikri
     # attribute 'x'" to ansible-core's "object of type 'dict' has no
     # attribute 'x'".
     private def jinja_error_message(ex : KrikriJinja::TemplateError) : String
-      (ex.message || "template render failed")
-        .gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+      ansible_wording(ex, line_prefix: true)
+    end
+
+    # The engine message with the attribute-miss rewording; line_prefix
+    # false drops TemplateError's "line N: " wrapper (the bare
+    # ansible-core wording for an undefined-variable failure carries no
+    # line info, unlike a template syntax error which keeps it).
+    private def ansible_wording(ex : KrikriJinja::TemplateError, line_prefix : Bool) : String
+      base = line_prefix ? (ex.message || "template render failed") : (ex.raw_message || ex.message || "template render failed")
+      base.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
     end
 
     # JSON-shaped counterpart of #prepare_template_vars, for the krikri-jinja
