@@ -1402,13 +1402,25 @@ module Krikri
 
   # A tombstoned-removed module name whose tombstone carries its OWN
   # custom removal message ("The 'community.docker.docker_compose'
-  # module has been removed. ..."). Ansible prints that message at RUN
-  # time and exits 1, unlike the GENERIC "couldn't resolve
-  # module/action" playbook-load refusal which exits 4 - live-verified
-  # against ansible-core 2.19.11 for both shapes (sorrowless.*
-  # round 5210000: real rc=1, krikri rc=4 on the docker_compose
-  # message; ec2_remote_facts's generic text rc=4 on both).
+  # module has been removed. ..."). Ansible refuses the WHOLE playbook
+  # at LOAD time for one of these - probed against ansible-core
+  # 2.19.11: rc=1 (NOT the generic couldn't-resolve rc=4), zero tasks
+  # run including `Gathering Facts`, "[ERROR]: <message>" plus the
+  # offending task's Origin block on STDERR - the same load-time
+  # refusal even when the offending task sits behind `when: false`.
+  # (This used to read "raises that at RUN time", when the engine only
+  # hit the tombstone for names that resolved to nothing; the table's
+  # collection-wide extension and the resolved-name-first check moved
+  # the refusal to match real's load-time shape.) Carries the rendered
+  # stderr block ([ERROR] line + Origin + 3 context lines + caret)
+  # built at the raise site for krikri-playbook.cr to print verbatim;
+  # nil renders message-only.
   class RemovedModuleError < UnresolvedModuleError
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # Parser for Ansible YAML playbooks
@@ -1475,15 +1487,36 @@ module Krikri
     # name exactly as the task wrote it - Ansible's message echoes
     # the source spelling, not any resolved form (except a tombstone
     # with its own fixed message, like docker_compose's).
-    def self.raise_unresolvable_module_error(as_written : String) : Nil
+    #
+    # resolved is the name #resolve_module_name landed on, when it
+    # resolved at all: the tombstone is consulted for the RESOLVED FQCN
+    # too, not just the as-written one - real's loader resolves a task's
+    # name first and then checks the resolved FQCN against the
+    # collection's meta/runtime.yml plugin_routing tombstones; a bare
+    # spelling that lands on a tombstoned FQCN is therefore refused
+    # without every bare spelling needing its own table entry (which
+    # would wrongly refuse spellings real resolves through redirects
+    # that are NOT tombstoned, like the builtin-runtime ones).
+    # source_file/source_map/prefix build the RemovedModuleError render
+    # ([ERROR] line + task Origin) where the raise site has a source
+    # position.
+    def self.raise_unresolvable_module_error(as_written : String, resolved : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, prefix : String = "") : Nil
       # A templated module name resolves (or fails) at run time, never
       # here - the raw `{{ }}` text is not an unresolvable name.
       return if as_written.includes?("{{")
 
-      return unless REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
+      name = as_written
+      tombstoned = REMOVED_MODULE_TOMBSTONES.has_key?(as_written)
+      if !tombstoned && resolved && resolved != as_written &&
+         REMOVED_MODULE_TOMBSTONES.has_key?(resolved)
+        name = resolved
+        tombstoned = true
+      end
+      return unless tombstoned
 
-      if custom = REMOVED_MODULE_TOMBSTONES[as_written]
-        raise RemovedModuleError.new(custom)
+      if custom = REMOVED_MODULE_TOMBSTONES[name]
+        raise RemovedModuleError.new(custom,
+          origin_error_render(custom, source_file, source_map, prefix))
       end
       raise UnresolvedModuleError.new("couldn't resolve module/action '#{as_written}'. " \
                                       "This often indicates a misspelling, missing collection, or incorrect module path.")
@@ -3048,14 +3081,30 @@ module Krikri
       else
         resolved_module_name = resolve_module_name(module_name)
         unavailable_module_name = resolved_module_name ? nil : module_name
+        # A tombstoned-removed module name (ec2_remote_facts and
+        # friends) hard-stops the whole run at parse time with
+        # Ansible's own exact wording - the same playbook-load check
+        # ansible-playbook runs, verified against 2.19.4. That
+        # stays static because a tombstoned name is one Ansible
+        # ITSELF refuses to resolve anywhere, at its own playbook-load
+        # time. The check consults the RESOLVED name too, and AHEAD of
+        # trusting the resolution result: real's loader resolves a
+        # task's name first and then checks the resolved FQCN against
+        # the collection's meta/runtime.yml plugin_routing tombstones -
+        # so a tombstoned-removed FQCN krikri also implements natively
+        # (community.crypto.openssl_certificate, aliased onto the
+        # existing x509_certificate plugin binary in MODULE_ALIASES)
+        # still refuses the whole run: probed real 2.19.11, rc=1, zero
+        # tasks run (not even `Gathering Facts`), even behind
+        # `when: false`, with the "[ERROR]: ..." line plus the task's
+        # Origin block on stderr. (Same story for a tombstoned action
+        # plugin name - real resolves those through the same loader -
+        # and it fires here before any native action/plugin handling.)
+        raise_unresolvable_module_error(module_name, resolved_module_name,
+          source_file, source_map, task_source_prefix(source_prefix, index))
+
         unless resolved_module_name
-          # A tombstoned-removed module name (ec2_remote_facts and
-          # friends) hard-stops the whole run at parse time with
-          # Ansible's own exact wording - the same playbook-load check
-          # ansible-playbook runs, verified against 2.19.4. That
-          # stays static because a tombstoned name is one Ansible
-          # ITSELF refuses to resolve anywhere, at its own playbook-load
-          # time. Every other unresolvable name - a module krikri simply
+          # Every other unresolvable name - a module krikri simply
           # hasn't ported - does NOT raise here (0.9.1050, reversing
           # 0.9.903's unconditional hard-stop): it flows through with
           # unavailable_module set, exactly like a role-private

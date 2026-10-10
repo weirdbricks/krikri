@@ -505,15 +505,16 @@ describe Krikri::PlaybookParser do
 
     it "hard-stops the parse for a module removed from community.general in v10 (consul_acl)" do
       # community.general removed `consul_acl` in v10.0.0 (its own
-      # runtime.yml tombstones the FQCN), so ansible-playbook
-      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
-      # using it - this engine previously took the graceful per-task
-      # unavailable_module skip, kept executing every other task, and
-      # produced ok=9 changed=6 failed=1 instead of the hard stop
-      # (idealista.consul-role, round 033).
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'community.general.consul_acl'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+      # runtime.yml tombstones the FQCN), so ansible-playbook refuses
+      # the whole playbook at load with the collection's own removal
+      # message, rc=1 (probed real 2.19.11) - this engine previously
+      # took the graceful per-task unavailable_module skip, kept
+      # executing every other task, and produced ok=9 changed=6 failed=1
+      # instead of the hard stop (idealista.consul-role, round 033).
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'community.general.consul_acl' module has been removed. " \
+        "Use community.general.consul_token and/or community.general.consul_policy instead. " \
+        "This feature was removed from collection 'community.general' version 10.0.0.") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
@@ -526,14 +527,16 @@ describe Krikri::PlaybookParser do
 
     it "hard-stops the parse for a module removed from community.general in v2 (docker_service)" do
       # community.general removed `docker_service` in v2.0.0
-      # (superseded by `docker_compose`), so ansible-playbook
-      # hard-fails immediately (rc=1, no PLAY RECAP) on a playbook
-      # using it - this engine previously took the graceful per-task
+      # (superseded by `docker_compose`), and its runtime.yml tombstone
+      # carries the collection's own removal message - real refuses the
+      # whole playbook at load with that message, rc=1 (probed real
+      # 2.19.11); this engine previously took the graceful per-task
       # unavailable_module skip and kept executing the rest of the play
       # (krzysztof-magosa.docker).
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'community.general.docker_service'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'community.general.docker_service' module has been removed. " \
+        "Use community.docker.docker_compose instead. " \
+        "This feature was removed from collection 'community.general' version 2.0.0.") do
         Krikri::PlaybookParser.parse_string(<<-YAML
           - hosts: all
             tasks:
@@ -2414,25 +2417,51 @@ describe Krikri::PlaybookParser do
     # openssl_certificate is x509_certificate's old name (renamed when
     # the module moved into community.crypto; ansible-core's builtin
     # runtime still redirects the bare/builtin/legacy spellings, and
-    # community.general redirected its pre-2.0 copy there too). All five
-    # spellings real roles write must resolve onto the
+    # community.general redirected its pre-2.0 copy there too). Four of
+    # the five spellings real roles write resolve onto the
     # community.crypto.x509_certificate plugin via MODULE_ALIASES -
     # before this, every spelling was unresolvable and the task dropped
-    # with a "uses unimplemented plugin" warning.
+    # with a "uses unimplemented plugin" warning. The fifth, the
+    # community.crypto FQCN of the OLD name, is tombstoned by
+    # community.crypto itself and refuses the whole load instead
+    # (RemovedModuleError; probed real 2.19.11: rc=1, zero tasks).
     describe "openssl_certificate aliases" do
-      {% for spelling in %w[openssl_certificate ansible.builtin.openssl_certificate ansible.legacy.openssl_certificate community.crypto.openssl_certificate community.general.openssl_certificate] %}
+      {% for spelling in %w[openssl_certificate ansible.builtin.openssl_certificate ansible.legacy.openssl_certificate community.general.openssl_certificate] %}
         {% cname = "resolves `" + spelling.id.stringify + ":` to community.crypto.x509_certificate" %}
         it {{ cname }} do
-          task = single_task(<<-YAML)
+          task = single_task(<<-YAML
             - name: t
               {{spelling.id}}:
                 path: /tmp/x
                 provider: selfsigned
                 csr_path: /tmp/x.csr
             YAML
+          )
           task.module_name.must_equal("community.crypto.x509_certificate")
         end
       {% end %}
+
+      it "refuses the community.crypto FQCN spelling of the old name with the collection tombstone (RemovedModuleError)" do
+        # community.crypto's own runtime.yml tombstoned
+        # openssl_certificate (removed 2.0.0 in favor of
+        # x509_certificate) - real's loader resolves the name and then
+        # consults the tombstone, so the load aborts even though this
+        # engine could run the aliased module natively. Probe source:
+        # the orchestrator's ansible-core 2.19.11 probing.
+        assert_raises_message(Krikri::RemovedModuleError,
+          "The 'community.crypto.openssl_certificate' module has been removed. " \
+          "The 'community.crypto.openssl_certificate' module has been renamed to 'community.crypto.x509_certificate'. " \
+          "This feature was removed from collection 'community.crypto' version 2.0.0.") do
+          single_task(<<-YAML
+            - name: t
+              community.crypto.openssl_certificate:
+                path: /tmp/x
+                provider: selfsigned
+                csr_path: /tmp/x.csr
+            YAML
+          )
+        end
+      end
     end
 
     # authorized_key is registered under both spellings real playbooks

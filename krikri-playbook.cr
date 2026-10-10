@@ -713,11 +713,18 @@ rescue ex : Krikri::EndRoleOutsideRoleError
   exit 4
 rescue ex : Krikri::RemovedModuleError
   # A tombstoned-removed module WITH its own custom removal message
-  # ("The 'X' module has been removed. ...") - Ansible raises that at
-  # RUN time and exits 1, not the playbook-load rc=4 the generic
-  # couldn't-resolve text gets (live-verified both against 2.19.11;
-  # sorrowless.* round 5210000 saw real rc=1 vs this engine's 4).
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # ("The 'X' module has been removed. ..."). Real refuses the WHOLE
+  # playbook at LOAD time: rc=1 (not the generic couldn't-resolve rc=4),
+  # zero tasks run, even behind `when: false`, with the [ERROR] line
+  # plus the task's Origin block on STDERR (probed against 2.19.11;
+  # sorrowless.* round 5210000 saw real rc=1 vs this engine's 4). The
+  # render was built at the parser raise site, where the source map
+  # lives.
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
   exit 1
 rescue ex : Krikri::UnresolvedModuleError
   # A module/action name that resolves to nothing this engine can run:
@@ -1299,8 +1306,16 @@ playbook.plays.each_with_index do |play, _play_index|
       exit 1
     rescue ex : Krikri::RemovedModuleError
       # Same custom-message tombstone split as the parse-time rescue
-      # above: Ansible's removal message exits 1, not 4.
-      puts "[ERROR]: #{ex.message}".colorize(:red)
+      # above: the removal message refuses the whole run, rc=1, with the
+      # [ERROR] line + task Origin block on STDERR (probed against
+      # 2.19.11). The exception may carry the render built at its raise
+      # site; some run-time-raised instances (which no longer exist for
+      # module tombstones) rendered message-only.
+      if render = ex.render
+        STDERR.print render
+      else
+        STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+      end
       exit 1
     rescue ex : Krikri::UnresolvedModuleError
       # Same whole-run abort for a module name Ansible can't

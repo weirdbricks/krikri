@@ -535,11 +535,17 @@ module Krikri
       # (weareinteractive.openssl writes the bare form; round-85002-class
       # trellis/nginx roles write the FQCNs), so all of them resolve
       # onto the existing x509_certificate plugin binary rather than
-      # shipping a near-duplicate of it. Deliberately permissive on the
-      # community.crypto FQCN, which a current community.crypto
-      # tombstones (2.0.0+): the engine would otherwise hard-stop a role
-      # Ansible 2.10-2.11 ran fine, and the module behind it is
-      # fully implemented either way.
+      # shipping a near-duplicate of it. The BUILTIN-runtime spellings
+      # (bare, ansible.builtin./ansible.legacy.) stay permissive: the
+      # builtin runtime redirects them onto community.crypto.-
+      # x509_certificate, which no tombstone kills. The community.crypto
+      # FQCN of the OLD name, though, is tombstoned by community.crypto
+      # itself (2.0.0+, REMOVED_MODULE_TOMBSTONES) and real refuses the
+      # WHOLE run for it at load time (probed against ansible-core
+      # 2.19.11: rc=1, zero tasks run, even behind a false when:), so
+      # the alias entry below is deliberately kept dead code for that
+      # spelling - the parser's tombstone check fires on the as-written
+      # name before this alias is ever consumed.
       "openssl_certificate"                   => "community.crypto.x509_certificate",
       "ansible.builtin.openssl_certificate"   => "community.crypto.x509_certificate",
       "ansible.legacy.openssl_certificate"    => "community.crypto.x509_certificate",
@@ -653,22 +659,20 @@ module Krikri
       # collection hard-fails on it (idealista.consul-role, round 033).
       # Both spellings: a task can reference it bare when `collections:`
       # is set on the play (or historically, before FQCNs were the
-      # convention) - only the FQCN was tombstoned initially, so a
-      # bare-name task (like idealista.consul-role's own sibling roles
-      # might write) slipped through ungracefully-skipped instead of
-      # hard-stopped, same bug class as docker_service below.
-      "community.general.consul_acl" => nil,
-      "consul_acl"                   => nil,
+      # convention) - the FQCN spelling got its own tombstone message
+      # from the collection reference data below; the bare spelling
+      # stays on the generic-refusal nil entry here.
+      "consul_acl" => nil,
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
       # hard-fails on it. krzysztof-magosa.docker writes the BARE name
       # (`docker_service:`, no FQCN) - the exact-string match against
       # `as_written` (raise_unresolvable_module_error, no bare/FQCN
       # normalization there) meant only the FQCN spelling was ever
-      # caught; confirmed live against the rebuilt 0.9.891 binary still
-      # gracefully skipping the bare form instead of hard-stopping.
-      "community.general.docker_service" => nil,
-      "docker_service"                   => nil,
+      # caught; the FQCN spelling's tombstone message now comes from
+      # the collection reference data below; the bare spelling stays
+      # on the generic-refusal nil entry here.
+      "docker_service" => nil,
       # docker_compose (the compose v1 module) - community.docker
       # removed it in v4.0.0 (docker-compose v1 is End-of-Life since
       # July 2022; community.docker.docker_compose_v2 is the
@@ -690,6 +694,187 @@ module Krikri
       "community.docker.docker_compose"  => DOCKER_COMPOSE_REMOVAL_MESSAGE,
       "community.general.docker_compose" => DOCKER_COMPOSE_REMOVAL_MESSAGE,
       "docker_compose"                   => DOCKER_COMPOSE_REMOVAL_MESSAGE,
+      # Tombstoned-removed MODULE FQCNs and their own load-time refusal
+      # text, from each collection's meta/runtime.yml
+      # plugin_routing.<leaf>.tombstone (removal_version +
+      # warning_text equivalent) - probed against ansible-core
+      # 2.19.11 by krikri-role-tester's orchestrator and stored in the
+      # reference data at .tombstones_ref.json. Real refuses the WHOLE
+      # playbook at load time for one of these: rc=1, zero tasks run,
+      # even behind `when: false`, with "[ERROR]: <msg>" plus the
+      # offending task's Origin block on stderr. The messages are each
+      # entry's collection removal text byte-identical (all 159 are
+      # type =="modules"; the data has zero type =="action" entries -
+      # real's action-plugin tombstones beyond ansible.builtin.include's
+      # do not appear in the explored data, and ansible.builtin.include
+      # itself is refused upstream of this table, see RemovedActionError).
+      # community.docker.docker_compose above stays byte-identical.
+      # Bare/ansible.builtin./ansible.legacy. spellings are NOT added: a
+      # bare spelling resolved to the tombstoned FQCN still hard-stops,
+      # because the check consults the RESOLVED name too (see
+      # raise_unresolvable_module_error's resolved: parameter).
+      "ansible.windows.win_domain"                                 => "The 'ansible.windows.win_domain' module has been removed. Use microsoft.ad.domain instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+      "ansible.windows.win_domain_controller"                      => "The 'ansible.windows.win_domain_controller' module has been removed. Use microsoft.ad.domain_controller instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+      "ansible.windows.win_domain_membership"                      => "The 'ansible.windows.win_domain_membership' module has been removed. Use microsoft.ad.membership instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+            "ansible.windows.win_domain" => "The 'ansible.windows.win_domain' module has been removed. Use microsoft.ad.domain instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+      "ansible.windows.win_domain_controller" => "The 'ansible.windows.win_domain_controller' module has been removed. Use microsoft.ad.domain_controller instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+      "ansible.windows.win_domain_membership" => "The 'ansible.windows.win_domain_membership' module has been removed. Use microsoft.ad.membership instead. This feature was removed from collection 'ansible.windows' version 3.0.0.",
+      "community.crypto.acme_account_facts" => "The 'community.crypto.acme_account_facts' module has been removed. The 'community.crypto.acme_account_facts' module has been renamed to 'community.crypto.acme_account_info'. This feature was removed from collection 'community.crypto' version 2.0.0.",
+      "community.crypto.ecs_certificate" => "The 'community.crypto.ecs_certificate' module has been removed. The 'community.crypto.ecs_certificate' module has been removed due to the upcoming sunsetting of the ECS service. Please use community.crypto 2.x.y to continue using this module. This feature was removed from collection 'community.crypto' version 3.0.0.",
+      "community.crypto.ecs_domain" => "The 'community.crypto.ecs_domain' module has been removed. The 'community.crypto.ecs_domain' module has been removed due to the upcoming sunsetting of the ECS service. Please use community.crypto 2.x.y to continue using this module. This feature was removed from collection 'community.crypto' version 3.0.0.",
+      "community.crypto.openssl_certificate" => "The 'community.crypto.openssl_certificate' module has been removed. The 'community.crypto.openssl_certificate' module has been renamed to 'community.crypto.x509_certificate'. This feature was removed from collection 'community.crypto' version 2.0.0.",
+      "community.crypto.openssl_certificate_info" => "The 'community.crypto.openssl_certificate_info' module has been removed. The 'community.crypto.openssl_certificate_info' module has been renamed to 'community.crypto.x509_certificate_info'. This feature was removed from collection 'community.crypto' version 2.0.0.",
+      "community.docker.docker_compose" => "The 'community.docker.docker_compose' module has been removed. This module uses docker-compose v1, which is End of Life since July 2022. Please migrate to community.docker.docker_compose_v2. This feature was removed from collection 'community.docker' version 4.0.0.",
+      "community.general.ali_instance_facts" => "The 'community.general.ali_instance_facts' module has been removed. Use community.general.ali_instance_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.bearychat" => "The 'community.general.bearychat' module has been removed. Chat service is no longer available. This feature was removed from collection 'community.general' version 12.0.0.",
+      "community.general.clc_alert_policy" => "The 'community.general.clc_alert_policy' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_blueprint_package" => "The 'community.general.clc_blueprint_package' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_firewall_policy" => "The 'community.general.clc_firewall_policy' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_group" => "The 'community.general.clc_group' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_loadbalancer" => "The 'community.general.clc_loadbalancer' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_modify_server" => "The 'community.general.clc_modify_server' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_publicip" => "The 'community.general.clc_publicip' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_server" => "The 'community.general.clc_server' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.clc_server_snapshot" => "The 'community.general.clc_server_snapshot' module has been removed. CenturyLink Cloud services went EOL in September 2023. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.consul_acl" => "The 'community.general.consul_acl' module has been removed. Use community.general.consul_token and/or community.general.consul_policy instead. This feature was removed from collection 'community.general' version 10.0.0.",
+      "community.general.docker_image_facts" => "The 'community.general.docker_image_facts' module has been removed. Use community.docker.docker_image_info instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.docker_service" => "The 'community.general.docker_service' module has been removed. Use community.docker.docker_compose instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.facter" => "The 'community.general.facter' module has been removed. Use community.general.facter_facts instead. This feature was removed from collection 'community.general' version 12.0.0.",
+      "community.general.flowdock" => "The 'community.general.flowdock' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.foreman" => "The 'community.general.foreman' module has been removed. Use the modules from the theforeman.foreman collection instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcdns_record" => "The 'community.general.gcdns_record' module has been removed. Use google.cloud.gcp_dns_resource_record_set instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcdns_zone" => "The 'community.general.gcdns_zone' module has been removed. Use google.cloud.gcp_dns_managed_zone instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gce" => "The 'community.general.gce' module has been removed. Use google.cloud.gcp_compute_instance instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcp_backend_service" => "The 'community.general.gcp_backend_service' module has been removed. Use google.cloud.gcp_compute_backend_service instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcp_forwarding_rule" => "The 'community.general.gcp_forwarding_rule' module has been removed. Use google.cloud.gcp_compute_forwarding_rule or google.cloud.gcp_compute_global_forwarding_rule instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcp_healthcheck" => "The 'community.general.gcp_healthcheck' module has been removed. Use google.cloud.gcp_compute_health_check, google.cloud.gcp_compute_http_health_check or google.cloud.gcp_compute_https_health_check instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcp_target_proxy" => "The 'community.general.gcp_target_proxy' module has been removed. Use google.cloud.gcp_compute_target_http_proxy instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcp_url_map" => "The 'community.general.gcp_url_map' module has been removed. Use google.cloud.gcp_compute_url_map instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.gcpubsub_facts" => "The 'community.general.gcpubsub_facts' module has been removed. Use community.google.gcpubsub_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.gcspanner" => "The 'community.general.gcspanner' module has been removed. Use google.cloud.gcp_spanner_database and/or google.cloud.gcp_spanner_instance instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.github_hooks" => "The 'community.general.github_hooks' module has been removed. Use community.general.github_webhook and community.general.github_webhook_info instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.hipchat" => "The 'community.general.hipchat' module has been removed. The hipchat service has been discontinued and the self-hosted variant has been End of Life since 2020. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.hpilo_facts" => "The 'community.general.hpilo_facts' module has been removed. Use community.general.hpilo_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.idrac_redfish_facts" => "The 'community.general.idrac_redfish_facts' module has been removed. Use community.general.idrac_redfish_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.jenkins_job_facts" => "The 'community.general.jenkins_job_facts' module has been removed. Use community.general.jenkins_job_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.katello" => "The 'community.general.katello' module has been removed. Use the modules from the theforeman.foreman collection instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.ldap_attr" => "The 'community.general.ldap_attr' module has been removed. Use community.general.ldap_attrs instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.logicmonitor" => "The 'community.general.logicmonitor' module has been removed. The logicmonitor_facts module is no longer maintained and the API used has been disabled in 2017. This feature was removed from collection 'community.general' version 1.0.0.",
+      "community.general.logicmonitor_facts" => "The 'community.general.logicmonitor_facts' module has been removed. The logicmonitor_facts module is no longer maintained and the API used has been disabled in 2017. This feature was removed from collection 'community.general' version 1.0.0.",
+      "community.general.memset_memstore_facts" => "The 'community.general.memset_memstore_facts' module has been removed. Use community.general.memset_memstore_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.memset_server_facts" => "The 'community.general.memset_server_facts' module has been removed. Use community.general.memset_server_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.na_cdot_aggregate" => "The 'community.general.na_cdot_aggregate' module has been removed. Use netapp.ontap.na_ontap_aggregate instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_license" => "The 'community.general.na_cdot_license' module has been removed. Use netapp.ontap.na_ontap_license instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_lun" => "The 'community.general.na_cdot_lun' module has been removed. Use netapp.ontap.na_ontap_lun instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_qtree" => "The 'community.general.na_cdot_qtree' module has been removed. Use netapp.ontap.na_ontap_qtree instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_svm" => "The 'community.general.na_cdot_svm' module has been removed. Use netapp.ontap.na_ontap_svm instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_user" => "The 'community.general.na_cdot_user' module has been removed. Use netapp.ontap.na_ontap_user instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_user_role" => "The 'community.general.na_cdot_user_role' module has been removed. Use netapp.ontap.na_ontap_user_role instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_cdot_volume" => "The 'community.general.na_cdot_volume' module has been removed. Use netapp.ontap.na_ontap_volume instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.na_ontap_gather_facts" => "The 'community.general.na_ontap_gather_facts' module has been removed. Use netapp.ontap.na_ontap_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.nginx_status_facts" => "The 'community.general.nginx_status_facts' module has been removed. Use community.general.nginx_status_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.one_image_facts" => "The 'community.general.one_image_facts' module has been removed. Use community.general.one_image_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.onepassword_facts" => "The 'community.general.onepassword_facts' module has been removed. Use community.general.onepassword_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_datacenter_facts" => "The 'community.general.oneview_datacenter_facts' module has been removed. Use community.general.oneview_datacenter_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_enclosure_facts" => "The 'community.general.oneview_enclosure_facts' module has been removed. Use community.general.oneview_enclosure_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_ethernet_network_facts" => "The 'community.general.oneview_ethernet_network_facts' module has been removed. Use community.general.oneview_ethernet_network_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_fc_network_facts" => "The 'community.general.oneview_fc_network_facts' module has been removed. Use community.general.oneview_fc_network_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_fcoe_network_facts" => "The 'community.general.oneview_fcoe_network_facts' module has been removed. Use community.general.oneview_fcoe_network_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_logical_interconnect_group_facts" => "The 'community.general.oneview_logical_interconnect_group_facts' module has been removed. Use community.general.oneview_logical_interconnect_group_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_network_set_facts" => "The 'community.general.oneview_network_set_facts' module has been removed. Use community.general.oneview_network_set_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.oneview_san_manager_facts" => "The 'community.general.oneview_san_manager_facts' module has been removed. Use community.general.oneview_san_manager_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.online_server_facts" => "The 'community.general.online_server_facts' module has been removed. Use community.general.online_server_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.online_user_facts" => "The 'community.general.online_user_facts' module has been removed. Use community.general.online_user_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt" => "The 'community.general.ovirt' module has been removed. Use ovirt.ovirt.ovirt_vm instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_affinity_label_facts" => "The 'community.general.ovirt_affinity_label_facts' module has been removed. Use ovirt.ovirt.ovirt_affinity_label_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_api_facts" => "The 'community.general.ovirt_api_facts' module has been removed. Use ovirt.ovirt.ovirt_api_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_cluster_facts" => "The 'community.general.ovirt_cluster_facts' module has been removed. Use ovirt.ovirt.ovirt_cluster_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_datacenter_facts" => "The 'community.general.ovirt_datacenter_facts' module has been removed. Use ovirt.ovirt.ovirt_datacenter_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_disk_facts" => "The 'community.general.ovirt_disk_facts' module has been removed. Use ovirt.ovirt.ovirt_disk_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_event_facts" => "The 'community.general.ovirt_event_facts' module has been removed. Use ovirt.ovirt.ovirt_event_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_external_provider_facts" => "The 'community.general.ovirt_external_provider_facts' module has been removed. Use ovirt.ovirt.ovirt_external_provider_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_group_facts" => "The 'community.general.ovirt_group_facts' module has been removed. Use ovirt.ovirt.ovirt_group_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_host_facts" => "The 'community.general.ovirt_host_facts' module has been removed. Use ovirt.ovirt.ovirt_host_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_host_storage_facts" => "The 'community.general.ovirt_host_storage_facts' module has been removed. Use ovirt.ovirt.ovirt_host_storage_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_network_facts" => "The 'community.general.ovirt_network_facts' module has been removed. Use ovirt.ovirt.ovirt_network_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_nic_facts" => "The 'community.general.ovirt_nic_facts' module has been removed. Use ovirt.ovirt.ovirt_nic_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_permission_facts" => "The 'community.general.ovirt_permission_facts' module has been removed. Use ovirt.ovirt.ovirt_permission_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_quota_facts" => "The 'community.general.ovirt_quota_facts' module has been removed. Use ovirt.ovirt.ovirt_quota_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_scheduling_policy_facts" => "The 'community.general.ovirt_scheduling_policy_facts' module has been removed. Use ovirt.ovirt.ovirt_scheduling_policy_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_snapshot_facts" => "The 'community.general.ovirt_snapshot_facts' module has been removed. Use ovirt.ovirt.ovirt_snapshot_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_storage_domain_facts" => "The 'community.general.ovirt_storage_domain_facts' module has been removed. Use ovirt.ovirt.ovirt_storage_domain_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_storage_template_facts" => "The 'community.general.ovirt_storage_template_facts' module has been removed. Use ovirt.ovirt.ovirt_storage_template_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_storage_vm_facts" => "The 'community.general.ovirt_storage_vm_facts' module has been removed. Use ovirt.ovirt.ovirt_storage_vm_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_tag_facts" => "The 'community.general.ovirt_tag_facts' module has been removed. Use ovirt.ovirt.ovirt_tag_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_template_facts" => "The 'community.general.ovirt_template_facts' module has been removed. Use ovirt.ovirt.ovirt_template_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_user_facts" => "The 'community.general.ovirt_user_facts' module has been removed. Use ovirt.ovirt.ovirt_user_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_vm_facts" => "The 'community.general.ovirt_vm_facts' module has been removed. Use ovirt.ovirt.ovirt_vm_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.ovirt_vmpool_facts" => "The 'community.general.ovirt_vmpool_facts' module has been removed. Use ovirt.ovirt.ovirt_vmpool_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.profitbricks" => "The 'community.general.profitbricks' module has been removed. Supporting library is unsupported since 2021. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.profitbricks_datacenter" => "The 'community.general.profitbricks_datacenter' module has been removed. Supporting library is unsupported since 2021. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.profitbricks_nic" => "The 'community.general.profitbricks_nic' module has been removed. Supporting library is unsupported since 2021. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.profitbricks_volume" => "The 'community.general.profitbricks_volume' module has been removed. Supporting library is unsupported since 2021. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.profitbricks_volume_attachments" => "The 'community.general.profitbricks_volume_attachments' module has been removed. Supporting library is unsupported since 2021. This feature was removed from collection 'community.general' version 11.0.0.",
+      "community.general.purefa_facts" => "The 'community.general.purefa_facts' module has been removed. Use purestorage.flasharray.purefa_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.purefb_facts" => "The 'community.general.purefb_facts' module has been removed. Use purestorage.flashblade.purefb_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.python_requirements_facts" => "The 'community.general.python_requirements_facts' module has been removed. Use community.general.python_requirements_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.rax" => "The 'community.general.rax' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_cbs" => "The 'community.general.rax_cbs' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_cbs_attachments" => "The 'community.general.rax_cbs_attachments' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_cdb" => "The 'community.general.rax_cdb' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_cdb_database" => "The 'community.general.rax_cdb_database' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_cdb_user" => "The 'community.general.rax_cdb_user' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_clb" => "The 'community.general.rax_clb' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_clb_nodes" => "The 'community.general.rax_clb_nodes' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_clb_ssl" => "The 'community.general.rax_clb_ssl' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_dns" => "The 'community.general.rax_dns' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_dns_record" => "The 'community.general.rax_dns_record' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_facts" => "The 'community.general.rax_facts' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_files" => "The 'community.general.rax_files' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_files_objects" => "The 'community.general.rax_files_objects' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_identity" => "The 'community.general.rax_identity' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_keypair" => "The 'community.general.rax_keypair' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_meta" => "The 'community.general.rax_meta' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_mon_alarm" => "The 'community.general.rax_mon_alarm' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_mon_check" => "The 'community.general.rax_mon_check' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_mon_entity" => "The 'community.general.rax_mon_entity' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_mon_notification" => "The 'community.general.rax_mon_notification' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_mon_notification_plan" => "The 'community.general.rax_mon_notification_plan' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_network" => "The 'community.general.rax_network' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_queue" => "The 'community.general.rax_queue' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_scaling_group" => "The 'community.general.rax_scaling_group' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.rax_scaling_policy" => "The 'community.general.rax_scaling_policy' module has been removed. This module relied on the deprecated package pyrax. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.redfish_facts" => "The 'community.general.redfish_facts' module has been removed. Use community.general.redfish_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.rhn_channel" => "The 'community.general.rhn_channel' module has been removed. RHN is EOL. This feature was removed from collection 'community.general' version 10.0.0.",
+      "community.general.rhn_register" => "The 'community.general.rhn_register' module has been removed. RHN is EOL. This feature was removed from collection 'community.general' version 10.0.0.",
+      "community.general.scaleway_image_facts" => "The 'community.general.scaleway_image_facts' module has been removed. Use community.general.scaleway_image_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_ip_facts" => "The 'community.general.scaleway_ip_facts' module has been removed. Use community.general.scaleway_ip_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_organization_facts" => "The 'community.general.scaleway_organization_facts' module has been removed. Use community.general.scaleway_organization_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_security_group_facts" => "The 'community.general.scaleway_security_group_facts' module has been removed. Use community.general.scaleway_security_group_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_server_facts" => "The 'community.general.scaleway_server_facts' module has been removed. Use community.general.scaleway_server_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_snapshot_facts" => "The 'community.general.scaleway_snapshot_facts' module has been removed. Use community.general.scaleway_snapshot_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.scaleway_volume_facts" => "The 'community.general.scaleway_volume_facts' module has been removed. Use community.general.scaleway_volume_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.sf_account_manager" => "The 'community.general.sf_account_manager' module has been removed. Use netapp.elementsw.na_elementsw_account instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.sf_check_connections" => "The 'community.general.sf_check_connections' module has been removed. Use netapp.elementsw.na_elementsw_check_connections instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.sf_snapshot_schedule_manager" => "The 'community.general.sf_snapshot_schedule_manager' module has been removed. Use netapp.elementsw.na_elementsw_snapshot_schedule instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.sf_volume_access_group_manager" => "The 'community.general.sf_volume_access_group_manager' module has been removed. Use netapp.elementsw.na_elementsw_access_group instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.sf_volume_manager" => "The 'community.general.sf_volume_manager' module has been removed. Use netapp.elementsw.na_elementsw_volume instead. This feature was removed from collection 'community.general' version 2.0.0.",
+      "community.general.smartos_image_facts" => "The 'community.general.smartos_image_facts' module has been removed. Use community.general.smartos_image_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.stackdriver" => "The 'community.general.stackdriver' module has been removed. This module relied on HTTPS APIs that do not exist anymore, and any new development in the direction of providing an alternative should happen in the context of the google.cloud collection. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.vertica_facts" => "The 'community.general.vertica_facts' module has been removed. Use community.general.vertica_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.general.webfaction_app" => "The 'community.general.webfaction_app' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.webfaction_db" => "The 'community.general.webfaction_db' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.webfaction_domain" => "The 'community.general.webfaction_domain' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.webfaction_mailbox" => "The 'community.general.webfaction_mailbox' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.webfaction_site" => "The 'community.general.webfaction_site' module has been removed. This module relied on HTTPS APIs that do not exist anymore and there is no clear path to update. This feature was removed from collection 'community.general' version 9.0.0.",
+      "community.general.xenserver_guest_facts" => "The 'community.general.xenserver_guest_facts' module has been removed. Use community.general.xenserver_guest_info instead. This feature was removed from collection 'community.general' version 3.0.0.",
+      "community.postgresql.postgresql_lang" => "The 'community.postgresql.postgresql_lang' module has been removed. Use community.postgresql.postgresql_ext instead. This feature was removed from collection 'community.postgresql' version 4.0.0.",
+      "community.windows.win_domain_computer" => "The 'community.windows.win_domain_computer' module has been removed. Use microsoft.ad.computer instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      "community.windows.win_domain_group" => "The 'community.windows.win_domain_group' module has been removed. Use microsoft.ad.group instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      "community.windows.win_domain_group_membership" => "The 'community.windows.win_domain_group_membership' module has been removed. Use microsoft.ad.group instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      "community.windows.win_domain_object_info" => "The 'community.windows.win_domain_object_info' module has been removed. Use microsoft.ad.object_info instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      "community.windows.win_domain_ou" => "The 'community.windows.win_domain_ou' module has been removed. Use microsoft.ad.ou instead. This feature was removed from collection 'community.windows' version 3.0.0.",
+      "community.windows.win_domain_user" => "The 'community.windows.win_domain_user' module has been removed. Use microsoft.ad.user instead. This feature was removed from collection 'community.windows' version 3.0.0.",
     }
   end
 end
