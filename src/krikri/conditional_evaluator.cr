@@ -2677,10 +2677,7 @@ module Krikri
         when "semver", "semantic"
           mode = "semver"
         when "pep440"
-          # packaging's PEP440Version (epochs, post/dev releases) is not
-          # implemented - LooseVersion's component scan is the standing
-          # approximation, tracked in KNOWN_MISSING.md's Open gaps.
-          mode = "loose"
+          mode = "pep440"
         else
           version_test_fail(test_name, "Invalid version type (#{vt}). Must be one of 'loose', 'strict', 'semver', 'semantic', 'pep440'")
         end
@@ -2709,6 +2706,7 @@ module Krikri
       cmp = case mode
             when "strict" then strict_version_cmp(left, compare_to.to_s)
             when "semver" then semver_cmp(left, compare_to.to_s)
+            when "pep440" then pep440_cmp(left, compare_to.to_s)
             else               loose_version_cmp(left, compare_to.to_s)
             end
 
@@ -2751,6 +2749,10 @@ module Krikri
 
     private def self.loose_version_cmp(a : String, b : String) : Int32
       VariableSubstitutor::FilterCore.loose_version_cmp(a, b)
+    end
+
+    private def self.pep440_cmp(a : String, b : String) : Int32
+      VariableSubstitutor::FilterCore.pep440_cmp(a, b)
     end
 
     private def self.quoted_literal?(expr : String) : Bool
