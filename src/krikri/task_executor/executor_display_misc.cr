@@ -245,11 +245,24 @@ module Krikri
         end
         abort = true
       end
-      ctx.push("template potentially truncated", ctx.origin)
+      # Real truncates the name only when the failing span is a MULTI-PART
+      # expression (a concat/arithmetic operator outside quoted literals -
+      # c03/c21/E probes: `{{ 'pre-' ~ badvar }}` aborts the whole name and
+      # later spans are never evaluated). A single-operand span failing on
+      # an attribute/subscript/undefined reference is an INLINE marker and
+      # the name render CONTINUES - later spans still evaluate (real 2.19.11
+      # probes A/B/D/F/G/H/L/M/N 2026-10-10: `{{ d.json }}` -> error 1 only;
+      # `{{ d.json }} {{ undef2 }}` -> both spans' markers, no truncation).
+      multipart = span.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/[~+\-*\/%]/)
+      if multipart
+        ctx.push("template potentially truncated", ctx.origin)
+      else
+        abort = false
+      end
       markers = (err_start...ctx.errors.size).map do |i|
         "#{state.placeholder_prefix}#{i}\uE001"
       end.join
-      {markers, true}
+      {markers, multipart}
     end
 
     # A value consisting of exactly one `{{ ... }}` construct (no

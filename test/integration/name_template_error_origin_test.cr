@@ -755,3 +755,37 @@ describe "task name template error warning blocks" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 end
+
+# Single-operand span failures (attribute/subscript/undefined) in a task
+# name are INLINE markers and the render CONTINUES - no "template
+# potentially truncated" error (real 2.19.11 probes A/B/D/F/G/H 2026-10-10,
+# found via kieranajp.ansible_beanstalkd_exporter round 5410000 whose
+# `Set beanstalkd_exporter version to {{ ... }}` name gained a spurious
+# truncation marker). Truncation stays for failing MULTI-PART spans
+# (concat) - the c03/c21/E pins above.
+describe "single-operand name-span failures do not truncate" do
+  it "renders one inline marker for an attribute error and keeps later literal text" do
+    src_dir = File.tempname("name-span-notrunc")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML
+      - hosts: localhost
+        gather_facts: false
+        connection: local
+        vars:
+          d: {}
+        tasks:
+          - name: "A {{ d.json }}"
+            command: /bin/true
+          - name: "D {{ d.json }} extra"
+            command: /bin/true
+      YAML
+    )
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+    text = output.to_s
+    text.must_include("TASK [A << error 1 - object of type 'dict' has no attribute 'json' >>]")
+    text.must_include("TASK [D << error 1 - object of type 'dict' has no attribute 'json' >> extra]")
+    text.wont_include("template potentially truncated")
+    FileUtils.rm_rf(src_dir)
+  end
+end
