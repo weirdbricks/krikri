@@ -243,7 +243,12 @@ module Krikri
         if kind == "loop" || kind == "with_list"
           resolved = structured_loop_source_value(bare, vars_context) ||
                      Krikri.parse_json_or_python_literal(result)
-          raise UndefinedVariableError.new(
+          # LoopTypeError (not UndefinedVariableError): a defined source
+          # resolving to a non-list is real's task-finalization TypeError
+          # - never when:-shielded, bare registered msg, own [ERROR]
+          # block (see emit_loop_source_error_block) - round 5410000
+          # badsectorlabs.ludus_vulhub, live-verified vs 2.19.11.
+          raise LoopTypeError.new(
             "The `loop` value must resolve to a 'list', not '#{python_type_name(resolved)}'.")
         end
         # with_items: scalar-wraps a non-list filter-chain resolution exactly
@@ -343,13 +348,32 @@ module Krikri
         elsif kind == "with_list" || task.loop_template_array_wrapped?
           [value]
         else
-          raise UndefinedVariableError.new(
+          # LoopTypeError (not UndefinedVariableError) - see the
+          # filter-chain path's own comment above: a defined source
+          # resolving to a non-list is real's task-finalization
+          # TypeError, never when:-shielded (round 174's existing
+          # wording, round 5410000's NoneType verdict).
+          raise LoopTypeError.new(
             "The `loop` value must resolve to a 'list', not '#{python_type_name(value)}'.")
         end
       when "with_dict"
         hash = value.as_h?
         if hash.nil?
-          if (arr = value.as_a?) && arr.empty? && !task.loop_template_array_wrapped?
+          if value.raw.nil?
+            # A with_dict: source that resolves to None (a DEFINED null
+            # default, round 5410000's `vulhub_envs:` shape) fails the
+            # task with the dict LOOKUP plugin's own type refusal - the
+            # task never skips. Live-verified vs 2.19.11: both the bare
+            # and the array-wrapped form print `The lookup plugin 'dict'
+            # failed: the 'dict' lookup plugin expects a dictionary, got
+            # 'None' of type <class 'NoneType'>)` and fail=1. The old gap
+            # let the null fall through (`hash` stayed nil, the whole
+            # resolver chain gave up), so the task ran ONCE with an
+            # unbound `item` instead.
+            raise LoopLookupError.new(
+              "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
+              "got '#{python_str(value)}' of type <class '#{python_type_name(value)}'>)")
+          elsif (arr = value.as_a?) && arr.empty? && !task.loop_template_array_wrapped?
             # The bare-scalar source shape (`with_dict: "{{ var }}"`, NO
             # YAML list wrapper - buluma.rsyslog's own `rsyslog_rsyslog_
             # d_files: []` default, round 180): Ansible templates the
@@ -374,9 +398,15 @@ module Krikri
             # fails. The type name Ansible prints is a 2.19-internal
             # lazy-templating container class not reproducible here;
             # "list" is the direct `dict()` equivalent.
-            raise UndefinedVariableError.new(
+            # LoopLookupError (real's own bare-msg channel for this
+            # lookup-plugin wording), not UndefinedVariableError - see
+            # the null branch above; only the type of the RESOLVED term
+            # differs (an empty list here, live-verified vs 2.19.11:
+            # `The lookup plugin 'dict' failed: ... got '[]' of type
+            # <class 'list'>)` in the array-wrapped form).
+            raise LoopLookupError.new(
               "The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, " \
-              "got '#{value}' of type <class '#{python_type_name(value)}'>)")
+              "got '#{python_str(value)}' of type <class '#{python_type_name(value)}'>)")
           end
         end
         return nil unless hash
@@ -930,6 +960,117 @@ module Krikri
 
       name = match[1]
       name == "item" || name.starts_with?("item.") || name.starts_with?("item[")
+    end
+
+    # The registered task result for a loop-source typing/lookup failure
+    # (LoopTypeError / LoopLookupError): real's registered fatal msg is
+    # the BARE error - NO "Task failed:" prefix and NO "Module failed:"
+    # middle (live-verified vs 2.19.11, round 5410000
+    # badsectorlabs.ludus_vulhub) - and the dump is msg-only
+    # ({"msg": "..."}), like a debug: task-failure's. _ansible_loop_
+    # source_error is what suppresses ResultDisplay's own generic
+    # "Task failed."/"Module failed." chain block (emit_task_error_block)
+    # for this failure: the [ERROR] block comes from
+    # emit_loop_source_error_block instead.
+    private def loop_source_error_result(ex : WhenEvaluationError) : JSON::Any
+      msg = ex.message || "The `loop` value must resolve to a 'list'."
+      JSON.parse({
+        "failed"                       => true,
+        "msg"                          => msg,
+        "_ansible_task_error_msg_only" => true,
+        "_ansible_loop_source_error"   => true,
+      }.to_json)
+    end
+
+    @@loop_source_error_seen = Set(String).new
+
+    # The [ERROR] block ansible-core 2.19.11 prints before the fatal line
+    # for a loop-source typing/lookup failure - NOT the "Task failed."
+    # chain block a module failure gets:
+    #
+    #   a) LoopTypeError - the `loop:` keyword's own TypeError:
+    #
+    #     [ERROR]: The `loop` value must resolve to a 'list', not 'NoneType'.
+    #     Origin: <abs task file>:<line>:<col>   <- the loop VALUE token
+    #     (loop + 2 preceding source lines, numbered)
+    #                ^ column <col>
+    #     (blank)
+    #     Provide a list of items/templates, or a template resolving to a list.
+    #     (blank)
+    #
+    #     The Origin's column is the loop keyword's VALUE start (the quote
+    #     of `"{{ x }}"`), NOT the task's name key and NOT the `loop:` key
+    #     itself - live-verified vs 2.19.11 at several indents/task shapes
+    #     (round 5410000: tasks/main.yml:45:9). The two-line-lookback
+    #     excerpt + caret is the same SourceContext layout
+    #     origin_context_block already renders byte-identically.
+    #   b) LoopLookupError - a with_<lookup>: type refusal:
+    #
+    #     [ERROR]: <lookup plugin error>
+    #     Origin: <unknown>
+    #     (blank)
+    #     invoke_lookup()
+    #     (blank)
+    #
+    #     (live-verified vs 2.19.11: a with_dict over a defined null).
+    # Deduped by full text like every other block (Display._deduplicate) -
+    # the Origin's file:line:col makes it task-unique.
+    private def emit_loop_source_error_block(task : Task, ex : WhenEvaluationError) : Nil
+      msg = ex.message || ""
+      return if msg.empty?
+
+      text = if ex.is_a?(LoopLookupError)
+               String.build do |io|
+                 io << "[ERROR]: " << msg << "\n"
+                 io << "Origin: <unknown>\n"
+                 io << "\n"
+                 io << "invoke_lookup()\n"
+                 io << "\n"
+               end
+             else
+               path = task.source_file || @playbook_file
+               return unless path && File.file?(path)
+               lines = File.read_lines(path)
+               return unless (pos = locate_loop_source_line(lines, task))
+
+               String.build do |io|
+                 io << "[ERROR]: " << msg << "\n"
+                 io << origin_context_block(path, lines, pos[0] + 1, pos[1])
+                 io << "\n"
+                 io << "Provide a list of items/templates, or a template resolving to a list.\n"
+                 io << "\n"
+               end
+             end
+      return unless @@loop_source_error_seen.add?(text)
+      puts text
+    end
+
+    # The loop keyword's VALUE token position for the task whose source
+    # we're looking at - the written `loop:`/`with_<lookup>:` key line
+    # after the task's own `- name:`/start, column just past `<key>: `
+    # (the same value-token convention locate_param_key_position uses).
+    private def locate_loop_source_line(lines : Array(String), task : Task) : {Int32, Int32}?
+      kind = task.loop_template_kind || "loop"
+      from_idx =
+        if base = locate_name_line(lines, task)
+          base[0]
+        else
+          return nil unless task.source_line > 0 && task.source_line <= lines.size
+          task.source_line - 1
+        end
+      ((from_idx + 1)...lines.size).each do |idx|
+        line = lines[idx]
+        stripped = line.strip
+        break if stripped.starts_with?("- ") && idx != from_idx
+        key_text = "#{kind}:"
+        next unless stripped.starts_with?(key_text)
+        key_idx = line.index(key_text)
+        next unless key_idx
+        rest = line[(key_idx + kind.size + 1)..]
+        column = key_idx + kind.size + 1 + (rest.size - rest.lstrip.size) + 1
+        return {idx, column}
+      end
+      nil
     end
 
     # Ansible resolves a task's module/action plugin before it ever

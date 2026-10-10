@@ -789,6 +789,17 @@ module Krikri
             resolve_loop_filetree(task, host, loop_vars_context, shared: loop_shared_sub) ||
             resolve_loop_lookup(task, loop_vars_context)
         end
+      rescue ex : LoopTypeError | LoopLookupError
+        # A loop source that IS defined but resolves to a non-list (or a
+        # lookup term of the wrong type) FAILS the task even when the
+        # inherited when: in play here is already False: real raises the
+        # loop keyword's type error at task-keyword finalization, before
+        # any when: verdict (live-verified vs 2.19.11, round 5410000 -
+        # the plain-skip collapse below only covers an UNDEFINED source).
+        # One clean failed task, banner already printed by the caller.
+        emit_loop_source_error_block(task, ex)
+        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        return true
       rescue
         nil
       end

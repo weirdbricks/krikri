@@ -580,6 +580,19 @@ module Krikri
             resolve_loop_filetree(task, host, loop_vars_context, shared: loop_shared_sub) ||
             resolve_loop_lookup(task, loop_vars_context)
         end
+      rescue ex : LoopTypeError | LoopLookupError
+        # A loop source that IS defined but resolves to a non-list (or a
+        # lookup term of the wrong type): real fails the task AT KEYWORD
+        # FINALIZATION with its own [ERROR] block and a BARE registered
+        # msg - no "Task failed: " prefix, no "Module failed." middle,
+        # and no when: ever shields it (live-verified vs 2.19.11: a
+        # defined-null `loop:` fails even behind `when: false`, round
+        # 5410000). Emit the typed block here (result_display's own
+        # generic chain is suppressed via the result's marker) and ride
+        # the normal single-task failure pipeline (stats/halt/register).
+        emit_loop_source_error_block(task, ex)
+        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        return
       rescue ex : WhenEvaluationError
         # Same shape execute_task_once's own WhenEvaluationError rescue
         # uses for a when: failure - a real `failed: true` result flowing
@@ -1043,6 +1056,11 @@ module Krikri
     # changed+failed+msg shape either way (register strips the marker
     # with every other _ansible_* key).
     private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil) : JSON::Any
+      # A loop-source typing/lookup failure keeps real's own shape: the
+      # bare msg (no "Task failed:" prefix), a msg-only dump, and the
+      # emit_task_error_block suppression marker - see
+      # loop_source_error_result's comment (round 5410000).
+      return loop_source_error_result(ex) if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
       msg = ex.message || "Error while evaluating conditional"
       msg = decorate_conditional_value_origin(task, msg, host) if task
       fields = {"changed" => false, "failed" => true, "msg" => msg}
@@ -1074,8 +1092,29 @@ module Krikri
         end
       end
       @halted_hosts.add(host.name) unless ignore_errors
+      suffix = item_label ? " => (item=#{item_label})" : ""
+      # A loop-source typing/lookup failure rides this no-result-pipeline
+      # path (include_tasks:/include_role:'s own loop funnel): real's
+      # block + fatal are distinct - the [ERROR] block from
+      # emit_loop_source_error_block and a msg-only dump with the BARE
+      # msg (no "Task failed:" prefix), not the chain shape (live-
+      # verified vs 2.19.11, round 5410000).
+      if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
+        unless defer_display
+          emit_loop_source_error_block(task, ex)
+          puts "fatal: [#{host.name}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+          puts "...ignoring".colorize(:red) if ignore_errors
+          register_name = task.register
+          unless register_name.nil? || register_name.empty?
+            register_result(host, register_name, JSON.parse({
+              "failed" => true,
+              "msg"    => msg,
+            }.to_json))
+          end
+        end
+        return false
+      end
       unless defer_display
-        suffix = item_label ? " => (item=#{item_label})" : ""
         # no_log is a task-level security control: the conditional's
         # error text embeds the rendered condition, which can quote
         # variable values the task asked to keep out of the output.
