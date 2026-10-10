@@ -1,0 +1,67 @@
+---
+# provokes docker_image_build's InvalidRepository / invalid-index wraps after
+# the buildx gate: real docker CLI + daemon + static buildx binary, no image
+# rows, name shapes that raise inside resolve_repository_name / the build's
+# own index check. KEYORDER blocks compared py (real ansible) vs krikri.
+
+- name: Install docker and its SDK
+  ansible.builtin.apt:
+    name: [docker.io, python3-docker]
+    state: present
+    update_cache: true
+
+- name: Create the CLI plugin dir
+  ansible.builtin.file:
+    path: /usr/local/lib/docker/cli-plugins
+    state: directory
+    mode: "0755"
+
+- name: Install the static buildx plugin binary
+  ansible.builtin.get_url:
+    url: https://github.com/docker/buildx/releases/download/v0.17.0/buildx-v0.17.0.linux-amd64
+    dest: /usr/local/lib/docker/cli-plugins/docker-buildx
+    mode: "0755"
+    force: false
+
+- name: Docker CLI sanity
+  ansible.builtin.command: docker version --format "{{ '{{' }}.Client.Version{{ '}}' }}"
+  changed_when: false
+  register: rcinfo
+
+- name: Report docker_cli_version
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_cli_version|{{ rcinfo.stdout | to_json }}"
+
+- name: Build context dir
+  ansible.builtin.file:
+    path: /tmp/kop_ir_ctx
+    state: directory
+    mode: "0755"
+
+- name: Dockerfile
+  ansible.builtin.copy:
+    content: "FROM busybox\n"
+    dest: /tmp/kop_ir_ctx/Dockerfile
+    mode: "0644"
+
+- name: docker_image_build with a scheme-bearing name
+  community.docker.docker_image_build:
+    name: "http://foo"
+    path: /tmp/kop_ir_ctx
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_scheme
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_scheme|{{ r | to_json }}"
+
+- name: docker_image_build with a registry-qualified bad-index name
+  community.docker.docker_image_build:
+    name: "registry.example.com-/thing"
+    path: /tmp/kop_ir_ctx
+  register: r
+  ignore_errors: true
+
+- name: Report docker_image_build_hyphen_index
+  ansible.builtin.debug:
+    msg: "KEYORDER|docker_image_build_hyphen_index|{{ r | to_json }}"

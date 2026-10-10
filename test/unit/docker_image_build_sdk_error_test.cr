@@ -1,34 +1,33 @@
 require "../minitest_helper"
 
-# Pins plugins/docker_image_build.cr's "SDK-error" wording path - main()'s
-# `except DockerException` wrap ("An unexpected Docker error occurred: {e}").
+# Pins plugins/docker_image_build.cr's fatal-result shape when
+# resolve_repository_name's InvalidRepository escapes the module body
+# UNCAUGHT (the module's `except DockerException` imports its class from
+# _common_cli, which is a DIFFERENT class than the _api/errors one
+# InvalidRepository extends - so the module's catch never fires).
 #
-# Source-reading community.docker 5.2.1 (this module is CLI-client only,
-# _common_cli.py): no SDK APIError can escape docker_image_build's module
-# body - the module builds no Engine API client at all, and since the image
-# lookup also runs through the CLI (`docker image ls`, live-verified
-# 2026-10-06) even daemon failures surface in the CLI run_command shape
-# (see docker_image_build_lookup_test.cr), not in any SDK wording. The ONLY
-# DockerException this module raises is _api/auth.py resolve_repository_name's
-# InvalidRepository, reached from find_image when its image-lookup chain
-# returned NO rows (an existing image short-circuits before it), with two
-# messages (live-verified 2026-10-06 against ansible-core 2.19.11 +
-# community.docker 5.2.1 driving a real docker CLI 29.8.2 + buildx plugin
-# against a podman `system service` socket):
+# Live shapes were WITNESSED on an Atlantic host (round 5331000,
+# 2026-10-10, cold+warm, ansible-core 2.19.11 + community.docker 5.2.1 +
+# docker.io 26.1.3 + static buildx v0.17.0; an earlier session's
+# 2026-10-06 comment block asserted a wrap wording that this round
+# refuted - the registered msgs carry NO "An unexpected Docker error
+# occurred:" prefix):
 #
-#   "An unexpected Docker error occurred: Repository name cannot contain a
-#    scheme (http://foo)"                    (name: "http://foo")
-#   "Building foo-/bar:latest failed"       (name: "foo-/bar" - the
-#    InvalidIndex hyphen check never fires, because split_repo_name maps the
-#    slash-less name to the docker.io index; the build itself rejects the
-#    tag with the run_command shape - but a registry-qualified name like
-#    "registry.example.com-/thing" DOES hit the hyphen check, live-verified
-#    the same way)
+#   name: "http://foo" ->
+#     {"failed": true, "changed": false,
+#      "exception": "(traceback unavailable)",
+#      "msg": "Task failed: Module failed: Repository name cannot contain a scheme (http://foo)"}
+#   name: "registry.example.com-/thing" ->
+#     {"failed": true, "changed": false,
+#      "exception": "(traceback unavailable)",
+#      "msg": "Task failed: Module failed: Invalid index name (registry.example.com-). Cannot begin or end with a hyphen."}
 #
-# The registered shape is fail_json(msg=..., exception=...): kwargs lead,
-# then failed, msg, changed, exception - no stdout_lines/stderr_lines (the
-# controller only derives them from a stdout/stderr, which the wrap has
-# none of).
+# A slash-LESS hyphen name ("foo-/bar") never reaches the hyphen check:
+# split_repo_name maps it to the docker.io index and the CLI build
+# rejects the tag in the run_command shape instead.
+#
+# No stdout_lines/stderr_lines: the controller derives them from a
+# stdout/stderr, which this fatal result has none of.
 #
 # The fake docker CLI below answers both probes (version + the buildx
 # gate's info call) and returns NO rows for `image ls`, which is what

@@ -57,22 +57,22 @@ module Krikri
       "tls_hostname"   => %w[],
       "validate_certs" => %w[tls_verify],
     }
-    # Ansible's own wrapper for a DockerException escaping the module body
-    # (docker_image_build.py's main). For this CLI-client module the only
-    # DockerException the flow can raise is _api/auth.py's InvalidRepository,
-    # reached from find_image's empty-lookup fallback (which resolves the
-    # repository name from the raw `name:` param); no SDK APIError is
-    # reachable because the module builds no Engine API client at all -
-    # the image lookup is CLI-side, exactly like real's (live-verified vs
-    # ansible-core 2.19.11 + community.docker 5.2.1 driving a real docker
-    # CLI + buildx plugin against a podman `system service` socket,
-    # 2026-10-06). The wrap's fail_json(msg=..., exception=...) shape -
-    # kwargs lead, then failed, msg, changed, exception - is WRAP_KEY_ORDER.
-    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
+    # Ansible's wrapper for the exception escaping the module body. The
+    # module's `except DockerException` arm imports its class from
+    # _common_cli, but resolve_repository_name raises _api/errors's
+    # InvalidRepository (a DIFFERENT DockerException subclass), so the
+    # module's catch never fires and the exception escapes uncaught -
+    # ansible's module-outer wrapper builds the fatal result itself.
+    # (The older comment here claimed CLI-side wrap wording that a 2026-
+    # 10-06 session asserted without a witnessed run; round 5331000's
+    # real host runs (docker CLI 29.1.3 + static buildx v0.17.0) refuse
+    # that claim - see the live shapes below.)
+    FATAL_MODULE_KEY_ORDER = %w[failed changed exception msg]
 
-    # The fail_json shape the DockerException wrap produces: client.fail
-    # passes exception= as a kwarg (which leads), then failed, then msg.
-    WRAP_KEY_ORDER = %w[exception failed msg changed]
+    # The wrap wording the module's own catch would produce; unreachable
+    # for resolve_repository_name's raises, kept so a stray caller still
+    # reads the same constant.
+    API_ERROR_PREFIX = "An unexpected Docker error occurred: "
 
     # _api/auth.py resolve_repository_name, raising its errors.InvalidRepository
     # (a DockerException) exactly when real's find_image does: ONLY after the
@@ -221,9 +221,11 @@ module Krikri
       lookup = cli_find_image(probe.cli, ref_name, tag)
       return failure if failure = lookup.failure
       if wrap = lookup.invalid_repo
+        # Uncaught InvalidRepository escape: ansible's module-outer wrapper
+        # builds the fatal result (round 5331000's live shape).
         result = PluginResult.new(changed: false, failed: true,
-          msg: "#{API_ERROR_PREFIX}#{wrap}")
-        result.key_order = WRAP_KEY_ORDER
+          msg: "Task failed: Module failed: #{wrap}")
+        result.key_order = FATAL_MODULE_KEY_ORDER
         return result
       end
       existing_image = lookup.image
