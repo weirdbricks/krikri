@@ -631,9 +631,9 @@ describe Krikri::PlaybookParser do
 
     it "keeps a module from a collection with zero krikri modules as unavailable_module, no longer raising (0.9.1050)" do
       # Round 811000 reversed 0.9.903's unconditional parse-time
-      # hard-stop for plain unimplemented modules: kubernetes.core and
-      # bodsch.scm are both real collections ansible-playbook
-      # would resolve and run fine, and Ansible resolves a task's
+      # hard-stop for plain unimplemented modules: kubernetes.core is a
+      # real collection ansible-playbook resolves and runs fine (and
+      # this controller has it installed), and Ansible resolves a task's
       # module lazily, per task, only once the task is about to run -
       # so the task now parses with unavailable_module set and takes
       # the runtime reachability-tracked skip path instead of aborting
@@ -648,22 +648,34 @@ describe Krikri::PlaybookParser do
       ).plays[0].tasks[0]
       task.unavailable_module.must_equal("kubernetes.core.helm_repository")
 
-      task = Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: niche collection, same shape
-                bodsch.scm.github_latest:
-                  repo: foo
-        YAML
-      ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("bodsch.scm.github_latest")
+      # A collection that is NOT installed on the controller is a
+      # different story: ansible-core itself refuses the whole playbook
+      # at load for it (couldn't-resolve rc=4, zero tasks), so the
+      # collection-awareness check refuses too - bodsch.scm is not
+      # installed here, and unlike the kubernetes.core case above real
+      # would never reach the task to skip it.
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'bodsch.scm.github_latest'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: niche collection, not installed on the controller
+                  bodsch.scm.github_latest:
+                    repo: foo
+          YAML
+        )
+      end
     end
 
     it "keeps a not-yet-implemented module from a RECOGNIZED collection as unavailable_module too (0.9.1050)" do
       # Same reversal, exercised on both sides of the OLD boundary: a
       # real builtin this engine hasn't implemented
       # (ansible.builtin.sysvinit) and an unimplemented module inside a
-      # collection the engine otherwise ships modules for (amazon.aws)
+      # collection the engine otherwise ships modules for (amazon.aws,
+      # installed on this controller - a REAL module leaf, since an
+      # installed collection that does not ship the file is one
+      # ansible-core itself refuses to resolve)
       # both now parse through with unavailable_module set instead of
       # refusing the whole run.
       task = Krikri::PlaybookParser.parse_string(<<-YAML
@@ -680,10 +692,10 @@ describe Krikri::PlaybookParser do
           - hosts: all
             tasks:
               - name: unimplemented module in an implemented collection
-                amazon.aws.s3_bucket_info_xyz:
+                amazon.aws.autoscaling_group_info:
         YAML
       ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("amazon.aws.s3_bucket_info_xyz")
+      task.unavailable_module.must_equal("amazon.aws.autoscaling_group_info")
     end
 
     it "keeps a task using an unimplemented plugin as unavailable_module instead of raising (0.9.1050)" do
@@ -704,7 +716,7 @@ describe Krikri::PlaybookParser do
       task.unavailable_module.must_equal("ansible.builtin.totally_fake_unimplemented_module_xyz")
     end
 
-    it "does NOT silently treat an underscore-prefixed name as a resolved builtin (keeps it as unavailable_module)" do
+    it "refuses an underscore-prefixed name nothing on the controller resolves (parse-time UnresolvedModuleError)" do
       # Real bug found benchmarking amtega.check_platform/amtega.epel
       # (round814/815): resolve_module_name used to blanket-pass any
       # module name starting with '_' straight through as "resolved",
@@ -716,21 +728,29 @@ describe Krikri::PlaybookParser do
       # that bypass instead, got treated as available with no backing
       # plugin binary, and crashed the whole run outright in
       # PluginManager#get_local_plugin_path ("Plugin binary not found:
-      # _check_platform"). This spec has no role context (no
-      # library/_check_platform.py to find), so the correct outcome is
-      # the graceful unavailable_module path (0.9.1050) - the runtime
-      # skip keeps it from ever reaching the plugin dispatch - see the
+      # _check_platform").
+      #
+      # This spec has no role context (no library/_check_platform.py to
+      # find) and the name is neither an ansible-core module nor
+      # redirected anywhere, so the CONTROLLER could not resolve it
+      # either - ansible-core refuses the whole playbook at load with
+      # the generic couldn't-resolve wording (live-verified vs 2.19.11),
+      # and the collection-awareness check matches that. See the
       # integration-level role-private-module spec for the case where a
-      # real backing source DOES exist and the task keeps running.
-      task = Krikri::PlaybookParser.parse_string(<<-YAML
-        - name: Uses a role-local custom module
-          hosts: all
-          tasks:
-            - name: Check platform
-              _check_platform:
-        YAML
-      ).plays[0].tasks[0]
-      task.unavailable_module.must_equal("_check_platform")
+      # real backing library/ source DOES exist and the task keeps
+      # running.
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action '_check_platform'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - name: Uses a role-local custom module
+            hosts: all
+            tasks:
+              - name: Check platform
+                _check_platform:
+          YAML
+        )
+      end
     end
 
     it "raises when no plays parse successfully" do
@@ -2400,8 +2420,16 @@ describe Krikri::PlaybookParser do
     # arguably unblocked the engine from rc=4 errors but NOT actually
     # run the work - silently skipped, green play, missing the real
     # change.
+    # Bare community.crypto short names: four of the five real roles
+    # write resolve through ansible_builtin_runtime.yml redirects
+    # (openssl_privatekey, openssl_csr, openssl_pkcs12, openssh_keypair
+    # all carry one) - and bare `x509_certificate` does NOT: the target
+    # name itself never had a builtin redirect, so ansible-core refuses
+    # the whole load for it (live-verified vs 2.19.11) and the
+    # collection-awareness check matches; only the `collections:`
+    # keyword form and the FQCN spelling resolve.
     describe "community.crypto short names" do
-      {% for short_name in %w[openssl_privatekey openssl_csr x509_certificate openssl_pkcs12 openssh_keypair] %}
+      {% for short_name in %w[openssl_privatekey openssl_csr openssl_pkcs12 openssh_keypair] %}
         {% cname = "resolves bare `" + short_name.id.stringify + ":` to community.crypto." + short_name.id.stringify %}
         it {{ cname }} do
           task = single_task(<<-YAML)
@@ -2412,6 +2440,32 @@ describe Krikri::PlaybookParser do
           task.module_name.must_equal("community.crypto.{{short_name.id}}")
         end
       {% end %}
+
+      it "refuses bare x509_certificate the way ansible-core does (no builtin redirect for the target name)" do
+        assert_raises_message(Krikri::UnresolvedModuleError,
+          "couldn't resolve module/action 'x509_certificate'. " \
+          "This often indicates a misspelling, missing collection, or incorrect module path.") do
+          single_task(<<-YAML)
+            - name: t
+              x509_certificate:
+                path: /tmp/x
+            YAML
+        end
+      end
+
+      it "resolves bare x509_certificate through the play's collections: keyword" do
+        task = Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              collections:
+                - community.crypto
+              tasks:
+                - name: t
+                  x509_certificate:
+                    path: /tmp/x
+          YAML
+        ).plays[0].tasks[0]
+        task.module_name.must_equal("community.crypto.x509_certificate")
+      end
     end
 
     # openssl_certificate is x509_certificate's old name (renamed when
@@ -2426,7 +2480,7 @@ describe Krikri::PlaybookParser do
     # community.crypto itself and refuses the whole load instead
     # (RemovedModuleError; probed real 2.19.11: rc=1, zero tasks).
     describe "openssl_certificate aliases" do
-      {% for spelling in %w[openssl_certificate ansible.builtin.openssl_certificate ansible.legacy.openssl_certificate community.general.openssl_certificate] %}
+      {% for spelling in %w[openssl_certificate ansible.builtin.openssl_certificate ansible.legacy.openssl_certificate] %}
         {% cname = "resolves `" + spelling.id.stringify + ":` to community.crypto.x509_certificate" %}
         it {{ cname }} do
           task = single_task(<<-YAML
@@ -2440,6 +2494,27 @@ describe Krikri::PlaybookParser do
           task.module_name.must_equal("community.crypto.x509_certificate")
         end
       {% end %}
+
+      it "refuses the community.general FQCN spelling of the old name like ansible-core does" do
+        # community.general 12.x no longer ships openssl_certificate and
+        # carries no redirect for it either, so ansible-core on this
+        # controller refuses the whole load with the generic
+        # couldn't-resolve wording (live-verified vs 2.19.11); the
+        # collection-awareness check matches. (The bare/builtin/legacy
+        # spellings above still resolve - ansible-core's OWN builtin
+        # runtime redirects them onto community.crypto.x509_certificate.)
+        assert_raises_message(Krikri::UnresolvedModuleError,
+          "couldn't resolve module/action 'community.general.openssl_certificate'. " \
+          "This often indicates a misspelling, missing collection, or incorrect module path.") do
+          single_task(<<-YAML)
+            - name: t
+              community.general.openssl_certificate:
+                path: /tmp/x
+                provider: selfsigned
+                csr_path: /tmp/x.csr
+            YAML
+        end
+      end
 
       it "refuses the community.crypto FQCN spelling of the old name with the collection tombstone (RemovedModuleError)" do
         # community.crypto's own runtime.yml tombstoned

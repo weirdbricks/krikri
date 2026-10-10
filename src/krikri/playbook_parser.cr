@@ -12,6 +12,7 @@ require "./vault"
 require "./variable_substitutor"
 
 require "./action_groups"
+require "./collection_index"
 
 module Krikri
   # Represents a single task in a playbook
@@ -826,6 +827,12 @@ module Krikri
     # "first of these that exists". Paths may be templated, including
     # against facts, so they are resolved per host at run time.
     property vars_files : Array(Array(String)) = [] of Array(String)
+    # Play-level `collections:` keyword - the collections a bare module
+    # name in this play's tasks resolves through (task-level `collections:`
+    # overrides). Consulted by the controller collection-set awareness
+    # check when deciding whether real could resolve a task's module at
+    # all; empty when the play writes none (real's default search).
+    property collections : Array(String) = [] of String
 
     # Every `roles:` entry's own defaults/main.yml and vars/main.yml,
     # merged in role order (a later role wins a name collision), kept as
@@ -1398,6 +1405,19 @@ module Krikri
   # filters are a separate mechanism entirely (PythonFilterRunner) and
   # were never affected.
   class UnresolvedModuleError < Exception
+    # The rendered [ERROR] + Origin block for a parse-time refusal whose
+    # source position is known (built at the raise site, where the source
+    # map lives) - ansible-core prints the Origin block for its own
+    # couldn't-resolve load refusal, so the byte-for-byte match needs it
+    # (probed live vs 2.19.11: missing-collection FQCNs and bare names
+    # real cannot resolve render the same [ERROR] line plus Origin as the
+    # tombstone-removed refusals do). nil renders message-only, as the
+    # source-less raise sites always did.
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # A tombstoned-removed module name whose tombstone carries its OWN
@@ -1414,13 +1434,11 @@ module Krikri
   # the refusal to match real's load-time shape.) Carries the rendered
   # stderr block ([ERROR] line + Origin + 3 context lines + caret)
   # built at the raise site for krikri-playbook.cr to print verbatim;
-  # nil renders message-only.
+  # nil renders message-only. The render getter and constructor are
+  # inherited from UnresolvedModuleError - a local initialize here that
+  # called super(message) would wipe the render UnresolvedModuleError's
+  # own initialize assigns.
   class RemovedModuleError < UnresolvedModuleError
-    getter render : String?
-
-    def initialize(message : String, @render : String? = nil)
-      super(message)
-    end
   end
 
   # Parser for Ansible YAML playbooks
@@ -1466,6 +1484,11 @@ module Krikri
         "with_flattened", "with_community.general.flattened", "with_subelements", "with_indexed_items", "until", "retries", "delay",
         "with_community.general.filetree",
         "loop_control", "notify", "changed_when", "failed_when", "delegate_to", "delegate_facts", "run_once", "connection",
+        # `collections:` - a real task keyword (the collections a task's
+        # bare module names resolve through, play/block/task scope),
+        # not a module; leaving it out made any task carrying one die
+        # as "conflicting action statements: <module>, collections".
+        "collections",
         "async", "poll", "vars", "environment", "no_log", "module_defaults", "ignore_unreachable", "throttle", "remote_user", "debugger",
         "block", "rescue", "always", "import_tasks", "include_tasks", "include_role",
         "import_role", "meta", "include_vars",
@@ -1518,8 +1541,16 @@ module Krikri
         raise RemovedModuleError.new(custom,
           origin_error_render(custom, source_file, source_map, prefix))
       end
-      raise UnresolvedModuleError.new("couldn't resolve module/action '#{as_written}'. " \
-                                      "This often indicates a misspelling, missing collection, or incorrect module path.")
+      message = "couldn't resolve module/action '#{as_written}'. " \
+                "This often indicates a misspelling, missing collection, or incorrect module path."
+      # Real prints the Origin block for this refusal too (live-verified
+      # vs 2.19.11), so attach the render whenever the raise site has a
+      # source position; source-less callers keep the message-only shape.
+      render = nil
+      if source_file && source_map && source_map.at?(prefix)
+        render = origin_error_render(message, source_file, source_map, prefix)
+      end
+      raise UnresolvedModuleError.new(message, render)
     end
 
     # Ansible validates `register:`'s value as a variable-name
@@ -1977,6 +2008,16 @@ module Krikri
       play.any_errors_fatal = parse_become_value(yaml["any_errors_fatal"]?) || false
       if mfp = yaml["max_fail_percentage"]?
         play.max_fail_percentage = safe_yaml_to_string(mfp).to_f?
+      end
+
+      # collections: - a string or a list of namespace.collection names
+      # the play's bare module names resolve through.
+      if collections_yaml = yaml["collections"]?
+        if list = collections_yaml.as_a?
+          play.collections = list.compact_map(&.as_s?)
+        elsif s = collections_yaml.as_s?
+          play.collections = [s]
+        end
       end
 
       # vars_files: a list whose entries are either a path or a nested
@@ -3121,6 +3162,53 @@ module Krikri
         # and it fires here before any native action/plugin handling.)
         raise_unresolvable_module_error(module_name, resolved_module_name,
           source_file, source_map, task_source_prefix(source_prefix, index))
+
+        # Controller collection-set awareness: real refuses the WHOLE
+        # playbook at load (rc=4, zero tasks run, the generic
+        # couldn't-resolve wording + this task's Origin block) for any
+        # module name it could not resolve to an existing module file on
+        # the CONTROLLER - a bare name that is neither an ansible-core
+        # module nor redirected by ansible_builtin_runtime.yml (bare
+        # `docker:`, `ec2_facts:`, `yum_versionlock:` - live-verified vs
+        # 2.19.11), an FQCN whose collection directory is absent
+        # (freeipa.ansible_freeipa.*), or an installed collection that
+        # ships no such module file. krikri implements community modules
+        # natively and would otherwise run (or lazily skip) all of them.
+        # The check runs on the as-written name, echoes it in the
+        # message, and fires BEFORE the when:-gate concern below: a name
+        # real CAN resolve (an installed collection's module krikri
+        # hasn't ported, a role-private library/ source) keeps the lazy
+        # unavailable_module flow - only definitely-unresolvable names
+        # flip to the parse refusal, exactly the set ansible-core itself
+        # refuses. Unsure outcomes (no discoverable ansible-core
+        # install, unreadable runtime data) keep running.
+        task_collections = task_hash["collections"]?.try do |collections_yaml|
+          if list = collections_yaml.as_a?
+            list.compact_map(&.as_s?)
+          else
+            (s = collections_yaml.as_s?) ? [s] : nil
+          end
+        end
+        # A task's own collections: list replaces the inherited scope;
+        # otherwise the play's list plus the role's own meta/main.yml
+        # declaration (both folded into bare-name resolution by real).
+        task_collections ||= play.collections + CollectionIndex.role_meta_collections(role_path)
+        resolution = CollectionIndex.controller_resolves?(module_name, task_collections, role_path, playbook_dir)
+        if resolution[:resolves] == false
+          message = "couldn't resolve module/action '#{module_name}'. " \
+                    "This often indicates a misspelling, missing collection, or incorrect module path."
+          prefix = task_source_prefix(source_prefix, index)
+          render = (source_file && source_map && source_map.at?(prefix)) ? origin_error_render(message, source_file, source_map, prefix) : nil
+          # An FQCN (or a bare name's redirect target) whose collection
+          # cannot be imported reproduces the [WARNING] ansible-core's
+          # loader prints ahead of the refusal (live-verified vs
+          # 2.19.11); other refusal shapes get none.
+          if warning = resolution[:missing_collection_warning]
+            warning_line = "[WARNING]: #{warning}\n"
+            render = render ? warning_line + render : "#{warning_line}[ERROR]: #{message}\n\n"
+          end
+          raise UnresolvedModuleError.new(message, render)
+        end
 
         unless resolved_module_name
           # Every other unresolvable name - a module krikri simply

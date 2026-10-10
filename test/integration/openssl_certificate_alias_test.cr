@@ -24,10 +24,16 @@ describe "openssl_certificate alias resolution" do
   # minitest's it/describe compile to generated methods, so the loop is
   # unrolled at compile time (one it per module name, same runtime count).
   {% begin %}
+    # community.general is NOT in this loop: community.general 12.x no
+    # longer ships openssl_certificate and carries no redirect for it,
+    # so ansible-core on this controller refuses the whole load with the
+    # generic couldn't-resolve wording (live-verified vs 2.19.11) and
+    # the collection-awareness check matches - see the refusal spec
+    # below. The bare/builtin/legacy spellings keep resolving through
+    # ansible-core's OWN builtin runtime redirect.
     {% module_names = ["openssl_certificate",
                        "ansible.builtin.openssl_certificate",
-                       "ansible.legacy.openssl_certificate",
-                       "community.general.openssl_certificate"] %}
+                       "ansible.legacy.openssl_certificate"] %}
     {% for m in module_names %}
       {% cname = "issues a self-signed certificate via `" + m.id.stringify + ":` end-to-end" %}
       it {{ cname }} do
@@ -73,6 +79,30 @@ describe "openssl_certificate alias resolution" do
       end
     {% end %}
   {% end %}
+  it "refuses the community.general FQCN spelling at load (no module file, no redirect anymore)" do
+    # live-verified vs ansible-core 2.19.11 on this controller: rc=4,
+    # zero tasks run, the generic couldn't-resolve wording + Origin.
+    playbook = File.tempname("openssl-cert-general-fqcn", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: cert under old general spelling
+            community.general.openssl_certificate:
+              path: /tmp/x.pem
+              provider: selfsigned
+    YAML
+    captured = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+    output = captured.to_s
+    status.exit_code.must_equal(4, output)
+    output.must_include("couldn't resolve module/action 'community.general.openssl_certificate'")
+    output.wont_include("PLAY RECAP")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   # The community.crypto FQCN spelling is TOMBSTONED in every current
   # community.crypto (3.x) meta/runtime.yml - real refuses the whole
   # playbook at load, and since 0.9.1589's collection-tombstone table so

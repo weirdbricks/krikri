@@ -516,8 +516,11 @@ module Krikri
       # both collections' actual sources), so - same call as raw: above -
       # they alias straight onto the existing plugin binaries rather
       # than shipping near-duplicates. fauust.mariadb (round 6002) calls
-      # the FQCN forms; the bare spellings resolve the same way when the
-      # collection is installed.
+      # the FQCN forms. Controller collection-set awareness makes both
+      # spellings dead aliases on a controller without ansible.mariadb
+      # installed (real refuses the FQCN at load, and the bare spellings
+      # carry no builtin-runtime redirect at all, live-verified vs
+      # 2.19.11) - kept for controllers that do have it.
       "mariadb_db"                   => "community.mysql.mysql_db",
       "mariadb_user"                 => "community.mysql.mysql_user",
       "ansible.mariadb.mariadb_db"   => "community.mysql.mysql_db",
