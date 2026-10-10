@@ -1399,23 +1399,33 @@ describe Krikri::ConditionalEvaluator do
     # and the strict boolean type check rejects the str - while this
     # engine rendered the call's truthiness as a bool and silently
     # skipped. Verified live against 2.19.11 on this machine.
+    #
+    # Round 5310002 re-check: the failing value's lineage is a
+    # `lookup('env', X)` result, whose origin real tracks as
+    # "<environment variable 'X'>" and names in the error message; the
+    # engine's deciding-operand walk reuses the same non-strict evaluation
+    # short-circuiting already performs, so it finds that origin without
+    # touching the boolean verdict.
     it "raises for an `X is defined and lookup(...)` chain whose deciding operand is a raw string" do
       ENV.delete("CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST")
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
-        /Conditional result \(False\) was derived from value of type 'str'/) do
+        /Conditional result \(False\) was derived from value of type 'str' at "<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>"\. Conditionals/) do
         Krikri::ConditionalEvaluator.evaluate(
-          %(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST') is defined and
-            lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST')),
+          "lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST') is defined and lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST')",
           Hash(String, JSON::Any).new, strict: true
         )
       end
     end
 
-    it "raises for a bare lookup call whose resolved value is a string" do
+    it "raises for a bare lookup call whose resolved value is a string without an origin clause" do
       v = Hash(String, JSON::Any).new
       v["kaos_java_version"] = JSON::Any.new("hello")
+      # `lookup('vars', ...)` values carry real's positional source origin
+      # (`<playbook>:line:col`, live-verified round 5310002 among the
+      # non-env probes) which this engine never tracks, so the wording
+      # stays origin-less rather than naming a wrong lineage.
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
-        /Conditional result \(True\) was derived from value of type 'str'/) do
+        /derived from value of type 'str'\. Conditionals/) do
         Krikri::ConditionalEvaluator.evaluate(
           %(lookup('vars', 'kaos_java_version')), v, strict: true
         )
@@ -1440,6 +1450,58 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(
         %(lookup('vars', 'kaos_java_version')), v
       ).must_equal(false)
+    end
+
+    # Round 5310002 live-verified matrix: the three shapes whose deciding
+    # value real attributes to `lookup('env', X)` all name
+    # "<environment variable 'X'>" (single-quoted arg name inside the
+    # tagged origin, even when the condition wrote the arg double-quoted):
+    #   bare call / `or`-chain deciding operand / ternary branch.
+    # The non-env probes (`vars`, `file`, `pipe`) all carry a positional
+    # <playbook>:line:col origin instead, never named here. This repo
+    # greps clean for the pinned name, so `lookup('env', ...)`
+    # deterministically returns "".
+    it "names the tracked env origin for the bare env lookup itself" do
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /derived from value of type 'str' at "<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>"\. Conditionals/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST')),
+          Hash(String, JSON::Any).new, strict: true
+        )
+      end
+    end
+
+    it "keeps the env origin for a double-quoted arg spelling" do
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /at "<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>"/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(lookup("env", "CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST")),
+          Hash(String, JSON::Any).new, strict: true
+        )
+      end
+    end
+
+    it "follows real's short-circuit `or` to the env lookup operand's origin" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_java_version"] = JSON::Any.new("")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /derived from value of type 'str' at "<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>"\. Conditionals/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(kaos_java_version or lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST')),
+          v, strict: true
+        )
+      end
+    end
+
+    it "stays origin-less when the env arg is not a string literal" do
+      v = Hash(String, JSON::Any).new
+      v["kaos_env_name"] = JSON::Any.new("CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST")
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /derived from value of type 'str'\. Conditionals/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          %(lookup('env', kaos_env_name)), v, strict: true
+        )
+      end
     end
   end
 
@@ -1498,13 +1560,26 @@ describe Krikri::ConditionalEvaluator do
     # else false` (empty env result) fails the task with the exact str
     # wording - the ternary's raw branch VALUE is the condition's result,
     # not a rendered bool.
-    it "raises under strict for a ternary whose deciding branch value is a string" do
+    it "raises under strict for a ternary whose deciding branch value is a string without an origin clause" do
       v = Hash(String, JSON::Any).new
       v["kaos_java_version"] = JSON::Any.new("hello")
       assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
-        /Conditional result \(True\) was derived from value of type 'str'/) do
+        /derived from value of type 'str'\. Conditionals/) do
         Krikri::ConditionalEvaluator.evaluate(
           "lookup('vars', 'kaos_java_version') if true else false", v, strict: true
+        )
+      end
+    end
+
+    # Round 5310002, live-verified: the ternary branch real picks is the
+    # condition's own value, so a `lookup('env', 'X')` branch keeps the
+    # same tagged env lineage origin the bare shape already names.
+    it "names the tracked env origin when the chosen ternary branch is the env lookup" do
+      env = Hash(String, JSON::Any).new
+      assert_raises_message(Krikri::ConditionalEvaluator::ConditionalBooleanError,
+        /derived from value of type 'str' at "<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>"/) do
+        Krikri::ConditionalEvaluator.evaluate(
+          "lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST') if true else false", env, strict: true
         )
       end
     end

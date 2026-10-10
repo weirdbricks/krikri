@@ -234,10 +234,9 @@ describe "strict boolean conditionals" do
   # value), so real 2.19.11 aborts the play with the strict
   # boolean-conditional error while this engine treated the string as
   # falsy and skipped - rc=0, failed=0. Verified live against 2.19.11 on
-  # this machine; real carries a lineage origin for the lookup value
-  # ("at \"<environment variable 'JAVA_VERSION'>\"") we do not track, so
-  # ours degrades to the origin-less message the other untracked origins
-  # already produce.
+  # this machine; the failing value's lineage is a `lookup('env', X)`
+  # result, whose origin real tracks as "<environment variable 'X'>"
+  # (re-verified round 5310002) and is now part of the message.
   it "fails a bare lookup call resolving to a string, as the round 5300002 repro ends the play" do
     # The name is never set anywhere in the suite or the repo (grep-able),
     # and the suite spec env does not define it: `lookup('env', ...)` then
@@ -257,6 +256,6 @@ describe "strict boolean conditionals" do
 
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str'. Conditionals must have a boolean result.")
+    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str' at \"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\". Conditionals must have a boolean result.")
   end
 end

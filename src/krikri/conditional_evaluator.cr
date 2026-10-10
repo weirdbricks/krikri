@@ -60,6 +60,12 @@ module Krikri
     REGEX_SAME_FILE_TEST    = /^(.+?)\s+is\s+(not\s+)?(?:is_)?same_file\((.+)\)\s*$/
     REGEX_GENERIC_IS_TEST   = /\bis\s+(not\s+)?\w/
     REGEX_BARE_CALL         = /\A\w+\s*\(.*\)\z/
+    # The whole-expression bare `lookup('env', LITERAL)` whose real 2.19.11
+    # lineage origin is the tagged "<environment variable 'LITERAL'>" -
+    # the only lookup origin shape this engine emits in strict-conditional
+    # error wording (both quote styles accept either arg spelling; the
+    # arg group is picked by which capture matched).
+    REGEX_ENV_LOOKUP_ORIGIN = /\Alookup\s*\(\s*['"]env['"]\s*,\s*'([^']*)'\s*\)\z|\Alookup\s*\(\s*['"]env['"]\s*,\s*"([^"]*)"\s*\)\z/
     REGEX_DIGITS            = /\d+/
 
     # Process-wide compiled regex cache for dynamic `is match(...)` / `is search(...)` patterns.
@@ -426,7 +432,7 @@ module Krikri
             # with an empty env value fails the task with the exact str
             # wording; see strict_conditional_value_type).
             if strict && !allow_broken_conditionals?
-              strict_conditional_value_type(VariableSubstitutor::JinjaRenderer.new(vars, true), condition)
+              strict_conditional_value_type(VariableSubstitutor::JinjaRenderer.new(vars, true), condition, vars, raise_undefined)
             end
             if !condition.includes?("|") && !condition.match(/\bis\s+/)
               converted_vars = vars.transform_values { |value| KrikriJinja.from_json_any(value) }
@@ -1111,7 +1117,7 @@ module Krikri
       if condition =~ REGEX_BARE_CALL
         renderer = VariableSubstitutor::JinjaRenderer.new(vars, true)
         if strict && !allow_broken_conditionals?
-          strict_conditional_value_type(renderer, condition)
+          strict_conditional_value_type(renderer, condition, vars, raise_undefined)
         end
         rendered = renderer.render("{{ 'True' if (#{condition}) else 'False' }}")
         return rendered.strip == "True"
@@ -1280,11 +1286,17 @@ module Krikri
     # caller, and a value the engine cannot resolve (Undefined) is left
     # to the arm's own existing lenient path, so the pinned bare-variable
     # shapes #evaluate_truthiness handles (int/list/dict/NoneType) stay
-    # unaffected. Real labels the value with its lineage origin; lookup
-    # results have no tracked origin, and like every other untracked
-    # origin the message just carries no `at ...` clause rather than
-    # guessing one.
-    private def self.strict_conditional_value_type(renderer : VariableSubstitutor::JinjaRenderer, expr : String) : Nil
+    # Real labels the value with its lineage origin when the engine tracks
+    # one: a `lookup('env', X)` result on 2.19.11 carries the tagged origin
+    # "<environment variable 'X'>" (round 5310002, kaos2oak.java re-check,
+    # JAVA_VERSION unset - live probes on this machine), so the message
+    # gains an ` at "<environment variable 'X'>"` clause. The other lookups
+    # probed (`vars`, `file`, `pipe`) all carry a positional origin (the
+    # playbook source's own `<file>:line:col`) that this engine never
+    # tracks, so like every other untracked origin their message just
+    # carries no `at ...` clause rather than guessing one. See
+    # #strict_boolean_lineage_origin for the shapes this tracks.
+    private def self.strict_conditional_value_type(renderer : VariableSubstitutor::JinjaRenderer, expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool) : Nil
       surrendered = false
       resolved = begin
         renderer.evaluate_value!(expr)
@@ -1311,9 +1323,96 @@ module Krikri
       # call's own non-boolean result.
       unless value == "undefined" || value == "True" || value == "False"
         raise ConditionalBooleanError.new(
-          "Conditional result (#{value.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
-          "Conditionals must have a boolean result.")
+          "Conditional result (#{value.empty? ? "False" : "True"}) was derived from value of type 'str'" +
+          strict_boolean_origin_clause(expr, vars, raise_undefined) +
+          ". Conditionals must have a boolean result.")
       end
+    end
+
+    # The ` at "<origin>"` clause real 2.19.11 appends to the strict
+    # boolean error when the failing value's lineage is trackable, empty
+    # otherwise. Only the `lookup('env', X)` shape is emitted (verified
+    # live vs 2.19.11, round 5310002: bare call, `or`-chain deciding
+    # operand, and ternary branch all print "<environment variable 'X'>",
+    # with the arg name single-quoted even when the condition wrote it
+    # double-quoted); every other production path - including the non-env
+    # lookups' positional `<file>:line:col` origin real tracks but this
+    # engine has no source-position lineage for - stays clause-less, the
+    # same don't-guess-an-untracked-origin rule the other untracked
+    # origins have always followed.
+    private def self.strict_boolean_origin_clause(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool) : String
+      if origin = strict_boolean_lineage_origin(expr, vars, raise_undefined)
+        return " at \"#{origin}\""
+      end
+      ""
+    end
+
+    # Walk *expr* down the semantics real Python/Jinja gives the failing
+    # condition (ternary picks a branch value, `and`/`or` return one
+    # operand's own value) looking for the bare `lookup('env', LITERAL)`
+    # the final str actually came from - nil when the walk cannot attribute
+    # it (non-literal arg, a structural shape this walk does not model, an
+    # operand evaluation raising where real short-circuiting would never
+    # have reached it). Every operand evaluation reuses the same non-strict
+    # #evaluate the deciding-operand search #evaluate_short_circuit_operator
+    # already performs, so the walk can only ever change the error MESSAGE
+    # of a conditional the strict check has already failed, never the
+    # boolean verdict itself.
+    private def self.strict_boolean_lineage_origin(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool) : String?
+      condition = expr
+      loop do
+        unwrapped = unwrap_outer_parens(condition)
+        break if unwrapped == condition
+        condition = unwrapped
+      end
+      if m = condition.match(REGEX_ENV_LOOKUP_ORIGIN)
+        arg = m[1]? || m[2]?
+        return nil unless arg
+        return "<environment variable '#{arg}'>"
+      end
+
+      # Ternary - the strict-checked expression's value IS the chosen
+      # branch's value, so the origin goes looking inside that branch only.
+      if condition.includes?(" if ") && condition.includes?(" else ")
+        if_parts = split_by_operator(condition, " if ")
+        if if_parts.size == 2
+          else_parts = split_by_operator(if_parts[1], " else ")
+          if else_parts.size == 2
+            branch = evaluate(else_parts[0], vars, false, raise_undefined) rescue nil
+            return nil if branch.nil?
+            chosen = branch ? if_parts[0] : else_parts[0]
+            return strict_boolean_lineage_origin(chosen, vars, raise_undefined)
+          end
+        end
+      end
+
+      # and/or - real's short-circuit returns the first falsy operand for
+      # `and` / first truthy for `or` (or the LAST operand if none
+      # qualify), so the origin search follows the same per-operand
+      # truthiness walk (quoted string literals keep the special constant
+      # truthiness #evaluate_short_circuit_operator pins) and descends only
+      # into the operand that actually produced the final value.
+      {" or ", " and "}.each do |operator|
+        next unless condition.includes?(operator)
+        parts = split_by_operator(condition, operator)
+        next unless split_progressed?(parts, condition)
+        is_or = operator == " or "
+        deciding = parts.last
+        parts.each do |part|
+          if content = quoted_string_literal(part)
+            part_truthy = !content.empty?
+          else
+            part_truthy = evaluate(part.strip, vars, false, raise_undefined) rescue nil
+            return nil if part_truthy.nil?
+          end
+          if part_truthy == is_or
+            deciding = part
+            break
+          end
+        end
+        return strict_boolean_lineage_origin(deciding, vars, raise_undefined)
+      end
+      nil
     end
 
     private def self.split_progressed?(parts : Array(String), condition : String) : Bool
