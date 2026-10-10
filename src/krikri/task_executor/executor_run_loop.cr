@@ -813,6 +813,12 @@ module Krikri
         # "Error while evaluating conditional: " shape (assert:'s own
         # identical split lives in assert_action_plugin.cr).
         raise WhenEvaluationError.new("Task failed: #{ex.message}")
+      rescue ex : RenderExpressionError
+        # A Python list-method's runtime failure ("'z' is not in list"):
+        # real words it "Task failed: Error rendering expression: <msg>"
+        # with the plain prefix and no conditional wrapper (probed vs
+        # 2.19.11 2026-10-10, `when: lst.index('z') == 1`).
+        raise WhenEvaluationError.new("Task failed: Error rendering expression: #{ex.message}")
       rescue ex : Krikri::FilterPluginError
         # A FILTER plugin's runtime failure (e.g. length on None) - real
         # prints its wrapper message with the plain "Task failed: " prefix

@@ -135,6 +135,11 @@ module Krikri
           "Task failed: Syntax error in expression: #{ex.message}")
         result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
         return ActionResult.final(result)
+      rescue ex : RenderExpressionError
+        result = ActionResult.conditional_error_result_json(
+          "Task failed: #{ex.message}")
+        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+        return ActionResult.final(result)
       rescue ex : FilterPluginError | TestPluginError
         # A test/filter plugin's RUNTIME failure inside a `that:` item
         # (the version test's "Version comparison failed: ..." among

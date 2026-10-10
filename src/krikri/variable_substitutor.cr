@@ -63,6 +63,15 @@ module Krikri
   class UndefinedVariableError < Exception
   end
 
+  # A Python list-method call's runtime failure ("'z' is not in list",
+  # "pop from empty list", ...) surfacing through a STRICT render: real
+  # 2.19.11 words the when:-side failure "Task failed: Error rendering
+  # expression: <msg>" (probed 2026-10-10: `when: lst.index('z') == 1`)
+  # and the task-NAME marker shows the bare message. Separate from
+  # UndefinedVariableError so the boundaries can prefix it differently.
+  class RenderExpressionError < Exception
+  end
+
   # The strict +/- operand failure: raised by ExpressionEvaluator's `+`/
   # `-` combining (combine_plus/combine_minus) and their operand resolver
   # (resolve_plus_operand, strict mode) when an operand is genuinely
@@ -1650,6 +1659,29 @@ module Krikri
            !Krikri.probe_has_side_effecting_call?(stripped) &&
            (msg = Krikri.strict_undefined_probe_message(stripped, @vars))
           raise UndefinedVariableError.new(msg)
+        end
+        if rendered == "undefined" &&
+           stripped.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/\.(index|count|extend|insert|pop|remove|reverse|sort)\s*\(/)
+          # A Python list-method call the lenient evaluator swallowed into
+          # the undefined sentinel (the method's own TemplateError - "'z'
+          # is not in list", "pop from empty list" - never moves the
+          # undefined miss-signal, so the probe above passes it by). Real
+          # 2.19.11 fails these: the when:-side registers "Task failed:
+          # Error rendering expression: 'z' is not in list", the task-NAME
+          # marker shows the bare message (both probed 2026-10-10,
+          # bilalcaliksan.zookeeper's follow-up). Re-evaluate through the
+          # raising path and surface its message.
+          begin
+            VariableSubstitutor::JinjaRenderer.evaluate_structured(stripped, @vars, strict: true)
+          rescue e : KrikriJinja::TemplateError
+            # raw_message: e.message carries the engine's "line N: " prefix,
+            # which real's marker/wording does not carry for this class.
+            raise RenderExpressionError.new(e.raw_message)
+          rescue e : UndefinedVariableError
+            raise e
+          rescue e
+            raise RenderExpressionError.new(e.message || "expression failed")
+          end
         end
         rendered
       else

@@ -238,6 +238,11 @@ module Krikri
       unless abort
         begin
           return {active_substitutor.substitute(span, strict: true), false}
+        rescue e : RenderExpressionError
+          # Real's task-NAME marker shows the BARE message ("error 1 -
+          # 'z' is not in list", probed 2026-10-10) - no "Error rendering
+          # template:" prefix for this class.
+          ctx.push(e.message.to_s, error_origin || ctx.origin)
         rescue e : UndefinedVariableError
           ctx.push(e.message.to_s, error_origin || ctx.origin)
         rescue e

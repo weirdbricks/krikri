@@ -121,7 +121,7 @@ module Krikri
     # operand was undefined) - the two are independent because
     # changed_when:/failed_when: deliberately still get the lenient
     # undefined-operand handling here (not touched by this fix).
-    class UndefinedVariableError < Exception
+  class UndefinedVariableError < Exception
     end
 
     # Raised (before any substitution) when a conditional expression
@@ -229,6 +229,23 @@ module Krikri
       if raise_undefined && !Krikri.probe_has_side_effecting_call?(condition) &&
          (msg = Krikri.strict_undefined_probe_message(condition, vars))
         raise UndefinedVariableError.new(msg)
+      end
+      # A Python list-method call's runtime failure (".index('z') is not
+      # in list") - the hand-rolled evaluator swallows it into the
+      # undefined sentinel and the condition silently turns False; real
+      # 2.19.11 fails "Task failed: Error rendering expression: 'z' is
+      # not in list" (probed 2026-10-10). One strict raising evaluation
+      # surfaces it; a clean pass falls through to the normal evaluation.
+      if raise_undefined && condition.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/\.(index|count|extend|insert|pop|remove|reverse|sort)\s*\(/)
+        begin
+          VariableSubstitutor::JinjaRenderer.evaluate_structured(condition, vars, strict: true)
+        rescue e : KrikriJinja::TemplateError
+          raise RenderExpressionError.new(e.raw_message) unless e.kind == KrikriJinja::ErrorKind::Undefined
+        rescue e : UndefinedVariableError
+          raise e
+        rescue e
+          raise RenderExpressionError.new(e.message || "expression failed")
+        end
       end
       TimingProfile.measure("controller.conditionals", "controller") do
         evaluate_measured(condition, vars, strict, raise_undefined)
