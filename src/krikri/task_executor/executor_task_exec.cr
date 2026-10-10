@@ -1211,13 +1211,13 @@ module Krikri
       src = "" if src == Krikri::NONE_SENTINEL
       return params unless src && Krikri.python_param_truthy?(src)
 
-      # Ansible's copy action plugin resolves a relative src against
-      # the role's files/ dir, the playbook dir, and the task's dir
-      # before anything else. krikri only ever looked at absolute paths
+      # Ansible's copy action plugin resolves a relative src through
+      # _find_needle (the role/task/playbook dwim stack, see
+      # NeedleLookup). krikri only ever looked at absolute paths
       # here, so a playbook-relative `src: files/m4-tree/` reached the
       # plugin binary unresolved and failed on the target with "Source
       # file not found" (found live via modules_data.yml). Resolve it
-      # against the same roots first_found uses, then rewrite src to the
+      # against that same search, then rewrite src to the
       # absolute controller path so every downstream check (existence,
       # size, vault decrypt, directory staging) sees the real file.
       #
@@ -1229,12 +1229,22 @@ module Krikri
       # msg instead (live-verified against 2.19.11 under -c local).
       local_connection = PluginManager.local_connection?(host, vars_context)
       if !src.starts_with?('/')
-        roots = [] of String
-        task.role_files_dir.try { |dir| roots << dir }
-        task.include_file_dir.try { |dir| roots << dir }
-        roots << @playbook_dir
-        roots << Dir.current
-        resolved = first_existing(roots, src)
+        # Search EXACTLY the candidate list Ansible's _find_needle
+        # searches (NeedleLookup.candidates - the same list the not-found
+        # error reports), so the "Searched in:" list can never name a path
+        # the lookup never actually opened. The search used to run over a
+        # hand-picked roots list (role files/, task dir, playbook dir, cwd)
+        # while the error listed the full dwim stack - so a candidate the
+        # error itself advertised was never tried: a role without a files/
+        # dir whose copy: src: carries its subdir prefix (l3.dotfiles'
+        # `src: 'templates/vimrc'` living at <role>/templates/vimrc, round
+        # 5290001) failed here even though ansible-playbook's role-root
+        # fallback (path_dwim_relative_stack's <role_root>/<src> entry)
+        # finds the file.
+        candidates = NeedleLookup.candidates(
+          NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+          File.expand_path(@playbook_dir), "files", src)
+        resolved = candidates.find { |candidate| File.exists?(candidate) }
         if resolved
           src = File.expand_path(resolved)
           params = params.dup
@@ -1243,9 +1253,6 @@ module Krikri
           # Ansible's _find_needle miss on the controller - a relative src,
           # so the failure carries the full Searched-in list (both
           # connection flavors live-verified against 2.19.11).
-          candidates = NeedleLookup.candidates(
-            NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
-            File.expand_path(@playbook_dir), "files", src)
           return controller_missing_copy_local_result(src, candidates) if local_connection
           return controller_missing_copy_result(src, candidates)
         end

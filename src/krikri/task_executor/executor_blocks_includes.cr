@@ -2592,18 +2592,34 @@ module Krikri
         end
       end
 
-      # Must be absolute: #inline_copy_source_content's own "is this a
-      # real controller-side path that needs staging to a remote host"
-      # gate is `src.starts_with?('/')` - a relative candidate (which
-      # this always was whenever krikri-playbook is invoked with a
-      # relative playbook path, the common case) silently skipped that
-      # gate entirely, leaving `src:` as an unresolved relative string
-      # in the params sent to copy.cr's plugin binary - which runs ON
-      # THE REMOTE HOST, where that relative path never existed. Found
-      # via robertdebock.dns's "Place override.conf" (a role-relative
-      # copy: src: reached over a real SSH connection, previously
-      # untested - every prior copy:-with-role-relative-src: round used
-      # either remote_src: true or a local connection).
+      # A TOTAL miss (nothing under the role chain, task dir, or role
+      # root exists): copy:'s and template:'s controller-side lookup
+      # (_find_needle) RAISES there - AnsibleFileNotFound with the full
+      # "Searched in:" list naming the still-RELATIVE src - so handing
+      # either module an absolute-but-nonexistent path (the rewrite below)
+      # turns the error into the listless absolute-src wording real never
+      # produces. Leave the src untouched for those two and let the
+      # downstream controller lookup fail with real's exact text;
+      # assemble:/synchronize: keep the absolute fallback (real's
+      # path_dwim_relative_stack itself returns the basedir-joined miss
+      # instead of raising, so an absolute path is what reaches them).
+      unless File.exists?(candidate)
+        return params if {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
+      end
+
+      # Must be absolute (FOUND paths only, per the miss branch above):
+      # #inline_copy_source_content's own "is this a real controller-side
+      # path that needs staging to a remote host" gate is
+      # `src.starts_with?('/')` - a relative candidate (which this always
+      # was whenever krikri-playbook is invoked with a relative playbook
+      # path, the common case) silently skipped that gate entirely,
+      # leaving `src:` as an unresolved relative string in the params sent
+      # to copy.cr's plugin binary - which runs ON THE REMOTE HOST, where
+      # that relative path never existed. Found via robertdebock.dns's
+      # "Place override.conf" (a role-relative copy: src: reached over a
+      # real SSH connection, previously untested - every prior
+      # copy:-with-role-relative-src: round used either remote_src: true
+      # or a local connection).
       resolved = params.dup
       resolved["src"] = File.expand_path(candidate)
       resolved
