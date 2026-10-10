@@ -25,12 +25,12 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook_binary(pb : String) : {Process::Status, String, String}
+private def run_playbook_binary(pb : String, env : Hash(String, String)? = nil) : {Process::Status, String, String}
   playbook = File.tempname("tombstone-refusal", ".yml")
   File.write(playbook, pb)
   out_io = IO::Memory.new
   err_io = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: out_io, error: err_io)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: out_io, error: err_io, env: env)
   {status, out_io.to_s, err_io.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -168,15 +168,37 @@ describe "parse-time tombstone refusal for collection-removed modules" do
         YAML
       )
     end
-    parsed = Krikri::PlaybookParser.parse_string(<<-YAML
-      - hosts: all
-        tasks:
-          - name: unimplemented, unresolved - graceful, not refused
-            kubernetes.core.helm_repository:
-              repo_name: foo
-      YAML
-    )
-    parsed.plays[0].tasks[0].unavailable_module.must_equal("kubernetes.core.helm_repository")
+    # The helm_repository half is controller-state-dependent: where
+    # kubernetes.core is installed the name resolves and the graceful
+    # unavailable_module flow applies; where it is not (a bare CI
+    # container) ansible-core refuses the whole load at parse time, and
+    # so does the engine - a genuinely-unresolvable name can never reach
+    # the lazy path. Either way it must NOT take the RemovedModuleError
+    # rc=1 path.
+    if Krikri::CollectionIndex.controller_resolves?("kubernetes.core.helm_repository")[:resolves]
+      parsed = Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: unimplemented, unresolved - graceful, not refused
+              kubernetes.core.helm_repository:
+                repo_name: foo
+        YAML
+      )
+      parsed.plays[0].tasks[0].unavailable_module.must_equal("kubernetes.core.helm_repository")
+    else
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'kubernetes.core.helm_repository'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: unimplemented, unresolved - graceful, not refused
+                kubernetes.core.helm_repository:
+                  repo_name: foo
+          YAML
+        )
+      end
+    end
   end
 end
 
@@ -227,8 +249,15 @@ describe "parse-time tombstone refusal end to end (krikri-playbook binary)" do
     # The non-tombstoned unimplemented name must NOT take the tombstone
     # rc=1 path: run to a PLAY RECAP, then exit 4 via the runtime
     # reachable_unavailable_modules machinery (helm_repository is not
-    # tombstoned anywhere - krikri simply hasn't ported it).
-    status, stdout, _stderr = run_playbook_binary(<<-YAML)
+    # tombstoned anywhere - krikri simply hasn't ported it). The lazy
+    # path needs the controller to RESOLVE the name, so the spawned
+    # binary gets a fixture tree (child env only) whose kubernetes.core
+    # ships the module file - identical on any controller.
+    fixture_root = PluginSpecHelper.tmp_path("tombstone-refusal-collections")
+    module_dir = File.join(fixture_root, "ansible_collections", "kubernetes", "core", "plugins", "modules")
+    FileUtils.mkdir_p(module_dir)
+    File.write(File.join(module_dir, "helm_repository.py"), "#!/usr/bin/python\n")
+    status, stdout, _stderr = run_playbook_binary(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
       - hosts: localhost
         connection: local
         gather_facts: false

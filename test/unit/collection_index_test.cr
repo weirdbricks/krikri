@@ -41,6 +41,18 @@ describe Krikri::CollectionIndex do
               redirect: testns.prov.thing
         YAML
     )
+    # Real collection/module shapes the redirect-following specs below
+    # pin against: community.crypto's x509_certificate (the target of
+    # the bare `openssl_certificate` builtin-runtime redirect) and
+    # amazon.aws's autoscaling_group_info (a REAL module leaf krikri has
+    # NOT ported). Stubbing them in the fixture makes those specs
+    # deterministic on any controller - the dev machine's own installed
+    # collections sit behind the fixture in the search order and agree
+    # with it, while a bare CI container has nothing else to consult.
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "community", "crypto", "plugins", "modules"))
+    File.write(File.join(@fixture_root, "ansible_collections", "community", "crypto", "plugins", "modules", "x509_certificate.py"), "# fixture module\n")
+    FileUtils.mkdir_p(File.join(@fixture_root, "ansible_collections", "amazon", "aws", "plugins", "modules"))
+    File.write(File.join(@fixture_root, "ansible_collections", "amazon", "aws", "plugins", "modules", "autoscaling_group_info.py"), "# fixture module\n")
     ENV["ANSIBLE_COLLECTIONS_PATH"] = @fixture_root
     Krikri::CollectionIndex.reset!
   end
@@ -90,6 +102,31 @@ describe Krikri::CollectionIndex do
     result[:resolves].must_equal(false)
   end
 
+  it "resolves an installed collection's real module even when krikri has not implemented it" do
+    # The fixture's amazon.aws ships autoscaling_group_info; the name
+    # resolves for real, so the engine must NOT refuse it (the lazy
+    # unavailable_module flow keeps ownership).
+    result = Krikri::CollectionIndex.controller_resolves?("amazon.aws.autoscaling_group_info")
+    result[:resolves].must_equal(true)
+  end
+
+  it "follows a builtin-runtime redirect to an installed collection's module (openssl_certificate)" do
+    result = Krikri::CollectionIndex.controller_resolves?("openssl_certificate")
+    result[:resolves].must_equal(true)
+  end
+
+  it "refuses a bare name whose builtin redirect dies on an absent collection (gc_storage), warning naming the target" do
+    # The fixture carries a community.* collection (community.crypto)
+    # but no community.google, so the redirect chain for bare
+    # `gc_storage:` dies on an absent collection INSIDE a present
+    # namespace - the collection-level import warning, deterministic on
+    # any controller.
+    result = Krikri::CollectionIndex.controller_resolves?("gc_storage")
+    result[:resolves].must_equal(false)
+    result[:missing_collection_warning].must_equal(
+      "Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
+  end
+
   # ------------------------------------------------------------------
   # Real-machine-state specs: the fixture env is gone again, the index
   # rescanned the controller's actual collections.
@@ -102,18 +139,6 @@ describe Krikri::CollectionIndex do
     result = Krikri::CollectionIndex.controller_resolves?("docker")
     result[:resolves].must_equal(false)
     result[:missing_collection_warning].must_be_nil
-  end
-
-  it "follows a builtin-runtime redirect to an installed collection's module (openssl_certificate)" do
-    result = Krikri::CollectionIndex.controller_resolves?("openssl_certificate")
-    result[:resolves].must_equal(true)
-  end
-
-  it "refuses a bare name whose builtin redirect dies on an absent collection (gc_storage), warning naming the target" do
-    result = Krikri::CollectionIndex.controller_resolves?("gc_storage")
-    result[:resolves].must_equal(false)
-    result[:missing_collection_warning].must_equal(
-      "Error loading plugin 'community.google.gc_storage': No module named 'ansible_collections.community.google'")
   end
 
   it "refuses a missing-collection FQCN the way ansible-core does (freeipa.ansible_freeipa)" do
@@ -131,14 +156,6 @@ describe Krikri::CollectionIndex do
   it "stays unsure for templated names" do
     result = Krikri::CollectionIndex.controller_resolves?("{{ pkg_mgr }}")
     result[:resolves].must_be_nil
-  end
-
-  it "resolves an installed collection's real module even when krikri has not implemented it" do
-    # amazon.aws ships autoscaling_group_info on this controller; the
-    # name resolves for real, so the engine must NOT refuse it (the
-    # lazy unavailable_module flow keeps ownership).
-    result = Krikri::CollectionIndex.controller_resolves?("amazon.aws.autoscaling_group_info")
-    result[:resolves].must_equal(true)
   end
 
   it "finds a role-private library/ module source and refuses nothing" do

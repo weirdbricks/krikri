@@ -233,8 +233,21 @@ module Krikri
     # installation is discoverable - the caller must then not refuse.
     def self.builtin_module?(leaf : String) : Bool?
       if ansible_pkg_dirs.empty?
-        # No ansible-core on this controller: the baked 2.19.11 name set
-        # is the truth (same reason as builtin_redirects's fallback).
+        # No ansible-core on this controller: the baked 2.19.11 data is
+        # the truth (same reason as builtin_redirects's fallback). The
+        # baked name set is the modules/ FILES plus every
+        # ansible_builtin_runtime.yml redirect key - but a redirect key
+        # is not a module FILE: real resolves such a bare name through
+        # the redirect chain and refuses it when the target collection
+        # is absent (bare `gc_storage:` -> community.google.gc_storage,
+        # live-verified vs 2.19.11). Excluding the redirect keys here
+        # lets bare_resolution fall through to that chain instead of
+        # short-circuiting every redirected name into "resolves".
+        if redirects = builtin_redirects("modules")
+          return Krikri.builtin_module_names.includes?(leaf) &&
+                 !redirects.has_key?(leaf) &&
+                 !builtin_redirects("action").try(&.has_key?(leaf))
+        end
         return Krikri.builtin_module_names.includes?(leaf)
       end
 

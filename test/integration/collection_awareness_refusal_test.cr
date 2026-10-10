@@ -19,12 +19,31 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_playbook(pb : String) : {Process::Status, String, String}
+# A controller-shaped collection tree for the specs whose pin depends on
+# what the controller has installed: community.docker present (so a
+# missing module file inside it is the installed-collection refusal
+# shape, no import warning), kubernetes.core shipping helm_repository
+# (so the unported module keeps its lazy skip path), and community.google
+# deliberately absent (so bare `gc_storage:`'s redirect dies on an
+# absent collection INSIDE a present namespace - the collection-level
+# warning text). Pointed at via ANSIBLE_COLLECTIONS_PATH for the spawned
+# binary only (child env, no process-wide state); the dev machine's own
+# installed collections sit behind it in the search order and agree with
+# every pin.
+private def fixture_collections_root : String
+  root = PluginSpecHelper.tmp_path("collection-awareness-fixture")
+  FileUtils.mkdir_p(File.join(root, "ansible_collections", "community", "docker", "plugins", "modules"))
+  FileUtils.mkdir_p(File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "modules"))
+  File.write(File.join(root, "ansible_collections", "kubernetes", "core", "plugins", "modules", "helm_repository.py"), "#!/usr/bin/python\n")
+  root
+end
+
+private def run_playbook(pb : String, env : Hash(String, String)? = nil) : {Process::Status, String, String}
   playbook = File.tempname("collection-awareness", ".yml")
   File.write(playbook, pb)
   stdout = IO::Memory.new
   stderr = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr, env: env)
   {status, stdout.to_s, stderr.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -70,7 +89,7 @@ describe "controller collection-set awareness refuses unresolvable module names 
   end
 
   it "refuses a bare name whose builtin redirect dies on an absent collection, warning naming the target" do
-    status, stdout, stderr = run_playbook(<<-YAML)
+    status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
         gather_facts: false
@@ -86,7 +105,7 @@ describe "controller collection-set awareness refuses unresolvable module names 
   end
 
   it "refuses an installed collection's missing module file with the [ERROR] + Origin but NO warning" do
-    status, stdout, stderr = run_playbook(<<-YAML)
+    status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
         gather_facts: false
@@ -103,9 +122,9 @@ describe "controller collection-set awareness refuses unresolvable module names 
 
   it "keeps a when:-gated task of an INSTALLED collection's unported module on the lazy skip path" do
     # The round-811000 concern is untouched: real CAN resolve
-    # kubernetes.core.helm_repository (the collection ships the module
-    # file), so the task parses through and skips at run time.
-    status, stdout, stderr = run_playbook(<<-YAML)
+    # kubernetes.core.helm_repository (the fixture collection ships the
+    # module file), so the task parses through and skips at run time.
+    status, stdout, stderr = run_playbook(<<-YAML, {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
       - hosts: localhost
         connection: local
         gather_facts: false

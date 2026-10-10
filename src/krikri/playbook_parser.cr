@@ -3194,7 +3194,16 @@ module Krikri
         # declaration (both folded into bare-name resolution by real).
         task_collections ||= play.collections + CollectionIndex.role_meta_collections(role_path)
         resolution = CollectionIndex.controller_resolves?(module_name, task_collections, role_path, playbook_dir)
-        if resolution[:resolves] == false
+        # A name krikri implements natively never refuses here, whatever
+        # the controller's collection state: the engine can actually run
+        # it, so "the controller lacks the collection" must not turn into
+        # a load-time refusal for it (a collection-less controller - CI
+        # containers, krikri-only hosts - would otherwise refuse whole
+        # playbooks of community.crypto/community.general tasks real runs
+        # wherever krikri has the port). The refusal keeps its teeth for
+        # names krikri has NOT ported - those genuinely cannot run here,
+        # exactly the set ansible-core refuses on such a controller.
+        if resolution[:resolves] == false && resolved_module_name.nil?
           message = "couldn't resolve module/action '#{module_name}'. " \
                     "This often indicates a misspelling, missing collection, or incorrect module path."
           prefix = task_source_prefix(source_prefix, index)

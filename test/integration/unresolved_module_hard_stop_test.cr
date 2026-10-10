@@ -39,11 +39,34 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
+# The lazy-path specs here pin the round-811000 flow for modules krikri
+# hasn't ported (kubernetes.core.helm_repository,
+# junipernetworks.junos.junos_netconf, containers.podman.podman_container)
+# - a flow that only applies when the CONTROLLER can resolve the name. A
+# controller without those collections refuses them at playbook load
+# before any lazy path can apply, so the spawned binary gets a
+# controller-shaped fixture tree (ANSIBLE_COLLECTIONS_PATH, child env
+# only) whose collections ship the module files: the names resolve for
+# real, stay unported in krikri, and the lazy flow under test applies
+# identically on any controller. Tombstoned names (ec2_remote_facts,
+# community.docker.docker_compose) refuse regardless of the fixture.
+private def fixture_collections_root : String
+  root = PluginSpecHelper.tmp_path("unresolved-module-collections")
+  {"kubernetes/core/helm_repository", "junipernetworks/junos/junos_netconf",
+   "containers/podman/podman_container"}.each do |leaf|
+    dir = File.join(root, "ansible_collections", File.dirname(leaf), "plugins", "modules")
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, File.basename(leaf) + ".py"), "#!/usr/bin/python\n")
+  end
+  root
+end
+
 private def run_playbook(pb : String) : {Process::Status, String}
   playbook = File.tempname("unresolved-module", ".yml")
   File.write(playbook, pb)
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
   {status, captured.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)

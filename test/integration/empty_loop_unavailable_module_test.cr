@@ -17,11 +17,28 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
+# community.grafana is the telekom_mms.grafana shape these specs pin the
+# lazy unavailable-module flow for, but a controller without the
+# collection installed refuses grafana_datasource at playbook load
+# before any lazy path can apply. The specs therefore run against a
+# controller-shaped fixture tree (ANSIBLE_COLLECTIONS_PATH for the
+# spawned binary only) whose community.grafana ships the module file -
+# the name resolves for real, krikri still hasn't ported it, and the
+# lazy flow under test applies identically on any controller.
+private def fixture_collections_root : String
+  root = PluginSpecHelper.tmp_path("empty-loop-collections")
+  module_dir = File.join(root, "ansible_collections", "community", "grafana", "plugins", "modules")
+  FileUtils.mkdir_p(module_dir)
+  File.write(File.join(module_dir, "grafana_datasource.py"), "#!/usr/bin/python\n")
+  root
+end
+
 private def run_playbook(pb : String) : {Process::Status, String}
   playbook = File.tempname("empty-loop-unavailable", ".yml")
   File.write(playbook, pb)
   captured = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: captured, error: captured,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
   {status, captured.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
@@ -53,7 +70,8 @@ describe "an unimplemented module behind an empty loop is a plain skip, rc=0" do
       YAML
 
     output = IO::Memory.new
-    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root)
+    status = Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: root,
+      env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_collections_root})
 
     status.success?.must_equal(true, output.to_s)
     output.to_s.must_include("skipping:", output.to_s)

@@ -13,6 +13,17 @@ require "../minitest_helper"
 #
 # Live-verified against ansible-core 2.19.11 locally: the failing shape
 # below is byte-identical to real's output.
+#
+# The controller collection-awareness check (0.9.1606) refuses a name
+# neither krikri nor the controller can run, so these specs pin the
+# lazy unavailable-module flow against a CONTROLLLED controller: the
+# spawned binary gets ANSIBLE_COLLECTIONS_PATH pointed at a fixture
+# tree whose community.general ships a redhat_subscription module file.
+# The engine then resolves the name for real (fixture dir is first in
+# the search order) and takes the unavailable-module path these specs
+# are about - identically whether or not the test machine itself has
+# community.general installed (its own collection dirs only add more
+# search roots behind the fixture).
 private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
@@ -20,11 +31,17 @@ private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-ex
 private def run_playbook(yaml : String)
   playbook = File.tempname("unavailable-module-args", ".yml")
   File.write(playbook, yaml)
+  fixture_root = File.tempname("unavailable-module-collections")
+  module_dir = File.join(fixture_root, "ansible_collections", "community", "general", "plugins", "modules")
+  FileUtils.mkdir_p(module_dir)
+  File.write(File.join(module_dir, "redhat_subscription.py"), "#!/usr/bin/python\n")
   output = IO::Memory.new
-  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output,
+    env: {"ANSIBLE_COLLECTIONS_PATH" => fixture_root})
   {status, output.to_s}
 ensure
   File.delete(playbook) if playbook && File.exists?(playbook)
+  FileUtils.rm_r(fixture_root) if fixture_root && Dir.exists?(fixture_root)
 end
 
 describe "unavailable module args finalization" do
