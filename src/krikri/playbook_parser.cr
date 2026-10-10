@@ -2588,6 +2588,25 @@ module Krikri
     # resolved list.
     LOOP_ARRAY_WRAPPED_TEMPLATE_KEYS = %w[loop with_items with_list with_dict with_indexed_items]
 
+    # The scalar (non-array, non-{{ }}) with_items:/with_list: value as ONE
+    # literal loop item - see the parse branch. nil for every other shape.
+    private def self.scalar_with_items_value(task_hash : Hash(YAML::Any, YAML::Any)) : JSON::Any?
+      ["with_items", "with_list"].each do |key|
+        value = task_hash[key]?
+        next unless value
+        next if value.as_a? || value.as_h?
+        if str = value.as_s?
+          next if str.includes?("{{")
+          return JSON::Any.new(str)
+        elsif i = value.as_i?
+          return JSON::Any.new(i.to_i64)
+        elsif b = value.as_bool?
+          return JSON::Any.new(b)
+        end
+      end
+      nil
+    end
+
     # If task_hash has one of the loop-source keywords set to a scalar
     # string that looks like a Jinja variable reference (rather than a
     # literal inline list/dict), return {keyword, template string}.
@@ -3245,6 +3264,14 @@ module Krikri
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
         task.loop_template_array_wrapped = template_loop[2]
+      elsif loop_scalar = task_hash["loop"]?.try(&.as_s?)
+        # A BARE (no {{ }}) scalar loop: source - real TEMPLATES it (a
+        # bare word renders as itself) and then type-fails: "The `loop`
+        # value must resolve to a 'list', not 'str'." (probed vs 2.19.11
+        # 2026-10-10). Routing it through the runtime template resolver
+        # gives exactly that shape (the resolver's non-list typing).
+        task.loop_template_kind = "loop"
+        task.loop_template = loop_scalar
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop = loop_yaml.map { |item| JSON.parse(item.to_json) }
         task.loop_items = task.loop
@@ -3255,6 +3282,16 @@ module Krikri
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)
+      elsif with_items_scalar = scalar_with_items_value(task_hash)
+        # A BARE scalar with_items:/with_list: source (no {{ }}) is ONE
+        # literal item - real's with_items/with_list wrap non-lists
+        # (`with_items: strongswan` -> item=strongswan; `with_items: 5` ->
+        # item=5; probed vs 2.19.11 2026-10-10, janneojala.strongswan's
+        # `with_items: strongswan` round 5410000). The old parse fell
+        # through every branch, the loop resolved empty, and the task ran
+        # once with 'item' undefined.
+        task.loop = [with_items_scalar]
+        task.loop_items = task.loop
       elsif with_dict = task_hash["with_dict"]?.try(&.as_h?)
         hash = Hash(String, JSON::Any).new
         with_dict.each { |k, v| hash[k.to_s] = JSON.parse(v.to_json) }
@@ -3919,6 +3956,16 @@ module Krikri
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)
+      elsif with_items_scalar = scalar_with_items_value(task_hash)
+        # A BARE scalar with_items:/with_list: source (no {{ }}) is ONE
+        # literal item - real's with_items/with_list wrap non-lists
+        # (`with_items: strongswan` -> item=strongswan; `with_items: 5` ->
+        # item=5; probed vs 2.19.11 2026-10-10, janneojala.strongswan's
+        # `with_items: strongswan` round 5410000). The old parse fell
+        # through every branch, the loop resolved empty, and the task ran
+        # once with 'item' undefined.
+        task.loop = [with_items_scalar]
+        task.loop_items = task.loop
       elsif generic_lookup = find_generic_lookup_loop(task_hash)
         task.loop_lookup_plugin = generic_lookup[0]
         task.loop_lookup_terms = generic_lookup[1]
@@ -4751,6 +4798,16 @@ module Krikri
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)
+      elsif with_items_scalar = scalar_with_items_value(task_hash)
+        # A BARE scalar with_items:/with_list: source (no {{ }}) is ONE
+        # literal item - real's with_items/with_list wrap non-lists
+        # (`with_items: strongswan` -> item=strongswan; `with_items: 5` ->
+        # item=5; probed vs 2.19.11 2026-10-10, janneojala.strongswan's
+        # `with_items: strongswan` round 5410000). The old parse fell
+        # through every branch, the loop resolved empty, and the task ran
+        # once with 'item' undefined.
+        task.loop = [with_items_scalar]
+        task.loop_items = task.loop
       elsif with_first_found = task_hash["with_first_found"]?
         task.loop_first_found = parse_first_found(with_first_found)
         task.loop_first_found_skip = first_found_skip?(with_first_found)
@@ -4967,6 +5024,14 @@ module Krikri
         task.loop_template_kind = template_loop[0]
         task.loop_template = template_loop[1]
         task.loop_template_array_wrapped = template_loop[2]
+      elsif loop_scalar = task_hash["loop"]?.try(&.as_s?)
+        # A BARE (no {{ }}) scalar loop: source - real TEMPLATES it (a
+        # bare word renders as itself) and then type-fails: "The `loop`
+        # value must resolve to a 'list', not 'str'." (probed vs 2.19.11
+        # 2026-10-10). Routing it through the runtime template resolver
+        # gives exactly that shape (the resolver's non-list typing).
+        task.loop_template_kind = "loop"
+        task.loop_template = loop_scalar
       elsif loop_yaml = task_hash["loop"]?.try(&.as_a?)
         task.loop_items = loop_yaml.map { |item| JSON.parse(item.to_json) }
       elsif with_items = task_hash["with_items"]?.try(&.as_a?)
@@ -4975,6 +5040,16 @@ module Krikri
       elsif with_list = task_hash["with_list"]?
         # with_list: IS loop: under its legacy name - see parse_with_list_items.
         task.loop_items = parse_with_list_items(with_list)
+      elsif with_items_scalar = scalar_with_items_value(task_hash)
+        # A BARE scalar with_items:/with_list: source (no {{ }}) is ONE
+        # literal item - real's with_items/with_list wrap non-lists
+        # (`with_items: strongswan` -> item=strongswan; `with_items: 5` ->
+        # item=5; probed vs 2.19.11 2026-10-10, janneojala.strongswan's
+        # `with_items: strongswan` round 5410000). The old parse fell
+        # through every branch, the loop resolved empty, and the task ran
+        # once with 'item' undefined.
+        task.loop = [with_items_scalar]
+        task.loop_items = task.loop
       elsif generic_lookup = find_generic_lookup_loop(task_hash)
         task.loop_lookup_plugin = generic_lookup[0]
         task.loop_lookup_terms = generic_lookup[1]

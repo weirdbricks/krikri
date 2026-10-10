@@ -104,6 +104,16 @@ module Krikri
       template = task.loop_template
       return nil unless kind && template
 
+      # A BARE (no {{ }}) scalar loop: source is LITERAL text to real's
+      # templar (no templating markers -> no evaluation -> "strongswan"
+      # itself), and the typing check then fails it:
+      # "The `loop` value must resolve to a 'list', not 'str'."
+      # (probed vs 2.19.11 2026-10-10). The variable-resolution path
+      # below would wrongly look the word up as a variable.
+      if kind == "loop" && !template.includes?("{{")
+        raise LoopTypeError.new("The `loop` value must resolve to a 'list', not 'str'.")
+      end
+
       value = resolve_template_value(template, vars_context)
 
       # A complex template - `with_items: "{{ some_list | default([]) |

@@ -227,4 +227,57 @@ describe "loop: source typing errors" do
     output.must_include("failed=0")
     output.wont_include("must resolve to a 'list'")
   end
+
+# Bare scalar loop sources (janneojala.strongswan round 5410000:
+# `with_items: strongswan`; probed vs 2.19.11 2026-10-10):
+# - with_items:/with_list: on a bare scalar = ONE literal item
+# - loop: on a bare scalar fails the typing check with 'str'
+  it "with_items on a bare string loops once with the literal" do
+    _ok, output, _pb = run_play_file(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "ITEM|{{ item }}"
+            with_items: strongswan
+      YAML
+    output.must_include("ITEM|strongswan")
+  end
+
+  it "with_list on a bare string loops once with the literal" do
+    _ok, output, _pb = run_play_file(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "WL|{{ item }}"
+            with_list: strongswan
+      YAML
+    output.must_include("WL|strongswan")
+  end
+
+  it "with_items on a bare int loops once with the int" do
+    _ok, output, _pb = run_play_file(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "WI|{{ item }}"
+            with_items: 5
+      YAML
+    output.must_include("WI|5")
+  end
+
+  it "loop on a bare string fails the typing check with 'str'" do
+    _ok, output, _pb = run_play_file(<<-YAML)
+      - hosts: all
+        gather_facts: false
+        tasks:
+          - ansible.builtin.debug:
+              msg: "LP|{{ item }}"
+            loop: strongswan
+      YAML
+    output.must_include("The `loop` value must resolve to a 'list', not 'str'.")
+    output.wont_include("is undefined")
+  end
 end
