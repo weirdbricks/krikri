@@ -69,6 +69,12 @@ module Krikri
         return err
       end
 
+      # The vendored-SDK import gate (docker_client.cr) - real constructs
+      # its client right after AnsibleModule validation and BEFORE
+      # LoginManager, so the gate precedes the logout path too (build's
+      # own gate is memoized, so this early call keeps it a single probe).
+      PluginHelpers::DockerClient.sdk_import_gate
+
       registry_url = @params["registry_url"]?.presence ||
                      @params["registry"]?.presence ||
                      @params["url"]?.presence ||

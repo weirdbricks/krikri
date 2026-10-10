@@ -263,6 +263,21 @@ module Krikri
   # ownership change requested" instead of failing like this.
   class OwnerLookupFailure < Exception; end
 
+  # Raised by PluginHelpers::DockerClient's sdk_import_gate (the vendored
+  # Docker SDK import gate every SDK-based docker plugin runs at client
+  # construction); run_and_capture turns it into the exact failure real's
+  # client construction produces - msg in the result, detail in the
+  # [ERROR] block only. Lives here (like OwnerLookupFailure) because every
+  # plugin binary compiles base_plugin, while docker_client.cr is only
+  # compiled for the docker plugins.
+  class SdkImportGateError < Exception
+    getter detail : String
+
+    def initialize(msg : String, @detail : String)
+      super(msg)
+    end
+  end
+
   # Base class for all plugins
   abstract class BasePlugin
     property host : Host
@@ -494,6 +509,14 @@ module Krikri
       # file-common owner:/group: args gets Ansible's failure shape
       # without each one hand-rolling it.
       PluginResult.new(changed: false, failed: true, msg: ex.message || "owner lookup failed").to_json
+    rescue ex : SdkImportGateError
+      # The Docker SDK import gate (docker_client.cr's sdk_import_gate)
+      # raises rather than returning a PluginResult so every SDK-based
+      # docker plugin gets real's client-construction failure through the
+      # shared DockerClient.build - the message is real's own
+      # missing_required_lib wording, the detail belongs in the [ERROR]
+      # block only, like the OwnerLookupFailure reasoning above.
+      PluginResult.new(changed: false, failed: true, msg: ex.message || "", _ansible_error_detail: ex.detail).to_json
     rescue ex : Exception
       error_result = PluginResult.new(
         changed: false,
