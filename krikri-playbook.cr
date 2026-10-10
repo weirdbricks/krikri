@@ -19,6 +19,7 @@ require "./src/krikri/version"
 require "./src/krikri/unsafe_values"
 require "./src/krikri/timing_profile"
 require "./src/krikri/playbook_parser"
+require "./src/krikri/collection_index"
 require "./src/krikri/tag_filter"
 require "./src/krikri/extra_vars_parser"
 require "./src/krikri/task_lister"
@@ -739,7 +740,15 @@ rescue ex : Krikri::UnresolvedModuleError
   # parser-error rescues below merely by
   # accident - 4 is here because that's what Ansible exits with
   # for exactly this error. See UnresolvedModuleError's own comment.
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # When the raise site had a source position it also built the
+  # [ERROR] + Origin render (ansible-core prints the Origin block for
+  # its own load refusal, live-verified vs 2.19.11) - print that
+  # verbatim on stderr like the RemovedModuleError render.
+  if render = ex.render
+    STDERR.print render
+  else
+    puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
   exit 4
 rescue ex : Krikri::RemovedActionError
   # A removed action plugin (`include:`) is Ansible's own rc=1
@@ -1324,8 +1333,13 @@ playbook.plays.each_with_index do |play, _play_index|
       # statically-present tasks never get this far - they exit in the
       # parse rescue above). Ansible's playbook-load check gives
       # the identical message and rc=4 - see UnresolvedModuleError's
-      # own comment.
-      puts "[ERROR]: #{ex.message}".colorize(:red)
+      # own comment. A render attached at the raise site prints verbatim
+      # on stderr, same as the parse-time rescue above.
+      if render = ex.render
+        STDERR.print render
+      else
+        puts "[ERROR]: #{ex.message}".colorize(:red)
+      end
       exit 4
     rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
       # Same whole-run abort discovered by a runtime-loaded file's own
