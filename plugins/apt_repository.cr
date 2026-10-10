@@ -6,6 +6,7 @@ require "uri"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/apt_repository_line"
 require "../src/krikri/plugin_helpers/apt_repository_cache_retry"
+require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_ppa"
 
 module Krikri

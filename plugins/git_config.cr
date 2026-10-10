@@ -2,6 +2,8 @@
 
 require "json"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/ansible_arg_validation"
+require "../src/krikri/plugin_helpers/get_bin_path"
 
 module Krikri
   # git_config plugin - reads/writes git configuration via `git config`.

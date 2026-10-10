@@ -2,6 +2,18 @@
 # krikri - Build Script
 # Fast, Ansible-compatible automation tool
 
+# Force byte-wise collation for every glob/sort below: plugin discovery
+# comes from `plugins/*.cr` and the fat binary splices sources in that
+# order, so a locale-dependent sort (macOS runners default to something
+# other than C) changes the splice order. That order is load-bearing -
+# a plugin whose `require`s live only in a sibling spliced earlier
+# compiles only by that accident (apt_repository's `include
+# AptLockRetry` failed exactly this way on macOS x86_64). Each plugin
+# now requires what it uses itself, but the deterministic order stays
+# so the generated file and fat binary are identical across runner
+# OSes and locales.
+export LC_ALL=C
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
