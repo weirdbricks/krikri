@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1581`.**
+**Currently at `0.9.1588`.**
 
 ## Open gaps
 
@@ -72,11 +72,6 @@ defect moves down or gets deleted.
   with `systemctl --user restart podman.socket`. One `statvfs` test can flake under parallel workers
   (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
 
-- **Facts-gathering crash with a bare "Index out of bounds"** (ktechmidas.openvpn, round 5210000's
-  warm run - after the role changed the host's network state). The gatherer now annotates the
-  failing section ("... (while gathering network)") so the next occurrence pinpoints itself;
-  root cause pending a recurrence.
-
 ## Round 5290000/5291000 (fix-confirm for 4 round-5250000 stragglers + 1 new find, 0.9.1577 -> 0.9.1581, 2026-10-09)
 
 Four fixes landed (each repro'd byte-identical against local ansible-playbook 2.19.11 first,
@@ -105,6 +100,48 @@ each with a regression test, all live-confirmed CLEAN on Atlantic.net), plus one
 chris1984.motd dispositioned: real 2.19.11 itself crashes on the role's `motd_content` default
 (`item.iteritems()` - a Python-2 dict method - inside the Jinja template), on any py3 host;
 krikri succeeds. Broken upstream role, not a krikri bug; emulating real's crash is out of scope.
+
+## Round 5300000-5320001 (10 role re-checks from round 5210000, 0.9.1582 -> 0.9.1588, 2026-10-10)
+
+Re-ran the ten round-5210000 divergences that were neither by-design dispositions nor
+community-scope cuts, at 0.9.1581: **1 CLEAN, 9 DIVERGENT** on the batch round, then six fixes
+landed (each repro'd byte-identical against local ansible-playbook 2.19.11 first, each with a
+regression test) and the five fixable roles confirmed CLEAN on round 5310000:
+
+- 0.9.1582: the facts gatherer crashed with a bare `Index out of bounds` on any `inet`/`inet6`
+  line whose address has no `/prefix` - Crystal's `address, prefix = str.split("/", 2)` indexes
+  the second element unconditionally; both per-line parses now skip like real (the annotated
+  "(while gathering network)" recurrence landed on ktechmidas.openvpn's warm run, round
+  5300009; live-confirmed CLEAN 5310004).
+- 0.9.1583: juxtaposed boolean keywords - `x != "Y" )or (y != "YES")` - never split, because
+  the hand-rolled evaluator only splits on literal " or "/" and "; Jinja's lexer tokenizes
+  or/and wherever they stand (dpredhat.ansible_role_mssql, kyleabenson.mssql; CLEAN 5310000/1).
+- 0.9.1584: `flatten` over a dict operand reduced it to [] - real iterates a dict's KEYS -
+  so `vars | flatten | select('match', ...)` loops silently skipped (kaos2oak.java).
+- 0.9.1585: a `when:` whose final result is a non-boolean (e.g. the "" str of an unset env
+  lookup after `is defined and ...`) must fail with real's "Conditionals must have a boolean
+  result." - krikri skipped it (kaos2oak.java; CLEAN 5310002).
+- 0.9.1586: undefined propagation, two shapes - a lazy var chain (`server_ip: "{{ bind_addr }}"`)
+  rendered silently empty where real fails with `'bind_addr' is undefined` (wasilak.centos-hashiui;
+  CLEAN 5310003), and `{{ hw_eth0.ipaddresses[0] }}` over an undefined name leaked Crystal's
+  `None has no element 0` instead of real's wording (SathiyarajPeriyannan.vsphere's debug task;
+  the play-level divergence there stays with the removed-module class below). The failure now
+  renders real's exact two-link error block ("Task failed." -> task origin -> <<< caused by >>>
+  -> the var's definition origin).
+- 0.9.1587 + 0.9.1588 (wording polish found by the 5310000 confirms): the strict-conditional
+  error now carries real's lineage origin for `lookup('env', X)` (`at "<environment variable
+  'X'>"`), non-debug tasks' conditional-failure dumps keep real's `"changed": false` (debug:
+  stays msg-only - probed across 18 module classes), and yum:/dnf: on a dnf-less host reproduces
+  real's backend-detection tuple failure instead of "Failed to install packages"
+  (kaos2oak.java, kyleabenson.mssql; mini-confirm 5320000).
+
+Still divergent, dispositioned without a fix: SathiyarajPeriyannan.vsphere and tcharl.nfs_client
+(both plays real refuses at parse time on removed/unresolvable modules - vsphere_guest, the
+freeipa collection - the documented "removed collection modules" class in Open gaps), and
+mtze.docker_swap_grub + bodsch.dnsmasq (infra flakes AGAIN on both: the reboot-reconnect race
+and the py-side warm apt hang rc=124, now the fourth apt-hang occurrence across rounds).
+clouddrove.ansible_role_common came back CLEAN - its 5210000 divergence was the PPA network
+flake, not krikri.
 
 ## Round 5250000-5250356 (357 new Galaxy top-download roles, 0.9.1567 -> 0.9.1576, 2026-10-09)
 
