@@ -13,20 +13,10 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1576`.**
+**Currently at `0.9.1581`.**
 
 ## Open gaps
 
-- **`loop_control.label` templating on a task skipped by an enclosing block's `when:`.**
-  ansible-core templates a looped task's label even when the task is being skipped by an
-  enclosing block's false condition, and a label that cannot template (`{{ openvpn_client.name
-  }}` over the `{}` item of `with_items: "{{ openvpn_clients }}"` with `openvpn_clients: {}`)
-  converts the skip into a task FAILURE carrying the enclosing chain's `false_condition`
-  (`openvpn_ca_master`). krikri skips the block's children before their loops run, so the label
-  never templates: veselahouba.openvpn stays divergent (0.9.1576 fixed the MODULE-loop half -
-  a label failure inside a loop that does run now fails the item like real; confirm round
-  5280000 still DIVERGENT on the block-skip shape). Narrow ansible-internal display edge;
-  closing it would mean templating labels of block-skipped children.
 - **Removed collection modules abort real's play; krikri skips them.** A module removed from a
   collection (kkolk.mssql's `community.windows.win_domain_user`, removal message and all) makes
   real 2.19.11 abort the whole play rc=1 at that task; krikri skips the task and continues, then
@@ -86,6 +76,35 @@ defect moves down or gets deleted.
   warm run - after the role changed the host's network state). The gatherer now annotates the
   failing section ("... (while gathering network)") so the next occurrence pinpoints itself;
   root cause pending a recurrence.
+
+## Round 5290000/5291000 (fix-confirm for 4 round-5250000 stragglers + 1 new find, 0.9.1577 -> 0.9.1581, 2026-10-09)
+
+Four fixes landed (each repro'd byte-identical against local ansible-playbook 2.19.11 first,
+each with a regression test, all live-confirmed CLEAN on Atlantic.net), plus one disposition:
+
+- 0.9.1577: a bare null `environment:` key was stringified into an empty environment_raw that
+  env finalization JSON.parsed and crashed with `unexpected token '<EOF>'` before the task ran;
+  real treats a null environment as no environment (lifeofguenter.nginx).
+- 0.9.1578: `when:` comparisons rendered a container variable by its literal template text -
+  `accounts != ['root']` over `accounts: ["{{ ansible_user_id }}"]` answered True and ran the
+  gated task on root; container leaves now render recursively first (l3d.dotfiles).
+- 0.9.1579: the task batcher's fact-publishing whitelist was missing six plugins (deploy_helper,
+  hostname, mount_facts, virt_net, ec2_metadata_facts, current_container_facts) - over SSH, a
+  later batch member's args referencing the fact rendered before the earlier member ran and
+  failed with `'deploy_helper' is undefined` (mbaran0v.ansible_role_prometheus_redis_exporter).
+- 0.9.1580: a loop_control.label that cannot template now fails the item on the block-skip path
+  too - real still templates labels per item under a False block when: and converts the skip
+  into that item's FAILED result carrying the chain's false_condition (veselahouba.openvpn;
+  closes the Open-gaps edge left by 0.9.1576).
+- 0.9.1581 (found BY the 5290000 confirm: the fixed comparison advanced l3d.dotfiles to its
+  next task): copy/template with a prefixed relative src (`src: 'templates/vimrc'` living at
+  `<role>/templates/vimrc`) never actually opened the role-root candidate its own "Searched
+  in:" error listed; the lookup now walks exactly that candidate list (real's _find_needle
+  role-root fallback). Confirmed CLEAN on round 5291000.
+
+chris1984.motd dispositioned: real 2.19.11 itself crashes on the role's `motd_content` default
+(`item.iteritems()` - a Python-2 dict method - inside the Jinja template), on any py3 host;
+krikri succeeds. Broken upstream role, not a krikri bug; emulating real's crash is out of scope.
 
 ## Round 5250000-5250356 (357 new Galaxy top-download roles, 0.9.1567 -> 0.9.1576, 2026-10-09)
 
