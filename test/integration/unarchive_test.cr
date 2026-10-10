@@ -39,6 +39,19 @@ private TMP_DIR = begin
   File.write(File.join(dir, "foreign_owner_src", "bin.txt"), "payload")
   `tar --owner=99999 --group=99999 -czf #{File.join(dir, "foreign_owner.tar.gz")} -C #{File.join(dir, "foreign_owner_src")} bin.txt`
 
+  # An archive whose listing carries NO explicit directory entries at
+  # all (built by naming an individual FILE on the tar command line -
+  # the shape apache-zookeeper-*.tar.gz has: every member a file, no
+  # dir members, yet real's unarchive still owner-adjusts the
+  # directories it synthesizes). Regression fixture for round 5420000
+  # (bilalcaliskan.zookeeper): the extracted TOP dir kept its
+  # archive-embedded ownership here, so the role's later
+  # `file: state=directory owner:` over it reported changed where real
+  # reported ok.
+  Dir.mkdir_p(File.join(dir, "no_dir_entries_src", "top"))
+  File.write(File.join(dir, "no_dir_entries_src", "top", "inner.txt"), "inner")
+  `tar --owner=12345 --group=12345 -czf #{File.join(dir, "no_dir_entries.tar.gz")} -C #{File.join(dir, "no_dir_entries_src")} top/inner.txt`
+
   # A GitHub-release-shaped archive with SEVERAL top-level members
   # (darkwizard242.hugo/awsnuke's own real shape: a release tarball
   # bundling the binary alongside README.md/LICENSE) - the fixture
@@ -489,6 +502,83 @@ describe "unarchive plugin" do
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "foreign_owner.tar.gz"), "dest" => dest, "mode" => "0755"})
 
     result["changed"].as_bool.must_equal(false)
+  end
+
+  it "applies mode: to the extracted top-level folder even when the archive has no directory entries" do
+    # Round 5420000 (bilalcaliskan.zookeeper) shape: a tarball whose
+    # listing carries only FILES (apache-zookeeper-*.tar.gz has no
+    # explicit dir members at all), so the extracted top directory is
+    # not itself a member - real's attribute pass covers it anyway via
+    # its own `top_folders` walk (unarchive.py, ansible#35426), and
+    # this spec pins the same coverage here with mode: (owner:/group:
+    # need root to actually differ - the sibling root-only spec below
+    # covers those).
+    dest = fresh_dest("tar-no-dir-entries-top-mode")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"  => File.join(TMP_DIR, "no_dir_entries.tar.gz"),
+      "dest" => dest,
+      "mode" => "0700",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    (File.info(File.join(dest, "top")).permissions.value & 0o777).must_equal(0o700)
+  end
+
+  it "applies owner:/group: at extraction so a following file: task finds the top dir already right" do
+    # The round's exact shape: the role's unarchive names owner:/group:
+    # and a later `file: state=directory owner:/group:/mode:` over the
+    # extracted top dir must report ok (changed: false) because
+    # unarchive already applied them - real chowns that top dir via its
+    # own top_folders pass (and passes --owner=/--group= to tar itself),
+    # while krikri used to leave the synthesized top dir root-owned, so
+    # its file: task reported changed where real reported ok (round
+    # 5420000, bilalcaliskan.zookeeper). The requested owner is the
+    # NUMERIC uid 4321 (not root): tar synthesizes unlisted intermediate
+    # dirs as root anyway, so only a non-root requested owner can
+    # actually detect the missing top-folder chown. Needs root to
+    # chown to an arbitrary uid at all - skip as non-root, where
+    # extraction can't produce the divergence (the sibling mode: spec
+    # above covers the same top-folder pass rootlessly).
+    skip "must run as root to reproduce the ownership divergence" unless PluginSpecHelper.running_as_root?
+
+    dest = fresh_dest("tar-owner-extraction-top")
+    PluginSpecHelper.run("unarchive", {
+      "src"   => File.join(TMP_DIR, "no_dir_entries.tar.gz"),
+      "dest"  => dest,
+      "owner" => "4321",
+      "group" => "4321",
+    }, umask: 0o022)
+
+    top = File.join(dest, "top")
+    File.info(top).owner_id.must_equal(4321)
+    File.info(top).group_id.must_equal(4321)
+    File.info(File.join(top, "inner.txt")).owner_id.must_equal(4321)
+
+    # The role's own followup task, verbatim in shape: state=directory
+    # owner:/group:/mode: over the extracted top dir, WITHOUT recurse -
+    # must already be converged.
+    file_result = PluginSpecHelper.run("file", {
+      "path"  => top,
+      "state" => "directory",
+      "owner" => "4321",
+      "group" => "4321",
+      "mode"  => "0755",
+    })
+    file_result["changed"].as_bool.must_equal(false)
+  end
+
+  it "stays changed: false on a no-owner warm rerun of a no-directory-entries archive" do
+    # No owner:/group:/mode: on the task at all - the extraction itself
+    # is the only change, and the warm rerun must not re-extract (the
+    # archive's embedded 12345:12345 ownership differs from the
+    # extracting user's, but that's exactly the Uid/Gid-differs
+    # exemption tar_changed? already implements for non-root runs).
+    dest = fresh_dest("tar-no-dir-entries-no-owner")
+    first = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "no_dir_entries.tar.gz"), "dest" => dest})
+    first["changed"].as_bool.must_equal(true)
+
+    second = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "no_dir_entries.tar.gz"), "dest" => dest})
+    second["changed"].as_bool.must_equal(false)
   end
 
   it "extracts a zip archive" do

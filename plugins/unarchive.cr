@@ -498,7 +498,29 @@ module Krikri
     end
 
     private def extract_tar(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool, extra_opts : Array(String) = [] of String) : Bool
-      cmd = "tar --extract -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
+      # Real's TgzArchive#unarchive (unarchive.py) passes a task-given
+      # owner:/group: straight to tar itself (`--owner=`/`--group=` on the
+      # --extract command), so ownership is applied AT EXTRACTION - to
+      # every path tar creates, including intermediate directories the
+      # archive's own listing never mentions as entries (a tarball built
+      # without explicit directory members, e.g. apache-zookeeper-*.tar.gz:
+      # only its FILES are listed, yet real's extraction still
+      # owner-adjusts the directories tar synthesizes around them). The
+      # post-extraction pass (apply_dest_attributes) only ever walks
+      # LISTED members plus the top-level folders, so without these
+      # flags an unlisted intermediate dir kept the archive's own
+      # embedded uid/gid (round 5420000, bilalcaliskan.zookeeper: the
+      # extracted top dir stayed root-owned - uid 1000 embedded in the
+      # tarball - and the role's later `file: state=directory owner:`
+      # task reported changed where real reported ok). GNU tar ignores
+      # --owner/--group it cannot apply (a non-root run silently
+      # extracts as the invoking user, rc=0), so this is safe to pass
+      # whenever the task names them - the post pass still surfaces a
+      # real chown failure as a task failure, exactly like real's
+      # set_fs_attributes_if_different does.
+      owner_flag = (owner = @params["owner"]?) ? " --owner=#{shell_single_quote(owner)}" : ""
+      group_flag = (group = @params["group"]?) ? " --group=#{shell_single_quote(group)}" : ""
+      cmd = "tar --extract -C #{shell_single_quote(dest)} -f #{shell_single_quote(src)}#{owner_flag}#{group_flag}#{tar_flags(exclude, include_files, keep_newer, extra_opts)}"
       remote_exec(cmd)[:exit_code] == 0
     end
 
@@ -752,12 +774,25 @@ module Krikri
       path
     end
 
-    # Shell-quoted on-disk paths for every archive member, after
-    # --strip-components stripping - split out of #apply_dest_attributes
-    # purely to keep that method's own branching (owner:/group:/mode:
-    # each independently optional) readable rather than tangled with
-    # this stripping logic's own branches.
-    private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
+    # The filtered, --strip-components-transformed member names real's
+    # attribute pass walks (unarchive.py's files_in_archive: the archive
+    # listing after extra_opts' --show-transformed-names transforms, the
+    # include:/exclude: filters and real's own excludes prep). Split out
+    # so both the per-member on-disk paths and the top-folder pass below
+    # walk the exact same filtered set. A member that collapses onto dest
+    # itself under stripping (the wrapper dir of a GitHub-release tarball,
+    # or the leading "./" of a `-C src .` archive) comes back as "" - the
+    # per-member pass maps that onto dest itself: tar extracts NOTHING
+    # there, but the attribute list must still include dest - Ansible
+    # lists the archive with `--show-transformed-names` + extra_opts, and
+    # a fully-stripped member comes out as "" (file member) or "/"
+    # (directory member), both of which its leading-'/' strip turns
+    # into "" and `os.path.join(dest, "")` puts dest itself on the
+    # attribute list (live-verified against ansible-core 2.19.11:
+    # mode: "0750" over --strip-components=1 ends with dest itself
+    # at 0750, exactly like every extracted member). Only the
+    # EXtraction skips it - tar refuses a member left with no name.
+    private def attribute_member_names(handler : Symbol, src : String) : Array(String)
       strip = handler == :tar ? strip_components_count : 0
       member_filter = handler == :tar ? extra_opts_member_filter : [] of String
       include_files = parse_list_param(@params["include"]?)
@@ -781,27 +816,52 @@ module Krikri
         # real's own excludes prep.
         next nil if !include_files.empty? && !member_matches_any_pattern?(include_files, member, handler == :tar)
         next nil if exclude_files.any? { |pattern| member_matches_any_pattern?([pattern], member) }
-        stripped = stripped_member(member, strip)
-        # A member that collapses onto dest itself under stripping (the
-        # wrapper dir of a GitHub-release tarball, or the leading "./" of
-        # a `-C src .` archive): tar extracts NOTHING there, but the
-        # attribute list must still include dest - Ansible lists the
-        # archive with `--show-transformed-names` + extra_opts, and a
-        # fully-stripped member comes out as "" (file member) or "/"
-        # (directory member), both of which its leading-'/' strip turns
-        # into "" and `os.path.join(dest, "")` puts dest itself on the
-        # attribute list (live-verified against ansible-core 2.19.11:
-        # mode: "0750" over --strip-components=1 ends with dest itself
-        # at 0750, exactly like every extracted member). Only the
-        # EXtraction skips it - tar refuses a member left with no name.
-        next dest if stripped.nil?
+        stripped_member(member, strip) || ""
+      end
+    end
+
+    # Shell-quoted on-disk paths for every archive member, after
+    # --strip-components stripping - split out of #apply_dest_attributes
+    # purely to keep that method's own branching (owner:/group:/mode:
+    # each independently optional) readable rather than tangled with
+    # this stripping logic's own branches.
+    private def stripped_member_paths(dest : String, handler : Symbol, src : String) : Array(String)
+      attribute_member_names(handler, src).compact_map do |name|
+        next shell_single_quote(dest) if name.empty?
         # Containment FIRST: a member like `../../etc` (or an absolute
         # one) normalizes outside dest and must never reach find/chown/
         # chmod as a start argument - see contained_member_path.
-        path = contained_member_path(dest, stripped)
+        path = contained_member_path(dest, name)
         next nil if path.nil?
         shell_single_quote(path)
       end
+    end
+
+    # The extracted TOP-LEVEL folders real's attribute pass applies
+    # owner:/group:/mode: to over and above the member list itself
+    # (unarchive.py's `top_folders` walk, ansible#35426): for every
+    # transformed member containing a '/', the member's first path
+    # component under dest. This is what makes an archive whose listing
+    # carries only FILES (no explicit directory entries at all - e.g.
+    # apache-zookeeper-*.tar.gz) still get its extracted top directory
+    # owned/chmod'd like real: the directory itself is no member, but
+    # every member under it names it as component zero, and a later
+    # `file: state=directory owner:` over the top dir must find it
+    # already right (round 5420000, bilalcaliskan.zookeeper - the top
+    # dir stayed root-owned here while real's top-folder pass had
+    # chown'd it, so real's file: task reported ok and krikri's
+    # changed). Real joins these onto dest verbatim; the containment
+    # check is kept anyway because a member that escapes dest (dropped
+    # from the per-member pass for exactly that reason) must not
+    # resurrect its first component as a find start argument here
+    # either.
+    private def top_folder_paths(dest : String, handler : Symbol, src : String) : Array(String)
+      attribute_member_names(handler, src).compact_map do |name|
+        next nil unless name.includes?("/")
+        first_component = name.split("/").first? || ""
+        next nil if first_component.empty?
+        contained_member_path(dest, first_component)
+      end.uniq!
     end
 
     private def apply_dest_attributes(dest : String, handler : Symbol, src : String) : PluginResult?
@@ -834,9 +894,16 @@ module Krikri
       # fail outright where the pre-fix blanket walk had merely been
       # over-broad).
       member_paths = stripped_member_paths(dest, handler, src)
-      return nil if member_paths.empty?
+      # Real's own pass order: every LISTED member first, then the
+      # top-level folders (unarchive.py's top_folders loop) - merged into
+      # one chunked find walk here; the operations are idempotent, so a
+      # top folder that is also an explicitly listed dir member is
+      # simply visited twice, exactly like real does.
+      paths = member_paths + top_folder_paths(dest, handler, src).map { |path| shell_single_quote(path) }
+      paths = paths.uniq
+      return nil if paths.empty?
 
-      member_paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
+      paths.each_slice(MEMBER_CHUNK_SIZE) do |chunk|
         # -P (GNU find's own default, made explicit here so a future
         # edit can't silently switch to -L): a symlink member start
         # argument must be examined AS a symlink, never followed -
