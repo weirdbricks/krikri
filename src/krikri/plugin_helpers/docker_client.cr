@@ -1,6 +1,7 @@
 require "docr"
 require "openssl"
 require "./docker_sdk_error"
+require "./python_lib_gate"
 
 module Krikri
   module PluginHelpers
@@ -88,6 +89,50 @@ module Krikri
       # _util.py's DOCKER_REQUIRED_TOGETHER - shared by every API module.
       COMMON_REQUIRED_TOGETHER = %w[client_cert client_key]
 
+      # Raised by sdk_import_gate so BasePlugin#run_and_capture can turn it
+      # into the exact failure real's client construction produces (msg in
+      # the result, detail in the [ERROR] block only). The class itself
+      # lives in base_plugin.cr (like OwnerLookupFailure) because every
+      # plugin binary compiles base_plugin, but only the docker ones
+      # compile this helper.
+      # The import gate real's five API modules run at client construction.
+      # community.docker 5.2.1's docker_container/docker_image/
+      # docker_network/docker_network_info/docker_login import the
+      # collection's VENDORED Docker SDK (module_utils/_common_api + _api/),
+      # NOT the external `docker` package - live-probed with the pinned
+      # pair (ansible-core 2.19.11 + 5.2.1): a python3-docker-less target
+      # runs docker_network fine. The gate their client init enforces is
+      # the vendored SDK's own _api/api/client.py fail_on_missing_imports
+      # (reached through AnsibleDockerClientBase.__init__ AFTER TLS
+      # parameter validation): `requests` must import, else the module
+      # fails with missing_required_lib("requests") wording, the
+      # traceback only in the [ERROR] block. (_common.py's external-SDK
+      # gate - the "Docker SDK for Python: docker>=5.0.0" wording and its
+      # MIN_DOCKER_VERSION version check - belongs to the _common.py
+      # consumers, the docker_swarm*/docker_node*/docker_config/
+      # docker_secret family this engine does not implement; there is no
+      # version branch on the vendored path.) krikri talks to the Docker
+      # Engine API directly (docr) and needs no `requests` either, so
+      # without this gate it carried on where real stops.
+      #
+      # Runs at the same point real's does: after TLS parameter validation,
+      # before the client is constructed, so before any network I/O.
+      # Memoized per plugin process (one task = one process).
+      @@gate_checked = false
+
+      def self.sdk_import_gate : Nil
+        return if @@gate_checked
+        @@gate_checked = true
+        return unless gate = Krikri.missing_python_library("requests", "requests")
+        raise SdkImportGateError.new(gate[:msg], gate[:detail])
+      end
+
+      # Clears the per-process memoization above - the specs run several
+      # gate calls in ONE process, where a task gets a fresh process each.
+      def self.reset_sdk_import_gate : Nil
+        @@gate_checked = false
+      end
+
       def self.build(params : Hash(String, String)) : {Docr::Client, String}
         docker_host = resolved_docker_host(params)
 
@@ -95,6 +140,7 @@ module Krikri
           build_tcp(params, docker_host)
         else
           socket_path = docker_host.try(&.sub(/^unix:\/\//, ""))
+          sdk_import_gate
           client = Docr::Client.new(socket_path)
           {client, socket_path || "default socket #{Docr::Client::DEFAULT_SOCKET_PATH}"}
         end
@@ -131,6 +177,7 @@ module Krikri
         tls_hostname = params["tls_hostname"]? || env_overlay(params)["DOCKER_TLS_HOSTNAME"]? || ENV["DOCKER_TLS_HOSTNAME"]?
 
         tls = build_tls_context(params, docker_host)
+        sdk_import_gate
         client = Docr::Client.new(host, port, tls, tls_hostname)
         {client, "#{docker_host}#{tls ? " (TLS)" : ""}"}
       end
