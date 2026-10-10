@@ -23,6 +23,25 @@ module Krikri
   # param hash) strips any key whose fully-substituted value equals it.
   OMIT_SENTINEL = "__crystal_ansible_omit__"
 
+  # Marker a chain-undefined templated leaf rides inside the template
+  # action plugin's variable scope ("'bind_addr' is undefined" wrapped in
+  # private-use control characters, see JinjaRenderer#rerender_string_value).
+  # Both characters are the same private-use code points the param-wire
+  # sentinels (param_sentinels.cr) already rely on to be unrepresentable in
+  # real playbook content, so the scope conversion in TemplateActionPlugin
+  # decodes the marker without ever mistaking authored text for one.
+  UNDEFINED_LEAF_MARKER_OPEN  = "\u{E000}undefleaf:"
+  UNDEFINED_LEAF_MARKER_CLOSE = "\u{E001}"
+
+  # Unwraps a marked leaf (its real-Ansible message), nil for any text not
+  # marked. Shared with TemplateActionPlugin's engine-scope conversion.
+  def self.undefined_leaf_message?(text : String) : String?
+    if text.starts_with?(UNDEFINED_LEAF_MARKER_OPEN) && text.ends_with?(UNDEFINED_LEAF_MARKER_CLOSE)
+      body = text[UNDEFINED_LEAF_MARKER_OPEN.size..]
+      body[0..-UNDEFINED_LEAF_MARKER_CLOSE.size - 1]
+    end
+  end
+
   # Raised only from #substitute's `strict:` path (module-arg/param
   # finalization - see #substitute_task_params) when a `{{ }}` span whose
   # ENTIRE content is a plain variable reference (`foo`, `foo.bar`,
@@ -631,6 +650,16 @@ module Krikri
     rescue
       return nil
     end
+    # evaluate_structured's nil means the BASE is genuinely undefined
+    # (SathiyarajPeriyannan.vsphere, round 5300004: `iriaddresses`-shaped
+    # `{{ hw_eth0.ipaddresses[0] }}` with `hw_eth0` set nowhere reported
+    # "None has no element 0" - the probe read the nil return as a real
+    # JSON-null base and indexed into it). Real ansible-core fails such an
+    # arg with the generic "'hw_eth0' is undefined", so hand the miss back
+    # to that wording; only an actual None VALUE (JSON-null cell or
+    # `none` result) keeps this probe's "None has no element N" - a nil
+    # return carries a real null only as JSON::Any(nil), never as nil.
+    return nil if current.nil?
 
     indices.each do |index|
       case list = current.try(&.raw)

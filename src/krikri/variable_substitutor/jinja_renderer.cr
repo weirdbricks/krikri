@@ -413,13 +413,13 @@ module Krikri
       # each entry re-renders in THAT HOST'S OWN scope (HostvarsContext):
       # Ansible's HostVarsVars templar renders `hostvars['other'].x`
       # with the other host's vars, never the reading host's.
-      def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+      def self.prepare_hostvars(raw_value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false, deferred_leaves : Hash(String, String)? = nil) : JSON::Any
         @@prepare_vars_depth += 1
         begin
           hosts = raw_value.as_h? || return raw_value
           prepared_hosts = Hash(String, JSON::Any).new(initial_capacity: hosts.size)
           hosts.each do |host_name, entry|
-            prepared_hosts[host_name] = prepare_hostvars_entry(host_name, entry, substitutor, defer_unresolved)
+            prepared_hosts[host_name] = prepare_hostvars_entry(host_name, entry, substitutor, defer_unresolved, deferred_leaves)
           end
           JSON::Any.new(prepared_hosts)
         ensure
@@ -427,15 +427,15 @@ module Krikri
         end
       end
 
-      private def self.prepare_hostvars_entry(host_name : String, entry : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+      private def self.prepare_hostvars_entry(host_name : String, entry : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false, deferred_leaves : Hash(String, String)? = nil) : JSON::Any
         host_subs = HostvarsContext.substitutor_for(host_name, substitutor.vars)
-        hash = entry.as_h? || return rerender_nested_templates(entry, host_subs, defer_unresolved)
+        hash = entry.as_h? || return rerender_nested_templates(entry, host_subs, defer_unresolved, deferred_leaves)
         prepared = Hash(String, JSON::Any).new(initial_capacity: hash.size)
         hash.each do |key, value|
           prepared[key] = if VarSubstitutor.resolved_var_name?(host_name, key)
                             value
                           else
-                            rerender_nested_templates(value, host_subs, defer_unresolved)
+                            rerender_nested_templates(value, host_subs, defer_unresolved, deferred_leaves)
                           end
         end
         JSON::Any.new(prepared)
@@ -525,7 +525,7 @@ module Krikri
       # this strict path does. A deferred leaf that IS later accessed is
       # rendered strictly at its access point (FilterEngine's map/selectattr
       # attribute extraction), restoring fail-on-access semantics there.
-      private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+      private def self.rerender_string_value(raw : String, value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false, deferred_leaves : Hash(String, String)? = nil) : JSON::Any
         # Unsafe gate (UnsafeValues.unsafe_text?, the shared value-level
         # registry): a leaf whose exact text was recorded from an execution
         # result (module result / fact / set_fact write) is verbatim
@@ -597,13 +597,16 @@ module Krikri
         begin
           rendered = substitutor.substitute(raw, strict: true)
         rescue e : Krikri::UndefinedVariableError
-          # The defer_unresolved carve-out: see rerender_nested_templates.
-          # Returns the leaf in its raw, still-templated form so a chain
-          # that never touches it (Jinja2's laziness) succeeds; any
-          # access point that actually reads the leaf renders it strictly
-          # and fails exactly like the pre-laziness behavior did.
-          return value if defer_unresolved
-          raise e
+          # The defer_unresolved carve-out (see the cheat-sheet comment on
+          # #rerender_nested_templates above): out of a strict render that
+          # proved the leaf bottoms out at a name set nowhere, the chain
+          # gets either the raw still-templated form (round-952484
+          # laziness) or the marked form (the template action plugin's
+          # collecting walk, #mark_deferred_undefined_leaf), and only a
+          # caller asking for neither raises. Extracted so this method
+          # stays within ameba's cyclomatic-complexity ceiling.
+          raise e unless defer_unresolved
+          return mark_deferred_undefined_leaf(e, raw, value, deferred_leaves)
         end
         stripped = raw.strip
         if stripped.starts_with?("{{") && stripped.ends_with?("}}")
@@ -611,6 +614,37 @@ module Krikri
         else
           JSON::Any.new(rendered)
         end
+      end
+
+      # The defer_unresolved carve-out's two outcomes, split out of
+      # #rerender_string_value (see that method's rescue block): a leaf
+      # whose template bottoms out at a name set nowhere comes back either
+      # in its raw, still-templated form (round-952484 laziness - a chain
+      # that never touches it succeeds) or, when the caller is collecting
+      # strict-undefined leaves (TemplateActionPlugin's
+      # prepare_template_vars_json walk), as a UNDEFINED_LEAF_MARKER-wrapped
+      # real-Ansible message (rounds 5300003 wasilak.centos-hashiui /
+      # 5300004 SathiyarajPeriyannan.vsphere). Real ansible-core keeps such
+      # a leaf as a FORWARDING-undefined value inside the vars scope and
+      # only fails when a template actually touches it; krikri's engine
+      # scope is eagerly built JSON, so an unmarked leaf survived the walk
+      # as its raw `{{ bind_addr }}` text and a template that read it
+      # rendered that file-destined text verbatim (rc=0) where
+      # ansible-playbook died with `'bind_addr' is undefined`. The walk has
+      # already proved the leaf bottoms out at a name set nowhere, so the
+      # marker carries the exception's own innermost message - the engine
+      # scope's conversion (TemplateActionPlugin#engine_scope_value) turns
+      # it into a strict Undefined there, without any re-probe (a fresh
+      # probe would re-run a side-effecting lookup the walk already ran
+      # once). Raises the original error itself when neither carve-out
+      # applies; hands back the walk's own leaf value otherwise.
+      private def self.mark_deferred_undefined_leaf(e : Krikri::UndefinedVariableError, raw : String,
+                                                    value : JSON::Any,
+                                                    deferred_leaves : Hash(String, String)?) : JSON::Any
+        return value unless deferred_leaves
+        message = e.message || "undefined variable"
+        deferred_leaves[raw] = message
+        JSON::Any.new(UNDEFINED_LEAF_MARKER_OPEN + message + UNDEFINED_LEAF_MARKER_CLOSE)
       end
 
       # The `{{ dict.update(other) }}{{ dict }}` mutate-for-side-effect-
@@ -759,14 +793,14 @@ module Krikri
         end
       end
 
-      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false) : JSON::Any
+      def self.rerender_nested_templates(value : JSON::Any, substitutor : VarSubstitutor, defer_unresolved : Bool = false, deferred_leaves : Hash(String, String)? = nil) : JSON::Any
         case raw = value.raw
         when String
-          rerender_string_value(raw, value, substitutor, defer_unresolved)
+          rerender_string_value(raw, value, substitutor, defer_unresolved, deferred_leaves)
         when Array
-          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor, defer_unresolved) })
+          JSON::Any.new(raw.map { |item| rerender_nested_templates(item, substitutor, defer_unresolved, deferred_leaves) })
         when Hash
-          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor, defer_unresolved) })
+          JSON::Any.new(raw.transform_values { |item| rerender_nested_templates(item, substitutor, defer_unresolved, deferred_leaves) })
         else
           value
         end

@@ -2514,7 +2514,22 @@ module Krikri
     private def chain_value_failure_stanza(task : Task, msg : String) : String?
       m = msg.match(/\A(Error while resolving value for '[^']+': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       return nil unless m
-      missing = m[2]
+      origin = undef_chain_var_origin(task, m[2])
+      return nil unless origin
+      "'#{m[2]}' is undefined\n" +
+        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+    end
+
+    # The unique var-layer DEFINITION whose plain-`{{ }}` own value
+    # strictly fails with "'#{missing}' is undefined" - the Origin real
+    # 2.19.11 points an [ERROR] chain's variable-templating link at when
+    # the missing name is reached through such a var (`server_ip: "{{
+    # bind_addr }}"` consumed by template:- live-captured). Shared with
+    # chain_value_failure_stanza (the task-arg finalization chain's
+    # fourth stanza): same layer merge, same exactly-one-match
+    # protection - ambiguous or lineage-less definitions (extra vars,
+    # inventory) yield nil so no origin ever gets mislabeled.
+    private def undef_chain_var_origin(task : Task, missing : String) : FileVarOrigin?
       word = /(^|[^A-Za-z0-9_])#{Regex.escape(missing)}($|[^A-Za-z0-9_])/
 
       merged = {} of String => JSON::Any
@@ -2544,10 +2559,33 @@ module Krikri
           matches << origin
         end
       end
-      return nil unless matches.size == 1
-      origin = matches[0]
-      "'#{missing}' is undefined\n" +
-        origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      matches.size == 1 ? matches[0] : nil
+    end
+
+    # The _ansible_undef_chain_origin ResultDisplay asks for: a template
+    # action's undefined-variable failure (the crash-shaped one, see
+    # ActionResult#crash_failure's *undef_chain*) points its second chain
+    # link at the failing VALUE's DEFinition (`server_ip: "{{ bind_addr
+    # }}"`) rather than the template file, exactly matching real
+    # 2.19.11's chain for the same playbook. nil = leave the crash shape's
+    # template-file default in place (no unique origin to show).
+    private def undef_chain_origin_block(task : Task, bare_msg : String) : String?
+      m = bare_msg.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+      return nil unless m
+      origin = undef_chain_var_origin(task, m[1])
+      return nil unless origin
+      ErrorBlock.origin_context(origin.path, origin.line, origin.column)
+    end
+
+    # The executor-side hook the three action-failure result builder sites
+    # call (execute_task_once, the batched loop, the handler loop): nil
+    # unless the carrying result is an undefined-chain template failure
+    # whose var scan resolved.
+    private def undef_chain_result_origin(task : Task, action_result : ActionResult) : String?
+      return nil unless action_result.undef_chain?
+      detail = action_result.error_detail?
+      return nil unless detail
+      undef_chain_origin_block(task, detail)
     end
 
     private def merge_var_layer(merged : Hash(String, JSON::Any), origins : Hash(String, VarOrigin), values : Hash(String, JSON::Any)?, layer_origins : Hash(String, VarOrigin)?) : Nil

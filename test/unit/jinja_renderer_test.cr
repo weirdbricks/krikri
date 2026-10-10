@@ -1612,3 +1612,96 @@ describe "filter call boundaries materialize lazy generators (xolyu.mariadb)" do
     end
   end
 end
+
+# Rounds 5300003 (wasilak.centos-hashiui) / 5300004
+# (SathiyarajPeriyannan.vsphere): a role default whose value is itself a
+# template referencing a name set nowhere (`server_ip: "{{ bind_addr }}"`)
+# used to survive the template action plugin's defer-walk as raw
+# `{{ bind_addr }}` text and a .j2 that read it rendered that text
+# verbatim into the file (rc=0) where ansible-playbook 2.19.11 fails the
+# task with the chain's innermost message ('bind_addr' is undefined).
+# The collector walk (defer_unresolved + deferred_leaves) now marks those
+# leaves; TemplateActionPlugin's engine-scope load turns the marker into
+# a strict Undefined.
+describe "JinjaRenderer.rerender_nested_templates chain-undefined leaf marking (rounds 5300003/5300004)" do
+  it "marks a leaf that bottoms out at a name set nowhere with the innermost message" do
+    vars = {"server_ip" => JSON::Any.new("{{ bind_addr }}")}
+    sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+    leaves = {} of String => String
+
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ bind_addr }}"), sub, defer_unresolved: true, deferred_leaves: leaves
+    )
+
+    message = Krikri.undefined_leaf_message?(result.as_s)
+    message.must_equal("'bind_addr' is undefined")
+    # The collection record keys the leaf's RAW text (kept for future
+    # introspection; the marker itself is what the engine scope sees).
+    leaves["{{ bind_addr }}"].must_equal("'bind_addr' is undefined")
+  end
+
+  it "marks the innermost name through a multi-level chain" do
+    vars = {
+      "outer"  => JSON::Any.new("{{ middle }}"),
+      "middle" => JSON::Any.new("{{ deepest }}"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+    leaves = {} of String => String
+
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ outer }}"), sub, defer_unresolved: true, deferred_leaves: leaves
+    )
+
+    Krikri.undefined_leaf_message?(result.as_s).must_equal("'deepest' is undefined")
+  end
+
+  it "keeps a defined chain rendering through the collector unchanged" do
+    vars = {
+      "outer" => JSON::Any.new("{{ inner }}"),
+      "inner" => JSON::Any.new("realvalue"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+    leaves = {} of String => String
+
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ outer }}"), sub, defer_unresolved: true, deferred_leaves: leaves
+    )
+
+    result.as_s.must_equal("realvalue")
+    leaves.must_equal({} of String => String)
+  end
+
+  it "keeps a defined nested container rendering through the collector unchanged" do
+    # The rounds-530000x worry, container side: a dict leaf whose value is
+    # a resolvable chain must still come out as the rendered value (not
+    # marked) so existing template rendering of container role defaults
+    # is untouched by the marking.
+    vars = {
+      "config"    => JSON.parse(%({"addr": "{{ bind_addr }}"})),
+      "bind_addr" => JSON::Any.new("10.0.0.1"),
+    }
+    sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+    leaves = {} of String => String
+
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      vars["config"], sub, defer_unresolved: true, deferred_leaves: leaves
+    )
+
+    result.as_h["addr"].as_s.must_equal("10.0.0.1")
+  end
+
+  it "keeps the collector-less defer walk raw (round-952484 filter-chain laziness unchanged)" do
+    # defer_unresolved WITHOUT a collector is every other path's shape
+    # (FilterEngine/ConditionalEvaluator lazy sibling leaves): those still
+    # return the untouched raw text - only the template action plugin's
+    # collecting walk marks.
+    vars = {"server_ip" => JSON::Any.new("{{ bind_addr }}")}
+    sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+
+    result = Krikri::VariableSubstitutor::JinjaRenderer.rerender_nested_templates(
+      JSON::Any.new("{{ bind_addr }}"), sub, defer_unresolved: true
+    )
+
+    result.as_s.must_equal("{{ bind_addr }}")
+  end
+end

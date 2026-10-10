@@ -738,7 +738,14 @@ module Krikri
       if result["_ansible_action_level"]?.try(&.as_bool?) == true
         root = ErrorBlock::Node.new("Task failed.", source_context: origin)
         cause = ErrorBlock::Node.new(msg)
-        if (crash_path = result["_ansible_error_origin"]?.try(&.as_s?)) && !crash_path.empty?
+        # The template action's undefined-chain marker (the executor
+        # resolved the failing VALUE's own DEFINITION - `server_ip: "{{
+        # bind_addr }}"` - and carries its rendered Origin block): real
+        # 2.19.11 replaces the template-file fallback with it, live-
+        # captured. Plain crash failures keep the file-path-only Origin.
+        if (undef_origin = result["_ansible_undef_chain_origin"]?.try(&.as_s?)) && !undef_origin.empty?
+          cause.source_context = undef_origin
+        elsif (crash_path = result["_ansible_error_origin"]?.try(&.as_s?)) && !crash_path.empty?
           cause.source_context = "Origin: #{crash_path}"
         end
         ErrorBlock.emit(root.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
