@@ -1449,6 +1449,24 @@ module Krikri
     # *label_base_context* is nil when the task has no loop_control.label
     # (and then no context is built at all - the common case).
     private def loop_item_display_label(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), label_base_context : Hash(String, JSON::Any)?, host : Host) : String
+      begin
+        loop_item_strict_label(task, item, idx, loop_items, label_base_context, host)
+      rescue Krikri::TaskExecutor::LoopLabelError
+        # Re-raised label failures after execution fall back to real's
+        # own display label for a label that couldn't render: the item
+        # shows as `(item=None)` (round 5250000, veselahouba.openvpn).
+        "None"
+      end
+    end
+
+    # The same rendering WITHOUT the LoopLabelError swallow: the
+    # skipped-block path needs the failure itself, because real still
+    # templates the label per item under a False block when: and the
+    # failure there converts the skip into that item's FAILED result
+    # (round 5280000, veselahouba.openvpn) - the executed paths keep the
+    # swallow because their items already executed and losing the results
+    # would be worse than a wrong label.
+    private def loop_item_strict_label(task : Task, item : JSON::Any, idx : Int32, loop_items : Array(JSON::Any), label_base_context : Hash(String, JSON::Any)?, host : Host) : String
       return item_display(item) unless base = label_base_context
       label_context = base.dup
       label_context["item"] = item
@@ -1478,26 +1496,14 @@ module Krikri
         next if key == "item" || key == task.loop_var || key == task.index_var
         label_context[key] = raw_value
       end
-      # A filter failure here (item bound, filter still
-      # raised) is swallowed: a loop_control.label is
-      # display-only, and raising out of finish_looped_
-      # task after the items already executed would lose
-      # their results - the label falls back to the raw
-      # text instead. The vars: themselves already got
+      # The vars: themselves already got
       # their real per-item verdict during execution.
       begin
         render_task_vars(task, label_context, host.name)
       rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
         nil
       end
-      begin
-        item_label_for(task, item, label_context, host)
-      rescue Krikri::TaskExecutor::LoopLabelError
-        # Re-raised label failures after execution fall back to real's
-        # own display label for a label that couldn't render: the item
-        # shows as `(item=None)` (round 5250000, veselahouba.openvpn).
-        "None"
-      end
+      item_label_for(task, item, label_context, host)
     end
 
     # The failed result a loop_control.label templating failure becomes:
@@ -1522,13 +1528,22 @@ module Krikri
         # NO [ERROR] block - a different display shape from the when:-
         # error marker this would otherwise share.
         "_ansible_loop_label_failed" => JSON::Any.new(true),
-        "msg"    => JSON::Any.new(ex.message || "Failed to template loop_control.label"),
+        "msg"                        => JSON::Any.new(ex.message || "Failed to template loop_control.label"),
       } of String => JSON::Any
       if skip_condition
         loop_var = task.loop_var || "item"
         hash["ansible_loop_var"] = JSON::Any.new(loop_var)
         hash["changed"] = JSON::Any.new(false)
-        hash["false_condition"] = JSON::Any.new(skip_condition)
+        # Same raw-text convention as every other false_condition dump: a
+        # literal YAML false/true stays a bool, anything written as an
+        # expression keeps its string form (live-verified vs 2.19.11 on
+        # the block-skip path: `when: false` shows `"false_condition":
+        # false`, not "false").
+        hash["false_condition"] = case skip_condition
+                                  when "false" then JSON::Any.new(false)
+                                  when "true"  then JSON::Any.new(true)
+                                  else              JSON::Any.new(skip_condition)
+                                  end
         hash["skip_reason"] = JSON::Any.new("Conditional result was False")
         hash[loop_var] = item
       end
@@ -1633,7 +1648,7 @@ module Krikri
           any_failed ||= failed
           any_unreachable ||= unreachable_task_result?(result)
           any_when_failed ||= failed && (result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true ||
-            result["_ansible_loop_label_failed"]?.try(&.as_bool) == true)
+                                         result["_ansible_loop_label_failed"]?.try(&.as_bool) == true)
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil

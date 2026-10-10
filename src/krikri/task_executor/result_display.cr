@@ -455,12 +455,22 @@ module Krikri
           emit_task_error_block(source_task, result, msg)
         end
         if result["_ansible_loop_label_failed"]?.try(&.as_bool) == true
-          # Real's two label-failure shapes: the when:-False case dumps
-          # the full skip-context result single-line sorted, the plain
-          # case dumps just the msg pretty (live-verified, round 5250000
-          # veselahouba.openvpn + local repro).
-          if result["skip_reason"]?
-            puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.python_json_dump(clean_for_display(result))}".colorize(:red)
+          # Real's label-failure shapes, keyed like every other dump on
+          # the module plus whether the skip context rode along (the
+          # underlying result is a skip result there, so debug's
+          # _ansible_verbose_always is NOT present and the dump follows
+          # the normal verbosity; the plain running-loop case's result
+          # came from the module and real's debug: result keeps
+          # verbose_always, dumping msg-only pretty at every verbosity):
+          # a normal module with skip context dumps the full result,
+          # a debug: one strips it to msg alone (live-verified, round
+          # 5250000 veselahouba.openvpn + round 5280000 block-skip
+          # repros).
+          if result["skip_reason"]? && !(module_name.try { |name| name.ends_with?("debug") } == true)
+            puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.dump_suffix(clean_for_display(result))}".colorize(:red)
+          elsif result["skip_reason"]?
+            dump = JSON::Any.new({"msg" => result["msg"]? || JSON::Any.new(nil)} of String => JSON::Any)
+            puts "failed: [#{host_label}] (item=#{item_label}) => #{ResultDisplay.dump_suffix(dump)}".colorize(:red)
           else
             puts "failed: [#{host_label}] (item=#{item_label}) => #{dump_pretty(JSON::Any.new({"msg" => result["msg"]? || JSON::Any.new(nil)} of String => JSON::Any))}".colorize(:red)
           end

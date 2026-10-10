@@ -718,7 +718,12 @@ module Krikri
         # skip path entirely and prints the single meta skip line (or
         # nothing at all for the actions that reject a when: outright).
         if task_has_loop?(nested_task) && nested_task.module_name != "_meta"
-          print_skipped_looped_task(nested_task, host, inherited_when)
+          # A label that fails to template under the False block when:
+          # converts this skip into a task FAILURE (see
+          # print_skipped_looped_task) - the task is then fully booked
+          # there (failed stat, no skip, no register skip result), so
+          # this method's skipped bookkeeping below must not run for it.
+          next if print_skipped_looped_task(nested_task, host, inherited_when)
         elsif nested_task.module_name == "_meta"
           unless meta_when_silent?(nested_task)
             puts "skipping: [#{connection_host}]#{meta_skip_dump(nested_task, host)}".colorize(:cyan)
@@ -754,7 +759,10 @@ module Krikri
     #     line - real never fails a task on its loop source once the
     #     inherited when: is already False (live-verified: undefined
     #     `loop:` under a False block when prints `skipping:`, rc=0).
-    private def print_skipped_looped_task(task : Task, host : Host, inherited_when : String?) : Nil
+    # Returns true when the task was converted into a FAILURE by a
+    # loop_control.label that could not template (already fully booked
+    # here), false when it stayed a plain skip.
+    private def print_skipped_looped_task(task : Task, host : Host, inherited_when : String?) : Bool
       connection_host = host.name
       begin
         vars_context = build_vars_context(task, host, loop_lenient_vars: true)
@@ -764,7 +772,7 @@ module Krikri
         # failed, but the inherited when: is False anyway, so the task is
         # skipped - one line, like a non-looped child.
         puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
-        return
+        return false
       end
       loop_vars_context = loop_source_vars_context(task, host, vars_context)
       loop_shared_sub = task.loop_fileglob || task.loop_file ? VarSubstitutor.new(vars: loop_vars_context, host_name: host.name) : nil
@@ -787,12 +795,12 @@ module Krikri
 
       if loop_items.nil?
         puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
-        return
+        return false
       end
 
       if loop_items.empty?
         puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_empty_loop}".colorize(:cyan)
-        return
+        return false
       end
 
       rendered_items = begin
@@ -802,7 +810,7 @@ module Krikri
       end
       if rendered_items.nil?
         puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
-        return
+        return false
       end
 
       # Only a loop_control.label needs the (expensive) per-item context;
@@ -810,16 +818,84 @@ module Krikri
       label_base_context = task.loop_label ? build_vars_context(task, host) : nil
       no_log = resolve_task_no_log(task, vars_context)
       is_debug = debug_module?(task)
+      # Real templates each item's loop_control.label even on this block-
+      # skip path (the inherited when: is evaluated per item, then the
+      # label for that item's result line), and a label that fails
+      # converts the skip into that item's FAILED result carrying the
+      # enclosing chain's false_condition (round 5280000,
+      # veselahouba.openvpn's `label: "{{ openvpn_client.name }}"` over a
+      # dict item inside a `when: openvpn_ca_master` block) - skipping
+      # the block's children before their loops run would otherwise mask
+      # the failure entirely (krikri printed plain skipping lines, rc=0,
+      # where real failed the task, rc=2). Skipped under no_log: the
+      # label never renders there at all (an unrendered label could echo
+      # the secret it hides), so there is no failure to detect either.
+      any_label_failed = false
       rendered_items.each_with_index do |item, idx|
-        shown = no_log ? "(censored due to no_log)" : loop_item_display_label(task, item, idx, rendered_items, label_base_context, host)
+        label_error = nil.as(Krikri::TaskExecutor::LoopLabelError?)
+        shown = no_log ? "(censored due to no_log)" : begin
+          begin
+            loop_item_strict_label(task, item, idx, rendered_items, label_base_context, host)
+          rescue ex : Krikri::TaskExecutor::LoopLabelError
+            label_error = ex
+            "None"
+          end
+        end
+        if label_error
+          any_label_failed = true
+          # The failed line's item label follows real's callback fallback:
+          # with `_ansible_item_label` unset by the failure it reads
+          # result['item'] - so a default loop_var shows the item's repr,
+          # while a custom loop_var (no 'item' key) and a debug: result
+          # (whose clean strips 'item' before the label lookup) show
+          # "None" (live-verified vs 2.19.11).
+          failed_label = if is_debug || (task.loop_var && task.loop_var != "item")
+                           "None"
+                         else
+                           item_display(item)
+                         end
+          # Same failed-result shape as the executed loop's label-failure
+          # path, with the enclosing chain's condition as the skip
+          # context; display_result's label-failure branch prints real's
+          # exact line shapes (full skip-context dump for a normal
+          # module, msg-only pretty for a debug: one).
+          result = loop_label_failure_result(task, item, label_error, skip_condition: inherited_when)
+          Krikri::ResultDisplay.display_result(host, result, false, item_label: failed_label, module_name: task.module_name, source_task: task)
+          next
+        end
         suffix = skipped_loop_item_suffix_for(task, inherited_when, item, idx)
         puts "skipping: [#{connection_host}] => (item=#{shown}) #{suffix}".colorize(:cyan)
+      end
+      if any_label_failed
+        # One task-level failure entry for the whole loop (real's recap
+        # counts failed=1 even with several failed items - the per-item
+        # lines above are display only), and the host halts for every
+        # later task unless ignore_errors: opts out - real's failed
+        # block-skip child suppresses later tasks for the host entirely,
+        # with no banner at all (live-verified vs 2.19.11).
+        ignore_errors = resolve_task_ignore_errors(task, vars_context)
+        Krikri::ResultDisplay.update_stats(@results[host.name], JSON::Any.new({
+          "changed" => JSON::Any.new(false),
+          "failed"  => JSON::Any.new(true),
+        } of String => JSON::Any), ignore_errors)
+        @halted_hosts.add(host.name) unless ignore_errors
+        # Real's loop aggregation still reports All items skipped as a
+        # task-level FATAL for a debug: task (its failed item results
+        # stay "skipped" to the aggregation), and only for one - a
+        # non-debug module's failed items suppress the aggregate entirely
+        # (live-verified vs 2.19.11, all-failed and mixed).
+        if is_debug
+          dump = JSON::Any.new({"msg" => JSON::Any.new("All items skipped")} of String => JSON::Any)
+          puts "fatal: [#{connection_host}]: FAILED! => #{Krikri::ResultDisplay.dump_suffix(dump)}".colorize(:red)
+        end
+        return true
       end
       # Every item is condition-skipped here, so the trailing line is the
       # all-items-skipped aggregate, same as the executed loop path's
       # executed_count == 0 branch. Real's dump only carries "changed":
       # false for non-debug modules (see skip_line_suffix_all_skipped).
       puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !is_debug)}".colorize(:cyan)
+      false
     end
 
     # The -v dump appended to a when:-false skipped line. Real keys the
