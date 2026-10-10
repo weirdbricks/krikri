@@ -551,6 +551,26 @@ module Krikri
         # Check if update_only is set
         update_only = true?(@params["update_only"]?)
 
+        # A name ending .rpm (or a fetched URL) is a LOCAL RPM FILE: real's
+        # dnf.py routes those through _install_remote_rpms
+        # (base.add_remote_rpms), whose except wraps ANY failure -
+        # including dnf's own "Could not open: <path>" for a file that
+        # isn't there - as "Error occurred attempting remote rpm operation:
+        # <e>" with results=[] and rc=1, NOT the failures-list shape
+        # (robertdebock.atom, round 5410000; dnf.py:801/854-863). The
+        # readability pre-check reproduces the witnessed shape.
+        if rpm_file = names.find { |n| n.strip.ends_with?(".rpm") && !n.strip.lchop.starts_with?("http") && !File.exists?(n.strip) }
+          return PluginResult.new(
+            changed: false,
+            failed: true,
+            msg: "Error occurred attempting remote rpm operation: Could not open: #{rpm_file.strip}",
+            include_empty_msg: true,
+            results: [] of String,
+            rc: 1,
+            key_order: %w[changed msg rc failed]
+          )
+        end
+
         classified = classify_install_packages(names, update_only)
         to_install = classified[:to_install]
         to_update = classified[:to_update]
