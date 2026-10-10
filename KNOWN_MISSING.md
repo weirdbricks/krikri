@@ -13,64 +13,93 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1588`.**
+**Currently at `0.9.1592`.**
 
 ## Open gaps
 
-- **Removed collection modules abort real's play; krikri skips them.** A module removed from a
-  collection (kkolk.mssql's `community.windows.win_domain_user`, removal message and all) makes
-  real 2.19.11 abort the whole play rc=1 at that task; krikri skips the task and continues, then
-  fails later on the role's own undefined `ansible_reboot_pending` conditional. Related shape,
-  same class: a module real cannot resolve AT ALL (bare `docker:` with no community.docker on
-  the controller, removed `ec2_facts`) refuses the whole playbook at parse time rc=4 while
-  krikri - which implements community modules natively - runs on (gbraad.docker-registry,
-  JohnPreston.awslogs; the community.crypto precedent from round 2300000 covers the
-  host-lacks-the-collection half).
+- **Modules real cannot resolve because the CONTROLLER lacks the collection; krikri runs them
+  natively.** Only the host-state-dependent half remains: bare `docker:` (gbraad.docker-registry),
+  removed `ec2_facts` (JohnPreston.awslogs), `vsphere_guest` (SathiyarajPeriyannan.vsphere) and
+  `freeipa.ansible_freeipa.*` (tcharl.nfs_client) refuse the whole playbook at parse time rc=4 on a
+  controller without those collections, while krikri implements community modules natively and runs
+  on. The deterministic half is closed: every collection-tombstoned module FQCN in the reference
+  env's collections (community.{windows,docker,crypto,general,mysql,postgresql}) now refuses the
+  whole playbook at load, rc=1, byte-identical to real's `[ERROR]` + task-Origin render, checked
+  ahead of krikri's own native resolution (kkolk.mssql, sorrowless.* docker_compose roles).
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
   `testing/keyorder_probes/kop_*` roles, run through `krikri-role-tester run` with `local:` queue
   entries and compared by `krikri-role-tester keyorder` (`--values` for values, not just shapes).
-  - Verified by the `kop_snap`, `kop_iptables` and `kop_apt_fail` probes (rounds 1100100+): `snap`, `iptables`
-    real mutations and `apt`'s failure/no-op shapes. The one difference left there is host noise: `apt`'s
-    `update_cache` retry warnings ("Sleeping for N seconds ...") carry random jitter in Ansible itself, so
-    their numbers differ between any two Ansible runs.
+  - Verified by the `kop_snap`, `kop_iptables`, `kop_apt_fail` probes (rounds 1100100+) and the
+    `kop_docker_build`/`kop_docker_invalidrepo` probes (rounds 1600100/1800100, 5331000): `snap`,
+    `iptables`, `apt` real-mutation/failure shapes and `docker_image_build`'s buildx gate, CLI image
+    lookup and both resolve_repository_name refusal shapes (`http://foo`, `registry.example.com-/thing`) -
+    the last two on a real docker.io 26.1.3 + buildx host, byte-identical cold and warm.
   - Not a gap to close: `homebrew*` and `ovirt_auth`/`redhat_subscription`/`rhsm_*` (macOS-first, or
     needing a live oVirt engine / Red Hat entitlement, together well under 2% of roles) and `ec2_*`,
     `iam_user_info`, `nsupdate`, `rabbitmq_*` (need an external account or appliance neither engine
     can reach).
   - Host noise (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is
     not a krikri difference.
-- **PostgreSQL:** the deprecated aliases (`port`, `host`, `login`, `unix_socket`, `db`) register
-  Ansible's deprecation, connection-failure results use libpq's own wording (byte-identical, including
-  every `getaddrinfo` failure code), and `postgresql_query` without a database name warns like real.
-  `connect_timeout` (via `connect_params` or `PGCONNECT_TIMEOUT`, task `environment:` first) is verified
-  byte-identical against real 2.19.11 on a held listener ("timeout expired", no hint line). A connect to an unroutable
-  address (`192.0.2.1`) with a `connect_timeout` set words as "timeout expired" too (probe still pending
-  after a fiber-side failure is read as the deadline, not an errno; unit-pinned, and
-  re-confirmed on an Atlantic.net host in round 2400002). The live tests
-  on port 15432 need a **postgres:16** server.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
   socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real).
   `docker_image_build` is verified against real Ansible 2.19.11 + community.docker on a real
-  docker.io host (the `kop_docker_build` probe, 7 probes byte-identical): the buildx-plugin gate
-  ("Docker CLI /usr/bin/docker does not have the buildx plugin installed", before any daemon call) and
-  the image lookup, which real runs through the CLI (`docker image ls`, then `docker image inspect`),
-  so a daemon failure surfaces in the CLI run_command shape (`cmd rc stdout stderr failed msg ...`),
-  never as an SDK APIError. The one DockerException this module can raise,
-  resolve_repository_name's InvalidRepository ("An unexpected Docker error occurred: ..."), is
-  unit-pinned (docker_image_build_lookup_test.cr) but not provoked live.
-- **`version_type='pep440'` compares with LooseVersion semantics, not PEP-440.** The `version`
-  test's `strict=True`/`version_type='strict'|'semver'|'semantic'` schemes (plus every
-  validation wording, positional binding and the empty-operand checks) are byte-pinned against
-  2.19.11, but packaging's `PEP440Version` (epochs, post/dev releases) is not implemented:
-  `version_type='pep440'` falls back to the LooseVersion component scan. No benchmarked role has
-  used pep440 yet; it gets implemented on first live hit.
+  docker.io host (the `kop_docker_build` probe, and round 5331000's `kop_docker_invalidrepo` probe -
+  both byte-identical cold and warm): the buildx-plugin gate ("Docker CLI /usr/bin/docker does not
+  have the buildx plugin installed", before any daemon call), the CLI image lookup
+  (`docker image ls`, then `docker image inspect`), and both resolve_repository_name refusals,
+  which escape the module body UNCAUGHT (their `errors.InvalidRepository` extends a different
+  `DockerException` than the module's catch imports) and register as
+  `msg: "Task failed: Module failed: <raw text>"` with keys failed/changed/exception/msg.
 - **Test suite needs a reachable container socket:** the Docker plugin tests (`docker_compose_v2`, the
   `--check` mode Docker end-to-end test) talk to the user's podman API socket. If `podman.socket` is
   "listening" but `/run/user/$UID/podman/podman.sock` is missing (seen after a tmpfiles sweep), restart it
   with `systemctl --user restart podman.socket`. One `statvfs` test can flake under parallel workers
-  (passes alone). `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+  (passes alone). The PostgreSQL live tests need a throwaway **postgres:16** server on port 15432
+  (`podman run -d --name krikri-pg16 -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=rootpass
+  docker.io/library/postgres:16` - all three live-test files green against it 2026-10-10).
+  `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+
+## Round 5330000/5331000 (gap-closing session: parse-time tombstone abort, pep440, postgres:16 live tests, docker InvalidRepository live, 2026-10-10)
+
+Four Open-gaps entries closed, 0.9.1589 -> 0.9.1592. The lead-off work ran in three parallel
+tracks (two Crush worktree jobs, this session's own probe rounds):
+
+- **0.9.1589**: `docker_image_build`'s resolve_repository_name failures follow real's UNCAUGHT
+  escape instead of the unreachable wrap ("Task failed: Module failed: <raw>", keys
+  failed/changed/exception/msg, no "An unexpected Docker error occurred:" prefix). The exchanged
+  probe role `testing/keyorder_probes/kop_docker_invalidrepo` installs docker.io + a static buildx
+  v0.17.0 binary (Ubuntu 22.04 carries no docker-buildx-plugin package) and provokes both name
+  shapes on a real daemon; round 5331000 confirmed byte-identical KEYORDER blocks cold+warm. The
+  pre-existing unit pins (asserted "live-verified 2026-10-06" by a prior session without a
+  witnessed run) were rewritten to the round's real shapes - the wrap wording that comment claimed
+  never happens.
+- **0.9.1591 (merge of crush/tombstone-abort)**: the parse-time tombstone machinery went
+  collection-wide. `REMOVED_MODULE_TOMBSTONES` now carries all 159 `type == modules` FQCN
+  tombstones from the reference env's collections' `meta/runtime.yml` (the messages get their
+  terminal period through ansible-core's join_sentences punctuation - caught by comparing krikri's
+  oc.yml probe against real before merge), the check consults the RESOLVED FQCN ahead of krikri's
+  own native resolution, and `RemovedModuleError` renders the whole `[ERROR]` + task-Origin block
+  at the raise site for the CLI to print and exit 1. Byte-identical vs real 2.19.11 on four live
+  probes: `community.windows.win_domain_user` behind `when: false` (real refuses rc=1 with zero
+  tasks run - not "at that task"), reached, `community.crypto.openssl_certificate` (tombstoned in
+  community.crypto 3.x, which krikri also implements natively - real's loader refuses first), and
+  the byte-identical pre-existing `docker_compose` entry re-witnessed. The openssl_certificate
+  alias end-to-end test now pins the refusal (that spelling cannot run end-to-end anymore).
+  kkolk.mssql and the resolved-collection half of the removed-module class are closed; what
+  remains is only the controller-lacks-the-collection half, now the lone Open-gaps bullet.
+- **0.9.1590/0.9.1592 (merge of crush/pep440 + post-crash test re-apply)**: `version`'s
+  `version_type='pep440'` properly PEP-440 (both evaluator copies) - epoch, zero-padded release
+  compare, dev < pre < release < post, discriminating equality - with the exact
+  `Invalid version: '<operand>'` failure wording; the orchestrator's extra 12-case real matrix
+  caught `1.01 == 1.1` normalization (release-segment leading zeros - not in the delegate's own
+  set) and passed clean otherwise; `version_type='loose'` and the no-version_type default stay
+  loose exactly as pinned. The session's battery of probes (crash recovery note): postgresql+
+  postgresql_privs live tests + the CLI postgres end-to-end all green 193/0 against a fresh
+  local postgres:16 on port 15432 (the Open-gaps "needs a postgres:16 server" note killed).
+
+No new Galaxy roles ran in this session; the kilometer-long overnight batch follows.
 
 ## Round 5290000/5291000 (fix-confirm for 4 round-5250000 stragglers + 1 new find, 0.9.1577 -> 0.9.1581, 2026-10-09)
 
