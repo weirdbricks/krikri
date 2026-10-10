@@ -1028,18 +1028,26 @@ module Krikri
     # `changed: false` IS present - live-verified against ansible-core
     # 2.19.11: a `when:`-raising task with register: gives a registered
     # var carrying changed=false+failed=true+msg. But the FATAL line for
-    # a task-level when:/loop-source failure dumps ONLY the msg
-    # ("{"msg": "Task failed: ..."}" - live-verified with and without
-    # register: and ignore_errors:, unlike assert:'s action-level
-    # conditional failure which keeps changed). The
-    # `_ansible_task_error_msg_only` marker tells ResultDisplay to drop
-    # everything but msg from the fatal dump; register strips it with
-    # every other `_ansible_*` key, so the registered var keeps the full
-    # changed+failed+msg shape.
+    # a task-level when:/loop-source failure is MODULE-KEYED (round
+    # 5310002 follow-up): real 2.19.11 dumps ONLY the msg
+    # ("{"msg": "Task failed: ..."}") for a debug: task (live-verified
+    # with and without register: and ignore_errors:, the shape round
+    # 84003 pinned), while every other module class keeps
+    # "changed": false (live sweep over set_fact/file/command/fail/
+    # assert/shell/copy/lineinfile/pause/setup/stat/ping/add_host/
+    # group_by/include_role/include_tasks/wait_for). The msg-only marker
+    # used to be stamped unconditionally here - right for debug, wrong
+    # everywhere else - so a failing set_fact now rides WITHOUT it and
+    # the generic dump keeps changed (ResultDisplay still strips
+    # failed/_ansible_*), while a registered var keeps the full
+    # changed+failed+msg shape either way (register strips the marker
+    # with every other _ansible_* key).
     private def when_error_result(ex : WhenEvaluationError, task : Task? = nil, host : Host? = nil) : JSON::Any
       msg = ex.message || "Error while evaluating conditional"
       msg = decorate_conditional_value_origin(task, msg, host) if task
-      JSON.parse({"changed" => false, "failed" => true, "msg" => msg, "_ansible_task_error_msg_only" => true}.to_json)
+      fields = {"changed" => false, "failed" => true, "msg" => msg}
+      fields["_ansible_task_error_msg_only"] = true if task && debug_module?(task)
+      JSON.parse(fields.to_json)
     end
 
     # For a `when_passes?` call site with no real per-item result
@@ -1090,11 +1098,15 @@ module Krikri
           display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
           if item_label
             puts "failed: [#{host.name}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
-          else
-            # Task-level conditional failures dump the msg alone - real
-            # 2.19.11 shows {"msg": "Task failed: ..."} with no changed
-            # key (live-verified; see when_error_result).
+          elsif debug_module?(task)
+            # Task-level conditional failures on a debug: dump the msg
+            # alone - real 2.19.11 shows {"msg": "Task failed: ..."} with
+            # no changed key (live-verified; see when_error_result).
             puts "fatal: [#{host.name}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
+          else
+            # Every other module class keeps changed: false in the same
+            # dump (live-verified, module-keyed; see when_error_result).
+            puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
           end
         else
           puts "fatal: [#{host.name}]#{suffix}: FAILED! => #{msg}".colorize(:red)

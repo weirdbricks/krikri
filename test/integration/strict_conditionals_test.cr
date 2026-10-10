@@ -234,10 +234,9 @@ describe "strict boolean conditionals" do
   # value), so real 2.19.11 aborts the play with the strict
   # boolean-conditional error while this engine treated the string as
   # falsy and skipped - rc=0, failed=0. Verified live against 2.19.11 on
-  # this machine; real carries a lineage origin for the lookup value
-  # ("at \"<environment variable 'JAVA_VERSION'>\"") we do not track, so
-  # ours degrades to the origin-less message the other untracked origins
-  # already produce.
+  # this machine; the failing value's lineage is a `lookup('env', X)`
+  # result, whose origin real tracks as "<environment variable 'X'>"
+  # (re-verified round 5310002) and is now part of the message.
   it "fails a bare lookup call resolving to a string, as the round 5300002 repro ends the play" do
     # The name is never set anywhere in the suite or the repo (grep-able),
     # and the suite spec env does not define it: `lookup('env', ...)` then
@@ -257,6 +256,111 @@ describe "strict boolean conditionals" do
 
     status, output = run_playbook(yaml)
     status.exit_code.must_equal(2)
-    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str'. Conditionals must have a boolean result.")
+    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str' at \"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\". Conditionals must have a boolean result.")
+  end
+
+  # Round 5310002 follow-up: the FATAL line the failing conditional
+  # prints is module-keyed in real 2.19.11 - a set_fact: keeps
+  # "changed": false beside the msg (round 5310002 byte capture), while
+  # a debug: dumps the msg alone (live-verified on the same machine;
+  # the shape equals_when's earlier debug-only verification pinned).
+  it "keeps changed: false in a failing set_fact's fatal dump, msg alone in debug's" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Set java_version from environment variable
+            ansible.builtin.set_fact:
+              java_version: "{{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' ) }}"
+            when: |-
+              lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' ) is defined and
+              lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' )
+    YAML
+    status, output = run_playbook(yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Conditional result (False) was derived from value of type 'str' at \\\"<environment variable 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST'>\\\". Conditionals must have a boolean result.\"}")
+
+    # Same failing condition on a debug:-family task: real's dump drops
+    # the changed key entirely (live-verified 2.19.11).
+    debug_yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gate
+            ansible.builtin.debug:
+              msg: never
+            when: CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN
+    YAML
+    status, output = run_playbook(debug_yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    # ...and that dump carries no changed key at all - the exact fatal
+    # line above is the pin (a whole-output wont_include can't work).
+  end
+
+  # The same module-keyed rule, probed live on 2.19.11 across a second
+  # class after set_fact: file:, command:, fail:, assert:, shell:,
+  # copy:, lineinfile:, pause:, setup:, stat:, ping:, add_host:,
+  # group_by:, include_role:, include_tasks: and wait_for: all keep
+  # "changed": false in their task-level when:-failure fatal dump -
+  # debug: is the only msg-only class (file: pinned here).
+  it "keeps changed: false in a failing file: task's fatal dump too" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gate
+            ansible.builtin.file:
+              path: /tmp
+              state: directory
+            when: CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN
+    YAML
+    status, output = run_playbook(yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+  end
+
+  # The looped variant obeys the same module-keying (live-verified vs
+  # 2.19.11): a when-failed item on a non-debug module shows the full
+  # per-item dump (ansible_loop_var + changed + item + msg, sorted,
+  # python single-line) with NO trailing aggregate fatal, while a
+  # debug: item shows the msg alone and ends with the aggregate
+  # `fatal: [host]: FAILED! => {"msg": "One or more items failed"}`.
+  it "shows a when-failed loop item's full result for non-debug, aggregate fatal only for debug" do
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gate
+            ansible.builtin.file:
+              path: /tmp
+              state: directory
+            loop: [1]
+            when: CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN
+    YAML
+    status, output = run_playbook(yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("failed: [localhost] (item=1) => {\"ansible_loop_var\": \"item\", \"changed\": false, \"item\": 1, \"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.wont_include("One or more items failed")
+
+    debug_yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: gate
+            ansible.builtin.debug:
+              var: item
+            loop: [1]
+            when: CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN
+    YAML
+    status, output = run_playbook(debug_yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("failed: [localhost] (item=1) => {\"msg\": \"Task failed: Error while evaluating conditional: 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST_UNKNOWN' is undefined\"}")
+    output.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"One or more items failed\"}")
   end
 end

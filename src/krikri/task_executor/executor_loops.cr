@@ -1564,9 +1564,13 @@ module Krikri
       # marker ResultDisplay consumes) rather than at the module level -
       # Ansible 2.19.11 prints the aggregate fatal for that shape only:
       # module item failures show per-item lines with no trailing fatal,
-      # while when-failed items end with
+      # and the aggregate itself is module-keyed too (same debug-family
+      # rule as the fatal dump in when_error_result): a when-failed item
+      # on a debug: ends with
       # `fatal: [host]: FAILED! => {"msg": "One or more items failed"}`
-      # (live-verified both ways).
+      # while every other module's when-failed item shows the full
+      # per-item dump and NO trailing fatal (live-verified vs 2.19.11
+      # across debug/fail/file).
       any_when_failed = false
 
       executed_count = 0
