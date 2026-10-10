@@ -226,4 +226,37 @@ describe "strict boolean conditionals" do
     output.wont_include("TASK-RAN")
     output.wont_include("Error while evaluating conditional")
   end
+
+  # Round 5300002 (kaos2oak.java): the role's `when: |-
+  # lookup('env', 'JAVA_VERSION' ) is defined and lookup('env',
+  # 'JAVA_VERSION' )` with the env var unset became a whole-conditional
+  # result of "" (Python's `and` returns the deciding operand's own
+  # value), so real 2.19.11 aborts the play with the strict
+  # boolean-conditional error while this engine treated the string as
+  # falsy and skipped - rc=0, failed=0. Verified live against 2.19.11 on
+  # this machine; real carries a lineage origin for the lookup value
+  # ("at \"<environment variable 'JAVA_VERSION'>\"") we do not track, so
+  # ours degrades to the origin-less message the other untracked origins
+  # already produce.
+  it "fails a bare lookup call resolving to a string, as the round 5300002 repro ends the play" do
+    # The name is never set anywhere in the suite or the repo (grep-able),
+    # and the suite spec env does not define it: `lookup('env', ...)` then
+    # deterministically returns "".
+    yaml = <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: Set java_version from environment variable
+            ansible.builtin.set_fact:
+              java_version: "{{ lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' ) }}"
+            when: |-
+              lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' ) is defined and
+              lookup('env', 'CRYSTAL_ANSIBLE_SPEC_COND_STR_CALL_TEST' )
+    YAML
+
+    status, output = run_playbook(yaml)
+    status.exit_code.must_equal(2)
+    output.must_include("Task failed: Conditional result (False) was derived from value of type 'str'. Conditionals must have a boolean result.")
+  end
 end
