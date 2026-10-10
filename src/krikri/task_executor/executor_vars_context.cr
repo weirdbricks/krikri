@@ -1240,15 +1240,32 @@ module Krikri
     end
 
     # with_first_found: and include_vars: resolve relative paths against
-    # *different* directories, verified against ansible-core 2.19.4 rather
-    # than assumed - conflating them would silently load files
-    # Ansible would not:
+    # *different* directories, so the ROLE-relative directory priority is
+    # CONTEXT-AWARE here rather than one fixed list. Real first_found
+    # (ansible-core 2.19.11) picks its search subdir from the task's own
+    # action name - first_found.py scans ['template', 'var', 'file'] against
+    # the enclosing task's action, pluralizes it, and resolves every
+    # candidate via DataLoader#path_dwim_relative_stack, which tries
+    # <stack-entry>/<subdir>/<needle> before <stack-entry>/<needle> for each
+    # entry of the task's search stack. Probed live 2026-10-10 with a probe
+    # role holding the same basename under files/, tasks/, vars/ and
+    # templates/ (round 5410000):
     #
-    # - the first_found lookup searches the role's `files/` (a probe role
-    #   with the same filename in both vars/ and files/ resolved to the
-    #   files/ copy, and a name present only in vars/ was skipped);
-    # - include_vars: itself searches the role's `vars/`, which is the
-    #   whole point of that directory.
+    # - an include_vars: task (its action contains "var" -> subdir "vars")
+    #   resolves its candidates from the role's vars/ FIRST - dochang.
+    #   lsbrelease's "include os specific variables" (include_vars: +
+    #   with_first_found: paths: [install]) resolves to vars/install/
+    #   default.yml, while krikri anchored the custom paths: at the
+    #   including file's dir unconditionally and picked the tasks/install/
+    #   default.yml copy - which exists in that role too - merged zero
+    #   variables, and the later package task died with
+    #   "'lsbrelease_package' is undefined";
+    # - every other context (debug, include_tasks, template, ... -> subdir
+    #   "files") resolves files/ first: files/ won with all four subdirs
+    #   populated, and tasks/ won over vars/ once files/ was removed.
+    #
+    # first_found_context_dirs below holds the concrete per-context dir
+    # order.
     #
     # Also searches the ROLE ROOT itself (`task.role_path`), not just
     # its files/templates/vars subdirs directly - geerlingguy.mysql's
@@ -1285,12 +1302,14 @@ module Krikri
       # leaving kubic_pkg_mgr undefined and silently omitting the whole
       # apt-key/apt-repo setup Ansible attempts.
       if custom_paths = task.loop_first_found_paths
-        # A relative custom path resolves against the directory of the
-        # FILE the with_first_found: task is itself written in -
-        # Ansible's own actual behavior (verified live against
-        # ansible-core 2.19.4/2.19.12: `paths: ["distribution"]` on a
-        # with_first_found: task living in a role's tasks/main.yml
-        # resolved to roles/<role>/tasks/distribution/, not
+        # A relative custom path anchors against the CONTEXT-AWARE
+        # role-relative directory stack (first_found_context_dirs) plus
+        # the role root itself. The historical single anchor order - the
+        # including file's own directory first, then the role root - was
+        # verified against ansible-core 2.19.4/2.19.12 for include_tasks:
+        # tasks (`paths: ["distribution"]` on a with_first_found: task
+        # living in a role's tasks/main.yml resolved to
+        # roles/<role>/tasks/distribution/, not
         # roles/<role>/distribution/ - `included:
         # .../tasks/distribution/Linux.yml` in -vv output). Found via
         # three independent real roles hitting this identically
@@ -1301,63 +1320,34 @@ module Krikri
         # actually verified against, but that role's own `paths:` entry
         # happened to be role-root-relative, not tasks-dir-relative -
         # the assumption that ALL custom paths: are role-root-relative
-        # was never itself verified and turned out wrong. Tries the
-        # including file's own directory FIRST (matching what
-        # Ansible showed), then falls back to the role root and the
-        # general per-task include_file_dir, so the earlier
-        # role-root-relative case still resolves too.
+        # was never itself verified and turned out wrong. include_tasks:
+        # keeps that pinned [including-file-dir, role-root] anchor pair
+        # unchanged; the generic and include_vars: contexts go through
+        # the context-aware stack instead (files/ first, vars/ first
+        # respectively - the dochang.lsbrelease divergence above).
         including_file_dir = task.include_file_dir || task.role_path.try { |role_dir| File.join(role_dir, "tasks") }
 
         roots = custom_paths.flat_map do |path|
           rendered = substitutor.substitute(path).strip
           if rendered.starts_with?("/")
             [rendered]
-          else
+          elsif task.include_tasks?
             [including_file_dir, task.role_path].compact.uniq!.map { |anchor| File.join(anchor, rendered) }
+          else
+            anchors = first_found_context_dirs(task)
+            task.role_path.try { |role_dir| anchors << role_dir }
+            anchors.uniq.map { |anchor| File.join(anchor, rendered) }
           end
         end
         return first_existing(roots, candidate)
       end
 
       roots = [] of String
-      if task.include_vars?
-        # include_vars: + with_first_found: (round 812001, mircomasa.
-        # filebeat): Ansible's include_vars action plugin searches the
-        # role's vars/ dir FIRST and its tasks/ dir only as a fallback, and
-        # never files/ or templates/ (verified live against ansible-core
-        # 2.19.11 with a probe role holding the same basename in every
-        # subdir: the vars/ copy won; with vars/ empty and only files//
-        # templates/ populated, the lookup exhausted and failed). The
-        # previous root order here put tasks/ first, so a role shipping the
-        # same OS filename in both tasks/ (a task LIST, mircomasa.filebeat's
-        # own tasks/Linux.yml) and vars/ (a vars MAPPING, its vars/Linux.yml
-        # defining a `default:` dict) resolved the include_vars: to the
-        # tasks/ copy, merged zero variables, and every later default that
-        # referenced one of them - fb_home: '{{ default["fb_home"] }}' -
-        # failed with "'default[...]' is undefined" at the first task that
-        # rendered it, even though the include_vars: task itself had
-        # reported ok. The tasks/ fallback stays because so5.ssh_hostbased_
-        # auth and so5.pbspro (both verified live against ansible-core
-        # 2.19.x) include_vars: with_first_found: a "setup-<OS>.yml" idiom
-        # whose only matching file lives under tasks/ (never vars/ or
-        # files/) - Ansible resolved to tasks/setup-Debian.yml there.
-        task.role_vars_dir.try { |dir| roots << dir }
+      if task.include_tasks?
         task.include_file_dir.try { |dir| roots << dir }
         task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
       else
-        # The directory of the file the with_first_found: task itself is
-        # written in - Ansible tries a bare candidate against the
-        # task's own file first. include_file_dir is only assigned for
-        # include_tasks: statements, though, so a task declared directly
-        # in a role's tasks/main.yml has it nil - fall back to the role's
-        # tasks/ dir itself.
-        task.include_file_dir.try { |dir| roots << dir }
-        task.role_path.try { |role_dir| roots << File.join(role_dir, "tasks") }
-        unless task.include_tasks?
-          task.role_files_dir.try { |dir| roots << dir }
-          task.role_templates_dir.try { |dir| roots << dir }
-          task.role_vars_dir.try { |dir| roots << dir }
-        end
+        first_found_context_dirs(task).each { |dir| roots << dir }
       end
       # vars//files//templates/ are NOT searched for an include_tasks:'
       # with_first_found: at all - include_tasks: consumes task-list YAML
@@ -1374,6 +1364,49 @@ module Krikri
       roots << Dir.current
 
       first_existing(roots, candidate)
+    end
+
+    # The context-aware ROLE-relative directory order for with_first_found:
+    # candidate resolution - used both by the no-paths: default stack above
+    # and as the anchor stack for each relative custom paths: entry.
+    #
+    # include_vars: tasks search the role's vars/ first, then files/, then
+    # tasks/: vars/-first is verified live twice (dochang.lsbrelease,
+    # round 5410000, and mircomasa.filebeat round 812001 - both resolve the
+    # vars/ copy when tasks/ holds the same basename; in the filebeat shape
+    # the tasks/ copy is a task LIST, so picking it merged zero variables
+    # and every later default that referenced one of them - fb_home:
+    # '{{ default["fb_home"] }}' - failed with "'default[...]' is
+    # undefined" even though the include_vars: task itself had reported
+    # ok). The tasks/ fallback stays because so5.ssh_hostbased_auth and
+    # so5.pbspro (both verified live against ansible-core 2.19.x)
+    # include_vars: with_first_found: a "setup-<OS>.yml" idiom whose only
+    # matching file lives under tasks/ (never vars/ or files/) - Ansible
+    # resolved to tasks/setup-Debian.yml there.
+    #
+    # Every other context searches files/ first, then tasks/, then vars/
+    # (the round-5410000 probe role: files/ won with all four subdirs
+    # populated, tasks/ won over vars/ once files/ was removed).
+    # templates/ keeps its historical slot between tasks/ and vars/. The
+    # include_tasks: carve-out (no role subdirs at all - a vars file can
+    # never be a valid include target) does NOT go through this helper.
+    private def first_found_context_dirs(task : Task) : Array(String)
+      dirs = [] of String
+      if task.include_vars?
+        # vars/ > tasks/ ONLY - the delegate's own cascade probe (vars/
+        # removed, candidate in both files/ and tasks/) watched real pick
+        # tasks/: real's include_vars context never searches files/.
+        task.role_vars_dir.try { |dir| dirs << dir }
+      else
+        task.role_files_dir.try { |dir| dirs << dir }
+      end
+      task.include_file_dir.try { |dir| dirs << dir }
+      task.role_path.try { |role_dir| dirs << File.join(role_dir, "tasks") }
+      unless task.include_vars?
+        task.role_templates_dir.try { |dir| dirs << dir }
+        task.role_vars_dir.try { |dir| dirs << dir }
+      end
+      dirs.uniq
     end
 
     private def resolve_fileglob(task : Task, host : Host, vars_context : Hash(String, JSON::Any), shared : VarSubstitutor? = nil) : Array(JSON::Any)?

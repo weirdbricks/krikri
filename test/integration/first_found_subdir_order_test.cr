@@ -125,6 +125,153 @@ describe "with_first_found: default search roots vs the task's action" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "prefers vars/ over tasks/ for an include_vars: with_first_found: with a custom paths: sub-key (dochang.lsbrelease shape)" do
+    # Real divergence benchmarking dochang.lsbrelease (round 5410432):
+    # its "include os specific variables" include_vars: + with_first_found:
+    # dict form carries paths: [install] and both tasks/install/default.yml
+    # (a task LIST) and vars/install/default.yml (the lsbrelease_package
+    # vars MAPPING) exist. ansible-playbook (core 2.19.11, probed live
+    # 2026-10-10) resolves the include_vars: to vars/install/default.yml;
+    # krikri anchored the custom paths: at the including file's dir
+    # unconditionally and picked tasks/install/default.yml - merged zero
+    # variables - so the later package task failed with
+    # "'lsbrelease_package' is undefined". Verified live with the same
+    # probe shape: with vars/ present the vars/ copy wins even though the
+    # tasks/ copy exists too.
+    src_dir = File.tempname("first-found-include-vars-custom-paths-vars-first")
+    role = File.join(src_dir, "roles", "myrole")
+    Dir.mkdir_p(File.join(role, "tasks", "install"))
+    Dir.mkdir_p(File.join(role, "vars", "install"))
+    File.write(File.join(role, "vars", "install", "default.yml"), <<-YAML)
+      lsbrelease_package: from-vars-install
+      YAML
+    File.write(File.join(role, "tasks", "install", "default.yml"), <<-YAML)
+      - name: not a vars file
+        ansible.builtin.debug:
+          msg: TASKS_INSTALL_DEFAULT_YML
+      YAML
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - name: include os specific variables
+        include_vars: '{{ item }}'
+        with_first_found:
+          - files:
+              - '{{ ansible_distribution }}.yml'
+              - '{{ ansible_os_family }}.yml'
+              - default.yml
+            paths:
+              - install
+      - name: show loaded var
+        ansible.builtin.debug:
+          msg: "lsbrelease_package={{ lsbrelease_package }}"
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          ansible_distribution: Debian
+          ansible_os_family: Debian
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("lsbrelease_package=from-vars-install")
+    output.to_s.wont_include("TASKS_INSTALL_DEFAULT_YML")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "prefers the role's files/ copy over tasks/ and vars/ for a generic task's with_first_found: with a custom paths: sub-key" do
+    # Probed live against ansible-core 2.19.11 (2026-10-10): for a generic
+    # task (debug:, action contains neither "template" nor "var") the
+    # first_found lookup resolves with subdir "files", so the role's files/
+    # copy wins even with the same basename present under tasks/ and vars/.
+    # krikri previously anchored custom paths: at the including file's dir
+    # (tasks/) first and never searched files/ at all.
+    src_dir = File.tempname("first-found-generic-custom-paths-files-first")
+    role = File.join(src_dir, "roles", "myrole")
+    Dir.mkdir_p(File.join(role, "tasks", "sub"))
+    Dir.mkdir_p(File.join(role, "files", "sub"))
+    Dir.mkdir_p(File.join(role, "vars", "sub"))
+    File.write(File.join(role, "files", "sub", "candidate.txt"), "from-files")
+    File.write(File.join(role, "tasks", "sub", "candidate.txt"), "from-tasks")
+    File.write(File.join(role, "vars", "sub", "candidate.txt"), "ivv: from-vars")
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - name: generic first found
+        ansible.builtin.debug:
+          msg: "GENERIC {{ item }}"
+        with_first_found:
+          - files:
+              - candidate.txt
+            paths:
+              - sub
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("GENERIC #{File.join(role, "files", "sub", "candidate.txt")}")
+    output.to_s.wont_include("GENERIC #{File.join(role, "tasks", "sub", "candidate.txt")}")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "prefers the role's tasks/ copy over vars/ for a generic task's with_first_found: once files/ has no candidate" do
+    # Same probe shape as above with the files/ candidate removed: real
+    # ansible-core 2.19.11 then resolves the tasks/ copy over the vars/
+    # copy (both present here).
+    src_dir = File.tempname("first-found-generic-custom-paths-tasks-over-vars")
+    role = File.join(src_dir, "roles", "myrole")
+    Dir.mkdir_p(File.join(role, "tasks", "sub"))
+    Dir.mkdir_p(File.join(role, "vars", "sub"))
+    File.write(File.join(role, "tasks", "sub", "candidate.txt"), "from-tasks")
+    File.write(File.join(role, "vars", "sub", "candidate.txt"), "ivv: from-vars")
+    File.write(File.join(role, "tasks", "main.yml"), <<-YAML)
+      - name: generic first found
+        ansible.builtin.debug:
+          msg: "GENERIC {{ item }}"
+        with_first_found:
+          - files:
+              - candidate.txt
+            paths:
+              - sub
+      YAML
+
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    output.to_s.must_include("GENERIC #{File.join(role, "tasks", "sub", "candidate.txt")}")
+    output.to_s.wont_include("GENERIC #{File.join(role, "vars", "sub", "candidate.txt")}")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "prefers vars/ over tasks/ for an include_vars: with_first_found: when both hold the same basename" do
     # Real divergence benchmarking mircomasa.filebeat (round 812001): its
     # "Load a variable file based on the OS type" include_vars: +
