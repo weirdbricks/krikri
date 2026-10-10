@@ -1,3 +1,8 @@
+require "base64"
+require "compress/gzip"
+require "json"
+require "./builtin_module_names_data"
+
 # Controller collection-set awareness (real's module-name resolution,
 # discovered from the controller this engine runs on rather than
 # modeled): krikri-playbook runs on the SAME controller real
@@ -25,6 +30,7 @@
 # refusal only fires when a needed directory/file is DEFINITELY absent
 # from every path real itself would search.
 module Krikri
+
   module CollectionIndex
     # Maximum meta/runtime.yml redirect chain depth before giving up as
     # "unsure" - real's own loader has no explicit cap but no real chain
@@ -125,6 +131,17 @@ module Krikri
           bases << candidate if Dir.exists?(candidate)
         end
       end
+      # pip's "default user install" (`pip3 install ansible-core` as a
+      # non-root user falls back to --user): ~/.local/lib/python3.X/
+      # site-packages - the harness's own ansible-core install path on
+      # the batch hosts, and home to its ansible_collections too
+      # (round 5440000's four confirm roles: the index found nothing
+      # there and every refusal degraded to unsure -> run).
+      if home = ENV["HOME"]?
+        Dir.glob("#{home}/.local/lib/python3*/site-packages").each do |candidate|
+          bases << candidate if Dir.exists?(candidate)
+        end
+      end
       bases.uniq
     end
 
@@ -215,7 +232,11 @@ module Krikri
     # inside the ansible-core package)? nil when no ansible-core
     # installation is discoverable - the caller must then not refuse.
     def self.builtin_module?(leaf : String) : Bool?
-      return nil if ansible_pkg_dirs.empty?
+      if ansible_pkg_dirs.empty?
+        # No ansible-core on this controller: the baked 2.19.11 name set
+        # is the truth (same reason as builtin_redirects's fallback).
+        return Krikri.builtin_module_names.includes?(leaf)
+      end
 
       cached = @@builtin_modules
       modules = cached || begin
@@ -266,10 +287,19 @@ module Krikri
         end
         return table
       end
+      # No ansible-core installation discoverable: fall back to the
+      # BAKED-IN 2.19.11 tables (krikri replaces ansible-core on this
+      # controller - its redirect truth is the same data the missing
+      # package would carry; round 5440000's confirm roles ran because
+      # this fallback used to return nil and every refusal degraded to
+      # "unsure").
+      baked_modules, baked_action = Krikri.builtin_runtime_redirects
       if kind == "modules"
-        @@builtin_redirects = nil
+        @@builtin_redirects = baked_modules
+        return baked_modules
       else
-        @@builtin_action_redirects = nil
+        @@builtin_action_redirects = baked_action
+        return baked_action
       end
       nil
     end

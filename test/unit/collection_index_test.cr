@@ -149,4 +149,37 @@ describe Krikri::CollectionIndex do
       role_path: File.join(root, "roles", "librole"))
     result[:resolves].must_equal(true)
   end
+
+  # ------------------------------------------------------------------
+  # The no-ansible-core fallback (round 5440000's confirm roles: the
+  # krikri host has no ansible-core install at all - the index used to
+  # degrade every builtin-dependent answer to nil ("unsure") and every
+  # refusal became a run). With the baked 2.19.11 name set + redirect
+  # tables the resolution is definitive even there.
+  it "bare redirect into an absent collection refuses with no ansible-core on the machine" do
+    # Simulate "no ansible-core anywhere": clear the discovered package
+    # dirs through reset! + an env where the standard paths are empty.
+    # ANSIBLE_COLLECTIONS_PATH points at an EMPTY tree (no collections),
+    # and the baked builtin tables carry the name resolution.
+    empty_root = PluginSpecHelper.tmp_path("collection-index-empty")
+    FileUtils.mkdir_p(File.join(empty_root, "ansible_collections"))
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = empty_root
+    Krikri::CollectionIndex.reset!
+
+    # `vsphere_guest` is not a builtin module file; its builtin-runtime
+    # redirect lands in community.vmware, which this fixture does not
+    # have - real refuses the playbook at load on such a controller.
+    resolution = Krikri::CollectionIndex.controller_resolves?("vsphere_guest")
+    resolution[:resolves].must_equal(false)
+  end
+
+  it "bare builtin name resolves with no ansible-core on the machine" do
+    empty_root = PluginSpecHelper.tmp_path("collection-index-empty-2")
+    FileUtils.mkdir_p(File.join(empty_root, "ansible_collections"))
+    ENV["ANSIBLE_COLLECTIONS_PATH"] = empty_root
+    Krikri::CollectionIndex.reset!
+
+    resolution = Krikri::CollectionIndex.controller_resolves?("command")
+    resolution[:resolves].must_equal(true)
+  end
 end
