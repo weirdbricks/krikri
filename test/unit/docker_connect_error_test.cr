@@ -57,6 +57,27 @@ module Krikri
                           "Failed to establish a new connection: [Errno 111] Connection refused'))")
         end
 
+        it "probes through Crystal's non-blocking EINPROGRESS to real's completion errno (live connect to a closed port)" do
+          # Crystal's own TCPSocket/HTTP::Client connect raises on the
+          # immediate EINPROGRESS return without reading SO_ERROR, so the
+          # exception real-world code catches carries EINPROGRESS, not the
+          # ECONNREFUSED real's blocking connect sees. The rendering must
+          # recover the completion verdict (probed live: instant refusal).
+          text = DockerSdkError.connect_error_text(connect_error(Errno::EINPROGRESS), "tcp://127.0.0.1:1")
+          text.must_equal("Error connecting: Error while fetching server API version: " \
+                          "HTTPConnectionPool(host='127.0.0.1', port=1): Max retries exceeded with url: /version " \
+                          "(Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at #{text[/object at (0x[0-9a-f]+)>/, 1]}>: " \
+                          "Failed to establish a new connection: [Errno 111] Connection refused'))")
+        end
+
+        it "keeps the caught errno when the probe cannot reach a verdict (no host context)" do
+          # A synthetic EINPROGRESS with no TCP docker_host falls to the
+          # unix branch; with a host the probe needs a resolvable endpoint.
+          # Here: tcp host whose DNS cannot resolve keeps the caught errno.
+          text = DockerSdkError.connect_error_text(connect_error(Errno::EINPROGRESS), "tcp://krikri-no-such-host.invalid:2375")
+          text.must_include("Failed to establish a new connection: [Errno 115] Operation now in progress")
+        end
+
         it "words an https daemon HTTPSConnectionPool" do
           text = DockerSdkError.connect_error_text(connect_error(Errno::ECONNREFUSED), "https://127.0.0.1:2376")
           text.must_include("HTTPSConnectionPool(host='127.0.0.1', port=2376)")

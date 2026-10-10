@@ -13,14 +13,10 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1610`.**
+**Currently at `0.9.1611`.**
 
 ## Open gaps
 
-- **Docker plugins, TCP-unreachable wording** is the last unmatchable byte-class (a Python heap
-  pointer inside real's own message - two real runs disagree). The SDK import gate closed with
-  0.9.1603: the five SDK-based modules gate on the VENDORED SDK's `requests` requirement
-  (`missing_required_lib("requests")` wording, witnessed live), not the external docker package.
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
   `testing/keyorder_probes/kop_*` roles, run through `krikri-role-tester run` with `local:` queue
@@ -38,7 +34,7 @@ defect moves down or gets deleted.
     not a krikri difference.
 - **Docker plugins:** API failures, container start failures, daemon-unreachable wording (SDK and CLI
   modules) and `docker_network` `ipam_config` are verified against community.docker 5.2.1 on a podman
-  socket. Still different: TCP-unreachable wording embeds a Python heap pointer (unstable even in real).
+  socket; the TCP-unreachable wording is in Deliberate limits below (unmatchable).
   `docker_image_build` is verified against real Ansible 2.19.11 + community.docker on a real
   docker.io host (the `kop_docker_build` probe, and round 5331000's `kop_docker_invalidrepo` probe -
   both byte-identical cold and warm): the buildx-plugin gate ("Docker CLI /usr/bin/docker does not
@@ -418,6 +414,25 @@ passwords without `sshpass` fall back to OpenSSH `SSH_ASKPASS` like real 2.19's 
 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
 "Open gaps" rather than arguing with the note in place.
+
+### Docker TCP-unreachable wording embeds a Python heap pointer
+
+- A docker module run with `DOCKER_HOST` pointing at a closed TCP port fails with
+  `Error connecting: Error while fetching server API version: HTTPConnectionPool(host='...',
+  port=N): Max retries exceeded with url: /version (Caused by NewConnectionError('<urllib3.
+  connection.HTTPConnection object at 0x7f...>: Failed to establish a new connection: [Errno 111]
+  Connection refused'))` - the `object at 0x...` address is a live Python heap pointer, printed
+  by real itself. Three runs of real ansible-playbook 2.19.11 against the same closed port
+  produced three different addresses (`0x7f0a371d01a0`, `0x7f364e4d41a0`, `0x7fb1ca5c81a0`,
+  2026-10-10), and krikri's own rendering (same wording, its `ex.object_id` in place of the
+  Python address) varies the same way run to run - the wording, chain shape and errno match;
+  only the per-process address differs on BOTH engines, so byte-for-byte comparison of this
+  one field is meaningless. (krikri's errno is recovered through a blocking connect re-probe,
+  0.9.1611: Crystal's own non-blocking connect surfaces EINPROGRESS without ever reading
+  SO_ERROR, so the caught errno was never the verdict real's blocking socket reports.)
+  Every other docker failure surface (SDK and CLI) is verified -
+  see the docker bullets in Open gaps. Decided 2026-10-10.
+
 ### `password_mechanism=sshpass` is not implemented (askpass is always the fallback)
 
 ansible-core 2.19 defaults `password_mechanism` to `ssh_askpass` and only needs the `sshpass` program when

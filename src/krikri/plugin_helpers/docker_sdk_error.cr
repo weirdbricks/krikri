@@ -245,7 +245,7 @@ module Krikri
           https = docker_host.try(&.starts_with?("https://")) || false
           port = uri.port || (https ? 2376 : 2375)
           pool = "#{https ? "HTTPS" : "HTTP"}ConnectionPool(host='#{uri.host || ""}', port=#{port})"
-          cause = errno_cause_text(ex)
+          cause = errno_cause_text(ex, uri.host, port)
           # urllib3 renders the failed connection attempt's own object
           # address in the cause ("...HTTPConnection object at 0x7fa5..."),
           # which is the Python process's live heap pointer - real's own
@@ -259,9 +259,40 @@ module Krikri
         end
       end
 
-      private def self.errno_cause_text(ex : Exception) : String
+      private def self.errno_cause_text(ex : Exception, host : String? = nil, port : Int32? = nil) : String
         errno = ex.os_error.as?(Errno)
+        # Crystal's non-blocking connect raises on connect()'s immediate
+        # EINPROGRESS/EAGAIN return without ever reading SO_ERROR, so the
+        # caught errno is never the completion verdict real's blocking
+        # socket reports ("[Errno 111] Connection refused" for a closed
+        # port). A blocking re-probe of the same endpoint recovers the
+        # OS's actual verdict with real's own socket semantics.
+        if host && port && (errno == Errno::EINPROGRESS || errno == Errno::EAGAIN)
+          errno = probe_connect_errno(host, port) || errno
+        end
         errno ? "[Errno #{errno.value}] #{errno.message}" : (ex.message || "connection error")
+      end
+
+      # One low-level BLOCKING connect attempt - the same socket semantics
+      # real's urllib3 connect uses, so the errno it surfaces is exactly
+      # the one Python would report: ECONNREFUSED (closed port) and
+      # ENETUNREACH/EHOSTUNREACH fail instantly; dropped/filtered traffic
+      # hangs until the kernel's own TCP timeout, exactly like real's
+      # connect does before its "Connection timed out". Any probe-side
+      # failure (DNS, resource) keeps the caught exception's own errno.
+      private def self.probe_connect_errno(host : String, port : Int32) : Errno?
+        family = host.includes?(':') ? Socket::Family::INET6 : Socket::Family::INET
+        ai = Socket::Addrinfo.resolve(host, port, family: family, type: Socket::Type::STREAM).first
+        fd = LibC.socket(ai.family.value, LibC::SOCK_STREAM, 0)
+        return nil if fd < 0
+        begin
+          rc = LibC.connect(fd, ai.to_unsafe, LibC::SocklenT.new(ai.size))
+          rc == 0 ? nil : Errno.new(Errno.value)
+        ensure
+          LibC.close(fd)
+        end
+      rescue
+        nil
       end
 
       # Python's repr of the exception requests wraps for a UNIX-socket
