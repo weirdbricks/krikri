@@ -606,6 +606,29 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply(v, "flatten").as_a.map(&.as_i64).must_equal([1_i64, 2_i64, 3_i64, 4_i64])
   end
 
+  it "flatten over a dict operand iterates to its keys, never its values" do
+    # Verified vs ansible-playbook 2.19.11: core.py's `for element in
+    # mylist` on a dict iterates to its KEYS, and a dict nested INSIDE
+    # the input (a Sequence check fails for mappings) stays an ordinary
+    # item. The `vars` magic var is always a dict, so kaos2oak.java's
+    # loop `{{ vars | flatten(levels=1) | select('match',
+    # '^default_java_') | list }}` (round 5300002) collapsed to nothing
+    # in krikri: the task skipped and the play failed downstream on the
+    # variable it would have set.
+    v = JSON.parse(%({"extra_thing": ["A", "B"], "plain": "x", "nested_dict": {"deep": 1}}))
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine.apply(v, "flatten(levels=1)").as_a.map(&.as_s).must_equal(["extra_thing", "plain", "nested_dict"])
+  end
+
+  it "flatten keeps a dict nested inside the input as an ordinary item" do
+    # Same verification vs 2.19.11 as the dict-operand test above: only
+    # the operand itself iterates to keys; an element that is a dict is
+    # not a Python Sequence, so it is appended untouched.
+    v = JSON.parse(%([{"z": 1}, "b"]))
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    engine.apply(v, "flatten").as_a.must_equal(JSON.parse(%([{"z": 1}, "b"])).as_a)
+  end
+
   it "map('regex_findall', pattern) preserves the pattern's quoting instead of mangling it into an empty match, real bug found live-verifying prometheus.prometheus.node_exporter" do
     # prometheus.prometheus._common's own checksum-file parsing chain -
     # `raw.splitlines() | map('regex_findall', '^([a-fA-F0-9]+)\\s+

@@ -35,6 +35,21 @@ describe Krikri::VariableSubstitutor::JinjaVarResolver do
     hash.keys.must_equal(["a"])
   end
 
+  it "renders user vars through the vars magic var's flatten chain" do
+    # kaos2oak.java's own loop source, round 5300002:
+    # `{{ vars | flatten(levels=1) | select('match', '^default_java_')
+    # | list }}` came back empty in krikri while ansible-playbook 2.19.11
+    # iterated the variable names - the real `vars` dict's user-defined
+    # entries (`extra_thing` here) must flow through the chain.
+    vars = {
+      "extra_thing" => JSON.parse(%(["A", "B"])),
+      "plain"       => JSON::Any.new("x"),
+    }
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(vars)
+    renderer.evaluate_value!("vars | flatten(levels=1) | select('match', '^extra_') | list")
+      .must_equal(JSON.parse(%(["extra_thing"])))
+  end
+
   it "evaluates structured values through the renderer" do
     vars = {
       "items"  => JSON.parse(%(["a", "{{ omit }}", "b"])),

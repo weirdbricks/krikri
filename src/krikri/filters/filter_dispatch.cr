@@ -196,7 +196,18 @@ module Krikri
           levels = (kwargs["levels"]? || positional[0]?).try(&.as_i64?).try(&.to_i32)
           skip_nulls_arg = kwargs["skip_nulls"]? || positional[1]?
           skip_nulls = skip_nulls_arg ? truthy?(skip_nulls_arg) : true
-          JSON::Any.new(flatten_array(as_array(value), levels, skip_nulls))
+          # Real flatten (core.py's `for element in mylist`) iterates
+          # whatever container it receives, so a DICT operand iterates to
+          # its KEYS - and only the operand: core.py's is_sequence is a
+          # Sequence check, which a dict nested inside the input fails,
+          # so nested dicts stay ordinary items there. #as_array reduced
+          # the dict operand to [], so `vars | flatten(levels=1) |
+          # select('match', '^default_java_') | list` - kaos2oak.java's
+          # own loop source, round 5300002 (Ansible's `vars` magic var is
+          # always a dict) - returned empty and the task silently
+          # skipped, failing the play downstream on the missing variable.
+          container = value.raw.is_a?(Hash) ? JSON::Any.new(as_hash(value).keys.map { |key| JSON::Any.new(key) }) : value
+          JSON::Any.new(flatten_array(as_array(container), levels, skip_nulls))
         when "reverse"
           case value.raw
           when Array
