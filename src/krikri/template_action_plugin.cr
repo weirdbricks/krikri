@@ -325,7 +325,7 @@ module Krikri
                             template_vars : Hash(String, JSON::Any)) : String
       rendered = engine.render_string(
         content,
-        template_vars.transform_values { |value| KrikriJinja.from_json_any(value) }
+        template_vars.transform_values { |value| engine_scope_value(value) }
       )
       # Ansible drops an `omit` value out of a rendered string entirely -
       # a template whose body is `A{{ omit }}B` writes "AB" (live-verified
@@ -335,6 +335,41 @@ module Krikri
       rendered = rendered.gsub(Krikri::OMIT_SENTINEL, "") if rendered.includes?(Krikri::OMIT_SENTINEL)
       rendered += "\n" unless rendered.ends_with?("\n")
       rendered
+    end
+
+    # Engine-scope conversion for the template render's variable loading.
+    # The plain-JSON path is KrikriJinja.from_json_any unchanged; a
+    # UNDEFINED_LEAF_MARKER-wrapped leaf (JinjaRenderer's defer-walk) is
+    # loaded as a strict chainable Undefined carrying the walk's own
+    # real-Ansible message instead. That is what real ansible-core 2.19
+    # hands the template engine for a var whose value chain bottoms out at
+    # a name set nowhere (rounds 5300003 wasilak.centos-hashiui /
+    # 5300004 SathiyarajPeriyannan.vsphere): touching it inside the
+    # template fails the task with exactly that innermost message
+    # (`'bind_addr' is undefined`), an untouched sibling leaf still never
+    # renders strictly (the round-952484 laziness), and the undefined
+    # consumers in between behave like Ansible's too - `| default('x')`
+    # falls through, `is defined` is False (live-verified vs 2.19.11),
+    # and stringification raises rather than printing the raw text.
+    private def engine_scope_value(value : JSON::Any) : KrikriJinja::AnyValue
+      case raw = value.raw
+      when Array
+        KrikriJinja::AnyValue.new(raw.map { |item| engine_scope_value(item) })
+      when Hash
+        converted = {} of String => KrikriJinja::AnyValue
+        raw.each { |key, item| converted[key] = engine_scope_value(item) }
+        KrikriJinja::AnyValue.new(converted)
+      when String
+        if message = Krikri.undefined_leaf_message?(raw)
+          undefined = KrikriJinja::StrictUndefined.new(nil, chainable: true)
+          undefined.hint = message
+          KrikriJinja::AnyValue.new(undefined)
+        else
+          KrikriJinja.from_json_any(value)
+        end
+      else
+        KrikriJinja.from_json_any(value)
+      end
     end
 
     # Loader rooted at the template's own directory plus its role's
@@ -389,9 +424,23 @@ module Krikri
     # cause as the engine-scope conversion's render_pure_mustache_value).
     # defer_unresolved keeps this path's existing laziness: a leaf that
     # references an undefined variable stays raw until a template that
-    # actually reads it fails, like Ansible.
+    # actually reads it fails, like Ansible - with one upgrade for the
+    # chain-undefined leaf shape, see #engine_scope_value and the
+    # deferred_leaves collection below: the leaf loads into the engine
+    # scope as the message-carrying strict Undefined real 2.19.11 would
+    # have instead of silently-renderable raw text (rounds 5300003
+    # wasilak.centos-hashiui / 5300004 SathiyarajPeriyannan.vsphere).
     private def prepare_template_vars_json(template_path : String) : Hash(String, JSON::Any)
       substitutor = VarSubstitutor.new(vars: @vars)
+      # Strict-undefined COLLECTION for this render's walk (defer_unresolved
+      # + a non-nil deferred_leaves tells JinjaRenderer to mark leaves that
+      # bottom out at a name set nowhere instead of raising): the marked
+      # leaves load into the engine scope as strict Undefineds via
+      # #engine_scope_value, so only templates that actually read them
+      # fail - template:, not an arg-finalization walk. This is real
+      # ansible-core 2.19's lazily-templated scope for the variables of a
+      # template: task (rounds 5300003/5300004).
+      deferred_leaves = {} of String => String
       # Unsafe gate (VarSubstitutor.resolved_var_name?, the same per-host
       # registry every other re-render site consults): a name published by
       # build_vars_context as execution-resolved (register:/set_fact:/a
@@ -412,12 +461,12 @@ module Krikri
           # re-render in ITS OWN host's scope (Ansible's HostVarsVars
           # templar). The generic re-render below would have rendered
           # every entry with THIS host's vars.
-          vars[key] = VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true)
+          vars[key] = VariableSubstitutor::JinjaRenderer.prepare_hostvars(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
           next
         end
         unless VarSubstitutor.resolved_var_name?(host_name, key)
           begin
-            value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true)
+            value = VariableSubstitutor::JinjaRenderer.rerender_nested_templates(value, substitutor, defer_unresolved: true, deferred_leaves: deferred_leaves)
           rescue Krikri::UndefinedVariableError
             # A role default that references an undefined variable stays raw;
             # only a template that actually uses it fails, like Ansible.

@@ -92,6 +92,20 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
       end
     end
 
+    it "raises the undefined-base message, not the None-index one, when the indexed chain never resolves (round 5300004)" do
+      # Round 5300004 (SathiyarajPeriyannan.vsphere): `hw_eth0` set
+      # nowhere and `{{ hw_eth0.ipaddresses[0] }}` reported "None has no
+      # element 0" - the bracket-index probe treated a genuinely
+      # UNDEFINED base like a real JSON-null one. Live-verified against
+      # ansible-core 2.19.11: an undefined base fails with "'hw_eth0'
+      # is undefined" (the generic strict probe's own wording); only an
+      # actual None value keeps the None-index message above.
+      sub = Krikri::VarSubstitutor.new(vars: Hash(String, JSON::Any).new, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /'hw_eth0' is undefined/) do
+        sub.substitute("IP address {{ hw_eth0.ipaddresses[0] }}", strict: true)
+      end
+    end
+
     it "raises 'None has no element 0' indexing into a JSON-null variable, plain bracket shape" do
       vars = {"none_var" => JSON.parse(%(null))}
       sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
