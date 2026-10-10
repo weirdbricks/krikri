@@ -81,7 +81,78 @@ module Krikri
       info.each do |key, value|
         res.extra[key] = value
       end
+      res.extra["valid_at"] = valid_at_result(info)
       res
+    end
+
+    # The Ansible module always sets result["valid_at"] ({} when the
+    # option is absent), then answers one boolean per probe:
+    # not_before <= point <= not_after, where each probe value went
+    # through _time.py get_relative_time_option first - a relative
+    # +/- sshd_config(5) spec resolved against UTC now, or one of four
+    # absolute shapes (the same set crypto_time_spec_valid? accepts).
+    # The parse regex is _time.py's convert_relative_to_datetime pattern
+    # with named groups (the shared RELATIVE_TIME_RE validator uses
+    # unnamed ones, so it can't hand the components over).
+    RELATIVE_SPEC_RE = /^[+-](?<weeks>\d+[wW])?(?<days>\d+[dD])?(?<hours>\d+[hH])?(?<minutes>\d+[mM])?(?<seconds>\d+[sS]?)?$/
+
+    private def valid_at_result(info : Hash(String, JSON::Any)) : JSON::Any
+      probes = {} of String => JSON::Any
+      if raw = @params["valid_at"]?
+        if parsed = (JSON.parse(raw).as_h? rescue nil)
+          not_before = asn1_time(info["not_before"]?)
+          not_after = asn1_time(info["not_after"]?)
+          parsed.each do |key, entry|
+            point = resolve_time_point(entry.as_s)
+            if point && (nb = not_before) && (na = not_after)
+              probes[key] = JSON::Any.new(nb <= point <= na)
+            else
+              probes[key] = JSON::Any.new(false)
+            end
+          end
+        end
+      end
+      JSON::Any.new(probes)
+    end
+
+    private def resolve_time_point(spec : String) : Time?
+      if spec.starts_with?('+') || spec.starts_with?('-')
+        match = spec.match(RELATIVE_SPEC_RE)
+        return nil unless match
+        # Each named group keeps its unit suffix (Python's inner \d+
+        # group is the digits only); strip it before counting.
+        weeks = relative_component(match, "weeks")
+        days = relative_component(match, "days")
+        hours = relative_component(match, "hours")
+        minutes = relative_component(match, "minutes")
+        seconds = relative_component(match, "seconds")
+        offset = (weeks * 7 + days).days + hours.hours + minutes.minutes + seconds.seconds
+        spec[0] == '+' ? Time.utc + offset : Time.utc - offset
+      else
+        case spec.size
+        when 15 then parse_time(spec, "%Y%m%d%H%M%SZ")
+        when 13 then parse_time(spec, "%Y%m%d%H%MZ")
+        when 19 then parse_time(spec, "%Y%m%d%H%M%S%z")
+        when 17 then parse_time(spec, "%Y%m%d%H%M%z")
+        end
+      end
+    end
+
+    private def relative_component(match : Regex::MatchData, name : String) : Int32
+      (match[name]? || "0").rstrip("wWdDhHmMsS").to_i
+    end
+
+    private def parse_time(value : String, format : String) : Time?
+      Time.parse(value, format, Time::Location::UTC).to_utc
+    rescue Time::Format::Error
+      nil
+    end
+
+    private def asn1_time(value : JSON::Any?) : Time?
+      return nil unless (raw = value.try(&.as_s?))
+      Time.parse_utc(raw, "%Y%m%d%H%M%SZ")
+    rescue Time::Format::Error
+      nil
     end
 
     # AnsibleModule validation order (ArgumentSpecValidator.validate):
