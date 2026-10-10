@@ -350,10 +350,8 @@ module Krikri
                 mode = "strict"
               when "semver", "semantic"
                 mode = "semver"
-                # packaging's PEP440Version is not implemented - loose is
-                # the standing approximation (see the conditional side).
               when "pep440"
-                mode = "loose"
+                mode = "pep440"
               else
                 fail_test.call("Invalid version type (#{py_str(version_type_val)}). Must be one of 'loose', 'strict', 'semver', 'semantic', 'pep440'")
               end
@@ -374,6 +372,7 @@ module Krikri
             cmp = case mode
                   when "strict" then VariableSubstitutor::FilterCore.strict_version_cmp(left, compare_text)
                   when "semver" then VariableSubstitutor::FilterCore.semver_cmp(left, compare_text)
+                  when "pep440" then VariableSubstitutor::FilterCore.pep440_cmp(left, compare_text)
                   else               VariableSubstitutor::FilterCore.loose_version_cmp(left, compare_text)
                   end
             case op

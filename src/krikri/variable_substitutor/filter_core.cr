@@ -1146,6 +1146,162 @@ module Krikri
         end
         0
       end
+
+      # PEP-440 normalized comparison - `version_type='pep440'` (packaging's
+      # Version class). Grammar is packaging's VERSION_PATTERN, compiled
+      # as one regex: optional `v` prefix, optional epoch (`N!`),
+      # dot-separated numeric release, optional pre tag (spellings
+      # alpha/a, beta/b, c/pre/preview/rc all normalize to the ranks
+      # a/b/rc below), optional post tag (post/rev/r - and a bare
+      # numeric suffix `1.0-1` counts as `1.0.post1`), optional dev tag,
+      # and an optional `+local` body. Surrounding whitespace and
+      # leading/trailing dots are trimmed before matching (the pattern
+      # itself is case-insensitive, so `1.0RC1` works). Ordering is
+      # packaging's _cmpkey, which is NOT the loose prefix-exhaustion
+      # scan: release segments pad with zeros (1.0 == 1 == 1.0.0.0), and
+      # every tag slot carries a sentinel - a dev-only release sits in
+      # the pre slot's NegativeInfinity (1.0.dev1 < 1.0rc1 < 1.0, with
+      # 1.0 a release WITHOUT a pre in the slot's Infinity), a missing
+      # post sits below every post number, a missing dev above every
+      # dev number, missing local below any local body, and within a
+      # local an alpha identifier sorts below a numeric one (packaging
+      # encodes numeric ids as (n, "") and alpha ids as (-inf, text)).
+      # Tags take part in equality: 2.0.post1 is NOT == 2.0. Invalid
+      # input raises `Invalid version: '<operand>'` through the shared
+      # VersionCompareError channel, so both evaluator copies' existing
+      # "Version comparison failed:" framing wraps it unchanged.
+      PEP440_PRE_RANK = {"alpha" => 0, "a" => 0, "beta" => 1, "b" => 1,
+                         "c" => 2, "rc" => 2, "pre" => 2, "preview" => 2}
+
+      PEP440_VERSION_RE = /\A\s*v?(?:(?:(?<epoch>[0-9]+)!)?(?<release>[0-9]+(?:\.[0-9]+)*)(?<pre>[-_.]?(?<pre_l>alpha|a|beta|b|preview|pre|c|rc)[-_.]?(?<pre_n>[0-9]+)?)?(?<post>(?:-(?<post_n1>[0-9]+))|(?:[-_.]?(?<post_l>post|rev|r)[-_.]?(?<post_n2>[0-9]+)?))?(?<dev>[-_.]?(?<dev_l>dev)[-_.]?(?<dev_n>[0-9]+)?)?)?(?:\+(?<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?\s*\z/i
+
+      private struct Pep440Parsed
+        getter epoch : Int64
+        getter release : Array(Int64)
+        getter pre : {Int32, Int64}?
+        getter post : Int64?
+        getter dev : Int64?
+        getter local : Array({Int64, String})?
+
+        def initialize(@epoch : Int64, @release : Array(Int64), @pre : {Int32, Int64}?,
+                       @post : Int64?, @dev : Int64?, @local : Array({Int64, String})?)
+        end
+      end
+
+      private def self.pep440_num(text : String?) : Int64
+        text.try(&.to_i64?) || 0i64
+      end
+
+      def self.pep440_cmp(a : String, b : String) : Int32
+        pep440_key_cmp(pep440_parse(a), pep440_parse(b))
+      end
+
+      private def self.pep440_parse(s : String) : Pep440Parsed
+        text = s.lstrip('.').rstrip('.')
+        parsed = PEP440_VERSION_RE.match(text)
+        raise VersionCompareError.new("Invalid version: '#{s}'") unless parsed
+        pre = nil
+        if letter = parsed["pre_l"]?
+          pre = {PEP440_PRE_RANK[letter.downcase], pep440_num(parsed["pre_n"]?)}
+        end
+        post = nil
+        if n1 = parsed["post_n1"]?
+          post = pep440_num(n1)
+        elsif parsed["post_l"]?
+          post = pep440_num(parsed["post_n2"]?)
+        end
+        dev = parsed["dev_l"]? ? pep440_num(parsed["dev_n"]?) : nil
+        local = nil
+        if loc = parsed["local"]?
+          # Numeric ids encode as (n, ""), alpha ids as (-1, text) - the
+          # -1 head makes every alpha id order below every numeric one,
+          # mirroring packaging's (n, "") / (-inf, text) cmpkey encoding.
+          local = loc.downcase.split(/[-_.]/).map { |seg| seg.matches?(/\A\d+\z/) ? {pep440_num(seg), ""} : {-1i64, seg} }
+        end
+        release = parsed["release"].split('.').map { |seg| pep440_num(seg) }
+        Pep440Parsed.new(pep440_num(parsed["epoch"]?), release, pre, post, dev, local)
+      end
+
+      # Sentinel-tag slot compare: tag 0 = the slot's NegativeInfinity
+      # (lowest), tag 1 = a real value carried in the two nums, tag 2 =
+      # the slot's Infinity (highest). Sentinel tags never consult nums.
+      private def self.pep440_slot_cmp(a_tag : Int64, a_num : Int64, a_num2 : Int64,
+                                       b_tag : Int64, b_num : Int64, b_num2 : Int64) : Int32
+        cmp = a_tag <=> b_tag
+        return cmp unless cmp == 0
+        return 0 unless a_tag == 1
+        cmp = a_num <=> b_num
+        return cmp unless cmp == 0
+        a_num2 <=> b_num2
+      end
+
+      private def self.pep440_key_cmp(x : Pep440Parsed, y : Pep440Parsed) : Int32 # ameba:disable Metrics/CyclomaticComplexity
+        cmp = x.epoch <=> y.epoch
+        return cmp unless cmp == 0
+
+        # Release: pad the shorter segment list with zeros; a longer
+        # non-zero tail wins, all-zero tails were padding and lose.
+        [x.release.size, y.release.size].max.times do |i|
+          x_seg = i < x.release.size ? x.release[i] : 0i64
+          y_seg = i < y.release.size ? y.release[i] : 0i64
+          cmp = x_seg <=> y_seg
+          return cmp unless cmp == 0
+        end
+
+        # Pre slot: a release whose only tag is dev (no pre, no post) is
+        # the slot's NegativeInfinity; any other release without a pre
+        # is the slot's Infinity.
+        x_pre = x.pre
+        y_pre = y.pre
+        x_pre_slot = if x_pre
+                       {1i64, x_pre[0].to_i64, x_pre[1]}
+                     elsif x.post.nil? && x.dev
+                       {0i64, 0i64, 0i64}
+                     else
+                       {2i64, 0i64, 0i64}
+                     end
+        y_pre_slot = if y_pre
+                       {1i64, y_pre[0].to_i64, y_pre[1]}
+                     elsif y.post.nil? && y.dev
+                       {0i64, 0i64, 0i64}
+                     else
+                       {2i64, 0i64, 0i64}
+                     end
+        cmp = pep440_slot_cmp(x_pre_slot[0], x_pre_slot[1], x_pre_slot[2],
+          y_pre_slot[0], y_pre_slot[1], y_pre_slot[2])
+        return cmp unless cmp == 0
+
+        # Post slot: a missing post is below every post number.
+        cmp = pep440_slot_cmp(
+          x.post.nil? ? 0i64 : 1i64, x.post || 0i64, 0i64,
+          y.post.nil? ? 0i64 : 1i64, y.post || 0i64, 0i64)
+        return cmp unless cmp == 0
+
+        # Dev slot: a missing dev is above every dev number.
+        cmp = pep440_slot_cmp(
+          x.dev.nil? ? 2i64 : 1i64, x.dev || 0i64, 0i64,
+          y.dev.nil? ? 2i64 : 1i64, y.dev || 0i64, 0i64)
+        return cmp unless cmp == 0
+
+        # Local slot: a missing local is below any local body; otherwise
+        # ids compare pairwise (the (-1, text) alpha encoding already
+        # orders alpha below numeric), with a shorter list as the prefix
+        # on ties.
+        cmp = (x.local.nil? ? 0i64 : 1i64) <=> (y.local.nil? ? 0i64 : 1i64)
+        return cmp unless cmp == 0
+        x_local = x.local
+        y_local = y.local
+        return 0 unless x_local && y_local
+        [x_local.size, y_local.size].max.times do |i|
+          x_id = x_local[i]?
+          y_id = y_local[i]?
+          return -1 if x_id.nil?
+          return 1 if y_id.nil?
+          cmp = x_id <=> y_id
+          return cmp unless cmp == 0
+        end
+        0
+      end
     end
   end
 end
