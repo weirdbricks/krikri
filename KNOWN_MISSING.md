@@ -17,15 +17,10 @@ defect moves down or gets deleted.
 
 ## Open gaps
 
-- **Modules real cannot resolve because the CONTROLLER lacks the collection; krikri runs them
-  natively.** Only the host-state-dependent half remains: bare `docker:` (gbraad.docker-registry),
-  removed `ec2_facts` (JohnPreston.awslogs), `vsphere_guest` (SathiyarajPeriyannan.vsphere) and
-  `freeipa.ansible_freeipa.*` (tcharl.nfs_client) refuse the whole playbook at parse time rc=4 on a
-  controller without those collections, while krikri implements community modules natively and runs
-  on. The deterministic half is closed: every collection-tombstoned module FQCN in the reference
-  env's collections (community.{windows,docker,crypto,general,mysql,postgresql}) now refuses the
-  whole playbook at load, rc=1, byte-identical to real's `[ERROR]` + task-Origin render, checked
-  ahead of krikri's own native resolution (kkolk.mssql, sorrowless.* docker_compose roles).
+- **Docker plugins, TCP-unreachable wording** is the last unmatchable byte-class (a Python heap
+  pointer inside real's own message - two real runs disagree). The SDK import gate closed with
+  0.9.1603: the five SDK-based modules gate on the VENDORED SDK's `requests` requirement
+  (`missing_required_lib("requests")` wording, witnessed live), not the external docker package.
 - **Registered-result key order: what is verified and what is not.** `PluginResult#key_order` (or an
   omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: the
   `testing/keyorder_probes/kop_*` roles, run through `krikri-role-tester run` with `local:` queue
@@ -60,6 +55,31 @@ defect moves down or gets deleted.
   (`podman run -d --name krikri-pg16 -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=rootpass
   docker.io/library/postgres:16` - all three live-test files green against it 2026-10-10).
   `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+
+## Round 5440000-5450000 (controller collection-set awareness: the last big Open-gap class closed, 0.9.1605 -> 0.9.1607, 2026-10-11)
+
+The "controller lacks the collection" class is closed by DISCOVERY, not modeling: krikri runs on
+the same controller real would, so CollectionIndex (0.9.1606) enumerates the installed collections
+once (ANSIBLE_COLLECTIONS_PATH, ~/.ansible/collections, dist-packages/user-site trees) and applies
+real's own load-time resolution to every module reference - builtin files, the
+ansible_builtin_runtime.yml redirect chains, collection meta/runtime.yml redirects (chained,
+cycle-limited), the `collections:` keyword (task > play, plus role meta/main.yml), and
+role/playbook-private library/ sources. A name the controller cannot resolve refuses the whole
+playbook at load: rc=4, the generic couldn't-resolve wording + the task's Origin + real's
+Error-loading-plugin [WARNING] - byte-identical on 18 probe shapes. Conservative where unsure:
+only definitely-absent dirs/files refuse; gated-unported modules keep their lazy skip flow. The
+first confirm round (5440000) exposed the blind spot - the krikri host has NO ansible-core
+install, so every builtin-dependent answer degraded to "unsure" and all four roles ran - fixed in
+0.9.1607 by baking the 2.19.11 builtin bare-name set (3824) and the module/action redirect tables
+into the binary (gzipped GPLv3 data) and adding the ~/.local user-install path. Confirm round
+5450000: **gbraad.docker-registry, JohnPreston.awslogs, SathiyarajPeriyannan.vsphere,
+tcharl.nfs_client all CLEAN** - both engines refuse identically at load (rc=4 cold+warm, zero
+tasks).
+
+Also in this window (0.9.1605): the last cosmetic residuals closed - a Python list-method call's
+runtime failure in a strict render ("'z' is not in list") surfaces as real's
+"Task failed: Error rendering expression: ..." (when:) / bare marker (task name) instead of
+silently rendering undefined.
 
 ## Round 5410000 (600 new Galaxy roles + fix phase, 0.9.1592 -> 0.9.1603, 2026-10-10/11)
 
