@@ -1797,6 +1797,12 @@ module Krikri
       # like the pre-run unreachable pass does.
       begin
         PluginManager.ensure_uploaded(host, task.module_name, vars_context)
+      rescue ex : PluginArchUnsupportedError
+        # Same failed-task shape the plugin dispatch itself returns for
+        # this (see execute_remote_plugin's typed rescue): one clean
+        # failed task with the actionable arch message, never an
+        # unhandled crash and never a bogus UNREACHABLE.
+        return JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
       rescue ex
         raise ex unless SSHManager.connection_level_exception?(ex)
         detail = ex.message.to_s.lines.first?.to_s

@@ -16,6 +16,19 @@ require "./action_plugin_manager"
 require "./timing_profile"
 
 module Krikri
+  # Issue #1 (arch awareness) - raised when a remote target reports a
+  # CPU architecture this controller's plugin binaries were not built for
+  # and no binaries for that architecture exist next to the running
+  # executable. Deliberately its own exception class rather than a plain
+  # Exception (or a transport failure): the batch pre-upload pass and the
+  # per-task paths both special-case it into one clean, actionable fatal
+  # ("no aarch64 plugin binaries ...") instead of the exec-format
+  # failure the uploaded binary would otherwise produce on the target,
+  # and instead of being misbooked as UNREACHABLE (the host is reachable
+  # - the controller just has nothing it can run on it).
+  class PluginArchUnsupportedError < Exception
+  end
+
   # Plugin Manager - Handles plugin execution locally or remotely
   # For remote hosts, uploads plugin binary and executes it there
   class PluginManager
@@ -56,6 +69,78 @@ module Krikri
     def self.staging_dir_tag(user : String) : String
       safe = user.gsub(/[^a-zA-Z0-9._-]/, "-")
       "#{safe}-#{Digest::SHA1.hexdigest(user)[0, 8]}"
+    end
+
+    # Issue #1 (arch awareness) - krikri's modules are COMPILED BINARIES
+    # uploaded to the target and exec'd there, unlike Ansible's Python
+    # modules which run under whatever interpreter the target already
+    # has; so an x86_64 controller managing an aarch64 target (a
+    # Raspberry Pi) uploads a binary the target kernel refuses with
+    # exec-format error. The fix shape is per-arch plugin binaries:
+    #
+    #   - Every remote host's architecture is probed over its OWN SSH
+    #     channel (`uname -m`, folded into upload round trip 1's script -
+    #     no extra round trip) and remembered per host (and in the
+    #     host-state cache as "_arch", so warm runs never re-probe).
+    #   - When the target arch matches this build's arch, the default
+    #     plugins/ lookup is used and EVERYTHING behaves exactly as
+    #     before - the same-arch path is byte-for-byte unchanged.
+    #   - When it differs, binaries are looked up in a plugins-<arch>/
+    #     directory next to the krikri-playbook executable (or
+    #     bin/plugins-<arch>/ in the checkout). build.sh's fat-plugin
+    #     model means ONE binary per arch serves every module name, so
+    #     any executable file in the dir works (the same per-name
+    #     hardlinks are materialized remotely as usual).
+    #   - When no such binaries exist, PluginArchUnsupportedError fails
+    #     EARLY with the remedy spelled out, instead of a confusing
+    #     exec-format failure after a multi-MB upload.
+    #
+    # build_arch is the CONTROLLER's own `uname -m` (what build.sh built
+    # the running binary for - the controller kernel runs krikri itself,
+    # so this is the arch of the binaries in plugins/), memoized for the
+    # process. Overridable as a spec seam.
+    @@build_arch : String? = nil
+
+    def self.build_arch : String
+      @@build_arch ||= begin
+        raw = begin
+          io = IO::Memory.new
+          ok = Process.run("uname", ["-m"], output: io, error: Process::Redirect::Close).success?
+          ok ? io.to_s : ""
+        rescue
+          ""
+        end
+        normalize_arch(raw)
+      end
+    end
+
+    def self.build_arch=(value : String)
+      @@build_arch = normalize_arch(value)
+    end
+
+    # Canonical architecture names: uname -m spellings folded onto one
+    # form each (Debian-style amd64/arm64 and the kernel's x86_64/aarch64
+    # name the same machines). Anything else passes through lowercased -
+    # armv7l etc. stay their own arch names, matching uname.
+    def self.normalize_arch(raw : String) : String
+      case arch = raw.strip.downcase
+      when "amd64" then "x86_64"
+      when "arm64" then "aarch64"
+      else              arch
+      end
+    end
+
+    # Target arch as last probed per host_key - probed fresh in
+    # upload_plugins_to_host's round trip 1, remembered across that
+    # process's calls here, and persisted in the host-state cache's
+    # "_arch" key so a warm run (which skips round trip 1 entirely) still
+    # knows it. nil means "not yet probed" and falls back to the
+    # same-arch default path - a host whose arch was never probed behaves
+    # exactly as before.
+    @@host_arch = Hash(String, String).new
+
+    private def self.effective_target_arch(host_key : String) : String?
+      @@host_arch[host_key]? || host_state[host_key]?.try(&.["_arch"]?)
     end
 
     # Cache of plugins already uploaded to remote hosts
@@ -132,6 +217,16 @@ module Krikri
     # host with exactly the md5 the local binary has now, recently
     # enough to trust. Any doubt at all returns false and the caller
     # does the full listing round trip.
+    #
+    # The md5s are compared against the binaries for the arch recorded
+    # for this host (its "_arch" host-state entry, or what was probed
+    # in-process already) - an aarch64 host's cached entries must match
+    # the aarch64 binaries, not the controller-arch ones. A host with no
+    # recorded arch (every pre-arch-awareness cache entry) compares
+    # against the default binaries, exactly as before. A recorded arch
+    # whose binaries no longer exist locally resolves no md5 at all, so
+    # this returns false and the real verification (which reports the
+    # actionable arch error) takes over.
     private def self.host_state_satisfies?(host_key : String, plugin_names : Array(String)) : Bool
       return false unless @@host_state_cache_enabled
 
@@ -142,16 +237,25 @@ module Krikri
       return false unless verified_at
       return false if Time.utc.to_unix - verified_at > HOST_STATE_TTL.total_seconds.to_i64
 
+      arch = effective_target_arch(host_key)
       plugin_names.all? do |name|
         recorded = entry[name]?
         next false unless recorded
-        recorded == cached_md5(get_local_plugin_path(name))
+        begin
+          recorded == cached_md5(get_local_plugin_path(name, arch))
+        rescue PluginArchUnsupportedError
+          false
+        end
       end
     end
 
-    private def self.record_host_state(host_key : String, md5s : Hash(String, String)) : Nil
+    private def self.record_host_state(host_key : String, md5s : Hash(String, String), arch : String? = nil) : Nil
       entry = host_state[host_key]? || Hash(String, String).new
       md5s.each { |name, md5| entry[name] = md5 }
+      # The target arch the recorded md5s were verified against, so a
+      # warm run (which skips the probing round trip) still resolves the
+      # right binaries - see effective_target_arch.
+      entry["_arch"] = arch if arch && !arch.empty?
       entry["_verified_at"] = Time.utc.to_unix.to_s
       host_state[host_key] = entry
       @@host_state_dirty = true
@@ -432,6 +536,20 @@ module Krikri
       unreachable = [] of String
       remote_hosts.each do |host|
         next unless ex = failures[host.name]?
+        if ex.is_a?(PluginArchUnsupportedError)
+          # NOT a reachability problem - the host answered, the controller
+          # just has no binaries it can run on it. Booking it as
+          # UNREACHABLE would send someone debugging ssh AND mask the real
+          # reason on every later task (the facts pass reports excluded
+          # hosts with a generic "Failed to connect" line). So: report the
+          # actionable message here, leave the host IN the play, and let
+          # its first task fail with the same message via the typed
+          # rescues on the dispatch paths - one failed task halts the
+          # host from there on, exactly like any other module failure.
+          msg = {"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json
+          puts %(fatal: [#{host.name}]: FAILED! => #{msg}).colorize(:red)
+          next
+        end
         unreachable << host.name
         # .to_json, not hand-built pseudo-JSON - a hand-escaped message
         # (backslashes, control chars in an ssh error) could produce
@@ -676,6 +794,10 @@ module Krikri
         for f in #{q_dir}/*.md5; do
           [ -f "$f" ] && echo "$(basename "$f" .md5) $(cat "$f")"
         done
+        # Issue #1 (arch awareness): probe the target's CPU architecture
+        # on the SSH channel this round trip already opened - the marker
+        # prefix can't collide with a "<plugin> <md5>" line above.
+        echo "KRIKRI-ARCH $(uname -m 2>/dev/null)"
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
@@ -685,11 +807,20 @@ module Krikri
               "a local user appears to have planted it (foreign-owned or symlinked). " \
               "Remove it manually after verifying, then re-run."
       end
+      target_arch : String? = nil
       list_result[:stdout]
         .each_line do |line|
-          name, _, md5 = line.strip.partition(' ')
-          remote_md5s[name] = md5 unless name.empty?
+          if line.starts_with?("KRIKRI-ARCH ")
+            probed = normalize_arch(line.byte_slice("KRIKRI-ARCH ".size))
+            target_arch = probed unless probed.empty?
+          else
+            name, _, md5 = line.strip.partition(' ')
+            remote_md5s[name] = md5 unless name.empty?
+          end
         end
+      # Remember the probe for every later call this process makes for
+      # this host (and let record_host_state persist it for warm runs).
+      @@host_arch[host_key] = target_arch if target_arch
 
       # Local digest computed exactly once per plugin *per run* (streamed,
       # not loaded fully into memory), memoized in @@local_md5_cache so a
@@ -698,7 +829,12 @@ module Krikri
       local_paths = Hash(String, String).new
       local_md5s = Hash(String, String).new
       candidates.each do |plugin_name|
-        path = get_local_plugin_path(plugin_name)
+        # The arch probed above decides WHICH local binaries get
+        # compared and uploaded - a different-arch target needs the
+        # plugins-<arch>/ build (or fails here with the actionable
+        # PluginArchUnsupportedError, before any multi-MB upload of a
+        # binary the target could never execute).
+        path = get_local_plugin_path(plugin_name, target_arch)
         local_paths[plugin_name] = path
         local_md5s[plugin_name] = cached_md5(path)
       end
@@ -712,7 +848,7 @@ module Krikri
       # the next run, whether or not anything needed uploading.
       verified = Hash(String, String).new
       (candidates - plugins_to_upload).each { |name| verified[name] = local_md5s[name] }
-      record_host_state(host_key, verified) unless verified.empty?
+      record_host_state(host_key, verified, target_arch) unless verified.empty?
 
       return if plugins_to_upload.empty?
 
@@ -835,7 +971,7 @@ module Krikri
       # would still pay the listing round trip.
       just_uploaded = Hash(String, String).new
       plugins_to_upload.each { |name| just_uploaded[name] = local_md5s[name] }
-      record_host_state(host_key, just_uploaded)
+      record_host_state(host_key, just_uploaded, target_arch)
 
       verb = rsync_ok ? "Successfully uploaded" : "Uploaded"
       via = rsync_ok ? "" : " via scp"
@@ -1313,6 +1449,13 @@ module Krikri
       task_timeout : Int64? = nil,
     ) : JSON::Any
       normalize_module_result(execute_remote_plugin_transport(plugin_name, config, host, vars, become, become_user, task_timeout))
+    rescue ex : PluginArchUnsupportedError
+      # One clean failed task carrying the actionable arch message (see
+      # PluginArchUnsupportedError's own comment) - not an unreachable,
+      # not an unhandled crash. Reached when a module only discovered at
+      # runtime (include_tasks:/include_role:) needs an upload the
+      # pre-run pass never made.
+      JSON.parse({"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json)
     rescue ex
       raise ex unless SSHManager.connection_level_exception?(ex)
       detail = ex.message.to_s.lines.first?.to_s
@@ -1925,10 +2068,42 @@ module Krikri
       {true, become_user, nil}
     end
 
-    # Get local plugin path (compiled binary)
-    private def self.get_local_plugin_path(plugin_name : String) : String
+    # Get local plugin path (compiled binary).
+    #
+    # *target_arch* is the target host's probed `uname -m` (nil when not
+    # probed yet). Matching this build's arch - or nil - takes the
+    # default plugins/ lookup below, unchanged. A DIFFERENT arch takes
+    # the plugins-<arch>/ per-arch build instead (see the arch-awareness
+    # comment at the top of this class), and raises
+    # PluginArchUnsupportedError when none was built.
+    private def self.get_local_plugin_path(plugin_name : String, target_arch : String? = nil) : String
       # Strip FQCN to get simple plugin filename
       simple_name = simple_plugin_name(plugin_name)
+
+      if arch = arch_override_for(target_arch)
+        # Resolved next to the running binary first (an installed
+        # krikri-playbook keeps its per-arch builds beside plugins/),
+        # then a cwd-relative bin/plugins-<arch>/ (crystal run in dev).
+        if executable = (@@executable_path ||= Process.executable_path)
+          if path = arch_specific_plugin_path(File.join(File.dirname(executable), "plugins-#{arch}"), simple_name)
+            return path
+          end
+        end
+        if path = arch_specific_plugin_path("./bin/plugins-#{arch}", simple_name)
+          return path
+        end
+
+        raise PluginArchUnsupportedError.new(
+          "no #{arch} plugin binaries available for #{plugin_name}: the target host reports " \
+          "a different CPU architecture than this krikri-playbook build " \
+          "(#{build_arch.empty? ? "unknown" : build_arch}), and the controller-arch binary " \
+          "could only fail there with an exec-format error. krikri's modules are compiled " \
+          "binaries (real Ansible ships Python modules, so it has no such problem). " \
+          "Build the plugin set for #{arch} - run ./build.sh on a machine of that architecture " \
+          "- and install the resulting bin/plugins/ directory as plugins-#{arch}/ next to the " \
+          "krikri-playbook executable (or as bin/plugins-#{arch}/ in the checkout)."
+        )
+      end
 
       # Resolve plugins/ next to the running binary itself, not relative to
       # the current working directory - otherwise krikri-playbook could
@@ -1949,6 +2124,39 @@ module Krikri
       return compiled if File.exists?(compiled)
 
       raise "Plugin binary not found: #{plugin_name} (looked for #{compiled})"
+    end
+
+    # The arch directory to override the default plugin lookup with, when
+    # *target_arch* is known, normalized, and genuinely different from
+    # this build's arch. nil means "use the default plugins/ path" -
+    # including when either side's arch is unknown (an unprobeable arch
+    # must never regress the working same-arch path).
+    private def self.arch_override_for(target_arch : String?) : String?
+      return nil if target_arch.nil? || target_arch.empty?
+      arch = normalize_arch(target_arch)
+      return nil if arch.empty? || build_arch.empty? || arch == build_arch
+      arch
+    end
+
+    # Resolve a binary inside a per-arch plugin directory: the exact
+    # module name when one exists there, otherwise ANY executable regular
+    # file in the dir. The second half is not sloppiness - build.sh's
+    # fat-plugin model makes one binary serve every module name (the
+    # per-name hardlinks are materialized on the remote side exactly as
+    # for the default dir), so a per-arch dir only ever needs ONE file
+    # in it. .md5 sidecars (and any non-executable stray) never qualify.
+    private def self.arch_specific_plugin_path(dir : String, simple_name : String) : String?
+      return nil unless Dir.exists?(dir)
+      exact = File.join(dir, simple_name)
+      return exact if File.exists?(exact)
+      Dir.children(dir)
+        .sort
+        .each do |child|
+          next if child.starts_with?(".")
+          path = File.join(dir, child)
+          return path if File.file?(path) && File::Info.executable?(path)
+        end
+      nil
     end
 
     # Stages *source_path* (the compiled plugin binary, resolved next to
@@ -2143,12 +2351,36 @@ module Krikri
     end
 
     # Clear uploaded plugins cache (for testing)
+    # Spec seams (the repo's *_for_spec convention) for the arch-aware
+    # decision logic - the privates they expose are pinned directly in
+    # the unit tests.
+    def self.local_plugin_path_for_spec(plugin_name : String, target_arch : String?) : String
+      get_local_plugin_path(plugin_name, target_arch)
+    end
+
+    def self.target_arch_for_spec(host_key : String) : String?
+      effective_target_arch(host_key)
+    end
+
+    def self.record_host_state_for_spec(host_key : String, md5s : Hash(String, String), arch : String?) : Nil
+      record_host_state(host_key, md5s, arch)
+    end
+
+    # Lets a test point the "plugins/ next to the executable" resolution
+    # at a throwaway tree. MUST be restored (nil) by the test - while set,
+    # the default plugins/ lookup falls through to the cwd-relative
+    # ./bin/plugins/ fallback, so it stays correct for other code.
+    def self.executable_path_for_spec=(path : String?)
+      @@executable_path = path
+    end
+
     def self.clear_cache : Nil
       @@uploaded_plugins.clear
       @@local_md5_cache.clear
       @@local_md5_representatives.clear
       @@host_state = nil
       @@host_state_dirty = false
+      @@host_arch.clear
     end
   end
 end

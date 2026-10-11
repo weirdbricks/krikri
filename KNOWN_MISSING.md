@@ -502,6 +502,42 @@ passwords without `sshpass` fall back to OpenSSH `SSH_ASKPASS` like real 2.19's 
 Do not re-litigate without new evidence - and if new evidence turns up, move the entry to
 "Open gaps" rather than arguing with the note in place.
 
+### No automatic cross-compilation of plugin binaries for a foreign-arch target
+
+krikri's modules are compiled binaries uploaded to the target and exec'd there, so an x86_64
+controller managing an aarch64 target (a Raspberry Pi) needs binaries built for aarch64 - real
+Ansible ships Python modules and has no equivalent constraint. krikri probes every target's
+architecture over its own SSH channel (`uname -m`, folded into the upload path's existing
+listing round trip, remembered in the plugin-state cache as `_arch` so warm runs never re-probe)
+and then:
+
+- same arch as the controller: the default `plugins/` binaries, exactly as before (unchanged
+  path, byte-for-byte);
+- different arch, and a `plugins-<arch>/` directory exists next to the `krikri-playbook`
+  executable (or `bin/plugins-<arch>/` in the checkout): those binaries are selected, compared
+  by md5, and uploaded like any other - one fat-plugin binary per arch dir serves every module
+  name, mirroring build.sh's hardlink model;
+- different arch, no `plugins-<arch>/` build: the run fails immediately with
+  `PluginArchUnsupportedError` naming the missing directory and the remedy, before any
+  multi-MB upload of a binary the target's kernel would refuse with exec-format error. The
+  host is NOT booked UNREACHABLE (it answered - the controller has nothing runnable for it);
+  its first task fails with the same message and the host halts from there.
+
+The deliberate limit: krikri does not cross-compile those binaries for you. Crystal has no
+practical turnkey cross-build for this project's plugin set (each plugin links the Crystal
+stdlib against target-arch libgc/libyaml/libpcre, so a proper cross toolchain plus per-arch
+native libraries would be needed), so the supported flow is: run `./build.sh` on a machine of
+the target's architecture (a Pi, an ARM cloud box, an emulated/chroot arm64 environment) and
+copy the resulting `bin/plugins/` directory to the controller as
+`<krikri-install-dir>/plugins-<arch>/`. Verified live (2026-10-11) against a real sshd target
+reporting aarch64 (a `/usr/local/bin/uname` shim inside an ubuntu:22.04 podman container
+standing in for the CPU, since this dev box has no qemu-user-static/binfmt registration and
+registering binfmt_misc needs root): the per-arch build was selected, uploaded and executed on
+the target (remote file md5-identical to `plugins-aarch64/command`, not the default binary),
+and the no-build case failed with the actionable message. A genuine foreign-CPU exec was not
+exercised - nothing on this machine can execute aarch64 code - but the exec surface itself is
+the same code path the same-arch run has always used. Decided 2026-10-11.
+
 ### Docker TCP-unreachable wording embeds a Python heap pointer
 
 - A docker module run with `DOCKER_HOST` pointing at a closed TCP port fails with
