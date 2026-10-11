@@ -87,7 +87,14 @@ describe "archive plugin" do
     dest = dest_path("changed.tar.gz")
     PluginSpecHelper.run("archive", {"path" => source_dir, "dest" => dest})
 
-    File.write(File.join(source_dir, "f.txt"), "v2")
+    # The rewrite changes both size and mtime: real community.general.
+    # archive compares (member name, tar header chksum) sets, which cover
+    # mode/uid/gid/size/mtime but NOT member content - verified live
+    # against ansible-playbook 2.19.11 that a same-second, same-size,
+    # content-only rewrite reports changed=false there (the header
+    # chksum is second-granular and content-blind), so a same-size
+    # rewrite alone would NOT flip the flag on the real side either.
+    File.write(File.join(source_dir, "f.txt"), "v2 with more bytes")
     result = PluginSpecHelper.run("archive", {"path" => source_dir, "dest" => dest})
 
     result["changed"].as_bool.must_equal(true)

@@ -1,7 +1,7 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1632"
+  VERSION = "0.9.1633"
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the

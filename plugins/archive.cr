@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "set"
 require "crystar"
 require "compress/gzip"
 require "compress/zip"
@@ -70,17 +71,24 @@ module Krikri
   # archive module, which uses Python's tarfile/zipfile stdlib rather than
   # shelling out too - no format shells out anymore.
   #
-  # Idempotency is checksum-based like Ansible, but computed by
-  # reading krikri-playbook's own previously-built archive back natively
-  # rather than replicating Python's tarfile per-member header checksum
-  # exactly - this compares krikri-playbook's own archives against
-  # themselves across runs, which
-  # doesn't require bit-for-bit parity with Python's internal algorithm to
-  # be correct. Note: upgrading from the previous shell-based
-  # implementation to this one may report changed: true exactly once for
-  # a pre-existing archive, since member ordering (now Dir.each_child's
-  # order, previously `find`'s) can differ even when content doesn't - a
-  # one-time transition artifact, not an ongoing bug.
+  # Idempotency mirrors real community.general.archive's comparison
+  # exactly (round 5466309 deekayen.log_mailer): the real module ALWAYS
+  # rebuilds dest, having snapshotted the pre-rewrite destination's
+  # checksums in __init__ (destination_checksums()), and afterwards
+  # reports changed iff the rebuilt archive's checksum set differs from
+  # that snapshot. For the tar formats that set is (member name, tar
+  # header chksum) pairs - the header chksum covers mode/uid/gid/size/
+  # mtime/typeflag/linkname but NOT member content, so an mtime-only
+  # source change re-reports changed=True where the previous
+  # content-digest comparison here stayed ok (exactly the warm-run
+  # divergence: /var/log members get fresh mtimes between runs on a live
+  # host while krikri saw identical contents). Single-file compress falls
+  # back to a CRC of the decompressed stream (content-only,
+  # mtime-insensitive) and zip compares (filename, CRC) - reproduced
+  # here with content digests, which are behaviorally equivalent.
+  # Verified live against ansible-playbook 2.19.11: an untouched rerun
+  # reports changed=False (real is NOT always-rebuild-changed), a
+  # touch -m-only rerun changed=True, a content append changed=True.
   class ArchivePlugin < BasePlugin
     def execute : PluginResult
       path_param = @params["path"]?
@@ -569,31 +577,48 @@ module Krikri
       "#{names.sort!.join("\n")}|#{digest.final.hexstring}"
     end
 
+    # Real archive.py compares {(member name, tar header chksum)} sets
+    # (TarArchive._get_checksums) - the header chksum is computed over the
+    # header fields (mode/uid/gid/size/mtime/typeflag/linkname/uname/
+    # gname), never the member bytes, so this fingerprints the parsed
+    # per-member metadata instead of hashing content: the changed
+    # predicate is equivalent, and unlike comparing stored chksum
+    # integers it is engine-independent (the same header fields produce
+    # the same fingerprint however the tar was written). A set, like
+    # real's - duplicate member names collapse.
     private def tar_signature(path : String, format : String) : String
-      names = [] of String
-      digest = OpenSSL::Digest.new("MD5")
+      fingerprints = Set(String).new
 
       File.open(path) do |file|
         case format
         when "gz"
-          Compress::Gzip::Reader.open(file) { |gzio| read_tar_signature(gzio, names, digest) }
+          Compress::Gzip::Reader.open(file) { |gzio| read_tar_member_fingerprints(gzio, fingerprints) }
         when "xz"
-          Compress::XZ::Reader.open(file) { |xzio| read_tar_signature(xzio, names, digest) }
+          Compress::XZ::Reader.open(file) { |xzio| read_tar_member_fingerprints(xzio, fingerprints) }
         when "bz2"
-          Compress::BZ2::Reader.open(file) { |bz2| read_tar_signature(bz2, names, digest) }
+          Compress::BZ2::Reader.open(file) { |bz2| read_tar_member_fingerprints(bz2, fingerprints) }
         else
-          read_tar_signature(file, names, digest)
+          read_tar_member_fingerprints(file, fingerprints)
         end
       end
 
-      "#{names.sort!.join("\n")}|#{digest.final.hexstring}"
+      fingerprints.to_a.sort!.join("\n")
     end
 
-    private def read_tar_signature(io : IO, names : Array(String), digest : OpenSSL::Digest) : Nil
+    private def read_tar_member_fingerprints(io : IO, fingerprints : Set(String)) : Nil
       Crystar::Reader.open(io) do |tar|
-        tar.each_entry do |entry|
-          names << entry.name
-          digest.update(entry.io.gets_to_end) unless entry.flag == Crystar::DIR.ord.to_u8
+        tar.each_entry do |header|
+          # h.mod_time is whatever the archive itself records - seconds
+          # for the ustar output Crystar prefers writing, sub-second for
+          # a PAX-written dest. That matches real's own comparison
+          # granularity: its (name, chksum) set reads the ustar header's
+          # second-truncated mtime field, while the float-precision mtime
+          # PAX record Python also writes is a separate pseudo-member
+          # getmembers() never returns - live-verified against
+          # ansible-playbook 2.19.11 that a same-second, same-size,
+          # content-only rewrite reports changed=false there.
+          fingerprints << [header.name, header.mode, header.uid, header.gid, header.size, header.mod_time,
+                           header.flag, header.link_name, header.uname, header.gname].join("\u{1}")
         end
       end
     end
@@ -637,16 +662,24 @@ module Krikri
       nil
     end
 
+    # Real archive.py ALWAYS rewrites dest (add_targets/add_single_target
+    # open it for writing unconditionally) and only afterwards decides
+    # changed by comparing the pre-rewrite snapshot against the rebuilt
+    # archive (is_different_from_original) - so dest gets replaced even
+    # on an unchanged rerun. An existing-but-unreadable dest has no
+    # checksum set on the real side (destination_checksums() returns
+    # None when os.access R_OK fails) and falls back to a plain size
+    # comparison (original_size != destination_size()).
     private def replace_dest(dest : String, format : String, single_compress : Bool, tmp_dest : String) : Bool
-      old_signature = File.exists?(dest) ? signature(dest, format, single_compress) : nil
       new_signature = signature(tmp_dest, format, single_compress)
-      changed = old_signature != new_signature
+      changed =
+        if File.exists?(dest) && !File.readable?(dest)
+          File.size(dest) != File.size(tmp_dest)
+        else
+          signature(dest, format, single_compress) != new_signature
+        end
 
-      if changed
-        File.rename(tmp_dest, dest)
-      else
-        File.delete?(tmp_dest)
-      end
+      File.rename(tmp_dest, dest)
       changed
     end
 
