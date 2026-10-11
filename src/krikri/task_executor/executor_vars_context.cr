@@ -715,7 +715,19 @@ module Krikri
       @facts_dict_cache[host_name] ||= begin
         facts_dict = Hash(String, JSON::Any).new(initial_capacity: 128)
         @facts[host_name].each do |key, value|
-          facts_dict[key.lchop("ansible_")] = value
+          # ansible_local is the ONE fact real Ansible keeps its ansible_
+          # prefix inside the ansible_facts dict (`ansible_facts
+          # ['ansible_local']` is defined and `ansible_facts['local']` is
+          # NOT - live-verified against ansible-core 2.19.11, where a
+          # key-listing debug over a fully gathered host shows ansible_local
+          # as the only ansible_-prefixed survivor). Oefenweb.mydumper's
+          # build-skip chain (`ansible_facts['ansible_local'] is not
+          # defined or ...`, round 5460204 warm phase) short-circuited true
+          # on the first clause here because this dict had stripped the
+          # prefix to 'local', re-running the whole source build on hosts
+          # where the role's own facts.d file already reported the built
+          # version.
+          facts_dict[key == "ansible_local" ? "ansible_local" : key.lchop("ansible_")] = value
         end
         facts_dict
       end
