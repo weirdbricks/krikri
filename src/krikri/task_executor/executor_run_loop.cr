@@ -167,11 +167,21 @@ module Krikri
         # connection keeps failing - and `ignore_unreachable: true`
         # makes that one ignored rather than fatal, letting the host go
         # on to the next task.
+        #
+        # The booking happens HERE (so the abort/halt decisions below
+        # see it) but the report itself prints after the task banner:
+        # ansible prints the banner first and the per-host results under
+        # it - a fatal printed before the banner (or before the PLAY
+        # banner, when this used to print straight from the pre-upload
+        # pass) is a krikri-visible divergence (live-verified vs
+        # ansible-core 2.19.11).
+        pending_unreachable = [] of Host
         hosts.each do |host|
           next unless @unreachable_hosts.includes?(host.name)
           next if @halted_hosts.includes?(host.name)
 
-          report_unreachable(task, host)
+          report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, print: false)
+          pending_unreachable << host
         end
 
         # any_errors_fatal:/max_fail_percentage: are evaluated BETWEEN
@@ -200,21 +210,37 @@ module Krikri
         # temporarily un-halt, and those run via their own separate
         # run_task_batch call). Found via geerlingguy.raspberry-pi: a
         # single-host play kept printing banners for every task after its
-        # one host failed and halted.
-        break if halt_rejected.empty?
+        # one host failed and halted. The task whose booking made them
+        # unreachable still prints its banner and those hosts' reports
+        # (pending_unreachable non-empty) - ansible shows
+        # "TASK [Gathering Facts]" + the fatal, not a bare fatal.
+        break if halt_rejected.empty? && pending_unreachable.empty?
 
         active_hosts = halt_rejected.reject { |host| role_ended_for_host?(task, host) }
         # Every active host had this role ended for it - a fully consumed
         # task prints nothing at all (Ansible's silent iterator
-        # consume), but later tasks outside the role still run.
-        next if active_hosts.empty?
+        # consume), but later tasks outside the role still run - unless
+        # this task also owes pending unreachable reports, which print
+        # under the task's banner like any other per-host result.
+        if active_hosts.empty?
+          unless pending_unreachable.empty?
+            unless @adhoc || (task.include_role? && task.is_static_import?)
+              Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
+              print_task_path(task)
+            end
+            flush_pending_unreachable(pending_unreachable)
+          end
+          next
+        end
 
         if task.block?
+          flush_pending_unreachable(pending_unreachable)
           execute_block_multi(task, active_hosts)
           next
         end
 
         if task.include_tasks? && !task_has_loop?(task)
+          flush_pending_unreachable(pending_unreachable)
           execute_include_tasks_multi(task, active_hosts)
           next
         end
@@ -238,6 +264,11 @@ module Krikri
           Krikri::ProfileTasks.record_task_start(task, task_display_name)
           print_task_path(task)
         end
+        # The buffered unreachable reports go under the banner, before
+        # the reachable hosts' results - a refused connection completes
+        # long before a real task does, so ansible's result order puts
+        # the fatal line first (live-verified vs 2.19.11).
+        flush_pending_unreachable(pending_unreachable)
 
         if @forks > 1 && task_forkable?(task) && active_hosts.size > 1 && task.throttle != 1 && (task.debugger || @debugger).nil?
           run_task_for_hosts_in_parallel(task, active_hosts)

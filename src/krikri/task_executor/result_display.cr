@@ -932,7 +932,11 @@ module Krikri
       nil
     end
 
-    private def self.error_origin_context(task : Task) : String?
+    # Public so TaskExecutor's own unreachable report (report_unreachable)
+    # can emit the same `[ERROR]: Task failed:` block ansible-playbook
+    # prints before an unreachable host's fatal line - that report lives
+    # outside ResultDisplay's result-dump path.
+    def self.error_origin_context(task : Task) : String?
       path = task.source_file
       return nil unless path && task.source_line > 0
       ErrorBlock.origin_context(path, task.source_line, task.source_col > 0 ? task.source_col : nil)

@@ -2,31 +2,70 @@ require "./executor"
 
 module Krikri
   class TaskExecutor
-    private def report_unreachable(task : Task, host : Host, ssh_error : String? = nil, no_log : Bool = false) : Nil
+    # Emits ansible-playbook's unreachable report for *host*:
+    # the `[ERROR]: Task failed:` block (with the task's own Origin when
+    # the failing task has a source position - the implicit Gathering
+    # Facts task has none, live-verified vs 2.19.11) followed by the
+    # `fatal: [host]: UNREACHABLE! => {...}` line, then books the result
+    # as either ignored (ignore_unreachable:) or unreachable, halting
+    # the host in the latter case.
+    #
+    # *task* is nil for the implicit Gathering Facts task's own report.
+    # With print: false the report text is buffered instead (see
+    # flush_pending_unreachable): run_task_batch books unreachable hosts
+    # BEFORE its abort/halt decisions but must print the report under
+    # the task banner, which is decided afterwards.
+    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       # Ansible embeds the transport's own error text in the msg
-      # ("Failed to connect to the host via ssh: ssh: connect to host
-      # ...: No route to host"); the known-unreachable paths have no
-      # fresh error to show and fall back to the connection host, which
-      # is what this always printed before.
+      # ("Task failed: Failed to connect to the host via ssh: ssh:
+      # connect to host ...: Connection refused", live-verified vs
+      # 2.19.11 at both the implicit Gathering Facts task and a regular
+      # task). The known-unreachable paths have no fresh error of their
+      # own: they fall back to the pre-upload pass's recorded transport
+      # error (unreachable_ssh_errors), then to the bare connection
+      # host, which is what this always printed before.
       #
       # no_log redaction applies on the unreachable path too (Ansible honors no_log there): the SSH transport error can echo
       # task context (a command line, a URL with embedded credentials)
       # the task asked to keep out of the output.
-      detail = ssh_error.try(&.strip.lines.first?) || connection_host
-      msg = %("Failed to connect to the host via ssh: #{detail}")
+      detail = ssh_error.try { |err| ssh_transport_detail(err) } ||
+               @unreachable_ssh_errors[host.name]? || connection_host
+      inner = "Failed to connect to the host via ssh: #{detail}"
+      msg = "Task failed: #{inner}"
       msg = "" if no_log
-      if Krikri::Oneline.enabled?
-        # The oneline callback's unreachable shape: `host | UNREACHABLE!:
-        # <msg>` with the RAW msg text (not the JSON-quoted fatal dump).
-        detail_msg = no_log ? "" : "Failed to connect to the host via ssh: #{detail}"
-        puts "#{host.name} | UNREACHABLE!: #{detail_msg}".colorize(:red)
+      report = String.build do |io|
+        if Krikri::Oneline.enabled?
+          # The oneline callback's unreachable shape: `host | UNREACHABLE!:
+          # <msg>` with the RAW msg text (not the JSON-quoted fatal dump).
+          detail_msg = no_log ? "" : "Failed to connect to the host via ssh: #{detail}"
+          io << "#{host.name} | UNREACHABLE!: #{detail_msg}".colorize(:red)
+          io << "\n"
+        else
+          unless no_log
+            origin = task.try { |failed_task| ResultDisplay.error_origin_context(failed_task) }
+            # The two segments ("Task failed." / the transport error) render
+            # separately in ansible's block; without a source context on
+            # either node they would collapse into one, so the cause breaks
+            # the collapse the way a context-bearing child does (an empty
+            # events list is never rendered - see ErrorBlock#collapse).
+            cause = ErrorBlock::Node.new(inner, events: [] of ErrorBlock::Node)
+            head = ErrorBlock::Node.new("Task failed.", source_context: origin)
+            ErrorBlock.emit_to(io, head.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
+          end
+          io << %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
+          io << "\n"
+        end
+      end
+
+      if print
+        print report
       else
-        puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
+        @pending_unreachable_output << report
       end
 
       stats = @results[host.name]
-      if task.ignore_unreachable?
+      if task.try(&.ignore_unreachable?)
         # Counted as ok AND ignored, matching Ansible's own recap
         # for an ignored unreachable task.
         stats["ok"] += 1
@@ -35,6 +74,28 @@ module Krikri
         stats["unreachable"] += 1
         @halted_hosts << host.name
       end
+    end
+
+    # Buffered unreachable reports from report_unreachable(print: false).
+    @pending_unreachable_output : Array(String) = [] of String
+
+    # Prints the unreachable reports buffered by run_task_batch's
+    # pre-banner booking pass, now that the task banner is out.
+    private def flush_pending_unreachable(pending : Array(Host)) : Nil
+      return if pending.empty?
+      pending.size.times { print @pending_unreachable_output.shift }
+    end
+
+    # The ssh transport's own error line inside an upload/exec failure
+    # message ("Failed to upload <local> to <remote>: ssh: connect to
+    # host ...: Connection refused"): ansible's unreachable msg embeds
+    # only that part, never this engine's upload framing. Falls back to
+    # the first line when the text carries no `ssh: ` segment (a silent
+    # mid-execution drop's "Connection closed by ...", say).
+    private def ssh_transport_detail(message : String) : String
+      stripped = message.strip
+      stripped[/\bssh: .*$/]?.try(&.strip.lines.first?) ||
+        stripped.lines.first? || ""
     end
 
     def show_recap : Nil

@@ -90,9 +90,11 @@ module Krikri
 
       live_targets.size.times { done.receive }
 
-      targets.each do |host|
-        connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
+      # SSH transport error detail per host whose gather failed at the
+      # transport level THIS pass - feeds the unreachable report's msg.
+      fresh_ssh_errors = Hash(String, String).new
 
+      targets.each do |host|
         # A host this pass just DISCOVERED to be unreachable (the facts
         # plugin's own failure was an SSH transport failure, not a module
         # failure) is remembered in @unreachable_hosts - the run-scoped
@@ -110,18 +112,28 @@ module Krikri
         # booked `failed=2` and ran on.
         if outcomes[host.name]?.try(&.[2])
           @unreachable_hosts << host.name
+          fresh_ssh_errors[host.name] = outcomes[host.name][1] || ""
         end
+      end
 
-        if @unreachable_hosts.includes?(host.name)
-          # Same wording/shape as report_unreachable's own banner - this
-          # IS that host's unreachable report, just booked from the
-          # Gathering Facts task instead of a later one, matching
-          # Ansible's single-event recap for a host that never connects.
-          puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": "Failed to connect to the host via ssh: #{connection_host}", "unreachable": true}).colorize(:red)
-          @results[host.name]["unreachable"] += 1
-          @halted_hosts << host.name
-          next
-        end
+      # Unreachable hosts report FIRST: a refused connection completes
+      # long before a successful gather, so ansible's result order puts
+      # the fatal line ahead of the successful hosts' ok lines
+      # (live-verified vs ansible-core 2.19.11).
+      targets.each do |host|
+        next unless @unreachable_hosts.includes?(host.name)
+        # Same wording/shape as report_unreachable's own banner - this
+        # IS that host's unreachable report, just booked from the
+        # Gathering Facts task instead of a later one, matching
+        # Ansible's single-event recap for a host that never connects.
+        # A transport failure discovered HERE carries this attempt's
+        # own ssh error; a host the pre-upload pass already knew about
+        # carries that pass's recorded one.
+        report_unreachable(nil, host, fresh_ssh_errors[host.name]? || @unreachable_ssh_errors[host.name]?)
+      end
+
+      targets.each do |host|
+        next if @unreachable_hosts.includes?(host.name)
 
         success, error_message = outcomes[host.name]
 
