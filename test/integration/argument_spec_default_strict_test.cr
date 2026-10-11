@@ -14,19 +14,23 @@ private PROJECT_ROOT = File.expand_path("../..", __DIR__)
 private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
 private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
 
-private def run_role_roleplay(argument_specs : String, extra_vars : String = "")
+private def run_role_roleplay(argument_specs : String, extra_vars : String = "", role_defaults : String = "", gather_facts : Bool = false)
   dir = File.tempname("argspec-default", ".d")
   Dir.mkdir(dir)
   role = File.join(dir, "roles", "specargs")
   FileUtils.mkdir_p(File.join(role, "meta"))
   FileUtils.mkdir_p(File.join(role, "tasks"))
+  FileUtils.mkdir_p(File.join(role, "defaults"))
   File.write(File.join(role, "meta", "argument_specs.yml"), argument_specs)
+  unless role_defaults.empty?
+    File.write(File.join(role, "defaults", "main.yml"), role_defaults)
+  end
   File.write(File.join(role, "tasks", "main.yml"), "---\n- name: past validation\n  ansible.builtin.debug:\n    msg: \"PAST-VALIDATION\"\n")
   playbook = File.join(dir, "play.yml")
   File.write(playbook, <<-YAML
     - hosts: localhost
       connection: local
-      gather_facts: false
+      gather_facts: #{gather_facts ? "true" : "false"}
       vars:
         group_name: masters
       #{extra_vars}
@@ -104,5 +108,64 @@ describe "argument_specs.yml default: expressions are strictly templated" do
 
     status.success?.must_equal(true)
     output.must_include("PAST-VALIDATION")
+  end
+
+  # antmelekhin.jira, round 5460383: the role default AND the spec default
+  # are both the same string-valued ternary template, and the declared type
+  # is int. The old binary treated the role default's RAW template text as
+  # a provided value and type-checked it ("of type str and we were unable
+  # to convert to int"); 0.9.1620's pre-validation value templating turns
+  # it into '80'/'443' first, which converts to int like real.
+  it "converts a str-valued ternary role default to int (antmelekhin.jira proxyport chain)" do
+    status, output = run_role_roleplay(<<-YAML, role_defaults: <<-DEFAULTS, gather_facts: true)
+      argument_specs:
+        main:
+          short_description: spec
+          options:
+            jira_catalina_connector_scheme:
+              type: str
+              choices:
+                - 'http'
+                - 'https'
+              default: 'http'
+            jira_catalina_connector_proxyport:
+              type: int
+              default: "{{ (jira_catalina_connector_scheme | lower == 'http') | ternary('80', '443') }}"
+      YAML
+      ---
+      jira_catalina_connector_scheme: 'http'
+      jira_catalina_connector_proxyport: "{{ (jira_catalina_connector_scheme | lower == 'http') | ternary('80', '443') }}"
+      DEFAULTS
+
+    status.success?.must_equal(true)
+    output.must_include("PAST-VALIDATION")
+    output.must_include("failed=0")
+    output.wont_include("unable to convert")
+  end
+
+  it "converts the ternary's else branch ('443') to int when the scheme is https" do
+    status, output = run_role_roleplay(<<-YAML, role_defaults: <<-DEFAULTS)
+      argument_specs:
+        main:
+          short_description: spec
+          options:
+            jira_catalina_connector_scheme:
+              type: str
+              choices:
+                - 'http'
+                - 'https'
+              default: 'http'
+            jira_catalina_connector_proxyport:
+              type: int
+              default: "{{ (jira_catalina_connector_scheme | lower == 'http') | ternary('80', '443') }}"
+      YAML
+      ---
+      jira_catalina_connector_scheme: 'https'
+      jira_catalina_connector_proxyport: "{{ (jira_catalina_connector_scheme | lower == 'http') | ternary('80', '443') }}"
+      DEFAULTS
+
+    status.success?.must_equal(true)
+    output.must_include("PAST-VALIDATION")
+    output.wont_include("unable to convert")
   end
 end
