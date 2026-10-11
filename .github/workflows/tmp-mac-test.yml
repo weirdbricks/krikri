@@ -13,6 +13,7 @@ jobs:
           KEY: ${{ secrets.TEST_SSH_KEY }}
         run: |
           uname -sm
+          brew install openssl@3 pcre2 bdw-gc >/dev/null 2>&1
           mkdir r && cd r
           gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p '*darwin-arm64.tar.gz'
           tar xzf *.tar.gz && cd krikri-*/
