@@ -9970,20 +9970,20 @@
     ],
     "type": "str",
     "choices": [
-     "btrfs",
-     "vfat",
-     "ext3",
-     "ext4",
-     "bcachefs",
-     "lvm",
      "swap",
-     "ext2",
-     "reiserfs",
-     "ext4dev",
-     "xfs",
-     "f2fs",
+     "lvm",
+     "ext3",
      "ocfs2",
-     "ufs"
+     "reiserfs",
+     "btrfs",
+     "ufs",
+     "ext2",
+     "bcachefs",
+     "vfat",
+     "ext4",
+     "f2fs",
+     "ext4dev",
+     "xfs"
     ]
    },
    "dev": {
@@ -12499,9 +12499,6 @@
     "default": null
    },
    "name": {
-    "aliases": [
-     "user"
-    ],
     "type": "str",
     "required": true
    },

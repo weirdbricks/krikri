@@ -159,10 +159,65 @@ def capture_spec(path, fqcn):
     return captured
 
 
-def clean_option(spec_entry):
+def _version_tuple(version):
+    """'5.0.2' -> (5, 0, 2) - digits only, tolerating suffixes by stopping
+    at the first non-numeric segment (close enough for removal-version
+    comparisons, which are plain X.Y.Z in practice)."""
+    parts = []
+    for piece in str(version).split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def collection_version_for(path):
+    """The MANIFEST.json version ansible RESOLVES for the collection
+    owning *path* - i.e. the FIRST MANIFEST.json found walking
+    COLL_ROOTS in ansible's own priority order by ns/col (derived from
+    the path), NOT whichever copy's module file happened to be parsed.
+    None for non-collection modules (ansible.builtin)."""
+    marker = os.path.sep + "ansible_collections" + os.path.sep
+    if marker not in path:
+        return None
+    tail = path.split(marker, 1)[1]
+    ns, col = tail.split(os.path.sep, 2)[0:2]
+    for root in COLL_ROOTS:
+        manifest = os.path.join(root, ns, col, "MANIFEST.json")
+        if os.path.exists(manifest):
+            try:
+                data = json.load(open(manifest))
+                return data.get("version") or (data.get("collection_info") or {}).get("version")
+            except Exception:
+                return None
+    return None
+
+
+def clean_option(spec_entry, collection_version=None):
     out = {}
-    if spec_entry.get("aliases"):
-        out["aliases"] = sorted(spec_entry["aliases"])
+    aliases = spec_entry.get("aliases")
+    # ansible-core drops a deprecated alias entirely once the LOADED
+    # collection's version reaches the alias's removal version
+    # (AnsibleModule._handle_aliases/deprecated-alias handling) - and
+    # "loaded collection version" is the MANIFEST.json ansible resolves
+    # for the collection, which can differ from the copy whose module
+    # file we parsed (live case: community.mysql module code from
+    # dist-packages 3.15.0 but MANIFEST 5.0.2 from ~/.ansible's skeleton
+    # install => `user` alias (removal 5.0.0) is REMOVED and real 2.19.11
+    # rejects `user:` while a naive alias copy accepts it).
+    deprecated = spec_entry.get("deprecated_aliases") or []
+    removed_names = set()
+    for dep in deprecated:
+        if not isinstance(dep, dict):
+            continue
+        removal = dep.get("version")
+        if removal and collection_version and _version_tuple(collection_version) >= _version_tuple(removal):
+            removed_names.add(dep.get("name"))
+    if aliases:
+        kept = [a for a in aliases if a not in removed_names]
+        if kept:
+            out["aliases"] = sorted(kept)
     t = spec_entry.get("type", "str")
     out["type"] = t if isinstance(t, str) else "str"
     if spec_entry.get("required"):
@@ -204,6 +259,7 @@ def extract(fqcn):
         redirect = builtin_redirect(fqcn.split(".")[-1])
         if redirect:
             effective = redirect
+    collection_version = collection_version_for(path)
     cap = capture_spec(path, effective)
     if "error" in cap or cap.get("argument_spec") is None:
         return {"_error": cap.get("error", "no AnsibleModule init captured")}
@@ -219,7 +275,7 @@ def extract(fqcn):
     options = {}
     for name, entry in spec.items():
         entry = entry or {}
-        options[name] = clean_option(entry)
+        options[name] = clean_option(entry, collection_version)
     return {
         "options": options,
         "mutually_exclusive": cap.get("mutually_exclusive") or [],
