@@ -17,7 +17,7 @@ describe "Krikri::FactsGatherer (setup_param_coverage_test.cr)" do
   describe "#resolve_enabled_families" do
     it "gathers every family with no tokens (real get_collector_names' `gather_subset or ['all']`)" do
       families = Krikri::FactsGatherer.resolve_enabled_families([] of String)
-      families.must_equal(Set.new(%w[min local network hardware mounts virtual is_chroot loadavg fibre_channel_wwn iscsi hostnqn]))
+      families.must_equal(Set.new(%w[min local network hardware mounts ssh_pub_keys virtual is_chroot loadavg fibre_channel_wwn iscsi hostnqn]))
     end
 
     it "keeps the min floor for !all, exactly like Ansible" do

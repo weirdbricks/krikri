@@ -221,6 +221,10 @@ module Krikri
       "network"  => %w[network all_ipv4_addresses all_ipv6_addresses default_ipv4 default_ipv6 interfaces],
       "hardware" => %w[hardware devices dmi processor processor_cores processor_count nvme],
       "mounts"   => %w[mounts],
+      # SshPubKeyFactCollector's own _fact_ids - znerol.ssh_kba round
+      # 5466303's `hostvars[..]["ansible_ssh_host_key_*"]` reads resolved
+      # undefined before this family existed at all.
+      "ssh_pub_keys" => %w[ssh_pub_keys ssh_host_pub_keys ssh_host_key_dsa_public ssh_host_key_rsa_public ssh_host_key_ecdsa_public ssh_host_key_ed25519_public],
       # Ansible gathers virtualization/dmi-adjacent singleton
       # collectors OUTSIDE the min bundle - `!all` (min only) on a real
       # host never reports ansible_virtualization_type/ansible_is_chroot/
@@ -235,6 +239,9 @@ module Krikri
       "iscsi"             => %w[iscsi],
       "hostnqn"           => %w[hostnqn],
     }
+
+    # SshPubKeyFactCollector's keydir search order.
+    SSH_PUB_KEY_DIRS = %w[/etc/ssh /etc/openssh /etc]
 
     # The families "min" covers in this engine. Ansible's
     # minimal_gather_subset also includes 'local' (the ansible_local
@@ -368,6 +375,7 @@ module Krikri
       gather_fibre_channel_wwn_facts(facts) if families.includes?("fibre_channel_wwn")
       gather_iscsi_fact(facts) if families.includes?("iscsi")
       gather_hostnqn_fact(facts) if families.includes?("hostnqn")
+      gather_section(facts, "ssh_pub_keys") { gather_ssh_pub_keys_facts(facts) } if families.includes?("ssh_pub_keys")
 
       facts
     end
@@ -2121,6 +2129,50 @@ module Krikri
         "5min"  => JSON::Any.new(fields[1]),
         "15min" => JSON::Any.new(fields[2]),
       } of String => JSON::Any
+    end
+
+    # ansible_ssh_host_key_{algo}_public(+_keytype) - Ansible's
+    # SshPubKeyFactCollector (ssh_pub_keys). Never implemented before -
+    # znerol.ssh_kba round 5466303: the role's server-host-key chain reads
+    # hostvars[..]["ansible_ssh_host_key_*"] behind `| default(False)`
+    # guards, which all went false, collapsing
+    # ssh_kba_server_host_names_and_keys to [] and skipping its
+    # `| length > 0` include gate where ansible-playbook runs all six
+    # loop items. (Round 5460170's depth-cap fix was real but masked this:
+    # the loop ran empty for a different reason on every real host.)
+    #
+    # Mirrors the collector's exact walk: dirs in order
+    # (/etc/ssh, /etc/openssh, /etc), algos (dsa, rsa, ecdsa, ed25519),
+    # and - subtle - the early return fires PER FACT NAME, so an algo the
+    # first dir lacked keeps falling through to the later dirs while the
+    # algos it DID find stop the search immediately. A file that exists
+    # but yields fewer than two whitespace-separated tokens is skipped
+    # (real would raise mid-collection; no real .pub file does this).
+    def gather_ssh_pub_keys_facts(facts, keydirs : Array(String) = SSH_PUB_KEY_DIRS)
+      algos = %w[dsa rsa ecdsa ed25519]
+      collected = Hash(String, String).new
+      done = false
+      keydirs.each do |keydir|
+        break if done
+        algos.each do |algo|
+          factname = "ssh_host_key_#{algo}_public"
+          if collected.has_key?(factname)
+            done = true
+            break
+          end
+          keydata = begin
+            File.read("#{keydir}/ssh_host_#{algo}_key.pub").strip
+          rescue
+            nil
+          end
+          next if keydata.nil? || keydata.empty?
+          parts = keydata.split
+          next if parts.size < 2
+          collected[factname] = parts[1]
+          collected["#{factname}_keytype"] = parts[0]
+        end
+      end
+      collected.each { |name, value| facts["ansible_#{name}"] = value }
     end
 
     # ansible_fibre_channel_wwn - Ansible scans
