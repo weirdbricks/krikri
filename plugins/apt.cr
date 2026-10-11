@@ -540,13 +540,13 @@ module Krikri
       # short-circuits the RESULT, not the `apt-get clean` run).
       if (autoremove || autoclean || clean) && !upgrade
         # Ansible's cleanup() builds `apt-get -y <dpkg_options>
-        # <purge> <force_yes> <operation>` - the purge/force flags and
-        # the dpkg options apply to autoremove/autoclean too (`purge:
-        # true` + `autoremove: true` is its own documented idiom: "Remove
-        # dependencies that are no longer required and purge their
-        # configuration files"). `apt-get clean` is the exception:
-        # Ansible's aptclean() runs the bare command with no options at
-        # all, so it stays bare here.
+        # <purge> <force_yes> <operation> <check_arg>` - the purge/force
+        # flags and the dpkg options apply to autoremove/autoclean too
+        # (`purge: true` + `autoremove: true` is its own documented
+        # idiom: "Remove dependencies that are no longer required and
+        # purge their configuration files"). `apt-get clean` is the
+        # exception: Ansible's aptclean() runs the bare command with no
+        # options at all, so it stays bare here.
         # Ansible's main() builds its `dpkg_options` ONCE - the
         # expanded list PLUS the lock-timeout override - and passes that
         # same value to cleanup(), install(), remove() and upgrade()
@@ -556,18 +556,79 @@ module Krikri
         # Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60
         # --purge --force-yes autoremove`).
         cleanup_flags = [real_dpkg_options(lock_timeout), (@purge ? "--purge" : nil), (@force ? "--force-yes" : nil)].compact.join(" ")
-        {
-          {autoremove && no_effective_packages, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove", "packages removed"},
-          {autoclean && no_effective_packages, "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean", "autocleaned"},
-          {clean, "apt-get clean", "cache cleaned"},
-        }.each do |(enabled, cmd, label)|
-          next unless enabled
 
-          if @check_mode
-            messages << "Would run: #{cmd}"
-            changed = true
-            next
+        # The cleanup operations are EARLY EXITS, not a cleanup pass.
+        # main()'s order is aptclean (clean:) -> the update_cache pass ->
+        # `if not packages: if autoclean: cleanup(autoclean); if
+        # autoremove: cleanup(autoremove)` - and cleanup() calls
+        # exit_json() ITSELF the moment its single apt-get op finishes,
+        # so at most ONE of the two ever runs per task: with
+        # `autoclean: true` AND `autoremove: true` (buluma.os_updates'
+        # "Debian | APT autoremove", rounds 952518 + 5460307) real
+        # Ansible runs ONLY the autoclean op - packages that have merely
+        # become autoremovable stay installed and the task reports
+        # autoclean's own 'Del ' marker - while this engine previously
+        # ran autoremove too (first, no less) and reported its "The
+        # following packages will be REMOVED" marker as the task's
+        # changed:. The update_cache pass's own no-packages exit
+        # (`cache_update_is_sole_operation`) also sits before the
+        # cleanup tail in main(), so a cache-refresh-only run never
+        # reaches autoclean/autoremove at all (the no-name tail below
+        # returns that exit).
+        cache_pass_exits = (update_cache || has_cache_valid_time) && cache_update_is_sole_operation
+        if clean
+          clean_result = if @check_mode
+                           messages << "Would run: apt-get clean"
+                           {exit_code: 0, stdout: "", stderr: ""}
+                         else
+                           # `apt-get clean` contends for the dpkg lock
+                           # like every other apt-get op - same
+                           # lock_timeout retry + PolicyRcD wrap as the
+                           # cleanup() ops below.
+                           res = with_policy_rc_d { apt_with_lock_retry("apt-get clean", lock_timeout, ->remote_exec(String)) }
+                           if res[:exit_code] != 0
+                             return PluginResult.new(changed: false, failed: true, msg: "apt-get clean failed: #{res[:stderr]}")
+                           end
+                           messages << "cache cleaned"
+                           res
+                         end
+          # aptclean()'s own result is discardable when the module keeps
+          # running (a package install's exit_json overwrites it) - its
+          # changed: only matters through this early exit, which is
+          # UNCONDITIONAL (`not p['package'] and p['upgrade'] == 'no'
+          # and not p['deb']`), not output-matched, and ends the module
+          # BEFORE the update_cache pass and the autoclean/autoremove
+          # tail are ever reached (exit_json(changed=True, msg=<clean
+          # stdout>, stdout=..., stderr=..., diff=...) - an empty clean
+          # output still carries its empty msg key, include_empty_msg).
+          changed = true
+          if cache_update_is_sole_operation
+            # cleanup()/aptclean() exits carry NO cache keys (their
+            # exit_json never saw the cache pass) - suppress the
+            # engine's cache_updated backfill the same way the deb path
+            # does.
+            @omit_cache_updated = true
+            return PluginResult.new(
+              changed: true,
+              failed: false,
+              msg: @check_mode ? messages.join(", ") : clean_result[:stdout],
+              stdout: clean_result[:stdout],
+              stderr: clean_result[:stderr],
+              diff: @diff_mode && !@check_mode ? apt_install_diff(clean_result[:stdout]) : JSON.parse("{}"),
+              include_empty_msg: true,
+              failed_flag: true,
+              key_order: ["changed", "msg", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"],
+            )
           end
+        end
+
+        if autoclean && no_effective_packages && !cache_pass_exits
+          cmd = "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoclean"
+          # check mode still runs the op - with --simulate, exactly like
+          # cleanup()'s check_arg - and marker-checks the simulate
+          # output like the real run (a no-op simulate output reports
+          # changed: false, not a blanket true).
+          cmd += " --simulate" if @check_mode
 
           # `autoremove`/`autoclean` are apt-get operations that contend
           # for the dpkg lock - wrap with lock_timeout retry, matching
@@ -588,23 +649,43 @@ module Krikri
           # boilerplate to stdout unconditionally, whether or not
           # anything was actually removed, so the previous "non-empty
           # stdout means changed" heuristic always reported changed:
-          # true for autoclean specifically. `clean:` (Ansible's
-          # own `aptclean()`) reports changed: true UNCONDITIONALLY
-          # when called with no package/upgrade/deb - not based on
-          # output at all.
-          did_something = case cmd
-                          when .includes?("autoremove")
-                            result[:stdout].includes?("The following packages will be REMOVED")
-                          when .includes?("autoclean")
-                            result[:stdout].includes?("Del ")
-                          else
-                            true
-                          end
+          # true for autoclean specifically. cleanup()'s exit_json is
+          # (changed, stdout, stderr, diff) plus the
+          # controller-appended stdout_lines/stderr_lines pair and
+          # failed: false - NO msg key and NO cache keys at all.
+          @omit_cache_updated = true
+          return PluginResult.new(
+            changed: result[:stdout].includes?("Del "),
+            failed: false,
+            stdout: result[:stdout],
+            stderr: result[:stderr],
+            diff: @diff_mode ? apt_install_diff(result[:stdout]) : JSON.parse("{}"),
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(result[:stdout]),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(result[:stderr]),
+            failed_flag: true,
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"],
+          )
+        end
 
-          if did_something
-            changed = true
-            messages << label
+        if autoremove && no_effective_packages && !cache_pass_exits
+          cmd = "#{apt_get_bin} -y#{cleanup_flags.empty? ? "" : " " + cleanup_flags} autoremove"
+          cmd += " --simulate" if @check_mode
+          result = with_policy_rc_d { apt_with_lock_retry(cmd, lock_timeout, ->remote_exec(String)) }
+          if result[:exit_code] != 0
+            return PluginResult.new(changed: false, failed: true, msg: "#{cmd} failed: #{result[:stderr]}")
           end
+          @omit_cache_updated = true
+          return PluginResult.new(
+            changed: result[:stdout].includes?("The following packages will be REMOVED"),
+            failed: false,
+            stdout: result[:stdout],
+            stderr: result[:stderr],
+            diff: @diff_mode ? apt_install_diff(result[:stdout]) : JSON.parse("{}"),
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(result[:stdout]),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(result[:stderr]),
+            failed_flag: true,
+            key_order: ["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"],
+          )
         end
       end
 

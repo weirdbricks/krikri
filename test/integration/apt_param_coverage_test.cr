@@ -24,7 +24,7 @@ require "file_utils"
 # The dpkg Status-Abbrev the dpkg-query shim reports for the requested
 # package: "ii" installed, "un" never installed, "rc" removed with
 # config files still on disk.
-private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, policy_path : String? = nil, &)
+private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, policy_path : String? = nil, op_stdout : String = "", &)
   dir = File.join(Dir.tempdir, "krikri-apt-param-#{Random.rand(1_000_000)}")
   log = File.join(dir, "calls.log")
   FileUtils.mkdir_p(dir)
@@ -46,6 +46,10 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
         if [ -n "$KRIKRI_APT_FAIL" ]; then
           echo "E: Krikri simulated apt failure." >&2
           exit 100
+        fi
+        if [ -n "$KRIKRI_APT_OP_STDOUT" ]; then
+          printf '%s' "$KRIKRI_APT_OP_STDOUT"
+          exit 0
         fi
         printf 'Reading package lists...\nBuilding dependency tree...\nReading state information...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'
         exit 0
@@ -75,11 +79,12 @@ private def with_apt_param_shims(dpkg_status : String, fail_apt : Bool = false, 
   File.chmod(File.join(dir, "stat"), 0o755)
   File.chmod(File.join(dir, "apt-cache"), 0o755)
   env = {
-    "PATH"               => "#{dir}:/usr/bin:/bin",
-    "KRIKRI_APT_CALLS"   => log,
-    "KRIKRI_DPKG_STATUS" => dpkg_status,
-    "KRIKRI_POLICY_PATH" => policy_path || "",
-    "KRIKRI_APT_FAIL"    => (fail_apt ? "1" : ""),
+    "PATH"                => "#{dir}:/usr/bin:/bin",
+    "KRIKRI_APT_CALLS"    => log,
+    "KRIKRI_DPKG_STATUS"  => dpkg_status,
+    "KRIKRI_POLICY_PATH"  => policy_path || "",
+    "KRIKRI_APT_FAIL"     => (fail_apt ? "1" : ""),
+    "KRIKRI_APT_OP_STDOUT" => op_stdout,
   }.to_json
   yield env, log
 ensure
@@ -418,7 +423,16 @@ describe "apt plugin - parameter coverage" do
   end
 
   describe "cleanup flags (apt.py cleanup() command construction)" do
-    it "applies dpkg_options, purge and force to autoremove/autoclean (apt.py: apt-get -y <dpkg_options> <purge> <force_yes> <operation>)" do
+    # apt.py main(): the `if not packages: if autoclean:
+    # cleanup(autoclean); if autoremove: cleanup(autoremove)` tail runs
+    # at most ONE op because cleanup() calls exit_json() itself - so
+    # with `autoclean: true` AND `autoremove: true` (buluma.os_updates'
+    # "Debian | APT autoremove", rounds 952518 + 5460307) only the
+    # autoclean op runs and its flag construction is what gets
+    # exercised (found when a package that had merely become
+    # autoremovable stayed installed under real Ansible while this
+    # engine's standalone autoremove removed it and reported changed:).
+    it "applies dpkg_options, purge and force to autoclean, the only cleanup op that runs when both are set (apt.py: apt-get -y <dpkg_options> <purge> <force_yes> <operation>)" do
       with_apt_param_shims("ii") do |env, log|
         result = PluginSpecHelper.run("apt", {
           "autoremove"   => "true",
@@ -429,8 +443,89 @@ describe "apt plugin - parameter coverage" do
         })
         falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
         lines = File.read_lines(log)
-        lines.must_include("-y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes autoremove")
         lines.must_include("-y #{DEFAULT_DPKG_OPTIONS} --purge --force-yes autoclean")
+        lines.each do |line|
+          line.split(' ').wont_include("autoremove")
+        end
+      end
+    end
+
+    # Same early-exit rule from the other side: with `autoclean` unset,
+    # autoremove IS the cleanup() call that runs (and exits).
+    it "runs autoremove when only autoremove is set (no autoclean to exit early)" do
+      with_apt_param_shims("ii") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "autoremove"   => "true",
+          "_environment" => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        call_with_verb(log, "autoremove").wont_be_nil
+        call_with_verb(log, "autoclean").must_be_nil
+      end
+    end
+
+    # apt.py main(): the update_cache pass's own `not p['package'] and
+    # not p['upgrade'] and not p['deb']` exit sits BEFORE the cleanup
+    # tail, so `update_cache: yes` + `autoclean/autoremove` exits at the
+    # cache pass and never runs the cleanup ops.
+    it "never runs standalone autoclean/autoremove when the update_cache pass exits first (apt.py: cache exit precedes the cleanup tail)" do
+      with_apt_param_shims("ii") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "update_cache" => "true",
+          "autoremove"   => "true",
+          "autoclean"    => "true",
+          "_environment" => env,
+        })
+        falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+        read_log(log).each do |line|
+          line.split(' ').wont_include("autoremove")
+          line.split(' ').wont_include("autoclean")
+        end
+      end
+    end
+
+    # apt.py's aptclean() early exit (`not p['package'] and
+    # p['upgrade'] == 'no' and not p['deb']`) fires BEFORE the
+    # autoclean/autoremove tail too, and its changed: is unconditional.
+    it "exits after apt-get clean when clean is set with no packages - autoclean/autoremove never run" do
+      with_apt_param_shims("ii") do |env, log|
+        result = PluginSpecHelper.run("apt", {
+          "clean"        => "true",
+          "autoremove"   => "true",
+          "autoclean"    => "true",
+          "_environment" => env,
+        })
+        result["changed"]?.try(&.as_bool).must_equal(true)
+        lines = read_log(log)
+        lines.size.must_equal(1)
+        lines.first.must_equal("clean")
+      end
+    end
+
+    # apt.py cleanup(): `changed = CLEAN_OP_CHANGED_STR[operation] in
+    # out` - the exit_json shape is (changed, stdout, stderr, diff)
+    # plus the controller-appended stdout_lines/stderr_lines pair and
+    # failed: false, with NO msg and NO cache keys (live-verified
+    # against ansible-core 2.19.11 with a registered result).
+    it "reports changed from the op's stdout marker and emits cleanup()'s exit_json shape" do
+      with_apt_param_shims("ii", op_stdout: "Del python3-q 2.4-1 [24 kB]\n") do |env, _log|
+        result = PluginSpecHelper.run("apt", {
+          "autoremove"   => "true",
+          "autoclean"    => "true",
+          "_environment" => env,
+        })
+        result["changed"]?.try(&.as_bool).must_equal(true)
+        result.as_h.keys.must_equal(["changed", "stdout", "stderr", "diff", "stdout_lines", "stderr_lines", "failed"])
+        result["stdout"]?.try(&.as_s).must_equal("Del python3-q 2.4-1 [24 kB]\n")
+        result["msg"]?.must_be_nil
+        result["cache_updated"]?.must_be_nil
+      end
+      with_apt_param_shims("ii") do |env, _log|
+        result = PluginSpecHelper.run("apt", {
+          "autoclean"    => "true",
+          "_environment" => env,
+        })
+        result["changed"]?.try(&.as_bool).must_equal(false)
       end
     end
 
