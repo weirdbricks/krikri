@@ -1,7 +1,11 @@
 require "yaml"
 
 module Krikri
-  VERSION = "0.9.1628"
+<<<<<<< HEAD
+  VERSION = "0.9.1629"
+=======
+  VERSION = "0.9.1629"
+>>>>>>> f5cdc1bd (Bump version to 0.9.1615 (profile_tasks + oneline callbacks))
 
   # The ansible-core release krikri's output is verified against, byte for
   # byte (see README "Compatibility target"). Also the value of the
