@@ -325,7 +325,14 @@ module Krikri
     private def validate_param_value(param : String, raw : String) : PluginResult?
       if allowed = CHOICES[param]?
         unless allowed.includes?(raw)
-          return choices_error(param, allowed, raw)
+          # parameters.py's unambiguous bool->choice rewrite (e.g.
+          # `logging: true` -> 'on', `logging: false` -> 'off'), applied
+          # in place so the later command checks see the choice.
+          if (rewritten = bool_choice_rewrite?(raw, allowed))
+            @params[param] = rewritten
+          else
+            return choices_error(param, allowed, raw)
+          end
         end
       end
       case param

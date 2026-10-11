@@ -47,6 +47,29 @@ describe "ufw plugin argument validation" do
     result["msg"].as_s.must_equal("value of logging must be one of: full, high, low, medium, off, on, got: krikri_level")
   end
 
+  it "rewrites logging true to the unambiguous 'on' choice (round 5460395)" do
+    result = PluginSpecHelper.run("ufw", {"logging" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.wont_include("must be one of")
+  end
+
+  it "rewrites logging 'True' (the templated bool spelling) to 'on'" do
+    result = PluginSpecHelper.run("ufw", {"logging" => "True"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.wont_include("must be one of")
+  end
+
+  it "rewrites logging false/False to the unambiguous 'off' choice" do
+    {"false", "False"}.each do |spelling|
+      result = PluginSpecHelper.run("ufw", {"logging" => spelling})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.wont_include("must be one of")
+    end
+  end
+
   it "fails an invalid direction choice before the required action check" do
     result = PluginSpecHelper.run("ufw", {"direction" => "krikri_dir", "logging" => "low"})
 

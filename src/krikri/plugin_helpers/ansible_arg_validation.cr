@@ -28,6 +28,23 @@ module Krikri
         REAL_TRUE.includes?(normalized) || REAL_FALSE.includes?(normalized)
       end
 
+      # parameters.py's _validate_argument_values rewrite: a value that
+      # reached a str+choices option stringified to exactly 'True'/
+      # 'False' (a YAML native bool through check_type_str) is rewritten
+      # to the choice itself when the choices overlap convert_bool.py's
+      # BOOLEANS_TRUE/BOOLEANS_FALSE in exactly ONE member, and left
+      # alone (failing the check with the original text) otherwise.
+      # krikri's wire can also carry the lowercase demotion ("true"/
+      # "false") of a non-string YAML literal, so both spellings rewrite
+      # (round 5460395, rolehippie.firewall's ufw logging: true).
+      def bool_choice_rewrite?(raw : String, allowed : Array(String)) : String?
+        normalized = raw.downcase
+        return nil unless normalized == "true" || normalized == "false"
+        members = normalized == "true" ? REAL_TRUE : REAL_FALSE
+        overlap = allowed.select { |choice| members.includes?(choice) }
+        overlap.size == 1 ? overlap.first : nil
+      end
+
       def bool_type_error(param : String, raw : String) : PluginResult
         PluginResult.new(changed: false, failed: true,
           msg: "argument '#{param}' is of type <class 'str'> and we were unable to convert to bool: " \
