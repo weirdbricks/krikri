@@ -2679,6 +2679,112 @@ describe "krikri-playbook CLI (--check mode)" do
       output.wont_include("was not found in either")
     end
 
+    # A looped task's templated notify resolves PER ITEM (ansible-core
+    # post_validates notify once per loop iteration with the loop var
+    # bound). Rendering it once against the task-level context left
+    # `item` undefined there ("Restart undefined") and aborted the whole
+    # run - buluma.beats, round 5460338 - where real 2.19.11 notified
+    # both per-item handlers fine (cold run: ok=10 changed=8).
+    it "resolves a looped task's templated notify per item" do
+      write_notify_playbook("notify_looped_templated.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: looped task with an item-templated notify
+              ansible.builtin.command: echo hi
+              loop:
+                - a
+                - b
+              notify: "Restart {{ item }}"
+          handlers:
+            - name: Restart a
+              ansible.builtin.debug:
+                msg: restarted a
+            - name: Restart b
+              ansible.builtin.debug:
+                msg: restarted b
+        YAML
+
+      status, output = run_playbook(
+        spec_tmp_path("notify_looped_templated.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.must_equal(0)
+      output.must_include("RUNNING HANDLER [Restart a]")
+      output.must_include("RUNNING HANDLER [Restart b]")
+      output.wont_include("was not found in either")
+    end
+
+    # Real's per-item notify shape, verified live vs 2.19.11: a
+    # when:-false item's early return carries no _ansible_notify, so only
+    # the executed item's rendered name is ever notified.
+    it "does not notify a looped task's when:-false item's rendered name" do
+      write_notify_playbook("notify_looped_when_skipped.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: looped task with an item-templated notify, one item gated off
+              ansible.builtin.command: echo hi
+              loop:
+                - a
+                - b
+              when: item == 'a'
+              notify: "Restart {{ item }}"
+          handlers:
+            - name: Restart a
+              ansible.builtin.debug:
+                msg: restarted a
+        YAML
+
+      status, output = run_playbook(
+        spec_tmp_path("notify_looped_when_skipped.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.must_equal(0)
+      output.must_include("RUNNING HANDLER [Restart a]")
+      output.wont_include("RUNNING HANDLER [Restart b]")
+      output.wont_include("was not found in either")
+    end
+
+    # A rendered per-item name matching no handler aborts with the
+    # RENDERED name in the error (real 2.19.11: "The requested handler
+    # 'Restart b' was not found..."), not the raw template text.
+    it "aborts with the rendered name when a looped item's notify matches no handler" do
+      write_notify_playbook("notify_looped_missing.yml", <<-YAML)
+        - hosts: localhost
+          connection: local
+          gather_facts: false
+          tasks:
+            - name: looped task with an item-templated notify, second name undefined
+              ansible.builtin.command: echo hi
+              loop:
+                - a
+                - b
+              notify: "Restart {{ item }}"
+          handlers:
+            - name: Restart a
+              ansible.builtin.debug:
+                msg: restarted a
+        YAML
+
+      status, output = run_playbook(
+        spec_tmp_path("notify_looped_missing.yml"),
+        mode_args: [] of String,
+        inventory: EXPLICIT_LOCALHOST_INVENTORY,
+      )
+
+      status.exit_code.must_equal(1)
+      output.must_include("The requested handler 'Restart b' was not found in either the main handlers list nor in the listening handlers list")
+      output.wont_include("Restart undefined")
+      output.wont_include("PLAY RECAP")
+    end
+
     it "catches a bad notify inside an include_tasks:-loaded file, which no parse-time sweep can see" do
       # The buluma.phpmyadmin shape (round 181): setup-Debian.yml is
       # pulled in via include_tasks: and notifies `restart apache`, a

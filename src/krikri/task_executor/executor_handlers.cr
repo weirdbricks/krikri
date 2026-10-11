@@ -5,7 +5,12 @@ require "../jinja_host_context"
 
 module Krikri
   class TaskExecutor
-    private def notify_handlers(task : Task, host : Host, notify_list : Array(String)) : Nil
+    # *override_vars_context* - a prebuilt, loop-item-bound vars context
+    # for a LOOPED task's per-item notification rendering (see
+    # #notify_looped_items in executor_loops.cr); nil - every regular
+    # call site - keeps the task-level build_vars_context, which has no
+    # `item` bound and is the correct scope for a non-looped task.
+    private def notify_handlers(task : Task, host : Host, notify_list : Array(String), override_vars_context : Hash(String, JSON::Any)? = nil) : Nil
       return if notify_list.empty?
 
       unless notify_list.any?(&.includes?("{{"))
@@ -16,7 +21,7 @@ module Krikri
         return
       end
 
-      vars_context = build_vars_context(task, host)
+      vars_context = override_vars_context || build_vars_context(task, host)
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
       notify_list.each do |handler_name|
         # A `notify: "{{ some_list_var }}"` whose ENTIRE value is one

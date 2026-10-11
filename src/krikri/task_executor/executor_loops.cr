@@ -1899,7 +1899,11 @@ module Krikri
       end
 
       if any_changed && (notify_list = task.notify)
-        notify_handlers(task, host, notify_list)
+        if notify_list.any?(&.includes?("{{"))
+          notify_looped_items(task, host, loop_items, item_results, skipped_items, notify_list, base_vars_context)
+        else
+          notify_handlers(task, host, notify_list)
+        end
       end
 
       if register_name = task.register
@@ -1950,6 +1954,59 @@ module Krikri
       end
 
       halt_if_failed(task, host, any_failed && !any_unreachable)
+    end
+
+    # A LOOPED task's templated notify: resolves PER ITEM. ansible-core
+    # post_validates the task once per loop iteration with the loop var
+    # bound (task_executor._run_loop), and every result_item carries its
+    # own rendered `_ansible_notify` (the "may be item-specific, ie.
+    # `notify: service {{item}}`" comment there), so `notify: "Restart
+    # {{ item }}"` notifies one rendered handler name per executed item.
+    # Rendering it once against the task-level context - which has no
+    # `item` - rendered "Restart undefined" and aborted the whole run
+    # with HandlerNotFoundError where real 2.19.11 notified the per-item
+    # names fine (buluma.beats, round 5460338). Live-verified vs
+    # 2.19.11:
+    # - only EXECUTED items contribute: a when:-false item's early return
+    #   carries no `_ansible_notify` (skipped_items covers both loop
+    #   paths' when:-false bookkeeping);
+    # - the gate is the loop AGGREGATE's changed flag (the strategy tests
+    #   task_result.is_changed() once for the whole loop), so an unchanged
+    #   sibling item's rendered name still notifies when another item
+    #   changed - real does this too;
+    # - a rendered name matching no handler aborts with the same
+    #   HandlerNotFoundError any unmatched notification raises, carrying
+    #   the RENDERED name ("Restart b", not the raw template).
+    # Literal (untemplated) notify lists never enter here - the notify
+    # site dispatches them straight to #notify_handlers.
+    private def notify_looped_items(task : Task, host : Host, loop_items : Array(JSON::Any), item_results : Array(JSON::Any?), skipped_items : Hash(Int32, SkippedLoopItem), notify_list : Array(String), base_vars_context : Hash(String, JSON::Any)?) : Nil
+      context_base = base_vars_context || build_vars_context(task, host)
+      loop_var = task.loop_var
+      index_var = task.index_var
+      loop_items.each_with_index do |item, idx|
+        next if skipped_items.has_key?(idx)
+        next unless item_results[idx]
+        vars_context = context_base.dup
+        # Same loop_var-replaces-item rule as both execution paths above
+        # (loop_control.loop_var hides "item"), and same
+        # per-item task.vars re-render: a task var referencing `item` was
+        # rendered once by build_vars_context before `item` existed, so a
+        # notify: referencing it would see the stale pre-loop value.
+        vars_context["item"] = item unless loop_var
+        vars_context[loop_var] = item if loop_var
+        vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
+        vars_context["ansible_loop"] = ansible_loop_vars(loop_items, idx) if task.loop_extended?
+        task.vars.each do |key, raw_value|
+          next if key == "item" || key == loop_var || key == index_var
+          vars_context[key] = raw_value
+        end
+        begin
+          render_task_vars(task, vars_context, host.name)
+        rescue VariableSubstitutor::FilterEngine::UnknownFilterError | WhenEvaluationError
+          nil
+        end
+        notify_handlers(task, host, notify_list, vars_context)
+      end
     end
 
     # The registered `results` entry for one iterated item whose `when:`
