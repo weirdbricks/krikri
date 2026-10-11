@@ -2009,7 +2009,14 @@ module Krikri
         # to_nice_yaml then quoted as a scalar and the app failed to
         # parse, round 190).
         stripped_value = value.strip
-        whole_single_span = stripped_value.starts_with?("{{") && stripped_value.ends_with?("}}") && stripped_value.scan("{{").size == 1
+        # single_top_level_span? (not the naive scan count) so a nested
+        # `'{{ var }}'` string literal inside the expression - the
+        # double-templated lookup idiom, rhaamo.snmpd round 5460199 -
+        # still counts as ONE whole span: the braces are quoted text,
+        # and treating the param as mixed text cost it the native-typed
+        # container on the plugin wire (apt got the Python-repr text
+        # where ansible-core passes the real list).
+        whole_single_span = VarSubstitutor.single_top_level_span?(stripped_value)
         # set_fact whole-single-span values are evaluated STRUCTURALLY, once,
         # to keep the expression's native type (see NATIVE_TYPED_PREFIX's
         # comment below). Evaluating first and skipping the string

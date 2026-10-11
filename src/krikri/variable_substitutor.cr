@@ -1572,6 +1572,44 @@ module Krikri
     class UndecryptableVaultError < Exception
     end
 
+    # Whether *text* is exactly ONE `{{ }}` span spanning its whole
+    # length, ignoring `{{`/`}}` sequences that sit INSIDE a quoted
+    # string literal within the expression. The naive whole-text
+    # `scan("{{").size == 1` count treats the double-templated idiom
+    # (`{{ query('flattened', '{{ pkg_list }}') }}` - rhaamo.snmpd,
+    # round 5460199) as mixed multi-span text, which costs the param
+    # its native typing (the output:true repr form instead of the JSON
+    # container the plugin wire expects) even though the whole value is
+    # one interpolation whose nested braces are merely string-literal
+    # TEXT, exactly what ansible-core's own parser sees.
+    def self.single_top_level_span?(text : String) : Bool
+      return false unless text.starts_with?("{{") && text.ends_with?("}}")
+      openers = 0
+      quote = nil
+      i = 0
+      while i < text.size
+        char = text[i]
+        if quote
+          if char == '\\' && i + 1 < text.size
+            i += 2
+            next
+          end
+          quote = nil if char == quote
+          i += 1
+          next
+        end
+        if char == '\'' || char == '"'
+          quote = char
+        elsif char == '{' && i + 1 < text.size && text[i + 1] == '{'
+          openers += 1
+          i += 2
+          next
+        end
+        i += 1
+      end
+      openers == 1
+    end
+
     # `output:` marks the FINAL, user-facing rendering of a value - a
     # module argument, a debug message, anything whose text a human or a
     # target host actually sees. Only there is a container rendered in

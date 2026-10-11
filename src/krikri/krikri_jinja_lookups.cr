@@ -4,6 +4,7 @@ require "./lookup_plugins"
 require "./python_lookup_runner"
 require "./jinja_host_context"
 require "./vault"
+require "./unsafe_values"
 require "./variable_substitutor/filter_engine"
 
 module Krikri
@@ -20,7 +21,7 @@ module Krikri
         KrikriJinja.register_default_function(function_name) do |args, kwargs, ctx|
           raise KrikriJinja::TemplateError.new("#{function_name}() requires a lookup name", 0) if args.empty?
           name = text(args[0]).sub(/^ansible\.(builtin|legacy)\./, "")
-          result = lookup(name, args[1..], kwargs, ctx)
+          result = lookup(name, prepare_lookup_terms(args[1..], ctx), kwargs, ctx, query_mode)
           if query_mode && !result.raw.is_a?(KrikriJinja::Undefined) && !result.raw.nil? && !result.raw.is_a?(Array)
             AnyValue.new([result])
           else
@@ -92,8 +93,38 @@ module Krikri
       )
     end
 
+    # Ansible's listify_lookup_plugin_terms: every lookup TERM that is a
+    # string carrying Jinja markers (`'{{ var }}'` - the "double-templated"
+    # idiom rhaamo.snmpd's own `query('flattened',
+    # '{{ snmpd_debian_packages }}')` uses, round 5460199) is itself
+    # templated before the plugin ever sees it (ansible-core emits a
+    # deprecation warning steering authors to inline expressions, but
+    # still resolves it). The engine previously handed the plugin the
+    # LITERAL unrendered text, so flattened saw one string item
+    # `{{ snmpd_debian_packages }}` instead of the three packages. The
+    # rendered value recovers its native type (a list variable flattens
+    # as a real list, not one repr string).
+    private def self.prepare_lookup_terms(terms : Array(AnyValue), ctx : KrikriJinja::Context) : Array(AnyValue)
+      terms.map do |term|
+        next term unless (raw = term.raw).is_a?(String)
+        next term unless raw.includes?("{{") || raw.includes?("{%")
+        # Host-derived text (register results, !unsafe scalars, anything
+        # the taint registry tracks) is verbatim DATA, never template
+        # source - the same gate every other re-render path consults. A
+        # hostile target's `{{ lookup('pipe', ...) }}`-shaped stdout
+        # flowing into a lookup term must print verbatim, not execute.
+        next term if UnsafeValues.unsafe_text?(raw)
+        rendered = begin
+          render_nested(ctx, raw)
+        rescue
+          raw
+        end
+        KrikriJinja.from_json_any(Krikri.parse_json_or_python_literal(rendered))
+      end
+    end
+
     private def self.lookup(name : String, terms : Array(AnyValue), kwargs : Hash(String, AnyValue),
-                            ctx : KrikriJinja::Context) : AnyValue
+                            ctx : KrikriJinja::Context, query_mode : Bool = false) : AnyValue
       first = terms[0]? || AnyValue.new(nil)
       role_path = scope_string(ctx, "role_path")
       case name
@@ -145,7 +176,13 @@ module Krikri
         AnyValue.new(terms.flat_map { |term| term.raw.is_a?(Array) ? list(term) : [term] })
       when "flattened"
         items = flatten(terms)
-        truthy?(kwargs["wantlist"]?) ? AnyValue.new(items) : AnyValue.new(items.map { |item| text(item) }.join(","))
+        # query() is Ansible's list-forcing sibling: the plugin's own
+        # scalar comma-join is lookup()-only, so a `query('flattened', ...)`
+        # result must stay the real flattened list (previously the
+        # comma-joined STRING came back and the register wrapper wrapped
+        # it into a one-element list - `query('flattened', pkg_list)`
+        # yielded `["a,b"]`).
+        (query_mode || truthy?(kwargs["wantlist"]?)) ? AnyValue.new(items) : AnyValue.new(items.map { |item| text(item) }.join(","))
       when "together"
         arrays = terms.map { |term| list(term) }
         size = arrays.max_of?(&.size) || 0

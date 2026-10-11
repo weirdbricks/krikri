@@ -49,9 +49,30 @@ module Krikri
 
         quote = stripped[0]
         rendered = jinja_renderer.render!(literal)
+        # A render that comes back CONTAINER-shaped (the term named a list
+        # or dict variable, so the render emits its Python repr or JSON
+        # text, `['a', 'b']` / `{"k": "v"}`) must NOT be re-wrapped in the
+        # original quote character: the repr's own interior quote
+        # characters then break `sole_quoted_literal?` on the
+        # re-evaluation pass, the whole term degrades to the "undefined"
+        # sentinel, and a `query('flattened', '{{ pkg_list }}')` term fed
+        # its consumer a single item literally named "undefined" -
+        # rhaamo.snmpd's apt task ran `install '['undefined']'` (round
+        # 5460199; ansible-core templates the term and flattens the REAL
+        # list). The un-mangled original is left for
+        # #evaluate_lookup_term, which re-renders it and recovers the
+        # container's native type.
+        return part if rerender_container_shaped?(rendered)
         "#{quote}#{rendered}#{quote}"
       rescue
         part
+      end
+
+      private def rerender_container_shaped?(rendered : String) : Bool
+        case Krikri.parse_json_or_python_literal(rendered).raw
+        when Array, Hash then true
+        else                  false
+        end
       end
 
       # Splits a lookup/query call's comma-split argument list into its
@@ -229,6 +250,27 @@ module Krikri
       # real JSON::Any value - a term is usually a variable reference to
       # a list, but may itself be a literal.
       private def evaluate_lookup_term(part : String) : JSON::Any
+        stripped = part.strip
+        if literal = sole_quoted_literal?(stripped)
+          if literal.includes?("{{") || literal.includes?("{%")
+            # The double-templated quoted term (`query('flattened',
+            # '{{ snmpd_debian_packages }}')`, rhaamo.snmpd round 5460199)
+            # that #rerender_double_templated_literal deliberately left
+            # alone because its render came back CONTAINER-shaped: render
+            # the literal's inner template here and recover the rendered
+            # value's NATIVE type - a list variable must reach the lookup
+            # as a real list to flatten (ansible-core's
+            # listify_lookup_plugin_terms templates each string term), not
+            # as one re-quoted repr string.
+            return Krikri.parse_json_or_python_literal(jinja_renderer.render!(literal))
+          end
+          # A quoted literal WITHOUT template markers is a string term by
+          # construction - its evaluated text must not be re-typed by its
+          # own shape (`query('flattened', '["a","b"]')` is ONE string item
+          # in ansible-core 2.19.11, not the parsed list; the shape-based
+          # parse below would have flipped it).
+          return JSON::Any.new(evaluate(part))
+        end
         rendered = evaluate(part)
         Krikri.parse_json_or_python_literal(rendered)
       end
