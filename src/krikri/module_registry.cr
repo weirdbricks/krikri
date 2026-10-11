@@ -169,6 +169,13 @@ module Krikri
       "ansible.builtin.sysctl",
       "community.general.ufw",
       "ansible.posix.firewalld",
+      # firewalld_info (round 5460373 deekayen.ping): the read-only
+      # companion to firewalld - gathers zone state over D-Bus into a
+      # registered `firewalld_info` dict. Its absence made the
+      # "read the zone settings" task an unavailable-module skip whose
+      # registered result then lacked the `firewalld_info` key the
+      # role's later tasks dereference. See plugins/firewalld_info.cr.
+      "ansible.posix.firewalld_info",
       "ansible.builtin.iptables",
       "ansible.builtin.debconf",
       "ansible.builtin.async_status",
