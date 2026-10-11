@@ -125,7 +125,11 @@ module Krikri
       # order, so equal-duration tasks stay in first-seen order.
       rows = @@stats.values
       ranked = rows.map_with_index { |stat, idx| {stat, idx} }.to_a.sort_by { |pair| {-pair[0].elapsed_ms, pair[1]} }.map(&.[0])
-      row_width = OutputBanner.columns + 1
+      # The real callback rows off `Display.columns - 9`: a name field
+      # padded with dashes to columns-9, then the value right-aligned in
+      # 9 columns - a 79-wide row on a non-tty (live-verified off-by-one
+      # against 2.19.11: row_width is columns, NOT columns+1).
+      row_width = OutputBanner.columns
       ranked.first(RECAP_ROW_LIMIT).each do |stat|
         left = "#{stat.name} ".ljust(row_width - 9, '-')
         value = " #{sprintf("%.2f", stat.elapsed_ms / 1000.0)}s"
