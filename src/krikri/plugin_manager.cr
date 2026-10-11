@@ -130,6 +130,39 @@ module Krikri
       end
     end
 
+    # The controller's own OS ("darwin"/"linux"), fixed at compile time.
+    # A target running a DIFFERENT OS needs that OS's plugin binaries even
+    # when the CPU arch matches (an arm64 Mac controller and an aarch64
+    # Linux target: the Mach-O plugins would die with exec-format error),
+    # so such a target's lookup key is "<os>-<arch>" (-> plugins-linux-aarch64/)
+    # instead of the bare arch. Overridable as a spec seam.
+    @@controller_os : String? = nil
+
+    def self.controller_os : String
+      @@controller_os ||= {% if flag?(:darwin) %} "darwin" {% else %} "linux" {% end %}
+    end
+
+    def self.controller_os=(value : String)
+      @@controller_os = value.strip.downcase
+    end
+
+    # The per-arch lookup key for a target: the bare normalized arch when
+    # the target runs the controller's OS (or its OS is unknown), else
+    # "<os>-<arch>".
+    def self.platform_key(arch : String, os : String) : String
+      target_os = os.strip.downcase
+      return arch if target_os.empty? || target_os == controller_os
+      "#{target_os}-#{arch}"
+    end
+
+    # "linux-arm64" style label of the release tarball carrying the
+    # binaries for a lookup key (bare arch keys are same-OS: Linux).
+    private def self.release_label(key : String) : String
+      os, sep, arch = key.partition('-')
+      os, arch = "linux", key if sep.empty?
+      "#{os}-#{arch == "aarch64" ? "arm64" : arch}"
+    end
+
     # Target arch as last probed per host_key - probed fresh in
     # upload_plugins_to_host's round trip 1, remembered across that
     # process's calls here, and persisted in the host-state cache's
@@ -798,6 +831,7 @@ module Krikri
         # on the SSH channel this round trip already opened - the marker
         # prefix can't collide with a "<plugin> <md5>" line above.
         echo "KRIKRI-ARCH $(uname -m 2>/dev/null)"
+        echo "KRIKRI-OS $(uname -s 2>/dev/null)"
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
@@ -808,16 +842,23 @@ module Krikri
               "Remove it manually after verifying, then re-run."
       end
       target_arch : String? = nil
+      target_os = ""
       list_result[:stdout]
         .each_line do |line|
           if line.starts_with?("KRIKRI-ARCH ")
             probed = normalize_arch(line.byte_slice("KRIKRI-ARCH ".size))
             target_arch = probed unless probed.empty?
+          elsif line.starts_with?("KRIKRI-OS ")
+            target_os = line.byte_slice("KRIKRI-OS ".size).strip
           else
             name, _, md5 = line.strip.partition(' ')
             remote_md5s[name] = md5 unless name.empty?
           end
         end
+      # A target on another OS than the controller gets an "<os>-<arch>" key.
+      if arch = target_arch
+        target_arch = platform_key(arch, target_os)
+      end
       # Remember the probe for every later call this process makes for
       # this host (and let record_host_state persist it for warm runs).
       @@host_arch[host_key] = target_arch if target_arch
@@ -2094,11 +2135,6 @@ module Krikri
       {true, become_user, nil}
     end
 
-    # Release tarballs name aarch64 builds "arm64" (see release.yml).
-    private def self.release_arch_name(arch : String) : String
-      arch == "aarch64" ? "arm64" : arch
-    end
-
     # Get local plugin path (compiled binary).
     #
     # *target_arch* is the target host's probed `uname -m` (nil when not
@@ -2126,12 +2162,12 @@ module Krikri
 
         raise PluginArchUnsupportedError.new(
           "no #{arch} plugin binaries available for #{plugin_name}: the target host reports " \
-          "a different CPU architecture than this krikri-playbook build " \
-          "(#{build_arch.empty? ? "unknown" : build_arch}), and the controller-arch binary " \
-          "could only fail there with an exec-format error. krikri's modules are compiled " \
+          "a different platform than this krikri-playbook build " \
+          "(#{controller_os}-#{build_arch.empty? ? "unknown" : build_arch}), and the controller's own " \
+          "binary could only fail there with an exec-format error. krikri's modules are compiled " \
           "binaries (real Ansible ships Python modules, so it has no such problem). " \
           "Download the #{arch} release (https://github.com/weirdbricks/krikri/releases, " \
-          "krikri-<version>-linux-#{release_arch_name(arch)}.tar.gz) and install its plugins/ " \
+          "krikri-<version>-#{release_label(arch)}.tar.gz) and install its plugins/ " \
           "directory as plugins-#{arch}/ next to the krikri-playbook executable (or as " \
           "bin/plugins-#{arch}/ in the checkout); or run ./build.sh on a machine of that " \
           "architecture and install the resulting bin/plugins/ the same way."

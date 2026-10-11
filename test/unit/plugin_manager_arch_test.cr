@@ -15,6 +15,7 @@ describe "plugin arch awareness (issue #1)" do
   after_each do
     Krikri::PluginManager.clear_cache
     Krikri::PluginManager.executable_path_for_spec = nil
+    Krikri::PluginManager.controller_os = {% if flag?(:darwin) %} "darwin" {% else %} "linux" {% end %}
     # Restore the lazy default: recompute from the real controller.
     io = IO::Memory.new
     if Process.run("uname", ["-m"], output: io, error: Process::Redirect::Close).success?
@@ -33,6 +34,56 @@ describe "plugin arch awareness (issue #1)" do
       # Not a known alias: passes through lowercased, matching uname.
       Krikri::PluginManager.normalize_arch("armv7l").must_equal("armv7l")
       Krikri::PluginManager.normalize_arch(" X86_64 \n").must_equal("x86_64")
+    end
+  end
+
+  describe "OS-aware lookup (arm64 Mac controller -> aarch64 Linux target)" do
+    it "keys a different-OS target as <os>-<arch>, a same-OS or unknown-OS one as the bare arch" do
+      Krikri::PluginManager.controller_os = "darwin"
+      Krikri::PluginManager.platform_key("aarch64", "Linux\n").must_equal("linux-aarch64")
+      Krikri::PluginManager.platform_key("aarch64", "Darwin").must_equal("aarch64")
+      Krikri::PluginManager.platform_key("aarch64", "").must_equal("aarch64")
+      Krikri::PluginManager.controller_os = "linux"
+      Krikri::PluginManager.platform_key("x86_64", "Linux").must_equal("x86_64")
+      Krikri::PluginManager.platform_key("x86_64", "Darwin").must_equal("darwin-x86_64")
+    end
+
+    it "never hands a Mac controller's own plugins to a same-arch Linux target" do
+      dir = PluginSpecHelper.tmp_path("arch-plugins-os-#{Random::Secure.hex(4)}")
+      begin
+        Dir.mkdir_p(File.join(dir, "plugins-linux-aarch64"))
+        binary = File.join(dir, "plugins-linux-aarch64", "command")
+        File.write(binary, "elf")
+        File.chmod(binary, 0o755)
+        Krikri::PluginManager.controller_os = "darwin"
+        Krikri::PluginManager.build_arch = "aarch64"
+        Krikri::PluginManager.executable_path_for_spec = File.join(dir, "krikri-playbook")
+        key = Krikri::PluginManager.platform_key("aarch64", "Linux")
+        Krikri::PluginManager.local_plugin_path_for_spec("command", key).must_equal(binary)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "fails early, naming the linux release tarball, when no Linux plugins exist" do
+      dir = PluginSpecHelper.tmp_path("arch-plugins-os-none-#{Random::Secure.hex(4)}")
+      begin
+        Dir.mkdir_p(dir)
+        Krikri::PluginManager.controller_os = "darwin"
+        Krikri::PluginManager.build_arch = "aarch64"
+        Krikri::PluginManager.executable_path_for_spec = File.join(dir, "krikri-playbook")
+        error = nil
+        begin
+          Krikri::PluginManager.local_plugin_path_for_spec("command", "linux-aarch64")
+        rescue e : Krikri::PluginArchUnsupportedError
+          error = e.message.to_s
+        end
+        message = error.to_s
+        message.includes?("plugins-linux-aarch64").must_equal(true, message)
+        message.includes?("-linux-arm64.tar.gz").must_equal(true, message)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
     end
   end
 
