@@ -1,5 +1,6 @@
 require "yaml"
 require "./unsafe_values"
+require "./python_yaml_time"
 require "./yaml_source_map"
 require "./var_origin"
 require "./module_registry"
@@ -6442,6 +6443,13 @@ module Krikri
         end
       when Hash
         yaml.to_json
+      when Time
+        # A bare date/time scalar param (`lookup_url: 2026-03-10`) reaches
+        # the strings-only wire through this fallback - YAML::Any#to_s
+        # renders Time as Crystal's "2026-03-10 00:00:00 UTC", Python
+        # str(date)/str(datetime) reads "2026-03-10"/"2026-03-10 00:00:00"
+        # (see python_yaml_time.cr).
+        Krikri.python_yaml_time_text(yaml.as_time)
       else
         yaml.to_s
       end

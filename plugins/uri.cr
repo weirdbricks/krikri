@@ -117,7 +117,20 @@ module Krikri
         end
       end
 
-      status_codes = (@params["status_code"]? || "200").split(",").map { |part| decimal_int(part.strip) }
+      # status_code: real uri types it as a LIST of ints (default [200]).
+      # A templated list value (e.g. "{{ range(100, 600) | list }}")
+      # arrives as its JSON text ([100, 101, ...]) - a comma-split of that
+      # crashes on the leading "[" before any request runs (round 5460281,
+      # perimeterd.perimeterd). Parse the JSON form when present; a plain
+      # string keeps the comma-split.
+      status_codes = begin
+        raw_status = @params["status_code"]? || "200"
+        if raw_status.lstrip.starts_with?('[')
+          Array(JSON::Any).from_json(raw_status).map { |value| decimal_int(value.as_s? || value.to_s) }
+        else
+          raw_status.split(",").map { |part| decimal_int(part.strip) }
+        end
+      end
 
       # creates:/removes: idempotency short-circuit, same semantics as
       # command's (exist → skip / not-exist → skip). Real uri.py exits
