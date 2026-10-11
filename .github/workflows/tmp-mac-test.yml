@@ -1,0 +1,24 @@
+name: tmp mac test
+on:
+  workflow_dispatch:
+    inputs:
+      tag: {required: true}
+      ip: {required: true}
+jobs:
+  t:
+    runs-on: macos-14
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY: ${{ secrets.TEST_SSH_KEY }}
+        run: |
+          uname -sm
+          brew install openssl@3 pcre2 bdw-gc >/dev/null 2>&1
+          mkdir r && cd r
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" -p '*darwin-multiarch.tar.gz'
+          tar xzf *.tar.gz && cd krikri-*/darwin-aarch64
+          printf '%s\n' "$KEY" > ../../key.pem && chmod 600 ../../key.pem
+          printf '[arm]\npi ansible_host=%s ansible_user=admin ansible_ssh_private_key_file=%s ansible_ssh_common_args="-o StrictHostKeyChecking=no" ansible_become=true\n' "${{ inputs.ip }}" "$PWD/../../key.pem" > ../../inv.ini
+          printf -- '- hosts: arm\n  gather_facts: false\n  tasks:\n    - command: uname -m\n      register: r\n    - debug: var=r.stdout\n' > ../../pb.yml
+          ./krikri-playbook --version | head -1
+          ./krikri-playbook -i ../../inv.ini ../../pb.yml 2>&1 | tail -20 || true
