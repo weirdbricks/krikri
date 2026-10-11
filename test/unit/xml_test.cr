@@ -297,6 +297,28 @@ describe "community.general.xml plugin" do
       result["msg"].as_s.must_include("missing parameter(s) required by 'attribute': value")
     end
 
+    it "accepts an empty-string value with attribute (sets the attribute empty)" do
+      # buluma.bamboo passes `value: "{{ bamboo_master_fqdn }}"` where the
+      # default is "" (round 5460345); real ansible-core 2.19.11 + community
+      # general 12.5.0 treats that as a provided empty-string value.
+      result = run_xml(xml_params({"xmlstring" => "<a><b/></a>", "xpath" => "/a/b", "attribute" => "x", "value" => ""}))
+      expect(falsey?(result["failed"]?)).must_equal(true)
+      result["changed"].must_equal(true)
+      result["xmlstring"].as_s.must_include(%(<b x=""/>))
+    end
+
+    it "still fails when value is an explicit null with attribute (required_by)" do
+      # The wire carries an explicit null as JSON null or NONE_SENTINEL -
+      # both mean Python None, which required_by rejects.
+      raw_values = [JSON::Any.new(nil), JSON::Any.new("__crystal_ansible_none__")]
+      raw_values.each do |raw_value|
+        params = JSON.parse(%({"xmlstring": "<a><b/></a>", "xpath": "/a/b", "attribute": "x", "value": #{raw_value.to_json}}))
+        result = run_xml(params)
+        result["failed"].must_equal(true)
+        result["msg"].as_s.must_include("missing parameter(s) required by 'attribute': value")
+      end
+    end
+
     it "fails when value is given without xpath (required_by)" do
       result = run_xml(xml_params({"xmlstring" => "<a/>", "value" => "1"}))
       result["failed"].must_equal(true)

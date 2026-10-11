@@ -81,13 +81,15 @@ module Krikri
       end
       # Ansible module's required_by treats an explicitly-null value as
       # missing (observed: attribute + `value: null` fails "missing
-      # parameter(s) required by 'attribute': value"), so check the raw
-      # JSON payload, not just key presence. The engine's param pipeline
-      # is Hash(String, String) and collapses a YAML null to an empty
-      # string, so treat "" as missing too - the one shape this can't
-      # represent is a quoted `value: ""` with attribute:, which
-      # Ansible accepts and sets the attribute to empty.
-      value_provided = !raw["value"]?.nil? && !raw["value"].not_nil!.raw.nil? && raw["value"].not_nil!.raw != ""
+      # parameter(s) required by 'attribute': value") but accepts an
+      # empty string - a quoted `value: ""` or a template that renders
+      # to "" (buluma.bamboo sets `bamboo_master_fqdn: ""` and passes
+      # `value: "{{ bamboo_master_fqdn }}"`) sets the attribute to
+      # empty (live-verified 2026-10-11 against ansible-core 2.19.11 +
+      # community.general 12.5.0). The wire distinguishes the two
+      # shapes: a null arrives as JSON null or the NONE_SENTINEL (see
+      # BasePlugin#explicit_null_param?), an empty string as "".
+      value_provided = @params.has_key?("value") && !explicit_null_param?("value")
       if @params["attribute"]? && !value_provided
         return PluginResult.new(changed: false, failed: true,
           msg: "missing parameter(s) required by 'attribute': value")
