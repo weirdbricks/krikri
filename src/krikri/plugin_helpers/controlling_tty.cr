@@ -199,5 +199,5 @@ lib LibC
   # declares - both files land in the same fat-plugin compilation unit,
   # where a differing signature for the same fun would not compile.
   fun setsid : PidT
-  fun ioctl(fd : Int, request : ULong, arg : Int) : Int
+  fun ioctl(fd : Int, request : ULong, arg : ULong) : Int
 end

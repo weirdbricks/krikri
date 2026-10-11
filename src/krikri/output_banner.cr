@@ -13,7 +13,7 @@
   # declarations unify by C symbol name, so the signatures must match
   # exactly inside one compilation unit.
   lib LibC
-    fun ioctl(fd : Int, request : ULong, arg : Int) : Int
+    fun ioctl(fd : Int, request : ULong, arg : ULong) : Int
   end
 {% end %}
 
@@ -49,7 +49,7 @@ module Krikri
 
       {% if flag?(:linux) || flag?(:darwin) %}
         ws = uninitialized LibCExt::Winsize
-        rc = LibC.ioctl(1, TIOCGWINSZ, pointerof(ws).address.to_i)
+        rc = LibC.ioctl(1, TIOCGWINSZ, pointerof(ws).address)
         if rc == 0 && ws.ws_col != 0
           return Math.max(79, ws.ws_col.to_i - 1)
         end
