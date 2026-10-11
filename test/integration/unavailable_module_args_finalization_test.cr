@@ -58,10 +58,14 @@ describe "unavailable module args finalization" do
               msg: SHOULD-RUN-AFTER
       YAML
 
-    # rc=4 is this engine's documented convention for a genuinely-reached
-    # unported module (pre-existing, unchanged by this fix) - real ansible
-    # would exit 2, but the MESSAGE parity is what this test pins down.
-    status.exit_code.must_equal(4)
+    # rc=2, real's own exit for this shape: the args' undefined variable
+    # fails the task during finalization, which ansible runs BEFORE module
+    # resolution - so the unported module was never actually reached and
+    # the engine-limit exit-4 must not fire (it used to: the
+    # reachable_unavailable_modules registration happened back in
+    # when_passes?, before finalization - round 5460184 moved it into
+    # execute_task_once, after finalization succeeds).
+    status.exit_code.must_equal(2)
     output.must_include("Finalization of task args for 'community.general.redhat_subscription' failed: Error while resolving value for 'password': 'redhat_password' is undefined")
     output.must_include("failed=1")
     output.wont_include("skipped=1")

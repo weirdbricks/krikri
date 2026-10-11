@@ -1367,7 +1367,23 @@ module Krikri
                          # (Ansible prints in iteration order).
                          if task.when_condition
                            passes = begin
-                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item)
+                             # defer_unavailable_module: a when:-passing item on
+                             # an unported module must NOT skip here - Ansible
+                             # finalizes the args AFTER the when: and BEFORE the
+                             # module resolves, per item, so an undefined
+                             # variable in the args is a failed item ("Task
+                             # failed: Finalization of task args ... failed"),
+                             # not a silent skip (round 5460184, CiscoUcs.ucs:
+                             # every looped ucs_timezone/ucs_ntp_server task
+                             # carries `hostname: "{{ ucs_hostname }}"` with
+                             # that var undefined - real fails the first such
+                             # task and halts the host, krikri skipped every
+                             # one and only died later on a genuinely
+                             # unresolvable module name in a deeper role).
+                             # execute_task_once re-evaluates the when: with the
+                             # same defer and owns both the finalization and
+                             # the skip.
+                             when_passes?(task, vars_context, host, item_label: item_label, defer_stats: true, defer_display: true, item: item, defer_unavailable_module: true)
                            rescue WhenEvaluationError
                              true # execute_task_once re-evaluates and turns the raise into a real failed result
                            end
@@ -1392,6 +1408,18 @@ module Krikri
                                   else
                                     execute_task_once(task, host, vars_context, item_label: item_label, exec_host: item_exec_host, defer_loop_stats: true)
                                   end
+                         # A nil from a looped execute_task_once call on an
+                         # unported module is the arg-finalized unavailable
+                         # skip (execute_task_once returns nil silently for a
+                         # looped caller so this site owns the bookkeeping with
+                         # the item bound) - record it like the when:-false
+                         # flow above so the "skipping:" line prints from
+                         # finish_looped_task in iteration order.
+                         if result.nil? && task.unavailable_module && python_module_source_for(task).nil?
+                           perform_skip(task, host, item_label, defer_stats: true, defer_display: true, item: item)
+                           skipped_items[idx] = SkippedLoopItem.new(item_label, nil)
+                           next nil
+                         end
                          if result && (facts = result["ansible_facts"]?) && (facts_hash = facts.as_h?)
                            facts_hash.each { |key, value| running_vars_context[key] = value }
                          end
@@ -1451,6 +1479,14 @@ module Krikri
       # the deadline (execute_task_once -> PluginManager.execute_plugin,
       # remote kill included).
       return false if task.timeout || task.timeout_expr
+      # An unported module with no role-private library/ source can never be
+      # dispatched by a batch script (there is no plugin binary to upload),
+      # and the batched path's per-item when:-pre-check must not silently
+      # skip a when:-passing item before its args are finalized - Ansible
+      # fails such an item at "Finalization of task args" (round 5460184,
+      # CiscoUcs.ucs's looped ucs_timezone with an undefined ucs_hostname).
+      # Route these to the one-at-a-time path, which finalizes args per item.
+      return false if task.unavailable_module && python_module_source_for(task).nil?
       return false if PluginManager.local_connection?(exec_host, vars_context)
       true
     end

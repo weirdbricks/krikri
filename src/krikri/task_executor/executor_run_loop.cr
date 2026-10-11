@@ -959,7 +959,6 @@ module Krikri
       # repeatedly benchmarking linux-system-roles).
       if (module_name = task.unavailable_module) && python_module_source_for(task).nil?
         if task.when_condition.nil? || evaluate_when_items(task, vars_context, host, shared)
-          reachable_unavailable_modules << module_name
           # Ansible finalizes a task's args AFTER its when: evaluates and
           # BEFORE it ever resolves the module - so a genuinely-reached
           # unavailable module must not skip yet when the caller still
@@ -969,7 +968,18 @@ module Krikri
           # centralpayment.rhel-subscription's community.general.
           # redhat_subscription with an undefined redhat_password - krikri
           # skipped, ansible failed the task). Callers that never finalize
-          # (loops, batch groups, block includes) keep the in-place skip.
+          # (batch groups, block includes) keep the in-place skip.
+          #
+          # The reachable_unavailable_modules registration is CONDITIONAL on
+          # the caller now (round 5460184, CiscoUcs.ucs): a deferring caller
+          # finalizes args before any module resolution, so its registration
+          # moved into execute_task_once after finalization succeeds - a
+          # task whose args fail on an undefined variable never reached the
+          # module (real's own finalization precedes module resolution and
+          # rc is the task failure's 2). An in-place caller (batch groups,
+          # block includes - shapes that never finalize here) still counts
+          # at its skip.
+          reachable_unavailable_modules << module_name unless defer_unavailable_module
           return true if defer_unavailable_module
         end
       else
@@ -1924,6 +1934,25 @@ module Krikri
       # when_passes?'s defer_unavailable_module comment) before this skip
       # could happen. Same bookkeeping when_passes? would have performed.
       if task.unavailable_module && python_module_source_for(task).nil?
+        # The exit-4 accounting for an unported module registers HERE,
+        # after arg finalization succeeded (and only for a module that will
+        # NOT run - a role-private library/ source dispatches below and is
+        # not "unavailable" in the engine-limit sense): real resolves a
+        # task's module only after its args finalize, so a task that failed
+        # finalization on an undefined variable never reached the module at
+        # all - its failure is the task's own (rc=2), not the engine-limit
+        # exit-4 (round 5460184, CiscoUcs.ucs: the looped ucs_timezone
+        # tasks carry `hostname: "{{ ucs_hostname }}"` with that var
+        # undefined, and the registration used to happen back in
+        # when_passes?, before this point). The Set dedups the looped
+        # path's per-item registrations.
+        reachable_unavailable_modules << task.unavailable_module.not_nil!
+        # A LOOPED caller (defer_loop_stats) must not print or book-keep
+        # here: its "skipping:" line has to print from finish_looped_task in
+        # iteration order (executed items and when:-false skips all display
+        # there), and the caller's nil detection performs the perform_skip
+        # bookkeeping itself with the loop item bound (round 5460184).
+        return nil if defer_loop_stats
         perform_skip(task, host, item_label, defer_stats: defer_loop_stats, defer_display: false, item: nil)
         return nil
       end

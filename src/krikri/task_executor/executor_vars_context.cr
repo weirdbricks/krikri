@@ -2560,6 +2560,11 @@ module Krikri
           io << "\n"
         end
       end
+      # Same dedup rule as emit_when_error_chain's (Ansible's Display dedups
+      # by full formatted message; the Origin's file:line makes the text
+      # task-unique, so a looped task's failing items display the chain
+      # once).
+      return unless @@finalization_error_chain_seen.add?(text)
       puts text
     end
 
@@ -2859,6 +2864,12 @@ module Krikri
     @@conditional_deprecation_hint_seen = false
     @@conditional_deprecation_seen = Set(String).new
     @@when_error_chain_seen = Set(String).new
+    # Same Display dedup for the arg-finalization chain: a looped task's
+    # failing items all raise through execute_task_once's finalization
+    # rescue, and real (whose Display dedups by full formatted message)
+    # shows the chain once for the whole loop (round 5460184's looped
+    # ucs_timezone items).
+    @@finalization_error_chain_seen = Set(String).new
 
     private def maybe_conditional_delimiters_deprecation(task : Task, raw : String, key : String, vars_context : Hash(String, JSON::Any)) : Nil
       conditional = raw.strip
