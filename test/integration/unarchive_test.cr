@@ -62,6 +62,18 @@ private TMP_DIR = begin
   File.write(File.join(dir, "multi_member_src", "README.md"), "readme")
   File.write(File.join(dir, "multi_member_src", "LICENSE"), "license")
   `tar czf #{File.join(dir, "multi_member.tar.gz")} -C #{File.join(dir, "multi_member_src")} hugo README.md LICENSE`
+
+  # A GitHub-release-shaped tarball whose wrapper dir carries a LICENSE
+  # member beside the binary (foi.sing_box's own real shape:
+  # sing-box-1.14.3-linux-amd64-musl/{LICENSE,sing-box}) - the fixture
+  # for the exclude: + --strip-components=1 interaction, where the
+  # excluded member matches only under tar's UNANCHORED
+  # component-boundary exclude matching and, once stripped, would
+  # otherwise name a path under dest that was never extracted.
+  Dir.mkdir_p(File.join(dir, "wrapped_license_src", "sing-box-1.14.3-linux-amd64-musl"))
+  File.write(File.join(dir, "wrapped_license_src", "sing-box-1.14.3-linux-amd64-musl", "sing-box"), "binary")
+  File.write(File.join(dir, "wrapped_license_src", "sing-box-1.14.3-linux-amd64-musl", "LICENSE"), "license")
+  `tar czf #{File.join(dir, "wrapped_with_license.tar.gz")} -C #{File.join(dir, "wrapped_license_src")} sing-box-1.14.3-linux-amd64-musl`
   dir
 end
 
@@ -438,6 +450,39 @@ describe "unarchive plugin" do
     (File.info(File.join(dest, "index.php")).permissions.value & 0o777).must_equal(0o700)
   end
 
+  it "skips an exclude: member on the mode walk when --strip-components=1 strips it onto a nonexistent path under dest" do
+    # Real bug found benchmarking foi.sing_box (round 5460257): the
+    # role's task is `unarchive: {exclude: [LICENSE], extra_opts:
+    # [--strip-components=1], mode: 0755}` into /usr/local/bin. tar's
+    # --exclude is UNANCHORED, so the wrapper-dir-relative LICENSE
+    # member (sing-box-1.14.3-linux-amd64-musl/LICENSE) was never
+    # extracted - but the attribute walk's exclude filter matched only
+    # full raw member names, LICENSE survived it, got stripped onto
+    # /usr/local/bin/LICENSE, and the find-chmod failed the task with
+    # "No such file or directory" where ansible-playbook 2.19.11
+    # (whose files_in_archive listing reuses the very same --exclude
+    # flags) proceeds fine. This is that exact shape; dest must
+    # pre-exist (real requires it too, live-verified).
+    dest = fresh_dest("tar-strip-exclude-license")
+    result = PluginSpecHelper.run("unarchive", {
+      "src"        => File.join(TMP_DIR, "wrapped_with_license.tar.gz"),
+      "dest"       => dest,
+      "mode"       => "0700",
+      "extra_opts" => "--strip-components=1",
+      "exclude"    => "LICENSE",
+    })
+
+    result["changed"].as_bool.must_equal(true)
+    # The excluded member was neither extracted nor walked...
+    File.exists?(File.join(dest, "LICENSE")).must_equal(false)
+    # ...while the extracted binary still got the requested mode, and
+    # dest itself too (the fully-stripped wrapper dir member lands on
+    # the attribute list as dest - same as the sibling
+    # tar-strip-components-mode-members spec pins).
+    (File.info(File.join(dest, "sing-box")).permissions.value & 0o777).must_equal(0o700)
+    (File.info(dest).permissions.value & 0o777).must_equal(0o700)
+  end
+
   it "reports changed: true when an extracted file is modified since the last extraction" do
     dest = fresh_dest("tar-changed")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest})
@@ -635,6 +680,24 @@ describe "unarchive plugin" do
     result["changed"].as_bool.must_equal(true)
     File.exists?(File.join(dest, "a.txt")).must_equal(true)
     File.exists?(File.join(dest, "sub", "b.txt")).must_equal(false)
+  end
+
+  it "excludes a member by a component-boundary SUFFIX of its archive path, like tar's unanchored --exclude" do
+    # GNU tar's --exclude matches a pattern against any component
+    # boundary of the stored member name, not just the full name:
+    # `--exclude=b.txt` excludes `./sub/b.txt` from both extraction and
+    # (in real's files_in_archive) the attribute listing. The exclude
+    # filter used to anchor against the full raw member name only, so
+    # this shape survived the filter - harmless for extraction (tar
+    # excluded it itself) but wrong for any walk downstream of the
+    # filter, and inconsistent with tar's own view of the archive.
+    dest = fresh_dest("exclude-suffix")
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.tar.gz"), "dest" => dest, "exclude" => "b.txt", "mode" => "0700"})
+
+    result["changed"].as_bool.must_equal(true)
+    File.exists?(File.join(dest, "sub", "b.txt")).must_equal(false)
+    File.exists?(File.join(dest, "a.txt")).must_equal(true)
+    (File.info(File.join(dest, "a.txt")).permissions.value & 0o777).must_equal(0o700)
   end
 
   it "keeps a Python-repr exclude: string a plain string (never re-parsed into a list)" do

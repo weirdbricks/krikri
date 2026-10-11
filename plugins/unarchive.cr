@@ -731,6 +731,24 @@ module Krikri
       end
     end
 
+    # tar's own --exclude is UNANCHORED: a pattern matches the member
+    # itself, anything nested under a matching directory, and any
+    # component-boundary suffix of the member (`exclude: [LICENSE]`
+    # excludes `sing-box-1.14.3-linux-amd64-musl/LICENSE` without naming
+    # the wrapper dir). Mirrored here for the tar handler's attribute
+    # walk because the walk's member list comes from a plain `tar tf`,
+    # not from tar's own --exclude-filtered listing - see
+    # attribute_member_names for the round 5460257 failure this closes.
+    private def member_matches_unanchored_exclude?(pattern : String, member : String) : Bool
+      components = member.split("/")
+      components.each_index do |index|
+        suffix = components[index..].reject(&.empty?).join("/")
+        next if suffix.empty?
+        return true if member_matches_any_pattern?([pattern], suffix)
+      end
+      false
+    end
+
     # Maps an archive-listing member path to its on-disk path under dest
     # after --strip-components=N stripping (mirroring GNU tar's own
     # semantics: N leading path components removed, a member left with
@@ -815,7 +833,31 @@ module Krikri
         # are not on disk). exclude: entries lose a trailing '/' like
         # real's own excludes prep.
         next nil if !include_files.empty? && !member_matches_any_pattern?(include_files, member, handler == :tar)
-        next nil if exclude_files.any? { |pattern| member_matches_any_pattern?([pattern], member) }
+        # exclude: on the tar handler must mirror tar's own --exclude
+        # semantics, which are UNANCHORED: a pattern matches the member
+        # itself, anything nested under a matching directory, and any
+        # component-boundary suffix of the member - `exclude: [LICENSE]`
+        # excludes `sing-box-1.14.3-linux-amd64-musl/LICENSE` without
+        # naming the wrapper dir. tar applies that to both --extract and
+        # real's own files_in_archive listing (which reuses the same
+        # --exclude flags), so an excluded member never reaches real's
+        # attribute walk even when --strip-components would map it onto
+        # an on-disk path. This member list comes from a plain `tar tf`
+        # instead, so the exclusion is re-implemented here with the same
+        # unanchored matching - the previous anchored name-only match let
+        # stripped, excluded members survive onto the walk list and fail
+        # every find with "No such file or directory" (round 5460257:
+        # foi.sing_box's `exclude: [LICENSE]` + `--strip-components=1` +
+        # mode: 0755 into /usr/local/bin; the wrapper-dir-relative
+        # LICENSE was never extracted but became
+        # find /usr/local/bin/LICENSE anyway). The zip handler keeps the
+        # anchored per-name match: unzip's -x patterns match full member
+        # paths, and real's ZipArchive fnmatches them the same way.
+        if handler == :tar
+          next nil if exclude_files.any? { |pattern| member_matches_unanchored_exclude?(pattern, member) }
+        else
+          next nil if exclude_files.any? { |pattern| member_matches_any_pattern?([pattern], member) }
+        end
         stripped_member(member, strip) || ""
       end
     end
