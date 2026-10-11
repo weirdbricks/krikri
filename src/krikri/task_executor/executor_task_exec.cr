@@ -120,6 +120,30 @@ module Krikri
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+      # Real's action collects every spec option present in task_vars and
+      # templates the values as ONE dict INSIDE the plugin
+      # (ActionModule.get_args_from_task_vars: `self._templar.template(args)`),
+      # before the spec's own required/default checks ever run - a value
+      # whose own template fails (the `undef(hint=...)` deliberately-failing
+      # default shape, deekayen.cert_checker round 5460361) fails the task
+      # with the bare template error wrapped "Task failed: <msg>", NOT the
+      # "Validation of arguments failed:" spec-failure shape and NOT the
+      # "Finalization of task args" wrapper (the failure happens
+      # post-finalization, inside the action plugin). Treating the raw
+      # template text as a provided value passed validation here and pushed
+      # the failure two tasks later, at the role's own assert.
+      options.each do |option_name, _spec|
+        value = vars_context[option_name]? || next
+        raw = value.raw
+        next unless raw.is_a?(String) && (raw.includes?("{{") || raw.includes?("{%"))
+        begin
+          rendered = substitutor.substitute(raw, strict: true)
+          vars_context[option_name] = Krikri.parse_json_or_python_literal(rendered)
+        rescue ex : UndefinedVariableError
+          return validate_args_templating_failure(task, host, ex.message || "", options)
+        end
+      end
+
       errors = [] of String
       missing_required = [] of String
       type_errors = [] of String
@@ -245,6 +269,86 @@ module Krikri
       ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
+    end
+
+    # The failure shape for a validate-args var-value templating failure
+    # (real's get_args_from_task_vars raises inside the action plugin, so
+    # the task executor's own wrapper - not the plugin's AnsibleActionFail
+    # path - builds the result): fatal msg "Task failed: <error>" with no
+    # "Validation of arguments failed:" body and no argument_errors key
+    # (deekayen.cert_checker's `cert_checker_email` default,
+    # round 5460361, live-verified vs 2.19.11).
+    private def validate_args_templating_failure(task : Task, host : Host, message : String, options : Hash(String, JSON::Any)) : Nil
+      emit_validate_args_error_block(task, message, options)
+      result = JSON::Any.new({
+        "changed" => JSON::Any.new(false),
+        "failed"  => JSON::Any.new(true),
+        "msg"     => JSON::Any.new("Task failed: #{message}"),
+      } of String => JSON::Any)
+      ignore_errors = resolve_task_ignore_errors(task, host: host)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
+      ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
+      @halted_hosts.add(host.name) unless ignore_errors
+    end
+
+    # The [ERROR] block real 2.19.11 prints before the fatal line for
+    # that same validate-args templating crash: the headline, a
+    # "Task failed." segment whose Origin is <unknown> (the exception
+    # carries no tagged origin of its own, so the segment body is the
+    # task's python-repr'd args run through textwrap.shorten's 120-char
+    # event truncation) and the bare template error with the DEFINING
+    # var layer's own Origin as the cause (live-captured 2.19.11).
+    # Deduped by full text like every other block (Display._deduplicate).
+    @@validate_args_error_blocks_seen = Set(String).new
+
+    private def emit_validate_args_error_block(task : Task, message : String, options : Hash(String, JSON::Any)) : Nil
+      args_repr = ResultDisplay.python_repr(JSON::Any.new({
+        "action" => JSON::Any.new("ansible.builtin.validate_argument_spec"),
+        "args"   => JSON::Any.new({
+          "argument_spec"    => JSON::Any.new(options),
+          "provided_arguments" => JSON::Any.new({} of String => JSON::Any),
+          "validate_args_context" => JSON::Any.new({
+            "type"                => JSON::Any.new("role"),
+            "name"                => JSON::Any.new(task.role_name || ""),
+            "argument_spec_name"  => JSON::Any.new("main"),
+            "path"                => JSON::Any.new(task.role_path || ""),
+          } of String => JSON::Any),
+        } of String => JSON::Any),
+      } of String => JSON::Any))
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << message << "\n"
+        io << "\nTask failed.\n"
+        io << "Origin: <unknown>\n"
+        io << "\n" << shorten_event_text(args_repr) << "\n"
+        io << "\n<<< caused by >>>\n\n"
+        io << message << "\n"
+        if origin = value_failure_var_origin(task, message)
+          io << origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        end
+        io << "\n"
+      end
+      return unless @@validate_args_error_blocks_seen.add?(text)
+      puts text
+    end
+
+    # textwrap.shorten(value, width=120) - Ansible's event-source
+    # truncation for an Origin-less segment body: collapse runs of
+    # whitespace to single spaces, keep the longest word sequence that
+    # leaves room for the " [...]" placeholder, never splitting a word.
+    private def shorten_event_text(value : String, width : Int = 120, placeholder : String = " [...]") : String
+      words = value.split
+      return "" if words.empty?
+      parts = [] of String
+      length = 0
+      words.each do |word|
+        addition = parts.empty? ? word.size : word.size + 1
+        break if length + addition + placeholder.size > width && !parts.empty?
+        parts << word
+        length += addition
+      end
+      text = parts.join(" ")
+      parts.size < words.size ? text + placeholder : text
     end
 
     # Whether *value* is compatible with a declared argument_specs.yml

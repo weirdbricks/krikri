@@ -525,6 +525,26 @@ module Krikri
       # same everywhere; derive_engine copies it into the template
       # plugin's own derived engine.
       KrikriJinja.default_engine.register_global("omit", Krikri::OMIT_SENTINEL)
+      # `undef(hint=...)` is a Jinja GLOBAL in every templating context
+      # (ansible/template/__init__.py passes it into the globals), NOT a
+      # variable: roles use it as a deliberately-failing default
+      # (`cert_checker_email: "{{ undef(hint='You must specify an email
+      # to receive reports.') }}"`, deekayen.cert_checker, round 5460361).
+      # It RETURNS a strict undefined carrying the hint as its failure
+      # message - `| default('x')` still catches it ("x" renders) and
+      # `is defined` is false (live-verified against 2.19.11); only a
+      # bare use fails, with the hint verbatim ("Error while resolving
+      # value for 'msg': You must specify an email..."), and the no-hint
+      # form fails with "Mandatory variable has not been overridden".
+      # Without this registration the name fell through to a missing
+      # VARIABLE ("'undef' is undefined") and the role's real hint text
+      # never surfaced anywhere.
+      KrikriJinja.default_engine.register_function("undef") do |_args, kwargs, _ctx|
+        hint = kwargs["hint"]?.try { |kwarg| KrikriJinja.to_json_any(kwarg).as_s? }
+        undefined = KrikriJinja::StrictUndefined.new
+        undefined.hint = hint || "Mandatory variable has not been overridden"
+        KrikriJinja::AnyValue.new(undefined)
+      end
       # ansible-core fails `{% for k, v in some_dict %}`, but roles that
       # pass on it in practice (jtyr.motd, jtyr.nsswitch) reach this form
       # with values Ansible keeps as pairs; keep it working.

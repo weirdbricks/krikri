@@ -386,6 +386,14 @@ module Krikri
     "true", "false", "none", "omit",
     "lookup", "query", "q", "url", "range", "dict", "list", "tuple",
     "namespace", "now",
+    # `undef` is a Jinja GLOBAL FUNCTION (registered on the shared engine
+    # in krikri_jinja_filters.cr), not a variable - a roleside
+    # deliberately-failing default (`cert_checker_email: "{{ undef(hint=
+    # '...') }}"`, deekayen.cert_checker, round 5460361) matched this
+    # probe's root-then-call regex as a variable named "undef" being
+    # "accessed", raising "'undef' is undefined" where real reports the
+    # role's own hint text.
+    "undef",
     # Jinja operator keywords: `not(...)` (no space before the paren -
     # rubyisbeautiful.proxy-common's `{{ not((x is undefined) or ...) }}`,
     # round 5210000) matched undefined_access_chain_source's root-then-
@@ -826,6 +834,13 @@ module Krikri
   # shape (`badvar | default('x')`, live-verified vs 2.19.11) probes
   # clean and costs one extra evaluation.
   def self.strict_probe_candidate?(expr : String, vars : Hash(String, JSON::Any)) : Bool
+    # An `undef(...)` call is itself the failure the probe exists to
+    # surface (the hint rides on the strict undefined it returns): the
+    # engine evaluates it through the registered global and never
+    # produces a miss-signal or a templated-var reference, so without
+    # this the lenient "undefined" sentinel rendered untouched (same
+    # round 5460361 role shape).
+    return true if expr.matches?(/\bundef\s*\(/)
     scan = expr.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
     scan.scan(/[A-Za-z_][A-Za-z0-9_]*/).each do |ref|
       raw = vars[ref[0]]?.try(&.as_s?)

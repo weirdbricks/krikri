@@ -2610,8 +2610,18 @@ module Krikri
     # protection - ambiguous or lineage-less definitions (extra vars,
     # inventory) yield nil so no origin ever gets mislabeled.
     private def undef_chain_var_origin(task : Task, missing : String) : FileVarOrigin?
-      word = /(^|[^A-Za-z0-9_])#{Regex.escape(missing)}($|[^A-Za-z0-9_])/
+      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing)
+    end
 
+    # The unique var-layer DEFINITION whose plain-`{{ }}` own value
+    # strictly fails with EXACTLY *message* - the general form of the
+    # "'x' is undefined" scan above, also reached for failures whose
+    # message is the value's own text (`undef(hint=...)`'s hint,
+    # deekayen.cert_checker round 5460361's validate-args [ERROR]
+    # chain). Same layer merge, same exactly-one-match protection -
+    # ambiguous or lineage-less definitions (extra vars, inventory)
+    # yield nil so no origin ever gets mislabeled.
+    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil) : FileVarOrigin?
       merged = {} of String => JSON::Any
       origins = {} of String => VarOrigin
       merge_var_layer(merged, origins, @play_vars, @play_var_origins)
@@ -2624,18 +2634,19 @@ module Krikri
 
       matches = [] of FileVarOrigin
       merged.each do |key, value|
-        next if key == missing
+        next if skip_key && key == skip_key
         raw = value.raw
         next unless raw.is_a?(String) && raw.includes?("{{") &&
                     !raw.includes?("{%") && !raw.includes?("{#") &&
-                    raw.match(word) && !UnsafeValues.unsafe_text?(raw)
+                    !UnsafeValues.unsafe_text?(raw)
+        next if required_text && !raw.includes?(required_text)
         next if raw.includes?("lookup(") || raw.includes?("query(")
         origin = origins[key]?
         next unless origin.is_a?(FileVarOrigin) && origin.column > 0 && File.file?(origin.path)
         begin
           VarSubstitutor.new(vars: merged).substitute(raw, strict: true)
         rescue e : UndefinedVariableError
-          next unless e.message == "'#{missing}' is undefined"
+          next unless e.message == message
           matches << origin
         end
       end
