@@ -127,15 +127,35 @@ describe "pip plugin" do
   # redirecting stdin from a nonexistent file named "2" instead of
   # being part of the package spec - verified live against the real
   # host that found it.
-  it "checks each comma-joined package independently for the already-installed idempotency short-circuit" do
-    # "pip" is always present in a working pip environment - safe (pip
-    # show only, no install/network) - listed twice to exercise the
-    # per-package split this fix introduced without depending on which
-    # OTHER packages happen to be installed in the sandbox running specs.
-    result = PluginSpecHelper.run("pip", {"name" => "pip,pip"})
+  it "sends a comma-joined multi-package name to pip as separately quoted argv words" do
+    shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+    Dir.mkdir(shim_dir)
+    shim = File.join(shim_dir, "multi-pkg-pip")
+    File.write(shim, <<-SH
+      #!/bin/sh
+      export PATH=/usr/local/bin:/usr/bin:/bin
+      printf '%s\n' "$*" >> #{File.join(shim_dir, "marker")}
+      case "$1 $2 $3" in
+        "install pip pip") echo "Requirement already satisfied: pip in /usr/lib/python3/dist-packages (1.0)"; exit 0 ;;
+      esac
+      exit 1
+      SH
+    )
+    File.chmod(shim, 0o755)
+    begin
+      result = PluginSpecHelper.run("pip", {
+        "name"       => "pip,pip",
+        "executable" => shim,
+      })
 
-    result["failed"]?.try(&.as_bool).wont_equal(true)
-    result["changed"].as_bool.must_equal(false)
+      result["failed"]?.try(&.as_bool).wont_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      marker = File.read(File.join(shim_dir, "marker"))
+      marker.must_include("install pip pip")
+      marker.wont_include("pip,pip")
+    ensure
+      FileUtils.rm_rf(shim_dir)
+    end
   end
 
   it "keeps a version-specifier comma as part of one requirement, not a second bogus package" do
@@ -570,10 +590,12 @@ describe "pip plugin" do
   # 'wsgiref'} in pip 25) SKIPS these stdlib-shadow names, so `pip
   # install argparse` never sees the previous install and reinstalls,
   # printing "Successfully installed" every run - while `pip show
-  # argparse` (krikri's old pre-check) does NOT skip it, so the
-  # short-circuit reported "Package already installed" where
+  # argparse` (the pre-check krikri used to run) does NOT skip it, so
+  # the old short-circuit reported "Package already installed" where
   # Ansible, which has no pre-check and decides purely on
   # 'Successfully installed' in the install output, reports changed.
+  # (The same no-pre-check rule is what now covers EVERY non-VCS
+  # present spec - see the rolehippie.ansible round-5460398 describe.)
   # The shim reproduces exactly that pip duality hermetically: `show`
   # finds argparse (exit 0), `install` "reinstalls" it with real pip's
   # own "Successfully installed argparse-1.4.0" line.
@@ -596,7 +618,7 @@ describe "pip plugin" do
       end
     end
 
-    it "still short-circuits ok for a non-stdlib package pip show finds" do
+    it "still runs the install for a non-stdlib package pip show finds, changed decided by pip's own output" do
       shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
       Dir.mkdir(shim_dir)
       pip = write_stdlib_skip_shim(shim_dir)
@@ -609,7 +631,44 @@ describe "pip plugin" do
         result["failed"]?.try(&.as_bool).wont_equal(true)
         result["changed"].as_bool.must_equal(false)
         marker = File.read(File.join(shim_dir, "marker"))
-        marker.wont_include("install")
+        marker.must_include("install regularpkg")
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
+  end
+
+  # rolehippie.ansible (round 5460398, warm phase): the role pins
+  # ansible-doctor/ansible-later on pathspec==0.11.1 and
+  # jsonschema==4.17.3 while ansible-lint's own resolution upgrades
+  # those same dependencies, so every rerun of
+  # `pip install ansible-doctor==2.1.1` DOWNGRADES them back and prints
+  # "Successfully installed pathspec-0.11.1" - even though
+  # `pip show ansible-doctor` reports 2.1.1 (the top-level pin) the
+  # whole time (live-verified in a throwaway Ubuntu 22.04 container:
+  # install ansible-doctor==2.1.1, install pathspec==1.1.1 over it,
+  # install ansible-doctor==2.1.1 again -> "Successfully installed
+  # pathspec-0.11.1"). Ansible's pip.py has no pre-check for
+  # state=present: it always runs the install and decides changed from
+  # that output - so real reports changed on every rerun while a
+  # `pip show`-based pre-check whose top-level `==` comparison matched
+  # reported ok. The shim reproduces that duality hermetically: `show`
+  # finds the pin satisfied, `install` prints pip's own
+  # dep-reconciliation "Successfully installed" line.
+  describe "pip present has no idempotency pre-check for plain name/version specs" do
+    it "reports changed when pip itself reconciles a violated dependency pin despite a satisfied top-level pin" do
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      pip = write_dep_reconcile_shim(shim_dir)
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"       => "ansible-doctor",
+          "version"    => "2.1.1",
+          "executable" => pip,
+        })
+
+        result["failed"]?.try(&.as_bool).wont_equal(true)
+        result["changed"].as_bool.must_equal(true)
       ensure
         FileUtils.rm_rf(shim_dir)
       end
@@ -714,6 +773,24 @@ private def write_stdlib_skip_shim(shim_dir : String) : String
       "show argparse") exit 0 ;;
       "show regularpkg") exit 0 ;;
       "install argparse") echo "Successfully installed argparse-1.4.0"; exit 0 ;;
+      "install regularpkg") echo "Requirement already satisfied: regularpkg in /usr/lib/python3/dist-packages (1.0)"; exit 0 ;;
+    esac
+    exit 1
+    SH
+  )
+  File.chmod(shim, 0o755)
+  shim
+end
+
+private def write_dep_reconcile_shim(shim_dir : String) : String
+  shim = File.join(shim_dir, "dep-reconcile-pip")
+  File.write(shim, <<-SH
+    #!/bin/sh
+    export PATH=/usr/local/bin:/usr/bin:/bin
+    printf '%s\n' "$*" >> #{File.join(shim_dir, "marker")}
+    case "$1 $2" in
+      "show ansible-doctor") echo "Name: ansible-doctor"; echo "Version: 2.1.1"; exit 0 ;;
+      "install ansible-doctor==2.1.1") echo "Requirement already satisfied: ansible-doctor==2.1.1 in /usr/local/lib/python3.10/dist-packages (2.1.1)"; echo "  Attempting uninstall: pathspec"; echo "Successfully installed pathspec-0.11.1"; exit 0 ;;
     esac
     exit 1
     SH

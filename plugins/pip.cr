@@ -58,11 +58,14 @@ module Krikri
   #   both of a pair given fails with Ansible's "parameters are
   #   mutually exclusive: <pair>"
   #
-  # Idempotency: `present` (no version:) checks `pip show <pkg>` for
-  # existence only - already installed at ANY version is a no-op,
-  # matching Ansible's own default behavior (pip: doesn't silently
-  # upgrade unless state: latest is explicit). `present` with a
-  # version: compares the exact installed version. `latest` always
+  # Idempotency: `present` (with or without version:) runs
+  # `pip install <spec>` unconditionally like Ansible's own pip module,
+  # which has NO idempotency pre-check at all - changed comes from pip's
+  # own output ("Successfully installed" present or not). A VCS-URL
+  # requirement is the one exception: a `pip show <derived-name>`
+  # pre-check short-circuits it, matching Ansible's freeze-comparison
+  # changed detection, which likewise reports ok whenever a rerun
+  # converges to what is already installed. `latest` always
   # invokes `pip install --upgrade` and inspects its own output for
   # "Requirement already up-to-date" vs. an actual install/upgrade,
   # matching Ansible's own PipModule.
@@ -602,17 +605,34 @@ module Krikri
       target = install_target(spec, requirements)
       return target if target.is_a?(PluginResult)
 
-      # A comma-joined multi-package `name:` list checked as ONE bogus
-      # "package" (`pip3 show docker,urllib3`) always failed - not just
-      # returning a wrong single result, but reporting `changed: true`
-      # on every rerun regardless of what was actually already present,
-      # since the idempotency check itself could never succeed. Checked
-      # per-package here (each already-installed, or - for a `==` pin -
-      # already at the requested version) so a warm rerun genuinely
-      # short-circuits, matching Ansible's own per-package pip
-      # idempotency.
+      # pip.py has NO idempotency pre-check for state=present: it always
+      # runs `pip install <spec>` and decides
+      # `changed = 'Successfully installed' in out_pip` (its only path
+      # when there's no requirements file or VCS name). Skipping the
+      # invocation is NOT observationally equivalent even when every
+      # top-level pin is already satisfied, because pip's own resolver
+      # may still change the environment: rolehippie.ansible (round
+      # 5460398) pins ansible-doctor/ansible-later on pathspec==0.11.1
+      # and jsonschema==4.17.3 while ansible-lint's own resolution
+      # upgrades those same deps, so every rerun of
+      # `pip install ansible-doctor==2.1.1` downgrades them back and
+      # prints "Successfully installed pathspec-0.11.1" (live-verified:
+      # `pip show ansible-doctor` reports 2.1.1 the whole time) - real
+      # Ansible reports changed, a `pip show`-based pre-check whose
+      # top-level `==` comparison matched reported ok. So for plain
+      # name/version specs the install ALWAYS runs and pip's own output
+      # decides changed.
+      #
+      # The one surviving pre-check is a VCS requirement: pip.py decides
+      # a VCS/requirements install by freeze-before vs freeze-after
+      # comparison, which reports ok whenever the rerun converges to
+      # what pip show already finds - the same result this pre-check
+      # gives without invoking pip at all (grycap.clues, rounds
+      # 700036/820004).
       unless upgrade || requirements
-        return PluginResult.new(changed: false, failed: false, msg: "Package already installed") if all_packages_satisfied?(pip_bin, spec)
+        if spec && split_requirements(spec).any? { |package| vcs_distribution_name(package) }
+          return PluginResult.new(changed: false, failed: false, msg: "Package already installed") if all_packages_satisfied?(pip_bin, spec)
+        end
       end
 
       extra = editable_extra(@params["extra_args"]? || "")
@@ -738,36 +758,22 @@ module Krikri
       merged
     end
 
-    # Per-package idempotency check for a non-upgrade, non-requirements
-    # install: every package already installed (or - for a `==` pin -
-    # already at the requested version)?
-    #
-    # pip's own stdlib-shadow skip: pip's installed-distribution
-    # iteration (`pip._internal.metadata.base.stdlib_pkgs`, pip 25.1:
-    # {'argparse', 'python', 'wsgiref'}) deliberately omits these
-    # module names, so `pip install argparse` NEVER sees an existing
-    # argparse install - it re-downloads and reinstalls it, printing
-    # "Successfully installed" every single run (verified live in a
-    # throwaway venv: two consecutive `pip install argparse` both end
-    # "Successfully installed argparse-1.4.0", while `pip show
-    # argparse` - which does NOT go through the skip list - finds it
-    # fine). Ansible's pip.py has no pre-check at all for
-    # state=present: it runs the install and decides
-    # `changed = 'Successfully installed' in out_pip` - so Ansible reports
-    # changed on EVERY repeat install of these names (found via
-    # geerlingguy.elasticsearch-curator's `pip: name: argparse`, round
-    # 975000-975099). Counting them as satisfied via `pip show`
-    # short-circuited with changed: false where Ansible runs a real
-    # reinstall - so these names are never "already installed" here and
-    # the actual pip install runs, its own output deciding changed.
-    PIP_STDLIB_SKIPPED_DISTRIBUTIONS = %w[argparse python wsgiref]
-
+    # Per-package satisfaction check for the VCS pre-check above: every
+    # package already installed, or - for a `==` pin - already at the
+    # requested version. pip's own stdlib-shadow skip (pip 25.1:
+    # `pip._internal.metadata.base.stdlib_pkgs` = {'argparse', 'python',
+    # 'wsgiref'}, found via geerlingguy.elasticsearch-curator's
+    # `pip: name: argparse`, round 975000-975099) does not apply here:
+    # pip.py decides a VCS install by freeze comparison, which is blind
+    # to a same-version reinstall anyway, so counting pip show's find as
+    # satisfied matches the freeze result for these names too. For a
+    # non-VCS spec the install always runs (see #install), and pip's own
+    # output - which DOES reinstall these names every time - decides
+    # changed, exactly like Ansible.
     private def all_packages_satisfied?(pip_bin : String, spec : String?) : Bool
       sp = spec || raise "pip: spec is required"
       packages = split_requirements(sp)
       packages.all? do |package|
-        next false if PIP_STDLIB_SKIPPED_DISTRIBUTIONS.includes?(distribution_name(package).downcase)
-
         if package.includes?("==")
           bare, _, wanted_version = package.partition("==")
           installed_version(pip_bin, bare) == wanted_version
