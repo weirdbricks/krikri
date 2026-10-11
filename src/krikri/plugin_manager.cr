@@ -2094,6 +2094,11 @@ module Krikri
       {true, become_user, nil}
     end
 
+    # Release tarballs name aarch64 builds "arm64" (see release.yml).
+    private def self.release_arch_name(arch : String) : String
+      arch == "aarch64" ? "arm64" : arch
+    end
+
     # Get local plugin path (compiled binary).
     #
     # *target_arch* is the target host's probed `uname -m` (nil when not
@@ -2125,9 +2130,11 @@ module Krikri
           "(#{build_arch.empty? ? "unknown" : build_arch}), and the controller-arch binary " \
           "could only fail there with an exec-format error. krikri's modules are compiled " \
           "binaries (real Ansible ships Python modules, so it has no such problem). " \
-          "Build the plugin set for #{arch} - run ./build.sh on a machine of that architecture " \
-          "- and install the resulting bin/plugins/ directory as plugins-#{arch}/ next to the " \
-          "krikri-playbook executable (or as bin/plugins-#{arch}/ in the checkout)."
+          "Download the #{arch} release (https://github.com/weirdbricks/krikri/releases, " \
+          "krikri-<version>-linux-#{release_arch_name(arch)}.tar.gz) and install its plugins/ " \
+          "directory as plugins-#{arch}/ next to the krikri-playbook executable (or as " \
+          "bin/plugins-#{arch}/ in the checkout); or run ./build.sh on a machine of that " \
+          "architecture and install the resulting bin/plugins/ the same way."
         )
       end
 

@@ -1,0 +1,37 @@
+name: Release multi-arch bundle
+
+# Adds krikri-<tag>-linux-multiarch.tar.gz (x86_64 + aarch64 controllers
+# and plugin sets in one tarball) to a published release, built from that
+# release's own two Linux tarballs. A separate workflow so release.yml is
+# untouched; runs after it completes, or manually for any existing tag.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: latest release)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and upload bundle
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG=$(gh release view --json tagName --jq .tagName)
+          mkdir -p dl out
+          gh release download "$TAG" -D dl -p '*-linux-x86_64.tar.gz' -p '*-linux-arm64.tar.gz'
+          scripts/make-multiarch-bundle.sh "$TAG" dl out
+          gh release upload "$TAG" out/*.tar.gz --clobber
