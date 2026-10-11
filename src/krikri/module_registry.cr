@@ -283,6 +283,12 @@ module Krikri
       # (Oefenweb.locales round 210720 hard-stopped on it). Drives
       # /etc/locale.gen + locale-gen on the target.
       "community.general.locale_gen",
+      # mail (0.9.1627): SMTP mail sending (deekayen.log_mailer round
+      # 5460362 - the role's "Send e-mail, attaching files." task was an
+      # unavailable-module skip where real ran the module and failed on
+      # the SMTP round trip). Pure SMTP client + MIME multipart - see
+      # plugins/mail.cr for the smtplib semantics it reproduces.
+      "community.general.mail",
       # java_cert (0.9.931): Java keystore certificate management via
       # keytool (no live round found - implemented from the real
       # module's semantics, digest-compare import included).

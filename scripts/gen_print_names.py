@@ -50,6 +50,7 @@ ARGS = {
     "ansible.builtin.expect": {"command": "echo hi", "responses": {"hi": ""}},
     "community.general.timezone": {"name": "UTC"},
     "community.general.ufw": {"rule": "allow"},
+    "community.general.mail": {"subject": "probe"},
     "community.crypto.openssl_privatekey": {"path": "/tmp/argval-probe/k.pem"},
     "community.crypto.openssl_csr": {"path": "/tmp/argval-probe/c.pem", "privatekey_path": "/tmp/argval-probe/k.pem"},
     "community.crypto.openssl_pkcs12": {"path": "/tmp/argval-probe/p.p12", "privatekey_path": "/tmp/argval-probe/k.pem"},

@@ -2496,6 +2496,19 @@
   "supported": null,
   "unsupported": null
  },
+ "community.general.mail|community.general.mail": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "Unsupported parameters for (community.general.mail) module: zznope. Supported parameters include: attach, bcc, body, cc, charset, ehlohost, headers, host, message_id_domain, password, port, secure, sender, subject, subtype, timeout, to, username (from, msg, recipients)."
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (community.general.mail) module: zznope. Supported parameters include: attach, bcc, body, cc, charset, ehlohost, headers, host, message_id_domain, password, port, secure, sender, subject, subtype, timeout, to, username (from, msg, recipients).",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
  "community.general.make|community.general.make": {
   "dump": {
    "ansible_facts": {
@@ -2869,6 +2882,19 @@
    "msg": "Unsupported parameters for (containers.podman.podman_image) module: zznope. Supported parameters include: arch, auth_file, build, ca_cert_dir, executable, force, name, password, path, pull, pull_extra_args, push, push_args, quadlet_dir, quadlet_file_mode, quadlet_filename, quadlet_options, state, tag, username, validate_certs (authfile, build_args, buildargs, tls_verify, tlsverify)."
   },
   "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (containers.podman.podman_image) module: zznope. Supported parameters include: arch, auth_file, build, ca_cert_dir, executable, force, name, password, path, pull, pull_extra_args, push, push_args, quadlet_dir, quadlet_file_mode, quadlet_filename, quadlet_options, state, tag, username, validate_certs (authfile, build_args, buildargs, tls_verify, tlsverify).",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
+ "mail|mail": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "missing required arguments: subject"
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: subject",
   "printed_name": null,
   "supported": null,
   "unsupported": null

@@ -4336,6 +4336,60 @@
   "required_one_of": [],
   "required_together": []
  },
+ "ansible.builtin.sysctl": {
+  "mutually_exclusive": [],
+  "options": {
+   "name": {
+    "aliases": [
+     "key"
+    ],
+    "type": "str",
+    "required": true
+   },
+   "value": {
+    "aliases": [
+     "val"
+    ],
+    "type": "str"
+   },
+   "state": {
+    "type": "str",
+    "choices": [
+     "present",
+     "absent"
+    ],
+    "default": "present"
+   },
+   "reload": {
+    "type": "bool",
+    "default": true
+   },
+   "sysctl_set": {
+    "type": "bool",
+    "default": false
+   },
+   "ignoreerrors": {
+    "type": "bool",
+    "default": false
+   },
+   "sysctl_file": {
+    "type": "path",
+    "default": "/etc/sysctl.conf"
+   }
+  },
+  "required_by": {},
+  "required_if": [
+   [
+    "state",
+    "present",
+    [
+     "value"
+    ]
+   ]
+  ],
+  "required_one_of": [],
+  "required_together": []
+ },
  "ansible.builtin.systemd": {
   "mutually_exclusive": [],
   "options": {
@@ -6052,6 +6106,23 @@
     "permanent"
    ]
   },
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": []
+ },
+ "ansible.posix.firewalld_info": {
+  "mutually_exclusive": [],
+  "options": {
+   "active_zones": {
+    "type": "bool",
+    "default": false
+   },
+   "zones": {
+    "type": "list",
+    "elements": "str"
+   }
+  },
+  "required_by": {},
   "required_if": [],
   "required_one_of": [],
   "required_together": []
@@ -9900,18 +9971,18 @@
     "type": "str",
     "choices": [
      "btrfs",
-     "ext4",
-     "xfs",
-     "bcachefs",
-     "ext3",
-     "lvm",
-     "reiserfs",
-     "ocfs2",
-     "f2fs",
-     "ext2",
-     "ext4dev",
-     "swap",
      "vfat",
+     "ext3",
+     "ext4",
+     "bcachefs",
+     "lvm",
+     "swap",
+     "ext2",
+     "reiserfs",
+     "ext4dev",
+     "xfs",
+     "f2fs",
+     "ocfs2",
      "ufs"
     ]
    },
@@ -10604,6 +10675,114 @@
   ],
   "required_together": []
  },
+ "community.general.mail": {
+  "mutually_exclusive": [],
+  "options": {
+   "username": {
+    "type": "str"
+   },
+   "password": {
+    "type": "str"
+   },
+   "host": {
+    "type": "str",
+    "default": "localhost"
+   },
+   "port": {
+    "type": "int",
+    "default": 25
+   },
+   "ehlohost": {
+    "type": "str"
+   },
+   "sender": {
+    "aliases": [
+     "from"
+    ],
+    "type": "str",
+    "default": "root"
+   },
+   "to": {
+    "aliases": [
+     "recipients"
+    ],
+    "type": "list",
+    "default": [
+     "root"
+    ],
+    "elements": "str"
+   },
+   "cc": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "bcc": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "subject": {
+    "aliases": [
+     "msg"
+    ],
+    "type": "str",
+    "required": true
+   },
+   "body": {
+    "type": "str"
+   },
+   "attach": {
+    "type": "list",
+    "default": [],
+    "elements": "path"
+   },
+   "headers": {
+    "type": "list",
+    "default": [],
+    "elements": "str"
+   },
+   "charset": {
+    "type": "str",
+    "default": "utf-8"
+   },
+   "subtype": {
+    "type": "str",
+    "choices": [
+     "html",
+     "plain"
+    ],
+    "default": "plain"
+   },
+   "secure": {
+    "type": "str",
+    "choices": [
+     "always",
+     "never",
+     "starttls",
+     "try"
+    ],
+    "default": "try"
+   },
+   "timeout": {
+    "type": "int",
+    "default": 20
+   },
+   "message_id_domain": {
+    "type": "str",
+    "default": "ansible"
+   }
+  },
+  "required_by": {},
+  "required_if": [],
+  "required_one_of": [],
+  "required_together": [
+   [
+    "password",
+    "username"
+   ]
+  ]
+ },
  "community.general.make": {
   "mutually_exclusive": [
    [
@@ -10887,6 +11066,13 @@
     "absent",
     [
      "name"
+    ]
+   ],
+   [
+    "global",
+    false,
+    [
+     "path"
     ]
    ]
   ],
@@ -12228,10 +12414,6 @@
     "type": "bool",
     "default": null
    },
-   "session_vars": {
-    "type": "list",
-    "elements": "dict"
-   },
    "query": {
     "type": "raw",
     "required": true
@@ -12249,6 +12431,10 @@
    "single_transaction": {
     "type": "bool",
     "default": false
+   },
+   "session_vars": {
+    "type": "list",
+    "elements": "dict"
    }
   },
   "required_by": {},
@@ -12313,6 +12499,9 @@
     "default": null
    },
    "name": {
+    "aliases": [
+     "user"
+    ],
     "type": "str",
     "required": true
    },
