@@ -345,10 +345,28 @@ module Krikri
       # walk, this guard brackets one key's conversion instead of all of
       # them - strictly tighter than before (a recursion that used to
       # burn through N variables' worth of work per depth level now
-      # burns through 1), so the existing cap of 3 stays just as safe,
-      # not looser.
+      # burns through 1).
       @@prepare_vars_depth = 0
-      MAX_PREPARE_VARS_DEPTH = 3
+      MAX_PREPARE_VARS_DEPTH = 50
+
+      # Names currently being prepared on this fiber. A lazy-var chain
+      # whose levels are all DISTINCT names is legitimate recursive
+      # resolution and must render to full depth the way Ansible's own
+      # templar does - the old flat depth cap of 3 cut such a chain at its
+      # 4th distinct level (znerol.ssh_kba round 5460170:
+      # names_and_keys -> nxk_names -> nxk -> host_keys -> hostname) and
+      # handed the engine the innermost var's still-templated raw text, so
+      # `hostvars[ssh_kba_server_hostname][...]` looked up the literal
+      # string "{{ inventory_hostname }}" as a host name, every
+      # `| default(False)` ternary guard went false, the cartesian product
+      # collapsed to [], and the role's `SSH host keys registered at
+      # client` loop silently resolved to zero items - skipped where
+      # ansible-playbook runs all six. Only a REPEATING name is a genuine
+      # runaway risk, so the guard fires when a name re-enters its own
+      # preparation (the same lenient bail the depth cap used - the raw
+      # value passes through unrendered), with the raised depth cap kept
+      # only as a backstop for pathological non-cyclic blowups.
+      @@prepare_vars_active = {} of Fiber => Array(String)
 
       # A variable's value after recursive re-templating, or nil when it is
       # undefined - what JinjaVarResolver hands the engine for *name*.
@@ -366,10 +384,6 @@ module Krikri
           return raw_value
         end
         if (raw_unsafe = raw_value.raw).is_a?(String) && UnsafeValues.unsafe_text?(raw_unsafe)
-          return raw_value
-        end
-
-        if @@prepare_vars_depth >= MAX_PREPARE_VARS_DEPTH
           return raw_value
         end
 
@@ -396,11 +410,19 @@ module Krikri
           return nil
         end
 
+        active = @@prepare_vars_active[Fiber.current] ||= Array(String).new
+        base_name = name.split(/[\.\[]/, 2)[0]
+        if active.includes?(base_name)
+          return raw_value
+        end
+        active.push(base_name)
         @@prepare_vars_depth += 1
         begin
           rerender_nested_templates(raw_value, substitutor)
         ensure
           @@prepare_vars_depth -= 1
+          active.pop
+          @@prepare_vars_active.delete(Fiber.current) if active.empty?
         end
       end
 
