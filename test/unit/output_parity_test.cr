@@ -37,6 +37,15 @@ describe Krikri::OutputBanner do
     it "never emits fewer than three stars for a very long message" do
       Krikri::OutputBanner.stars("x" * 200).must_equal("***")
     end
+
+    # Ansible pads by DISPLAY width, not codepoint count - its _textlen
+    # counts each East Asian Wide/Fullwidth character as two columns
+    # (live-verified vs 2.19.11: a TASK banner naming 日本 pads two stars
+    # shorter than a codepoint count would give).
+    it "counts East Asian wide characters as two columns" do
+      msg = "TASK [Téλ-日本 ✓]"
+      Krikri::OutputBanner.stars(msg).must_equal("*" * (79 - (msg.size + 2)))
+    end
   end
 
   describe ".banner" do

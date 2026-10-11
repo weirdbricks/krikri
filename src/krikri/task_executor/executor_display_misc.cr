@@ -251,30 +251,118 @@ module Krikri
           # template:" prefix for this class.
           ctx.push(e.message.to_s, error_origin || ctx.origin)
         rescue e : UndefinedVariableError
-          ctx.push(e.message.to_s, error_origin || ctx.origin)
+          msg = e.message.to_s
+          # Live-verified vs 2.19.11 (q-probes): whether the span's failure
+          # truncates the template run depends on the span's SHAPE, not just
+          # the failure:
+          # - an undefined reference combined by a binary operator
+          #   (`{{ u ~ 'x' }}`, `{{ u + 1 }}`, `{{ u == 'x' }}`,
+          #   `{{ u and true }}`) makes the whole expression a terminating
+          #   Marker: the error is followed by one "template potentially
+          #   truncated" error and the run aborts (later spans never
+          #   evaluate);
+          # - a failure consumed inline does NOT abort and adds no
+          #   truncation: a marker-aware filter's argument
+          #   (`{{ x | default(y) }}` -> 'y' is undefined), a plain filter
+          #   (`{{ u | upper }}`), an attribute miss (`{{ d.missing }}`),
+          #   a list literal (`{{ [u] }}`) - the error marker replaces the
+          #   span and rendering continues;
+          # - when the failing value is a dotted path's own template value
+          #   (`{{ n.a }}` with `a: "{{ nosuch }}"`), the error is the
+          #   LEAF's ('nosuch' at its defining site), not the name's - with
+          #   an operator present it precedes the truncation error exactly
+          #   like a pre-rendered bare-ident value's error does.
+          if (leaf = dotted_leaf_failure(span, span_vars, msg, task, host))
+            ctx.push(msg, leaf || error_origin || ctx.origin)
+            abort = true if name_span_combines_operands?(span)
+          elsif name_span_combines_operands?(span)
+            ctx.push(msg, error_origin || ctx.origin)
+            abort = true
+          else
+            ctx.push(msg, error_origin || ctx.origin)
+          end
         rescue e
           ctx.push("Error rendering template: #{e.message}", error_origin || ctx.origin)
+          abort = true
         end
-        abort = true
-      end
-      # Real truncates the name only when the failing span is a MULTI-PART
-      # expression (a concat/arithmetic operator outside quoted literals -
-      # c03/c21/E probes: `{{ 'pre-' ~ badvar }}` aborts the whole name and
-      # later spans are never evaluated). A single-operand span failing on
-      # an attribute/subscript/undefined reference is an INLINE marker and
-      # the name render CONTINUES - later spans still evaluate (real 2.19.11
-      # probes A/B/D/F/G/H/L/M/N 2026-10-10: `{{ d.json }}` -> error 1 only;
-      # `{{ d.json }} {{ undef2 }}` -> both spans' markers, no truncation).
-      multipart = span.gsub(/'[^']*'|"[^"]*"/, " ").matches?(/[~+\-*\/%]/)
-      if multipart
-        ctx.push("template potentially truncated", ctx.origin)
-      else
-        abort = false
       end
       markers = (err_start...ctx.errors.size).map do |i|
         "#{state.placeholder_prefix}#{i}\uE001"
       end.join
-      {markers, multipart}
+      if abort
+        ctx.push("template potentially truncated", ctx.origin)
+        markers = (err_start...ctx.errors.size).map do |i|
+          "#{state.placeholder_prefix}#{i}\uE001"
+        end.join
+        {markers, true}
+      else
+        {markers, false}
+      end
+    end
+
+    # Whether a span's expression combines operand values with a binary
+    # operator - the shape that turns a failed operand into a TERMINATING
+    # Marker (see render_complex_name_span for the live-verified probe
+    # table). Quoted segments are literals and never combine. `in` is
+    # deliberately not probed for (unverified).
+    private def name_span_combines_operands?(span : String) : Bool
+      scan_text = span.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
+      return true if scan_text.matches?(/~/)
+      return true if scan_text.matches?(/(==|!=|<=|>=|<|>|\+|\*|\/|%)/)
+      return true if scan_text.matches?(/(^|[\s(])(-)(\s|\d)/)
+      return true if scan_text.matches?(/(^|\s)(and|or)(\s|$)/)
+      false
+    end
+
+    # The failing undefined value behind a dotted path in a failed span:
+    # `{{ n.a }}` with `n: {a: "{{ nosuch }}"}` fails while rendering the
+    # LEAF's own value, so the error belongs to that leaf. Returns the
+    # leaf's defining origin when a dotted path's leaf value is itself a
+    # plain `{{ }}` template whose strict render raises the very same
+    # undefined-reference message; nil otherwise (attribute misses,
+    # non-template leaves - the caller then attributes the error to the
+    # span's own origin).
+    private def dotted_leaf_failure(span : String, vars_context : Hash(String, JSON::Any), msg : String, task : Task, host : Host) : VarOrigin?
+      scan_text = span.gsub(/'[^']*'/, " ").gsub(/"[^"]*"/, " ")
+      scan_text.scan(/[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+/).map(&.[0]).uniq!.each do |path_str|
+        parts = path_str.split('.')
+        node = vars_context[parts[0]]?
+        next unless node
+        parts[1..].each do |part|
+          node = node.as_h?.try(&.[part]?)
+          break unless node
+        end
+        next unless node
+        raw = node.as_s?
+        next unless raw && raw.includes?("{{") && !raw.includes?("{%") && !raw.includes?("{#")
+        begin
+          VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(raw, strict: true)
+        rescue err : UndefinedVariableError
+          next unless err.message == msg
+          return dotted_leaf_origin(task, host, parts)
+        rescue
+          next
+        end
+      end
+      nil
+    end
+
+    # The defining position of a dotted path's leaf value (`n.a` inside
+    # the play vars / vars file / role file / inventory file that supplies
+    # `n`): the layer's own VarOrigin gives the FILE, and the position is
+    # the value token of the leaf key in that file - a bare path for
+    # whole-file var sources ("n/a"), or any mapping path ending in
+    # "vars/n/a" for vars nested under a play's or task's `vars:` section.
+    private def dotted_leaf_origin(task : Task, host : Host, parts : Array(String)) : VarOrigin?
+      origin = var_origin_for(task, host, parts[0])
+      return nil unless origin.is_a?(FileVarOrigin)
+      file = origin.path
+      return nil unless File.file?(file)
+      map = YamlSourceMap.scan(File.read(file))
+      suffix = parts.join("/")
+      pos = map.at?(suffix) || map.suffix_at?("/vars/#{suffix}")
+      return nil unless pos
+      FileVarOrigin.new(File.expand_path(file), pos[0], pos[1])
     end
 
     # A value consisting of exactly one `{{ ... }}` construct (no

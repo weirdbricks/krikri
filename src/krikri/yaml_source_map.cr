@@ -30,6 +30,17 @@ module Krikri
       @positions[path]?
     end
 
+    # The first (document-order) position whose path ends with *suffix* -
+    # for locating a nested var's value inside a file whose top-level
+    # wrapping differs by source kind ("0/vars/n/a" in a playbook vs
+    # "n/a" in a vars file).
+    def suffix_at?(suffix : String) : Pos?
+      @positions.each do |path, pos|
+        return pos if path.ends_with?(suffix)
+      end
+      nil
+    end
+
     # The top-level sequence entries as (index, start line) pairs sorted
     # by position - for a playbook these are its plays, letting callers
     # locate which play a given source line belongs to.

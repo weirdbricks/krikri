@@ -754,6 +754,149 @@ describe "task name template error warning blocks" do
   ensure
     FileUtils.rm_rf(src_dir) if src_dir
   end
+
+  it "keeps a marker-aware filter argument failure inline with no truncation" do
+    src_dir = File.tempname("name-warn-default-filter")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: "T {{ x | default(y) }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (q1/q6 probes): a failure consumed by a
+    # filter's argument ('y' undefined inside default(y)) replaces the
+    # span with its error marker inline and adds NO "template potentially
+    # truncated" error.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'y' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:4:13\n\n2   gather_facts: false\n3   tasks:\n4     - name: \"T {{ x | default(y) }}\"\n              ^ column 13\n\n")
+    text.must_include("TASK [T << error 1 - 'y' is undefined >>]")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "keeps an attribute-miss failure inline with no truncation" do
+    src_dir = File.tempname("name-warn-attr-miss")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          d: {}
+        tasks:
+          - name: "T {{ d.missing }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (q11 probe): a plain attribute miss is one
+    # inline error at the name's own site - no truncation, later spans
+    # still evaluate.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - object of type 'dict' has no attribute 'missing'\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:13\n\n4     d: {}\n5   tasks:\n6     - name: \"T {{ d.missing }}\"\n              ^ column 13\n\n")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "points a nested dict var's failure at the leaf value's definition" do
+    src_dir = File.tempname("name-warn-nested-dict")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          n:
+            a: "{{ nosuch }}"
+        tasks:
+          - name: "T {{ n.a }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (q3/q10/q16 probes): the error is the
+    # LEAF's ('nosuch' at the a: value's own position), not the name's.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nosuch' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:5:10\n\n3   vars:\n4     n:\n5       a: \"{{ nosuch }}\"\n           ^ column 10\n\n")
+    text.must_include("TASK [T << error 1 - 'nosuch' is undefined >>]")
+    text.includes?("template potentially truncated").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "splits a dotted-leaf error from the truncation error when combined by an operator" do
+    src_dir = File.tempname("name-warn-leaf-operator")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          n:
+            a: "{{ nosuch }}"
+        tasks:
+          - name: "T {{ n.a ~ 'x' }}"
+            ansible.builtin.debug:
+              msg: hi
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11 (q18 probe): the leaf's error keeps its own
+    # defining site, then the operator-combined span aborts with the
+    # truncation error at the name's own site - two separate blocks.
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 1 - 'nosuch' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:5:10\n\n")
+    text.must_include("[WARNING]: Encountered 1 template error.\nerror 2 - template potentially truncated\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:7:13\n\n")
+    text.must_include("TASK [T << error 1 - 'nosuch' is undefined >><< error 2 - template potentially truncated >>]")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
+  it "prints the loop item failure chain with the value's defining origin" do
+    src_dir = File.tempname("name-warn-loop-chain")
+    Dir.mkdir_p(src_dir)
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          v: "{{ nosuch }}"
+        tasks:
+          - name: "T {{ item }}"
+            ansible.builtin.debug:
+              msg: hi
+            loop:
+              - "{{ v }}"
+              - ok
+      YAML
+
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, "pb.yml"], output: output, error: output, chdir: src_dir)
+
+    text = output.to_s
+    # Live-verified vs 2.19.11: the loop item's templating failure prints
+    # "Task failed." at the task's name key with the failing value's own
+    # defining site as the caused-by Origin - never the action-level
+    # "Action failed." chain.
+    text.must_include("[ERROR]: Task failed: 'nosuch' is undefined\n\nTask failed.\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:6:7\n\n4     v: \"{{ nosuch }}\"\n5   tasks:\n6     - name: \"T {{ item }}\"\n        ^ column 7\n\n<<< caused by >>>\n\n'nosuch' is undefined\nOrigin: #{File.expand_path(File.join(src_dir, "pb.yml"))}:4:8\n\n2   gather_facts: false\n3   vars:\n4     v: \"{{ nosuch }}\"\n         ^ column 8\n\n")
+    text.must_include("fatal: [localhost]: FAILED! => {\"msg\": \"Task failed: 'nosuch' is undefined\"}")
+    text.includes?("Action failed.").must_equal false
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
 end
 
 # Single-operand span failures (attribute/subscript/undefined) in a task
