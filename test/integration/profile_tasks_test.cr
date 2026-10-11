@@ -109,10 +109,12 @@ describe "profile_tasks callback emulation" do
       row_names.includes?("my handler").must_equal(true)
       row_names.size.must_equal(5)
 
-      # Real row shape: `name ` dash-padded to 71 columns, then the
-      # ` X.XXs` value right-aligned in 9 columns with dashes; 80 total.
+      # Real row shape: `name ` dash-padded to 70 columns, then the
+      # ` X.XXs` value right-aligned in 9 columns with dashes; 79 total
+      # (Display.columns - 9 + 9, live-verified against 2.19.11 - the
+      # timestamp LINES above are 80 wide, but rows are 79).
       rows.each do |row|
-        row.size.must_equal(80)
+        row.size.must_equal(79)
         row.must_match(/\A.+ -{5,} \d+\.\d{2}s\z/)
       end
       slow_row = rows.find! { |row| row.starts_with?("slow task ") }
