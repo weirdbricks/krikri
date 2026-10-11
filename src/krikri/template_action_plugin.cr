@@ -285,7 +285,7 @@ module Krikri
     # this render's own engine, then the render is retried once.
     private def render_template(template_content : String, template_path : String) : String?
       directive_overrides, content = extract_jinja2_directive(template_content)
-      content = rewrite_inline_ternaries(content, false) unless custom_delimiters?
+      content = rewrite_crinja_compat(content) unless custom_delimiters?
 
       options = KrikriJinja::LexerOptions.new(
         block_start: delimiter_param("block_start_string", "{%"),
@@ -520,65 +520,19 @@ module Krikri
       vars
     end
 
-    # Rewrites Jinja2 inline conditional expressions `{{ A if C else B }}`
-    # into the Crinja-parseable `{{ C | ternary(A, B) }}` form. This is
-    # Jinja2 (used by dev-sec os_hardening), which Crinja 0.9.0 cannot
-    # parse. Only `{{ }}` expression blocks are touched; `{% %}` statement
-    # blocks are left as-is.
-    #
-    # Regex-based (not manual char indexing): matches a `{{ ... }}` block
-    # and rewrites an inline ` A  if  C  else  B ` ternary within it. Each
-    # match keeps the ` if ` / ` else ` as the top-level separator, so an
-    # operand that is itself a parenthesized ternary (`(B if C2 else D)`)
-    # is handled naturally by the nested `( ... )` captures.
-    # The ` else ... ` branch is optional - Jinja2 permits `{{ A if C
-    # }}` on its own (renders as empty/Undefined when C is false;
-    # konstruktoid-hardening's sshd_config.j2 does this throughout, e.g.
-    # `{{ 'Ciphers ' ~ sshd_ciphers | join(',') if sshd_ciphers }}` to
-    # omit the whole config line entirely when the list is empty).
-    # #rewrite_ternary_expr treats a missing else branch as `''`.
-    # `[^}\n]` (not just `[^}]`) in every lazy segment below is load-
-    # bearing, not cosmetic: a real inline ternary is always written on
-    # one line, but `[^}]*?` alone also matches newlines, so on a large
-    # template with sparse/mismatched `{`/`}` (mrlesmithjr.netdata's own
-    # 5934-line netdata.conf.j2 - only 26 `{{` and 37 bare `}` total in
-    # the whole file, zero of them an actual ternary) each of the 26
-    # `{{` candidates would lazily scan for the next literal `}`
-    # ACROSS THE REST OF THE FILE, and the nested optional `else` group
-    # multiplies that against every already-scanned position - PCRE2's
-    # JIT match-time stack (a separate resource from its compile-time
-    # stack, and unrelated to true catastrophic backtracking) overflows
-    # ("Regex match error: JIT stack limit reached"), crashing the
-    # `template:` task outright on a file that never needed rewriting at
-    # all. Excluding `\n` bounds every candidate scan to a single line,
-    # matching how these templates are actually written and eliminating
-    # the cross-file scan entirely.
-    INLINE_TERNARY = /
-      \{\{                          # opening {{
-      (                             # capture the whole expression
-        (?:[^}\n]*?)               # lazy: up to the ternary
-        \s+if\s+                  # the ` if ` keyword
-        (?:[^}\n]*?)               # condition (lazy)
-        (?:\s+else\s+              # the ` else ` keyword (optional)
-        (?:[^}\n]*?))?              # else branch (lazy, optional)
-      )
-      \}\}                        # closing }}
-    /x
-
     # Method-call `.join(` form that Jinja2 permits but Crinja's
     # parser rejects: `{{ "SEP".join(LIST) }}` is the standard `sep.join(list)`
     # idiom (dev-sec os_hardening's securetty template uses it). Rewritten
     # into the equivalent `LIST | join("SEP")` filter, which Crinja supports.
     # $1 = the sep string literal, $2 = the list expression being joined.
-    # `[^"\\]` excludes `\n` too (not just cosmetic - see INLINE_TERNARY's
-    # own comment above for the general shape of this bug): a template
+    # `[^"\\]` excludes `\n` too (not just cosmetic): a template
     # with an ODD number of `"` characters total has no valid second
     # quote to close a literal at all, so the unbounded `(?:[^"\\]|\\.)*`
     # tries every possible split of the REST OF THE FILE between its two
     # alternatives looking for one - mrlesmithjr.netdata's own 5934-line
     # netdata.conf.j2 has exactly one stray `"` in the whole file, and
-    # this pattern alone (not INLINE_TERNARY, initially suspected first)
-    # was the one that actually overflowed PCRE2's JIT match-time stack.
+    # this pattern alone was the one that actually overflowed PCRE2's
+    # JIT match-time stack.
     # Real quoted string literals here are always single-line.
     JOIN_METHOD = /("(?:[^"\\\n]|\\.)*")\s*\.join\(\s*([^)\n]*?)\s*\)/
 
@@ -598,7 +552,7 @@ module Krikri
     # numeric indexing on a parenthesized expression) but NOT `(EXPR)[1]`
     # (bracket indexing on one) - confirmed by direct testing, not
     # assumed - so a captured trailing `[N]` is rewritten to `.N` rather
-    # than carried through as-is; #rewrite_inline_ternaries's own gsub
+    # than carried through as-is; #rewrite_crinja_compat's own gsub
     # call is responsible for making that substitution (see below).
     #
     # Group 1 alternates `.ident`/`[...]` suffixes in any order - real
@@ -620,12 +574,10 @@ module Krikri
     # so the vendored Crinja fork's native `+` handling still sees it;
     # the `+` forms used to be pre-stripped out of the whole template,
     # see #render_template's comment for why that's gone), $2 the
-    # keyword, $3 the condition. Used to find the same real-Jinja2
-    # infix `in`/`not in` operator Crinja can't parse (see
-    # #rewrite_in_expr) when it's used directly in a statement condition
-    # rather than nested inside an inline ternary's own condition
-    # (already handled separately, since that one lives inside a `{{ }}`
-    # block). Deliberately does NOT match `{% for %}` - `for x in list`
+    # keyword, $3 the condition - each is wrapped with `| pytruthy`
+    # below (see the comment inside the gsub block) so a falsy-but-
+    # non-empty condition behaves like real Jinja2. Deliberately does
+    # NOT match `{% for %}` - `for x in list`
     # is valid Crinja syntax on its own and must never be touched.
     TAG_IF_ELIF = /\{%(-|\+?)\s*(if|elif)\s+(.*?)\s*(-|\+?)%\}/
 
@@ -705,8 +657,8 @@ module Krikri
     end
 
     # True when any of the six Jinja delimiter-string task params (Ansible's block_start_string/...) is set to a non-default value.
-    # The text-level Jinja compat rewrites (#rewrite_inline_ternaries'
-    # INLINE_TERNARY/TAG_IF_ELIF/FOR_TUPLE_PARENS regexes) hard-code the
+    # The text-level Jinja compat rewrites (#rewrite_crinja_compat's
+    # JOIN_METHOD/SPLIT_METHOD/TAG_IF_ELIF/FOR_TUPLE_PARENS regexes) hard-code the
     # classic delimiter shapes; with custom delimiters those byte
     # sequences are literal template text, and rewriting them would
     # corrupt the output - so the whole rewrite pass is skipped for such
@@ -812,39 +764,30 @@ module Krikri
       end
     end
 
-    # `rewrite_in:` is false on the krikri-jinja path: that engine evaluates
-    # a real infix `in`/`not in` natively, including Python's "undefined on
-    # the left of a list membership is simply False", so rewriting it into
-    # the `is in([...])` test form would only lose that.
-    private def rewrite_inline_ternaries(template : String, rewrite_in : Bool = true) : String
+    # Text-level Jinja compat rewrites left over from the Crinja era.
+    # Inline ternaries (`{{ A if C else B }}`) are deliberately NOT
+    # rewritten here: krikri-jinja parses and evaluates them natively,
+    # and LAZILY - the old Crinja-era rewrite turned each one into
+    # `C | ternary(A, B)`, a filter call whose arguments are evaluated
+    # eagerly, so an untaken branch containing an invalid expression
+    # (rolehippie.prometheus's default.j2: `' --storage.tsdb.retention.
+    # size=' + prometheus_tsdb_retention_size if ... | default(false)
+    # else ''`, with the var defaulting to null) failed the whole render
+    # with "unsupported operands for +: String and Nil" where real
+    # Jinja2 never even evaluates the untaken branch (round 5460382).
+    private def rewrite_crinja_compat(template : String) : String
       # Bounded defense-in-depth against a non-converging rewrite pass -
       # every individual rewrite below is believed idempotent once
       # applied, but this loop already hung the whole process for real
-      # (100% CPU, no return) from one whitespace-handling bug in
-      # #rewrite_ternary_expr; a hard cap turns any *future* such bug
-      # into a merely-imperfect render instead of a permanent hang.
-      # Matches the same bounded-retemplating pattern VarSubstitutor#
-      # substitute already uses for its own "re-render until stable"
-      # loop.
+      # (100% CPU, no return) from one whitespace-handling bug in the
+      # since-removed ternary rewrite; a hard cap turns any *future*
+      # such bug into a merely-imperfect render instead of a permanent
+      # hang. Matches the same bounded-retemplating pattern
+      # VarSubstitutor# substitute already uses for its own "re-render
+      # until stable" loop.
       20.times do
         once = template
-        # Rewrite inline ternaries first. INLINE_TERNARY's match includes
-        # the surrounding `{{`/`}}` (needed so the regex only fires
-        # inside an expression block, not inside plain text that happens
-        # to contain " if "/" else "), and String#gsub replaces the
-        # *whole* match with the block's return value - so the rewrite
-        # must re-add `{{ }}` around the rewritten expression itself.
-        # Previously didn't, silently turning every inline ternary in
-        # every template into unparsed literal text in the rendered
-        # output (`value=true | ternary('a', 'b')` instead of `value=a`) -
-        # never caught by task-status-only real-host diffing, since the
-        # template task still reports `changed:`/"Template rendered
-        # successfully" either way; only inspecting the rendered file's
-        # actual content surfaces it.
-        once = once.gsub(INLINE_TERNARY) do
-          "{{ #{rewrite_ternary_expr($1)} }}"
-        end
-        # Then rewrite `.join(` method calls to the join filter.
+        # Rewrite `.join(` method calls to the join filter.
         once = once.gsub(JOIN_METHOD) do
           "#{$2} | join(#{$1})"
         end
@@ -857,14 +800,12 @@ module Krikri
             "(#{$1} | split(#{$2}))"
           end
         end
-        # Then rewrite a real-Jinja2 infix `in`/`not in` test used
-        # directly in a `{% if %}`/`{% elif %}` condition (the ternary
-        # case above already handles it when nested inside a `{{ }}`
-        # ternary's own condition).
+        # Then wrap every `{% if %}`/`{% elif %}` condition with
+        # `| pytruthy` (see the comment inside the block below).
         once = once.gsub(TAG_IF_ELIF) do
           condition = $3
           # Already wrapped by an earlier pass through this same loop
-          # (see the loop-convergence comment on #rewrite_inline_ternaries)
+          # (see the loop-convergence comment on #rewrite_crinja_compat)
           # - leave it exactly as-is instead of nesting another `|
           # pytruthy` around it every iteration, which would never
           # converge (`once` would keep differing from `template`
@@ -883,7 +824,6 @@ module Krikri
             # strictly more correct in every case, since real_truthy?
             # agrees with Crinja::Value#truthy? on everything except the
             # empty-collection cases it was already getting wrong.
-            condition = rewrite_in_expr(condition) if rewrite_in
             "{%#{$1} #{$2} (#{condition}) | pytruthy #{$4}%}"
           end
         end
@@ -895,201 +835,6 @@ module Krikri
         template = once
       end
       template
-    end
-
-    # Rewrites a single expression's `A if C else B` into `C | ternary(A, B)`.
-    # Requires the literal ` if ` and ` else ` tokens present in *expr*.
-    #
-    # *then_part*/*else_part* are recursively rewritten too - ssh_hardening's
-    # own AllowTcpForwarding line nests a ternary inside another's else
-    # branch (`A if C1 else (B if C2 else D)`), which the outer gsub loop
-    # (see #rewrite_inline_ternaries) cannot fix up on a later pass: once
-    # the outer ternary is rewritten to `C1 | ternary(A, (B if C2 else
-    # D))`, the inner "B if C2 else D" text is no longer inside its own
-    # `{{ }}` block (it is now embedded in an already-rewritten filter
-    # call), so INLINE_TERNARY's regex either never matches it again or -
-    # worse - matches the *whole* already-rewritten `{{ }}` block a
-    # second time and mangles it further. Recursing here, before the
-    # outer rewrite is assembled, fixes both branches in one pass so
-    # nothing nested is left for a second pass to mishandle.
-    # Jinja2 (and every real playbook/template) writes list/tuple
-    # membership as the bare infix operator `X in [...]`/`X not in [...]`
-    # - standard Python/Jinja2 syntax. Crinja has no infix `in` operator
-    # at all, only a `is in(seq)` TEST (`Crinja.test({seq: ...}, :in)`),
-    # so any real-world use of the infix form fails the whole render
-    # (dev-sec ssh_hardening's AllowTcpForwarding line: `ssh_allow_tcp_
-    # forwarding in ('yes', 'no', 'local', 'all', 'remote')`).
-    #
-    # Rewrites a single self-contained `LEFT (not )?in CONTAINER`
-    # expression into `LEFT is (not )?in(CONTAINER_AS_LIST)` - a `(...)`
-    # tuple-literal container is converted to a `[...]` list literal
-    # (Crinja's `:in` test reads its `seq` argument from a Jinja
-    # list, not a tuple, which Crinja doesn't have as its own literal
-    # type at all). Returns *expr* unchanged if it isn't a clean, single
-    # top-level `in`/`not in` expression (e.g. a compound `X in Y and Z`
-    # condition) - not needed by any template in this codebase today,
-    # and safer to leave alone than to guess at operator precedence.
-    private def rewrite_in_expr(expr : String) : String
-      stripped = strip_wrapping_parens(expr.strip)
-
-      negated = false
-      in_idx = index_of_token(stripped, " not in ")
-      if in_idx >= 0
-        negated = true
-        token_len = 8
-      else
-        in_idx = index_of_token(stripped, " in ")
-        return expr if in_idx < 0
-        token_len = 4
-      end
-
-      left = stripped[0...in_idx].strip
-      container = stripped[(in_idx + token_len)..].strip
-      return expr if left.empty? || container.empty?
-
-      # A trailing top-level ` and `/` or ` after the container means this
-      # is a compound condition, not a clean single `in` test - leave it
-      # alone rather than mis-rewrite half of it.
-      return expr if index_of_token(container, " and ") >= 0 || index_of_token(container, " or ") >= 0
-
-      list_literal = if container.starts_with?('[')
-                       container
-                     elsif container.starts_with?('(')
-                       inner = strip_wrapping_parens(container)
-                       return expr if inner == container # not a single clean (...) wrap
-                       "[#{inner}]"
-                     elsif container =~ /\A[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*\z/
-                       # A bare variable/dotted/indexed reference
-                       # (`ansible_facts.processor`, not a `[...]`
-                       # literal or `(...)` tuple) - Ansible roles
-                       # check membership against a variable-bound list
-                       # far more often than an inline literal one.
-                       # Crinja's own `is in(seq)` test takes `seq:
-                       # Array(Crinja::Value)`, evaluated as a normal
-                       # expression - a bare variable reference needs no
-                       # bracket-wrapping at all, unlike the tuple-
-                       # literal case above. Found via dev-sec.os-
-                       # hardening's own `('amd' in ansible_facts.
-                       # processor) | pytruthy` - previously fell
-                       # through to `return expr` unrewritten (neither
-                       # `[`- nor `(`-prefixed), leaving Crinja's own
-                       # unsupported infix `in` operator untouched and
-                       # failing the whole template render outright.
-                       container
-                     else
-                       return expr
-                     end
-      "#{left} is #{negated ? "not " : ""}in(#{list_literal})"
-    end
-
-    private def rewrite_ternary_expr(expr : String) : String
-      # #strip - INLINE_TERNARY's capture includes the raw whitespace
-      # padding around the `{{`/`}}` delimiters (e.g. captures " EXPR "
-      # from "{{ EXPR }}"). Without stripping it here, a call that falls
-      # through to the plain `return expr` below (nothing to rewrite)
-      # hands back that same padding, which the caller then re-wraps as
-      # "{{ #{expr} }}" - adding *another* space on each side on top of
-      # what's already there. Every later pass through the outer
-      # rewrite_inline_ternaries loop re-captures and re-pads the same
-      # way, growing the string by two characters forever and never
-      # reaching the loop's `once == template` convergence check - a
-      # genuine unbounded infinite loop (confirmed: 100% CPU, no I/O,
-      # never returns), not just a cosmetic double-space.
-      expr = expr.strip
-
-      # A whole ternary can itself be wrapped in a redundant outer paren
-      # pair (ssh_hardening's own ForwardAgent line: `((ssh_forward_agent)
-      # if ssh_forward_agent is defined else 'no')`) - without stripping
-      # it first, that outer `(` never closes until the very end, so
-      # every character of the real ` if `/` else ` tokens sits at paren
-      # depth 1, not 0, and #index_of_token (a depth-0-only scan) never
-      # finds them at all - the whole ternary is left completely
-      # unrewritten and handed to Crinja as literal (unsupported) inline-
-      # if syntax.
-      expr = strip_wrapping_parens(expr)
-
-      # Split on the top-level ` if ` and ` else ` (guarding quotes/parens
-      # via a small scan). Uses a manual scan rather than the regex above
-      # because a ternary may be nested and we want the *last* ` else `.
-      if_idx = index_of_token(expr, " if ")
-      return expr unless if_idx >= 0
-      else_idx = index_of_token_from(expr, " else ", if_idx)
-
-      then_part = rewrite_ternary_expr(strip_wrapping_parens(expr[0...if_idx].strip))
-      # A missing ` else ` branch (`{{ A if C }}`, Jinja2's own
-      # else-less inline conditional) renders as empty/Undefined when C
-      # is false - `''` reproduces that in the ternary filter form.
-      if else_idx >= 0
-        cond_part = rewrite_in_expr(expr[if_idx + 4...else_idx].strip)
-        else_part = rewrite_ternary_expr(strip_wrapping_parens(expr[else_idx + 6..].strip))
-      else
-        cond_part = rewrite_in_expr(expr[if_idx + 4..].strip)
-        else_part = "''"
-      end
-
-      # cond_part is parenthesized unconditionally before the pipe: real
-      # Jinja2's `|` binds *tighter* than `is`, so an unparenthesized `X
-      # is in([...]) | ternary(...)` parses as `X is in([...] |
-      # ternary(...))` - the filter call ends up as part of the test's
-      # own argument instead of applying to the test's boolean result.
-      # Only actually matters when cond_part itself contains `is` (from
-      # #rewrite_in_expr), but wrapping is harmless otherwise too.
-      "(#{cond_part}) | ternary(#{then_part}, #{else_part})"
-    end
-
-    # Strips one layer of wrapping parens from *s* - but only when the
-    # opening `(` and closing `)` actually match each other (paren depth
-    # returns to 0 only at the very last character), not when *s* merely
-    # starts with `(` and ends with `)` for unrelated reasons (e.g.
-    # `(a) + (b)`). A nested ternary branch written `(B if C2 else D)`
-    # needs this stripped before recursing into #rewrite_ternary_expr,
-    # or the whole branch stays at paren depth 1 throughout and its own
-    # ` if `/` else ` tokens are never found (both are depth-0-only
-    # scans).
-    private def strip_wrapping_parens(s : String) : String
-      return s unless s.starts_with?('(') && s.ends_with?(')')
-      depth = 0
-      s.each_char.with_index do |char, i|
-        depth += 1 if char == '('
-        depth -= 1 if char == ')'
-        return s if depth == 0 && i < s.size - 1
-      end
-      s[1..-2]
-    end
-
-    # Index of the first occurrence of *token* (outside quotes and at
-    # paren depth 0), or -1. The token must be preceded/followed by a
-    # non-identifier char so `elif`/`elseif` style keywords can't match.
-    private def index_of_token(str : String, token : String) : Int32
-      index_of_token_from(str, token, 0)
-    end
-
-    private def index_of_token_from(str : String, token : String, from : Int32) : Int32
-      depth = 0
-      in_single = false
-      in_double = false
-      j = from
-      while j <= str.size - token.size
-        c = str[j]
-        if in_single
-          in_single = false if c == '\''
-        elsif in_double
-          in_double = false if c == '"'
-        else
-          case c
-          when '\'' then in_single = true
-          when '"'  then in_double = true
-          when '('  then depth += 1
-          when ')'  then depth -= 1
-          else
-            if depth == 0 && str[j, token.size] == token
-              return j
-            end
-          end
-        end
-        j += 1
-      end
-      -1
     end
 
     # Prepare variables for template rendering
