@@ -13,7 +13,7 @@ gets fixed, delete its bullet; the fixing commit is the record.
 made, with the reasoning attached; nothing there is waiting on anyone. An item that stops being a
 defect moves down or gets deleted.
 
-**Currently at `0.9.1611`.**
+**Currently at `0.9.1629`.**
 
 ## Open gaps
 
@@ -51,6 +51,93 @@ defect moves down or gets deleted.
   (`podman run -d --name krikri-pg16 -p 127.0.0.1:15432:5432 -e POSTGRES_PASSWORD=rootpass
   docker.io/library/postgres:16` - all three live-test files green against it 2026-10-10).
   `docker_image_build`'s nonexistent-`path` test skips where `docker` is podman's shim.
+- **Genuine `a: "{{ b }}"` / `b: "{{ a }}"` variable cycles HANG the render loop** (found by the
+  round-5460170 investigation, verified on unpatched main too): the old prepare_var depth cap
+  never guarded the outer re-pass render loop, and the new per-name cycle detection (0.9.1622)
+  only brackets prepare_var itself - a spinning pair of mutually-templated vars spins the outer
+  re-pass forever. Needs its own investigation.
+
+## Round 5460000 (400 new roles: top-download list exhausted + modified-ordered backfill; 10 fixes landed, 0.9.1613 -> 0.9.1629, 2026-10-11)
+
+400 NEW roles: the Galaxy top-download list is now fully exhausted (pages 1-~688 all either
+tested or dead), so the batch is the last 257 installable download-list names plus 143 from the
+`order_by=-modified` ordering (installability-prefiltered through the ansible-galaxy
+owner__username+name query as before): **304 CLEAN, 32 DIVERGENT, 64 GALAXY_MISSING**. Ten fixes
+landed (each repro'd byte-identical against local 2.19.11 first, each with regression tests):
+
+- 0.9.1613: a looped task's templated `notify:` (`"Restart {{ item }}"`) rendered once against
+  the task-level context (no `item`) -> "Restart undefined" -> HandlerNotFoundError aborted the
+  cold run (buluma.beats; warm passed only because nothing changed). Real post_validates notify
+  per loop iteration - krikri now resolves templated notifies per executed item, gate stays the
+  loop aggregate's changed flag, unmatched rendered names abort carrying the rendered name.
+- 0.9.1614: a looped task whose when: passes but whose module is unported skipped every item
+  at the when-pre-check, BEFORE arg finalization; real finalizes args after when: and fails the
+  item on undefined args (CiscoUcs.ucs's looped ucs_timezone, rc=2). The looped path now defers
+  like the solo path (round 5210000); reachable_unavailable_modules registration moved
+  post-finalization; the finalization [ERROR] chain dedups across a loop's failing items.
+- 0.9.1615: `ansible.posix.firewalld_info` implemented (D-Bus zone-state gathering through the
+  target's own python-firewall client; deekayen.ping's registered `firewalld_info` dereference).
+- 0.9.1616: ufw's bool-to-choice rewrite - parameters.py stringifies a YAML-native bool through
+  check_type_str then rewrites it to the unambiguous choices overlap ('True'->'on', 'False'->'off')
+  instead of failing the choices check (rolehippie.firewall's `logging: true`).
+- 0.9.1617: conditional string-literal scanning - the naive `text[i-1] != '\\'` escape check
+  never closed the quote of a `'\\'` literal (odd-backslash-run rule now at all three scan
+  sites; krikri-jinja already correct; deekayen.meshchat's assert).
+- 0.9.1618: `ansible_facts['ansible_local']` keeps its prefix (the ONLY ansible_-prefixed key
+  real keeps inside ansible_facts) - facts_dict_for blanket-stripped it to 'local', short-
+  circuiting Oefenweb.mydumper's warm build-skip chain into a full source rebuild.
+- 0.9.1619: xml's required_by accepts an empty-string value (real sets the attribute empty;
+  only an explicit null fails) and rejects value: null where krikri wrongly accepted it
+  (buluma.bamboo's templated-empty proxyName).
+- 0.9.1620: the `undef(hint=...)` Jinja global implemented (krikri fell through to a missing
+  VARIABLE lookup, hiding roles' deliberately-failing defaults) + validate_argument_spec
+  templates collected task-var values inside the action like real's get_args_from_task_vars
+  (deekayen.cert_checker).
+- 0.9.1621 (+ krikri-jinja v0.4.33): inline ternaries parse natively and evaluate LAZILY - the
+  Crinja-era `A if C else B` -> `C | ternary(A, B)` rewrite evaluated the untaken branch eagerly
+  (`'x=' + prometheus_tsdb_retention_size` with a null default -> "String and Nil"); the
+  else-less form binds Jinja2's base Undefined (renders "", feeds default()).
+- 0.9.1622: prepare_var's flat depth-3 cap cut znerol.ssh_kba's 4-level lazy-var chain,
+  collapsing its loop to zero items (task silently skipped); replaced with per-name cycle
+  detection + a depth-50 backstop. See the new Open-gaps bullet for the genuine-cycle hang this
+  exposed in the OUTER re-pass loop (pre-existing, unfixed).
+- 0.9.1623: unarchive's tar-handler exclude matches tar's UNANCHORED --exclude semantics
+  (component-boundary suffixes) for the attribute walk - exclude: [LICENSE] + strip-components
+  no longer walks a never-extracted member (foi.sing_box).
+- 0.9.1624: uri's status_code parses the templated-JSON-list wire form (the comma-split crashed
+  on the leading "[") and PyYAML date-like scalars render as Python str(date)/str(datetime)
+  text everywhere the parser vars/params cross the JSON hop - `X-GitHub-Api-Version: 2026-03-10`
+  was going out as "2026-03-10T00:00:00Z" and failing HTTP 400 (perimeterd.perimeterd).
+- 0.9.1625: double-templated lookup terms (`query('flattened', '{{ var }}')`) render before the
+  plugin runs (real's listify_lookup_plugin_terms); container-shaped renders no longer re-wrap
+  into the quote-mangling path that produced apt's `install '['undefined']'` (rhaamo.snmpd);
+  query('flattened') keeps the real list instead of wrapping a comma-joined string.
+- 0.9.1626: apt's cleanup ops are EARLY EXITS in real's main() - with autoclean+autoremove only
+  autoclean ever runs (buluma.os_updates; krikri ran autoremove too and reported its marker).
+- 0.9.1627: pip state:present always runs pip (pip.py has no idempotency pre-check; pip's
+  resolver legitimately re-reconciles shared dep pins and prints "Successfully installed" -
+  krikri's pip-show short-circuit said ok; VCS specs keep the freeze-equivalent pre-check).
+- 0.9.1628: `community.general.mail` implemented natively (ssmtp-like SMTP client, smtplib
+  exception-shape parity, MIME multipart wire-identical; deekayen.log_mailer's mail task was an
+  unavailable-module skip where real failed on SMTP auth - recaps now match).
+
+Dispositioned without a fix: deekayen.{cleanmgr,nessus_agent,silverlight,ivanti_heat,dotnet452},
+oatakan.chocolatey_package_localize, iquzart.win_check_network_drive (win_*/Windows);
+stackhpc.os-container-infra (openstack.cloud); fgierlinger.docker_swarm (docker_swarm*);
+nephelaiio.tree (known py rc=124 hang); opstree_devops.linux_armour (known py-side chaos);
+deekayen.summon (macOS-first, py fails on missing brew); antmelekhin.jira (no engine bug - its
+validate-args failure was 0.9.1620's exact shape and the round ran a pre-fix binary; regression
+tests added only). amottier.debian_minimal + diademiemi.github_cli: both engines fail with
+identical wording, counter-only diffs - host-state.
+
+Also in this window (0.9.1629): the `profile_tasks` timing callback and `oneline` stdout callback
+emulation landed (krikri-wt-callbacks branch, live-verified byte shapes vs 2.19.11 +
+ansible.posix 2.1.0; `ANSIBLE_CALLBACKS_ENABLED`, `ANSIBLE_STDOUT_CALLBACK`, and the krikri-only
+`-o`/`--one-line`/`--krikri-oneline` extension), with README + deliberate-limits docs.
+
+Confirm round 5464100 for all ten fixed roles was SSH_TIMEOUT-blocked twice by an Atlantic.net
+SSH-bootstrap outage (fresh provisions never answered SSH; single-role probe 5465000 confirmed
+systemic) - retried on a 30-min probe loop until it clears.
 
 ## Round 5440000-5450000 (controller collection-set awareness: the last big Open-gap class closed, 0.9.1605 -> 0.9.1607, 2026-10-11)
 
