@@ -2,7 +2,7 @@
 
 Real-host `krikri-playbook`-vs-`ansible-playbook` correctness rounds run so
 far, and each role's **current** status (not what was fixed to get there —
-see `KNOWN_MISSING.md` and `git log` for that history). Check this before
+see `git log` and the GitHub issues for that history). Check this before
 picking a shortlist for the next round, to avoid re-discovering Galaxy-404s
 or already-clean roles as if they were new.
 

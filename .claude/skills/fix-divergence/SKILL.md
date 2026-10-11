@@ -178,9 +178,9 @@ Then clean up: `git worktree remove <path> --force`,
 
 Once ALL roles from a round's triage are either fixed or dispositioned
 (missing module / broken upstream / not-yet-root-caused), update
-`KNOWN_MISSING.md` and `ROLES_TESTED.md` together in one commit — not one
+`ROLES_TESTED.md` together in one commit — not one
 commit per role. See AGENTS.md's own note on this: `ROLES_TESTED.md`'s
 row for an already-documented divergent role updates from "not yet
 root-caused" to the actual root cause + fix version, and
-`KNOWN_MISSING.md` gets a summary narrative with the closed open-gap
-entries removed. Bump the README version badge in the same commit.
+the fixing commit says `Fixes #N` for the matching GitHub issue (file
+one first if none exists); no narrative is written. Bump the README version badge in the same commit.

@@ -25,7 +25,8 @@ equivalent) and `krikri-lint` (the `ansible-lint` equivalent).
 |---|---|
 | Compatibility target | ansible-core 2.19.11 (byte-for-byte console output) |
 | Real Galaxy roles tested on real hosts | 6,680 ([status per role](ROLES_TESTED.md)) |
-| Open gaps and deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
+| Open gaps | [GitHub issues](https://github.com/weirdbricks/krikri/issues) |
+| Deliberate scope cuts | [KNOWN_MISSING.md](KNOWN_MISSING.md) |
 | Third-party collection modules natively ported | 62 |
 | Automated tests | 6,408 passing, 0 failures |
 | Cold run vs. `ansible-playbook` | 2.36x faster |

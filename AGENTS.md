@@ -128,8 +128,8 @@ the same investigation - not one per file touched.
 ## The real-host benchmark-round workflow
 
 This is the primary way bugs get found - unit tests alone (6000+) have never been enough; every real
-round against a production Ansible role finds more. Read `KNOWN_MISSING.md`'s own intro before
-starting a round.
+round against a production Ansible role finds more. Read `KNOWN_MISSING.md`'s own intro and skim the open
+[GitHub issues](https://github.com/weirdbricks/krikri/issues) (`gh issue list`) before starting a round.
 
 Rounds are driven by **`krikri-role-tester`** (sibling repo,
 `../krikri-role-tester`), a Crystal app that replaced the old shell drivers
@@ -185,8 +185,9 @@ from this repo.
 5. **Confirm phase:** re-run *only* the roles that diverged, via a fresh queue file against the
    rebuilt binary, before considering any fix done.
 
-6. Update `KNOWN_MISSING.md` (the running per-round narrative) and `ROLES_TESTED.md` (the
-   current-status table) together in one commit, covering the whole batch at once rather than
+6. Update `ROLES_TESTED.md` (the current-status table) and, if a deliberate limit was decided,
+   `KNOWN_MISSING.md`, together in one commit; open/close GitHub issues for gaps (`Fixes #N` in the
+   fixing commit, `gh issue create` for a confirmed unfixed divergence), covering the whole batch at once rather than
    per-pair; bump `README.md`'s version badge too.
    **Every role tested gets its own row in `ROLES_TESTED.md`'s table** (one role per row,
    not bundled into a shared "role / role / role" line even when several fail the same
@@ -219,11 +220,12 @@ Atlantic.net API keys used in the real-host benchmark workflow come from.
 
 ## Docs that must stay in sync
 
-- `KNOWN_MISSING.md` - two lists plus per-round narrative. **Open gaps** (top) is defects with an
-  unknown or unfinished fix and should stay short; **Deliberate limits** (bottom) is decisions
-  already made, with the reasoning attached. Keep the two apart - an item that stops being a defect
-  moves down or gets deleted, it does not linger at the top, and a fixed item's narrative lives in
-  `git log`, never here. Per-round narrative sits between them, newest first.
+- **GitHub issues** - open gaps: defects with an unknown or unfinished fix. File one per root cause
+  (label `divergence`/`bug`; `tracking` for long-running verification coverage), close with
+  `Fixes #N`. No per-round narrative anywhere: it lives in `git log`.
+- `KNOWN_MISSING.md` - **Deliberate limits** only: decisions already made, with the reasoning attached,
+  plus test-environment notes. An item that turns out to be a defect becomes an issue and is deleted
+  from here.
 - `ROLES_TESTED.md` - one-line current status per role tested, no history, cold/warm timing
   included on every row. Also owns the 10-role benchmark comparison table (moved here from
   `README.md` - detailed per-role numbers belong here, not in the README).

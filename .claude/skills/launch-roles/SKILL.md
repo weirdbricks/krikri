@@ -251,7 +251,7 @@ Claude is the dispatcher, not a bystander, for each root cause:
    never reuse one across two different fixes running concurrently.
 2. Right before dispatching into a worktree that's been sitting, `git merge
    --ff-only main` in it first — an earlier fix may have already merged and
-   bumped `VERSION`/`KNOWN_MISSING.md`, and dispatching against a stale base
+   bumped `VERSION`, and dispatching against a stale base
    guarantees a collision later.
 3. Dispatch via `mcp__crush-api__crush_run` with the root cause, a minimal
    repro, and the affected role(s) as context.
@@ -285,7 +285,7 @@ this validation**:
 This applies to every job independently, even when 2 are running
 concurrently — validate and merge one at a time (see the staleness gotcha
 in the dispatch step above: a second worktree merging after the first may
-need its `VERSION`/`KNOWN_MISSING.md` bump renumbered by hand).
+need its `VERSION` bump renumbered by hand).
 
 ## 11. Confirm each fix against the real host
 
@@ -312,9 +312,10 @@ Once every dispatched fix is merged and confirmed, update the round's
 tracking docs together in one commit (per `AGENTS.md`'s "Docs that must stay
 in sync"):
 
-- **`KNOWN_MISSING.md`**: add this round's narrative entry (newest first,
-  between the two lists) covering the whole batch; move/delete any "Open
-  gaps" entries that this round's fixes resolved.
+- **GitHub issues**: file one issue per unfixed root cause (`gh issue create`,
+  label `divergence`), and make sure each merged fix's commit says `Fixes #N`.
+  No per-round narrative is written anywhere; `git log` is the record. Only
+  touch `KNOWN_MISSING.md` if a deliberate limit was decided.
 - **`ROLES_TESTED.md`**: one row per role tested this round — never bundled
   — each with cold/warm timing for both engines. Every role from the
   original batch queue gets a row, including ones that stayed CLEAN, not
