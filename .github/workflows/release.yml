@@ -300,3 +300,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run brew-test.yml --ref main
+
+      # Same GITHUB_TOKEN anti-recursion rule: a workflow_run trigger on
+      # this workflow never fires (confirmed live on v0.9.1638), so the
+      # multi-arch bundle (built from this release's two Linux tarballs)
+      # is dispatched explicitly.
+      - name: Dispatch release-bundle.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release-bundle.yml --ref main -f tag="${GITHUB_REF_NAME}"

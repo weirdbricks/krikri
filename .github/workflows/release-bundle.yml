@@ -2,13 +2,11 @@ name: Release multi-arch bundle
 
 # Adds krikri-<tag>-linux-multiarch.tar.gz (x86_64 + aarch64 controllers
 # and plugin sets in one tarball) to a published release, built from that
-# release's own two Linux tarballs. A separate workflow so release.yml is
-# untouched; runs after it completes, or manually for any existing tag.
+# release's own two Linux tarballs. Dispatched by release.yml's last step
+# (a workflow_run trigger never fires for GITHUB_TOKEN-started runs), or
+# manually for any existing tag.
 
 on:
-  workflow_run:
-    workflows: [Release]
-    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -20,7 +18,6 @@ permissions:
 
 jobs:
   bundle:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
