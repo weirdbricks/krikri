@@ -8,6 +8,7 @@ require "openssl/digest"
 require "./host"
 require "./shell"
 require "./ssh_manager"
+require "./connection_settings"
 require "./local_executor"
 require "./param_sentinels"
 require "./plugin_helpers/strict_bool_params"
@@ -575,6 +576,16 @@ module Krikri
       @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
     end
 
+    # The EFFECTIVE connection user/port for this plugin's own SSH
+    # calls (controller-side plugins like fetch, and any plugin that
+    # dials out): resolved from the wire vars first (task-level
+    # ansible_user/ansible_port win), then the config's host entry -
+    # which build_plugin_config fills with the task's effective
+    # settings - then the plain inventory defaults.
+    private def effective_connection : ConnectionSettings
+      ConnectionSettings.resolve(@host, @vars)
+    end
+
     # timeout: overrides SSHManager's own default per-call process
     # timeout (SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS, 3600s) - unused
     # by every existing caller (all happy with that default), added for
@@ -588,6 +599,7 @@ module Krikri
         LocalExecutor.exec(command, force_shell: force_shell, env: env)
       else
         # Execute via SSH - use ansible_host if set
+        conn = effective_connection
         if env
           # No argv-free way exists to hand an environment through a plain
           # `ssh host <string>`: the string IS an argv element, on the local
@@ -601,20 +613,22 @@ module Krikri
           # values stay byte-exact.
           SSHManager.exec_script(
             get_connection_host,
-            @host.user || "root",
+            conn.user,
             with_environment_prefix(env, command),
-            @host.port,
+            conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
-            identity_file: get_identity_file
+            identity_file: get_identity_file,
+            extra_args: conn.common_args + conn.extra_args
           )
         else
           SSHManager.exec(
             get_connection_host,
-            @host.user || "root",
+            conn.user,
             command,
-            @host.port,
+            conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
-            identity_file: get_identity_file
+            identity_file: get_identity_file,
+            extra_args: conn.common_args + conn.extra_args
           )
         end
       end
@@ -787,11 +801,12 @@ module Krikri
       else
         SSHManager.upload(
           get_connection_host,
-          @host.user || "root",
+          effective_connection.user,
           local_path,
           remote_path,
-          @host.port,
-          identity_file: get_identity_file
+          effective_connection.port,
+          identity_file: get_identity_file,
+          extra_args: effective_connection.common_args + effective_connection.extra_args
         )
       end
     end
@@ -803,11 +818,12 @@ module Krikri
       else
         SSHManager.download(
           get_connection_host,
-          @host.user || "root",
+          effective_connection.user,
           remote_path,
           local_path,
-          @host.port,
-          identity_file: get_identity_file
+          effective_connection.port,
+          identity_file: get_identity_file,
+          extra_args: effective_connection.common_args + effective_connection.extra_args
         )
       end
     end

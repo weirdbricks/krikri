@@ -8,6 +8,7 @@ require "./ssh_manager"
 require "./local_plugin_daemon"
 require "./local_executor"
 require "./passwords"
+require "./connection_settings"
 require "./playbook_parser"
 require "./shell"
 require "./inventory_parser"
@@ -448,9 +449,22 @@ module Krikri
 
       return {} of String => String if required_plugins.empty?
 
-      # Collect all unique remote hosts from the playbook
-      remote_hosts = [] of Host
+      # Collect one upload target per EFFECTIVE CONNECTION SPEC, not per
+      # host: a play's own vars: can move the connection away from the
+      # inventory's settings (ansible_user/ansible_port/... - play vars
+      # outrank inventory host vars, live-verified), and the staging dir
+      # is per-user, so plugins must be staged where the tasks will
+      # actually execute and under the user they will run as.
+      remote_hosts = [] of {host: Host, conn: ConnectionSettings}
       host_keys_seen = Set(String).new
+      # Per-spec: the settings to upload under, and every (host, play)
+      # that contributed it - with whether THAT play contains any task
+      # carrying its own connection vars. A failed eager upload marks a
+      # host unreachable only when no contributing play could route
+      # around it through a task-level override; the per-task dispatch
+      # then reports the real failure shape itself.
+      spec_conns = Hash(String, ConnectionSettings).new
+      spec_contributions = Hash(String, Array({String, Bool})).new
 
       playbook.plays.each do |play|
         hosts = inventory.get_hosts(play.hosts.to_s)
@@ -491,14 +505,22 @@ module Krikri
           next if (conn_type = host.vars["ansible_connection"]?.try(&.as_s?)) &&
                   connection_plugin_not_found?(conn_type)
 
-          # Deduplicate by connection details
-          connection_host = get_connection_host(host, host.vars)
-          host_key = "#{host.user}@#{connection_host}:#{host.port}"
+          # Deduplicate by connection details - the PLAY's effective
+          # spec (play vars win over inventory host vars for the
+          # connection keys, matching the executor's own precedence), so
+          # a play-level `vars: {ansible_port: ...}` stages the plugins
+          # where its tasks will really connect.
+          conn = ConnectionSettings.resolve_play(host, play.vars)
+          host_key = conn.spec_key
 
           unless host_keys_seen.includes?(host_key)
-            remote_hosts << host
+            remote_hosts << {host: host, conn: conn}
             host_keys_seen.add(host_key)
+            spec_conns[host_key] = conn
+            spec_contributions[host_key] = [] of {String, Bool}
           end
+          spec_contributions[host_key] << {host.name,
+            play_tasks_have_connection_override?(play.tasks) || play_tasks_have_connection_override?(play.handlers)}
         end
       end
 
@@ -514,14 +536,20 @@ module Krikri
       # pre-seeding TaskExecutor#initialize does for @results/@facts.
       # Nothing here can race under cooperative scheduling anyway, but
       # pre-seeding removes the question entirely.
-      remote_hosts.each do |host|
-        connection_host = get_connection_host(host, host.vars)
-        @@uploaded_plugins["#{host.user}@#{connection_host}:#{host.port}"] ||= Set(String).new
+      spec_conns.each_value do |conn|
+        @@uploaded_plugins[conn.spec_key] ||= Set(String).new
+        # The pre-pass runs before any per-task dispatch, so nothing has
+        # registered this spec's connection password yet - without it the
+        # upload's ssh would hit a password prompt with no askpass helper
+        # configured and die with "exec(/usr/bin/ssh-askpass)". The same
+        # registration ensure_uploaded performs per task.
+        if conn_password = conn.password
+          SSHManager.register_connection_password(conn.conn_host, conn.user, conn.port, conn_password)
+        end
       end
       plugin_list.each do |plugin_name|
         cached_md5(get_local_plugin_path(plugin_name))
       end
-
       # Each host's uploads are entirely disjoint and order-independent,
       # so they run concurrently through the same bounded-fiber Channel
       # gate gather_facts_for_all_hosts and the --forks per-task fan-out
@@ -536,13 +564,13 @@ module Krikri
       buffers = Hash(String, IO::Memory).new
       failures = Hash(String, Exception).new
 
-      remote_hosts.each do |host|
+      remote_hosts.each do |entry|
         spawn do
           gate.receive
           buffer = IO::Memory.new
           OutputRouting.redirect_current_fiber_to(buffer)
           begin
-            upload_plugins_to_host(host, plugin_list)
+            upload_plugins_to_host(entry[:host], plugin_list, entry[:conn])
           rescue ex
             # Captured rather than left to propagate: an exception
             # escaping a spawned fiber takes the whole process down with
@@ -550,11 +578,11 @@ module Krikri
             # reported first would depend on scheduling. Re-raised below
             # in deterministic order instead, so this still fails the run
             # exactly as the old serial loop did.
-            failures[host.name] = ex
+            failures[entry[:conn].spec_key] = ex
           ensure
             OutputRouting.clear_current_fiber_redirect
           end
-          buffers[host.name] = buffer
+          buffers[entry[:conn].spec_key] = buffer
         ensure
           gate.send(nil)
           done.send(nil)
@@ -565,19 +593,20 @@ module Krikri
 
       # Flushed in remote_hosts order only after every fiber has finished,
       # so concurrent hosts' progress lines never interleave.
-      remote_hosts.each do |host|
-        if buffer = buffers[host.name]?
+      remote_hosts.each do |entry|
+        if buffer = buffers[entry[:conn].spec_key]?
           print buffer.to_s
         end
       end
 
-      # An upload failure means the host could not be reached at all.
-      # Previously this re-raised, and nothing up the call chain caught
-      # it - so ONE unreachable host in an inventory killed the whole
-      # process with a raw Crystal stack trace, no recap at all, and the
-      # results of every reachable host were lost. ansible-playbook
-      # reports the host UNREACHABLE!, keeps going for the others, and
-      # exits 4. Returning the names lets the caller do the same.
+      # An upload failure means the host could not be reached at all
+      # ON THAT SPEC. Previously this re-raised, and nothing up the call
+      # chain caught it - so ONE unreachable host in an inventory killed
+      # the whole process with a raw Crystal stack trace, no recap at
+      # all, and the results of every reachable host were lost.
+      # ansible-playbook reports the host UNREACHABLE!, keeps going for
+      # the others, and exits 4. Returning the names lets the caller do
+      # the same.
       #
       # The UNREACHABLE! fatal line itself is NOT printed here: it used
       # to come out before the first `PLAY [` banner (this pass runs
@@ -588,26 +617,40 @@ module Krikri
       # portion of the upload error; the raw message leads with this
       # pass's own "Failed to upload <local> to <remote>: " prefix) is
       # returned per host so the task-level paths can embed it.
+      #
+      # One spec backs every host that resolved to it, so a failed
+      # upload is fanned out over the spec's contributing hosts -
+      # EXCEPT for hosts contributed by a play whose tasks carry their
+      # own connection vars: the override task may connect through a
+      # completely different spec, so pre-marking the host unreachable
+      # here would swallow a task real ansible-playbook runs
+      # successfully (a task-level ansible_port to a reachable port
+      # while the inventory port is dead). Those hosts stay in and let
+      # the per-task dispatch produce the real failure shape.
       unreachable = {} of String => String
-      remote_hosts.each do |host|
-        next unless ex = failures[host.name]?
-        if ex.is_a?(PluginArchUnsupportedError)
-          # NOT a reachability problem - the host answered, the controller
-          # just has no binaries it can run on it. Booking it as
-          # UNREACHABLE would send someone debugging ssh AND mask the real
-          # reason on every later task (the facts pass reports excluded
-          # hosts with a generic "Failed to connect" line). So: report the
-          # actionable message here, leave the host IN the play, and let
-          # its first task fail with the same message via the typed
-          # rescues on the dispatch paths - one failed task halts the
-          # host from there on, exactly like any other module failure.
-          msg = {"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json
-          puts %(fatal: [#{host.name}]: FAILED! => #{msg}).colorize(:red)
-          next
+      remote_hosts.each do |entry|
+        next unless ex = failures[entry[:conn].spec_key]?
+        spec_contributions[entry[:conn].spec_key].each do |(host_name, has_override)|
+          next if has_override
+          if ex.is_a?(PluginArchUnsupportedError)
+            # NOT a reachability problem - the host answered, the controller
+            # just has no binaries it can run on it. Booking it as
+            # UNREACHABLE would send someone debugging ssh AND mask the real
+            # reason on every later task (the facts pass reports excluded
+            # hosts with a generic "Failed to connect" line). So: report the
+            # actionable message here, leave the host IN the play, and let
+            # its first task fail with the same message via the typed
+            # rescues on the dispatch paths - one failed task halts the
+            # host from there on, exactly like any other module failure.
+            msg = {"changed" => false, "failed" => true, "msg" => ex.message.to_s}.to_json
+            puts %(fatal: [#{host_name}]: FAILED! => #{msg}).colorize(:red)
+            next
+          end
+          next if unreachable.has_key?(host_name)
+          message = ex.message.to_s
+          detail = message[/\bssh: .*$/]?.try(&.lines.first?) || message.lines.first? || ""
+          unreachable[host_name] = detail
         end
-        message = ex.message.to_s
-        detail = message[/\bssh: .*$/]?.try(&.lines.first?) || message.lines.first? || ""
-        unreachable[host.name] = detail
       end
 
       puts "" if @@verbose
@@ -629,6 +672,21 @@ module Krikri
     # templated), so plugins used exclusively inside one aren't
     # pre-uploaded; a known, narrower limitation, not a regression from
     # this fix.
+    # Does any task in this list (recursing through block/rescue/always,
+    # the same shape collect_required_plugins walks) carry its own SSH
+    # connection variables in task.vars? Block vars are merged into
+    # member tasks' task.vars by the parser, so a block-level
+    # `vars: {ansible_user: ...}` reads as a task-level one here too.
+    private def self.play_tasks_have_connection_override?(tasks : Array(Task)) : Bool
+      tasks.each do |task|
+        return true if ConnectionSettings::CONNECTION_VAR_KEYS.any? { |key| task.vars.has_key?(key) }
+        return true if (bt = task.block_tasks) && play_tasks_have_connection_override?(bt)
+        return true if (rt = task.rescue_tasks) && play_tasks_have_connection_override?(rt)
+        return true if (at = task.always_tasks) && play_tasks_have_connection_override?(at)
+      end
+      false
+    end
+
     private def self.collect_required_plugins(tasks : Array(Task), required : Set(String)) : Nil
       tasks.each do |task|
         if task.block?
@@ -791,11 +849,18 @@ module Krikri
     # Collapsed to 3 SSH round trips total (was 2N+1): one to mkdir +
     # dump every existing remote .md5 in one pass, one rsync/scp transfer
     # for whatever needs uploading, one to write all the new .md5 files.
-    private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String)) : Nil
-      connection_host = get_connection_host(host, host.vars)
-      host_key = "#{host.user}@#{connection_host}:#{host.port}"
-      user = host.user || "root"
-      identity_file = host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+    private def self.upload_plugins_to_host(host : Host, plugin_names : Array(String), conn : ConnectionSettings? = nil) : Nil
+      # Connection settings default to the HOST's own inventory-level
+      # view (the pre-upload pass has no per-task vars); a per-task
+      # caller (ensure_uploaded/recover_*) hands in the task's effective
+      # settings so an upload for a task-level ansible_user/port lands
+      # on that connection and is cached under ITS spec key.
+      conn ||= ConnectionSettings.resolve(host, host.vars)
+      connection_host = conn.conn_host
+      host_key = conn.spec_key
+      user = conn.user
+      identity_file = conn.identity_file
+      extra_args = conn.common_args + conn.extra_args
 
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
@@ -853,7 +918,7 @@ module Krikri
         true
         SCRIPT
       remote_md5s = Hash(String, String).new
-      list_result = SSHManager.exec_script(connection_host, user, list_script, host.port, identity_file: identity_file)
+      list_result = SSHManager.exec_script(connection_host, user, list_script, conn.port, identity_file: identity_file, extra_args: extra_args)
       if list_result[:exit_code] == 75
         raise "Refusing to use plugin staging dir #{staging_base} on #{connection_host}: " \
               "a local user appears to have planted it (foreign-owned or symlinked). " \
@@ -968,9 +1033,10 @@ module Krikri
           user,
           local_plugin_paths,
           staging_dir,
-          host.port,
+          conn.port,
           mode: 0o755,
-          identity_file: identity_file
+          identity_file: identity_file,
+          extra_args: extra_args
         )
 
         unless rsync_ok
@@ -985,9 +1051,10 @@ module Krikri
               user,
               local_paths[plugin_name],
               "#{staging_dir}/#{plugin_name}",
-              host.port,
+              conn.port,
               mode: nil,
-              identity_file: identity_file
+              identity_file: identity_file,
+              extra_args: extra_args
             )
           end
         end
@@ -1021,7 +1088,7 @@ module Krikri
           str << "echo " << Shell.single_quote(local_md5s[plugin_name].to_s) << " > " << Shell.single_quote("#{staging_dir}/#{plugin_name}.md5") << "\n"
         end
       end
-      SSHManager.exec_script(connection_host, user, write_script, host.port, identity_file: identity_file)
+      SSHManager.exec_script(connection_host, user, write_script, conn.port, identity_file: identity_file, extra_args: extra_args)
 
       plugins_to_upload.each { |name| @@uploaded_plugins[host_key].add(name) }
 
@@ -1576,8 +1643,14 @@ module Krikri
       become_user : String?,
       task_timeout : Int64? = nil,
     ) : JSON::Any
-      # Get the actual connection host (checks ansible_host)
-      connection_host = get_connection_host(host, vars)
+      # The task's EFFECTIVE connection settings: a task-level (or block/
+      # play-level) connection var changes the actual ssh target/user/
+      # port/key/password/args for this dispatch, exactly like real's
+      # connection plugin. The upload below is also keyed/cached under
+      # this spec.
+      conn = ConnectionSettings.resolve(host, vars)
+      connection_host = conn.conn_host
+      extra_args = conn.common_args + conn.extra_args
 
       ensure_uploaded(host, plugin_name, vars)
 
@@ -1631,24 +1704,26 @@ module Krikri
       # (see #resolve_become and #remote_plugin_target's own note) -
       # required, because it is interpolated into the daemon's own ssh
       # command line the same way the one-shot target string is.
-      daemon_user = become_needed?(become, become_user || "root", host.user || "root") ? (become_user || "root") : nil
+      daemon_user = become_needed?(become, become_user || "root", conn.user) ? (become_user || "root") : nil
 
       # A `timeout:` task bypasses the daemon (its in-flight module cannot
       # be killed without killing the daemon, and a dispatched-or-not
       # classification would be lost) - same gate as the local daemon's.
       if @@daemon_enabled && task_timeout.nil? && daemon_eligible?(plugin_name, become) &&
-         !SSHManager.daemon_unavailable?(connection_host, host.user || "root", host.port, daemon_user)
+         !SSHManager.daemon_unavailable?(connection_host, conn.user, conn.port, daemon_user,
+           SSHManager.connection_sig(conn.identity_file, extra_args, conn.password))
         begin
           return SSHManager.daemon_send(
             connection_host,
-            host.user || "root",
-            host.port,
-            "#{remote_plugin_dir(host.user || "root")}/#{simple_plugin_name(plugin_name)}",
+            conn.user,
+            conn.port,
+            "#{remote_plugin_dir(conn.user)}/#{simple_plugin_name(plugin_name)}",
             simple_plugin_name(plugin_name),
             JSON.parse(config),
-            identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
+            identity_file: conn.identity_file,
             become_user: daemon_user,
-            become_password: Passwords.become(vars, host)
+            become_password: Passwords.become(vars, host),
+            extra_args: extra_args
           )
         rescue ex : SSHManager::DaemonDispatchUnknownError
           # The request reached the daemon but its response did not come
@@ -1664,7 +1739,7 @@ module Krikri
         end
       end
 
-      target = remote_plugin_target(plugin_name, become, become_user, host.user || "root", Passwords.become(vars, host))
+      target = remote_plugin_target(plugin_name, become, become_user, conn.user, Passwords.become(vars, host))
 
       # Execute plugin remotely with config via stdin.
       #
@@ -1712,11 +1787,12 @@ module Krikri
       # into the task-timeout marker instead of a bogus unreachable.
       result = SSHManager.exec_script(
         connection_host,
-        host.user || "root",
+        conn.user,
         script,
-        host.port,
+        conn.port,
         timeout: remaining_exec_timeout(started, task_timeout),
-        identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        identity_file: conn.identity_file,
+        extra_args: extra_args
       )
 
       return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, result)
@@ -1734,7 +1810,7 @@ module Krikri
       # re-uploaded mid-run either - detect it, drop the stale belief,
       # upload for real, and retry once. Bounded to a single retry so a
       # genuinely broken target still fails instead of looping.
-      if missing_remote_binary?(interpreted, target, remote_plugin_dir(host.user || "root"))
+      if missing_remote_binary?(interpreted, target, remote_plugin_dir(conn.user))
         recover_missing_plugin!(host, plugin_name, vars)
         # The re-upload is krikri-only transfer time too (see above): the
         # retry exec gets a fresh `timeout:` budget, not the first one's
@@ -1742,11 +1818,12 @@ module Krikri
         started = task_timeout ? Time.instant : nil
         retry_result = SSHManager.exec_script(
           connection_host,
-          host.user || "root",
+          conn.user,
           script,
-          host.port,
+          conn.port,
           timeout: remaining_exec_timeout(started, task_timeout),
-          identity_file: vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+          identity_file: conn.identity_file,
+          extra_args: extra_args
         )
         return task_timeout_marker(task_timeout) if task_timeout_kill?(started, task_timeout, retry_result)
         return interpret_remote_result(retry_result[:exit_code], retry_result[:stdout], retry_result[:stderr])
@@ -1835,25 +1912,25 @@ module Krikri
     # Batch-path counterpart: one invalidation, one upload covering
     # every module the group needs.
     def self.recover_missing_plugins!(host : Host, plugin_names : Array(String), vars : Hash(String, JSON::Any)) : Nil
-      connection_host = get_connection_host(host, vars)
-      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      conn = ConnectionSettings.resolve(host, vars)
+      host_key = conn.spec_key
       simple_names = plugin_names.map { |name| simple_plugin_name(name) }.uniq!
 
       invalidate_host_state(host_key)
       if set = @@uploaded_plugins[host_key]?
         simple_names.each { |name| set.delete(name) }
       end
-      upload_plugins_to_host(host, simple_names)
+      upload_plugins_to_host(host, simple_names, conn)
     end
 
     private def self.recover_missing_plugin!(host : Host, plugin_name : String, vars : Hash(String, JSON::Any)) : Nil
-      connection_host = get_connection_host(host, vars)
-      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      conn = ConnectionSettings.resolve(host, vars)
+      host_key = conn.spec_key
       simple_name = simple_plugin_name(plugin_name)
 
       invalidate_host_state(host_key)
       @@uploaded_plugins[host_key]?.try(&.delete(simple_name))
-      upload_plugins_to_host(host, [simple_name])
+      upload_plugins_to_host(host, [simple_name], conn)
     end
 
     # Resolves a plugin's remote path (`remote_plugin_dir/<simple name>`)
@@ -1885,21 +1962,24 @@ module Krikri
     # only the first time an unforeseen module is actually needed.
     def self.ensure_uploaded(host : Host, plugin_name : String, vars : Hash(String, JSON::Any)) : Nil
       simple_name = simple_plugin_name(plugin_name)
-      connection_host = get_connection_host(host, vars)
-      host_key = "#{host.user}@#{connection_host}:#{host.port}"
+      conn = ConnectionSettings.resolve(host, vars)
+      host_key = conn.spec_key
 
       # Belt-and-braces against the entry points' own registration pass:
       # every remote dispatch path funnels through here, so a host that
       # only acquires a connection password at RUNTIME (add_host:, a
       # set_fact) still gets it keyed for the SSH calls below. No-op
       # when no password is set - the overwhelmingly common case.
-      if conn_password = Passwords.connection(vars, host)
-        SSHManager.register_connection_password(connection_host, host.user || "root", host.port, conn_password)
+      # Keyed on the EFFECTIVE spec: a task-level ansible_user/port/
+      # password registers under the triple this task's ssh calls are
+      # actually keyed on, not the inventory's.
+      if conn_password = conn.password
+        SSHManager.register_connection_password(conn.conn_host, conn.user, conn.port, conn_password)
       end
 
       return if @@uploaded_plugins[host_key]?.try(&.includes?(simple_name))
 
-      upload_plugins_to_host(host, [simple_name])
+      upload_plugins_to_host(host, [simple_name], conn)
     end
 
     # The user this process is already running as - the local-connection

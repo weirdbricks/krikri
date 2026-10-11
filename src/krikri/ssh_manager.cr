@@ -477,13 +477,14 @@ module Krikri
       port : Int32? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
 
       # Build SSH command with ControlMaster for connection pooling
-      control_path = get_control_path(host, user, port)
       password = password_for(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
 
       # Important: We pass the command through bash -c to ensure proper shell
       # interpretation on the remote side. This prevents the local shell from
@@ -491,7 +492,7 @@ module Krikri
       # We use /bin/bash instead of /bin/sh for better compatibility
       wrapped_command = "/bin/bash -c #{shell_quote(command)}"
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, [wrapped_command], password, extra_options: extra_args)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -543,14 +544,15 @@ module Krikri
       port : Int32? = nil,
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       identity_file : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : NamedTuple(exit_code: Int32, stdout: String, stderr: String)
       init
       @@stats["commands_executed"] += 1
 
-      control_path = get_control_path(host, user, port)
       password = password_for(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password))
 
-      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password)
+      ssh_cmd = ssh_argv(control_path, identity_file, port, user, host, ["bash", "-s"], password, extra_options: extra_args)
 
       stdout = IO::Memory.new
       stderr = IO::Memory.new
@@ -620,7 +622,7 @@ module Krikri
     # --daemon`. A play mixing privileged and unprivileged tasks holds
     # two resident daemons per host, which is fine. `nil` in the last
     # slot is the no-become daemon.
-    alias DaemonKey = {String, String, Int32?, String?}
+    alias DaemonKey = {String, String, Int32?, String?, String}
 
     @@daemon_processes = Hash(DaemonKey, Process).new
 
@@ -646,21 +648,21 @@ module Krikri
     # Whether a daemon for this key is worth attempting at all. Public
     # so PluginManager can skip the attempt before building a request,
     # rather than learning about it from a raised exception.
-    def self.daemon_unavailable?(host : String, user : String, port : Int32?, become_user : String?) : Bool
-      @@daemon_failures[{host, user, port, become_user}] >= MAX_DAEMON_FAILURES
+    def self.daemon_unavailable?(host : String, user : String, port : Int32?, become_user : String?, sig : String = "") : Bool
+      @@daemon_failures[{host, user, port, become_user, sig}] >= MAX_DAEMON_FAILURES
     end
 
     # Spec seams: install/remove a Process as the cached daemon for a
     # key, so #daemon_send's dispatch-vs-response-lost classification can
     # be tested against a LOCAL fake daemon process with no SSH in the
     # loop (a fresh spawn would dial a real host).
-    def self.seed_daemon_process_for_spec(host : String, user : String, port : Int32?, become_user : String?, process : Process) : Nil
-      @@daemon_processes[{host, user, port, become_user}] = process
+    def self.seed_daemon_process_for_spec(host : String, user : String, port : Int32?, become_user : String?, process : Process, sig : String = "") : Nil
+      @@daemon_processes[{host, user, port, become_user, sig}] = process
     end
 
-    def self.clear_daemon_for_spec(host : String, user : String, port : Int32?, become_user : String?) : Nil
-      kill_daemon(host, user, port, become_user)
-      @@daemon_failures.delete({host, user, port, become_user})
+    def self.clear_daemon_for_spec(host : String, user : String, port : Int32?, become_user : String?, sig : String = "") : Nil
+      kill_daemon(host, user, port, become_user, sig)
+      @@daemon_failures.delete({host, user, port, become_user, sig})
     end
 
     # Raised when a daemon request WAS sent (the frame was fully written
@@ -728,14 +730,15 @@ module Krikri
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       become_user : String? = nil,
       become_password : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : JSON::Any
       init
-      key = {host, user, port, become_user}
+      key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}
       # Provenance of the process used below - it decides how a lost
       # response is classified (see the read rescue).
       fresh_spawn = @@daemon_processes[key]?.nil?
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4])
 
       request = {"module" => module_name, "config" => config}.to_json
 
@@ -747,7 +750,7 @@ module Krikri
           end
         rescue ex
           @@daemon_failures[key] += 1
-          kill_daemon(host, user, port, become_user)
+          kill_daemon(host, user, port, become_user, key[4])
           raise ex
         end
 
@@ -755,7 +758,7 @@ module Krikri
           run_io_with_timeout(timeout) { read_daemon_frame(process.output) }
         rescue ex
           @@daemon_failures[key] += 1
-          kill_daemon(host, user, port, become_user)
+          kill_daemon(host, user, port, become_user, key[4])
           raise ex if fresh_spawn
           raise DaemonDispatchUnknownError.new("daemon request for '#{module_name}' was sent but its response was lost (#{ex.class.name}: #{ex.message})", ex,
             transport_lost: daemon_response_loss_is_transport?(ex))
@@ -768,7 +771,7 @@ module Krikri
         JSON.parse(response)
       rescue ex
         @@daemon_failures[key] += 1
-        kill_daemon(host, user, port, become_user)
+        kill_daemon(host, user, port, become_user, key[4])
         # A response DID arrive and frame cleanly; only its content is
         # unusable. Whatever produced it already ran - never re-execute.
         raise DaemonDispatchUnknownError.new("daemon response for '#{module_name}' was not valid JSON (#{ex.message})", ex)
@@ -812,11 +815,12 @@ module Krikri
       timeout : Int32 = DEFAULT_EXEC_TIMEOUT_SECONDS,
       become_user : String? = nil,
       become_password : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : Hash(Int32, JSON::Any)
       init
-      key = {host, user, port, become_user}
+      key = {host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}
       process = @@daemon_processes[key]? ||
-                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password)
+                spawn_daemon(host, user, port, remote_binary_path, identity_file, become_user, become_password, extra_args, key[4])
 
       payload = steps.map do |step|
         {
@@ -842,8 +846,8 @@ module Krikri
       end
       results
     rescue ex
-      @@daemon_failures[{host, user, port, become_user}] += 1
-      kill_daemon(host, user, port, become_user)
+      @@daemon_failures[{host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port))}] += 1
+      kill_daemon(host, user, port, become_user, connection_sig(identity_file, extra_args, password_for(host, user, port)))
       raise ex
     end
 
@@ -866,8 +870,8 @@ module Krikri
     # otherwise it spawns `sudo -S -p ''` and the password line is
     # written into this process's stdin pipe BEFORE any frame, where
     # sudo reads it and nothing else ever sees it.
-    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil) : Process
-      control_path = get_control_path(host, user, port)
+    private def self.spawn_daemon(host : String, user : String, port : Int32?, remote_binary_path : String, identity_file : String?, become_user : String? = nil, become_password : String? = nil, extra_args : Array(String) = [] of String, sig : String = "") : Process
+      control_path = get_control_path(host, user, port, sig)
       password = password_for(host, user, port)
 
       sudo_needs_password = false
@@ -877,13 +881,14 @@ module Krikri
           "sudo -n -u #{shell_quote(become_user)} -- true",
           port,
           timeout: 60,
-          identity_file: identity_file
+          identity_file: identity_file,
+          extra_args: extra_args
         )
         sudo_needs_password = probe[:exit_code] != 0
       end
 
       ssh_cmd = ssh_argv(control_path, identity_file, port, user, host,
-        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password)], password)
+        [daemon_remote_command(remote_binary_path, become_user, sudo_needs_password)], password, extra_options: extra_args)
 
       process = TimingProfile.measure("transport.daemon_spawn", "transport.spawn") do
         Process.new(
@@ -900,7 +905,7 @@ module Krikri
         process.input.print('\n')
         process.input.flush
       end
-      @@daemon_processes[{host, user, port, become_user}] = process
+      @@daemon_processes[{host, user, port, become_user, sig}] = process
       process
     end
 
@@ -986,8 +991,8 @@ module Krikri
     # rescue, where something has already gone wrong and the priority is
     # dropping the stale connection so the NEXT call spawns a fresh one,
     # not waiting around for a clean exit that may never come.
-    private def self.kill_daemon(host : String, user : String, port : Int32?, become_user : String? = nil) : Nil
-      process = @@daemon_processes.delete({host, user, port, become_user})
+    private def self.kill_daemon(host : String, user : String, port : Int32?, become_user : String? = nil, sig : String = "") : Nil
+      process = @@daemon_processes.delete({host, user, port, become_user, sig})
       return unless process
 
       begin
@@ -1007,13 +1012,24 @@ module Krikri
     # underneath them. Both are dropped for every key matching the host;
     # the `ssh -O exit` is best-effort (no master socket = no-op).
     def self.reset_connection(host_name : String) : Nil
-      matching = @@daemon_processes.keys.select { |(h, _, _, _)| h == host_name }
+      matching = @@daemon_processes.keys.select { |(h, _, _, _, _)| h == host_name }
       matching.each do |key|
         kill_daemon(*key)
-        host, user, port, _ = key
-        control_path = get_control_path(host, user, port)
+        host, user, port, _, sig = key
+        control_path = get_control_path(host, user, port, sig)
         Process.run("ssh", ["-O", "exit", "-o", "ControlPath=#{control_path}", "#{user}@#{host}"],
           output: Process::Redirect::Close, error: Process::Redirect::Close)
+      end
+      # Every ControlMaster ever opened for this host - including the
+      # one-shot (non-daemon) sockets, which no daemon key tracks. A
+      # master established under one option set must not survive a
+      # meta: reset_connection for tasks that connect differently.
+      @@control_specs.select { |(h, _, _), _| h == host_name }.each do |(host, user, port), sigs|
+        sigs.each do |sig|
+          control_path = get_control_path(host, user, port, sig)
+          Process.run("ssh", ["-O", "exit", "-o", "ControlPath=#{control_path}", "#{user}@#{host}"],
+            output: Process::Redirect::Close, error: Process::Redirect::Close)
+        end
       end
     end
 
@@ -1083,6 +1099,7 @@ module Krikri
       mode : Int32? = 0o644,
       identity_file : String? = nil,
       recursive : Bool = false,
+      extra_args : Array(String) = [] of String,
     )
       init
       @@stats["files_uploaded"] += 1
@@ -1091,12 +1108,12 @@ module Krikri
         raise "Local file not found: #{local_path}"
       end
 
-      control_path = get_control_path(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
       password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password)
+        [local_path, "#{user}@#{host}:#{remote_path}"], recursive: recursive, connect_timeout: true, password: password, extra_options: extra_args)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1121,7 +1138,7 @@ module Krikri
       # files and can fold one chmod into a round trip it already makes -
       # otherwise this costs an extra round trip *per file*.
       if mode && mode != 0o644
-        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file)
+        exec(host, user, "chmod #{mode.to_s(8)} #{Shell.single_quote(remote_path)}", port, identity_file: identity_file, extra_args: extra_args)
       end
     end
 
@@ -1133,16 +1150,17 @@ module Krikri
       local_path : String,
       port : Int32? = nil,
       identity_file : String? = nil,
+      extra_args : Array(String) = [] of String,
     )
       init
       @@stats["files_downloaded"] += 1
 
-      control_path = get_control_path(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
       password = password_for(host, user, port)
 
       # Use scp with ControlMaster to reuse SSH connection
       scp_cmd = scp_argv(control_path, identity_file, port, user, host,
-        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password)
+        ["#{user}@#{host}:#{remote_path}", local_path], recursive: false, connect_timeout: false, password: password, extra_options: extra_args)
 
       out_io = IO::Memory.new
       err_io = IO::Memory.new
@@ -1189,12 +1207,13 @@ module Krikri
       port : Int32? = nil,
       mode : Int32 = 0o644,
       identity_file : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : Bool
       init
 
       return false unless rsync_available?
 
-      control_path = get_control_path(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
       password = password_for(host, user, port)
 
       # Use rsync with SSH control master
@@ -1202,7 +1221,7 @@ module Krikri
         "rsync",
         "-az",                     # archive mode, compress
         "--chmod=#{mode.to_s(8)}", # set permissions
-        "-e", rsync_ssh_command(control_path, identity_file, port, password),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
         local_path,
         "#{user}@#{host}:#{remote_path}",
       ]
@@ -1237,13 +1256,14 @@ module Krikri
       port : Int32? = nil,
       mode : Int32 = 0o755,
       identity_file : String? = nil,
+      extra_args : Array(String) = [] of String,
     ) : Bool
       init
 
       return false if local_files.empty?
       return false unless rsync_available?
 
-      control_path = get_control_path(host, user, port)
+      control_path = get_control_path(host, user, port, connection_sig(identity_file, extra_args, password_for(host, user, port)))
       password = password_for(host, user, port)
 
       # rsync accepts multiple sources for one destination directory
@@ -1253,7 +1273,7 @@ module Krikri
         "rsync",
         "-az",
         "--chmod=#{mode.to_s(8)}",
-        "-e", rsync_ssh_command(control_path, identity_file, port, password),
+        "-e", rsync_ssh_command(control_path, identity_file, port, password, extra_args),
       ] + local_files + ["#{user}@#{host}:#{remote_dir}/"]
 
       result = TimingProfile.measure("transport.rsync", "transport") do
@@ -1276,19 +1296,22 @@ module Krikri
 
     # Close specific connection
     def self.close_connection(host : String, user : String, port : Int32? = nil) : Nil
-      control_path = get_control_path(host, user, port)
+      sigs = @@control_specs[{host, user, port}]?.try(&.to_a) || [""]
+      sigs.each do |sig|
+        control_path = get_control_path(host, user, port, sig)
 
-      # Send exit command to close the master connection
-      if File.exists?(control_path)
-        Process.run(
-          "ssh",
-          ["-o", "ControlPath=#{control_path}", "-O", "exit", "#{user}@#{host}"],
-          output: Process::Redirect::Close,
-          error: Process::Redirect::Close
-        )
+        # Send exit command to close the master connection
+        if File.exists?(control_path)
+          Process.run(
+            "ssh",
+            ["-o", "ControlPath=#{control_path}", "-O", "exit", "#{user}@#{host}"],
+            output: Process::Redirect::Close,
+            error: Process::Redirect::Close
+          )
 
-        # Clean up socket file
-        File.delete(control_path) if File.exists?(control_path)
+          # Clean up socket file
+          File.delete(control_path) if File.exists?(control_path)
+        end
       end
     end
 
@@ -1302,27 +1325,52 @@ module Krikri
       end
     end
 
-    # Memoized per (host, user, port) - the gsub-over-a-regex result never
-    # changes for the same triple, and every exec/upload/download/rsync
-    # call on a host recomputes it.
-    @@control_path_cache = Hash({String, String, Int32?}, String).new
+    # Memoized per (host, user, port, options signature) - the
+    # gsub-over-a-regex result never changes for the same key, and every
+    # exec/upload/download/rsync call on a host recomputes it.
+    @@control_path_cache = Hash({String, String, Int32?, String}, String).new
+
+    # Every options signature ever opened per (host, user, port), so the
+    # connection-teardown paths (reset_connection, close_connection) can
+    # reach masters they have no daemon key for - a one-shot exec's
+    # master would otherwise outlive its task and get silently reused
+    # by a later task whose connection options differ.
+    @@control_specs = Hash({String, String, Int32?}, Set(String)).new
+
+    # The connection-options fingerprint a ControlMaster socket (and a
+    # resident daemon, which owns one) is keyed on: identity file, ssh
+    # extra args, and whether a password is in play. Real
+    # ansible-playbook hashes its ssh connection options into its own
+    # ControlPath for the same reason: two tasks connecting to the same
+    # (host, user, port) with different options must not silently share
+    # one authenticated master - a task-level `-o BatchMode=yes` or a
+    # different private key would otherwise be swallowed by a socket
+    # established under the previous task's options.
+    def self.connection_sig(identity_file : String?, extra_args : Array(String), password : String?) : String
+      return "" if identity_file.nil? && extra_args.empty? && password.nil?
+      digest = OpenSSL::Digest.new("SHA256")
+      digest.update("#{identity_file}\0#{extra_args.join('\u{1}')}\0#{password ? "1" : "0"}")
+      digest.final.hexstring[0, 16]
+    end
 
     # Get control socket path for connection pooling. *port* may be nil
     # (unspecified - ssh resolves it), which keys separately from an
-    # explicit 22 so the two never share a socket.
-    private def self.get_control_path(host : String, user : String, port : Int32?) : String
-      @@control_path_cache.fetch({host, user, port}) do
+    # explicit 22 so the two never share a socket. *sig* separates
+    # connections whose ssh options differ (see #connection_sig).
+    private def self.get_control_path(host : String, user : String, port : Int32?, sig : String = "") : String
+      @@control_path_cache.fetch({host, user, port, sig}) do
         # Create a unique socket path for this connection
         # Format: /tmp/.krikri-playbook-ssh/user@host:port
         # The sanitized name alone can COLLIDE for distinct (user, host)
         # pairs (e.g. "a/b" vs "a_b") - the second connection would then
         # attach to the FIRST target's mux socket and silently run
-        # against the wrong host. A hash of the raw triple disambiguates.
+        # against the wrong host. A hash of the raw key disambiguates.
         socket_name = "#{user}@#{host}:#{port}".gsub(/[^a-zA-Z0-9@:.-]/, "_")
         digest = OpenSSL::Digest.new("SHA256")
-        digest.update("#{user}\0#{host}\0#{port}")
+        digest.update("#{user}\0#{host}\0#{port}\0#{sig}")
         socket_name += "-#{digest.final.hexstring[0, 16]}"
-        @@control_path_cache[{host, user, port}] = "#{@@control_path_dir}/#{socket_name}"
+        (@@control_specs[{host, user, port}] ||= Set(String).new).add(sig)
+        @@control_path_cache[{host, user, port, sig}] = "#{@@control_path_dir}/#{socket_name}"
       end
     end
 
@@ -1387,6 +1435,7 @@ module Krikri
       host : String,
       remote_args : Array(String),
       password : String? = nil,
+      extra_options : Array(String) = [] of String,
     ) : Array(String)
       sshpass_prefix(password) + [
         "ssh",
@@ -1397,7 +1446,7 @@ module Krikri
         "-o", "ServerAliveInterval=60",
         "-o", "ServerAliveCountMax=3",
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
-      ] + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + [
+      ] + askpass_args(password) + identity_args(identity_file) + (port ? ["-p", port.to_s] : [] of String) + extra_options + [
         "#{user}@#{host}",
       ] + remote_args
     end
@@ -1417,6 +1466,7 @@ module Krikri
       recursive : Bool = false,
       connect_timeout : Bool = true,
       password : String? = nil,
+      extra_options : Array(String) = [] of String,
     ) : Array(String)
       sshpass_prefix(password) + [
         "scp",
@@ -1426,7 +1476,7 @@ module Krikri
       ] + (connect_timeout ? ["-o", "ConnectTimeout=#{CliOptions.timeout}"] : [] of String) + [
         "-o", "StrictHostKeyChecking=#{strict_host_key_checking}",
       ] + askpass_args(password) + (recursive ? ["-r"] : [] of String) + identity_args(identity_file) +
-        (port ? ["-P", port.to_s] : [] of String) +
+        (port ? ["-P", port.to_s] : [] of String) + extra_options +
         CliOptions.extra_scp_args + local_args
     end
 
@@ -1441,12 +1491,13 @@ module Krikri
     # unwrapped and inherits the askpass overlay env from rsync, plus
     # the same single-prompt bound the other builders carry. Public as a
     # spec seam.
-    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil) : String
+    def self.rsync_ssh_command(control_path : String, identity_file : String?, port : Int32?, password : String? = nil, extra_args : Array(String) = [] of String) : String
       base = "ssh -o ControlMaster=auto -o ControlPath=#{shell_quote(control_path)} -o ControlPersist=600" \
              " -o ConnectTimeout=#{CliOptions.timeout} -o StrictHostKeyChecking=#{strict_host_key_checking}"
       base = "sshpass -e #{base}" if password && sshpass_available?
       base += " -o NumberOfPasswordPrompts=1" if password && !sshpass_available?
       base = "#{base}#{identity_ssh_opt(identity_file)}"
+      extra_args.each { |arg| base += " #{shell_quote(arg)}" }
       port ? "#{base} -p #{port}" : base
     end
 
