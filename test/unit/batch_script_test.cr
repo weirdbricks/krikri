@@ -154,6 +154,78 @@ describe Krikri::BatchScript do
     results[5]?.must_be_nil
   end
 
+  it "streams each step's result to stdout before the next step starts" do
+    # Regression for losing completed steps when the SSH transport dies
+    # mid-script (live-verified on Atlantic.net, probe role
+    # kop_sshd_batch vs ansible-core 2.19.11, 2026-10-08: real books the
+    # pre-death task ok because each of its tasks is its own ssh round
+    # trip; end-of-script-only dumping destroyed this engine's completed
+    # step with the dead transport and recapped ok=1 vs real's ok=2).
+    # Step 1's plugin kills the whole script process group mid-run,
+    # simulating the transport death; with streaming, step 0's result is
+    # already in the captured stdout. setsid gives the script its own
+    # process group, so the group-kill cannot reach the test process.
+    steps = [
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"survives"}), false),
+      Krikri::BatchScript::Step.new("/bin/bash", "kill -9 0", false),
+    ]
+    script = build("t-stream-death", steps)
+
+    process = Process.new("setsid", ["bash"], input: Process::Redirect::Pipe, output: Process::Redirect::Pipe, error: Process::Redirect::Pipe)
+    process.input.print(script)
+    process.input.close
+    output = process.output.gets_to_end
+    process.wait
+
+    output.must_include("OUT 0 ")
+    results = Krikri::BatchScript.parse(output)
+    results[0]?.wont_be_nil
+    results[0].stdout.must_equal(%({"changed":false,"failed":false,"msg":"survives"}))
+    # The killed script never produced step 1's result - run_batch_script
+    # stamps that absence as unreachable (see stamp_missing_on_transport_
+    # death); parse itself must not invent one.
+    results[1]?.must_be_nil
+  end
+
+  it "emits a dump_one call per step in the generated script" do
+    steps = [
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"a"}), false),
+      Krikri::BatchScript::Step.new("/bin/cat", %({"changed":false,"failed":false,"msg":"b"}), false),
+    ]
+    script = build("t-dump-one-structure", steps)
+    script.must_include("dump_one 0\n")
+    script.must_include("dump_one 1\n")
+  end
+
+  it "parse skips a truncated mid-stream base64 payload instead of crashing" do
+    # A transport death can cut the FINAL streamed line mid-base64; the
+    # partial bytes are not a step result (the step's outcome is unknown
+    # and run_batch_script stamps it unreachable), so parse must leave
+    # the step missing rather than raise on the decode.
+    good = Base64.strict_encode(%({"changed":false,"failed":false,"msg":"hi"}))
+    results = Krikri::BatchScript.parse("OUT 0 0 #{good}\nERR 0 0\nOUT 1 0 #{good[0..0]}\n")
+    results[0]?.wont_be_nil
+    results[1]?.must_be_nil
+  end
+
+  it "stamp_missing_on_transport_death stamps only steps whose results never arrived" do
+    good = Base64.strict_encode(%({"changed":false,"failed":false,"msg":"hi"}))
+    parsed = Krikri::BatchScript.parse("OUT 0 0 #{good}\nERR 0 0\n")
+    result = Krikri::BatchScript.stamp_missing_on_transport_death(parsed, 255, "Shared connection to 10.0.0.1 closed.", 2)
+
+    result[0].exit_code.must_equal(0)
+    result[0].stdout.must_equal(%({"changed":false,"failed":false,"msg":"hi"}))
+    result[1].exit_code.must_equal(255)
+    result[1].stdout.must_equal("")
+    result[1].stderr.must_equal("Shared connection to 10.0.0.1 closed.")
+  end
+
+  it "stamp_missing_on_transport_death leaves a healthy (exit 0) parse untouched" do
+    parsed = Krikri::BatchScript.parse("")
+    result = Krikri::BatchScript.stamp_missing_on_transport_death(parsed, 0, "", 2)
+    result.size.must_equal(0)
+  end
+
   it "names the batch parent after the per-connecting-user staging tag, not a shared path" do
     # Regression for the shared /var/tmp/.krikri-playbook/batch- parent:
     # two krikri users on one host used to share one entirely predictable
