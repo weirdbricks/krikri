@@ -349,6 +349,41 @@ describe Krikri::ConditionalEvaluator do
       Krikri::ConditionalEvaluator.evaluate(%('change_user' not in os_security_users_allow), v).must_equal(false)
     end
 
+    it "keeps a doubled-backslash literal from swallowing the 'not in' operator" do
+      # deekayen.meshchat's own defaults-sanity assert (round 5460365):
+      # `that:` item `'\\' not in item.value` (a two-backslash Jinja
+      # string literal). The quote scanner's naive `text[i-1] != '\\'
+      # escape check saw a backslash directly before the CLOSING quote
+      # and never left the string, so no depth-0 " not in " was ever
+      # found, the whole condition fell through to a bare variable
+      # lookup and the task failed with "''\\' not in item.value' is
+      # undefined". Real ansible-playbook 2.19.11 passes the assert.
+      # The backslash before the close is itself the escaped character
+      # (`\\` decodes to one literal backslash), so the quote does
+      # close the literal.
+      v = Hash(String, JSON::Any).new
+      v["item"] = JSON.parse(%({"value": "MeshChat", "key": "pi_zone"}))
+      Krikri::ConditionalEvaluator.evaluate("'\\\\' not in item.value", v).must_equal(true)
+    end
+
+    it "matches a doubled-backslash literal against a value containing the run" do
+      # Same literal, containment-positive: the two-backslash sequence
+      # in the value is matched (both engines keep the literal verbatim,
+      # verified against ansible-playbook 2.19.11 - `{{ '\\' | length }}`
+      # renders 2 there too).
+      v = Hash(String, JSON::Any).new
+      v["item"] = JSON.parse(%({"value": "a\\\\b"}))
+      Krikri::ConditionalEvaluator.evaluate("'\\\\' in item.value", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("'\\\\' not in item.value", v).must_equal(false)
+    end
+
+    it "splits 'and' around a doubled-backslash literal operand" do
+      v = Hash(String, JSON::Any).new
+      v["item"] = JSON.parse(%({"value": "MeshChat", "key": "pi_zone"}))
+      Krikri::ConditionalEvaluator.evaluate("'\\\\' not in item.value and item.key == 'pi_zone'", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("'\\\\' not in item.value and item.key == 'nope'", v).must_equal(false)
+    end
+
     it "handles a quoted literal that itself contains the word 'in' as its own word" do
       # Real bug found benchmarking a real geerlingguy.glusterfs 3-node
       # cluster: a hand-written peer-probe task's own idempotency check

@@ -353,7 +353,7 @@ module Krikri
          ((condition[0] == '\'' && condition[-1] == '\'') ||
          (condition[0] == '"' && condition[-1] == '"'))
         first_quote = condition[0]
-        close_idx = (1...condition.size - 1).find { |i| condition[i] == first_quote && condition[i - 1] != '\\' }
+        close_idx = (1...condition.size - 1).find { |i| condition[i] == first_quote && !escaped_quote_at?(condition, i) }
         if close_idx.nil?
           return !condition[1..-2].empty?
         end
@@ -1157,7 +1157,7 @@ module Krikri
       in_quotes = false
       quote_char = ' '
       expr.each_char_with_index do |char, idx|
-        if (char == '"' || char == '\'') && (idx == 0 || expr[idx - 1] != '\\')
+        if (char == '"' || char == '\'') && !escaped_quote_at?(expr, idx)
           if in_quotes && char == quote_char
             in_quotes = false
           elsif !in_quotes
@@ -1444,6 +1444,28 @@ module Krikri
     # allocation) plus a String::Builder accumulator, matching the shape
     # FilterEngine.split_chain already uses for the same kind of
     # depth/quote-aware scan.
+    # True when the quote character at *index* is escaped by the
+    # backslash run immediately before it. A single `text[i-1] != '\\'`
+    # check is wrong for a DOUBLED backslash: in the Jinja string
+    # literal `'\\'` (a two-backslash literal, deekayen.meshchat's own
+    # assert round 5460365) the closing quote is preceded by one
+    # backslash - but that backslash is itself the ESCAPED character
+    # (`\\` decodes to one literal backslash), so the quote really does
+    # close the literal. The naive check left the scanner inside the
+    # string forever, so every later depth-0 operator (" not in ", " in
+    # ", " and ", ...) went unfound and the whole condition fell through
+    # to a bare variable lookup ("''\\' not in item.value' is
+    # undefined"). Python/Jinja2's rule, matched here: a backslash
+    # escapes the next character only when the run of backslashes
+    # directly before it has ODD length.
+    private def self.escaped_quote_at?(text : String, index : Int32) : Bool
+      backslashes = 0
+      while backslashes < index && text[index - backslashes - 1] == '\\'
+        backslashes += 1
+      end
+      backslashes.odd?
+    end
+
     private def self.operator_at?(condition : String, index : Int32, operator : String) : Bool
       return false if index + operator.size > condition.size
 
@@ -1465,7 +1487,7 @@ module Krikri
         char = condition[i]
 
         # Track quotes
-        if (char == '"' || char == '\'') && (i == 0 || condition[i - 1] != '\\')
+        if (char == '"' || char == '\'') && !escaped_quote_at?(condition, i)
           if in_quotes && char == quote_char
             in_quotes = false
           elsif !in_quotes
