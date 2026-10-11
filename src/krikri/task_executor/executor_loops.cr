@@ -1206,7 +1206,7 @@ module Krikri
         # (live-verified: `when: false` + an undefined loop item prints
         # "skipping:" and counts skipped=1, never an error).
         @results[host.name]["skipped"] += 1
-        puts "skipping: [#{host.name}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         register_skip_result(task, host)
         return
       end
@@ -1792,7 +1792,12 @@ module Krikri
           # (see skipped_loop_item_suffix_for): debug shows the short
           # {false_condition, item} dump, everything else the full cleaned
           # per-item skip result (live-verified vs 2.19.11).
-          puts "skipping: [#{connection_host}] => (item=#{shown}) #{skipped_loop_item_suffix_for(task, skipped.false_condition || task.when_condition, item, idx)}".colorize(:cyan)
+          # Under the oneline stdout callback the per-item skip lines are
+          # not rendered at all - the loop's single aggregate line carries
+          # the skipped items in its results array.
+          unless Krikri::Oneline.enabled?
+            puts "skipping: [#{connection_host}] => (item=#{shown}) #{skipped_loop_item_suffix_for(task, skipped.false_condition || task.when_condition, item, idx)}".colorize(:cyan)
+          end
           # Real records EVERY iterated item in the registered `results`,
           # the when:-false ones included - dropping them left a later
           # `loop: "{{ registered.results }}"` iterating an empty list and
@@ -1828,7 +1833,9 @@ module Krikri
           # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
           # can itself be the secret)
           item_shown = resolve_task_no_log(task, base_vars_context) ? "(censored due to no_log)" : item_label
-          puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
+          unless Krikri::Oneline.enabled?
+            puts "skipping: [#{connection_host}] => (item=#{item_shown}) #{Krikri::ResultDisplay.skip_result_suffix(result, loop_items[idx]?, task.loop_var)}".colorize(:cyan)
+          end
         else
           executed_count += 1
           merge_ansible_facts(fact_hosts.try(&.[idx]) || host, result, task.module_name.ends_with?("set_fact"), task)
@@ -1869,6 +1876,35 @@ module Krikri
       #     or failed=1 if any item failed (honoring ignore_errors).
       # The per-item `skipping:`/`changed:`/`ok:` lines above are display
       # only; Ansible prints those but sums the task once in the recap.
+      #
+      # The registered loop aggregate (Ansible's own shape - `results`,
+      # then `skipped`, then flags, then `msg` - see the construction
+      # below) is built for EVERY looped task now, not only registered
+      # ones: under the oneline stdout callback this aggregate IS the
+      # task's whole per-host display - the real callback renders exactly
+      # this shape (one `host | STATE => {results...}` line, or the
+      # command-family `| rc=-1 | (stdout) ` shape for command/shell
+      # loops, live-verified) instead of the per-item lines.
+      aggregate = {} of String => JSON::Any
+      if loop_items.empty?
+        aggregate["changed"] = JSON::Any.new(false)
+        aggregate["skipped"] = JSON::Any.new(true)
+        aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
+        aggregate["results"] = JSON::Any.new(results)
+      else
+        aggregate["results"] = JSON::Any.new(results)
+        aggregate["skipped"] = JSON::Any.new(all_items_skipped)
+        aggregate["changed"] = JSON::Any.new(true) if any_changed
+        if any_failed
+          aggregate["failed"] = JSON::Any.new(true)
+          aggregate["msg"] = JSON::Any.new("One or more items failed")
+        end
+        unless aggregate.has_key?("msg")
+          aggregate["msg"] = JSON::Any.new(all_items_skipped ? "All items skipped" : "All items completed")
+        end
+        aggregate["changed"] = JSON::Any.new(any_changed) unless aggregate.has_key?("changed")
+      end
+
       if executed_count == 0
         # Nothing executed - either the loop source was genuinely empty
         # (0 items total) or every item was itself individually skipped
@@ -1901,7 +1937,7 @@ module Krikri
                           else
                             ""
                           end
-        puts "skipping: [#{connection_host}]#{trailing_suffix}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host, trailing_suffix).colorize(:cyan)
         @results[host.name]["skipped"] += 1
       else
         # Any item that failed at the SSH transport level makes the whole
@@ -1920,8 +1956,10 @@ module Krikri
           ResultDisplay.update_stats(@results[host.name], aggregate_result, resolve_task_ignore_errors(task, base_vars_context))
           # A when:-failed item's aggregate: real closes the item list
           # with the task-level fatal (see any_when_failed) BEFORE the
-          # ...ignoring line.
-          if any_when_failed
+          # ...ignoring line. Both are default-callback output - the
+          # oneline callback's aggregate line below already carries the
+          # failure.
+          if any_when_failed && !Krikri::Oneline.enabled?
             connection_host = host.name
             puts "fatal: [#{connection_host}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
           end
@@ -1930,7 +1968,13 @@ module Krikri
           # lines (Ansible prints it once for the whole task, not per item).
           # The per-item display no longer emits it (the loop-failure branch
           # in result_display returns before that suffix).
-          puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(task, base_vars_context)
+          unless Krikri::Oneline.enabled?
+            puts "...ignoring".colorize(:red) if any_failed && resolve_task_ignore_errors(task, base_vars_context)
+          else
+            # The single per-host aggregate line (the real oneline
+            # callback's only rendering of a looped task).
+            ResultDisplay.display_result(host, JSON::Any.new(aggregate), @diff_mode, module_name: task.module_name, source_task: task)
+          end
         end
       end
 
@@ -1944,46 +1988,6 @@ module Krikri
 
       if register_name = task.register
         unless register_name.empty?
-          # Ansible's loop-aggregate register shape, in Ansible's own insertion
-          # order (ansible-core's itemized-task handler builds it key by
-          # key, and the order is observable - a later `to_json` of the
-          # register, or a loop over its `results`, prints it verbatim):
-          # `results` first, then `skipped`, then whatever any item
-          # contributed (`changed` when an item changed, `failed` +
-          # `msg` on a failure), then `msg`, and only LAST the
-          # `changed: false` fallback - which is why a loop that changed
-          # nothing reads {results, skipped, msg, changed} while a
-          # changing one reads {results, skipped, changed, ...}.
-          #
-          # A zero-item loop never reaches that at all: Ansible returns the
-          # "No items in the list" shape instead, with `changed` FIRST, a
-          # `skipped_reason` (not `skip_reason`), and no `msg` - so the
-          # empty case is built separately rather than by the flags below.
-          # `failed` is only present when an item actually failed (same
-          # on-failure-only rule as a module's own wire result), and
-          # `msg` is "All items completed" / "All items skipped" / "One
-          # or more items failed" - an aggregate that always carried
-          # failed: false made `r.failed | default('none')` print False
-          # where Ansible prints None (live-verified, git_config GC14).
-          aggregate = {} of String => JSON::Any
-          if loop_items.empty?
-            aggregate["changed"] = JSON::Any.new(false)
-            aggregate["skipped"] = JSON::Any.new(true)
-            aggregate["skipped_reason"] = JSON::Any.new("No items in the list")
-            aggregate["results"] = JSON::Any.new(results)
-          else
-            aggregate["results"] = JSON::Any.new(results)
-            aggregate["skipped"] = JSON::Any.new(all_items_skipped)
-            aggregate["changed"] = JSON::Any.new(true) if any_changed
-            if any_failed
-              aggregate["failed"] = JSON::Any.new(true)
-              aggregate["msg"] = JSON::Any.new("One or more items failed")
-            end
-            unless aggregate.has_key?("msg")
-              aggregate["msg"] = JSON::Any.new(all_items_skipped ? "All items skipped" : "All items completed")
-            end
-            aggregate["changed"] = JSON::Any.new(any_changed) unless aggregate.has_key?("changed")
-          end
           @registered_vars[host.name][register_name] = JSON::Any.new(aggregate)
           @hv_generation += 1
         end

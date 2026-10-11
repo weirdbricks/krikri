@@ -761,7 +761,7 @@ module Krikri
       # Ansible correctly shows these as `skipping:` and counts
       # them under `skipped=`, not `ok=`.
       if result["skipped"]?.try(&.as_bool) == true
-        puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_result_suffix(result)}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_result_suffix(result)).colorize(:cyan)
         @results[host.name]["skipped"] += 1
         return
       end
@@ -830,10 +830,10 @@ module Krikri
           next if print_skipped_looped_task(nested_task, host, inherited_when)
         elsif nested_task.module_name == "_meta"
           unless meta_when_silent?(nested_task)
-            puts "skipping: [#{connection_host}]#{meta_skip_dump(nested_task, host)}".colorize(:cyan)
+            puts Krikri::Oneline.skip_line(connection_host, meta_skip_dump(nested_task, host)).colorize(:cyan)
           end
         else
-          puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(nested_task, host, inherited_when)}".colorize(:cyan)
+          puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(nested_task, host, inherited_when)).colorize(:cyan)
         end
         # A skipped meta: task (e.g. a named meta: flush_handlers inside
         # a when:-false block) prints its "skipping:" line but is NOT
@@ -875,7 +875,7 @@ module Krikri
         # context rescue, scoped to display: the child's own vars: render
         # failed, but the inherited when: is False anyway, so the task is
         # skipped - one line, like a non-looped child.
-        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
         return false
       end
       loop_vars_context = loop_source_vars_context(task, host, vars_context)
@@ -909,12 +909,12 @@ module Krikri
       end
 
       if loop_items.nil?
-        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
         return false
       end
 
       if loop_items.empty?
-        puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_empty_loop}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_empty_loop).colorize(:cyan)
         return false
       end
 
@@ -924,7 +924,7 @@ module Krikri
         nil
       end
       if rendered_items.nil?
-        puts "skipping: [#{connection_host}]#{skipped_line_suffix_for(task, host, inherited_when)}".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host, skipped_line_suffix_for(task, host, inherited_when)).colorize(:cyan)
         return false
       end
 
@@ -979,7 +979,9 @@ module Krikri
           next
         end
         suffix = skipped_loop_item_suffix_for(task, inherited_when, item, idx)
-        puts "skipping: [#{connection_host}] => (item=#{shown}) #{suffix}".colorize(:cyan)
+        unless Krikri::Oneline.enabled?
+          puts "skipping: [#{connection_host}] => (item=#{shown}) #{suffix}".colorize(:cyan)
+        end
       end
       if any_label_failed
         # One task-level failure entry for the whole loop (real's recap
@@ -1009,7 +1011,7 @@ module Krikri
       # all-items-skipped aggregate, same as the executed loop path's
       # executed_count == 0 branch. Real's dump only carries "changed":
       # false for non-debug modules (see skip_line_suffix_all_skipped).
-      puts "skipping: [#{connection_host}]#{Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !is_debug)}".colorize(:cyan)
+      puts Krikri::Oneline.skip_line(connection_host, Krikri::ResultDisplay.skip_line_suffix_all_skipped(changed: !is_debug)).colorize(:cyan)
       false
     end
 

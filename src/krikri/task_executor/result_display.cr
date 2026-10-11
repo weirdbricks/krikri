@@ -2,6 +2,7 @@ require "json"
 require "colorize"
 require "../host"
 require "../timing_profile"
+require "../oneline_output"
 require "../variable_substitutor/filter_core"
 require "../argspec_validator"
 require "./error_block"
@@ -323,6 +324,19 @@ module Krikri
       # banner ahead of the very first item's "ok:" on the looped path.
       result["_ansible_pause_console"]?.try(&.as_a?).try &.each do |line|
         puts line.as_s? || line.to_s
+      end
+
+      # The oneline stdout callback replaces the whole per-result display
+      # surface (ok:/changed:/fatal: shapes, error blocks, diffs, the
+      # "...ignoring" suffix) with one line per host result - stderr
+      # output above (deprecations, module warnings) is callback-
+      # independent and already printed. A looped task's per-item results
+      # print nothing here: the loop finisher renders the ONE aggregate
+      # line the real oneline callback emits per host (see
+      # Krikri::Oneline#display_result's item_label comment).
+      if Krikri::Oneline.enabled?
+        Krikri::Oneline.display_result(host, result, module_name: module_name, item_label: item_label, no_log: no_log)
+        return
       end
 
       # Ansible's callback (CallbackBase._dump_results) drops these top-level
@@ -1271,6 +1285,15 @@ module Krikri
       String.build { |io| dump_compact_io(VariableSubstitutor::FilterCore.sort_json_keys(result), io, item_sep) }
     end
 
+    # Public shape of the oneline callback's own dump (indent=0, so
+    # separators (",", ": ")): keys sorted, no space after commas, `": "`
+    # between key and value. Used by Krikri::Oneline for the censored
+    # no_log shape; module results go through adhoc_result_json instead
+    # (which adds the _ansible_verbose_always indent flip on top).
+    def self.dump_oneline_json(result : JSON::Any) : String
+      dump_compact(result, ",")
+    end
+
     private def self.dump_compact_io(value : JSON::Any, io : IO, item_sep : String) : Nil
       case raw = value.raw
       when Nil
@@ -1583,6 +1606,99 @@ module Krikri
         raw.to_s
       else
         value.to_s.to_json
+      end
+    end
+  end
+end
+
+module Krikri
+  # The per-result rendering half of the oneline stdout callback
+  # emulation (see src/krikri/oneline_output.cr for the shape contract
+  # and the state/line-core half). Lives here because it reuses this
+  # file's ad-hoc dump machinery (adhoc_result_json's oneline branch and
+  # the clean_for_display strip are exactly what the real oneline.py
+  # callback feeds its results through).
+  module Oneline
+    def self.emit_startup_deprecation : Nil
+      ResultDisplay.emit_core_deprecation(DEPRECATION_TEXT)
+    end
+
+    # Called from ResultDisplay.display_result's entrypoint for every
+    # non-loop-item result when enabled. Loop items (item_label set)
+    # print nothing here - the loop finisher renders the ONE aggregate
+    # line the real oneline callback emits per host.
+    def self.display_result(host : Host, result : JSON::Any, module_name : String? = nil,
+                            item_label : String? = nil, no_log : Bool = false) : Nil
+      # A looped task's per-item result: the aggregate line printed by the
+      # loop finisher carries every item, so per-item lines drop silently
+      # (the real callback never renders the per-item events - it only
+      # implements the aggregate handlers).
+      return if item_label
+
+      # Same verbosity<3 top-level strip the default display applies
+      # before any dump (invocation hidden unless -vvv, warnings/
+      # deprecations shown as their own stderr lines instead) - the real
+      # _dump_results abridges the same keys.
+      if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
+        result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
+      end
+
+      # no_log is a display-layer security control here too: the raw
+      # result still carries the secrets, the censored shape is what
+      # prints (same shape the default callback's no_log branch builds).
+      if no_log
+        censored = JSON.parse({
+          "censored" => "the output has been hidden due to the fact that 'no_log: true' was specified for this result",
+          "changed"  => result["changed"]?.try(&.as_bool) || false,
+        }.to_json)
+        changed = result["changed"]?.try(&.as_bool) || false
+        if Krikri.result_failed_flag(result)
+          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(censored)}".colorize(:red)
+        else
+          puts "#{host.name} | #{changed ? "CHANGED" : "SUCCESS"} => #{ResultDisplay.dump_oneline_json(censored)}".colorize(changed ? :yellow : :green)
+        end
+        return
+      end
+
+      changed = result["changed"]?.try(&.as_bool) || false
+      failed = Krikri.result_failed_flag(result)
+
+      if result["skipped"]?.try(&.as_bool) && !failed
+        puts "#{host.name} | SKIPPED".colorize(:cyan)
+        return
+      end
+
+      if result["unreachable"]?.try(&.as_bool)
+        msg = result["msg"]?.try(&.as_s?) || ""
+        puts "#{host.name} | UNREACHABLE!: #{msg}".colorize(:red)
+        return
+      end
+
+      if failed
+        # 2.19 tags every module-failure result with an exception (a
+        # `(traceback unavailable)` placeholder when there is no real
+        # traceback); the "An exception occurred" line is the callback's
+        # exception branch, kept in all its captured shapes - the
+        # command-family shape renders the command line instead of the
+        # exception text (oneline.py's MODULE_NO_JSON branch, live-
+        # verified both ways).
+        exception_text = result["exception"]?.try(&.as_s?)
+        exception_text = exception_text && !exception_text.empty? ? exception_text : "(traceback unavailable)"
+        if command_module?(module_name) && !result.as_h?.try(&.has_key?("module_stderr"))
+          puts command_msg(host.name, "FAILED", result).colorize(:red)
+        else
+          puts exception_line(exception_text).colorize(:red)
+        end
+        puts "#{host.name} | FAILED! => #{ResultDisplay.adhoc_result_json(result, module_name, oneline: true)}".colorize(:red)
+        return
+      end
+
+      state = changed ? "CHANGED" : "SUCCESS"
+      color = changed ? :yellow : :green
+      if command_module?(module_name) && !result.as_h?.try(&.has_key?("ansible_job_id"))
+        puts command_msg(host.name, state, result).colorize(color)
+      else
+        puts "#{host.name} | #{state} => #{ResultDisplay.adhoc_result_json(result, module_name, oneline: true)}".colorize(color)
       end
     end
   end

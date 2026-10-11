@@ -415,6 +415,7 @@ module Krikri
       any_changed = false
       any_failed = false
       executed_count = 0
+      oneline_results = [] of JSON::Any
 
       # An empty loop: source (e.g. cloudalchemy.cortex's "reload cortex
       # services" handler looping over `cortex_services | dict2items`
@@ -431,7 +432,7 @@ module Krikri
         # handler's module is never resolved, so an unimplemented module
         # behind an empty loop is a plain skip, not an
         # unavailable-modules exit-code report.
-        puts "skipping: [#{host.name}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         return JSON.parse({
           "changed" => false,
           "failed"  => false,
@@ -447,6 +448,21 @@ module Krikri
 
         result = execute_handler_plugin_once(handler, host, vars_context)
         merge_ansible_facts(host, result, handler.module_name.ends_with?("set_fact"), handler)
+        # The oneline callback's aggregate dump needs every iterated item's
+        # result (skipped ones included) - collected here, shaped like the
+        # task-loop path's registered entries (private-key strip plus the
+        # loop bindings).
+        if Krikri::Oneline.enabled?
+          entry = result.as_h.dup
+          entry.reject! { |key, _| key.starts_with?("_ansible_") }
+          entry[loop_var || "item"] = item
+          entry["ansible_loop_var"] = JSON::Any.new(loop_var || "item")
+          if index_var
+            entry[index_var] = JSON::Any.new(idx.to_i64)
+            entry["ansible_index_var"] = JSON::Any.new(index_var)
+          end
+          oneline_results << JSON::Any.new(entry)
+        end
         next if result["skipped"]?.try(&.as_bool)
 
         executed_count += 1
@@ -470,12 +486,26 @@ module Krikri
       # executed_count == 0 branch.
       if executed_count == 0
         connection_host = host.name
-        puts "skipping: [#{connection_host}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(connection_host).colorize(:cyan)
         return JSON.parse({
           "changed" => false,
           "failed"  => false,
           "skipped" => true,
         }.to_json)
+      end
+
+      # The oneline callback's single per-host aggregate line for a looped
+      # handler - same shape the looped-task path renders (results array
+      # plus the "All items completed"/"One or more items failed" msg).
+      if Krikri::Oneline.enabled?
+        aggregate = {
+          "results" => JSON::Any.new(oneline_results),
+          "skipped" => JSON::Any.new(false),
+          "changed" => JSON::Any.new(any_changed),
+          "msg"     => JSON::Any.new(any_failed ? "One or more items failed" : "All items completed"),
+        } of String => JSON::Any
+        aggregate["failed"] = JSON::Any.new(true) if any_failed
+        ResultDisplay.display_result(host, JSON::Any.new(aggregate), @diff_mode, module_name: handler.module_name, source_task: handler)
       end
 
       JSON.parse({
@@ -581,7 +611,7 @@ module Krikri
       index_var = handler.index_var
 
       if loop_items.empty?
-        puts "skipping: [#{host.name}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         return JSON.parse({
           "changed" => false,
           "failed"  => false,
@@ -617,7 +647,9 @@ module Krikri
           end
           unless when_result
             suffix = " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) "
-            puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
+            unless Krikri::Oneline.enabled?
+              puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
+            end
             next
           end
         end
@@ -644,7 +676,7 @@ module Krikri
           @results[host.name]["failed"] += 1
         end
       elsif !any_iteration_ran
-        puts "skipping: [#{host.name}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         @results[host.name]["skipped"] += 1
       end
 
@@ -736,7 +768,9 @@ module Krikri
         reachable_unavailable_modules << module_name if reached
         connection_host = host.name
         suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
-        puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(nil, item)}".colorize(:cyan)
+        unless Krikri::Oneline.enabled? && item
+          puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(nil, item)}").colorize(:cyan)
+        end
         return JSON.parse({
           "changed" => false,
           "failed"  => false,
@@ -777,7 +811,9 @@ module Krikri
         unless when_result
           connection_host = host.name
           suffix = (item = vars_context["item"]?) ? " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) " : ""
-          puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
+          unless Krikri::Oneline.enabled? && item
+            puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}").colorize(:cyan)
+          end
           return JSON.parse({
             "changed" => false,
             "failed"  => false,

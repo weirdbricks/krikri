@@ -153,6 +153,33 @@ are safe and faster on big inventories; `--forks 1` runs one host at a time. `--
 `implicit` (the default, every play re-gathers), `explicit` (only plays
 with `gather_facts: true`) or `smart`.
 
+### Callback plugins
+
+Two callback shapes are emulated, byte-matched against ansible-core
+2.19.11; anything else is a hard startup error rather than a silent
+divergence:
+
+- `ANSIBLE_CALLBACKS_ENABLED=ansible.posix.profile_tasks` (or the legacy
+  short form `profile_tasks`, comma-separated list like Ansible's) prints
+  a wall-clock timestamp line under every TASK/RUNNING HANDLER banner and
+  a TASKS RECAP block after PLAY RECAP ranking tasks by duration.
+  `--krikri-profile-tasks` is the same switch as a flag.
+- `ANSIBLE_STDOUT_CALLBACK=oneline` (or `ansible.builtin.oneline`) replaces
+  the whole default output surface with one line per host result
+  (`localhost | CHANGED | rc=0 | (stdout) hi` for command-family results,
+  `localhost | SUCCESS => {compact json}` for the rest), no banners and no
+  PLAY RECAP - plus the `[DEPRECATION WARNING]` line real 2.19 emits for
+  this callback. `default` is accepted as a no-op; every other stdout
+  callback value (`minimal`, `dense`, ...) errors.
+
+The `-o` / `--one-line` / `--krikri-oneline` flag turns the oneline
+display on without the env var. **This is a krikri extension, not
+parity**: real `ansible-playbook` rejects `-o` (it is adhoc-only there,
+verified against 2.19.11), so accepting it cannot break an upstream
+playbook command line. All krikri-only convenience switches use the
+`--krikri-` prefix and are grouped under "Krikri-specific options:" in
+`--help`.
+
 Everything else - `--syntax-check`, `--list-hosts`, `-e`, `--start-at-task`,
 vault subcommands and the rest - is documented in
 `krikri-playbook --help`.

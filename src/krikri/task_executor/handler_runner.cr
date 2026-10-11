@@ -222,14 +222,18 @@ module Krikri
     private def print_handler_display(handler : Task, handler_index : Int32,
                                       rendered_name : String, host : Host,
                                       bannered : Set(Int32), role_prefix : String) : Nil
-      if Krikri::RunOptions.verbosity >= 2
+      if Krikri::RunOptions.verbosity >= 2 && !Krikri::Oneline.enabled?
         puts "NOTIFIED HANDLER #{rendered_name} for #{host.name}"
       end
       unless bannered.includes?(handler_index)
         Krikri::OutputBanner.banner("RUNNING HANDLER [#{role_prefix}#{rendered_name}]")
+        # Same per-task timestamp-line treatment as regular tasks (the
+        # handler shows up in the TASKS RECAP under its own name,
+        # live-verified) - recorded once per handler, where the banner is.
+        Krikri::ProfileTasks.record_task_start(handler, rendered_name)
         bannered << handler_index
       end
-      if Krikri::RunOptions.verbosity >= 2 && (file = handler.source_file) && handler.source_line > 0
+      if Krikri::RunOptions.verbosity >= 2 && !Krikri::Oneline.enabled? && (file = handler.source_file) && handler.source_line > 0
         puts "task path: #{File.expand_path(file)}:#{handler.source_line}"
       end
     end

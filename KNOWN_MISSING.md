@@ -450,6 +450,35 @@ deprecated` (with an Origin block) when a registered timed-out result is templat
 `timeout:` and matches the result values and key order but does not emit that warning: stderr only, no
 effect on task status or stdout. Decided 2026-10-07: not worth matching.
 
+### Callback-plugin emulation covers exactly two shapes, and errors on everything else
+
+There is no generic callback-plugin architecture. `ANSIBLE_CALLBACKS_ENABLED` recognizes exactly
+`ansible.posix.profile_tasks` (plus the legacy short form `profile_tasks`) and
+`ANSIBLE_STDOUT_CALLBACK` recognizes exactly `oneline` (plus a no-op `default`, which is what
+krikri's hardcoded display already is); every other value is a hard startup error
+(`[ERROR]: Could not load 'X' callback plugin.`, rc 1) instead of upstream's behavior. Real 2.19.11
+warns-and-SKIPS an unknown `callbacks_enabled` entry (`[WARNING]: Skipping callback plugin 'X',
+unable to load`) and fails hard only for an unloadable stdout callback - krikri errors hard for
+BOTH, on purpose (product decision, 2026-10-10): a run that silently produces different output
+than the callback the user asked for is worse than no run. Consequences of that decision:
+
+- `profile_tasks`' own config surface is not implemented: `PROFILE_TASKS_TASK_OUTPUT_LIMIT` stays
+  at the default 20 rows, `PROFILE_TASKS_SORT_ORDER` stays at the default descending, and
+  `PROFILE_TASKS_SUMMARY_ONLY` is not honored. The -vv+ per-row `task path:` line under each recap
+  row is not rendered either.
+- Other aggregate callbacks (`profile_roles`, `profile_json`, `community.general.*` timings) and
+  other stdout callbacks (`minimal`, `dense`, `json`, `-t/--tree`) are not implemented and error.
+- `ANSIBLE_CALLBACK_WHITELIST` (removed upstream >= 2.12) is deliberately NOT read.
+
+On the oneline side, two scope bounds: -v/-vv/-vvv output is not reshaped by the callback beyond
+suppressing the default callback's own artifacts (task banners, `task path:`, NOTIFIED HANDLER
+lines) - controller-side verbose output is unchanged - and a task-level error's [ERROR] chain
+block collapses to oneline's own `An exception occurred ...` line plus the FAILED! dump, as the
+real callback's exception branch does. Also accepted: looped `include_tasks:`/`include_role:`
+iterations print one line per iteration under oneline where real prints the whole loop as a
+single aggregate (the per-iteration results never reach this engine as one aggregate shape).
+Decided 2026-10-10.
+
 
 ### Console-output differences from ansible-core 2.19.11 that cannot be matched
 

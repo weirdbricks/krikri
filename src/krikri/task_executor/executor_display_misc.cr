@@ -16,7 +16,14 @@ module Krikri
       detail = ssh_error.try(&.strip.lines.first?) || connection_host
       msg = %("Failed to connect to the host via ssh: #{detail}")
       msg = "" if no_log
-      puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
+      if Krikri::Oneline.enabled?
+        # The oneline callback's unreachable shape: `host | UNREACHABLE!:
+        # <msg>` with the RAW msg text (not the JSON-quoted fatal dump).
+        detail_msg = no_log ? "" : "Failed to connect to the host via ssh: #{detail}"
+        puts "#{host.name} | UNREACHABLE!: #{detail_msg}".colorize(:red)
+      else
+        puts %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
+      end
 
       stats = @results[host.name]
       if task.ignore_unreachable?

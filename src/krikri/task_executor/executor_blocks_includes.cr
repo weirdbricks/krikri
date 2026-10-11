@@ -117,13 +117,15 @@ module Krikri
     end
 
     private def execute_include_tasks_multi(task : Task, hosts : Array(Host)) : Nil
-      Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, hosts.first)}]")
+      include_display_name = render_task_name_for_display(task, hosts.first)
+      Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{include_display_name}]")
+      Krikri::ProfileTasks.record_task_start(task, include_display_name)
       print_task_path(task)
 
       run_hosts, skip_hosts = partition_by_when(task, hosts)
 
       skip_hosts.each do |host|
-        puts "skipping: [#{host.name}]".colorize(:cyan)
+        puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
         @results[host.name]["skipped"] += 1
       end
 
@@ -306,6 +308,9 @@ module Krikri
     # source position print nothing.
     private def print_task_path(task : Task) : Nil
       return unless Krikri::RunOptions.verbosity >= 2
+      # The `task path:` line is default-callback -v output; the oneline
+      # callback has no verbose rendering of its own.
+      return if Krikri::Oneline.enabled?
       return unless (file = task.source_file) && task.source_line > 0
       puts "task path: #{File.expand_path(file)}:#{task.source_line}"
     end
@@ -791,7 +796,7 @@ module Krikri
           # this previously always skipped instead, silently continuing
           # past a role whose OS-specific package list was never loaded.
           if task.loop_first_found_skip?
-            puts "skipping: [#{host.name}]".colorize(:cyan)
+            puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
             @results[host.name]["skipped"] += 1
           else
             finish_include_vars_failure(task, host,
@@ -1667,7 +1672,7 @@ module Krikri
         # matching execute_include_vars's identical handling of the same
         # situation.
         if loop_items.empty?
-          puts "skipping: [#{host.name}]".colorize(:cyan)
+          puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
           @results[host.name]["skipped"] += 1
           return
         end
@@ -1754,7 +1759,7 @@ module Krikri
             @results[host.name]["failed"] += 1
           end
         elsif !any_iteration_ran
-          puts "skipping: [#{host.name}]".colorize(:cyan)
+          puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
           @results[host.name]["skipped"] += 1
         end
         # Ansible runs a looped include in two phases: every
@@ -1816,7 +1821,12 @@ module Krikri
         unless when_result
           connection_host = host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
-          puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+          # A looped include's per-item skip lines drop under oneline (the
+          # aggregate line carries them); a plain skip renders the bare
+          # `host | SKIPPED` shape.
+          unless Krikri::Oneline.enabled? && item_label
+            puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}").colorize(:cyan)
+          end
           # defer_when_stats (the looped caller): the per-item skip must NOT
           # bump the recap per iteration - Ansible recaps a looped
           # include task ONCE, and only as skipped when EVERY iteration was
@@ -2056,7 +2066,11 @@ module Krikri
       # literal's Python str(), so the parser-supplied native value wins
       # whenever there is one.
       include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
-      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+      if Krikri::Oneline.enabled?
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
+      else
+        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+      end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
     end
@@ -2080,7 +2094,11 @@ module Krikri
                ErrorBlock::Node.new(message)
              end
       ErrorBlock.emit_stderr(node)
-      puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+      if Krikri::Oneline.enabled?
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => message}.to_json))}".colorize(:red)
+      else
+        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+      end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
     end
@@ -2110,7 +2128,7 @@ module Krikri
       value_origin = if pos = failure.origin
                        task.source_file.try { |source_path| ErrorBlock.origin_context(source_path, pos[0], pos[1]) }
                      end
-      if task_origin
+      if task_origin && !Krikri::Oneline.enabled?
         conversion = ErrorBlock::Node.new(failure.conversion_message, source_context: value_origin)
         keyword = ErrorBlock::Node.new(failure.keyword_message, source_context: value_origin)
         keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true, conversion)
@@ -2120,12 +2138,18 @@ module Krikri
 
       connection_host = host.name
       brief = "Task failed: #{failure.brief}"
-      if item_label
+      if Krikri::Oneline.enabled?
+        # The [ERROR] chain block and the fatal:/failed: shape are
+        # default-callback output; oneline renders the exception line
+        # plus the FAILED! dump instead.
+        puts Krikri::Oneline.exception_line("(traceback unavailable)").colorize(:red)
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => brief}.to_json))}".colorize(:red)
+      elsif item_label
         puts "failed: [#{connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
       else
         puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
       end
-      puts "...ignoring".colorize(:red) if ignore_errors
+      puts "...ignoring".colorize(:red) if ignore_errors && !Krikri::Oneline.enabled?
       halt_if_failed(task, host, true)
     end
 
@@ -2250,7 +2274,9 @@ module Krikri
         unless when_result
           connection_host = host.name
           suffix = item_label ? " => (item=#{item_label}) " : ""
-          puts "skipping: [#{connection_host}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+          unless Krikri::Oneline.enabled? && item_label
+            puts Krikri::Oneline.skip_line(connection_host, "#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}").colorize(:cyan)
+          end
           @results[host.name]["skipped"] += 1
           return
         end

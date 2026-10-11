@@ -43,6 +43,9 @@ module Krikri
       return if targets.empty?
 
       Krikri::OutputBanner.banner("TASK [Gathering Facts]")
+      # The implicit facts task is a real task to the profile_tasks
+      # callback (its own recap row, live-verified), banner or no banner.
+      Krikri::ProfileTasks.record_task_start(Krikri::ProfileTasks::FACTS_TASK_IDENTITY, "Gathering Facts")
       # Real -vv labels the implicit facts task's `task path:` with the
       # play's own location, not a task line.
       if Krikri::RunOptions.verbosity >= 2 && (file = @play_source_file) && @play_source_line > 0
@@ -123,7 +126,15 @@ module Krikri
         success, error_message = outcomes[host.name]
 
         if success
-          puts "ok: [#{host.name}]".colorize(:green)
+          if Krikri::Oneline.enabled? && (facts_result = @facts_results[host.name]?)
+            # The oneline callback renders the WHOLE setup result as the
+            # host's line (`host | SUCCESS => {...facts...}`, live-
+            # verified) - the default callback's bare `ok: [host]` is not
+            # what oneline prints.
+            Krikri::Oneline.display_result(host, facts_result, module_name: "setup")
+          else
+            puts "ok: [#{host.name}]".colorize(:green)
+          end
           # A successful implicit Gathering Facts task DOES count as ok=1 in
           # the recap - ansible-core 2.19.11 recaps ok=2 for facts + one
           # command task, ok=1 for a task-less play, and ok=4 for 2 gathers +
@@ -263,6 +274,7 @@ module Krikri
       end
 
       if ansible_facts = result["ansible_facts"]?
+        @facts_results[host.name] = result
         facts = Hash(String, JSON::Any).new
         ansible_facts.as_h.each { |key, value| facts[key] = value }
         # Merge, not replace: with the run-scoped fact store this host may

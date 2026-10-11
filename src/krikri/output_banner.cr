@@ -17,6 +17,8 @@
   end
 {% end %}
 
+require "./oneline_output"
+
 module Krikri
   # ansible-playbook's `Display.banner` shape: a blank line, then
   # `<msg> ` followed by `*` padding out to the display width (79 when
@@ -33,6 +35,12 @@ module Krikri
     {% end %}
 
     def self.banner(msg : String) : Nil
+      # The oneline stdout callback replaces the default callback's whole
+      # output surface - banners included (no PLAY/TASK/PLAY RECAP lines
+      # at all, live-verified). The profile_tasks TASKS RECAP banner is
+      # NOT routed through here (it must survive oneline), so nothing
+      # else needs an exception.
+      return if Krikri::Oneline.enabled?
       puts ""
       puts "#{msg} #{stars(msg)}"
     end

@@ -10,6 +10,8 @@
 # registered falls through unchanged) - this only matters once a
 # --forks > 1 run is actually in flight.
 require "./src/krikri/output_banner"
+require "./src/krikri/profile_tasks"
+require "./src/krikri/oneline_output"
 require "./src/krikri/run_options"
 require "./src/krikri/task_executor/output_routing"
 
@@ -241,6 +243,46 @@ forks = 5
 # below is this project's own pragmatic addition on top of that, and
 # wins if both are given.
 gathering = {"implicit", "explicit", "smart"}.includes?(ENV["ANSIBLE_GATHERING"]?) ? ENV["ANSIBLE_GATHERING"].not_nil! : "implicit"
+
+# Callback-plugin emulation switches (see src/krikri/profile_tasks.cr and
+# src/krikri/oneline_output.cr for the display halves).
+#
+# ANSIBLE_CALLBACKS_ENABLED is a comma-separated list like Ansible's
+# (split on commas, whitespace stripped). Only ansible.posix.profile_tasks
+# and its legacy short form are implemented; any other value is a HARD
+# startup error - real ansible only warns-and-skips an unrecognizable
+# aggregate callback, but a run that silently produces different output
+# than the callback the user asked for is worse than no run (deliberate
+# product decision, 2026-10-10).
+profile_tasks_enabled = false
+if callbacks_enabled_raw = ENV["ANSIBLE_CALLBACKS_ENABLED"]?
+  enabled_callbacks = callbacks_enabled_raw.split(",").map(&.strip).reject(&.empty?)
+  enabled_callbacks.each do |callback|
+    unless {"ansible.posix.profile_tasks", "profile_tasks"}.includes?(callback)
+      STDERR.puts "[ERROR]: Could not load '#{callback}' callback plugin."
+      exit 1
+    end
+  end
+  profile_tasks_enabled = true unless enabled_callbacks.empty?
+end
+
+# ANSIBLE_STDOUT_CALLBACK: only oneline (and a no-op default) is
+# implemented. Any other value - including other valid upstream stdout
+# callbacks such as minimal or dense - errors hard rather than silently
+# producing output different from the named callback's shape. The FQCN
+# spellings are accepted the same way real 2.19 resolves them.
+oneline_enabled = false
+if stdout_callback = ENV["ANSIBLE_STDOUT_CALLBACK"]?
+  case stdout_callback
+  when "oneline", "ansible.builtin.oneline"
+    oneline_enabled = true
+  when "default", "ansible.builtin.default"
+    # Matches krikri's hardcoded display exactly; accepted as a no-op.
+  else
+    STDERR.puts "[ERROR]: Could not load '#{stdout_callback}' callback plugin."
+    exit 1
+  end
+end
 # ansible-playbook's -v/-vv/-vvv/... stack into a numeric
 # verbosity level, exposed to task-param templating as the
 # ansible_verbosity magic var - found via marcinpraczko.goss-install's
@@ -350,6 +392,22 @@ begin
         exit 1
       end
       gathering = normalized
+    end
+
+    # Krikri-specific options - krikri-only convenience switches, all
+    # `--krikri-` prefixed (see the namespace convention in README.md).
+    parser.separator("Krikri-specific options:")
+
+    parser.on("--krikri-profile-tasks", "Enable the ansible.posix.profile_tasks timing display: a wall-clock timestamp line under every TASK/RUNNING HANDLER banner and a TASKS RECAP block after PLAY RECAP ranking tasks by duration (slowest first). Same switch as ANSIBLE_CALLBACKS_ENABLED=ansible.posix.profile_tasks.") do
+      profile_tasks_enabled = true
+    end
+
+    parser.on("-o", "--one-line", "One-line output: collapse every task result to a single `host | STATE ...` line (the oneline stdout callback's shape; no banners, no PLAY RECAP). Real ansible-playbook rejects -o - the flag is adhoc-only there (verified against 2.19.11) - so accepting it here is compatibility-safe; documented as a krikri extension, not parity. Same switch as ANSIBLE_STDOUT_CALLBACK=oneline.") do
+      oneline_enabled = true
+    end
+
+    parser.on("--krikri-oneline", "Alias for -o/--one-line (the --krikri- namespace makes the extension discoverable even where upstream has no flag).") do
+      oneline_enabled = true
     end
 
     parser.on("-v", "--verbose", "Verbose output") do
@@ -513,6 +571,11 @@ rescue ex : Exception
   puts "Error: #{ex.message}".colorize(:red)
   exit 1
 end
+
+# One code path, two entry points: either (or both) of the env vars and
+# the krikri-only CLI switches land on the same internal enabled flags.
+Krikri::ProfileTasks.enable if profile_tasks_enabled
+Krikri::Oneline.enable if oneline_enabled
 
 extra_vars = {} of String => JSON::Any
 extra_var_origins = {} of String => Krikri::VarOrigin
@@ -1099,6 +1162,13 @@ unless limit_hosts.empty?
   end
 end
 
+# The oneline stdout callback's own startup deprecation (2.19-behavior
+# parity, not a krikri deprecation). Real loads the stdout callback when
+# the run starts - after the inventory warnings, and NOT at all for
+# --syntax-check/--list-tasks (live-verified: no deprecation line there) -
+# so it emits here, right before the first play output.
+Krikri::Oneline.emit_startup_deprecation if oneline_enabled
+
 # Real -vv prints a "PLAYBOOK: <file>" banner (basename) plus the play
 # count line (full path as given) right before the first play.
 if verbosity_level >= 2
@@ -1421,9 +1491,18 @@ unreachable_hosts.each do |name|
 end
 
 # No task ever ran when --start-at-task matched nothing: real lists no hosts.
-Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results) unless start_at_task && start_at_pending
+# Under the oneline stdout callback the whole recap block is default-callback
+# output and does not print at all (live-verified: no PLAY RECAP lines).
+unless start_at_task && start_at_pending || Krikri::Oneline.enabled?
+  Krikri::ResultDisplay.show_recap(all_hosts.uniq(&.name), combined_results)
+  puts ""
+end
 
-puts ""
+# The profile_tasks aggregate callback's TASKS RECAP block - after PLAY
+# RECAP, and STILL printed under the oneline stdout callback (which
+# suppresses PLAY RECAP itself but not this aggregate callback's own
+# banner, live-verified).
+Krikri::ProfileTasks.print_recap unless start_at_task && start_at_pending
 
 # set_stats: custom stats block - ansible-playbook only prints this
 # when show_custom_stats is enabled (ansible.cfg [defaults] show_custom_stats,
@@ -1431,7 +1510,9 @@ puts ""
 # codebase has no ansible.cfg INI parsing, so only the env var override is
 # honored; the ansible.cfg file setting itself is not read.
 show_custom_stats = ["true", "yes", "1", "on"].includes?(ENV["ANSIBLE_SHOW_CUSTOM_STATS"]?.try(&.downcase) || "")
-if show_custom_stats && !Krikri::CustomStats.empty?
+# The block is default-callback output, so the oneline stdout callback
+# suppresses it along with the rest of the recap surface.
+if show_custom_stats && !Krikri::CustomStats.empty? && !Krikri::Oneline.enabled?
   puts "CUSTOM STATS: ".colorize(:cyan).bold
   unless Krikri::CustomStats.global.empty?
     puts "\t#{Krikri::CustomStats.global.to_json}"

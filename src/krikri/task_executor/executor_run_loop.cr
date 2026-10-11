@@ -228,7 +228,14 @@ module Krikri
         # tasks do (see is_static_import's own comment).
         unless @adhoc || (task.include_role? && task.is_static_import?)
           display_host = active_hosts.first? || hosts.first
-          Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{render_task_name_for_display(task, display_host)}]")
+          task_display_name = render_task_name_for_display(task, display_host)
+          Krikri::OutputBanner.banner("TASK [#{task_role_prefix(task)}#{task_display_name}]")
+          # The profile_tasks aggregate callback's per-task timestamp line
+          # fires here too - banner or no banner (under the oneline stdout
+          # callback the banner itself is suppressed but the timestamp
+          # line still prints, live-verified), and handlers/facts get the
+          # same treatment at their own banner sites.
+          Krikri::ProfileTasks.record_task_start(task, task_display_name)
           print_task_path(task)
         end
 
@@ -545,7 +552,7 @@ module Krikri
                       # used to produce at SSH time.
                       if when_skips_task?(task, vars_context, host, shared_sub)
                         @results[host.name]["skipped"] += 1
-                        puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+                        puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_line_suffix(task.when_condition)).colorize(:cyan)
                         register_skip_result(task, host)
                         return
                       end
@@ -1020,19 +1027,24 @@ module Krikri
         # can itself be the secret)
         shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
         suffix = shown ? " => (item=#{shown}) " : ""
-        # Same module-keyed -v dump rule the skipped-block printer uses
-        # (see skipped_line_suffix_for): a debug: skip's dump is just
-        # {false_condition[, item]}, every other module's is the full
-        # cleaned skip result (live-verified vs 2.19.11). Identical
-        # output at the default verbosity (both shapes are empty there).
-        # A meta: whose when: was evaluated here follows real's own meta
-        # rules: the actions that reject a when: outright print NO
-        # skipping line at all, the rest print the meta-shaped dump.
-        if task.module_name == "_meta"
+        if Krikri::Oneline.enabled?
+          # A plain skip renders the bare `host | SKIPPED` line; a loop
+          # item's skip line is not rendered at all - the loop finisher's
+          # single aggregate line carries the skipped items.
+          puts "#{host.name} | SKIPPED".colorize(:cyan) unless item_label
+        elsif task.module_name == "_meta"
+          # A meta: whose when: was evaluated here follows real's own meta
+          # rules: the actions that reject a when: outright print NO
+          # skipping line at all, the rest print the meta-shaped dump.
           unless meta_when_silent?(task)
             puts "skipping: [#{host.name}]#{meta_skip_dump(task, host)}".colorize(:cyan)
           end
         else
+          # Same module-keyed -v dump rule the skipped-block printer uses
+          # (see skipped_line_suffix_for): a debug: skip's dump is just
+          # {false_condition[, item]}, every other module's is the full
+          # cleaned skip result (live-verified vs 2.19.11). Identical
+          # output at the default verbosity (both shapes are empty there).
           dump_suffix = if debug_module?(task)
                           Krikri::ResultDisplay.skip_line_suffix(task.when_condition, item)
                         else
@@ -1117,9 +1129,17 @@ module Krikri
       # verified vs 2.19.11, round 5410000).
       if ex.is_a?(LoopTypeError) || ex.is_a?(LoopLookupError)
         unless defer_display
-          emit_loop_source_error_block(task, ex)
-          puts "fatal: [#{host.name}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
-          puts "...ignoring".colorize(:red) if ignore_errors
+          if Krikri::Oneline.enabled?
+            # The oneline callback's failed shape for the no-result
+            # pipeline path: the synthesized-exception line plus the
+            # msg-only FAILED! dump (same payload the fatal line carries).
+            puts Krikri::Oneline.exception_line("(traceback unavailable)").colorize(:red)
+            puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"msg" => msg}.to_json))}".colorize(:red)
+          else
+            emit_loop_source_error_block(task, ex)
+            puts "fatal: [#{host.name}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+            puts "...ignoring".colorize(:red) if ignore_errors
+          end
           register_name = task.register
           unless register_name.nil? || register_name.empty?
             register_result(host, register_name, JSON.parse({
@@ -1136,7 +1156,20 @@ module Krikri
         # variable values the task asked to keep out of the output.
         # Ansible stamps _ansible_no_log onto these action failures and
         # shows the censored JSON - mirror that shape here.
-        if resolve_task_no_log(task)
+        if Krikri::Oneline.enabled?
+          # A looped task's per-item when-failure prints nothing here -
+          # the loop's aggregate line carries it.
+          unless item_label
+            if resolve_task_no_log(task)
+              puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"censored" => "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}.to_json))}".colorize(:red)
+            else
+              display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
+              payload = debug_module?(task) ? {"msg" => display_msg} : {"changed" => false, "msg" => display_msg}
+              puts Krikri::Oneline.exception_line("(traceback unavailable)").colorize(:red)
+              puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse(payload.to_json))}".colorize(:red)
+            end
+          end
+        elsif resolve_task_no_log(task)
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
           puts %(fatal: [#{host.name}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         elsif conditional_evaluation_failure?(msg)
@@ -1166,7 +1199,7 @@ module Krikri
         else
           puts "fatal: [#{host.name}]#{suffix}: FAILED! => #{msg}".colorize(:red)
         end
-        puts "...ignoring".colorize(:red) if ignore_errors
+        puts "...ignoring".colorize(:red) if ignore_errors && !Krikri::Oneline.enabled?
       end
       register_name = task.register
       unless register_name.nil? || register_name.empty?
@@ -1192,7 +1225,7 @@ module Krikri
     # a *prior* iteration's real "changed" result into a later iteration
     # whose own task was skipped, wrongly running the dependent task.
     private def print_batched_skip(task : Task, host : Host, vars_context : Hash(String, JSON::Any)) : Nil
-      puts "skipping: [#{host.name}]#{Krikri::ResultDisplay.skip_line_suffix(task.when_condition)}".colorize(:cyan)
+      puts Krikri::Oneline.skip_line(host.name, Krikri::ResultDisplay.skip_line_suffix(task.when_condition)).colorize(:cyan)
       @results[host.name]["skipped"] += 1
     end
 

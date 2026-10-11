@@ -101,6 +101,10 @@ module Krikri
     @in_handler_flush = false
     # Facts per host
     @facts : Hash(String, Hash(String, JSON::Any))
+    # The raw setup-module result per host from the most recent gather,
+    # kept only for the oneline stdout callback's per-host facts line
+    # (the real callback dumps the whole setup result there).
+    @facts_results = Hash(String, JSON::Any).new
     # The subset of @facts[host.name] that came from `set_fact`/
     # `register`-style high-precedence writes rather than an ordinary
     # fact-gathering module (setup/package_facts/service_facts/etc).
