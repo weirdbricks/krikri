@@ -1575,6 +1575,32 @@
   "supported": null,
   "unsupported": null
  },
+ "ansible.builtin.sysctl|ansible.builtin.sysctl": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "missing required arguments: name"
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
+ "ansible.builtin.sysctl|sysctl": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "missing required arguments: name"
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
  "ansible.builtin.systemd|ansible.builtin.systemd": {
   "dump": {
    "ansible_facts": {
@@ -1923,6 +1949,19 @@
    "msg": "missing required arguments: key, user"
   },
   "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: key, user",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
+ "ansible.posix.firewalld_info|ansible.posix.firewalld_info": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "Unsupported parameters for (ansible.posix.firewalld_info) module: zznope. Supported parameters include: active_zones, zones."
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: Unsupported parameters for (ansible.posix.firewalld_info) module: zznope. Supported parameters include: active_zones, zones.",
   "printed_name": null,
   "supported": null,
   "unsupported": null
@@ -2310,6 +2349,19 @@
    "msg": "missing required arguments: capability, path"
   },
   "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: capability, path",
+  "printed_name": null,
+  "supported": null,
+  "unsupported": null
+ },
+ "community.general.cronvar|community.general.cronvar": {
+  "dump": {
+   "ansible_facts": {
+    "discovered_interpreter_python": "/usr/bin/python3.13"
+   },
+   "changed": false,
+   "msg": "missing required arguments: name"
+  },
+  "error_line": "[ERROR]: Task failed: Module failed: missing required arguments: name",
   "printed_name": null,
   "supported": null,
   "unsupported": null
