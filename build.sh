@@ -254,6 +254,39 @@ if [ ! -d "lib" ]; then
     exit 1
 fi
 
+# Check lib/ for staleness against shard.lock: pulling a commit that bumps a
+# shard's tag changes shard.lock but not lib/, and the existence check above
+# happily builds the new engine code against the OLD library (round 5466302:
+# the krikri-jinja v0.4.33 tag landed with its fix, but lib/ still held
+# v0.4.32, so the round's binary re-raised the "'missing' is undefined"
+# else-less-ternary bug the bump was supposed to fix).
+DRIFTED=""
+LOCK_NAME=""
+while IFS= read -r line; do
+    case "$line" in
+        "  "*:) LOCK_NAME="${line#  }"; LOCK_NAME="${LOCK_NAME%:}" ;;
+        "    version: "*)
+            if [ -n "$LOCK_NAME" ] && [ -f "lib/$LOCK_NAME/shard.yml" ]; then
+                LOCK_VER=$(echo "$line" | sed 's/^ *version: *//' | cut -d+ -f1)
+                LIB_VER=$(grep -m1 "^version:" "lib/$LOCK_NAME/shard.yml" | sed 's/^version: *//')
+                if [ -n "$LOCK_VER" ] && [ "$LOCK_VER" != "$LIB_VER" ]; then
+                    DRIFTED="$DRIFTED $LOCK_NAME(lock $LOCK_VER, lib $LIB_VER)"
+                fi
+            fi
+            ;;
+    esac
+done < shard.lock
+
+if [ -n "$DRIFTED" ]; then
+    echo -e "${RED}❌ Stale lib/ detected:$DRIFTED${NC}"
+    echo ""
+    echo -e "${BLUE}To refresh lib/ to shard.lock's versions, run:${NC}"
+    echo -e "${GREEN}  shards install${NC}"
+    echo ""
+    echo -e "${YELLOW}Then run ./build.sh again${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}✅ All dependencies found${NC}"
 echo ""
 
