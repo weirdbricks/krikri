@@ -666,7 +666,26 @@ module Krikri
       return {PluginResult.new(changed: true, failed: false, msg: msg), changed, nil} if check_mode
 
       execute_grant_plan(db, name, host, ops)
-      {nil, true, msg}
+      # Real books the privilege branch of an update by comparing the
+      # account's grants from before the privilege loop against a fresh
+      # SHOW GRANTS after it (its own `changed = changed or (curr_priv !=
+      # after_priv)` tail in user_mod), NOT by whether statements were
+      # planned: a planned GRANT the server treats as a no-op still
+      # executes and still books changed=false, keeping the "Privileges
+      # updated: granted [...]" msg the intersect loop set before
+      # executing. Round 4310000's residual leaf: append_privs: true
+      # re-adding *.*:USAGE on an account that already holds other global
+      # privileges - MySQL only surfaces the baseline USAGE row when
+      # nothing else is granted on *.*, so the spec's desired USAGE is
+      # always "missing" from such an account's parsed grants and the
+      # GRANT is planned every time, yet grants it nothing. Mirrors real
+      # by re-reading and comparing (the create path never runs this
+      # comparison - real's user_add unconditionally reports changed).
+      if exists
+        after = current_grants(db, name, host)
+        changed = true unless after == current
+      end
+      {nil, changed, msg}
     end
 
     private def ensure_absent(db : DB::Database, name : String, host : String, exists : Bool, check_mode : Bool) : PluginResult
