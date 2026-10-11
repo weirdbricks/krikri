@@ -1,7 +1,7 @@
 name: Release multi-arch bundle
 
 # Adds krikri-<tag>-linux-multiarch.tar.gz (x86_64 + aarch64 controllers
-# and plugin sets in one tarball) and krikri-<tag>-darwin-multiarch.tar.gz
+# and plugin sets in one tarball) and krikri-<tag>-darwin-with-linux-multiarch.tar.gz
 # (both Mac controllers plus the Linux plugin sets they upload to Linux targets) to a published release, built from that
 # release's own two Linux tarballs. Dispatched by release.yml's last step
 # (a workflow_run trigger never fires for GITHUB_TOKEN-started runs), or
@@ -32,5 +32,5 @@ jobs:
           mkdir -p dl out
           gh release download "$TAG" -D dl -p '*-linux-x86_64.tar.gz' -p '*-linux-arm64.tar.gz' -p '*-darwin-x86_64.tar.gz' -p '*-darwin-arm64.tar.gz'
           scripts/make-multiarch-bundle.sh "$TAG" dl out
-          scripts/make-darwin-multiarch-bundle.sh "$TAG" dl out
+          scripts/make-darwin-with-linux-multiarch-bundle.sh "$TAG" dl out
           gh release upload "$TAG" out/*.tar.gz --clobber

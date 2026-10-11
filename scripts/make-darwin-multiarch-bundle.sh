@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble krikri-<tag>-darwin-multiarch.tar.gz from the four release
+# Assemble krikri-<tag>-darwin-with-linux-multiarch.tar.gz from the four release
 # tarballs (darwin x86_64/arm64 + linux x86_64/arm64). A Mac controller
 # can only upload Linux plugins to Linux targets, which need
 # plugins-linux-<arch>/ next to the controller (see plugin_manager.cr
@@ -8,11 +8,11 @@
 #   plugins-<other mac arch>  symlink, for Mac targets of the other CPU
 #   plugins-linux-<arch>      symlink to the shared Linux plugin sets
 #
-# usage: make-darwin-multiarch-bundle.sh <tag> <dir-with-the-four-tarballs> <out-dir>
+# usage: make-darwin-with-linux-multiarch-bundle.sh <tag> <dir-with-the-four-tarballs> <out-dir>
 set -euo pipefail
 
 tag=$1 src=$2 out=$3
-pkg="krikri-${tag}-darwin-multiarch"
+pkg="krikri-${tag}-darwin-with-linux-multiarch"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
