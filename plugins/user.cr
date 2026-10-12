@@ -535,6 +535,25 @@ module Krikri
       PluginResult.new(changed: true, failed: false, msg: "Password ageing updated")
     end
 
+    # Real user.py's get_groups_set() runs in BOTH the create and modify
+    # paths, before any useradd/usermod/lgroupmod command, and validates
+    # every requested groups: member with a PLAIN fail_json - just msg,
+    # no name/rc echo (msg "Group docker does not exist"). Letting the
+    # command run instead surfaces useradd/usermod's own stderr ("group
+    # 'docker' does not exist") with name/rc fields, which is not what
+    # Ansible registers. A blank groups: (absent, "" or a rendered empty
+    # list) never reaches get_groups_set, so it is skipped here too.
+    private def missing_requested_group : String?
+      groups_val = @params["groups"]?.presence
+      return nil unless groups_val
+
+      requested = PluginHelpers::UserState.normalize_groups_value(groups_val).split(',').map(&.strip).reject(&.empty?)
+      requested.each do |group|
+        return group unless group_exists?(group)
+      end
+      nil
+    end
+
     private def create(name : String, check_mode : Bool) : PluginResult
       # Real user.py's create_user checks a given group: BEFORE useradd
       # runs and fails with a PLAIN fail_json(msg=...) - no name/rc echo
@@ -547,6 +566,11 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "Group #{group} does not exist")
         end
+      end
+
+      if group = missing_requested_group
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Group #{group} does not exist")
       end
 
       local = local?
@@ -629,6 +653,11 @@ module Krikri
           return PluginResult.new(changed: false, failed: true,
             msg: "Group #{group} does not exist")
         end
+      end
+
+      if group = missing_requested_group
+        return PluginResult.new(changed: false, failed: true,
+          msg: "Group #{group} does not exist")
       end
 
       local = local?

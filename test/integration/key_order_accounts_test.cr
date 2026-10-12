@@ -341,6 +341,35 @@ describe "user plugin result key order" do
     result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
   end
 
+  # Same plain fail_json shape for a nonexistent groups: member, in the
+  # create path: real user.py validates via get_groups_set() BEFORE
+  # useradd runs, so nothing is created and no name/rc is echoed (with
+  # the check missing, useradd's own stderr "useradd: group 'x' does
+  # not exist" leaks into msg with name/rc instead).
+  it "fails a nonexistent groups: member on create with the plain fail shape and Ansible's message" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "krikri-kop-nobody", "groups" => "krikri-kop-nosuchgroup",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Group krikri-kop-nosuchgroup does not exist")
+    result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+    `getent passwd krikri-kop-nobody`.strip.must_be_empty
+  end
+
+  # The modify path runs the same get_groups_set() check before any
+  # usermod flag logic (and before check mode short-circuits), so an
+  # existing user with a nonexistent groups: member fails identically.
+  it "fails a nonexistent groups: member on an existing user with the plain fail shape and Ansible's message" do
+    result = PluginSpecHelper.run("user", {
+      "name" => "root", "groups" => "krikri-kop-nosuchgroup",
+    })
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Group krikri-kop-nosuchgroup does not exist")
+    result.as_h.keys.must_equal(["failed", "msg", "changed", "exception"])
+  end
+
   # A create that useradd itself rejects (uid 0 is taken) exercises the
   # fail_json(name=, msg=err, rc=rc) shape: the registered order puts the
   # kwargs first (name, rc), then failed, msg, changed, exception
