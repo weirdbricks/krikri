@@ -1,6 +1,6 @@
 ---
 name: fix-divergence
-description: Investigate and fix a DIVERGENT role from a krikri-role-tester round using the Crush-delegated worktree workflow. Use whenever the user asks to "fix", "root-cause", "investigate", or "triage" one or more divergent roles from a completed batch round, or says "use crush" for this. Covers per-role worktree setup, delegating to Crush, independent validation before merge, and landing the fix. Launching the batch itself is a separate skill (`launch-roles`); this one starts after a round is DONE.
+description: Investigate and fix a DIVERGENT role from a krikri-role-tester round using the Crush-delegated worktree workflow. Use whenever the user asks to "fix", "root-cause", "investigate", or "triage" one or more divergent roles from a completed batch round, or says "use crush" for this. Covers per-role worktree setup, delegating to Crush, independent validation before merge, and landing the fix. Triage is `launch-roles` and choosing what to work on from the GitHub issues is `work-issues`; this skill is the per-fix mechanics and is normally invoked by `work-issues`.
 ---
 
 # Fix a divergent role (Crush worktree workflow)
@@ -91,9 +91,15 @@ calling Crush: `ansible-galaxy role install <role> -p /tmp/galaxy-roles`,
 then a small `ansible_connection=local`/`localhost` playbook (no live VM
 needed) comparing `ansible-playbook` against a freshly-built
 `bin/krikri-playbook`. The evidence directory for the original divergence
-is `~/scratch/krt-results/<round>_<backend>_<role>/` (`run.log`,
-`summary.txt`, `cold_py.out`/`cold_crystal.out`/`warm_py.out`/
-`warm_crystal.out`, `galaxy_install.log`).
+is `<results-dir>/<role>/` inside the `logs___<epoch>` directory the user
+gave the `launch-roles` skill (or, when started from an issue, the pointer in
+the issue body - that path may be gone, so the repro pasted in the issue is the
+source of truth) (`run.log`, `summary.txt`, `compare.txt`,
+`compare_cold.diff`/`compare_warm.diff`, `cold_ansible.out`/
+`cold_krikri.out`/`warm_ansible.out`/`warm_krikri.out`,
+`galaxy_install.log`). Start from `compare.txt` and the `.diff`, not the
+whole `.out` files. Results older than krikri-role-tester 0.1.0 live in
+`<round>_<backend>_<role>/` with `cold_py.out`/`cold_crystal.out`.
 
 ## 3. Validate before trusting anything — every time, no exceptions
 
