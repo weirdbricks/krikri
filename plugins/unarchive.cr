@@ -287,6 +287,71 @@ module Krikri
       nil
     end
 
+    # pick_handler (unarchive.py) tries the handlers in the fixed order
+    # [ZipArchive, ZipZArchive, TgzArchive, TarArchive, TarBzip, TarXz,
+    # TarZstd] and collects one reason per failed handler, de-duplicated
+    # (live-verified against 2.19.11's unarchive.py ~782-800/951-974/
+    # 1022-1033). Two reason shapes:
+    # - a handler whose binaries are missing entirely reports
+    #   "Unable to find required '<a>' or '<b>' binary in the path."
+    #   with ONLY the actually-missing names joined by "' or '" - the
+    #   tar-family handlers' fixed spelling carries no trailing period;
+    # - a handler whose binaries exist but whose listing probe fails
+    #   reports 'Command "<binary path>" could not handle archive:
+    #   <stderr>' (unzip -l for the zip handlers, tar's own stderr for
+    #   the tar family). This engine probes the whole tar family with
+    #   the same single `tar tf` (GNU tar's own auto-detection already
+    #   covers gz/bz2/xz uniformly), so the five tar-family reasons are
+    #   byte-identical here and dedup into one line - mirroring how the
+    #   identical-probe zip pair dedups in real.
+    private def handler_failure_reasons(src : String) : Array(String)
+      found = {} of String => String?
+      %w[unzip zipinfo gtar tar].each do |name|
+        out = remote_exec("command -v #{shell_single_quote(name)} 2> /dev/null")
+        path = out[:stdout].strip
+        found[name] = out[:exit_code] == 0 && !path.empty? ? path : nil
+      end
+
+      reasons = [] of String
+
+      unzip = found["unzip"]?
+      # ZipArchive needs unzip AND zipinfo; ZipZArchive needs unzip
+      # twice (its own message spells the duplicate out), so when unzip
+      # exists both handlers probe the same `unzip -l` and their
+      # could-not-handle reasons are identical - ZipZ's copy dedups.
+      zip_missing = %w[unzip zipinfo].select { |name| found[name].nil? }
+      unless zip_missing.empty?
+        reasons << "Unable to find required '#{zip_missing.join("' or '")}' binary in the path."
+      end
+      unless unzip
+        reasons << "Unable to find required 'unzip' or 'unzip' binary in the path."
+      end
+      if unzip && (zip_reason = could_not_handle_reason("unzip -l", unzip, src))
+        reasons << zip_reason
+      end
+
+      # The tar family: gtar preferred, plain tar as the fallback binary
+      # (Ansible's TgzArchive/TarArchive cmd/zipinfo pair). gtar does not
+      # exist on most distros, so a missing-binary report only fires when
+      # BOTH are gone.
+      tar_path = found["gtar"]? || found["tar"]?
+      if tar_path
+        if tar_reason = could_not_handle_reason("tar tf", tar_path, src)
+          5.times { reasons << tar_reason }
+        end
+      else
+        reasons << "Unable to find required 'gtar' or 'tar' binary in the path"
+      end
+
+      reasons.uniq
+    end
+
+    private def could_not_handle_reason(command : String, binary_path : String, src : String) : String?
+      out = remote_exec("#{command} #{shell_single_quote(src)}")
+      return nil if out[:exit_code] == 0
+      %(Command "#{binary_path}" could not handle archive: #{out[:stderr].strip})
+    end
+
     # A list-typed param arrives in one of two shapes depending on how
     # the task wrote it: a LITERAL YAML list (`extra_opts:
     # ['--strip-components=1']`) is comma-joined by playbook_parser.cr's
@@ -349,14 +414,17 @@ module Krikri
         # Real unarchive's pick_handler composes its failure as
         # 'Failed to find handler for "<src>". Make sure the required
         # command to extract the file is installed.\n<reasons>' - the
-        # head is deterministic; the reason list after it is NOT (2.14
-        # collects the per-handler probe reasons into a Python set, so
-        # even real-vs-real ordering shuffles run to run), so only the
-        # head is replicated here. Found via the podman-diff
+        # head is deterministic; the reason list after it is NOT ordered
+        # (2.14 collects the per-handler probe reasons into a Python
+        # set, so even real-vs-real ordering shuffles run to run), so
+        # the reasons are appended in handler order with duplicates
+        # dropped - the only stable replica. Found via the podman-diff
         # unarchive_edge_cases E6 harness case, where this engine said
         # "Unsupported archive format for <src>" instead.
-        return PluginResult.new(changed: false, failed: true,
-          msg: "Failed to find handler for \"#{src}\". Make sure the required command to extract the file is installed.")
+        head = %(Failed to find handler for "#{src}". Make sure the required command to extract the file is installed.)
+        reasons = handler_failure_reasons(src)
+        msg = reasons.empty? ? head : "#{head}\n#{reasons.join("\n")}"
+        return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
       changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files)

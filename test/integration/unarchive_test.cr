@@ -788,17 +788,30 @@ describe "unarchive plugin" do
   end
 
   it "fails on a non-archive src with Ansible's no-handler-found message head" do
-    # podman-diff unarchive_edge_cases E6: Ansible 2.14's pick_handler
-    # composes 'Failed to find handler for "<src>". Make sure the
-    # required command to extract the file is installed.\n<reasons>' -
-    # the reasons tail is nondeterministic (collected into a Python
-    # set), so this engine replicates only the head.
+    # pick_handler (unarchive.py) composes 'Failed to find handler for
+    # "<src>". Make sure the required command to extract the file is
+    # installed.\n<reasons>' - the reasons are the per-handler probe
+    # failures de-duplicated (2.14+ collects them into a Python set whose
+    # ordering shuffles run to run, so real-vs-real ordering is not
+    # comparable; the handler order with duplicates dropped is the
+    # stable replica).
     not_archive = File.join(TMP_DIR, "not-an-archive.txt")
     File.write(not_archive, "this is not an archive")
 
     result = PluginSpecHelper.run("unarchive", {"src" => not_archive, "dest" => fresh_dest("no-handler")})
 
     result["failed"].as_bool.must_equal(true)
-    result["msg"].as_s.must_include(%(Failed to find handler for "#{not_archive}". Make sure the required command to extract the file is installed.))
+    msg = result["msg"].as_s
+    lines = msg.split("\n")
+    lines.first.must_equal(%(Failed to find handler for "#{not_archive}". Make sure the required command to extract the file is installed.))
+    # Test hosts carry unzip + zipinfo + tar (the zip half of this suite
+    # needs them) and no gtar: ZipZ's duplicate unzip reason and the five
+    # identical tar-family probe reasons dedup away, leaving exactly one
+    # could-not-handle line per probe binary - the unzip probe's first
+    # (ZipArchive comes first in handler order), then tar's. The captured
+    # stderr is multi-line, so reason boundaries are counted, not lines.
+    lines[1].must_match(/\ACommand ".*unzip" could not handle archive: /)
+    msg.scan("could not handle archive: ").size.must_equal(2)
+    msg.scan(/Command "[^"]*\/tar" could not handle archive: /).size.must_equal(1)
   end
 end
