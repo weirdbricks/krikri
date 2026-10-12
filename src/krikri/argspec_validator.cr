@@ -324,12 +324,19 @@ module Krikri
     # `dest: false`/`dest: 0`/`dest: ""` all fail "dest is required",
     # `src: 0` with no content fails "src (or content) is required",
     # while `src: 0` WITH content runs the content path - the falsy src
-    # is simply ignored). assemble's own check is a None check instead:
+    # is simply ignored). The required check's content half is a None
+    # check on top of that (`not source and content is None`), so an
+    # explicitly null `content:` counts as not provided too - unlike an
+    # empty string, which is a legitimate whole-file value - and must
+    # reach "src (or content) is required" (live-verified vs 2.19.11:
+    # `content: "{{ nullvar }}"` with a null var fails while
+    # `content: "{{ emptystring }}"` writes the empty file; issue #20).
+    # assemble's own check is a None check instead:
     # an explicitly null param counts as absent, an empty string does
     # not.
     private def action_plugin_required_params(module_name : String, params : Hash(String, String)) : Failure?
       if module_name == "ansible.builtin.copy"
-        unless params.has_key?("content") || Krikri.python_param_truthy?(params["src"]?)
+        unless provided_param?(params, "content") || Krikri.python_param_truthy?(params["src"]?)
           return Failure.new("src (or content) is required", true)
         end
         return Failure.new("dest is required", true) unless params.has_key?("dest") && Krikri.python_param_truthy?(params["dest"]?)
@@ -614,8 +621,17 @@ module Krikri
     # with no value passes (live-verified vs 2.19.11: `state: present`
     # plus a typo'd option reports the state error, and copy's
     # unsupported-parameter error never gets to run).
+    #
+    # The content escape only covers a GIVEN content: real template.py
+    # never reads `content` at all (its check is `source is None or dest
+    # is None`), so an explicitly null `content:` must not satisfy it -
+    # live-verified vs 2.19.11: `template:` with a null `content:` and no
+    # src fails "src and dest are required" while the post-action pass's
+    # injected rendered content (which may itself render empty, but is
+    # then a real "", not a null) keeps falling through to the spec
+    # checks.
     private def template_action_failure(params : Hash(String, String)) : Failure?
-      if !params.has_key?("content") && (!params.has_key?("src") || !params.has_key?("dest"))
+      if !provided_param?(params, "content") && (!params.has_key?("src") || !params.has_key?("dest"))
         return Failure.new("src and dest are required", true)
       end
       if provided_param?(params, "state")
