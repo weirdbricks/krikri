@@ -92,6 +92,33 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].name.must_equal("all")
     end
 
+    it "parses a task whose name: key is present but null like a missing name (issue #11)" do
+      # A null `name:` is not a missing key - YAML::Any#[]? still returns
+      # a value for it, so a plain as_s cast raised "Cast from Nil to
+      # String failed", leaking as a raw "Warning: Skipping task" (role
+      # armov.zabbix_agent2_lit_trellis_custom's tasks/main.yml). Real
+      # (2.19.11) accepts a null name and displays the TASK [<action>]
+      # header, i.e. the same fallback as a missing name.
+      task = single_task("- name:\n  ansible.builtin.debug:\n    msg: hi")
+
+      task.has_explicit_name?.must_equal(false)
+      task.name.must_equal("ansible.builtin.debug")
+    end
+
+    it "parses a play whose name: key is present but null like a missing play name (issue #11)" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name:
+          hosts: all
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.must_equal("all")
+      playbook.plays[0].tasks[0].name.must_equal("ansible.builtin.debug")
+    end
+
     it "joins a list hosts: value with commas for the fallback play name" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - hosts: [web, db]

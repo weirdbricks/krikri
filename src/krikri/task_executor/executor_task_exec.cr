@@ -775,6 +775,11 @@ module Krikri
 
       ignore_errors = resolve_task_ignore_errors(task, vars_context)
       no_log = resolve_task_no_log(task, vars_context)
+      # A batch-prepared finalization failure carries its [ERROR] chain
+      # block stashed on the result (see stash_finalization_error_block) -
+      # print it now, under this task's own banner and just before the
+      # fatal/failed line, where Ansible puts it.
+      TaskExecutor.flush_deferred_finalization_error_block(result)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
@@ -2069,6 +2074,7 @@ module Krikri
       vars_context : Hash(String, JSON::Any),
       become_user : String? = task.become_user,
       substituted_env : Hash(String, String)? = nil,
+      become_flag : Bool? = nil,
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
@@ -2166,7 +2172,7 @@ module Krikri
         # top-level config fields (not nested under "params") so this
         # round-trips through async:'s job file (written verbatim from this
         # same config) without __async_run needing any extra plumbing.
-        "become"      => task.become?.to_s,
+        "become"      => (become_flag.nil? ? task.become? : become_flag).to_s,
         "become_user" => become_user,
       }
 

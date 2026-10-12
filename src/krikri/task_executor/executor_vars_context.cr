@@ -1766,12 +1766,67 @@ module Krikri
       value.nil? ? @check_mode : value
     end
 
+    # Runtime resolution of a task's effective become: value. Mirrors
+    # ansible-core's TaskExecutor._set_become_plugin: an `ansible_become`
+    # var present in the task's vars context (inventory host vars
+    # included) decides become OUTRIGHT - the keyword ladder is only the
+    # fallback when the var is absent, so inventory
+    # `ansible_become: true` escalates a `file:` task even without any
+    # become: keyword (issue #3: the touched file came out owned by the
+    # login user instead of root). The var's value goes through the same
+    # boolean coercion ansible's boolean() applies; a value it can't
+    # interpret falls back to the keyword path instead of erroring (the
+    # lenient-degradation rule this codebase already applies to templated
+    # connection vars).
     private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
+      if raw = substitutor.vars["ansible_become"]?
+        decided = ansible_become_var_boolean(raw, substitutor)
+        return decided unless decided.nil?
+      end
+
       expr = task.become_expr
       return task.become? unless expr
 
       rendered = substitutor.substitute(expr)
       ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become?
+    end
+
+    # The effective become_user, with the same var-over-keyword origin
+    # order the become plugin's options resolve under (ansible's config
+    # manager: direct > vars > keyword): an `ansible_become_user` var in
+    # the task's vars context outranks a task-level `become_user:`
+    # keyword, which falls back to nil (the caller defaults to "root").
+    private def resolve_task_become_user(task : Task, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : String?
+      if raw = vars_context["ansible_become_user"]?
+        if user = ansible_become_var_string(raw, substitutor)
+          return user
+        end
+      end
+      task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+    end
+
+    # ansible boolean()'s accepted forms (convert_bool.BOOLEANS_TRUE /
+    # BOOLEANS_FALSE), case-insensitive; nil for anything else so the
+    # caller falls back to the keyword ladder instead of guessing.
+    private def ansible_become_var_boolean(raw : JSON::Any, substitutor : VarSubstitutor) : Bool?
+      value = raw.raw
+      value = substitutor.substitute(value) if value.is_a?(String) && (value.includes?("{{") || value.includes?("{%"))
+      return value if value.is_a?(Bool)
+      return value != 0 if value.is_a?(Int)
+      return nil unless value.is_a?(String)
+      case value.strip.downcase
+      when "y", "yes", "on", "1", "true"  then true
+      when "n", "no", "off", "0", "false" then false
+      end
+    end
+
+    private def ansible_become_var_string(raw : JSON::Any, substitutor : VarSubstitutor) : String?
+      value = raw.raw
+      return nil unless value.is_a?(String)
+      return nil if value.empty?
+      rendered = substitutor.substitute(value)
+      return nil if rendered.empty?
+      rendered
     end
 
     # Runtime resolution of a templated `ignore_errors:` (Task#
@@ -1916,6 +1971,44 @@ module Krikri
       return Krikri::NATIVE_TYPED_PREFIX + "null" if raw.nil?
       return nil if raw.is_a?(String) && raw == OMIT_SENTINEL
       Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
+    end
+
+    # The decoded JSON container behind a NATIVE_TYPED_PREFIX msg wire
+    # value (parse_module_params's literal list/dict debug msg branch), or
+    # nil for any other shape - an unprefixed value, an unparsable payload,
+    # or a prefixed SCALAR (those keep the whole-span/native-typed flow
+    # below).
+    private def native_typed_msg_container(stripped_value : String) : JSON::Any?
+      return nil unless stripped_value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+      parsed = begin
+        JSON.parse(stripped_value[Krikri::NATIVE_TYPED_PREFIX.size..])
+      rescue JSON::ParseException
+        return nil
+      end
+      parsed.raw.is_a?(Array) || parsed.raw.is_a?(Hash) ? parsed : nil
+    end
+
+    # Renders a native-typed msg container's STRING leaves through the
+    # substitutor (each list item is its own template in Ansible - mixed
+    # text around a `{{ }}` span stays mixed text) and re-encodes the
+    # NATIVE_TYPED_PREFIX wire; non-string leaves pass through natively.
+    private def render_debug_msg_container(substitutor : VarSubstitutor, node : JSON::Any) : String
+      Krikri::NATIVE_TYPED_PREFIX + render_debug_msg_leaves(substitutor, node).to_json
+    end
+
+    private def render_debug_msg_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any
+      case raw = node.raw
+      when String
+        JSON::Any.new(substitutor.substitute(raw, strict: true, output: true))
+      when Array
+        JSON::Any.new(raw.map { |item| render_debug_msg_leaves(substitutor, item) })
+      when Hash
+        rendered = Hash(String, JSON::Any).new
+        raw.each { |k, v| rendered[k] = render_debug_msg_leaves(substitutor, v) }
+        JSON::Any.new(rendered)
+      else
+        node
+      end
     end
 
     # Whole-single-span template leaves of a JSON-container set_fact
@@ -2066,7 +2159,20 @@ module Krikri
         begin
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
-          native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+          native_typed = if debug_msg && (msg_container = native_typed_msg_container(stripped_value))
+                           # A parse-time literal list/dict msg (NATIVE_TYPED_PREFIX JSON
+                           # from parse_module_params's debug branch) renders its leaves
+                           # HERE, per-leaf: Ansible templates each list item as its own
+                           # string, so mixed-text items ("The OS is {{ os_arch }}") keep
+                           # their surrounding literal text instead of being flattened
+                           # into the comma-joined string the generic substitution below
+                           # would produce (issue #7, zhan9san.java). Non-string leaves
+                           # keep their native type; a failing leaf raises through the
+                           # same rescue chain as every other msg shape.
+                           render_debug_msg_container(substitutor, msg_container)
+                         else
+                           (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                         end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
             # with template leaves (a dict-valued set_fact: stringify_value
@@ -2499,6 +2605,16 @@ module Krikri
       false
     end
 
+    # Prints a result's stashed finalization error block, deduped across
+    # the whole run exactly like the inline emission path (Ansible's
+    # Display dedups by full formatted message - the Origin's file:line
+    # makes the text task-unique).
+    def self.flush_deferred_finalization_error_block(result : JSON::Any) : Nil
+      return unless text = result.as_h?.try(&.["_ansible_finalization_error_block"]?).try(&.as_s?)
+      return unless @@finalization_error_chain_seen.add?(text)
+      puts text
+    end
+
     private def finalization_module_name(task : Task) : String
       name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
       # engine-internal pseudo modules (_include_vars, ...) are real actions
@@ -2534,8 +2650,20 @@ module Krikri
     # the task's defining file either way, live-captured on a role task);
     # when the task can't be located there, no block is printed.
     private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
+      if text = finalization_error_block_text(task, ex)
+        return unless @@finalization_error_chain_seen.add?(text)
+        puts text
+      end
+    end
+
+    # Renders the [ERROR] chain block's text WITHOUT printing it, so the
+    # batch paths can defer the print to the failed result's own display
+    # (see stash_finalization_error_block). Returns nil when the task's
+    # source can't be located - no block either way, same as the emit-time
+    # behavior this was split from.
+    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError) : String?
       path = task.source_file || @playbook_file
-      return unless path && File.file?(path)
+      return nil unless path && File.file?(path)
 
       lines = File.read_lines(path)
       msg = ex.message || ""
@@ -2618,9 +2746,22 @@ module Krikri
       # Same dedup rule as emit_when_error_chain's (Ansible's Display dedups
       # by full formatted message; the Origin's file:line makes the text
       # task-unique, so a looped task's failing items display the chain
-      # once).
-      return unless @@finalization_error_chain_seen.add?(text)
-      puts text
+      # once) - applied by the caller at print time.
+      text
+    end
+
+    # Batch-build (execute_batch_group / execute_looped_task_batched)
+    # prepares every member UP FRONT, before the earlier members' results
+    # display - printing the [ERROR] chain block during that preparation
+    # put it ahead of the PREVIOUS task's changed: line (issue #14,
+    # pylabs.nginx: the block surfaced under the previous task's header,
+    # ahead of its own result line). Instead the rendered text rides the
+    # failed result on this private marker - the same pattern as
+    # _ansible_loop_error_emitted - and the display path
+    # (finish_single_task / finish_looped_task) prints it just before the
+    # fatal/failed line, under the failing task's own banner.
+    def self.stash_finalization_error_block(result : JSON::Any, text : String) : Nil
+      result.as_h?.try &.[]=("_ansible_finalization_error_block", JSON::Any.new(text))
     end
 
     # The fourth chain stanza real 2.19.11 appends when the arg's

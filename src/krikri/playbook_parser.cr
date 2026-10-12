@@ -1961,7 +1961,13 @@ module Krikri
       end
 
       # Get play name
-      explicit_name = yaml["name"]?.try(&.as_s)
+      # `name:` present but empty (nil) must behave like a MISSING name,
+      # not raise - YAML::Any#[]? returns a value for a null-valued key,
+      # so the plain as_s here raised "Cast from Nil to String failed"
+      # (surfaced as a raw "Warning: Skipping task"; role
+      # armov.zabbix_agent2_lit_trellis_custom's tasks/main.yml, issue #11).
+      # Real (2.19.11) accepts a null name and displays the action.
+      explicit_name = yaml["name"]?.try(&.as_s?)
 
       # Get hosts (required)
       hosts_yaml = yaml["hosts"]?
@@ -2803,7 +2809,13 @@ module Krikri
       # (now-fixed) "Generic TASK [Task 1] label" entry. Each branch
       # below knows its own directive's name at the point it returns, so
       # the fallback is resolved per-branch rather than once up front.
-      name = task_hash["name"]?.try(&.as_s)
+      # `name:` present but empty (nil) must behave like a MISSING name,
+      # not raise - YAML::Any#[]? returns a value for a null-valued key,
+      # so the plain as_s here raised "Cast from Nil to String failed",
+      # reported as a raw "Warning: Skipping task" (issue #11, role
+      # armov.zabbix_agent2_lit_trellis_custom). Real (2.19.11) accepts a
+      # null name and displays the TASK [<action>] header.
+      name = task_hash["name"]?.try(&.as_s?)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
         return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
@@ -5333,6 +5345,19 @@ module Krikri
             # templates msg through the native-typing Templar); the strings-only
             # wire would otherwise turn it into "1"/"true"
             params[key.to_s] = fact_literal_wire_value(value)
+          elsif module_name == "ansible.builtin.debug" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
+            # debug: msg: <list-or-dict> keeps the container native the same
+            # way the scalar branch above does: Ansible's debug action puts
+            # the task arg into result['msg'] verbatim, so a YAML list msg
+            # prints/registers as a real list (zhan9san.java round, issue #7
+            # - the generic comma-join below fused the items into one
+            # string). The NATIVE_TYPED_PREFIX payload carries the leaves'
+            # `{{ }}` templates intact; substitute_task_params renders them
+            # per-leaf before the action plugin decodes the container.
+            # Templated WHOLE values (`msg: "{{ list_var }}"`) are never
+            # marked here - the executor's whole-span structural evaluation
+            # owns their type, as for every other module.
+            params[key.to_s] = Krikri::NATIVE_TYPED_PREFIX + value.to_json
           elsif module_name == "ansible.builtin.fail" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
             # fail: msg keeps CONTAINER literals native too: Ansible's fail
             # action puts the task arg into result['msg'] verbatim, so

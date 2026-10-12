@@ -1723,8 +1723,15 @@ module Krikri
         # have crashed the whole run instead of failing just this task.
         # Same [ERROR] chain block + changed: false as
         # execute_task_once's identical rescue (2.19.11 live-captured).
-        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         failed = finalization_failure_json(ex, task)
+        # Stash, don't print: batch-build prepares every member up front,
+        # BEFORE the earlier members' results display - an inline print
+        # here put the block ahead of the previous task's changed: line
+        # (issue #14, pylabs.nginx). The display path prints it under this
+        # task's own banner, just before the fatal line.
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+          TaskExecutor.stash_finalization_error_block(failed, text)
+        end
         # Not routed through apply_changed_failed_when - same reasoning as
         # execute_task_once's identical rescue: failed_when:/changed_when:
         # only reinterpret a MODULE result, and no module ran here.
@@ -1768,7 +1775,7 @@ module Krikri
         return apply_changed_failed_when(task, staged_assemble, vars_context, host)
       end
       substituted_params = staged_assemble
-      substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+      substituted_become_user = resolve_task_become_user(task, vars_context, substitutor)
 
       # Action-only directives: pre-action validation gate (see
       # execute_task_once's identical hook).
@@ -1883,7 +1890,7 @@ module Krikri
       remote_vars_context = vars_context.dup
       remote_vars_context["ansible_connection"] = JSON::Any.new("local")
 
-      config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user, substituted_env)
+      config_json = build_plugin_config(task, host, substituted_params, remote_vars_context, substituted_become_user, substituted_env, become_flag: become)
 
       # The batch script runs the plugin binary directly, so it must be on
       # the target before the script is built - pre-upload cannot see
@@ -2048,8 +2055,18 @@ module Krikri
         # No "changed" key would match Ansible's pre-2.19 display;
         # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
         # so the failed result carries changed: false.
-        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         result = finalization_failure_json(ex, task)
+        # Stash, don't print: when this runs as a batch group's detour
+        # member (execute_batch_group's fingerprint-mismatch path), the
+        # call happens during batch-build, before the earlier members'
+        # results display - an inline print put the block ahead of the
+        # previous task's changed: line (issue #14, pylabs.nginx). The
+        # display path prints it under this task's own banner, just before
+        # the fatal line; the solo path's display comes through the same
+        # flush, at the same relative position the inline print had.
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+          TaskExecutor.stash_finalization_error_block(result, text)
+        end
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
         # as failed/changed, and arg finalization failed before any module
@@ -2194,7 +2211,7 @@ module Krikri
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
       # here, since Task is shared/reused across hosts and loop iterations.
-      substituted_become_user = task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+      substituted_become_user = resolve_task_become_user(task, vars_context, substitutor)
 
       # Ansible's add_host: the groups failure (action stage) and the
       # inventory.add_host name crash (result-processing stage, which
@@ -2299,30 +2316,16 @@ module Krikri
       # be built exactly once here, the way prepare_batch_step already
       # builds it once for the batch path; this used to serialize, parse,
       # then dup and re-serialize the entire variable context.
-      wire_vars = vars_context
-      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
-        wire_vars = vars_context.dup
-        wire_vars["ansible_connection"] = JSON::Any.new("local")
-      end
-
-      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env)
-
-      if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
-        # async: writes this config verbatim to a job file; the detached
-        # __async_run process resolves become:/become_user: back out of
-        # it via the JSON::Any entry point, exactly as before. Remote
-        # hosts take the SSH fire-and-forget path inside execute_async
-        # (needs the substitutor/become_user context the local path
-        # re-derives itself).
-        return apply_changed_failed_when(task, execute_async(task, exec_host, config, vars_context, substitutor, substituted_become_user), vars_context, host)
-      end
-
       # The same become resolution and validation resolve_become used to
       # perform from inside PluginManager, hoisted to the call site so
       # the config String can be handed straight through without being
       # parsed again. Identical defaults (become_user "root" when become:
       # is set but become_user: isn't) and identical error message -
       # and identical to what prepare_batch_step does for the batch path.
+      # Resolved BEFORE build_plugin_config so the wire config's own
+      # become: field (async:'s job file resolves it back out via
+      # resolve_become) carries the same var-aware verdict the dispatch
+      # below uses.
       become = resolve_task_become(task, substitutor)
       become_user = nil
 
@@ -2338,6 +2341,24 @@ module Krikri
           }.to_json)
           return apply_changed_failed_when(task, failed, vars_context, host)
         end
+      end
+
+      wire_vars = vars_context
+      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
+        wire_vars = vars_context.dup
+        wire_vars["ansible_connection"] = JSON::Any.new("local")
+      end
+
+      config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
+
+      if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
+        # async: writes this config verbatim to a job file; the detached
+        # __async_run process resolves become:/become_user: back out of
+        # it via the JSON::Any entry point, exactly as before. Remote
+        # hosts take the SSH fire-and-forget path inside execute_async
+        # (needs the substitutor/become_user context the local path
+        # re-derives itself).
+        return apply_changed_failed_when(task, execute_async(task, exec_host, config, vars_context, substitutor, substituted_become_user), vars_context, host)
       end
 
       # The arbitrary-Python-module runner: an unavailable module with a
@@ -2514,10 +2535,10 @@ module Krikri
           .to_h.to_json
       end
 
-      # build_plugin_config takes the raw pre-default become_user (its
-      # OTHER two call sites - the normal plugin path and the batch
-      # path - both pass substituted_become_user unchanged too); only
-      # the actual dispatch below needs the resolved values.
+      # build_plugin_config takes the effective become_user this caller
+      # already carries (the var-aware resolve_task_become_user result -
+      # the normal plugin path and the batch path pass the same value);
+      # the dispatch below uses the fully-resolved become/become_user.
 
       # `become`/`become_user` here are the caller's already-resolved
       # values (resolve_task_become, with the play-level become:
@@ -2535,7 +2556,7 @@ module Krikri
       # confirmed live against a real host with root/passwordless-sudo
       # already proven to work for every OTHER plugin dispatch in the
       # same play.
-      config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user, substituted_env)
+      config = build_plugin_config(task, exec_host, py_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
 
       # The DISPATCH decision gets the controller's own unflipped
       # vars_context, mirroring the normal plugin dispatch above - NOT
