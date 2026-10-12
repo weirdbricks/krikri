@@ -66,7 +66,7 @@ describe "docker sdk import gate" do
         Krikri::PluginHelpers::DockerClient.sdk_import_gate
       end
       error.message.must_equal(expected)
-      error.detail.must_equal("#{expected}: No module named 'requests'")
+      error.detail.must_equal(expected)
     end
   end
 

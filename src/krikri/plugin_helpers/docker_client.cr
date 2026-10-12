@@ -124,7 +124,9 @@ module Krikri
         return if @@gate_checked
         @@gate_checked = true
         return unless gate = Krikri.missing_python_library("requests", "requests")
-        raise SdkImportGateError.new(gate[:msg], gate[:detail])
+        # The docker modules' fail_json carries no `exception`, so real's
+        # [ERROR] block is the bare msg - no ": No module named 'requests'".
+        raise SdkImportGateError.new(gate[:msg], gate[:msg])
       end
 
       # Clears the per-process memoization above - the specs run several
