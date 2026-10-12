@@ -12945,3 +12945,110 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `kop_task_timeout` | ubuntu | ✅ clean, `timeout:` probe (slow shell, per-item loop, block inheritance) identical key order and values cold and warm (round 3700001, 0.9.1541 static release). Times: cold py 19.55s vs cr 29.30s; warm py 19.64s vs cr 23.13s. |
 | `kop_action_timeout` | ubuntu | ✅ clean, action-plugin `timeout:` (`pause`, `pause` loop) and an erroring templated task name identical cold and warm (round 3800000, 0.9.1541 static release). Times: cold py 13.23s vs cr 13.32s; warm py 12.00s vs cr 8.29s. |
 | `kop_upload_window` | ubuntu | ✅ clean, `timeout: 1` task right after krikri's uploaded plugin directory was deleted passes on both engines (round 3700000, 0.9.1541 static release). Times: cold py 6.60s vs cr 9.97s; warm py 4.83s vs cr 3.35s. |
+
+## Round 29863740-29863839 (2026-10-12): 100-role auto-mode batch, 0.9.1656 release (commit d24675e0)
+
+73 byte-identical (35 clean, 38 matched failures), 27 divergent; divergences filed as issues #17-#29.
+
+| Role | OS | Status |
+|---|---|---|
+| `andrewrothstein.docker_buildx` | ubuntu | ✅ clean, byte-identical cold and warm (round29863816, 0.9.1656 release). Times: cold py 9.82s vs cr 5.52s; warm py 6.85s vs cr 0.64s. |
+| `andrewrothstein.git_build` | ubuntu | ✅ clean, byte-identical cold and warm (round29863782, 0.9.1656 release). Times: cold py 5.95s vs cr 3.39s; warm py 4.80s vs cr 0.39s. |
+| `ansiblebit.httpd` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863745, 0.9.1656 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `azavea.duply` | rocky | ❌ Divergent - issue #18 (round29863749, 0.9.1656 release). Times: cold py 6.15s vs cr 6.44s; warm py 6.05s vs cr 0.31s. |
+| `bilalcaliskan.zookeeper` | rocky | ❌ Divergent - issue #17 (round29863817, 0.9.1656 release). Times: cold py 220.32s vs cr 194.46s; warm py 29.95s vs cr 2.09s. |
+| `bostjanbozic.redis` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863752, 0.9.1656 release). Times: cold py 0.47s vs cr 0.02s; warm py 0.48s vs cr 0.01s. |
+| `calvinbui.ansible_nut` | rocky | ❌ Divergent - issue #18 (round29863839, 0.9.1656 release). Times: cold py 39.37s vs cr 30.93s; warm py 39.84s vs cr 26.13s. |
+| `capitanh.harbork8s_ansible_role` | rocky | ❌ Divergent - issue #18 (round29863763, 0.9.1656 release). Times: cold py 5.45s vs cr 4.77s; warm py 3.68s vs cr 0.29s. |
+| `capitanh.oraclejdk-ansible-role` | rocky | ❌ Divergent - issue #17 (round29863837, 0.9.1656 release). Times: cold py 13.97s vs cr 11.11s; warm py 7.72s vs cr 0.86s. |
+| `chzerv.log2ram` | ubuntu | ✅ clean, byte-identical cold and warm (round29863820, 0.9.1656 release). Times: cold py 405.64s vs cr 368.11s; warm py 86.41s vs cr 52.31s. |
+| `claranet.nodejs` | rocky | ❌ Divergent - issue #23 (round29863747, 0.9.1656 release). Times: cold py 4.12s vs cr 5.43s; warm py 3.68s vs cr 0.28s. |
+| `cloudweeb.backupninja` | rocky | ❌ Divergent - issue #19 (round29863801, 0.9.1656 release). Times: cold py 25.32s vs cr 28.89s; warm py 9.78s vs cr 4.90s. |
+| `cmacrae.common` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863776, 0.9.1656 release). Times: cold py 0.70s vs cr 0.01s; warm py 1.72s vs cr 0.03s. |
+| `coglinev3.ansible_common` | rocky | ✅ clean, byte-identical cold and warm (round29863777, 0.9.1656 release). Times: cold py 49.09s vs cr 42.96s; warm py 68.39s vs cr 0.88s. |
+| `cypreess.buildpack-django-app` | ubuntu | ✅ clean, byte-identical cold and warm (round29863838, 0.9.1656 release). Times: cold py 3.45s vs cr 4.35s; warm py 2.45s vs cr 0.33s. |
+| `cypreess.postgres` | ubuntu | ✅ clean, byte-identical cold and warm (round29863810, 0.9.1656 release). Times: cold py 64.52s vs cr 48.37s; warm py 19.26s vs cr 11.97s. |
+| `daniel-rhoades.aws-vpc` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863762, 0.9.1656 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `daniel-rhoades.tomcat` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863809, 0.9.1656 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `deimosfr.coreos-container-linux` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863802, 0.9.1656 release). Times: cold py 0.49s vs cr 0.02s; warm py 0.45s vs cr 0.01s. |
+| `derjd.docker` | ubuntu | ✅ clean, byte-identical cold and warm (round29863786, 0.9.1656 release). Times: cold py 75.20s vs cr 58.06s; warm py 12.37s vs cr 0.67s. |
+| `devops-coop.minecraft` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863767, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `dj-wasabi.ossec-agent` | ubuntu | ❌ Divergent - issue #20 (round29863780, 0.9.1656 release). Times: cold py 39.73s vs cr 142.56s; warm py 10.56s vs cr 121.05s. |
+| `dochang.lsbrelease` | rocky | ❌ Divergent - issue #19 (round29863825, 0.9.1656 release). Times: cold py 6.05s vs cr 6.89s; warm py 5.98s vs cr 2.45s. |
+| `dottgonzo.add_ubuntu_production_server_basic_tools` | ubuntu | ✅ clean, byte-identical cold and warm (round29863790, 0.9.1656 release). Times: cold py 23.90s vs cr 23.94s; warm py 7.89s vs cr 3.41s. |
+| `dottgonzo.ansible_role_add_kvm_vm` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863826, 0.9.1656 release). Times: cold py 4.06s vs cr 3.29s; warm py 2.69s vs cr 0.37s. |
+| `dottgonzo.ansible_role_add_ssh_key` | ubuntu | ✅ clean, byte-identical cold and warm (round29863798, 0.9.1656 release). Times: cold py 4.40s vs cr 3.45s; warm py 2.63s vs cr 0.28s. |
+| `dottgonzo.ansible_role_create_users` | ubuntu | ✅ clean, byte-identical cold and warm (round29863824, 0.9.1656 release). Times: cold py 4.10s vs cr 3.26s; warm py 2.94s vs cr 0.39s. |
+| `dottgonzo.ansible_role_deploy_swarm_stackfiles` | ubuntu | ✅ clean, byte-identical cold and warm (round29863822, 0.9.1656 release). Times: cold py 3.92s vs cr 3.18s; warm py 2.64s vs cr 0.34s. |
+| `dottgonzo.ansible_role_login_into_docker_registry` | rocky | ✅ clean, byte-identical cold and warm (round29863819, 0.9.1656 release). Times: cold py 3.46s vs cr 6.27s; warm py 2.68s vs cr 0.34s. |
+| `dottgonzo.ansible_role_reboot_machine` | ubuntu | ✅ clean, byte-identical cold and warm (round29863828, 0.9.1656 release). Times: cold py 45.54s vs cr 38.18s; warm py 36.76s vs cr 35.11s. |
+| `dottgonzo.ansible_role_set_netplan_file` | rocky | ✅ clean, byte-identical cold and warm (round29863823, 0.9.1656 release). Times: cold py 4.24s vs cr 5.24s; warm py 2.97s vs cr 0.28s. |
+| `dottgonzo.set_common_system_settings` | ubuntu | ✅ clean, byte-identical cold and warm (round29863774, 0.9.1656 release). Times: cold py 78.13s vs cr 47.88s; warm py 24.30s vs cr 4.49s. |
+| `dottgonzo.upgrade_system_and_reboot` | rocky | ❌ Divergent - issue #18 (round29863771, 0.9.1656 release). Times: cold py 5.36s vs cr 5.43s; warm py 4.39s vs cr 0.39s. |
+| `ElaoInfra.motd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863784, 0.9.1656 release). Times: cold py 1.20s vs cr 0.04s; warm py 0.47s vs cr 0.01s. |
+| `Fantomatic.win-ec2` | rocky | ❌ Divergent - issue #29 (round29863769, 0.9.1656 release). Times: cold py 0.51s vs cr 0.03s; warm py 0.50s vs cr 0.03s. |
+| `fcsonline.port-knocking` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863831, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `fesaille.gh` | rocky | ✅ clean, byte-identical cold and warm (round29863795, 0.9.1656 release). Times: cold py 13.29s vs cr 12.51s; warm py 5.87s vs cr 0.45s. |
+| `grycap.docker-registry` | ubuntu | ✅ clean, byte-identical cold and warm (round29863778, 0.9.1656 release). Times: cold py 458.69s vs cr 435.01s; warm py 19.42s vs cr 2.25s. |
+| `hax0rbana_adam.collabora_online` | rocky | ❌ Divergent - issue #19 (round29863781, 0.9.1656 release). Times: cold py 10.99s vs cr 8.81s; warm py 9.15s vs cr 3.44s. |
+| `hifis.gitlab_base` | ubuntu | ✅ clean, byte-identical cold and warm (round29863754, 0.9.1656 release). Times: cold py 284.33s vs cr 262.57s; warm py 14.19s vs cr 4.33s. |
+| `hoplacloud.linux_motd` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863750, 0.9.1656 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `hoplacloud.linux_update` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863830, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `hxpro.selinux` | ubuntu | ✅ clean, byte-identical cold and warm (round29863834, 0.9.1656 release). Times: cold py 5.27s vs cr 3.53s; warm py 3.64s vs cr 0.34s. |
+| `IbrahimMohammad.mysql_secure_installation` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863748, 0.9.1656 release). Times: cold py 4.90s vs cr 3.62s; warm py 3.76s vs cr 0.37s. |
+| `idealista.kafka_role` | ubuntu | ❌ Divergent - timestamp-only diffs in fatal output (start/end or cache_update_time); no engine fix, mask candidate (round29863796, 0.9.1656 release). Times: cold py 734.64s vs cr 555.45s; warm py 328.43s vs cr 307.23s. |
+| `idealista.tomcat_role` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863764, 0.9.1656 release). Times: cold py 94.75s vs cr 64.87s; warm py 37.68s vs cr 39.11s. |
+| `ivansible.nginx_base` | ubuntu | ✅ clean, byte-identical cold and warm (round29863814, 0.9.1656 release). Times: cold py 4.10s vs cr 3.19s; warm py 2.82s vs cr 0.31s. |
+| `jahrik.i3_gaps` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863783, 0.9.1656 release). Times: cold py 4.08s vs cr 6.18s; warm py 2.58s vs cr 0.27s. |
+| `jetune.gradle` | ubuntu | ❌ Divergent - issue #17 (round29863740, 0.9.1656 release). Times: cold py 11.48s vs cr 7.16s; warm py 7.88s vs cr 0.90s. |
+| `jgrowl.ddclient` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863756, 0.9.1656 release). Times: cold py 5.82s vs cr 3.90s; warm py 4.98s vs cr 0.55s. |
+| `jtyr.ansible_etc_hosts` | ubuntu | ✅ clean, byte-identical cold and warm (round29863804, 0.9.1656 release). Times: cold py 4.27s vs cr 3.04s; warm py 3.03s vs cr 0.36s. |
+| `justereseau.common` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863803, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `kadaan.homebrew` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863791, 0.9.1656 release). Times: cold py 4.35s vs cr 7.48s; warm py 2.63s vs cr 0.43s. |
+| `kawaz.certbot` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863761, 0.9.1656 release). Times: cold py 3.89s vs cr 5.21s; warm py 2.82s vs cr 0.31s. |
+| `kireevco.newrelic-java-agent` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863758, 0.9.1656 release). Times: cold py 9.02s vs cr 3.99s; warm py 4.93s vs cr 0.49s. |
+| `laniakea.cvmfs_client_config` | ubuntu | ✅ clean, byte-identical cold and warm (round29863742, 0.9.1656 release). Times: cold py 4.86s vs cr 3.61s; warm py 3.59s vs cr 0.34s. |
+| `laniakea.galaxy_ie` | rocky | ❌ Divergent - issue #25 (round29863753, 0.9.1656 release). Times: cold py 5.71s vs cr 5.30s; warm py 3.70s vs cr 0.36s. |
+| `lchabert.python34` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863806, 0.9.1656 release). Times: cold py 0.52s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `luisarizmendi.ocp_prereq_role` | rocky | ❌ Divergent - issues #20, #27 (round29863757, 0.9.1656 release). Times: cold py 55.93s vs cr 65.30s; warm py 44.61s vs cr 13.93s. |
+| `marcusianlevine.airflow` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863770, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `marcusianlevine.sbt` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863815, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.44s vs cr 0.01s. |
+| `marvinpinto.oauth2-proxy` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863792, 0.9.1656 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.51s vs cr 0.01s. |
+| `memiah.firewalld` | rocky | ✅ clean, byte-identical cold and warm (round29863775, 0.9.1656 release). Times: cold py 10.98s vs cr 6.69s; warm py 8.15s vs cr 0.91s. |
+| `memiah.mysql-s3-restore` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863787, 0.9.1656 release). Times: cold py 0.48s vs cr 0.02s; warm py 0.47s vs cr 0.01s. |
+| `mimacom.crowd` | rocky | ❌ Divergent - issue #17 (round29863835, 0.9.1656 release). Times: cold py 51.61s vs cr 51.73s; warm py 17.70s vs cr 3.53s. |
+| `mrlesmithjr.ansible_prometheus` | rocky | ❌ Divergent - issue #17 (round29863793, 0.9.1656 release). Times: cold py 11.74s vs cr 8.47s; warm py 11.04s vs cr 2.38s. |
+| `mrlesmithjr.mysql` | rocky | ❌ Divergent - issue #19 (round29863821, 0.9.1656 release). Times: cold py 31.16s vs cr 138.81s; warm py 29.97s vs cr 21.59s. |
+| `nick_invision.macos_github_actions_runner` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863751, 0.9.1656 release). Times: cold py 4.30s vs cr 4.61s; warm py 2.61s vs cr 0.28s. |
+| `oasis_roles.kdump` | rocky | ✅ clean, byte-identical cold and warm (round29863755, 0.9.1656 release). Times: cold py 33.24s vs cr 27.69s; warm py 8.18s vs cr 0.49s. |
+| `oktapodia.phpunit` | ubuntu | ✅ clean, byte-identical cold and warm (round29863760, 0.9.1656 release). Times: cold py 7.34s vs cr 5.19s; warm py 3.46s vs cr 0.35s. |
+| `ome.docker_slack_notifier` | rocky | ❌ Divergent - issue #17 (round29863799, 0.9.1656 release). Times: cold py 10.09s vs cr 7.00s; warm py 7.31s vs cr 0.36s. |
+| `oussemos.ntp` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863813, 0.9.1656 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
+| `poppen.iptables_legacy` | ubuntu | ✅ clean, byte-identical cold and warm (round29863818, 0.9.1656 release). Times: cold py 32.94s vs cr 18.20s; warm py 15.43s vs cr 1.07s. |
+| `rafael-c-alexandre.ntp` | ubuntu | ✅ clean, byte-identical cold and warm (round29863744, 0.9.1656 release). Times: cold py 33.77s vs cr 19.10s; warm py 13.96s vs cr 0.64s. |
+| `robertdebock.minikube` | rocky | ❌ Divergent - issue #28 (round29863773, 0.9.1656 release). Times: cold py 16.46s vs cr 11.27s; warm py 10.92s vs cr 0.66s. |
+| `sansible.prometheus_elasticsearch_exporter` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863807, 0.9.1656 release). Times: cold py 0.45s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `sansible.prometheus_nginx_exporter` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863797, 0.9.1656 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `sansible.prometheus_server` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863766, 0.9.1656 release). Times: cold py 0.48s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
+| `sh0shin.doas` | ubuntu | ✅ clean, byte-identical cold and warm (round29863812, 0.9.1656 release). Times: cold py 4.24s vs cr 3.49s; warm py 2.71s vs cr 0.31s. |
+| `sh0shin.motd` | ubuntu | ✅ clean, byte-identical cold and warm (round29863836, 0.9.1656 release). Times: cold py 4.50s vs cr 3.82s; warm py 2.82s vs cr 0.32s. |
+| `slicen.ansible_role_portainer` | rocky | ❌ Divergent - issue #26 (round29863785, 0.9.1656 release). Times: cold py 5.79s vs cr 5.50s; warm py 4.65s vs cr 0.35s. |
+| `SoInteractive.docker` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863741, 0.9.1656 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `solutionDrive.readthedocs` | ubuntu | ✅ clean, byte-identical cold and warm (round29863800, 0.9.1656 release). Times: cold py 7.03s vs cr 3.16s; warm py 6.00s vs cr 0.34s. |
+| `sprylab.tomcat-ubuntu` | ubuntu | ❌ Divergent - issue #24 (round29863794, 0.9.1656 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.46s vs cr 0.01s. |
+| `stackhpc.mlnx-neo` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863779, 0.9.1656 release). Times: cold py 0.66s vs cr 0.01s; warm py 0.50s vs cr 0.01s. |
+| `stackhpc.mlnx-ufm` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863789, 0.9.1656 release). Times: cold py 0.50s vs cr 0.01s; warm py 0.47s vs cr 0.01s. |
+| `Stouts.nodejs` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863746, 0.9.1656 release). Times: cold py 0.51s vs cr 0.01s; warm py 0.55s vs cr 0.01s. |
+| `thomasjpfan.docker` | ubuntu | ❌ Divergent - timestamp-only diffs in fatal output (start/end or cache_update_time); no engine fix, mask candidate (round29863768, 0.9.1656 release). Times: cold py 40.97s vs cr 21.47s; warm py 10.48s vs cr 1.52s. |
+| `thorian93.postfix` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863827, 0.9.1656 release). Times: cold py 4.25s vs cr 5.79s; warm py 3.17s vs cr 0.36s. |
+| `tinyblargon.autofs` | ubuntu | ✅ clean, byte-identical cold and warm (round29863788, 0.9.1656 release). Times: cold py 39.34s vs cr 26.29s; warm py 13.20s vs cr 0.58s. |
+| `tobias_richter.apt_packages` | rocky | ❌ Divergent - issue #18 (round29863805, 0.9.1656 release). Times: cold py 5.54s vs cr 5.59s; warm py 3.83s vs cr 0.30s. |
+| `tobias_richter.apt_upgrade` | ubuntu | ✅ clean, byte-identical cold and warm (round29863772, 0.9.1656 release). Times: cold py 295.92s vs cr 276.09s; warm py 18.56s vs cr 7.19s. |
+| `tobias_richter.users` | rocky | ✅ clean, byte-identical cold and warm (round29863811, 0.9.1656 release). Times: cold py 3.98s vs cr 4.89s; warm py 2.58s vs cr 0.29s. |
+| `tschifftner.java` | rocky | ❌ Divergent - issue #21 (round29863743, 0.9.1656 release). Times: cold py 3.92s vs cr 4.87s; warm py 2.72s vs cr 0.35s. |
+| `tumf.docker-compose` | rocky | ❌ Divergent - issue #22 (round29863829, 0.9.1656 release). Times: cold py 6.72s vs cr 5.47s; warm py 5.12s vs cr 1.19s. |
+| `weareinteractive.php5` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29863808, 0.9.1656 release). Times: cold py 5.18s vs cr 4.12s; warm py 3.45s vs cr 0.59s. |
+| `wrboyce.snmpd` | ubuntu | ✅ clean, byte-identical cold and warm (round29863832, 0.9.1656 release). Times: cold py 27.41s vs cr 18.73s; warm py 9.32s vs cr 0.59s. |
+| `wtanaka.android_sdk` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863765, 0.9.1656 release). Times: cold py 0.46s vs cr 0.01s; warm py 0.45s vs cr 0.01s. |
+| `wtanaka.newrelic-sysmond` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29863759, 0.9.1656 release). Times: cold py 1.14s vs cr 0.04s; warm py 0.45s vs cr 0.01s. |
+| `ZeroDowntime.environment` | rocky | ✅ clean, byte-identical cold and warm (round29863833, 0.9.1656 release). Times: cold py 3.93s vs cr 5.55s; warm py 2.43s vs cr 0.33s. |
