@@ -931,6 +931,43 @@ module Krikri
       @@retemplating_depth = 0
       MAX_RETEMPLATING_DEPTH = 50
 
+      # The message ansible-core's Templar raises for the same shape
+      # (TemplateRecursionError, "recursive loop detected in template
+      # string"). Shared with the re-raise helpers below so a krikri-jinja
+      # TemplateError wrapping this error (the engine wraps every resolver
+      # exception) is recognized by its message and unwrapped back to the
+      # real class at the engine boundary.
+      RECURSION_ERROR_MESSAGE = "Recursive loop detected in template: mutually-templated variable values (e.g. a: \"{{ b }}\" / b: \"{{ a }}\") never converge"
+      RECURSION_ERROR_MARK    = "Recursive loop detected in template"
+
+      # The fallback-rescue convention across both evaluators and the
+      # lenient render path (evaluate_expr_dotted's `rescue` -> plain
+      # lookup, whole_span_structured's `rescue` -> nil, JinjaRenderer#
+      # render's `rescue` -> original text) exists for UNKNOWN constructs,
+      # and a TemplateRecursionError is not one: swallowing it made every
+      # fallback re-attempt the same cycle (the round-5460170 hang - the
+      # guard tripped at the cap over a thousand times in five seconds
+      # without the error ever surfacing), and the lenient render's
+      # give-back-the-original-text behavior fed the still-templated text
+      # back to the outer re-pass loop, which re-rendered it forever.
+      # Call this first in any rescue that sits on a re-render path: it
+      # re-raises the error (unwrapping the engine's "line N: " prefix
+      # when krikri-jinja wrapped it) so the cycle fails the task the way
+      # ansible-core does.
+      def self.re_raise_recursion(error : Exception) : Nil
+        return unless recursion_error?(error)
+        # A raw TemplateRecursionError is re-raised as-is; an engine-wrapped
+        # one gets the clean constant back - the engine prefixes every wrap
+        # with its own "line N: ", and a cycle that crossed several engine
+        # layers arrived with that prefix stacked twenty deep.
+        raise error.is_a?(TemplateRecursionError) ? error : TemplateRecursionError.new(RECURSION_ERROR_MESSAGE)
+      end
+
+      def self.recursion_error?(error : Exception) : Bool
+        return true if error.is_a?(TemplateRecursionError)
+        error.is_a?(KrikriJinja::TemplateError) && (error.message || "").includes?(RECURSION_ERROR_MARK)
+      end
+
       # Runs *block* under the re-templating depth guard. Every entry
       # point that re-renders a variable's own unrendered `{{ }}` value
       # must go through this - a cycle can re-enter through any of them
@@ -948,9 +985,20 @@ module Krikri
       # Manual enter/exit pair for call sites whose body can't be a block
       # (VarSubstitutor#substitute_impl wraps a long multi-return body in
       # a method-level ensure instead).
+      #
+      # The increment happens BEFORE the cap check, not after: the old
+      # raise-then-never-increment order let every caller's matching
+      # `exit_retemplating` (with_depth_guard's ensure, substitute_impl's
+      # own ensure) decrement a level that was never entered - so at the
+      # cap the counter leaked DOWNWARD one per failed entry and the
+      # mutual-cycle descent oscillated just under it forever, each level
+      # re-running the whole cycle instead of ever surfacing the error
+      # (the round-5460170 hang). Increment-then-check keeps enter/exit
+      # strictly paired, so the depth really accumulates through the
+      # nested re-passes and the cap raises exactly once, at the top.
       def self.enter_retemplating : Nil
         if @@retemplating_depth >= MAX_RETEMPLATING_DEPTH
-          raise TemplateRecursionError.new("Recursive loop detected in template: mutually-templated variable values (e.g. a: \"{{ b }}\" / b: \"{{ a }}\") never converge")
+          raise TemplateRecursionError.new(RECURSION_ERROR_MESSAGE)
         end
         @@retemplating_depth += 1
       end
@@ -1021,7 +1069,12 @@ module Krikri
         value
       rescue e : UndefinedVariableError
         raise e
-      rescue
+      rescue e
+        # A TemplateRecursionError (or the engine's wrapped form of one)
+        # must surface, not degrade to the nil "path does not apply"
+        # return - that nil sent every caller down its re-render fallback,
+        # re-attempting the same cycle forever (the round-5460170 hang).
+        Rerender.re_raise_recursion(e)
         nil
       end
 

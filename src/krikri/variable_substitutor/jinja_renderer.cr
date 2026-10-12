@@ -145,6 +145,15 @@ module Krikri
       def render(text : String) : String
         render!(text)
       rescue e : KrikriJinja::TemplateError
+        # A mutual-template cycle's recursion error raised inside the
+        # engine's lazy variable preparation (prepare_var -> substitute)
+        # arrives wrapped as a TemplateError. It must NEVER take the
+        # lenient give-back-the-original-text path below: the
+        # still-templated text re-entered the outer re-pass loop and was
+        # re-rendered forever (the round-5460170 hang). Unwrapped to the
+        # real TemplateRecursionError so the cycle fails the task the way
+        # ansible-core's own "recursive loop detected in template" does.
+        Rerender.re_raise_recursion(e)
         # An unknown FILTER or TEST name must never degrade to the
         # original unrendered text here: Jinja2/Ansible hard-fails
         # the task at compile time ("No filter named 'X'." / "No test
@@ -199,7 +208,12 @@ module Krikri
         # unavailable mechanism degrades, and it degrades inside the
         # dispatch, never as this exception).
         raise e
-      rescue
+      rescue e
+        # Same recursion carve-out as the TemplateError arm above: a raw
+        # TemplateRecursionError re-raised from a nested render lands here
+        # too, and returning the original text on it re-opened the outer
+        # re-pass loop forever.
+        Rerender.re_raise_recursion(e)
         # Return original text on failure
         text
       end
@@ -248,6 +262,13 @@ module Krikri
       def evaluate_value!(expr : String) : JSON::Any?
         evaluate_value_once!(expr)
       rescue e : KrikriJinja::TemplateError
+        # The engine wraps a nested prepare_var's TemplateRecursionError
+        # (a mutual-template cycle detected by the shared depth guard)
+        # into a TemplateError; unwrapping it here keeps the recursion
+        # error propagating instead of flowing into the unknown-filter/
+        # unknown-test retry machinery below, which re-runs the same
+        # cycle (the round-5460170 hang).
+        Rerender.re_raise_recursion(e)
         if name = KrikriJinjaFilters.unknown_filter_name(e)
           raise e unless KrikriJinjaFilters.ensure_shared_python_filter(name, @vars)
         elsif test_name = KrikriJinjaFilters.unknown_test_name(e)
