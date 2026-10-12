@@ -22,6 +22,16 @@
       ansible.builtin.debug:
         msg: "polled_result finished={{ polled_result.finished }} changed={{ polled_result.changed }}"
 
+    - name: a poll 1 job that needs a second poll tick
+      ansible.builtin.command: /bin/sleep 2
+      async: 30
+      poll: 1
+      register: polled_slow_result
+
+    - name: show the slow polled async result
+      ansible.builtin.debug:
+        msg: "polled_slow_result finished={{ polled_slow_result.finished }}"
+
     - name: a fire-and-forget async task with poll 0 returns immediately
       ansible.builtin.command: sleep 1
       async: 30

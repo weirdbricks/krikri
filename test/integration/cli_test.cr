@@ -2150,6 +2150,12 @@ describe "krikri-playbook CLI (--check mode)" do
     # ansible-core 2.19.11 renders its registered .finished as the
     # JSON boolean True (live-verified), not the integer 1.
     output.must_include("polled_result finished=True changed=True")
+    # ansible's async_status poll loop prints a POLL line for each tick
+    # that finds the job unfinished and an OK line when it finishes
+    # successfully - the sleep 2 / poll 1 fixture task yields at least one
+    # of each (how many POLL ticks it gets depends on scheduling).
+    output.must_match(/ASYNC POLL on localhost: jid=\S+ started=True finished=False/)
+    output.must_match(/ASYNC OK on localhost: jid=\S+/)
     # poll: 0 returns immediately with a job id, not the real result yet:
     # Ansible prints no "Job started" console line at all (the old
     # krikri-only msg key is gone), so the registered fire-and-forget
