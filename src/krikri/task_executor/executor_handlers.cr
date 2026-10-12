@@ -976,7 +976,7 @@ module Krikri
         return result
       end
       substituted_params = staged_assemble
-      substituted_become_user = handler.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+      substituted_become_user = resolve_task_become_user(handler, vars_context, substitutor)
 
       # `timeout:` - same resolution and range validation the regular
       # task path runs (see execute_task_once), at the same point: after
@@ -1083,9 +1083,10 @@ module Krikri
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
-      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env)
-
       become = resolve_task_become(handler, substitutor)
+
+      config = build_plugin_config(handler, host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
+
       become_user = nil
 
       if become

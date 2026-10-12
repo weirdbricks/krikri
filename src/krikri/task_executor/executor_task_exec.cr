@@ -2069,6 +2069,7 @@ module Krikri
       vars_context : Hash(String, JSON::Any),
       become_user : String? = task.become_user,
       substituted_env : Hash(String, String)? = nil,
+      become_flag : Bool? = nil,
     ) : String
       # Add check_mode and diff_mode to params
       final_params = params.dup
@@ -2166,7 +2167,7 @@ module Krikri
         # top-level config fields (not nested under "params") so this
         # round-trips through async:'s job file (written verbatim from this
         # same config) without __async_run needing any extra plumbing.
-        "become"      => task.become?.to_s,
+        "become"      => (become_flag.nil? ? task.become? : become_flag).to_s,
         "become_user" => become_user,
       }
 
