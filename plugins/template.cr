@@ -522,6 +522,17 @@ module Krikri
       # overwritten instead of replaced, silently diverging from
       # Ansible's follow=false (and silently "succeeding" where
       # Ansible's follow default writes a real file).
+      # Ansible's atomic_move chowns the staged file to an existing
+      # dest's uid/gid before the rename, so e.g. Debian's redis:redis
+      # /etc/redis/redis.conf stays readable by its service.
+      begin
+        if !File.symlink?(dest) && (info = File.info?(dest, follow_symlinks: false))
+          File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
+        end
+      rescue File::Error
+        # Best-effort: non-root can't chown.
+      end
+
       begin
         File.rename(temp_file, dest)
       rescue
