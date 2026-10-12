@@ -969,7 +969,9 @@ module Krikri
     #   carrying Ansible's exact wording.
     # - every other module-level failure: "Module failed." + the result
     #   message (the module API's own wrapper), collapsed.
-    private def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
+    # Public (not private) only so the unit suite can pin each module's
+    # chain shape directly, the way the other display helpers here are.
+    def self.task_error_chain(module_name : String?, msg : String, origin : String) : ErrorBlock::Node
       root = ErrorBlock::Node.new("Task failed.", source_context: origin)
 
       # set_fact's strict cacheable: conversion failure (a plain
@@ -1025,8 +1027,17 @@ module Krikri
         # for a controller-side src miss (live-verified: the fatal msg
         # carries the "Task failed: " brief prefix itself and the block
         # is the single collapsed segment).
-        inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
-        root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+        if msg.starts_with?("Failed to find handler for ")
+          # pick_handler's failure is raised by the MODULE itself
+          # (AnsibleModule.fail_json in unarchive.py), not the
+          # controller-side action plugin - real renders the generic
+          # module-failure chain ("Task failed: Module failed: <msg>",
+          # live-verified vs 2.19.11), unlike the src-miss failure below.
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
+        else
+          inner = msg.starts_with?("Task failed: ") ? msg["Task failed: ".size..] : msg
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner))
+        end
       when "script"
         if msg.starts_with?("Could not find or access '")
           # script:'s controller-side src miss: real re-raises the
