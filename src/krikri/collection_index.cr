@@ -317,6 +317,18 @@ module Krikri
       nil
     end
 
+    # A bare module name's ansible_builtin_runtime.yml redirect target
+    # ("modules" routing), when the builtin runtime carries one for it
+    # (bare `docker_service:` -> community.general.docker_service) - the
+    # hop real's loader takes a bare name through before any target
+    # collection's own meta/runtime.yml (and its tombstones) is
+    # consulted. nil when the name has no builtin-runtime redirect; the
+    # baked 2.19.11 table is the fallback when no ansible-core
+    # installation is discoverable, same as builtin_redirects.
+    def self.builtin_module_redirect(name : String) : String?
+      builtin_redirects("modules").try(&.[name]?)
+    end
+
     # One collection's meta/runtime.yml redirect table for a routing
     # kind, lazily read and memoized per collection directory. nil = no
     # redirects (file missing, no plugin_routing.<kind> section,
