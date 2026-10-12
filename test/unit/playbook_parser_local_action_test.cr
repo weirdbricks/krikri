@@ -104,6 +104,22 @@ describe "Krikri::PlaybookParser (playbook_parser_local_action_test.cr)" do
       end
     end
 
+    it "reports a bool type error when a legacy sudo: precedes the module key" do
+      # sprylab.tomcat-ubuntu: ansible takes the first non-attribute key
+      # (sudo) as the action and type-checks it before apt can conflict.
+      assert_raises_message(Krikri::MetaActionTypeError, "unexpected parameter type in action: <class 'bool'>") do
+        Krikri::PlaybookParser.parse_string(<<-YAML)
+          - name: legacy first
+            hosts: all
+            gather_facts: false
+            tasks:
+              - name: install
+                sudo: yes
+                apt: name=tar
+          YAML
+      end
+    end
+
     it "keeps a templated module name for run-time resolution instead of marking it unavailable" do
       pb = Krikri::PlaybookParser.parse_string(<<-YAML)
         - name: templated action
