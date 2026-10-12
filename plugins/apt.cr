@@ -261,13 +261,32 @@ module Krikri
       # (round 196). Without this guard this engine's dpkg-query-based
       # absent path quietly reported "Package ... not installed" rc=0.
       unless File.exists?("/usr/bin/apt-get") || File.exists?("/usr/local/bin/apt-get")
-        return PluginResult.new(
+        # Real run_command's ENOENT shape keeps the bare "Error executing
+        # command." as the fatal msg while the [ERROR] block renders the
+        # Errno text from the exception field - here carried as
+        # _ansible_error_detail like the APT::Default-Release exit below
+        # (live-verified vs 2.19.11, round 196 / issue #18: "Task failed:
+        # Module failed: Error executing command: [Errno 2] No such file
+        # or directory: b'update'"). The fail_json dict carries empty
+        # stdout/stderr(+_lines), no cache keys, and its keys dump sorted;
+        # the module warns about the python3-apt auto-install it was
+        # attempting before failing.
+        @omit_cache_updated = true
+        result = PluginResult.new(
           changed: false,
           failed: true,
           msg: "Error executing command.",
           cmd: "update",
-          rc: 2
+          rc: 2,
+          stdout: "",
+          stderr: "",
+          stdout_lines: [] of String,
+          stderr_lines: [] of String,
+          key_order: ["changed", "cmd", "msg", "rc", "stderr", "stderr_lines", "stdout", "stdout_lines"],
+          _ansible_error_detail: "Error executing command: [Errno 2] No such file or directory: b'update'"
         )
+        result.extra["warnings"] = JSON.parse(["Updating cache and auto-installing missing dependency: python3-apt"].to_json)
+        return result
       end
 
       # Ansible's apt module auto-installs the python3-apt bindings
@@ -1130,10 +1149,10 @@ module Krikri
         io << "\\A"
         pin.each_char do |char|
           case char
-          when '*' then io << ".*"
-          when '?' then io << '.'
+          when '*'      then io << ".*"
+          when '?'      then io << '.'
           when '[', ']' then io << char
-          else          io << Regex.escape(char.to_s)
+          else               io << Regex.escape(char.to_s)
           end
         end
         io << "\\z"
@@ -1142,7 +1161,6 @@ module Krikri
     rescue Regex::Error
       pin == candidate
     end
-
 
     # Parses apt-get's own end-of-run summary line ("0 upgraded, 0 newly
     # installed, 0 to remove and N not upgraded.") to tell a genuine
@@ -1158,7 +1176,6 @@ module Krikri
       return false unless match
       match[1] == "0" && match[2] == "0"
     end
-
 
     # Real package_status()'s lone-installed-provider resolution for a
     # purely virtual name (see handle_latest's spec_list): the provider's
