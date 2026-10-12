@@ -5311,6 +5311,19 @@ module Krikri
             # templates msg through the native-typing Templar); the strings-only
             # wire would otherwise turn it into "1"/"true"
             params[key.to_s] = fact_literal_wire_value(value)
+          elsif module_name == "ansible.builtin.debug" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
+            # debug: msg: <list-or-dict> keeps the container native the same
+            # way the scalar branch above does: Ansible's debug action puts
+            # the task arg into result['msg'] verbatim, so a YAML list msg
+            # prints/registers as a real list (zhan9san.java round, issue #7
+            # - the generic comma-join below fused the items into one
+            # string). The NATIVE_TYPED_PREFIX payload carries the leaves'
+            # `{{ }}` templates intact; substitute_task_params renders them
+            # per-leaf before the action plugin decodes the container.
+            # Templated WHOLE values (`msg: "{{ list_var }}"`) are never
+            # marked here - the executor's whole-span structural evaluation
+            # owns their type, as for every other module.
+            params[key.to_s] = Krikri::NATIVE_TYPED_PREFIX + value.to_json
           elsif module_name == "ansible.builtin.fail" && key.to_s == "msg" && (value.raw.is_a?(Hash) || value.raw.is_a?(Array))
             # fail: msg keeps CONTAINER literals native too: Ansible's fail
             # action puts the task arg into result['msg'] verbatim, so
