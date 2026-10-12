@@ -69,25 +69,32 @@ module Krikri
       # plugin-binary configs whose wire vars are pruned still see the
       # inventory's ansible_host/ansible_port/... exactly like the old
       # per-site reads did.
-      user = string_var(vars, "ansible_user") ||
-             string_var(vars, "ansible_ssh_user") ||
-             string_var(host.vars, "ansible_user") ||
-             string_var(host.vars, "ansible_ssh_user") ||
+      user = tiered_var(vars, host, "ansible_user", "ansible_ssh_user") ||
              host.user || "root"
       port = port_var(vars) || port_var(host.vars) || host.port
-      conn_host = string_var(vars, "ansible_host") ||
-                  string_var(vars, "ansible_ssh_host") ||
-                  string_var(host.vars, "ansible_host") ||
-                  string_var(host.vars, "ansible_ssh_host") ||
+      conn_host = tiered_var(vars, host, "ansible_host", "ansible_ssh_host") ||
                   host.name
-      identity_file = (string_var(vars, "ansible_ssh_private_key_file") ||
-                       string_var(host.vars, "ansible_ssh_private_key_file")).presence
+      identity_file = tiered_var(vars, host, "ansible_ssh_private_key_file").presence
       password = Passwords.connection(vars, host)
-      common_args = split_ssh_args(string_var(vars, "ansible_ssh_common_args") ||
-                                   string_var(host.vars, "ansible_ssh_common_args"))
-      extra_args = split_ssh_args(string_var(vars, "ansible_ssh_extra_args") ||
-                                  string_var(host.vars, "ansible_ssh_extra_args"))
+      common_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_common_args"))
+      extra_args = split_ssh_args(tiered_var(vars, host, "ansible_ssh_extra_args"))
       new(conn_host, user, port, identity_file, password, common_args, extra_args)
+    end
+
+    # WHY: every connection key is resolved through the SAME two
+    # tiers - the task's rendered vars context (task > block > play
+    # > ..., already merged into one hash by build_vars_context)
+    # first, then the host's raw inventory vars - so a block- or
+    # play-level `vars:` entry outranks the inventory exactly the
+    # way ansible-core's connection var pipeline orders them. Within
+    # each tier the canonical spelling is tried before the deprecated
+    # alias, preserving the original all-of-vars-then-all-of-inventory
+    # evaluation order exactly.
+    private def self.tiered_var(vars : Hash(String, JSON::Any)?, host : Host, key : String, alias_key : String? = nil) : String?
+      string_var(vars, key) ||
+        (alias_key ? string_var(vars, alias_key) : nil) ||
+        string_var(host.vars, key) ||
+        (alias_key ? string_var(host.vars, alias_key) : nil)
     end
 
     # The play-level view of a host's connection: play vars outrank
@@ -164,27 +171,9 @@ module Krikri
             current.clear
             quoted = false
           end
-        when '\''
+        when '\'', '"'
           quoted = true
-          j = i + 1
-          while j < text.size && text[j] != '\''
-            current << text[j]
-            j += 1
-          end
-          i = j
-        when '"'
-          quoted = true
-          j = i + 1
-          while j < text.size && text[j] != '"'
-            if text[j] == '\\' && j + 1 < text.size && {'"', '\\', '$', '`'}.includes?(text[j + 1])
-              current << text[j + 1]
-              j += 1
-            else
-              current << text[j]
-            end
-            j += 1
-          end
-          i = j
+          i = scan_quoted(text, i, current, char)
         when '\\'
           if i + 1 < text.size
             current << text[i + 1]
@@ -197,6 +186,28 @@ module Krikri
       end
       args << current.to_s if current.size > 0 || quoted
       args
+    end
+
+    # WHY: both quote styles scan forward to their closing quote,
+    # and the double-quoted form additionally honors backslash
+    # escapes for \" \\ $ ` - pulling that scan out of
+    # split_ssh_args keeps the per-character dispatch flat while
+    # producing byte-identical output: the helper only ever
+    # appends to *current* and returns the index of the closing
+    # quote (text.size for an unterminated span), which the
+    # caller then steps past exactly as the inline loops did.
+    private def self.scan_quoted(text : String, i : Int32, current : IO::Memory, quote : Char) : Int32
+      j = i + 1
+      while j < text.size && text[j] != quote
+        if quote == '"' && text[j] == '\\' && j + 1 < text.size && {'"', '\\', '$', '`'}.includes?(text[j + 1])
+          current << text[j + 1]
+          j += 1
+        else
+          current << text[j]
+        end
+        j += 1
+      end
+      j
     end
   end
 end

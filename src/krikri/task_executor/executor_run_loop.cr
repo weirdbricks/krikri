@@ -1584,7 +1584,7 @@ module Krikri
 
       ssh_user = conn.user
       return nil if SSHManager.daemon_unavailable?(conn.conn_host, ssh_user, conn.port, become_user,
-        SSHManager.connection_sig(conn.identity_file, conn.common_args + conn.extra_args, Passwords.connection(vars, host)))
+                      SSHManager.connection_sig(conn.identity_file, conn.common_args + conn.extra_args, Passwords.connection(vars, host)))
 
       payload = steps.map do |step|
         {

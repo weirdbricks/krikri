@@ -28,16 +28,16 @@ describe Krikri::ConnectionSettings do
   end
 
   it "takes user/port/host/key/password/args from the task's vars first" do
-    host = conn_host("web1", "admin", 2222,
-      vars = {
-        "ansible_user"                  => jv("invuser"),
-        "ansible_port"                  => JSON::Any.new(2223),
-        "ansible_host"                  => jv("10.9.8.7"),
-        "ansible_ssh_private_key_file"  => jv("/inv/id_rsa"),
-        "ansible_ssh_pass"              => jv("invpass"),
-        "ansible_ssh_common_args"       => jv("-o A=1"),
-        "ansible_ssh_extra_args"        => jv("-o B=2"),
-      } of String => JSON::Any)
+    vars = {
+      "ansible_user"                 => jv("invuser"),
+      "ansible_port"                 => JSON::Any.new(2223),
+      "ansible_host"                 => jv("10.9.8.7"),
+      "ansible_ssh_private_key_file" => jv("/inv/id_rsa"),
+      "ansible_ssh_pass"             => jv("invpass"),
+      "ansible_ssh_common_args"      => jv("-o A=1"),
+      "ansible_ssh_extra_args"       => jv("-o B=2"),
+    } of String => JSON::Any
+    host = conn_host("web1", "admin", 2222, vars)
     task_vars = {
       "ansible_user"                 => jv("taskuser"),
       "ansible_port"                 => JSON::Any.new(2202),

@@ -141,7 +141,7 @@ module Krikri
     # alone).
     private def self.breaks_run?(task : Task, group_has_registers : Bool) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        runs_off_the_target?(task) || runs_on_the_controller?(task) ||
+        off_the_batch_connection?(task) ||
         task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task, group_has_registers) ||
         reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
@@ -163,6 +163,18 @@ module Krikri
         # a controller-side accumulator for the final recap) - neither
         # can run as a remote batch script step.
         {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name)
+    end
+
+    # WHY one helper: both conditions mean the task never
+    # executes over the batch group's shared SSH connection
+    # to the target - delegate_to:/connection: re-route it
+    # elsewhere, and PluginManager's controller-only plugins
+    # (fetch:, wait_for_connection:) run on the controller -
+    # so neither can be a remote batch script step. Each
+    # case's own full reasoning lives in the two helpers
+    # below.
+    private def self.off_the_batch_connection?(task : Task) : Bool
+      runs_off_the_target?(task) || runs_on_the_controller?(task)
     end
 
     # A templated action:/local_action: (see Task#templated_action)

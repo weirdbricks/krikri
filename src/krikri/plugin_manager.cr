@@ -520,7 +520,7 @@ module Krikri
             spec_contributions[host_key] = [] of {String, Bool}
           end
           spec_contributions[host_key] << {host.name,
-            play_tasks_have_connection_override?(play.tasks) || play_tasks_have_connection_override?(play.handlers)}
+                                           play_tasks_have_connection_override?(play.tasks) || play_tasks_have_connection_override?(play.handlers)}
         end
       end
 
