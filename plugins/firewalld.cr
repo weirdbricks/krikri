@@ -597,7 +597,9 @@ module Krikri
     # thing firewall's offline Python reads) otherwise.
     private def resolve_zone : String?
       given = @params["zone"]?
-      return given if given
+      # Ansible treats an empty zone (e.g. from an empty registered stdout)
+      # as unset and reports changed, not INVALID_ZONE.
+      return given if given && !given.empty?
 
       if firewalld_running?
         zone = remote_exec("firewall-cmd --get-default-zone")[:stdout].strip
