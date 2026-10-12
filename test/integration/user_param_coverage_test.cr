@@ -119,6 +119,10 @@ private EXISTING_GROUP  = "adm:x:4:shim-user\nsudo:x:27:shim-user\ndocker:x:999:
 private NO_USER         = "root:x:0:0:root:/root:/bin/bash\n"
 private NO_SHADOW       = "root:!:19900:0:99999:7:::\n"
 private NO_GROUP        = "root:x:0:\n"
+# The local path validates requested groups: members against the group db
+# (Ansible's get_groups_set), so a task passing groups: needs them present
+# here even when the rest of the scenario is an empty account database.
+private GROUPS_ADM_SUDO = "root:x:0:\nadm:x:4:\nsudo:x:27:\n"
 
 describe "user plugin - parameter coverage" do
   describe "non_unique" do
@@ -271,7 +275,7 @@ describe "user plugin - parameter coverage" do
     end
 
     it "checks /etc/passwd directly (never getent) and uses luseradd/lchage/lgroupmod instead of shadow-utils" do
-      with_user_shims(NO_USER, NO_SHADOW, NO_GROUP) do |env, log|
+      with_user_shims(NO_USER, NO_SHADOW, GROUPS_ADM_SUDO) do |env, log|
         result = PluginSpecHelper.run("user", {
           "name" => "shim-new", "local" => "true", "groups" => "adm,sudo",
           "expires" => "1893456000", "skeleton" => "/etc/skel.custom",
