@@ -155,16 +155,27 @@ module Krikri
       #   `content: "{{ sanoid_conf }}"` with `sanoid_conf: ""` needs
       #   this to keep working) - and `src: "actual/path", content: ""`
       #   DOES hit "src and content are mutually exclusive" (the empty
-      #   content still counts as "given"). The ONE exception - a `{%
-      #   for %}...{% endfor %}` block tag rendering to nothing
-      #   (hbjydev.restic's own `content:`) DOES fail "src (or content)
-      #   is required" - is handled upstream, in
-      #   TaskExecutor#substitute_task_params, which drops such a param
-      #   key entirely (OMIT_SENTINEL) rather than sending it here as
-      #   "" - so a plain presence check on content is already correct
-      #   for every remaining shape without this plugin needing to know
-      #   anything about how its value was templated.
+      #   content still counts as "given"). TWO exceptions fail
+      #   "src (or content) is required" or take the src path instead,
+      #   both because the templating layer can tell them apart from a
+      #   real "": a `{% for %}...{% endfor %}` block tag rendering to
+      #   nothing (hbjydev.restic's own `content:`), dropped entirely
+      #   upstream in TaskExecutor#substitute_task_params (OMIT_SENTINEL),
+      #   and an explicit Python null (`content: "{{ nullvar }}"` with a
+      #   null var, or a bare `content:`), which rides NONE_SENTINEL and
+      #   is restored to nil below via #explicit_null_param?.
       content = @params["content"]?
+      # An explicit None content (`content:` with no value, or a
+      # whole-span `{{ expr }}` that natively resolved to Python null)
+      # rode the wire as NONE_SENTINEL and BasePlugin demoted it to ""
+      # above - but Ansible's action plugin reads it with
+      # `.get('content', None)` and treats it as "given" only when it is
+      # not None, so a null content must NOT reach "src and content are
+      # mutually exclusive" when a src is present: the src path runs
+      # instead (live-verified vs 2.19.11; the no-src case already fails
+      # "src (or content) is required" in the executor's spec check,
+      # issue #20). A real empty-string content stays "given".
+      content = nil if explicit_null_param?("content")
       # A falsy non-string literal src (false/0/0.0 - the parser marks
       # those, see NON_STRING_PARAM_PREFIX) is ignored by Ansible's action
       # plugin (`not source`), exactly like an absent or empty one - so

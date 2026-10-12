@@ -1325,6 +1325,14 @@ module Krikri
       # leaked into the searched paths, where Ansible fails on the target.
       return params if remote_src_param?(params)
 
+      # An explicit None content (`content:` with no value, or a whole-span
+      # null template) must NOT be swallowed by the src inliner: real's
+      # content is None there, so the SRC path runs with the task's own
+      # src untouched (live-verified vs 2.19.11, issue #20) - an inlined
+      # content would silently turn the task into a content copy. An
+      # ABSENT content keeps inlining (the small-src optimization).
+      return params if (inline_content = params["content"]?) && inline_content == Krikri::NONE_SENTINEL
+
       src = params["src"]?
       # A falsy non-string literal src (false/0/0.0 - the parser marks
       # those) is ignored by Ansible's copy action plugin (`not source`),
@@ -2209,6 +2217,17 @@ module Krikri
       PluginHelpers::AnsibleSplitlines.split(text)
     end
 
+    # Whether copy's `content` counts as GIVEN: Ansible reads it with
+    # `.get('content', None)` and every check is `content is not None`/`is
+    # None`, so an explicit null (`content:` with no value, or a whole-span
+    # `{{ expr }}` that natively resolved to Python null - both riding
+    # NONE_SENTINEL on the string wire) is NOT given, while an empty
+    # string content is (an empty FILE is a legitimate thing to write).
+    private def copy_content_given?(params : Hash(String, String)) : Bool
+      content = params["content"]?
+      !content.nil? && content != Krikri::NONE_SENTINEL
+    end
+
     # Ansible's copy action plugin rejects src+content together before the
     # src file is even looked at (live-verified: the mutual-exclusion
     # error wins over a MISSING src too, and an EMPTY src is simply
@@ -2225,7 +2244,7 @@ module Krikri
       # literal nulls as NONE_SENTINEL, same as a whole-span null
       # template).
       return nil unless src && src != Krikri::NONE_SENTINEL && Krikri.python_param_truthy?(src)
-      return nil unless params.has_key?("content")
+      return nil unless copy_content_given?(params)
       JSON.parse({"changed" => false, "failed" => true, "msg" => "src and content are mutually exclusive"}.to_json)
     end
 
@@ -2251,7 +2270,7 @@ module Krikri
     # "Could not find or access" wording first, exactly like real.
     private def copy_literal_type_failure(task : Task, params : Hash(String, String)) : JSON::Any?
       return nil unless task.module_name == "ansible.builtin.copy"
-      if params.has_key?("content")
+      if copy_content_given?(params)
         if Krikri.python_param_truthy?(params["dest"]?) &&
            (native = Krikri.non_string_scalar(params["dest"]?))
           return literal_attribute_crash_result(native, "endswith")
@@ -2691,7 +2710,7 @@ module Krikri
       return false unless {"ansible.builtin.copy", "ansible.builtin.template"}.includes?(task.module_name)
       return false if remote_src_param?(params)
       return true if check_mode
-      return false if params.has_key?("content")
+      return false if copy_content_given?(params)
       src = params["src"]?
       dest = params["dest"]?
       return false unless src && dest && Krikri.non_string_scalar(src).nil? && Krikri.non_string_scalar(dest).nil?
@@ -2720,7 +2739,10 @@ module Krikri
     # sha1 of the content string, or of the source FILE's bytes when src
     # is a controller file; nothing when src is remote or missing).
     private def argspec_source_checksum(params : Hash(String, String)) : String?
-      if content = params["content"]?
+      content = params["content"]?
+      # Same predicate as copy_content_given? without re-walking Hash#[]'s
+      # nilable union, so no not_nil! is needed to satisfy the linter.
+      if content && content != Krikri::NONE_SENTINEL
         return Digest::SHA1.hexdigest(content)
       end
       # A truthy remote_src (in whatever spelling, marked literal
