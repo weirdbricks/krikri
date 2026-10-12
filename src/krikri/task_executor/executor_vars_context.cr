@@ -1918,6 +1918,44 @@ module Krikri
       Krikri::NATIVE_TYPED_PREFIX + native_value.to_json
     end
 
+    # The decoded JSON container behind a NATIVE_TYPED_PREFIX msg wire
+    # value (parse_module_params's literal list/dict debug msg branch), or
+    # nil for any other shape - an unprefixed value, an unparsable payload,
+    # or a prefixed SCALAR (those keep the whole-span/native-typed flow
+    # below).
+    private def native_typed_msg_container(stripped_value : String) : JSON::Any?
+      return nil unless stripped_value.starts_with?(Krikri::NATIVE_TYPED_PREFIX)
+      parsed = begin
+        JSON.parse(stripped_value[Krikri::NATIVE_TYPED_PREFIX.size..])
+      rescue JSON::ParseException
+        return nil
+      end
+      parsed.raw.is_a?(Array) || parsed.raw.is_a?(Hash) ? parsed : nil
+    end
+
+    # Renders a native-typed msg container's STRING leaves through the
+    # substitutor (each list item is its own template in Ansible - mixed
+    # text around a `{{ }}` span stays mixed text) and re-encodes the
+    # NATIVE_TYPED_PREFIX wire; non-string leaves pass through natively.
+    private def render_debug_msg_container(substitutor : VarSubstitutor, node : JSON::Any) : String
+      Krikri::NATIVE_TYPED_PREFIX + render_debug_msg_leaves(substitutor, node).to_json
+    end
+
+    private def render_debug_msg_leaves(substitutor : VarSubstitutor, node : JSON::Any) : JSON::Any
+      case raw = node.raw
+      when String
+        JSON::Any.new(substitutor.substitute(raw, strict: true, output: true))
+      when Array
+        JSON::Any.new(raw.map { |item| render_debug_msg_leaves(substitutor, item) })
+      when Hash
+        rendered = Hash(String, JSON::Any).new
+        raw.each { |k, v| rendered[k] = render_debug_msg_leaves(substitutor, v) }
+        JSON::Any.new(rendered)
+      else
+        node
+      end
+    end
+
     # Whole-single-span template leaves of a JSON-container set_fact
     # param evaluate structurally (same semantics as #native_typed_value,
     # per leaf); any leaf that isn't a clean whole-single-span template,
@@ -2066,7 +2104,20 @@ module Krikri
         begin
           # inside the begin: native_typed_value's strict-undefined check must
           # get the same "Error while resolving value for '<key>'" wrapper
-          native_typed = (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+          native_typed = if debug_msg && (msg_container = native_typed_msg_container(stripped_value))
+                           # A parse-time literal list/dict msg (NATIVE_TYPED_PREFIX JSON
+                           # from parse_module_params's debug branch) renders its leaves
+                           # HERE, per-leaf: Ansible templates each list item as its own
+                           # string, so mixed-text items ("The OS is {{ os_arch }}") keep
+                           # their surrounding literal text instead of being flattened
+                           # into the comma-joined string the generic substitution below
+                           # would produce (issue #7, zhan9san.java). Non-string leaves
+                           # keep their native type; a failing leaf raises through the
+                           # same rescue chain as every other msg shape.
+                           render_debug_msg_container(substitutor, msg_container)
+                         else
+                           (native_containers || debug_msg) && whole_single_span ? native_typed_value(substitutor, stripped_value) : nil
+                         end
           unless native_typed
             # A set_fact param whose parse-time wire is a JSON container
             # with template leaves (a dict-valued set_fact: stringify_value
