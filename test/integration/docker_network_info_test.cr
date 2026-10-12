@@ -19,6 +19,11 @@ describe "docker_network_info plugin" do
   end
 
   it "fails with a connection error (never skips) when the Docker daemon is unreachable" do
+    # The SDK import gate runs BEFORE any connection attempt, so on a
+    # host whose python lacks `requests` (e.g. the CI container) even
+    # this deliberately-unreachable run answers with the import text,
+    # not the connect text - the same convention as the SDK specs.
+    skip "python requests not importable, the SDK gate would answer first" unless PluginSpecHelper.docker_sdk_importable?
     result = PluginSpecHelper.run("docker_network_info", {
       "name"        => "krikri-spec-unreachable",
       "docker_host" => "unix:///nonexistent/krikri-no-such-#{Process.pid}.sock",
@@ -29,12 +34,14 @@ describe "docker_network_info plugin" do
   end
 
   it "returns exists: false (not failed) when the daemon is reachable but the network is absent" do
-    # Probe with the plugin itself against the same default connection
+    # Probe the same default connection the plugin itself uses
     # (docker_host: params, DOCKER_HOST env, default socket) - `docker
     # network ls` via the CLI can succeed through a context or a
-    # different socket than the one the Engine-API connection here uses.
-    probe = PluginSpecHelper.run("docker_network_info", {"name" => "krikri-probe-#{Process.pid}"})
-    skip("no reachable docker daemon") if probe["msg"]?.try(&.as_s).to_s.includes?("Error connecting")
+    # different socket than the one the Engine-API connection here
+    # uses. The shared probe also requires the SDK to import: a python
+    # without `requests` answers every run with the import text (e.g.
+    # the CI container), where no daemon question can be answered.
+    skip("no reachable docker daemon") unless PluginSpecHelper.docker_daemon_reachable?
 
     result = PluginSpecHelper.run("docker_network_info", {
       "name" => "krikri-spec-definitely-absent-#{Process.pid}",

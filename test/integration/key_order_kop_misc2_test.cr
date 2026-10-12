@@ -368,6 +368,26 @@ describe "round 994002 kop_misc2 registered key order" do
   end
 
   describe "community.docker.current_container_facts" do
+    # Whether THIS environment is a container, derived the same way the
+    # module derives it (/proc/self/cpuset's cgroup path, then the
+    # /etc/hostname mountinfo fallback) - the module answers honestly
+    # wherever it runs, so a CI job container (cpuset .../actions_job/<id>)
+    # reports running_in_container=true and the round's bare-host pins
+    # only apply where there is no container.
+    private def spec_in_container? : Bool
+      cpuset = File.read("/proc/self/cpuset").strip rescue ""
+      cgroup_path = cpuset.rpartition("/")[0]
+      return true if ["/docker", "/azpl_job", "/actions_job"].includes?(cgroup_path) && cgroup_path != ""
+
+      mountinfo = File.read("/proc/self/mountinfo") rescue ""
+      mountinfo.each_line.any? do |line|
+        parts = line.split
+        parts.size >= 5 && parts[4] == "/etc/hostname" &&
+          (/.*\/([a-f0-9]{64})\/hostname$/.matches?(parts[3]) ||
+            /.*\/([a-f0-9]{64})\/userdata\/hostname$/.matches?(parts[3]))
+      end
+    end
+
     it "registers ansible_facts, failed, changed" do
       value = run_registered_value(registered_dump_play(<<-YAML))
         - name: gather container facts
@@ -375,9 +395,16 @@ describe "round 994002 kop_misc2 registered key order" do
           register: KRIKRI_REGISTER
       YAML
       value.as_h.keys.must_equal(["ansible_facts", "failed", "changed"])
-      value["ansible_facts"]["ansible_module_running_in_container"].as_bool.must_equal(false)
-      value["ansible_facts"]["ansible_module_container_id"].as_s.must_equal("")
-      value["ansible_facts"]["ansible_module_container_type"].as_s.must_equal("")
+      if spec_in_container?
+        value["ansible_facts"]["ansible_module_running_in_container"].as_bool.must_equal(true)
+        value["ansible_facts"]["ansible_module_container_id"].as_s.wont_be_empty
+        ["docker", "podman", "azure_pipelines", "github_actions"].must_include(
+          value["ansible_facts"]["ansible_module_container_type"].as_s)
+      else
+        value["ansible_facts"]["ansible_module_running_in_container"].as_bool.must_equal(false)
+        value["ansible_facts"]["ansible_module_container_id"].as_s.must_equal("")
+        value["ansible_facts"]["ansible_module_container_type"].as_s.must_equal("")
+      end
       value["changed"].as_bool.must_equal(false)
     end
   end

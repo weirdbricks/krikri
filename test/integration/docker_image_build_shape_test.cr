@@ -68,6 +68,11 @@ end
 # already-present path can be exercised - a remote-driver build's default
 # output stays in the builder's cache and never reaches the store.
 private def build_shape_seed_image : Nil
+  # The already-present spec's ensure-block cleanup runs even on a skip
+  # (it rides the same block), and Process.run of an absent binary
+  # raises File::NotFoundError - which would replace the skip with an
+  # Error on hosts without podman (e.g. the CI container).
+  return unless PluginSpecHelper.container_cli_available?("podman")
   ctx = PluginSpecHelper.tmp_path("docker-image-build-shape-seed")
   FileUtils.rm_rf(ctx)
   Dir.mkdir_p(ctx)
@@ -77,6 +82,7 @@ private def build_shape_seed_image : Nil
 end
 
 private def build_shape_unseed_image : Nil
+  return unless PluginSpecHelper.container_cli_available?("podman")
   Process.run("podman", ["rmi", "localhost/km-docker-build-shape:1"],
     output: Process::Redirect::Close, error: Process::Redirect::Close)
 end

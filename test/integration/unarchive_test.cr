@@ -595,9 +595,13 @@ describe "unarchive plugin" do
     }, umask: 0o022)
 
     top = File.join(dest, "top")
-    File.info(top).owner_id.must_equal(4321)
-    File.info(top).group_id.must_equal(4321)
-    File.info(File.join(top, "inner.txt")).owner_id.must_equal(4321)
+    # Crystal's File::Info#owner_id/#group_id return the numeric id as a
+    # STRING (st_uid.to_s), so compare against the string form - the
+    # integer comparison could never pass in the root environment this
+    # spec runs in.
+    File.info(top).owner_id.must_equal("4321")
+    File.info(top).group_id.must_equal("4321")
+    File.info(File.join(top, "inner.txt")).owner_id.must_equal("4321")
 
     # The role's own followup task, verbatim in shape: state=directory
     # owner:/group:/mode: over the extracted top dir, WITHOUT recurse -
