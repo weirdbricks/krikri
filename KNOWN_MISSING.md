@@ -470,6 +470,22 @@ because anyone intends to fix them.
   the Ansible module's "Zone operations must be permanent..." rather than being silently serviced offline.
   Still unimplemented: bare defaults against a host with no firewalld daemon.
 
+## Plugin key-order probe coverage
+
+`PluginResult#key_order` (or an omit-`changed` wire) pins a plugin's keys to Ansible 2.19.11's order. Probes: `testing/keyorder_probes/kop_*` roles, run via `krikri-role-tester run` with `local:` queue entries and compared by `krikri-role-tester keyorder` (`--values` for values, not just shapes). Add to this list when another module family is probed.
+
+### Verified
+
+- `kop_snap`, `kop_iptables`, `kop_apt_fail` (rounds 1100100+): `snap`, `iptables`, `apt` real-mutation/failure shapes.
+- `kop_docker_build`, `kop_docker_invalidrepo` (rounds 1600100/1800100, 5331000): `docker_image_build` buildx gate, CLI image lookup, both resolve_repository_name refusals (`http://foo`, `registry.example.com-/thing`), on a real docker.io 26.1.3 + buildx host, byte-identical cold and warm. The refusals escape the module body uncaught and register as `msg: "Task failed: Module failed: <raw text>"` with keys failed/changed/exception/msg.
+- Docker plugins: API failures, container start failures, daemon-unreachable wording (SDK and CLI modules) and `docker_network` `ipam_config` verified against community.docker 5.2.1 on a podman socket. TCP-unreachable wording is a deliberate limit (see above).
+
+### Not a gap to close
+
+- `homebrew*`, `ovirt_auth`/`redhat_subscription`/`rhsm_*` (macOS-first, or need a live oVirt engine / Red Hat entitlement; well under 2% of roles).
+- `ec2_*`, `iam_user_info`, `nsupdate`, `rabbitmq_*` (need an external account or appliance neither engine can reach).
+- Host noise (apt/dnf output text, per-host keys/UUIDs, snap revisions, mount/systemd dependency ordering) is not a krikri difference.
+
 ---
 
 For the fixed-bug history (150+ rounds of real-host benchmarking against production
