@@ -92,6 +92,33 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].name.must_equal("all")
     end
 
+    it "parses a task whose name: key is present but null like a missing name (issue #11)" do
+      # A null `name:` is not a missing key - YAML::Any#[]? still returns
+      # a value for it, so a plain as_s cast raised "Cast from Nil to
+      # String failed", leaking as a raw "Warning: Skipping task" (role
+      # armov.zabbix_agent2_lit_trellis_custom's tasks/main.yml). Real
+      # (2.19.11) accepts a null name and displays the TASK [<action>]
+      # header, i.e. the same fallback as a missing name.
+      task = single_task("- name:\n  ansible.builtin.debug:\n    msg: hi")
+
+      task.has_explicit_name?.must_equal(false)
+      task.name.must_equal("ansible.builtin.debug")
+    end
+
+    it "parses a play whose name: key is present but null like a missing play name (issue #11)" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - name:
+          hosts: all
+          gather_facts: false
+          tasks:
+            - ansible.builtin.debug:
+                msg: hi
+        YAML
+
+      playbook.plays[0].name.must_equal("all")
+      playbook.plays[0].tasks[0].name.must_equal("ansible.builtin.debug")
+    end
+
     it "joins a list hosts: value with commas for the fallback play name" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - hosts: [web, db]
@@ -554,28 +581,62 @@ describe Krikri::PlaybookParser do
       # and a bare-name task slipped through to the graceful skip
       # instead of hard-stopping, confirmed live against the rebuilt
       # binary still gracefully skipping it (round 043 confirm-phase).
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'docker_service'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed module, bare name
-                docker_service:
-          YAML
-        )
-      end
+      # Since the issue #8 redirect hop, the bare spelling resolves
+      # through ansible_builtin_runtime.yml's redirect onto the FQCN and
+      # refuses with the FQCN's own removal message (rc=1) when the
+      # collection is installed on the controller - the generic
+      # couldn't-resolve wording (rc=4) only without it, which is what
+      # real's redirect chain dies to at the collection import.
+      if Krikri::CollectionIndex.installed?("community", "general")
+        assert_raises_message(Krikri::RemovedModuleError,
+          "The 'community.general.docker_service' module has been removed. " \
+          "Use community.docker.docker_compose instead. " \
+          "This feature was removed from collection 'community.general' version 2.0.0.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed module, bare name
+                  docker_service:
+            YAML
+          )
+        end
 
-      assert_raises_message(Krikri::UnresolvedModuleError,
-        "couldn't resolve module/action 'consul_acl'. " \
-        "This often indicates a misspelling, missing collection, or incorrect module path.") do
-        Krikri::PlaybookParser.parse_string(<<-YAML
-          - hosts: all
-            tasks:
-              - name: removed module, bare name
-                consul_acl:
-          YAML
-        )
+        assert_raises_message(Krikri::RemovedModuleError,
+          "The 'community.general.consul_acl' module has been removed. " \
+          "Use community.general.consul_token and/or community.general.consul_policy instead. " \
+          "This feature was removed from collection 'community.general' version 10.0.0.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed module, bare name
+                  consul_acl:
+            YAML
+          )
+        end
+      else
+        assert_raises_message(Krikri::UnresolvedModuleError,
+          "couldn't resolve module/action 'docker_service'. " \
+          "This often indicates a misspelling, missing collection, or incorrect module path.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed module, bare name
+                  docker_service:
+            YAML
+          )
+        end
+
+        assert_raises_message(Krikri::UnresolvedModuleError,
+          "couldn't resolve module/action 'consul_acl'. " \
+          "This often indicates a misspelling, missing collection, or incorrect module path.") do
+          Krikri::PlaybookParser.parse_string(<<-YAML
+            - hosts: all
+              tasks:
+                - name: removed module, bare name
+                  consul_acl:
+            YAML
+          )
+        end
       end
     end
 

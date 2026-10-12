@@ -775,6 +775,11 @@ module Krikri
 
       ignore_errors = resolve_task_ignore_errors(task, vars_context)
       no_log = resolve_task_no_log(task, vars_context)
+      # A batch-prepared finalization failure carries its [ERROR] chain
+      # block stashed on the result (see stash_finalization_error_block) -
+      # print it now, under this task's own banner and just before the
+      # fatal/failed line, where Ansible puts it.
+      TaskExecutor.flush_deferred_finalization_error_block(result)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else

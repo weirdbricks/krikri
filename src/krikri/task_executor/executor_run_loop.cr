@@ -1723,8 +1723,15 @@ module Krikri
         # have crashed the whole run instead of failing just this task.
         # Same [ERROR] chain block + changed: false as
         # execute_task_once's identical rescue (2.19.11 live-captured).
-        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         failed = finalization_failure_json(ex, task)
+        # Stash, don't print: batch-build prepares every member up front,
+        # BEFORE the earlier members' results display - an inline print
+        # here put the block ahead of the previous task's changed: line
+        # (issue #14, pylabs.nginx). The display path prints it under this
+        # task's own banner, just before the fatal line.
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+          TaskExecutor.stash_finalization_error_block(failed, text)
+        end
         # Not routed through apply_changed_failed_when - same reasoning as
         # execute_task_once's identical rescue: failed_when:/changed_when:
         # only reinterpret a MODULE result, and no module ran here.
@@ -2048,8 +2055,18 @@ module Krikri
         # No "changed" key would match Ansible's pre-2.19 display;
         # 2.19.11 (live-captured) shows {"changed": false, "msg": ...},
         # so the failed result carries changed: false.
-        emit_finalization_error_block(task, ex) if ex.is_a?(UndefinedVariableError)
         result = finalization_failure_json(ex, task)
+        # Stash, don't print: when this runs as a batch group's detour
+        # member (execute_batch_group's fingerprint-mismatch path), the
+        # call happens during batch-build, before the earlier members'
+        # results display - an inline print put the block ahead of the
+        # previous task's changed: line (issue #14, pylabs.nginx). The
+        # display path prints it under this task's own banner, just before
+        # the fatal line; the solo path's display comes through the same
+        # flush, at the same relative position the inline print had.
+        if ex.is_a?(UndefinedVariableError) && (text = finalization_error_block_text(task, ex))
+          TaskExecutor.stash_finalization_error_block(result, text)
+        end
         # Deliberately NOT routed through apply_changed_failed_when:
         # failed_when:/changed_when: govern whether a MODULE RESULT counts
         # as failed/changed, and arg finalization failed before any module

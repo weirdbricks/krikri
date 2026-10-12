@@ -2605,6 +2605,16 @@ module Krikri
       false
     end
 
+    # Prints a result's stashed finalization error block, deduped across
+    # the whole run exactly like the inline emission path (Ansible's
+    # Display dedups by full formatted message - the Origin's file:line
+    # makes the text task-unique).
+    def self.flush_deferred_finalization_error_block(result : JSON::Any) : Nil
+      return unless text = result.as_h?.try(&.["_ansible_finalization_error_block"]?).try(&.as_s?)
+      return unless @@finalization_error_chain_seen.add?(text)
+      puts text
+    end
+
     private def finalization_module_name(task : Task) : String
       name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
       # engine-internal pseudo modules (_include_vars, ...) are real actions
@@ -2640,8 +2650,20 @@ module Krikri
     # the task's defining file either way, live-captured on a role task);
     # when the task can't be located there, no block is printed.
     private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
+      if text = finalization_error_block_text(task, ex)
+        return unless @@finalization_error_chain_seen.add?(text)
+        puts text
+      end
+    end
+
+    # Renders the [ERROR] chain block's text WITHOUT printing it, so the
+    # batch paths can defer the print to the failed result's own display
+    # (see stash_finalization_error_block). Returns nil when the task's
+    # source can't be located - no block either way, same as the emit-time
+    # behavior this was split from.
+    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError) : String?
       path = task.source_file || @playbook_file
-      return unless path && File.file?(path)
+      return nil unless path && File.file?(path)
 
       lines = File.read_lines(path)
       msg = ex.message || ""
@@ -2724,9 +2746,22 @@ module Krikri
       # Same dedup rule as emit_when_error_chain's (Ansible's Display dedups
       # by full formatted message; the Origin's file:line makes the text
       # task-unique, so a looped task's failing items display the chain
-      # once).
-      return unless @@finalization_error_chain_seen.add?(text)
-      puts text
+      # once) - applied by the caller at print time.
+      text
+    end
+
+    # Batch-build (execute_batch_group / execute_looped_task_batched)
+    # prepares every member UP FRONT, before the earlier members' results
+    # display - printing the [ERROR] chain block during that preparation
+    # put it ahead of the PREVIOUS task's changed: line (issue #14,
+    # pylabs.nginx: the block surfaced under the previous task's header,
+    # ahead of its own result line). Instead the rendered text rides the
+    # failed result on this private marker - the same pattern as
+    # _ansible_loop_error_emitted - and the display path
+    # (finish_single_task / finish_looped_task) prints it just before the
+    # fatal/failed line, under the failing task's own banner.
+    def self.stash_finalization_error_block(result : JSON::Any, text : String) : Nil
+      result.as_h?.try &.[]=("_ansible_finalization_error_block", JSON::Any.new(text))
     end
 
     # The fourth chain stanza real 2.19.11 appends when the arg's
