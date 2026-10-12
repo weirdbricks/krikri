@@ -1152,7 +1152,12 @@ module Krikri
         begin
           value = render_via_jinja_value(expr)
           value ? @lookup.format_value(value) : "undefined"
-        rescue
+        rescue e
+          # A mutual-template cycle's recursion error is not an unknown
+          # construct - re-raised (unwrapped from the engine's TemplateError
+          # when needed) so the fallback lookup below re-attempting the
+          # same cycle cannot resurrect the hang.
+          Rerender.re_raise_recursion(e)
           # A leading unary minus whose Crinja evaluation failed: negate a
           # numeric operand, raise on a missing bare reference or a
           # non-numeric one - Jinja2/Ansible fails the task on both
@@ -1237,7 +1242,12 @@ module Krikri
         # on a quiet `nil`. Ansible resolves the var fully (via
         # its own vars_context) before evaluating `.name`.
         value ? @lookup.format_value(value) : @lookup.nested(expr)
-      rescue
+      rescue e
+        # Same recursion-error carve-out as the bare-reference fallback in
+        # #evaluate_expr_access: a mutual-template cycle must fail the
+        # task, not fall through to a second resolution attempt that
+        # re-enters the very cycle the guard just detected.
+        Rerender.re_raise_recursion(e)
         @lookup.nested(expr)
       end
 
