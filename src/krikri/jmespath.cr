@@ -415,6 +415,10 @@ module Krikri
           if accept(TokenKind::Dot)
             if accept(TokenKind::Star)
               node = Wildcard.new(node)
+            elsif peek.kind == TokenKind::LBrace
+              node = parse_multiselect_hash(node)
+            elsif peek.kind == TokenKind::LBracket
+              node = parse_multiselect_list(node)
             else
               token = expect_ident_or_string("field name after '.'")
               node = SubExpression.new(node, Field.new(token.text))
@@ -475,16 +479,7 @@ module Krikri
           expect(TokenKind::RBracket, "']'")
           MultiSelectList.new(nil, items)
         when TokenKind::LBrace
-          advance
-          entries = [] of Tuple(String, Node)
-          loop do
-            key_token = expect_ident_or_string("hash key")
-            expect(TokenKind::Colon, "':'")
-            entries << {key_token.text, parse_expression}
-            break unless accept(TokenKind::Comma)
-          end
-          expect(TokenKind::RBrace, "'}'")
-          MultiSelectHash.new(nil, entries)
+          parse_multiselect_hash(nil)
         when TokenKind::Identifier
           name = advance.text
           if peek.kind == TokenKind::LParen
@@ -534,13 +529,38 @@ module Krikri
         when TokenKind::Number, TokenKind::Colon
           parse_slice_or_index(left)
         else
-          items = [parse_expression]
-          while accept(TokenKind::Comma)
-            items << parse_expression
-          end
-          expect(TokenKind::RBracket, "']'")
-          MultiSelectList.new(left, items)
+          parse_multiselect_list(left)
         end
+      end
+
+      # A multiselect hash may also appear after a dot - `assets[].{name:
+      # name, url: browser_download_url}` is the canonical json_query
+      # projection form (found by the hax0rbana_adam.firefox_geckodriver
+      # round, issue #9).
+      private def parse_multiselect_hash(left : Node?) : Node
+        expect(TokenKind::LBrace, "'{'")
+        entries = [] of Tuple(String, Node)
+        loop do
+          key_token = expect_ident_or_string("hash key")
+          expect(TokenKind::Colon, "':'")
+          entries << {key_token.text, parse_expression}
+          break unless accept(TokenKind::Comma)
+        end
+        expect(TokenKind::RBrace, "'}'")
+        MultiSelectHash.new(left, entries)
+      end
+
+      # After a dot only a comma-separated multiselect list is valid
+      # (`foo.[a, b]`); jmespath.py rejects `.[]`, `.[0]` and `.[?...]`
+      # there - those need a field between the dot and the bracket.
+      private def parse_multiselect_list(left : Node?) : Node
+        expect(TokenKind::LBracket, "'['")
+        items = [parse_expression]
+        while accept(TokenKind::Comma)
+          items << parse_expression
+        end
+        expect(TokenKind::RBracket, "']'")
+        MultiSelectList.new(left, items)
       end
 
       private def parse_slice_or_index(left : Node) : Node
