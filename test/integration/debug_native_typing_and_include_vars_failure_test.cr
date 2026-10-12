@@ -41,6 +41,80 @@ describe "debug native typing and include_vars failures" do
     msgs.must_equal([%("msg": 1), %("msg": true), %("msg": "1"), %("msg": 1), %("msg": true), %("msg": true), %("msg": "n=1"), %("msg": "1")])
   end
 
+  it "keeps a YAML list msg a real list with per-item templating" do
+    stdout_text, _ = run_krikri(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars: {os_arch_version: Linux_x86_64_25_0_2, jdk_dest: /opt}
+        tasks:
+          - debug:
+              msg:
+                - The OS and Architecture is {{ os_arch_version }}
+                - The JDK destination dir is {{ jdk_dest }}
+          - debug:
+              msg: ["a,comma", plain, 7, true]
+          - debug:
+              msg: []
+          - debug:
+              msg: {k1: v1, k2: "{{ jdk_dest }}"}
+          - debug:
+              msg: "{{ [1, 2] }}"
+          - debug:
+              msg: "[1, 2]"
+      YAML
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": [
+        "The OS and Architecture is Linux_x86_64_25_0_2",
+        "The JDK destination dir is /opt"
+    ]
+BLOCK
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": [
+        "a,comma",
+        "plain",
+        7,
+        true
+    ]
+BLOCK
+    stdout_text.must_include(%("msg": []))
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": {
+        "k1": "v1",
+        "k2": "/opt"
+    }
+BLOCK
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": [
+        1,
+        2
+    ]
+BLOCK
+    stdout_text.must_include(%("msg": "[1, 2]"))
+  end
+
+  it "registers a list msg as a real list for later tasks" do
+    stdout_text, _ = run_krikri(<<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        vars: {x: 5}
+        tasks:
+          - debug:
+              msg:
+                - one {{ x }}
+                - two
+            register: r
+          - debug:
+              msg: "{{ r.msg | length }} {{ r.msg | to_json }}"
+      YAML
+    stdout_text.must_include(<<-'BLOCK')
+    "msg": [
+        "one 5",
+        "two"
+    ]
+BLOCK
+    stdout_text.must_include(%("msg": "2 [\\"one 5\\", \\"two\\"]"))
+  end
+
   it "prints the inline error marker and the stderr template-error warning for an undefined var:" do
     stdout_text, stderr_text = run_krikri(<<-YAML)
       - hosts: localhost
