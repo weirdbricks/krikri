@@ -27,6 +27,22 @@ require "../minitest_helper"
 #   Valid-booleans list order is a Python set iteration in real
 #   (differs between processes), so only the wording shape is pinned
 describe "docker_image_build plugin argument validation" do
+  # Mirrors real's own precondition chain for the check below (see
+  # PluginHelpers::DockerCliProbe.buildx_check): the `docker info
+  # --format` probe must succeed (a live daemon) AND report the buildx
+  # client plugin in ClientInfo.Plugins, or the module fails at that
+  # gate before ever reaching the path validation this spec pins.
+  def docker_info_probe_ok_with_buildx?
+    return false unless Process.find_executable("docker")
+    info_json = IO::Memory.new
+    status = Process.run("docker", ["info", "--format", "{{ json . }}"],
+      output: info_json, error: Process::Redirect::Close)
+    return false unless status.success?
+    info_json.to_s.includes?("\"buildx\"")
+  rescue
+    false
+  end
+
   it "lists both missing required arguments, sorted" do
     result = PluginSpecHelper.run("docker_image_build", {"tag" => "latest"})
 
@@ -199,6 +215,7 @@ describe "docker_image_build plugin argument validation" do
     # path check is only reachable against a real Docker CLI.
     docker_version = (`docker --version 2>&1` rescue "")
     skip "docker CLI is podman here; the path check is behind the CLI probe" if docker_version.downcase.includes?("podman")
+    skip "this docker CLI's info probe fails or reports no buildx plugin (no live daemon, or no buildx installed), so real's buildx gate fires before the path check" unless docker_info_probe_ok_with_buildx?
 
     result = PluginSpecHelper.run("docker_image_build", {
       "name" => "krikri/test",

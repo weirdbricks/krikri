@@ -227,6 +227,50 @@ module PluginSpecHelper
     !Process.find_executable(name).nil?
   end
 
+  # Whether the python the plugins spawn can import the libraries the
+  # SDK-based community.docker modules gate on (python_lib_gate's
+  # `requests` probe). Probed with a docker_network run pointed at a
+  # deliberately nonexistent socket: an import failure answers with the
+  # "Failed to import the required Python library" wording, anything
+  # else means the import passed. The CI runner's python has no
+  # `requests`, where every SDK-module spec would otherwise fail at the
+  # gate instead of exercising daemon behaviour - they check this first
+  # and skip.
+  def self.docker_sdk_importable? : Bool
+    result = run("docker_network", {
+      "name"        => "krikri-sdk-probe-#{Process.pid}",
+      "state"       => "absent",
+      "docker_host" => "unix:///tmp/krikri-sdk-probe-#{Process.pid}.sock",
+    })
+    !result["msg"]?.try(&.as_s).to_s.includes?("Failed to import the required Python library")
+  end
+
+  # Whether the default docker_host resolves to a live daemon: the SDK
+  # must import first (an import-gate failure is NOT an unreachable
+  # daemon - the old per-file probes keyed off the SDK's exact connect
+  # wording and read the import error as "reachable"), then a
+  # docker_network state=absent probe against the default socket must
+  # actually succeed.
+  def self.docker_daemon_reachable? : Bool
+    return false unless docker_sdk_importable?
+    result = run("docker_network", {
+      "name"  => "krikri-daemon-probe-#{Process.pid}",
+      "state" => "absent",
+    })
+    result["failed"]?.try(&.as_bool) != true
+  end
+
+  # Whether an image ref is already present locally (CLI inspect, never
+  # a pull): the ambient-image precondition several docker fixtures
+  # assume but no spec creates.
+  def self.docker_image_present?(ref : String) : Bool
+    return false unless Process.find_executable("docker")
+    Process.run("docker", ["image", "inspect", ref],
+      output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+  rescue
+    false
+  end
+
   # Whether the environment can apply POSIX ACLs at all: a real
   # `setfacl` on a throwaway file succeeds. Needs root or CAP_FOWNER
   # plus a filesystem mounted with acl support (tmpfs and most fuse

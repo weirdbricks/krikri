@@ -84,6 +84,7 @@ describe "docker_login plugin argument validation" do
   end
 
   it "state=absent needs no credentials (no required_if)" do
+    skip("no usable docker daemon here (unreachable, or the docker SDK's python deps not importable)") unless PluginSpecHelper.docker_daemon_reachable?
     result = PluginSpecHelper.run("docker_login", {"state" => "absent"})
 
     result["changed"].as_bool.must_equal(false)

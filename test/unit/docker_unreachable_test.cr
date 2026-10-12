@@ -31,6 +31,7 @@ end
 
 describe "docker modules daemon-unreachable wording" do
   it "docker_container reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = dead_socket_unreachable("docker_container",
       {"name" => "krikri-dead-socket-container", "image" => "docker.io/library/busybox:latest", "state" => "started"})
 
@@ -40,6 +41,7 @@ describe "docker modules daemon-unreachable wording" do
   end
 
   it "docker_image reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = dead_socket_unreachable("docker_image",
       {"name" => "docker.io/library/busybox:latest", "source" => "pull", "state" => "present"})
 
@@ -49,6 +51,7 @@ describe "docker modules daemon-unreachable wording" do
   end
 
   it "docker_network reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = dead_socket_unreachable("docker_network", {"name" => "krikri-dead-socket-network"})
 
     result["failed"].as_bool.must_equal(true)
@@ -57,6 +60,7 @@ describe "docker modules daemon-unreachable wording" do
   end
 
   it "docker_login reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = dead_socket_unreachable("docker_login",
       {"registry_url" => "https://example.com", "username" => "u", "password" => "p"})
 
@@ -66,6 +70,7 @@ describe "docker modules daemon-unreachable wording" do
   end
 
   it "docker_network_info reports the SDK's version-fetch failure" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = dead_socket_unreachable("docker_network_info", {"name" => "krikri-dead-socket-network"})
 
     result["failed"].as_bool.must_equal(true)
@@ -76,6 +81,14 @@ describe "docker modules daemon-unreachable wording" do
   it "docker_image_build fails at real's CLI version probe with the CLI's own output" do
     cli = docker_cli_path
     skip("no docker CLI on PATH - the probe's failure text is the CLI's own") if cli.empty?
+    # docker >= 29 prints the client half of `version --format json` to
+    # stdout even when the daemon socket is dead (rc != 0, the connect
+    # error on stderr), where older CLIs print nothing at all - the
+    # byte-exact empty-stdout shape below only holds for the latter.
+    probe_out = IO::Memory.new
+    Process.run(cli, ["--host", "unix://#{DEAD_SOCKET}", "version", "--format", "{{ json . }}"],
+      output: probe_out, error: Process::Redirect::Close)
+    skip "this docker CLI prints client JSON to stdout despite the dead socket, so the empty-stdout probe shape does not hold here" unless probe_out.to_s.strip.empty?
     result = dead_socket_unreachable("docker_image_build",
       {"path" => "/tmp", "name" => "krikri-dead-socket-build"})
 

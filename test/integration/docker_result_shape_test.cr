@@ -299,6 +299,7 @@ describe "docker result shape: docker_login" do
   # registry contact (the module's client connects first), with the SDK
   # version-fetch wording every API-client module shares.
   it "fails when the daemon is unreachable, before any registry contact" do
+    skip("the docker SDK's python deps (requests) are not importable on this host's python") unless PluginSpecHelper.docker_sdk_importable?
     result = PluginSpecHelper.run("docker_login", {
       "registry_url" => "https://registry-1.docker.io/v1/",
       "username" => "krikri", "password" => "bogus",

@@ -2148,6 +2148,7 @@ describe "krikri-playbook CLI (--check mode)" do
     # as the mysql specs' server probe below.
     skip "no Docker/Podman daemon reachable" unless docker_daemon_ready?
     skip "Docker/Podman daemon reachable but localhost/krikri-playbook-compat:latest is absent (compat/Dockerfile builds it; CI provides a stand-in)" unless docker_smoke_image_ready?
+    skip "the docker SDK's python deps (requests) are not importable on this host's python - every docker module in the fixture would fail at the import gate" unless PluginSpecHelper.docker_sdk_importable?
     status, output = run_playbook(
       "test-docker-quick.yml",
       [] of String,
