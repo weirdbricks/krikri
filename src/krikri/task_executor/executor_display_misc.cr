@@ -638,9 +638,20 @@ module Krikri
         sleep poll.seconds
         if status = AsyncJobs.read_status(jid)
           if AsyncJobs.finished?(status)
+            # ansible-playbook prints "ASYNC OK on <host>: jid=<jid>" when a
+            # polled job ends successfully (and ASYNC FAILED for a failure,
+            # which the fatal display already reports) - omitting it made a
+            # finished job look silently unfinished next to real ansible
+            # output.
+            failed = status["failed"]?.try(&.as_bool?) || (status["rc"]?.try(&.as_i?) || 0) != 0
+            puts "ASYNC OK on #{exec_host.name}: jid=#{jid}" unless failed
             return async_status_wrapped_result(jid, status)
           end
         end
+        # ansible-playbook's async_status poll loop prints a POLL line for
+        # every tick that finds the job still running, so the ticks are
+        # visible while a long async task runs.
+        puts "ASYNC POLL on #{exec_host.name}: jid=#{jid} started=True finished=False"
         break if Time.instant >= deadline
       end
 
@@ -813,9 +824,20 @@ module Krikri
             # stub). Only a finished status is final; keep polling to
             # the deadline, then the same async-timeout failure
             # ansible-core reports.
-            return status if AsyncJobs.finished?(status)
+            if AsyncJobs.finished?(status)
+              # ansible-playbook prints "ASYNC OK on <host>: jid=<jid>" when
+              # a polled job ends successfully (and ASYNC FAILED for a
+              # failure, which the fatal display already reports).
+              failed = status["failed"]?.try(&.as_bool?) || (status["rc"]?.try(&.as_i?) || 0) != 0
+              puts "ASYNC OK on #{exec_host.name}: jid=#{jid}" unless failed
+              return status
+            end
           end
         end
+        # ansible-playbook's async_status poll loop prints a POLL line for
+        # every tick that finds the job still running, so the ticks are
+        # visible while a long async task runs.
+        puts "ASYNC POLL on #{exec_host.name}: jid=#{jid} started=True finished=False"
         break if Time.instant >= deadline
       end
 
