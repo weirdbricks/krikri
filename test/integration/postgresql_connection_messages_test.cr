@@ -171,6 +171,14 @@ private CLOSE_LISTENER = <<-PYTHON
   while True:
       c, _ = s.accept()
       if mode == "rst":
+          # Give the client's connect() time to return before the RST
+          # lands: an RST processed by the client while it is still
+          # inside connect() fails the CONNECT (strerror wording) instead
+          # of the post-connect read (server-closed wording) - a
+          # scheduling race, not the behavior this spec pins. libpq only
+          # words the post-connect break once connect() has returned.
+          import time
+          time.sleep(0.5)
           c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
       c.close()
   PYTHON
@@ -235,6 +243,15 @@ describe "community.postgresql.* connection-failure messages (accept-then-close 
     # that text for every Socket::ConnectError; the errno is now
     # re-derived with a direct probe connect at error-report time.
     skip "no `unshare` on this host" unless Process.find_executable("unshare")
+    # Creating the namespace needs CAP_SYS_ADMIN (or user namespaces
+    # enabled): a plain job container (a GitHub Actions container job,
+    # for one) fails `unshare -rn` with EPERM before the plugin ever
+    # runs, which would otherwise surface here as an empty plugin
+    # output. Probe the capability exactly the way this test uses it.
+    unless Process.run("unshare", ["-rn", "/bin/true"],
+             output: Process::Redirect::Close, error: Process::Redirect::Close).success?
+      skip "cannot create a network namespace here (unshare -rn denied)"
+    end
     binary = File.join(PluginSpecHelper::PLUGINS_DIR, "postgresql_query")
     config = {
       "host"   => {"name" => "localhost", "user" => ENV["USER"]? || "root", "port" => 22},

@@ -9,21 +9,45 @@ require "../../src/krikri/plugin_helpers/facts_gatherer"
 # read must keep capture("cat", ...)'s contract (stripped content, ""
 # when the file is missing or unreadable).
 describe "Krikri::FactsGatherer statvfs and file reads (facts_gatherer_statvfs_test.cr)" do
+  # The reference is read from a LIVE filesystem, and the suite runs on
+  # parallel workers that write to disk while this spec is between its
+  # readings - both CI failures so far were a few blocks of drift
+  # between the reference snapshot and the plugin's, and usage can also
+  # swing both ways inside the window, so a value bracketed by two
+  # reference readings is not guaranteed either. What this spec pins is
+  # FIELD SELECTION and ARITHMETIC, not instantaneous occupancy: the
+  # invariant fields (block size, block total, inode total, and the
+  # products built from them) stay pinned exactly, while every field
+  # that moves under concurrent writes must match one of the two
+  # reference readings within a small absolute drift budget - orders of
+  # magnitude below the gap a confused field (f_bfree vs f_bavail) or a
+  # wrong multiplier would produce.
+  private VOLATILE_BLOCK_BUDGET = 8192 # 32 MiB on a 4 KiB-block fs
+
+  private def within_reference_window(low : Int64, high : Int64, actual : Int64, budget : Int64 = VOLATILE_BLOCK_BUDGET.to_i64) : Nil
+    lo, hi = {low, high}.min, {low, high}.max
+    (actual >= lo - budget && actual <= hi + budget).must_equal(
+      true, "expected #{actual} to match the reference readings #{lo}..#{hi} within #{budget}")
+  end
+
   it "matches stat -f exactly for every mount-space field on / and /tmp" do
     {"/", "/tmp"}.each do |mount|
-      parts = `stat -f --format='%S %b %f %a %c %d' #{mount}`.strip.split(" ").map(&.to_i64)
-      block_size, block_total, block_free, block_available, inode_total, inode_free = parts
+      read = -> {
+        `stat -f --format='%S %b %f %a %c %d' #{mount}`.strip.split(" ").map(&.to_i64)
+      }
+      block_size, block_total, block_free, block_available, inode_total, inode_free = read.call
       stats = Krikri::FactsGatherer.gather_mount_space_stats(mount)
+      _, _, block_free2, block_available2, _, inode_free2 = read.call
 
       stats["block_size"].must_equal(block_size)
       stats["block_total"].must_equal(block_total)
-      stats["block_available"].must_equal(block_available)
-      stats["block_used"].must_equal(block_total - block_free)
+      within_reference_window(block_available, block_available2, stats["block_available"].as(Int64))
+      within_reference_window(block_total - block_free, block_total - block_free2, stats["block_used"].as(Int64))
       stats["size_total"].must_equal(block_size * block_total)
-      stats["size_available"].must_equal(block_size * block_available)
+      within_reference_window(block_size * block_available, block_size * block_available2, stats["size_available"].as(Int64), VOLATILE_BLOCK_BUDGET * block_size)
       stats["inode_total"].must_equal(inode_total)
-      stats["inode_available"].must_equal(inode_free)
-      stats["inode_used"].must_equal(inode_total - inode_free)
+      within_reference_window(inode_free, inode_free2, stats["inode_available"].as(Int64), 2048)
+      within_reference_window(inode_total - inode_free, inode_total - inode_free2, stats["inode_used"].as(Int64), 2048)
     end
   end
 
@@ -31,16 +55,18 @@ describe "Krikri::FactsGatherer statvfs and file reads (facts_gatherer_statvfs_t
     python = Process.find_executable("python3")
     skip "python3 not available" unless python
 
-    raw = Krikri::FactsGatherer.capture(python, ["-c",
-                                                 "import os; s=os.statvfs('/'); print(s.f_frsize, s.f_blocks, s.f_bavail, s.f_files, s.f_favail)"])
-    frsize, blocks, bavail, files, favail = raw.split(" ").map(&.to_i64)
+    pycode = "import os; s=os.statvfs('/'); print(s.f_frsize, s.f_blocks, s.f_bavail, s.f_files, s.f_favail)"
+    frsize, blocks, bavail, files, favail =
+      Krikri::FactsGatherer.capture(python, ["-c", pycode]).split(" ").map(&.to_i64)
     stats = Krikri::FactsGatherer.gather_mount_space_stats("/")
+    _, _, bavail2, _, favail2 =
+      Krikri::FactsGatherer.capture(python, ["-c", pycode]).split(" ").map(&.to_i64)
 
     stats["block_size"].must_equal(frsize)
     stats["block_total"].must_equal(blocks)
-    stats["block_available"].must_equal(bavail)
+    within_reference_window(bavail, bavail2, stats["block_available"].as(Int64))
     stats["inode_total"].must_equal(files)
-    stats["inode_available"].must_equal(favail)
+    within_reference_window(favail, favail2, stats["inode_available"].as(Int64))
   end
 
   it "returns an empty hash when statvfs fails on a nonexistent path" do

@@ -111,6 +111,12 @@ describe "archive rerun idempotency" do
   end
 
   it "falls back to a size-only comparison when dest exists but is unreadable" do
+    # The 0o000 dest is the whole premise: the plugin must fail to read
+    # it and fall back to the size-only comparison. As root nothing is
+    # unreadable - the plugin reads the garbage bytes and compares them
+    # normally - so the fallback cannot be exercised at all.
+    skip "running as root: nothing is unreadable, so the size-only fallback cannot be exercised" if PluginSpecHelper.running_as_root?
+
     work = PluginSpecHelper.tmp_path("archive-idem-unreadable")
     src = make_idem_src("archive-idem-unreadable-src")
     Dir.mkdir_p(work)

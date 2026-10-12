@@ -518,6 +518,16 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
               name: firewalld
               state: started
               enabled: true
+              # Force the systemd dispatch explicitly: real Ansible's
+              # service action plugin resolves use=auto from the
+              # ansible_facts.service_mgr FACT (never the bare play
+              # var), so on a host that is not systemd-managed - a job
+              # container whose PID 1 is not systemd - real dispatches
+              # to the generic service module and fails the unit the
+              # same way this spec failed on CI. `use: systemd` is the
+              # escape hatch real honors, so the shape below is what
+              # runs wherever this spec runs.
+              use: systemd
             register: r
       #{dump_task("svc-cold", work)}
       YAML
@@ -562,6 +572,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
               name: firewalld
               state: started
               enabled: true
+              use: systemd
             register: r
       #{dump_task("svc-warm", work)}
       YAML
@@ -592,6 +603,7 @@ describe "service registered shapes (round994002/994003 systemd dispatch)" do
             ansible.builtin.service:
               name: firewalld
               state: started
+              use: systemd
             register: r
       #{dump_task("svc-noenable", work)}
       YAML
