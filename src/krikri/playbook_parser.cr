@@ -1927,7 +1927,13 @@ module Krikri
       end
 
       # Get play name
-      explicit_name = yaml["name"]?.try(&.as_s)
+      # `name:` present but empty (nil) must behave like a MISSING name,
+      # not raise - YAML::Any#[]? returns a value for a null-valued key,
+      # so the plain as_s here raised "Cast from Nil to String failed"
+      # (surfaced as a raw "Warning: Skipping task"; role
+      # armov.zabbix_agent2_lit_trellis_custom's tasks/main.yml, issue #11).
+      # Real (2.19.11) accepts a null name and displays the action.
+      explicit_name = yaml["name"]?.try(&.as_s?)
 
       # Get hosts (required)
       hosts_yaml = yaml["hosts"]?
@@ -2769,7 +2775,13 @@ module Krikri
       # (now-fixed) "Generic TASK [Task 1] label" entry. Each branch
       # below knows its own directive's name at the point it returns, so
       # the fallback is resolved per-branch rather than once up front.
-      name = task_hash["name"]?.try(&.as_s)
+      # `name:` present but empty (nil) must behave like a MISSING name,
+      # not raise - YAML::Any#[]? returns a value for a null-valued key,
+      # so the plain as_s here raised "Cast from Nil to String failed",
+      # reported as a raw "Warning: Skipping task" (issue #11, role
+      # armov.zabbix_agent2_lit_trellis_custom). Real (2.19.11) accepts a
+      # null name and displays the TASK [<action>] header.
+      name = task_hash["name"]?.try(&.as_s?)
 
       if block_yaml = task_hash["block"]?.try(&.as_a?)
         return parse_block_task(name || "block", task_hash, block_yaml, play, file_dir, known_vars, role_path, playbook_dir, source_file, source_map, source_prefix, index)
