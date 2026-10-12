@@ -142,8 +142,23 @@ module Krikri
       " => #{ResultDisplay.dump_suffix(JSON::Any.new(cleaned))}"
     end
 
-    # Warning texts already printed this run (real Display.warning dedups).
+    # Warning texts already printed this run - the shared Display.warning
+    # dedupe: real keys `_warns` on the FORMATTED "[WARNING]: {msg}" line
+    # (utils/display.py _deduplicate, called at display time) and it is one
+    # set across every warning source, so a message raised by a
+    # controller-side action-plugin check and again by the module result it
+    # also rides on prints ONCE (live-verified vs 2.19.11 with service's
+    # "Ignoring \"pattern\" as it is not used in \"systemd\"", which krikri
+    # emits from both the argspec validator and plugins/service's result
+    # warnings). Keyed on the printed line, so differently-formatted
+    # sources still collide exactly when real's would.
     @@warned_texts = Set(String).new
+
+    def self.emit_display_warning(text : String) : Nil
+      line = "[WARNING]: #{text.strip}"
+      return unless @@warned_texts.add?(line)
+      STDERR.puts line.colorize(:light_magenta)
+    end
 
     # Core-emitted deprecation lines already printed this run (real
     # Display._deprecated dedups on the formatted message) and the
@@ -172,13 +187,11 @@ module Krikri
     # An action-plugin warning raised while validating task args (the
     # service plugin's `Ignoring "X" as it is not used in "systemd"` for
     # its UNUSED_PARAMS): one console line per distinct message per run,
-    # exactly like Ansible's Display.warning dedupe.
-    @@action_warnings = Set(String).new
-
+    # exactly like Ansible's Display.warning dedupe - which is global
+    # across sources, so this shares the same set as every other
+    # [WARNING] emitter (see emit_display_warning).
     def self.emit_action_warning(text : String) : Nil
-      line = "[WARNING]: #{text}"
-      return unless @@action_warnings.add?(line)
-      STDERR.puts line.colorize(:light_magenta)
+      emit_display_warning(text)
     end
 
     # A collection-redirect deprecation (community.mysql.<module> ->
@@ -307,8 +320,7 @@ module Krikri
       # 2.19.11 with find's "Skipped '<path>' path due to this access issue").
       result["warnings"]?.try(&.as_a?).try &.each do |warning|
         text = warning.as_s? || warning.to_s
-        next unless @@warned_texts.add?(text)
-        STDERR.puts "[WARNING]: #{text.strip}".colorize(:light_magenta)
+        emit_display_warning(text)
       end
       emit_debug_template_error_warning(source_task, result)
 

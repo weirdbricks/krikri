@@ -274,3 +274,177 @@ describe "parse-time tombstone refusal end to end (krikri-playbook binary)" do
     _stderr.wont_include("module has been removed")
   end
 end
+
+describe "redirect-target and builtin-runtime tombstone refusals (issue #8)" do
+  # The bare-spelling redirect hop is gated on the target collection's
+  # presence on the controller (real's redirect chain dies at the
+  # collection import without it, and the name falls back to the
+  # generic couldn't-resolve refusal), so the assertions follow the
+  # helm_repository precedent and branch on CollectionIndex.
+  it "refuses bare docker_service with community.general.docker_service's removal message" do
+    if Krikri::CollectionIndex.installed?("community", "general")
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'community.general.docker_service' module has been removed. " \
+        "Use community.docker.docker_compose instead. This feature was " \
+        "removed from collection 'community.general' version 2.0.0.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed via redirect
+                docker_service:
+                  project_name: x
+          YAML
+        )
+      end
+    else
+      assert_raises_message(Krikri::UnresolvedModuleError,
+        "couldn't resolve module/action 'docker_service'. " \
+        "This often indicates a misspelling, missing collection, or incorrect module path.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: removed via redirect
+                docker_service:
+                  project_name: x
+          YAML
+        )
+      end
+    end
+  end
+
+  it "refuses the ansible.builtin./ansible.legacy. spellings of docker_service the same way" do
+    # Real resolves both qualified spellings through the same
+    # builtin-runtime redirect and refuses with the RESOLVED FQCN's
+    # message (live-verified vs 2.19.11: neither spelling echoes
+    # ansible.builtin./ansible.legacy. in the message).
+    return unless Krikri::CollectionIndex.installed?("community", "general")
+    ["ansible.builtin.docker_service", "ansible.legacy.docker_service"].each do |spelling|
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'community.general.docker_service' module has been removed. " \
+        "Use community.docker.docker_compose instead. This feature was " \
+        "removed from collection 'community.general' version 2.0.0.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: qualified spelling
+                #{spelling}:
+                  project_name: x
+          YAML
+        )
+      end
+    end
+  end
+
+  it "refuses bare docker_image_facts through the redirect hop with its FQCN's message" do
+    # A bare name NOT in the tombstone table under its own spelling,
+    # whose builtin-runtime redirect still lands on a tombstoned FQCN -
+    # the redirect hop is keyed on the redirect TARGET, not on the
+    # as-written spelling (live-verified vs 2.19.11: bare
+    # `docker_image_facts:` -> community.general.docker_image_facts,
+    # rc=1).
+    return unless Krikri::CollectionIndex.installed?("community", "general")
+    assert_raises_message(Krikri::RemovedModuleError,
+      "The 'community.general.docker_image_facts' module has been removed. " \
+      "Use community.docker.docker_image_info instead. This feature was " \
+      "removed from collection 'community.general' version 2.0.0.") do
+      Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: removed facts module
+              docker_image_facts:
+        YAML
+      )
+    end
+  end
+
+  it "refuses the ansible-core builtin-runtime module tombstones with the loader's exact message" do
+    # The three pre-collection F5 module tombstones in
+    # ansible_builtin_runtime.yml's plugin_routing.modules (removal_date
+    # 2019-11-06) - refused unconditionally on every controller, since
+    # the tombstone lives in ansible.builtin's own routing data
+    # (live-verified vs 2.19.11: rc=1, and every spelling's message
+    # names the ansible.builtin FQCN).
+    {
+      "bigip_asm_policy" => "The 'ansible.builtin.bigip_asm_policy' module has been removed. " \
+                            "bigip_asm_policy has been removed please use bigip_asm_policy_manage instead. " \
+                            "This feature was removed from ansible-core in a release after 2019-11-06.",
+      "bigip_facts" => "The 'ansible.builtin.bigip_facts' module has been removed. " \
+                       "bigip_facts has been removed please use bigip_device_info module. " \
+                       "This feature was removed from ansible-core in a release after 2019-11-06.",
+      "bigip_gtm_facts" => "The 'ansible.builtin.bigip_gtm_facts' module has been removed. " \
+                           "bigip_gtm_facts has been removed please use bigip_device_info module. " \
+                           "This feature was removed from ansible-core in a release after 2019-11-06.",
+    }.each do |name, message|
+      assert_raises_message(Krikri::RemovedModuleError, message) do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: builtin tombstone
+                #{name}:
+          YAML
+        )
+      end
+    end
+  end
+
+  it "refuses the qualified spellings of bigip_facts with the same ansible.builtin message" do
+    ["ansible.builtin.bigip_facts", "ansible.legacy.bigip_facts"].each do |spelling|
+      assert_raises_message(Krikri::RemovedModuleError,
+        "The 'ansible.builtin.bigip_facts' module has been removed. " \
+        "bigip_facts has been removed please use bigip_device_info module. " \
+        "This feature was removed from ansible-core in a release after 2019-11-06.") do
+        Krikri::PlaybookParser.parse_string(<<-YAML
+          - hosts: all
+            tasks:
+              - name: qualified builtin tombstone
+                #{spelling}:
+          YAML
+        )
+      end
+    end
+  end
+
+  it "keeps f5_utils on the generic couldn't-resolve path" do
+    # f5_utils's builtin-runtime entry is plugin_routing.module_utils -
+    # not a module tombstone - so real resolves nothing for a bare
+    # `f5_utils:` and refuses with the generic wording rc=4
+    # (live-verified vs 2.19.11).
+    assert_raises_message(Krikri::UnresolvedModuleError,
+      "couldn't resolve module/action 'f5_utils'. " \
+      "This often indicates a misspelling, missing collection, or incorrect module path.") do
+      Krikri::PlaybookParser.parse_string(<<-YAML
+        - hosts: all
+          tasks:
+            - name: module_utils tombstone is not a module tombstone
+              f5_utils:
+        YAML
+      )
+    end
+  end
+
+  it "rc=1 with the [ERROR] + Origin block on stderr and zero tasks run for bare docker_service" do
+    # The issue #8 end-to-end shape (probed real 2.19.11): rc=1, the
+    # community.general.docker_service message naming the RESOLVED FQCN
+    # (never the as-written bare spelling), the task's Origin block on
+    # stderr, zero tasks run.
+    return unless Krikri::CollectionIndex.installed?("community", "general")
+    status, stdout, stderr = run_playbook_binary(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: removed module
+            docker_service:
+              project_name: x
+          - name: would-be-next
+            ansible.builtin.debug: msg=hi
+      YAML
+    status.exit_code.must_equal(1, "stdout:\n#{stdout}\nstderr:\n#{stderr}")
+    stderr.must_include("[ERROR]: The 'community.general.docker_service' module has been removed. Use community.docker.docker_compose instead. This feature was removed from collection 'community.general' version 2.0.0.")
+    stderr.must_include("Origin: ")
+    stderr.must_include("^ column ")
+    stderr.wont_include("couldn't resolve module/action")
+    stdout.wont_include("TASK [")
+    stdout.wont_include("PLAY RECAP")
+  end
+end
