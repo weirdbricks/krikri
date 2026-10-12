@@ -2,6 +2,7 @@ require "yaml"
 require "./unsafe_values"
 require "./python_yaml_time"
 require "./yaml_source_map"
+require "./deprecation_hint"
 require "./var_origin"
 require "./module_registry"
 require "./loop_resolver"
@@ -3064,6 +3065,13 @@ module Krikri
       # legacy `sudo:` reports "conflicting action statements: wait_for,
       # sudo" (mrlesmithjr.lsi-megaraid), not the literal directive key.
       is_local_action = false
+      # True only for a MAPPING-form legacy `action:` (never
+      # `local_action:`). Ansible resolves such a mapping's module lazily
+      # at run time (after the task's when:), so a when:-gated task with
+      # an unresolvable module name must not abort the load here - real
+      # 2.19.11 still prints the mapping-form deprecation at load, then
+      # only refuses the name if the task is ever reached.
+      action_mapping = false
       templated_action_string = nil.as(String?)
       if module_name && ACTION_DIRECTIVE_KEYS.includes?(module_name)
         is_local_action = module_name.includes?("local_action")
@@ -3086,6 +3094,11 @@ module Krikri
             module_params = rest && !rest.strip.empty? ? YAML::Any.new(rest) : YAML::Any.new(Hash(YAML::Any, YAML::Any).new)
           end
         elsif (mp2 = module_params) && (h = mp2.as_h?)
+          action_mapping = true unless is_local_action
+          if action_mapping
+            warn_action_mapping_deprecation(source_file, source_map,
+              task_source_prefix(source_prefix, index))
+          end
           mod = ""
           # Ansible's dict-form action:/local_action: directive
           # (`action: {module: X, name: Y, state: Z}`, no args: wrapper
@@ -3277,7 +3290,7 @@ module Krikri
         # wherever krikri has the port). The refusal keeps its teeth for
         # names krikri has NOT ported - those genuinely cannot run here,
         # exactly the set ansible-core refuses on such a controller.
-        if resolution[:resolves] == false && resolved_module_name.nil?
+        if !action_mapping && resolution[:resolves] == false && resolved_module_name.nil?
           message = "couldn't resolve module/action '#{module_name}'. " \
                     "This often indicates a misspelling, missing collection, or incorrect module path."
           prefix = task_source_prefix(source_prefix, index)
@@ -3814,6 +3827,56 @@ module Krikri
         @@source_lines[path] = SourceLines.new(info.modification_time, info.size, lines)
         lines
       end
+    end
+
+    # Real (2.19.11, live-verified) prints at PLAYBOOK LOAD, on stderr,
+    # for every mapping-form legacy `action:` task - even one behind
+    # `when: false` that never runs:
+    #   [DEPRECATION WARNING]: Using a mapping for `action` is deprecated.
+    #   This feature will be removed from ansible-core version 2.23.
+    #   Origin: <file>:<line>:<col>
+    #   <source context>
+    #   Use a string value for `action`.
+    # with the Origin pointing at the mapping's FIRST KEY (5:5 = the
+    # `module:` line's key column; the source map records the mapping's
+    # own start, which libyaml places at that first key). Deduped per
+    # origin like Display._deduplicate; without a resolvable source
+    # position the Origin block is simply omitted, never the warning.
+    @@action_mapping_deprecations = Set(String).new
+    ACTION_DEPRECATION_MUTEX = Mutex.new
+
+    private def self.warn_action_mapping_deprecation(source_file : String?, source_map : YamlSourceMap?, prefix : String) : Nil
+      text = String.build do |io|
+        io << "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n"
+        pos = source_map.try(&.at?("#{prefix}/action"))
+        if sf = source_file
+          if pos && (line = pos[0]) > 0 && File.file?(sf) && (lines = source_lines(sf))
+            col = pos[1]
+            io << "Origin: " << File.expand_path(sf) << ":" << line << ":" << col << "\n"
+            io << "\n"
+            label_width = line.to_s.size
+            max_src_line_len = 120 - label_width - 1
+            start_idx = Math.max(0, (line - 1) - 2)
+            (start_idx..(line - 1)).each do |idx|
+              src = lines[idx].chomp.gsub('\t', ' ')
+              src = src.size > max_src_line_len ? src[0...max_src_line_len - 3] + "..." : src
+              io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
+            end
+            io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+          end
+        end
+        io << "Use a string value for `action`.\n"
+        io << "\n"
+      end
+      # The runtime include_tasks parse path runs inside concurrent
+      # per-host fibers, so the dedup set needs the same mutex treatment
+      # as the source-line cache above.
+      ACTION_DEPRECATION_MUTEX.synchronize do
+        return if @@action_mapping_deprecations.includes?(text)
+        @@action_mapping_deprecations << text
+        Krikri::DeprecationHint.print_hint_once
+      end
+      STDERR.puts text
     end
 
     private def self.warn_reserved_vars(keys : Array(String), source_file : String?, from_line : Int32) : Nil
