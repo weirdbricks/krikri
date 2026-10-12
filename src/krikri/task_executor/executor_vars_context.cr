@@ -156,6 +156,22 @@ module Krikri
       # via unconditional overwrite-in-priority-order instead.
       vars_context = base_context_a_for(host).dup
 
+      # Connection vars only: Ansible ranks play vars ABOVE inventory
+      # host vars, but baseA's merge order (an internal performance
+      # layout, not a precedence claim) lets host.vars overwrite
+      # play_vars keys for everything. Re-applying the play's own value
+      # for the SSH connection keys makes a play-level
+      # `vars: {ansible_user: ...}` / `ansible_port: ...` etc. actually
+      # win over the inventory the way ansible-playbook 2.19.11 does
+      # (live-verified), without touching the general play/host
+      # ordering for every other key. A registered var (set_fact:) for
+      # the same key still wins - Ansible's registered tier outranks
+      # play vars - so it is left exactly as baseA stacked it.
+      ConnectionSettings::CONNECTION_VAR_KEYS.each do |key|
+        next if @registered_vars[host.name].has_key?(key)
+        vars_context[key] = @play_vars[key] if @play_vars.has_key?(key)
+      end
+
       # Synthesized here (not in the cached baseA below) so the legacy
       # spellings can be withheld from loop-source resolution - see
       # #synthesize_legacy_ssh_aliases and #loop_source_vars_context.
@@ -450,6 +466,26 @@ module Krikri
       # it is what reproduces Ansible's "you cannot set_fact over an
       # extra-var" behavior).
       @extra_vars.each { |key, value| vars_context[key] = value }
+
+      # The SSH connection keys are read DIRECTLY out of this hash by
+      # ConnectionSettings.resolve (controller-side dispatch, batching,
+      # upload caching) - long before per-param templating ever runs - so
+      # a templated value (`ansible_user: "{{ deploy_user }}"`, the
+      # common real-role shape) would otherwise reach the ssh command
+      # line literally. Render them HERE, once, against the fully merged
+      # context, exactly where Ansible's connection plugin renders its
+      # own option vars. A render failure (undefined reference) leaves
+      # the raw template in place: the connection then fails loudly
+      # against a garbage user/port rather than silently falling back to
+      # the inventory's identity - the silent fallback is the original
+      # task-level-vars bug this whole feature exists to fix.
+      ConnectionSettings::CONNECTION_VAR_KEYS.each do |key|
+        next unless (value = vars_context[key]?) && (text = value.as_s?) && text.includes?("{{")
+        begin
+          vars_context[key] = JSON::Any.new(Krikri::VarSubstitutor.new(vars: vars_context).substitute(text))
+        rescue
+        end
+      end
 
       # Publish this host's execution-resolved (unsafe) variable names for
       # the re-templating gate - see VarSubstitutor's @@resolved_var_names

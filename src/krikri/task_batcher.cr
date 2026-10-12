@@ -1,6 +1,7 @@
 require "./playbook_parser"
 require "./action_plugin_manager"
 require "./plugin_manager"
+require "./connection_settings"
 
 module Krikri
   # Pure planning logic for task batching (on by default; --no-batching
@@ -140,17 +141,40 @@ module Krikri
     # alone).
     private def self.breaks_run?(task : Task, group_has_registers : Bool) : Bool
       structural_or_dynamic?(task) || needs_controller_control_flow?(task) ||
-        runs_off_the_target?(task) || runs_on_the_controller?(task) ||
+        off_the_batch_connection?(task) ||
         task.run_once? || retroactive_verdict?(task) ||
         produces_ansible_facts?(task) || runs_as_action_plugin?(task, group_has_registers) ||
         reconfigures_firewall?(task) || resolves_module_at_runtime?(task) ||
         !!task.unavailable_module ||
+        # A task that sets its OWN connection variables (task-level,
+        # including block vars merged into task.vars) connects
+        # differently from its neighbors - a batch script is ONE ssh
+        # connection, so such a task must never share one with a task
+        # that doesn't (or with one that sets different values). The
+        # runtime fingerprint check in execute_batch_group covers
+        # runtime-set values (set_fact/include_vars); this static rule
+        # keeps the static cases out of the shared round trip entirely.
+        # Play-level vars are shared by the whole flat list and so
+        # cannot split a group.
+        ConnectionSettings::CONNECTION_VAR_KEYS.any? { |key| task.vars.has_key?(key) } ||
         # group_by:/set_stats: - same category as reboot: above: no
         # uploaded plugin binary at all, handled entirely controller-side
         # (group_by: mutates the shared Inventory; set_stats: writes into
         # a controller-side accumulator for the final recap) - neither
         # can run as a remote batch script step.
         {"ansible.builtin.reboot", "ansible.builtin.group_by", "ansible.builtin.set_stats"}.includes?(task.module_name)
+    end
+
+    # WHY one helper: both conditions mean the task never
+    # executes over the batch group's shared SSH connection
+    # to the target - delegate_to:/connection: re-route it
+    # elsewhere, and PluginManager's controller-only plugins
+    # (fetch:, wait_for_connection:) run on the controller -
+    # so neither can be a remote batch script step. Each
+    # case's own full reasoning lives in the two helpers
+    # below.
+    private def self.off_the_batch_connection?(task : Task) : Bool
+      runs_off_the_target?(task) || runs_on_the_controller?(task)
     end
 
     # A templated action:/local_action: (see Task#templated_action)

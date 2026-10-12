@@ -634,8 +634,9 @@ module Krikri
       reboot_command = params["reboot_command"]?.try { |v| v == Krikri::NONE_SENTINEL || v.empty? ? nil : v } || "systemctl reboot"
 
       connection_host = PluginManager.get_connection_host(exec_host, vars_context)
-      user = exec_host.user || "root"
-      identity_file = vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      conn = ConnectionSettings.resolve(exec_host, vars_context)
+      user = conn.user
+      identity_file = conn.identity_file
 
       sleep pre_reboot_delay.seconds if pre_reboot_delay > 0
 
@@ -644,7 +645,7 @@ module Krikri
       # outcome here, not an error - only a clean non-zero exit from the
       # remote shell itself (the command was rejected outright, e.g.
       # permission denied) is worth surfacing.
-      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", exec_host.port, timeout: 15, identity_file: identity_file) rescue nil
+      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", conn.port, timeout: 15, identity_file: identity_file, extra_args: conn.common_args + conn.extra_args) rescue nil
       # Ansible stamps its elapsed clock the moment the shutdown command
       # returns (result['start'] in the action plugin) and reports elapsed as
       # integer seconds on EVERY path after that point - including when the
@@ -667,7 +668,7 @@ module Krikri
       deadline = Time.instant + reboot_timeout.seconds
       reconnected = false
       until Time.instant >= deadline
-        result = SSHManager.exec(connection_host, user, test_command, exec_host.port, timeout: connect_timeout, identity_file: identity_file) rescue nil
+        result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.common_args + conn.extra_args) rescue nil
         if result && result[:exit_code] == 0
           reconnected = true
           break
@@ -1539,7 +1540,7 @@ module Krikri
     # needed there beyond deleting the scratch copy afterward (via the
     # `__cleanup_after_copy` marker param).
     private def stage_large_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
 
       if match = precomputed_copy_match(params, src, host, vars_context)
         return match
@@ -1549,12 +1550,13 @@ module Krikri
 
       begin
         SSHManager.upload(
-          connection_host,
-          host.user || "root",
+          conn.conn_host,
+          conn.user,
           src,
           remote_tmp,
-          host.port,
-          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+          conn.port,
+          identity_file: conn.identity_file,
+          extra_args: conn.common_args + conn.extra_args
         )
       rescue
         return params
@@ -1625,13 +1627,14 @@ module Krikri
         if [ -f "$p" ]; then sha1sum "$p" | cut -d' ' -f1; else echo NOFILE; fi
         SCRIPT
 
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
       result = SSHManager.exec_script(
-        connection_host,
-        host.user || "root",
+        conn.conn_host,
+        conn.user,
         script,
-        host.port,
-        identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+        conn.port,
+        identity_file: conn.identity_file,
+        extra_args: conn.common_args + conn.extra_args
       )
       return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_sha1
 
@@ -1668,19 +1671,20 @@ module Krikri
     # directory is transferred as ciphertext. Left unhandled - no real
     # role round has hit a vaulted file inside a directory copy.
     private def stage_directory_copy_source(params : Hash(String, String), src : String, host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, String)
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-copy-dir-#{Random::Secure.hex(8)}"
 
       begin
         SSHManager.upload(
-          connection_host,
-          host.user || "root",
+          conn.conn_host,
+          conn.user,
           src.rstrip('/'),
           remote_tmp,
-          host.port,
+          conn.port,
           mode: nil,
-          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?),
-          recursive: true
+          identity_file: conn.identity_file,
+          recursive: true,
+          extra_args: conn.common_args + conn.extra_args
         )
       rescue
         return params
@@ -1799,17 +1803,18 @@ module Krikri
         return resolved
       end
 
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-unarchive-src-#{Random::Secure.hex(8)}-#{File.basename(src)}"
 
       begin
         SSHManager.upload(
-          connection_host,
-          host.user || "root",
+          conn.conn_host,
+          conn.user,
           src,
           remote_tmp,
-          host.port,
-          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+          conn.port,
+          identity_file: conn.identity_file,
+          extra_args: conn.common_args + conn.extra_args
         )
       rescue
         return params
@@ -1907,17 +1912,18 @@ module Krikri
         return resolved
       end
 
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-script-#{Random::Secure.hex(8)}-#{File.basename(resolved_local)}"
 
       begin
         SSHManager.upload(
-          connection_host,
-          host.user || "root",
+          conn.conn_host,
+          conn.user,
           resolved_local,
           remote_tmp,
-          host.port,
-          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?)
+          conn.port,
+          identity_file: conn.identity_file,
+          extra_args: conn.common_args + conn.extra_args
         )
       rescue
         return params
@@ -1991,19 +1997,20 @@ module Krikri
 
       return params if PluginManager.local_connection?(host, vars_context)
 
-      connection_host = PluginManager.get_connection_host(host, vars_context)
+      conn = ConnectionSettings.resolve(host, vars_context)
       remote_tmp = "/tmp/.krikri-playbook-assemble-#{Random::Secure.hex(8)}"
 
       begin
         SSHManager.upload(
-          connection_host,
-          host.user || "root",
+          conn.conn_host,
+          conn.user,
           src.rstrip('/'),
           remote_tmp,
-          host.port,
+          conn.port,
           mode: nil,
-          identity_file: vars_context["ansible_ssh_private_key_file"]?.try(&.as_s?),
-          recursive: true
+          identity_file: conn.identity_file,
+          recursive: true,
+          extra_args: conn.common_args + conn.extra_args
         )
       rescue
         return params
@@ -2134,11 +2141,17 @@ module Krikri
                     pruned
                   end
 
+      # The host entry carries the task's EFFECTIVE connection settings:
+      # a controller-side plugin (fetch:) or any plugin that dials back
+      # out over SSH must connect the way this task's connection vars
+      # say, not the inventory's. remote transport dispatch resolves its
+      # own settings from the full vars; this only has to agree.
+      task_conn = ConnectionSettings.resolve(host, vars_context)
       config = {
         "host" => {
           "name" => host.name,
-          "user" => host.user,
-          "port" => host.port,
+          "user" => task_conn.user,
+          "port" => task_conn.port,
         },
         "params" => final_params,
         "vars"   => wire_vars,

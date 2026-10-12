@@ -1364,6 +1364,12 @@ module Krikri
       step_tasks = [] of Task
       step_vars = [] of Hash(String, JSON::Any)
       halted = false
+      # The connection settings the first BatchScript step resolved to -
+      # every later step must match it or the group cannot share one SSH
+      # round trip (a batch script is ONE connection: user/port/key/
+      # password/args differences would silently run later members over
+      # the FIRST member's connection).
+      first_step_conn : ConnectionSettings? = nil
 
       group.each do |task|
         break if halted
@@ -1412,6 +1418,33 @@ module Krikri
           failed = outcome["failed"]?.try(&.as_bool) || false
           halted = true if failed && !resolve_task_ignore_errors(task, vars_context)
         when BatchScript::Step
+          member_conn = ConnectionSettings.resolve(host, vars_context)
+          if first = first_step_conn
+            if member_conn.fingerprint != first.fingerprint
+              # A member whose effective connection differs from the
+              # group's first step cannot share the round trip: run it
+              # through the exact solo path instead (execute_task_once
+              # applies changed_when:/failed_when: like the batch path
+              # does after interpretation), and cache its result here -
+              # the task-major consumer reads this cache either way.
+              # Its when: was already checked above and passed; the
+              # re-check inside execute_task_once re-passes on identical
+              # vars without any counter effect.
+              if result = execute_task_once(task, host, vars_context, shared: member_substitutor)
+                cache[task] = {result, vars_context}
+                # Mirror the JSON::Any branch's halting: a failed (and not
+                # ignored) detour member stops later members of the group
+                # exactly as a failed batch step would have.
+                failed = result["failed"]?.try(&.as_bool) || false
+                halted = true if failed && !resolve_task_ignore_errors(task, vars_context)
+              else
+                cache[task] = {nil, vars_context}
+              end
+              next
+            end
+          else
+            first_step_conn = member_conn
+          end
           steps << outcome
           step_tasks << task
           step_vars << vars_context
@@ -1420,8 +1453,8 @@ module Krikri
 
       return if steps.empty?
 
-      connection_host = PluginManager.get_connection_host(host, step_vars.first)
-      step_results = run_batch_steps(host, connection_host, steps, vars: step_vars.first)
+      conn = ConnectionSettings.resolve(host, step_vars.first)
+      step_results = run_batch_steps(host, conn, steps, vars: step_vars.first)
 
       steps.each_index do |idx|
         next unless interpreted = step_results[idx]?
@@ -1455,12 +1488,12 @@ module Krikri
     # served only solo tasks, so every task took one optimization and
     # forfeited the other. The daemon transport is preferred now, and
     # the script remains the fallback for the cases it cannot serve.
-    private def run_batch_steps(host : Host, connection_host : String, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)
-      if result = try_daemon_batch(host, connection_host, steps, vars)
+    private def run_batch_steps(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)
+      if result = try_daemon_batch(host, conn, steps, vars)
         return result
       end
 
-      interpreted = interpret_batch_script(host, connection_host, steps)
+      interpreted = interpret_batch_script(host, conn, steps)
 
       # Perf item 6a's safety net, on the
       # BATCH path. Item 6a lets a run skip the "which plugin binaries
@@ -1480,7 +1513,7 @@ module Krikri
       # Re-running the whole group is safe here specifically because a
       # missing binary means NOTHING in it ran: every step dispatches
       # the same binary, and the script fail-fasts at the first one.
-      ssh_user = host.user || "root"
+      ssh_user = conn.user
       if interpreted.any? { |_, step| PluginManager.missing_remote_binary_on_host?(step, "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}", ssh_user) }
         # The re-upload this recovery performs fails exactly like any
         # other upload when the host has gone unreachable mid-play -
@@ -1501,14 +1534,14 @@ module Krikri
           }.to_json)
           return steps.each_index.to_h { |idx| {idx, unreachable} }
         end
-        return interpret_batch_script(host, connection_host, steps)
+        return interpret_batch_script(host, conn, steps)
       end
 
       interpreted
     end
 
-    private def interpret_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)
-      script_results = run_batch_script(host, connection_host, steps)
+    private def interpret_batch_script(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step)) : Hash(Int32, JSON::Any)
+      script_results = run_batch_script(host, conn, steps)
       interpreted = Hash(Int32, JSON::Any).new
       script_results.each do |idx, step_result|
         interpreted[idx] = PluginManager.interpret_remote_result(step_result.exit_code, step_result.stdout, step_result.stderr)
@@ -1541,7 +1574,7 @@ module Krikri
     # running tasks the playbook asked for. A wrongly-repeated
     # idempotent module is a far better failure than a silently dropped
     # one.
-    private def try_daemon_batch(host : Host, connection_host : String, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)?
+    private def try_daemon_batch(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step), vars : Hash(String, JSON::Any)? = nil) : Hash(Int32, JSON::Any)?
       return nil unless PluginManager.daemon_enabled?
       return nil if steps.empty?
 
@@ -1549,8 +1582,9 @@ module Krikri
       return nil unless steps.all? { |step| step.become_user == become_user }
       return nil if steps.any?(&.module_name.empty?)
 
-      ssh_user = host.user || "root"
-      return nil if SSHManager.daemon_unavailable?(connection_host, ssh_user, host.port, become_user)
+      ssh_user = conn.user
+      return nil if SSHManager.daemon_unavailable?(conn.conn_host, ssh_user, conn.port, become_user,
+                      SSHManager.connection_sig(conn.identity_file, conn.common_args + conn.extra_args, Passwords.connection(vars, host)))
 
       payload = steps.map do |step|
         {
@@ -1562,14 +1596,15 @@ module Krikri
 
       begin
         results = SSHManager.daemon_send_batch(
-          connection_host,
+          conn.conn_host,
           ssh_user,
-          host.port,
+          conn.port,
           "#{PluginManager.remote_plugin_dir(ssh_user)}/#{steps.first.module_name}",
           payload,
-          identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?),
+          identity_file: conn.identity_file,
           become_user: become_user,
-          become_password: Passwords.become(vars, host)
+          become_password: Passwords.become(vars, host),
+          extra_args: conn.common_args + conn.extra_args
         )
         # Same normalization the script transport applies one frame up in
         # interpret_batch_script: the daemon's parsed response is a raw
@@ -1597,10 +1632,10 @@ module Krikri
       end
     end
 
-    private def run_batch_script(host : Host, connection_host : String, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
+    private def run_batch_script(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
-      script = BatchScript.build(batch_id, steps, host.user)
-      raw = SSHManager.exec_script(connection_host, host.user || "root", script, host.port, identity_file: host.vars["ansible_ssh_private_key_file"]?.try(&.as_s?))
+      script = BatchScript.build(batch_id, steps, conn.user)
+      raw = SSHManager.exec_script(conn.conn_host, conn.user, script, conn.port, identity_file: conn.identity_file, extra_args: conn.common_args + conn.extra_args)
       parsed = BatchScript.parse(raw[:stdout])
 
       # The batch transport only ever sees the SSH invocation's STDOUT -
@@ -1875,7 +1910,8 @@ module Krikri
           "unreachable" => true,
         }.to_json)
       end
-      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, host.user || "root", Passwords.become(vars_context, host))
+      step_conn = ConnectionSettings.resolve(host, vars_context)
+      plugin_target = PluginManager.remote_plugin_target(task.module_name, become, become_user, step_conn.user, Passwords.become(vars_context, host))
 
       # The daemon transport (item 3) dispatches by module NAME inside an
       # already-running process, and takes its privilege from which
@@ -1891,7 +1927,7 @@ module Krikri
       # Ansible never runs - and that a minimal host may not even have.
       BatchScript::Step.new(plugin_target, config_json, resolve_task_ignore_errors(task, vars_context),
         PluginManager.simple_plugin_name(task.module_name),
-        PluginManager.become_needed?(become, become_user, host.user || "root") ? become_user : nil,
+        PluginManager.become_needed?(become, become_user, step_conn.user) ? become_user : nil,
         substituted_params)
     end
 

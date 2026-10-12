@@ -723,7 +723,8 @@ module Krikri
         }.to_json)
       end
       become_pw = Passwords.become(vars, exec_host)
-      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, exec_host.user || "root", become_pw)
+      conn = ConnectionSettings.resolve(exec_host, vars)
+      target = PluginManager.remote_plugin_target(task.module_name, become, become_user, conn.user, become_pw)
       # With a become password the target is the probe+sudo -S wrapper,
       # which is full of single quotes - it cannot live inside the
       # `sh -c '<...>'` argv string below (the quotes would terminate
@@ -731,10 +732,11 @@ module Krikri
       # anyway). That shape writes the inner command to its own base64'd
       # file instead; without a password the launch bytes stay exactly
       # as they always were.
-      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, exec_host.user || "root")
-      connection_host = PluginManager.get_connection_host(exec_host, vars)
-      user = exec_host.user || "root"
-      identity_file = vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
+      pw_wrapped = !become_pw.nil? && PluginManager.become_needed?(become, become_user, conn.user)
+      connection_host = conn.conn_host
+      user = conn.user
+      identity_file = conn.identity_file
+      extra_args = conn.common_args + conn.extra_args
 
       jid = AsyncJobs.generate_jid
       dir = "~/.ansible_async"
@@ -774,7 +776,7 @@ module Krikri
                  SCRIPT
                end
 
-      launched = SSHManager.exec_script(connection_host, user, launch, exec_host.port, identity_file: identity_file)
+      launched = SSHManager.exec_script(connection_host, user, launch, conn.port, identity_file: identity_file, extra_args: extra_args)
       if launched[:exit_code] != 0
         return JSON.parse({
           "changed" => false,
@@ -798,7 +800,7 @@ module Krikri
       deadline = Time.instant + (task.async_seconds || raise "BUG: async_seconds missing").seconds
       loop do
         sleep poll.seconds
-        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", exec_host.port, identity_file: identity_file)
+        check = SSHManager.exec_script(connection_host, user, "cat #{dir}/#{jid} 2>/dev/null", conn.port, identity_file: identity_file, extra_args: extra_args)
         if (output = check[:stdout].strip).size > 0
           if status = (JSON.parse(output) rescue nil)
             # The file can still hold the synchronous launch stub
