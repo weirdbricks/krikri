@@ -60,7 +60,8 @@ library shards (krikri-jinja, krikri-xml, ...) stay MIT; GPL krikri may use them
                                      #   also rebuild --release before any krikri-role-tester round whose
                                      #   *timing* matters: `--version`'s `Build:` line reports debug/release,
                                      #   and a debug binary runs ~1.8x slower wall-clock on identical work -
-                                     #   `krikri-role-tester run` warns (not refuses) when it detects one
+                                     #   `krikri-role-tester` warns (not refuses) when it detects one, and records
+                                     #   the build type, commit and a stale-binary check in the run's `versions.txt`
 scripts/minitest.sh                 # the full minitest suite under test/
 scripts/minitest.sh -- -p 4         # same suite on 4 worker fibers (the suite is
                                      #   IO/sleep-bound, so tests genuinely overlap;
@@ -139,26 +140,33 @@ covers the queue-file format, the scheduler model, results layout, and both
 backends in detail. The summary below is only what's specific to using it
 from this repo.
 
+**The user runs `krikri-role-tester` themselves; Claude never starts it** (it
+provisions real servers, and babysitting it burned tokens). Claude's part
+starts from the results directory the user hands over - the `launch-roles`
+skill's first step is to ask for it, and it documents the layout.
+
 1. **Check `ROLES_TESTED.md` first** for a role shortlist - avoids re-discovering Galaxy-404s
    (`geerlingguy.mongodb`/`.consul`/`.golang` don't exist anymore) or re-verifying already-clean
    roles as if new (unless deliberately re-checking after something made a host suspect).
 
-2. **Batch phase:** build a queue file (one role per line) from the
-   `ROLES_TESTED.md` shortlist, then run it (Atlantic.net only - the Kata
-   backend is retired, see below). The account's server cap is 25, with 2
-   reserved for Dirless, so use at most 22 concurrent Atlantic.net hosts
-   (11 role pairs) across all running batches combined:
+2. **Batch phase (run by the user):** rebuild `bin/krikri-playbook --release` first (the
+   run records the binary's version and commit in `versions.txt`, and flags a binary older
+   than its checkout's HEAD), then either let the tool pick new roles or re-run a list:
 
-       bin/krikri-role-tester run roles.txt \
-         --atlantic-hosts 22 \
-         --results-dir ~/scratch/krt-results --round-start 1000
+       ./bin/krikri-role-tester --auto-mode --roles=600       # new roles from Galaxy
+       ./bin/krikri-role-tester --auto-mode --queue roles.txt # re-run specific roles
 
-   The tool runs both backends' worker pools concurrently (up to 4 pairs each), provisions a
-   fresh pair per role, runs cold + warm on both engines, and normalizes PLAY RECAP counters into
-   `SUMMARY|` lines under `<results-dir>/<round>_<backend>_<safe-role>/`. It also handles
-   idempotency (each phase already runs the role twice) and the known plugin-upload UNREACHABLE
-   race (same-host retry, up to 3, no reboot dance) itself - see its README's "Known divergences"
-   section. Do **not** make engine code changes during this phase.
+   `--auto-mode` skips roles already in `ROLES_TESTED.md` or an earlier `logs___*`
+   dir, drops Galaxy 404s before provisioning, splits ubuntu/rocky 50-50, and writes
+   everything to a fresh `logs___<epoch>/<role>/`. It is Atlantic.net only; the account's
+   server cap is 25 with 2 reserved for Dirless, so `--atlantic-hosts` defaults to 22
+   (11 role pairs) - lower it if another batch is running. Each role has staged time
+   budgets (terraform 5m, ssh 5m, cold+warm 30m) and a watchdog kills silent rounds.
+   Per role it runs cold + warm on both engines and compares exit codes, per-task results
+   and raw output byte for byte (`compare`, `compare.txt`, `compare_<phase>.diff`) besides
+   the PLAY RECAP counters (`SUMMARY|` lines). It also handles the known plugin-upload
+   UNREACHABLE race (same-host retry, up to 3) itself - see its README. Do **not** make
+   engine code changes during this phase.
    - Any divergence still needs a minimal repro confirmed against `ansible-playbook` (not
      assumed) before treating it as a krikri-playbook bug - plenty of "bugs" turn out to be broken
      upstream repos, missing Galaxy roles, or role-side gaps (e.g. `php-mysql`'s own repo ships no
@@ -171,9 +179,14 @@ from this repo.
      behavioral quirk in one it partially implements. Check whether the responsible module is core
      or on the supported list before spending investigation time on a divergence.
 
-3. **Triage:** run `bin/krikri-role-tester report ~/scratch/krt-results --round-start 1000
-   --round-end <N>` once the batch finishes, then dedupe the collected divergences - if two or
-   more roles hit the same root cause, that's one fix to make, not two.
+3. **Triage:** start from `<logs___dir>/report.txt` (one line per role, with a
+   `bytes=IDENTICAL|DIFFERENT` suffix). Roles that are `bytes=IDENTICAL` need no reading.
+   For the rest, read `<role>/compare.txt`, then `compare_<phase>.diff`, then the `.out`
+   files around the named task. Then dedupe the collected divergences - if two or more
+   roles hit the same root cause, that's one fix to make, not two. A difference in output
+   *text* (e.g. Ansible's `Origin:` error context) is a real krikri gap, not something to
+   mask; masks (`Compare::MASKS` in krikri-role-tester) are only for output that can never
+   be identical. The `launch-roles` skill walks through this.
 
 4. **Fix phase (serial):** apply fixes one at a time against the unit tests (concurrent edits to
    the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).
@@ -182,8 +195,10 @@ from this repo.
    and say so in the commit message). Bump `VERSION` per logical fix or tightly-related group of
    fixes, run the full `scripts/minitest.sh -- -p 4` suite, and `./build.sh`.
 
-5. **Confirm phase:** re-run *only* the roles that diverged, via a fresh queue file against the
-   rebuilt binary, before considering any fix done.
+5. **Confirm phase:** ask the user to re-run *only* the roles that diverged
+   (`./bin/krikri-role-tester --auto-mode --queue <file>`, queue lines copied from the old
+   `queue.txt`) against the rebuilt binary, and triage the new directory, before considering
+   any fix done. `versions.txt` shows which krikri commit the re-run used.
 
 6. Update `ROLES_TESTED.md` (the current-status table) and, if a deliberate limit was decided,
    `KNOWN_MISSING.md`, together in one commit; open/close GitHub issues for gaps (`Fixes #N` in the
@@ -196,8 +211,9 @@ from this repo.
    timings live (see `ROLES_TESTED.md`'s own note at the top). Older rows predating this
    convention (bundled entries, missing timings) are left as-is, not backfilled.
 
-7. If a run was SIGKILLed, `bin/krikri-role-tester sweep ~/scratch/krt-results` finds rounds
-   whose `run.log` never reached `DONE` and tears down their leftover terraform state directly.
+7. If a run was SIGKILLed, the user runs `bin/krikri-role-tester sweep <logs___dir>` (and
+   `cleanup-orphans <logs___dir>`) to find rounds whose `run.log` never reached `DONE` and tear
+   down their leftover terraform state / servers.
 
 ## Local Kata test hosts (retired)
 

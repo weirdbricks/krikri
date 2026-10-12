@@ -1,248 +1,212 @@
 ---
 name: launch-roles
-description: Run a full krikri-role-tester round end-to-end against Ansible Galaxy roles — launch, monitor, triage, dispatch fixes, and confirm them. Use whenever the user asks to "launch roles", "run a round", "start a batch", "test some roles", or names specific roles/a role count to test against krikri-playbook vs ansible-playbook. Covers picking roles, choosing a fresh round-start, fetching Atlantic.net credentials, respecting Atlantic.net's concurrency limit, running the batch, monitoring it to completion, triaging divergences, dispatching root-cause fixes to Crush, validating and landing each fix, confirming the fix against the real host, and syncing the round's docs. Atlantic.net only — the Kata backend is retired (not enough value for the reliability cost; see step 4).
+description: Triage the results of a krikri-role-tester run and drive the fixes — read the run's results directory (logs___<epoch>), skip byte-identical roles, group the rest by root cause, dispatch root-cause fixes to Crush, validate and land each fix, and have the user re-run to confirm. Use whenever the user asks to "launch roles", "run a round", "triage a batch", "look at the results", "check the logs___ dir", or names a results directory. The user runs krikri-role-tester themselves; this skill never starts it. Its first step is always to ask for the results directory.
 ---
 
-# Launch roles (krikri-role-tester full round)
+# Triage a krikri-role-tester run
 
-Drives an entire real-host benchmark round in
-`/home/labros/git_work/krikri/AGENTS.md`'s workflow: batch → monitor → triage
-→ fix dispatch → validate/land → confirm → docs sync. Steps 1-7 are the
-"batch phase" — no engine code changes during those. Steps 8 onward
-(triage/fix/confirm) do change code, by design — that's the point of a full
-round, not a deviation from it.
+The user runs `krikri-role-tester` on their own (typically overnight, as
+`./bin/krikri-role-tester --auto-mode --roles=N`). **Never start it
+yourself** — not `run`, not `--auto-mode`, not a re-run. It provisions real
+servers, and polling it is exactly the token burn this workflow replaces. Your
+job starts after it has produced a results directory.
 
-## 1. Determine the role list
+Steps 1-8 are read-only investigation. Steps 9 onward change code, by design.
 
-If the user named specific roles (as arguments or in their message), that
-answers everything below — skip straight to using those roles.
+## 1. FIRST: ask for the results directory
 
-Otherwise ask, in order, skipping any question the request already answers:
+Before anything else — before reading `ROLES_TESTED.md`, before looking at the
+repo — get the path to the results directory:
 
-**Question 1:** "New roles, or already-tested roles?"
+> Which results directory should I triage? (the `logs___<epoch>` directory
+> the tool printed as `logs: …` / `report: …`)
 
-**Question 2:** "How many roles do you want to run?"
+Skip the question only if the user's message already contains the path.
 
-### New roles
+If the user asked to *launch* or *run* roles, do not do it: give them the
+command (`./bin/krikri-role-tester --auto-mode --roles=<N>`, add
+`--queue <file>` to re-run specific roles) and ask them to come back with the
+directory when it finishes.
 
-Source fresh candidates from the Galaxy top-download list, diffed against
-every role already in `ROLES_TESTED.md` so nothing gets re-tested:
-
-```bash
-# Extract every already-tested role name (case matters for the dedup below)
-grep -oP '^\| `\K[^`]+(?=` \|)' ROLES_TESTED.md | sort -u > /tmp/tested.txt
-
-# Page through Galaxy's top-download list. Use summary_fields.namespace.name,
-# NOT github_user/username — a role's install-time namespace can differ from
-# its GitHub owner after a Galaxy-side rename/migration, and github_user
-# produced a ~36% GALAXY_MISSING rate (plain 404s) in an earlier batch.
-for page in $(seq 1 <enough-pages-for-3x-the-batch-size>); do
-  curl -s "https://galaxy.ansible.com/api/v1/roles/?order_by=-download_count&page_size=100&page=$page" \
-    | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-for r in d['results']:
-    ns = r.get('summary_fields',{}).get('namespace',{}).get('name') or r.get('github_user')
-    print(f\"{ns}.{r['name']}\")
-"
-  sleep 0.3
-done >> /tmp/galaxy_all.txt
-
-# Case-insensitive dedup against already-tested roles — Galaxy's namespace
-# field is lowercase-canonical, but ROLES_TESTED.md rows preserve whatever
-# casing the original queue file used (e.g. `Appsilon.mount_efs`), so a
-# case-sensitive diff re-tests the same role under a different spelling.
-awk 'NR==FNR{tested[tolower($0)]=1; next} !(tolower($0) in tested) && !seen[tolower($0)]++' \
-  /tmp/tested.txt /tmp/galaxy_all.txt > /tmp/galaxy_new_ranked.txt
-```
-
-Take the top N from `/tmp/galaxy_new_ranked.txt` (already ranked by download
-count, highest first). For a split-OS batch (e.g. 400 roles = 200
-ubuntu + 200 rocky), just take the first half/second half — no need to
-re-rank per OS.
-
-### Already-tested roles
-
-Pull from `ROLES_TESTED.md`'s current-status table — this is a deliberate
-re-check (e.g. after a fix that should have changed a role's DIVERGENT
-status, or after something made a host suspect), not new-role discovery. Ask
-which rows/status to target if it's not obvious from context (e.g. "all
-DIVERGENT roles" vs. specific named roles). If the target is a filter like
-"all DIVERGENT roles" rather than a fixed list, the count is whatever
-matches that filter — skip Question 2 in that case, it's already answered.
-
-
-## 2. Pick a fresh round-start
-
-Round numbers must never be reused, especially not from a killed/interrupted
-batch — relaunching at a dead batch's `--round-start` hits 100% instant
-`SSH_TIMEOUT` against now-torn-down hosts (see memory:
-`dont-reuse-round-numbers-after-kill`).
-
-Find the highest round number already used and start comfortably above it:
+Check the directory before trusting it:
 
 ```bash
-ls ~/scratch/krt-results 2>/dev/null | sed -E 's/^([0-9]+)_.*/\1/' | sort -n | tail -1
+ls <dir>
 ```
 
-Round up to a clean multiple (e.g. last was `700443` → use `701000`) so the
-new round's own numbers stay easy to read back out of `ROLES_TESTED.md` later.
+- `report.txt` present → the run finished. Normal case.
+- `report.txt` missing but role dirs present → the run is still going or was
+  killed. Say so, and ask whether to triage the finished rounds only (those
+  whose `run.log` contains `DONE`).
+- Directory missing or empty → ask again; do not guess another path.
 
-## 3. Fetch Atlantic.net credentials
+## 2. What the directory contains
 
-Every round uses Atlantic.net now (Kata is retired — see step 4), so this
-step is never skipped. Per `CLAUDE.local.md`:
+```
+logs___<epoch>/
+  versions.txt          what produced this run: tool, krikri binary + checkout
+                        commit, ansible, terraform
+  queue.txt             the roles tested, one "role any <ubuntu|rocky>" per line
+                        (feed it back with --auto-mode --queue to re-run)
+  rejected_roles.txt    candidates dropped before testing (would not install)
+  report.txt            one line per role - START HERE
+  <role>/               one directory per role (role name with . and / as _)
+    meta                round=, backend=, role= (original name)
+    status              final status marker (see step 4)
+    run.log             timeline; ends with DONE; has the versions: line, the
+                        SUMMARY| lines and COMPARE| lines
+    summary.txt         the four SUMMARY| lines only
+    compare             IDENTICAL or DIFFERENT (byte comparison verdict)
+    compare.txt         per phase: verdict, then each difference
+    compare_cold.diff   unified diff ansible vs krikri (only if cold differs)
+    compare_warm.diff   same for warm
+    cold_ansible.out    raw engine output
+    cold_krikri.out
+    warm_ansible.out
+    warm_krikri.out
+    galaxy_install.log  ansible-galaxy output
+    work/               site.yml, inv_ansible.ini, inv_krikri.ini, roles/, tf/
+```
+
+Roles that never got far enough (blocked, timed out) will lack some files —
+that is information, not an error.
+
+`report.txt` lines look like:
+
+```
+round29862900 | justin_p.posh5 | DIVERGENT ansible[ok=1 changed=0 unreachable=0 failed=1 skipped=0] vs krikri[ok=1 ... failed=0 skipped=6] | cold ansible=5.9s krikri=6.7s warm ansible=4.7s krikri=0.5s | bytes=DIFFERENT
+```
+
+`SUMMARY|role|phase|engine|rc=N|time=S|ok=.. changed=.. unreachable=.. failed=.. skipped=..`
+(engine is `ansible` or `krikri`; phase is `cold` or `warm`).
+
+**Older results** (before 0.1.0) use `<round>_<backend>_<role>/` directory
+names, `cold_py.out`/`cold_crystal.out` file names, `py`/`crystal` engine ids
+and have no `compare*`/`versions.txt`. `krikri-role-tester report <dir>` still
+reads them; there is no byte verdict, so triage by recap and the `.out` files.
+
+## 3. Check what the run tested
+
+Read `versions.txt` first and tell the user, in one line, what was tested:
+krikri version, build type, commit, dirty or not.
+
+- `warning:` / `stale_binary=yes` → the krikri binary is older than its
+  checkout's HEAD commit. Fixes already merged may not be in it. Tell the
+  user before triaging anything; a "divergence" may already be fixed. Ask
+  whether to continue or have them rebuild and re-run.
+- `Build: debug` → timings are ~1.8x slow; do not compare timings, and do
+  not copy them into `ROLES_TESTED.md`.
+- `commit: … (dirty …)` → note it; the result is not reproducible from the
+  commit alone.
+
+Record the commit — step 12's docs sync and any issue need it.
+
+## 4. Read report.txt and tally
 
 ```bash
-ATLANTICNET_ACCESS_KEY=$(/usr/local/bin/keypass-tool.sh 2>/dev/null | keepassxc-cli show -s "$DB" atlanticnet --attributes AccessKey 2>/dev/null)
+cut -d'|' -f3 <dir>/report.txt | awk '{print $1}' | sort | uniq -c | sort -rn
+grep -c 'bytes=IDENTICAL' <dir>/report.txt
 ```
 
-- **`-s`/`--show-protected` is required** — without it `keepassxc-cli show`
-  silently returns the literal string `PROTECTED` instead of the real value,
-  which breaks `terraform apply` with an invalid-API-key error that looks
-  unrelated to credentials.
-- Always redirect stderr to `/dev/null`, **never `2>&1`** — the "Enter
-  password to unlock" prompt text otherwise gets captured into the credential.
-- Maps to `ATLANTICNET_ACCESS_KEY`/`ATLANTICNET_PRIVATE_KEY` (not
-  `_USERNAME`/`_PASSWORD`).
-- See `CLAUDE.local.md` for the exact KeePass DB path and entry name — read it
-  rather than hardcoding here, since it's gitignored and may change.
+Statuses (the `status` file and the third column):
 
-## 4. Respect Atlantic.net's concurrency limit
+| Status | Meaning | Krikri signal? |
+|---|---|---|
+| `CLEAN` | recap counters match in cold and warm | maybe — check `bytes=` |
+| `DIVERGENT` | recap counters differ | yes |
+| `COMMUNITY_MODULE_MISSING` | only difference is a community module krikri does not track | deliberate gap, not a bug |
+| `GALAXY_MISSING` | role would not install | no |
+| `TF_APPLY_FAILED`, `SSH_TIMEOUT`, `BOOT_FAILED`, `NO_CAPACITY`, `CREDENTIALS_FAILED` | infra | no |
+| `TIMED_OUT_OR_CRASHED` | an engine run or the watchdog hit its time budget | possibly a krikri hang — read both `.out` tails |
+| `STOPPED` | run was interrupted | no |
+| `ERROR` | tool error | no — report to the user |
 
-**Kata is retired as a backend for this skill** — not enough value for its
-reliability cost (real incident: a 400-role round on 2026-09-12 hit 47
-BOOT_FAILED roles, all kata, all clustered near the end of one batch — pure
-infra flakiness, not signal about krikri). Always pass `--backend atlantic`
-explicitly; never pass `--kata-hosts` or rely on the tool's default
-`--backend both`. Ignore any older `kata-concurrency-limit`/
-`kata-teardown-devshm-leak` memory entries when planning a round — they're
-about a backend this skill no longer uses.
+`CLEAN` only means the five recap counters match. **Two engines that fail the
+same way are `CLEAN`.** The `bytes=` suffix is the stricter check.
 
-- **Atlantic.net:** account cap is 25 servers, 2 reserved for Dirless — keep
-  total concurrency (this batch + anything already running) ≤ 22
-  (memory: `atlanticnet-server-limit`). Check for already-running batches
-  first (`ps aux | grep krikri-role-tester`, or ask the user) before assuming
-  the full 22 is free.
-- **Sweep before launching, every time**, even if nothing looks obviously
-  wrong: `bin/krikri-role-tester sweep ~/scratch/krt-results` — a prior
-  session's crash or interrupted run can leave orphaned Atlantic.net servers
-  that silently eat into the 22-server budget above. Also check
-  `ps aux | grep krikri-role-tester` for anything already running before
-  computing how much of the budget is actually free.
+## 5. Skip what is byte-identical
 
-`--atlantic-hosts` now **defaults to 22** (the usable ceiling itself) as of
-`krikri-role-tester`'s own default — no more manually guessing a smaller
-number and re-deriving the ceiling at launch time. Only pass `--atlantic-hosts`
-explicitly to go *below* 22 (e.g. sharing the budget with another
-already-running batch — see the concurrency check above).
+A role with `bytes=IDENTICAL` matched on exit codes, per-task results and raw
+output in both phases. **Do not read its logs.** Count it and move on. This is
+the point of the byte comparison: it removes most roles from the LLM's
+attention.
 
-## 5. Write the queue file
+Everything else (`bytes=DIFFERENT`, or any non-CLEAN status) needs a decision.
 
-One role per line in the scratchpad directory:
+The only normalisations are: both engines use the inventory alias
+`testhost`, each side's own host IP becomes `<HOST_IP>`, and Ansible's
+`[WARNING]: Host '…' is using the discovered Python interpreter…` line is
+removed. Anything else that differs is real output.
 
-```
-geerlingguy.docker
-geerlingguy.nginx
-geerlingguy.apache
-```
+## 6. Triage the rest, cheapest evidence first
 
-Backend hints (`kata`/`atlantic`/`any`) in the queue file format are now
-moot since every run is atlantic-only — don't add them, plain role names
-are enough. (`krikri-role-tester` still parses the hint field if an older
-queue file has one; it's just never needed for a new one.)
+For each non-identical role, read in this order and stop as soon as the cause
+is clear:
 
-## 6. Run it
+1. `<role>/compare.txt` — a few lines. Per phase, the first-level reason:
+   - `exit code differs: ansible=A krikri=B`
+   - `block count differs: ansible=N krikri=M` (a different number of
+     PLAY/TASK/RECAP sections — a task ran or was skipped on one side only)
+   - `block N TASK [name] task results differ: ansible=[changed] krikri=[ok]`
+   - `block N TASK [name] bytes differ (X B ansible, Y B krikri)` (same
+     status, different text)
+2. `<role>/compare_cold.diff` / `compare_warm.diff` — the exact lines. Read
+   only the hunks `compare.txt` pointed at.
+3. `<role>/cold_ansible.out` vs `cold_krikri.out` — only around the named
+   task, not the whole file.
+4. `<role>/work/roles/<role>/tasks/…` — the task source, when you need to know
+   what the task does.
 
-```bash
-cd /home/labros/git_work/krikri-role-tester
-ATLANTICNET_ACCESS_KEY=... ATLANTICNET_PRIVATE_KEY=... \
-  bin/krikri-role-tester run <queue-file> \
-    --backend atlantic --atlantic-hosts <N> \
-    --results-dir ~/scratch/krt-results --round-start <fresh-round>
-```
+Do not read `run.log` unless status is blocked/timed out/ERROR; `summary.txt`
+is already folded into `report.txt`.
 
-Launch as a background command (this is a long-running batch — provisioning,
-cold+warm runs, teardown per role). Tell the user the round range and where
-results will land, then continue on to monitoring (step 7) — the rest of
-this round (triage, fix, confirm) is this skill's job too, not a handoff.
+## 7. Classify and deduplicate
 
-Record `round_start` and `total` (the queue file's line count) now — steps
-7-8 both need them to know which round directories belong to this batch.
+Group roles by root cause — the same missing module, the same message format
+difference, the same flag. One cause is one fix, not N.
 
-If the run needs to be interrupted, use plain `kill <pid>` (SIGTERM) for a
-graceful shutdown — never `kill -9` — and mention
-`bin/krikri-role-tester sweep ~/scratch/krt-results` as the recovery path if
-it ever does get SIGKILLed or the machine crashes.
+For each group decide:
 
-## 7. Monitor progress
+- **Real krikri bug** — a behavioural difference with the same input: a
+  different exit code, a task `changed` on one side only, a task skipped or
+  run on one side only, a different result structure. Confirm with a minimal
+  repro against `ansible-playbook` (below) before treating it as one.
+- **Krikri output gap** — same behaviour, different text: error context
+  (Ansible prints `Origin: <file>:<line>:<col>` and a source excerpt under
+  task errors), module error wording, extra warnings. **These are real
+  differences. Do not propose masking them** — a mask hides the gap and makes a
+  later fix undetectable. Masks are only for output that can never be identical
+  (a host IP, a probe-driven Ansible warning); they live in `Compare::MASKS`
+  in the krikri-role-tester repo, and adding one is the user's call.
+- **Both engines fail the same upstream way** — a broken role (missing
+  variable, removed `include:` action, dead URL). Not a krikri problem, but the
+  *text* may still differ — then it is an output gap as above.
+- **Untracked community module** — `COMMUNITY_MODULE_MISSING`; skip.
+- **Infra / blocked** — not krikri signal; list them for the user.
 
-While the batch runs, check in roughly every 3 minutes (poll via
-`ScheduleWakeup`/`Monitor` rather than a blocking `sleep` loop) and report
-progress as `<done>/<total>`, e.g. `5/20 done`:
+To build a minimal repro: `ansible-galaxy role install <role> -p /tmp/galaxy-roles`
+and a small `ansible_connection=local` playbook comparing `ansible-playbook`
+with a freshly built `bin/krikri-playbook` (no VM needed). `ansible-playbook`
+needs a pty here: `script -qec "ansible-playbook ..." /dev/null`.
 
-```bash
-total=$(wc -l < <queue-file>)
-round_end=$((round_start + total - 1))
-done=$(for round in $(seq "$round_start" "$round_end"); do
-  ls -d ~/scratch/krt-results/"${round}"_*/ 2>/dev/null
-done | xargs -I{} sh -c 'grep -q DONE "{}/run.log" 2>/dev/null && echo done' | wc -l)
-echo "$done/$total done"
-```
+## 8. Report to the user
 
-**Do not glob `<round-start>*`** — that matches on string prefix, so
-round-start `701000` would match a directory named `7010005_...` but miss
-`701001`-`701499`, which is where most of a real batch's rounds actually
-live. Iterate the numeric range `round_start..round_start+total-1` instead
-(round numbers are assigned roughly sequentially per queued role, one round
-per role); `grep -l`/`grep -q DONE` counts a directory once it's reached
-`DONE`, regardless of final status.
+Before dispatching anything, report — this is where the user's input is needed
+(what is worth fixing now):
 
-Each check-in should also confirm the batch is actually healthy, not just
-counting up slowly:
+- What was tested (step 3) and the tally: `N identical / M different / K
+  blocked`.
+- Per root-cause group: one line of cause, the affected roles, one evidence
+  path (`<dir>/<role>/compare_cold.diff`), and your classification.
+- Blocked/GALAXY_MISSING roles, listed, not analysed.
 
-- **No unexpected errors**: skim the tail of active `run.log` files (or
-  `ps aux | grep krikri-role-tester` to confirm the process is still alive)
-  for anything beyond the expected `SUMMARY|`/`DONE` lines — a crash, a
-  Terraform auth failure, or a repeating same-host `UNREACHABLE` retry loop
-  all warrant flagging to the user immediately rather than waiting for the
-  next 3-minute tick.
-- **Actual progress, not a stall**: the `done` count (or the set of active
-  round directories' `run.log` mtimes) should be advancing between checks.
-  If it's flat for more than one or two ticks with the process still
-  running, that's worth surfacing — don't just keep silently re-polling.
-
-Stop monitoring once `done == total` (or the process has exited) and report
-the final tally before moving to triage.
-
-## 8. Triage
-
-Once the batch finishes, run triage automatically — don't ask the user
-whether to do it:
-
-```bash
-round_end=$((round_start + total - 1))  # same derivation as step 7
-bin/krikri-role-tester report ~/scratch/krt-results --round-start "$round_start" --round-end "$round_end"
-```
-
-Then, per `AGENTS.md`'s triage step:
-
-- Dedupe the divergences — if two or more roles hit the same root cause,
-  that's one fix to make, not two.
-- For each divergence, confirm it's a real `krikri-playbook` bug with a
-  minimal repro against `ansible-playbook` before treating it as one —
-  plenty of "bugs" turn out to be broken upstream roles, missing Galaxy
-  roles, or role-side gaps that affect Ansible identically.
-- Report the triaged results to the user (CLEAN count, DIVERGENT roles with
-  their deduped root causes, any BLOCKED/GALAXY_MISSING roles) — this is
-  where the user's input is actually needed (deciding what's worth fixing
-  now vs. later), not on whether triage should run at all.
+Then continue with the groups the user wants fixed. If the user already said
+to fix everything real, do not wait.
 
 ## 9. Dispatch root causes to Crush
 
-Once triage has a deduped list of confirmed root causes, start sending them
-to Crush for investigation/fix automatically — don't ask the user for
-permission to begin this.
+Once there is a deduped list of confirmed root causes, send them to Crush
+automatically.
 
 Claude is the dispatcher, not a bystander, for each root cause:
 
@@ -251,17 +215,17 @@ Claude is the dispatcher, not a bystander, for each root cause:
    never reuse one across two different fixes running concurrently.
 2. Right before dispatching into a worktree that's been sitting, `git merge
    --ff-only main` in it first — an earlier fix may have already merged and
-   bumped `VERSION`, and dispatching against a stale base
-   guarantees a collision later.
+   bumped `VERSION`, and dispatching against a stale base guarantees a
+   collision later.
 3. Dispatch via `mcp__crush-api__crush_run` with the root cause, a minimal
-   repro, and the affected role(s) as context.
+   repro, the affected role(s), and the evidence paths from the results
+   directory as context.
 4. **Max 2 concurrent Crush tasks against this repo at any time** — more
    crashes the host (Crystal builds are CPU/memory-heavy). Queue the rest;
    launch the next one only once a running slot frees up.
 
-Fix/confirm phases (steps 4-5 of the benchmark-round workflow in
-`AGENTS.md`) still apply per fix — this step just means dispatch starts
-immediately after triage instead of waiting for the user to say "go ahead."
+See `fix-divergence` for the per-fix details (prompt contents, the
+dropped-`return` warning, no `version.cr` edits in the worktree).
 
 ## 10. Validate every completed Crush job
 
@@ -277,52 +241,59 @@ this validation**:
 2. Run `scripts/minitest.sh -- -p 4` (full suite) and `./build.sh` — both must pass clean
    before anything is trusted.
 3. If validation finds real problems, push back and fix by hand rather than
-   deferring to Crush's implementation choices — Crush's output is a second
-   opinion, not an approval to merge on its own.
+   deferring to Crush's implementation choices.
 4. Only once it checks out: Claude commits and pushes. Then delete the
    worktree — also Claude's job, not Crush's.
 
-This applies to every job independently, even when 2 are running
-concurrently — validate and merge one at a time (see the staleness gotcha
-in the dispatch step above: a second worktree merging after the first may
-need its `VERSION` bump renumbered by hand).
+Validate and merge one at a time (a second worktree merging after the first
+may need its `VERSION` bump renumbered by hand).
 
-## 11. Confirm each fix against the real host
+## 11. Confirm each fix with a re-run — by the user
 
-Passing `scripts/minitest.sh`/`./build.sh` proves the fix doesn't regress anything
-covered by unit tests — it does **not** prove the original divergence is
-actually gone. Per `AGENTS.md`'s confirm phase, after a fix for a role is
-merged to `main`:
+Passing the suite proves no regression; it does not prove the divergence is
+gone. After a fix for a role is merged to `main`:
 
-1. Build a fresh queue file containing **only the role(s) that diverged
-   because of this root cause** (not the whole original batch).
-2. Pick another fresh, never-used round-start (same rule as step 2).
-3. Re-run via `bin/krikri-role-tester run` against the freshly rebuilt
-   binary, then `report` on just that round range.
-4. The role must come back CLEAN on both cold and warm before the fix is
-   considered done. If it's still DIVERGENT, the root cause wasn't fully
-   fixed — treat it as a new investigation, not a docs update.
+1. Tell the user the krikri binary must be rebuilt (`./build.sh --release`) —
+   the run only tests what is in the binary. `versions.txt` of the next run
+   will show the commit; check it contains the fix.
+2. Write a queue file with **only the affected roles**, in the results
+   directory's format (copy their lines from the old `queue.txt`, which keeps
+   each role's OS):
 
-Do this per fix as it lands, not batched at the end — a later fix could
-otherwise mask whether an earlier one actually worked.
+   ```
+   hoplacloud.fail2ban any rocky
+   ```
+
+3. Give the user the command and ask them to run it and send back the new
+   directory:
+
+   ```
+   ./bin/krikri-role-tester --auto-mode --queue <queue-file>
+   ```
+
+4. Back at step 1 with the new directory. The role must come back
+   `bytes=IDENTICAL` (or, if the remaining difference is a *known, accepted*
+   output gap, say so explicitly). If it is still different, the root cause
+   was not fully fixed — treat it as a new investigation.
+
+Do this per fix as it lands, not batched at the end.
 
 ## 12. Sync round docs
 
-Once every dispatched fix is merged and confirmed, update the round's
-tracking docs together in one commit (per `AGENTS.md`'s "Docs that must stay
-in sync"):
+Once every dispatched fix is merged and confirmed, update the tracking docs
+together in one commit (per `AGENTS.md`'s "Docs that must stay in sync"):
 
 - **GitHub issues**: file one issue per unfixed root cause (`gh issue create`,
   label `divergence`), and make sure each merged fix's commit says `Fixes #N`.
-  No per-round narrative is written anywhere; `git log` is the record. Only
+  Include the krikri commit from `versions.txt` and the evidence path. No
+  per-round narrative is written anywhere; `git log` is the record. Only
   touch `KNOWN_MISSING.md` if a deliberate limit was decided.
-- **`ROLES_TESTED.md`**: one row per role tested this round — never bundled
-  — each with cold/warm timing for both engines. Every role from the
-  original batch queue gets a row, including ones that stayed CLEAN, not
-  only the ones that needed fixes.
+- **`ROLES_TESTED.md`**: one row per role tested — never bundled — each with
+  cold/warm timing for both engines (from the `report.txt` line). Every role
+  from `queue.txt` gets a row, including ones that stayed CLEAN or
+  byte-identical. Skip timings from a debug build.
 - **`README.md`**: bump the version badge to match the final `VERSION`
   reached this round.
 
-This is the step that closes out the round — after this, `ROLES_TESTED.md`
-and `git log` are the source of truth for what this round did, matching how
-every prior round was documented.
+This closes out the round — after this, `ROLES_TESTED.md` and `git log` are
+the source of truth for what the round did.
