@@ -777,6 +777,17 @@ module Krikri
       # checked above, so this is purely the loop-source failure.
       items = begin
         resolve_first_found(task, host, vars_context)
+      rescue ex : LoopLookupError
+        # with_first_found: exhaustion is the with_<lookup>: machinery's
+        # own lookup failure - real prints the bodyless [ERROR] block
+        # (Origin: <unknown> + invoke_lookup()) and a msg-only fatal for
+        # it on include_vars: too (live-verified vs 2.19.11, issue #12),
+        # not the arg-finalization wrapper the generic include_vars
+        # failure shape below builds. Same emit + standard failure
+        # pipeline the loop funnels use.
+        emit_loop_source_error_block(task, ex)
+        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        return
       rescue ex : UndefinedVariableError | FirstFoundLookupError
         finish_include_vars_failure(task, host, ex.message || "is undefined")
         return

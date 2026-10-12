@@ -1281,7 +1281,15 @@ module Krikri
       # already flows through resolve_loop_items_or_raise (converted to
       # WhenEvaluationError -> clean task failure) for the general loop
       # and include_tasks paths; execute_include_vars rescues it directly.
-      raise FirstFoundLookupError.new(
+      # LoopLookupError (not FirstFoundLookupError): the with_first_found:
+      # keyword's exhaustion is the with_<lookup>: machinery's own lookup
+      # failure - real prints the bodyless [ERROR] block (Origin: <unknown>
+      # + invoke_lookup()) and a msg-only fatal for it on EVERY module
+      # kind the keyword is attached to (module task, include_tasks:,
+      # include_vars:, handler - live-verified vs 2.19.11, issue #12), not
+      # the arg-finalization "Task failed:" wrapper the plain
+      # FirstFoundLookupError conversion produced.
+      raise LoopLookupError.new(
         "The lookup plugin 'first_found' failed: No file was found when using first_found."
       ) unless task.loop_first_found_skip?
       [] of JSON::Any
@@ -1738,6 +1746,19 @@ module Krikri
     # lookup-invocation site never carries source positions. See
     # emit_loop_source_error_block for the block.
     class LoopLookupError < WhenEvaluationError
+      # true when the failing lookup ran INSIDE the loop source's own
+      # template (`loop: "{{ query('first_found', ...) }}"`) - ansible-core
+      # pins those errors' Origin at the loop keyword's VALUE token
+      # (live-verified vs 2.19.11, issue #12). false keeps the with_<lookup>:
+      # keyword machinery's bodyless shape - that invocation site carries
+      # no source position, so real prints `Origin: <unknown>` plus the
+      # bare `invoke_lookup()` frame line. See
+      # emit_loop_source_error_block for both blocks.
+      getter? origin_known : Bool
+
+      def initialize(message : String, @origin_known = false)
+        super(message)
+      end
     end
 
     # Shared substitute+evaluate+strict-undefined-rescue sequence for a
@@ -3354,9 +3375,20 @@ module Krikri
       end
 
       cause_context = nil
-      if (m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)) &&
-         (origin = undef_chain_var_origin(task, m[1]))
-        cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+      if m = inner.to_s.match(/\A'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+        if origin = undef_chain_var_origin(task, m[1])
+          cause_context = origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
+        elsif task_has_loop_source?(task) && (pos = locate_loop_source_line(lines, task))
+          # An UNDEFINED loop source (`loop: "{{ wordpress_sites }}"`) has
+          # no defining var for undef_chain_var_origin to find - but real
+          # still pins the cause stanza's Origin at the loop keyword's
+          # VALUE token, the reference site itself (live-verified vs
+          # 2.19.11: `loop: "{{ wordpress_sites }}"` reports the loop
+          # line/column with the usual excerpt+caret, issue #12,
+          # armov.zabbix_agent2_lit_trellis_custom). Without this the
+          # caused-by stanza printed with no Origin block at all.
+          cause_context = origin_context_block(path, lines, pos[0] + 1, pos[1])
+        end
       end
 
       text = String.build do |io|

@@ -905,8 +905,12 @@ module Krikri
     rescue ex : FirstFoundLookupError
       # Same channel again: a templated `loop: "{{ query('first_found',
       # params) }}"` whose lookup finds nothing (and has no skip: true)
-      # is a task failure in Ansible, never a silent empty loop.
-      raise WhenEvaluationError.new(ex.message)
+      # is a task failure in Ansible, never a silent empty loop. The
+      # lookup failed INSIDE the loop source's own template here, so its
+      # [ERROR] block's Origin points at the loop keyword's VALUE token
+      # (origin_known: true - live-verified vs 2.19.11, issue #12), unlike
+      # the with_first_found: keyword's bodyless Origin: <unknown> shape.
+      raise LoopLookupError.new(ex.message || "lookup failed", origin_known: true)
     rescue ex : UndefinedVariableError
       if when_condition = task.when_condition
         # Ansible evaluates the task's own when: BEFORE the loop source
@@ -1023,13 +1027,41 @@ module Krikri
     #     (blank)
     #
     #     (live-verified vs 2.19.11: a with_dict over a defined null).
+    #   c) LoopLookupError with origin_known (a lookup that failed INSIDE
+    #   the loop source's own template - `loop: "{{ query('first_found',
+    #   'nope.yml') }}"`, live-verified vs 2.19.11, issue #12):
+    #
+    #     [ERROR]: <lookup plugin error>
+    #     Origin: <abs task file>:<line>:<col>   <- the loop VALUE token
+    #     (loop + 2 preceding source lines, numbered)
+    #                ^ column <col>
+    #     (blank)
+    #
+    #     - the same excerpt shape as LoopTypeError but WITHOUT its
+    #     "Provide a list..." tail. origin_known=false keeps the (b)
+    #     bodyless shape: the with_<lookup>: keyword machinery invokes the
+    #     lookup through helpers that carry no source position, so real
+    #     prints `Origin: <unknown>` + the bare `invoke_lookup()` frame
+    #     line (live-verified vs 2.19.11 for with_first_found: on a
+    #     module task, on include_tasks: and on include_vars:, issue #12).
     # Deduped by full text like every other block (Display._deduplicate) -
     # the Origin's file:line:col makes it task-unique.
     private def emit_loop_source_error_block(task : Task, ex : WhenEvaluationError) : Nil
       msg = ex.message || ""
       return if msg.empty?
 
-      text = if ex.is_a?(LoopLookupError)
+      text = if ex.is_a?(LoopLookupError) && ex.origin_known?
+               path = task.source_file || @playbook_file
+               return unless path && File.file?(path)
+               lines = File.read_lines(path)
+               return unless (pos = locate_loop_source_line(lines, task))
+
+               String.build do |io|
+                 io << "[ERROR]: " << msg << "\n"
+                 io << origin_context_block(path, lines, pos[0] + 1, pos[1])
+                 io << "\n"
+               end
+             elsif ex.is_a?(LoopLookupError)
                String.build do |io|
                  io << "[ERROR]: " << msg << "\n"
                  io << "Origin: <unknown>\n"

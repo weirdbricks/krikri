@@ -1125,6 +1125,11 @@ module Krikri
   # completely different, real reason (insufficient host resources) -
   # visibly different final state, not just a cosmetic message mismatch.
   class RemovedActionError < Exception
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # A pre-2.0 legacy top-level task attribute (`sudo`/`su`/`always_run`/
@@ -3103,10 +3108,21 @@ module Krikri
         # a release after <date>." tail - see plugins/loader.py's
         # _find_fq_plugin and _display_utils.py's
         # get_deprecation_message_with_plugin_info.
-        raise RemovedActionError.new(
+        # Ansible prints this refusal on STDERR with the task's own Origin
+        # block pointing at the `include:` KEY (live-verified vs 2.19.11:
+        # `- include: tasks/foo.yml` reports Origin 4:7, the module key's
+        # column - the same position the task prefix records), not the
+        # bare stdout line this engine used to print (issue #12,
+        # hoplacloud.fail2ban / pauvos.docker_engine).
+        removed_message =
           "The 'ansible.builtin.include' action plugin has been removed. " \
           "Use include_tasks or import_tasks instead. This feature was " \
-          "removed from ansible-core in a release after 2023-05-16.")
+          "removed from ansible-core in a release after 2023-05-16."
+        raise RemovedActionError.new(
+          removed_message,
+          origin_error_render(
+            removed_message, source_file, source_map,
+            task_source_prefix(source_prefix, index)))
       end
 
       # A `static:` beside a NON-include action is ansible-core's own
@@ -4425,7 +4441,10 @@ module Krikri
     # source position instead of a task-prefix lookup - for errors whose
     # Origin is a specific sibling KEY inside the task (the `static:`
     # attribute refusal points at the static: line itself, not the task).
-    private def self.origin_error_render_at(message : String, path : String?, source_map : YamlSourceMap?, pos : YamlSourceMap::Pos?) : String
+    # Public (not private) because RoleLoader's meta/main.yml dependency
+    # not-found raise builds its Origin block from the declaring role's
+    # meta file, outside this class (issue #12).
+    def self.origin_error_render_at(message : String, path : String?, source_map : YamlSourceMap?, pos : YamlSourceMap::Pos?) : String
       String.build do |io|
         io << "[ERROR]: " << message << "\n"
         if path && pos && File.file?(path)

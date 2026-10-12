@@ -277,9 +277,15 @@ module Krikri
       # handler's own accounting already happens in HandlerRunner#run
       # around this method's single return value. Resolves the same
       # loop sources a regular task's own resolution chain does, minus
-      # with_fileglob/with_first_found (need a delegate host + shared
-      # substitutor a handler has no equivalent concept of, and are
-      # vanishingly rare on a handler in practice).
+      # with_fileglob (needs a delegate host + shared substitutor a
+      # handler has no equivalent concept of). with_first_found: WAS
+      # omitted for the same (stated) reason, but its exhaustion is a
+      # hard task failure in Ansible - the handler ran its module once
+      # with `item` unbound instead (live-verified vs 2.19.11: a
+      # with_first_found: handler whose only candidate is missing fails
+      # with the bare lookup-failure [ERROR] block, recap failed=1,
+      # issue #12) - so it now resolves through the same
+      # LoopLookupError channel every other funnel uses.
       # resolve_loop_items_or_raise: round174 matrix scenario 10 - a
       # genuinely undefined loop: source fails the handler itself
       # (returned via when_error_result, the same shape execute_handler_
@@ -302,6 +308,7 @@ module Krikri
         loop_vars_context = loop_source_vars_context(handler, host, vars_context)
         loop_items = resolve_loop_items_or_raise(handler, host, loop_vars_context) do
           handler.loop_items ||
+            resolve_first_found(handler, host, loop_vars_context) ||
             resolve_loop_template(handler, loop_vars_context) ||
             resolve_loop_nested(handler, loop_vars_context, host.name) ||
             resolve_loop_together(handler, loop_vars_context, host.name) ||

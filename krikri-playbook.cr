@@ -822,7 +822,13 @@ rescue ex : Krikri::RemovedActionError
   # fell through to the generic `rescue ex` below and exited 4. Found
   # benchmarking mrlesmithjr.firewalld (round 176), which still uses the
   # legacy bare `include:` directive.
-  puts "[ERROR]: #{ex.message}".colorize(:red)
+  # Ansible prints this refusal on STDERR with the task's Origin block
+  # (live-verified vs 2.19.11), not a bare line on stdout (issue #12).
+  if render = ex.render
+    STDERR.print render
+  else
+    STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
+  end
   exit 1
 rescue ex : Krikri::ConflictingActionStatementsError
   # A legacy top-level task attribute (sudo/su/always_run/etc.) beside a

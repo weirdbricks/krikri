@@ -103,6 +103,31 @@ module Krikri
       paths.join(":")
     end
 
+    # The search-path list a role's OWN meta/main.yml DEPENDENCY reports
+    # when IT names a missing role - ansible-core's RoleDefinition loads
+    # dependencies through the collection-aware loader, which prefixes the
+    # joined list with the "ansible.legacy" collection name and appends the
+    # declaring role's own parent directory as an extra search root before
+    # the playbook dir (live-verified vs 2.19.11:
+    #   play-level `roles: [missing]` ->
+    #     "/pb/roles:/home/.../.ansible/roles:/usr/share/ansible/roles:
+    #      /etc/ansible/roles:/pb"
+    #   meta/main.yml `dependencies: [missing]` ->
+    #     "ansible.legacy:/pb/roles:/home/.../.ansible/roles:
+    #      /usr/share/ansible/roles:/etc/ansible/roles:/pb/roles:/pb"
+    #   with the role installed via ANSIBLE_ROLES_PATH=/rl:
+    #     "ansible.legacy:/pb/roles:/rl:/rl:/pb"
+    # - the inserted entry is the declaring role dir's own parent). Display
+    # only - resolve_role_dir's own (superset) search order is unchanged.
+    def self.role_search_display_dependency(playbook_dir : String, declaring_role_dir : String) : String
+      basedir = File.expand_path(playbook_dir)
+      paths = [File.join(basedir, "roles")]
+      paths.concat(roles_paths)
+      paths << File.dirname(File.expand_path(declaring_role_dir))
+      paths << basedir
+      "ansible.legacy:" + paths.join(":")
+    end
+
     # Loads every entry in a play's `roles:` list (plus their meta/main.yml
     # dependencies, recursively), in order. Returns {tasks, handlers} to
     # prepend to the play - Ansible runs role tasks before the play's own
@@ -285,10 +310,23 @@ module Krikri
       # {nil, nil} when the entry set none (the default for include_role:,
       # whose invocation has no such keyword in this engine).
       role_timeout : {Int64?, String?} = {nil, nil},
+      # Set only when this load_role call IS a meta/main.yml dependency
+      # load - the declaring role's own dir, for the not-found message's
+      # dependency-context search list (see
+      # #role_search_display_dependency).
+      dependency_declaring_dir : String? = nil,
     )
+      # When a play-level `roles:` entry's own meta/main.yml DEPENDENCY
+      # names a role that is nowhere on disk, the raise carries the
+      # declaring role's dir so the message reports the dependency
+      # context's own search list (ansible.legacy:-prefixed, plus the
+      # declaring role's parent) instead of the play-level one (issue #12,
+      # laniakea.galaxy). The render (Origin at the dependency entry inside
+      # the declaring role's meta/main.yml) is attached by
+      # #load_meta_dependencies, which owns that file's source map.
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
-        raise RoleNotFoundError.new("the role '#{name}' was not found in #{role_search_display(playbook_dir)}")
+        raise RoleNotFoundError.new(role_not_found_message(name, playbook_dir, dependency_declaring_dir))
       end
 
       # An already-loaded role contributes no defaults a second time -
@@ -629,7 +667,25 @@ module Krikri
         dep_name, dep_version, dep_vars, dep_tags, dep_when, dep_origins = parse_role_entry(dep, meta_path, cached_source_map(meta_path), "dependencies/#{dep_index}")
         before_count = tasks.size
         dep_default_origins = Hash(String, VarOrigin).new
-        dep_defaults = load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins)
+        dep_defaults = begin
+          load_role(dep_name, dep_vars, dep_tags, play, playbook_dir, seen, tasks, handlers, nil, parent_names, parent_paths, parent_defaults, parent_default_origins, dep_origins, play_scope: play_scope, role_version: dep_version, role_when: dep_when, default_origins_out: dep_default_origins, dependency_declaring_dir: role_dir)
+        rescue ex : RoleNotFoundError
+          # A missing DEPENDENCY reports its Origin at the dependency
+          # entry inside the declaring role's own meta/main.yml (issue #12,
+          # laniakea.galaxy; live-verified vs 2.19.11: both the `- role: x`
+          # mapping form and the bare `- x` string form point at column 5,
+          # the entry's own start). The raise site has no source context,
+          # so attach the block here where the meta file's source map is
+          # at hand - only when this raise is really about THIS entry
+          # (a nested dependency's own not-found raise already carries its
+          # declaring meta's render from the inner rescue).
+          if ex.render.nil? && ex.message.to_s.includes?("the role '#{dep_name}' was not found in ansible.legacy:") &&
+             (pos = dependency_origin_pos(meta_path, dep, dep_index))
+            ex.render = PlaybookParser.origin_error_render_at(
+              ex.message.to_s, meta_path, cached_source_map(meta_path), pos)
+          end
+          raise ex
+        end
         apply_role_when(tasks, before_count, dep_when)
         # Origins mirror the value merge below exactly: a key the earlier
         # dependency already provided keeps ITS origin; a key this
@@ -646,6 +702,44 @@ module Krikri
       end
 
       collected
+    end
+
+    # The source position a missing meta/main.yml DEPENDENCY's Origin
+    # points at: the bare-string entry's own scalar position, or - for the
+    # `- role: x` mapping form - the name KEY's own column (the source map
+    # records the VALUE position, so walk back to the key on the same
+    # line, the same walk-back parse_task's static:/include-attribute
+    # handling does). Nil when the map has no position for the entry -
+    # the error then renders message-only.
+    private def self.dependency_origin_pos(meta_path : String, dep : YAML::Any, dep_index : Int32) : {Int32, Int32}?
+      map = cached_source_map(meta_path)
+      prefix = "dependencies/#{dep_index}"
+      if hash = dep.as_h?
+        key = %w[role name src].find { |k| hash[k]? }
+        return nil unless key
+        pos = map.at?("#{prefix}/#{key}")
+        return nil unless pos
+        line = pos[0]
+        src_line = line > 0 ? File.read_lines(meta_path)[line - 1]? : nil
+        col = src_line.try do |src_text|
+          idx = src_text.index("#{key}:")
+          idx ? idx + 1 : pos[1]
+        end || pos[1]
+        {line, col}
+      else
+        map.at?(prefix)
+      end
+    end
+
+    # The not-found message for a role load: the dependency context's own
+    # search list when this load IS a meta/main.yml dependency (see
+    # #role_search_display_dependency), the play-level one otherwise.
+    private def self.role_not_found_message(name : String, playbook_dir : String, dependency_declaring_dir : String?) : String
+      if dependency_declaring_dir
+        "the role '#{name}' was not found in #{role_search_display_dependency(playbook_dir, dependency_declaring_dir)}"
+      else
+        "the role '#{name}' was not found in #{role_search_display(playbook_dir)}"
+      end
     end
 
     # The dedup key for one role invocation: role name + its `version:`
