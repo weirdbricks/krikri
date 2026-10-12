@@ -603,6 +603,15 @@ module Krikri
       end
 
       if loop_items
+        # Ansible reports a zero-item loop: as a single bare `skipping:`
+        # (counted skipped=1), e.g. query('first_found', ..., skip: true)
+        # with no candidate found (claranet.nodejs).
+        if loop_items.empty?
+          puts Krikri::Oneline.skip_line(host.name).colorize(:cyan)
+          @results[host.name]["skipped"] += 1
+          return
+        end
+
         executed = false
         failed = false
         # `register:` on a looped include_vars: (pacifica.ansible_pacifica's
