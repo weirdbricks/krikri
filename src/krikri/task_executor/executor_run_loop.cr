@@ -1584,7 +1584,7 @@ module Krikri
 
       ssh_user = conn.user
       return nil if SSHManager.daemon_unavailable?(conn.conn_host, ssh_user, conn.port, become_user,
-                      SSHManager.connection_sig(conn.identity_file, conn.common_args + conn.extra_args, Passwords.connection(vars, host)))
+                      SSHManager.connection_sig(conn.identity_file, conn.ssh_extra_options, Passwords.connection(vars, host)))
 
       payload = steps.map do |step|
         {
@@ -1604,7 +1604,7 @@ module Krikri
           identity_file: conn.identity_file,
           become_user: become_user,
           become_password: Passwords.become(vars, host),
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
         # Same normalization the script transport applies one frame up in
         # interpret_batch_script: the daemon's parsed response is a raw
@@ -1635,7 +1635,7 @@ module Krikri
     private def run_batch_script(host : Host, conn : ConnectionSettings, steps : Array(BatchScript::Step)) : Hash(Int32, BatchScript::StepResult)
       batch_id = Random::Secure.hex(8)
       script = BatchScript.build(batch_id, steps, conn.user)
-      raw = SSHManager.exec_script(conn.conn_host, conn.user, script, conn.port, identity_file: conn.identity_file, extra_args: conn.common_args + conn.extra_args)
+      raw = SSHManager.exec_script(conn.conn_host, conn.user, script, conn.port, identity_file: conn.identity_file, extra_args: conn.ssh_extra_options)
       parsed = BatchScript.parse(raw[:stdout])
 
       # The batch transport only ever sees the SSH invocation's STDOUT -

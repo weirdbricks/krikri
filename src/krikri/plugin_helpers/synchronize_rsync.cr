@@ -115,6 +115,17 @@ module Krikri
           unless bool(params["verify_host"]?)
             ssh_cmd += " -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           end
+          # ansible.posix's `_ssh_args` - the connection's ssh_args +
+          # ssh_common_args + ssh_extra_args, folded into ONE string by
+          # the action plugin and ONLY when the task sets
+          # use_ssh_args: yes (its own `use_ssh_args and
+          # transport == 'ssh'` gate) - rides along verbatim here,
+          # exactly like the module's own `ssh_cmd_str += ' %s' %
+          # ssh_args`. Absent (the default), the rsh keeps NOT carrying
+          # ansible_ssh_common_args, matching real behavior.
+          if ssh_args = params["_ssh_args"]?.try { |value| value unless value.empty? }
+            ssh_cmd += " #{ssh_args}"
+          end
           argv << "--rsh=#{ssh_cmd}"
         end
       end
