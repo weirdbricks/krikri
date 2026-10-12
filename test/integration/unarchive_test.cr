@@ -805,13 +805,14 @@ describe "unarchive plugin" do
     lines = msg.split("\n")
     lines.first.must_equal(%(Failed to find handler for "#{not_archive}". Make sure the required command to extract the file is installed.))
     # Test hosts carry unzip + zipinfo + tar (the zip half of this suite
-    # needs them) and no gtar: ZipZ's duplicate unzip reason and the five
-    # identical tar-family probe reasons dedup away, leaving exactly one
-    # could-not-handle line per probe binary - the unzip probe's first
-    # (ZipArchive comes first in handler order), then tar's. The captured
-    # stderr is multi-line, so reason boundaries are counted, not lines.
+    # needs them) and no gtar: ZipZ's duplicate unzip reason dedups away,
+    # leaving the unzip probe's first (ZipArchive comes first in handler
+    # order), then one 'Unable to list files in the archive' reason per
+    # tar-family flag (-z, none, -j, -J, zstd), each with its own tool's
+    # stderr. The captured stderr is multi-line, so reason boundaries
+    # are counted, not lines.
     lines[1].must_match(/\ACommand ".*unzip" could not handle archive: /)
-    msg.scan("could not handle archive: ").size.must_equal(2)
-    msg.scan(/Command "[^"]*\/tar" could not handle archive: /).size.must_equal(1)
+    msg.scan("could not handle archive: ").size.must_equal(6)
+    msg.scan(/Command "[^"]*\/tar" could not handle archive: Unable to list files in the archive: /).size.must_equal(5)
   end
 end

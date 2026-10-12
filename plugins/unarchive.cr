@@ -298,12 +298,10 @@ module Krikri
     #   tar-family handlers' fixed spelling carries no trailing period;
     # - a handler whose binaries exist but whose listing probe fails
     #   reports 'Command "<binary path>" could not handle archive:
-    #   <stderr>' (unzip -l for the zip handlers, tar's own stderr for
-    #   the tar family). This engine probes the whole tar family with
-    #   the same single `tar tf` (GNU tar's own auto-detection already
-    #   covers gz/bz2/xz uniformly), so the five tar-family reasons are
-    #   byte-identical here and dedup into one line - mirroring how the
-    #   identical-probe zip pair dedups in real.
+    #   <stderr>' (unzip -l for the zip handlers; for the tar family
+    #   each handler's own `tar --list <flag>` probe, prefixed with
+    #   'Unable to list files in the archive: '). Identical reasons
+    #   dedup, as in real.
     private def handler_failure_reasons(src : String) : Array(String)
       found = {} of String => String?
       %w[unzip zipinfo gtar tar].each do |name|
@@ -336,8 +334,15 @@ module Krikri
       # BOTH are gone.
       tar_path = found["gtar"]? || found["tar"]?
       if tar_path
-        if tar_reason = could_not_handle_reason("tar tf", tar_path, src)
-          5.times { reasons << tar_reason }
+        # Each tar-family handler lists with its own flag (TgzArchive -z,
+        # TarArchive none, TarBzip -j, TarXz -J, TarZstd the zstd
+        # program), so each reports its own tool's stderr behind
+        # 'Unable to list files in the archive: '. The raw stderr keeps
+        # its trailing newline (real does not strip it).
+        ["-z", "", "-j", "-J", "--use-compress-program=zstd"].each do |flag|
+          out = remote_exec("#{shell_single_quote(tar_path)} --list #{flag} -f #{shell_single_quote(src)}")
+          next if out[:exit_code] == 0
+          reasons << %(Command "#{tar_path}" could not handle archive: Unable to list files in the archive: #{out[:stderr]})
         end
       else
         reasons << "Unable to find required 'gtar' or 'tar' binary in the path"
@@ -349,7 +354,7 @@ module Krikri
     private def could_not_handle_reason(command : String, binary_path : String, src : String) : String?
       out = remote_exec("#{command} #{shell_single_quote(src)}")
       return nil if out[:exit_code] == 0
-      %(Command "#{binary_path}" could not handle archive: #{out[:stderr].strip})
+      %(Command "#{binary_path}" could not handle archive: #{out[:stderr]})
     end
 
     # A list-typed param arrives in one of two shapes depending on how
