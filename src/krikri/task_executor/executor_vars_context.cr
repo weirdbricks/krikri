@@ -3206,14 +3206,29 @@ module Krikri
     # stays undecorated rather than mislabeled with a file position real
     # wouldn't print. The host-less fallback keeps the original narrow
     # shape (the playbook file's own play vars, via YamlSourceMap).
-    # Full lineage (compound conditions, deeper chains) is still not
-    # tracked; when the variable isn't found the message is returned
-    # unchanged, never guessed at.
+    # Full lineage (deeper chains) is still not tracked; when the
+    # variable isn't found the message is returned unchanged, never
+    # guessed at. A compound when: expression has no single defining
+    # var, so real's lineage there labels the when: token itself -
+    # handled below for the one captured shape ('int', issue #21).
     private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
       raw = task.when_condition.to_s.strip
-      return msg unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+      unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        # Compound when: (`x is defined and x|length` etc.): the tested
+        # value comes from the expression itself, and real reports the
+        # when: value token's position - the same position as the
+        # second Origin: block. Captured from 2.19.11 for the int
+        # shape (`...|length`) only; other types stay undecorated
+        # rather than guessed at.
+        return msg unless msg.includes?("was derived from value of type 'int'")
+        return msg unless (tok = when_token_position(task))
+        # String (not Regex) sub: a Regex match here would clobber the `$1`
+        # the sub-blocks below read in this same method.
+        return msg.sub("was derived from value of type 'int'",
+          "was derived from value of type 'int' at '#{tok[0]}:#{tok[1]}:#{tok[2]}'")
+      end
       if h = host
         origin = var_origin_for(task, h, raw, runtime_marker: true)
         case origin

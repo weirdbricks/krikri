@@ -304,4 +304,35 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Issue #21: a compound when: whose result is an int (`x is defined
+  # and x|length` on a non-empty list - the java_pre_packages shape
+  # from tschifftner.java) gets the same ` at '...'` clause, labelled
+  # with the when: value token's position - the same position as the
+  # second Origin: block (as captured from ansible-core 2.19.11).
+  it "labels a compound int conditional with the when: token position" do
+    playbook = File.tempname("when-compound-int-origin", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          java_pre_packages: [foo]
+        tasks:
+          - name: compound int conditional
+            ansible.builtin.debug:
+              msg: hi
+            when: java_pre_packages is defined and java_pre_packages|length
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    # The when: value token sits on line 10, column 13 (`      when: `).
+    output.to_s.must_include("was derived from value of type 'int' at '#{File.expand_path(playbook)}:10:13'", output.to_s)
+    output.to_s.must_include(%({"msg": "Task failed: Conditional result (True) was derived from value of type 'int' at '#{File.expand_path(playbook)}:10:13'. Conditionals must have a boolean result."}), output.to_s)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
