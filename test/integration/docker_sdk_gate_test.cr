@@ -80,6 +80,7 @@ describe "docker sdk gate at plugin level" do
   end
 
   it "lets a passing gate through: the same params fail with the daemon connect wording, not the gate" do
+    skip "the docker SDK's python deps (requests) are not importable on this host's python, so the gate can never pass here" unless PluginSpecHelper.docker_sdk_importable?
     GATE_SDK_MODULES.each do |module_name|
       result = PluginSpecHelper.run(module_name, gate_params(module_name))
 

@@ -7,12 +7,11 @@ require "../minitest_helper"
 # same convention as the other daemon-dependent plugin specs.
 describe "docker_container state=healthy" do
   def daemon_reachable?
-    probe = PluginSpecHelper.run("docker_container", {
-      "name"  => "krikri-hc-probe-#{Process.pid}",
-      "state" => "absent",
-      "image" => "busybox:latest",
-    })
-    !(probe["msg"]?.try(&.as_s).to_s.includes?("Error connecting: Error while fetching server API version"))
+    PluginSpecHelper.docker_daemon_reachable?
+  end
+
+  def busybox_ready?
+    PluginSpecHelper.docker_image_present?("busybox:latest")
   end
 
   it "fails when name is missing" do
@@ -35,7 +34,8 @@ describe "docker_container state=healthy" do
   end
 
   it "succeeds immediately for a container with no healthcheck and returns container facts" do
-    skip("no reachable docker daemon") unless daemon_reachable?
+    skip("no usable docker daemon here (unreachable, or the docker SDK's python deps not importable)") unless daemon_reachable?
+    skip("busybox:latest image not present locally") unless busybox_ready?
     name = "krikri-hc-nohc-#{Process.pid}"
     begin
       result = PluginSpecHelper.run("docker_container", {
@@ -54,7 +54,8 @@ describe "docker_container state=healthy" do
   end
 
   it "waits for a passing healthcheck to report healthy" do
-    skip("no reachable docker daemon") unless daemon_reachable?
+    skip("no usable docker daemon here (unreachable, or the docker SDK's python deps not importable)") unless daemon_reachable?
+    skip("busybox:latest image not present locally") unless busybox_ready?
     name = "krikri-hc-ok-#{Process.pid}"
     begin
       result = PluginSpecHelper.run("docker_container", {
@@ -72,7 +73,8 @@ describe "docker_container state=healthy" do
   end
 
   it "fails with Ansible's timeout wording when the healthcheck never turns healthy" do
-    skip("no reachable docker daemon") unless daemon_reachable?
+    skip("no usable docker daemon here (unreachable, or the docker SDK's python deps not importable)") unless daemon_reachable?
+    skip("busybox:latest image not present locally") unless busybox_ready?
     name = "krikri-hc-fail-#{Process.pid}"
     begin
       result = PluginSpecHelper.run("docker_container", {
@@ -93,7 +95,8 @@ describe "docker_container state=healthy" do
   end
 
   it "skips the health wait in check mode" do
-    skip("no reachable docker daemon") unless daemon_reachable?
+    skip("no usable docker daemon here (unreachable, or the docker SDK's python deps not importable)") unless daemon_reachable?
+    skip("busybox:latest image not present locally") unless busybox_ready?
     name = "krikri-hc-check-#{Process.pid}"
     begin
       result = PluginSpecHelper.run("docker_container", {
