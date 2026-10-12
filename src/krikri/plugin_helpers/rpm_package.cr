@@ -1,4 +1,5 @@
 require "json"
+require "./dnf_install_failures"
 require "../base_plugin"
 
 module Krikri
@@ -18,6 +19,12 @@ module Krikri
     # shape; dnf's is the older monolith) - unify those only as part of
     # a deliberate behavioral alignment, not by wholesale deletion.
     module RpmPackage
+      # The dnf-module failure wording/key order for a failed install
+      # batch comes from the shared DnfInstallFailures parser
+      # (plugin_helpers/dnf_install_failures.cr) - plugins/package.cr's
+      # own dnf/yum shell-out needs the identical shape and can't include
+      # this module (it also serves apt).
+      include DnfInstallFailures
       # ----- shared execution path (moved verbatim from yum.cr, whose
       # install path was the more-refactored of the two; dnf.cr now
       # delegates to the same methods instead of carrying an older,
@@ -790,6 +797,15 @@ module Krikri
         result = remote_exec_tolerating_unknown_repo(cmd)
 
         if result[:exit_code] != 0
+          # Ansible's dnf module reports a partially-unresolvable install
+          # batch with its own canned msg ("Failed to install some of the
+          # specified packages") and one deduped "No package X available."
+          # entry per missing spec parsed out of dnf's output - NOT the
+          # raw dnf stderr/stdout dump the fallback below keeps for
+          # outputs nothing in parses (repo metadata/404-class errors).
+          if failures = parse_dnf_install_failures(result[:stdout], result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
+          end
           return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install packages", error_lines(result), result[:exit_code])}
         end
 
