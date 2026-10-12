@@ -1526,6 +1526,20 @@ module Krikri
     # without every bare spelling needing its own table entry (which
     # would wrongly refuse spellings real resolves through redirects
     # that are NOT tombstoned, like the builtin-runtime ones).
+    #
+    # A name krikri cannot resolve natively (resolved nil) also gets the
+    # builtin-runtime redirect hop: a bare spelling whose
+    # ansible_builtin_runtime.yml redirect lands on a tombstoned
+    # collection FQCN refuses with THAT FQCN's own removal message when
+    # the target collection is installed on this controller (bare
+    # `docker_service:` -> community.general.docker_service ->
+    # community.general 2.0.0's tombstone: rc=1 and the
+    # community.general.docker_service message, live-verified vs
+    # 2.19.11 for the bare, ansible.builtin.- and ansible.legacy.-
+    # qualified spellings; issue #8). Without the collection real's
+    # redirect chain dies at the collection import and the name falls
+    # back to the generic couldn't-resolve refusal - which the bare
+    # spellings' nil entries in the table still provide.
     # source_file/source_map/prefix build the RemovedModuleError render
     # ([ERROR] line + task Origin) where the raise site has a source
     # position.
@@ -1541,12 +1555,32 @@ module Krikri
         name = resolved
         tombstoned = true
       end
-      return unless tombstoned
 
-      if custom = REMOVED_MODULE_TOMBSTONES[name]
+      if custom = tombstoned ? REMOVED_MODULE_TOMBSTONES[name]? : nil
         raise RemovedModuleError.new(custom,
           origin_error_render(custom, source_file, source_map, prefix))
       end
+
+      # The builtin-runtime redirect hop for names krikri does not
+      # resolve natively - the redirect table's keys are bare leaf
+      # names (the builtin runtime's only dotted modules keys are the
+      # .ps1 Windows variants), so strip the builtin/legacy
+      # qualifications real also folds away before its redirect lookup.
+      if resolved.nil?
+        leaf = as_written
+        leaf = leaf["ansible.builtin.".size..] if leaf.starts_with?("ansible.builtin.")
+        leaf = leaf["ansible.legacy.".size..] if leaf.starts_with?("ansible.legacy.")
+        if !leaf.empty? && !leaf.includes?('.') &&
+           (target = CollectionIndex.builtin_module_redirect(leaf)) &&
+           (custom = REMOVED_MODULE_TOMBSTONES[target]?) &&
+           (target_parts = target.split('.')).size >= 3 &&
+           CollectionIndex.installed?(target_parts[0], target_parts[1])
+          raise RemovedModuleError.new(custom,
+            origin_error_render(custom, source_file, source_map, prefix))
+        end
+      end
+
+      return unless tombstoned
       message = "couldn't resolve module/action '#{as_written}'. " \
                 "This often indicates a misspelling, missing collection, or incorrect module path."
       # Real prints the Origin block for this refusal too (live-verified

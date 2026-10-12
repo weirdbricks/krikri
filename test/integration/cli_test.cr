@@ -1305,6 +1305,45 @@ describe "krikri-playbook CLI (--check mode)" do
     output.must_include("packages is now {'bar': 2}")
   end
 
+  it "keeps a set_fact using json_query with a dot-multiselect-hash query defined for later tasks" do
+    # Issue #9, from the hax0rbana_adam.firefox_geckodriver round: the
+    # query `assets[?ends_with(name, '...')].{name: name, url: ...}`
+    # failed to parse (the post-dot `{...}` multiselect hash was not in
+    # the JMESPath grammar), json_query raised, and `download_url` ended
+    # up undefined for the next task - ansible resolves it fine.
+    playbook = write_notify_playbook("test-json-query-multiselect-hash-quick.yml", <<-YML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          platform: linux-x64
+        tasks:
+          - set_fact:
+              urls:
+                json:
+                  assets:
+                    - name: geckodriver-v0.35.0-linux-arm64.tar.gz
+                      browser_download_url: u-arm
+                    - name: geckodriver-v0.35.0-linux-x64.tar.gz
+                      browser_download_url: u-x64
+          - name: Determining the URL for the latest release
+            set_fact:
+              download_url: "{{ urls.json | json_query(jmesquery) }}"
+            vars:
+              jmesquery: "assets[?ends_with(name, '{{ platform }}.tar.gz')].{name: name, url: browser_download_url}"
+          - set_fact:
+              chosen: "{{ download_url[0].url }}"
+          - debug:
+              msg: "download_url is {{ download_url }} and chosen is {{ chosen }}"
+    YML
+
+    status, output = run_playbook(playbook, [] of String, inventory: EXPLICIT_LOCALHOST_INVENTORY)
+
+    status.success?.must_equal(true)
+    output.must_include("chosen is u-x64")
+    output.wont_include("'download_url' is undefined")
+  end
+
   describe "include_vars: / with_first_found:" do
     it "loads a file chosen by with_first_found into a named dict, and merges without name:" do
       status, output = run_playbook(

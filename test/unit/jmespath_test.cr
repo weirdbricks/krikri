@@ -89,6 +89,28 @@ describe Krikri::JMESPath do
       result.as_h["x"].as_i.must_equal(1)
       result.as_h["y"].as_i.must_equal(2)
     end
+
+    it "builds a multi-select hash after a dot and after a projection" do
+      data = j(%({"assets": [{"name": "a.tar.gz", "browser_download_url": "u1"}, {"name": "b.zip", "browser_download_url": "u2"}]}))
+      result = Krikri::JMESPath.evaluate("assets[].{name: name, url: browser_download_url}", data)
+      result.as_a.size.must_equal(2)
+      result.as_a[0].as_h["url"].as_s.must_equal("u1")
+      Krikri::JMESPath.evaluate("outer.{x: inner}", j(%({"outer": {"inner": 1}}))).as_h["x"].as_i.must_equal(1)
+    end
+
+    it "builds a multi-select list after a dot" do
+      result = Krikri::JMESPath.evaluate("foo.[a, b]", j(%({"foo": {"a": 1, "b": 2, "c": 3}})))
+      result.as_a.map(&.as_i).must_equal([1, 2])
+    end
+
+    it "filters with ends_with and projects through a multi-select hash (issue #9)" do
+      data = j(%({"assets": [{"name": "geckodriver-v0.35.0-linux-arm64.tar.gz", "browser_download_url": "u-arm"}, {"name": "geckodriver-v0.35.0-linux-x64.tar.gz", "browser_download_url": "u-x64"}, {"name": "something-else.zip", "browser_download_url": "u-other"}]}))
+      query = %q(assets[?ends_with(name, 'linux-x64.tar.gz')].{name: name, url: browser_download_url})
+      result = Krikri::JMESPath.evaluate(query, data)
+      result.as_a.size.must_equal(1)
+      result.as_a[0].as_h["url"].as_s.must_equal("u-x64")
+      result.as_a[0].as_h["name"].as_s.must_equal("geckodriver-v0.35.0-linux-x64.tar.gz")
+    end
   end
 
   describe "pipes, logic and the current node" do

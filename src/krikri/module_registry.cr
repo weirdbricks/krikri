@@ -652,6 +652,23 @@ module Krikri
       }.to_json)
     end
 
+    # ansible-core's own builtin-runtime tombstones for the three
+    # pre-collection F5 module names - the exact console [ERROR] text
+    # ansible-playbook 2.19.11 prints for them (live-verified for the
+    # bare, ansible.builtin.- and ansible.legacy.-qualified spellings;
+    # every spelling's message names the ansible.builtin FQCN, since
+    # real resolves the bare name into ansible.builtin's routing before
+    # the tombstone fires).
+    BIGIP_ASM_POLICY_REMOVAL_MESSAGE = "The 'ansible.builtin.bigip_asm_policy' module has been removed. " \
+                                       "bigip_asm_policy has been removed please use bigip_asm_policy_manage instead. " \
+                                       "This feature was removed from ansible-core in a release after 2019-11-06."
+    BIGIP_FACTS_REMOVAL_MESSAGE      = "The 'ansible.builtin.bigip_facts' module has been removed. " \
+                                       "bigip_facts has been removed please use bigip_device_info module. " \
+                                       "This feature was removed from ansible-core in a release after 2019-11-06."
+    BIGIP_GTM_FACTS_REMOVAL_MESSAGE  = "The 'ansible.builtin.bigip_gtm_facts' module has been removed. " \
+                                       "bigip_gtm_facts has been removed please use bigip_device_info module. " \
+                                       "This feature was removed from ansible-core in a release after 2019-11-06."
+
     # Bare module names ansible-core can no longer resolve in ANY
     # collection (removed from ansible-core years ago and from the
     # collections that absorbed them), so every ansible-playbook
@@ -681,14 +698,46 @@ module Krikri
       "consul_acl" => nil,
       # Removed from community.general in v2.0.0 (superseded by
       # `docker_compose`), so every controller on a current collection
-      # hard-fails on it. krzysztof-magosa.docker writes the BARE name
-      # (`docker_service:`, no FQCN) - the exact-string match against
-      # `as_written` (raise_unresolvable_module_error, no bare/FQCN
-      # normalization there) meant only the FQCN spelling was ever
-      # caught; the FQCN spelling's tombstone message now comes from
-      # the collection reference data below; the bare spelling stays
-      # on the generic-refusal nil entry here.
+      # hard-fails on it. krzysztof-magosa.docker (round 180) and
+      # inhumantsar.docker-compose-gitlab (issue #8) write the BARE name
+      # (`docker_service:`, no FQCN): real resolves the bare spelling
+      # through ansible_builtin_runtime.yml's redirect onto
+      # community.general.docker_service and then hits that collection's
+      # own meta/runtime.yml tombstone, so the load refuses with the
+      # FQCN's removal message and rc=1 - NOT the generic couldn't-
+      # resolve rc=4 (live-verified vs 2.19.11 for the bare,
+      # ansible.builtin.- and ansible.legacy.-qualified spellings). The
+      # bare spelling keeps its nil entry here as the fallback for
+      # controllers WITHOUT community.general installed, where real's
+      # redirect chain dies at the collection import and the name falls
+      # back to the generic couldn't-resolve refusal; with the
+      # collection present, raise_unresolvable_module_error's
+      # redirect-target hop supplies the FQCN message from the
+      # collection reference data below.
       "docker_service" => nil,
+      # ansible-core's own builtin-runtime module tombstones (the
+      # plugin_routing.modules.<name>.tombstone entries in
+      # ansible_builtin_runtime.yml - the same table the `include:`
+      # action tombstone comes from): the three pre-collection F5
+      # module names ansible-core itself tombstoned (removal_date
+      # 2019-11-06). These refuse on EVERY controller unconditionally -
+      # the tombstone lives in ansible.builtin's own routing data, no
+      # collection install involved - with rc=1 and the live-verified
+      # (vs 2.19.11, all three spellings) message built from the
+      # loader's "The '<fqcn>' module has been removed." wrapper plus
+      # the table's warning_text plus the removal-date tail.
+      # (f5_utils's tombstone entry is plugin_routing.module_utils -
+      # not a module tombstone - so a bare `f5_utils:` stays on the
+      # generic couldn't-resolve rc=4, also live-verified.)
+      "bigip_asm_policy"                                        => BIGIP_ASM_POLICY_REMOVAL_MESSAGE,
+      "ansible.builtin.bigip_asm_policy"                        => BIGIP_ASM_POLICY_REMOVAL_MESSAGE,
+      "ansible.legacy.bigip_asm_policy"                         => BIGIP_ASM_POLICY_REMOVAL_MESSAGE,
+      "bigip_facts"                                             => BIGIP_FACTS_REMOVAL_MESSAGE,
+      "ansible.builtin.bigip_facts"                             => BIGIP_FACTS_REMOVAL_MESSAGE,
+      "ansible.legacy.bigip_facts"                              => BIGIP_FACTS_REMOVAL_MESSAGE,
+      "bigip_gtm_facts"                                         => BIGIP_GTM_FACTS_REMOVAL_MESSAGE,
+      "ansible.builtin.bigip_gtm_facts"                         => BIGIP_GTM_FACTS_REMOVAL_MESSAGE,
+      "ansible.legacy.bigip_gtm_facts"                          => BIGIP_GTM_FACTS_REMOVAL_MESSAGE,
       # docker_compose (the compose v1 module) - community.docker
       # removed it in v4.0.0 (docker-compose v1 is End-of-Life since
       # July 2022; community.docker.docker_compose_v2 is the

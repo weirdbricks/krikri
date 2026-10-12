@@ -2626,6 +2626,16 @@ module Krikri
       false
     end
 
+    # Prints a result's stashed finalization error block, deduped across
+    # the whole run exactly like the inline emission path (Ansible's
+    # Display dedups by full formatted message - the Origin's file:line
+    # makes the text task-unique).
+    def self.flush_deferred_finalization_error_block(result : JSON::Any) : Nil
+      return unless text = result.as_h?.try(&.["_ansible_finalization_error_block"]?).try(&.as_s?)
+      return unless @@finalization_error_chain_seen.add?(text)
+      puts text
+    end
+
     private def finalization_module_name(task : Task) : String
       name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
       # engine-internal pseudo modules (_include_vars, ...) are real actions
@@ -2661,8 +2671,20 @@ module Krikri
     # the task's defining file either way, live-captured on a role task);
     # when the task can't be located there, no block is printed.
     private def emit_finalization_error_block(task : Task, ex : UndefinedVariableError) : Nil
+      if text = finalization_error_block_text(task, ex)
+        return unless @@finalization_error_chain_seen.add?(text)
+        puts text
+      end
+    end
+
+    # Renders the [ERROR] chain block's text WITHOUT printing it, so the
+    # batch paths can defer the print to the failed result's own display
+    # (see stash_finalization_error_block). Returns nil when the task's
+    # source can't be located - no block either way, same as the emit-time
+    # behavior this was split from.
+    private def finalization_error_block_text(task : Task, ex : UndefinedVariableError) : String?
       path = task.source_file || @playbook_file
-      return unless path && File.file?(path)
+      return nil unless path && File.file?(path)
 
       lines = File.read_lines(path)
       msg = ex.message || ""
@@ -2745,9 +2767,22 @@ module Krikri
       # Same dedup rule as emit_when_error_chain's (Ansible's Display dedups
       # by full formatted message; the Origin's file:line makes the text
       # task-unique, so a looped task's failing items display the chain
-      # once).
-      return unless @@finalization_error_chain_seen.add?(text)
-      puts text
+      # once) - applied by the caller at print time.
+      text
+    end
+
+    # Batch-build (execute_batch_group / execute_looped_task_batched)
+    # prepares every member UP FRONT, before the earlier members' results
+    # display - printing the [ERROR] chain block during that preparation
+    # put it ahead of the PREVIOUS task's changed: line (issue #14,
+    # pylabs.nginx: the block surfaced under the previous task's header,
+    # ahead of its own result line). Instead the rendered text rides the
+    # failed result on this private marker - the same pattern as
+    # _ansible_loop_error_emitted - and the display path
+    # (finish_single_task / finish_looped_task) prints it just before the
+    # fatal/failed line, under the failing task's own banner.
+    def self.stash_finalization_error_block(result : JSON::Any, text : String) : Nil
+      result.as_h?.try &.[]=("_ansible_finalization_error_block", JSON::Any.new(text))
     end
 
     # The fourth chain stanza real 2.19.11 appends when the arg's
@@ -3498,26 +3533,31 @@ module Krikri
       end
     end
 
-    # For copy:/template:/assemble: tasks that came from a role, a
-    # relative src: resolves against the role's files/ or templates/
-    # directory - the plugin subprocess itself has no concept of roles, so
-    # this has to happen here, before the config is handed off. An
-    # absolute src: (or a task not from a role) is left untouched.
+    # For copy:/template:/assemble:-style controller src resolution shared
+    # by script: and unarchive:: a relative src resolves through Ansible's
+    # _find_needle dwim stack - EXACTLY the ordered NeedleLookup.candidates
+    # list a miss reports in "Searched in:" - so the resolver can never
+    # skip a path the error message advertises. The resolver used to check
+    # only <role>/files/<src>, <playbook>/<src> and the cwd, so a role
+    # file addressed with its own files/ prefix (`script: files/x.py`
+    # living at <role>/files/x.py) resolved nowhere even though the
+    # reported search list contained it (lukapetrovic-git.ubuntu_patch's
+    # `script: files/get_upgraded_packages.py`, issue #10); the miss
+    # branch then failed with a Searched-in list naming the existing file.
+    # The plugin subprocess itself has no concept of roles, so this has to
+    # happen here, before the config is handed off. The cwd fallback stays
+    # as a last-resort extra beyond Ansible's list (kept for scripts run
+    # from a directory Ansible would not find the file from either).
     private def resolve_script_path(local_path : String, task : Task) : String?
-      if role_dir = task.role_files_dir
-        candidate = File.join(role_dir, local_path)
-        return File.expand_path(candidate) if File.exists?(candidate)
-      end
-      # Ansible's script action plugin resolves the src against the
-      # playbook's own basedir too (`files/` next to the playbook being
-      # the common layout) - not just a role's files/ dir and the
-      # controller's cwd. Running krikri-playbook from anywhere other
-      # than the playbook's own directory left a playbook-relative
-      # `files/...` src unresolvable ("the script files/m4-script.sh
-      # does not exist on the target (transfer failed?)") where
-      # ansible-playbook found it (found live via modules_systems.yml).
-      candidate = File.join(@playbook_dir, local_path)
-      return File.expand_path(candidate) if File.exists?(candidate)
+      candidates = if local_path.starts_with?('/') || local_path.starts_with?("~")
+                     [] of String
+                   else
+                     NeedleLookup.candidates(
+                       NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+                       File.expand_path(@playbook_dir), "files", local_path)
+                   end
+      resolved = candidates.find { |candidate| File.exists?(candidate) }
+      return File.expand_path(resolved) if resolved
       return File.expand_path(local_path) if File.exists?(local_path)
       nil
     end

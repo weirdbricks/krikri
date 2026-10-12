@@ -775,6 +775,11 @@ module Krikri
 
       ignore_errors = resolve_task_ignore_errors(task, vars_context)
       no_log = resolve_task_no_log(task, vars_context)
+      # A batch-prepared finalization failure carries its [ERROR] chain
+      # block stashed on the result (see stash_finalization_error_block) -
+      # print it now, under this task's own banner and just before the
+      # fatal/failed line, where Ansible puts it.
+      TaskExecutor.flush_deferred_finalization_error_block(result)
       if @adhoc
         ResultDisplay.display_adhoc_result(host, result, @diff_mode, module_name: task.module_name)
       else
@@ -1785,10 +1790,10 @@ module Krikri
       # the gap actually surfaces).
       unless src.starts_with?('/') && File.exists?(src)
         resolved_local = resolve_script_path(src, task)
-        # resolve_script_path covers both the role's files/ dir and a
-        # path relative to the controller's own cwd - if neither has it,
-        # Ansible's controller-side lookup has run out of places to
-        # look and the task fails here, before the plugin ever runs.
+        # resolve_script_path searches the same _find_needle candidate list
+        # unarchive_candidates reports - if none of them exists, Ansible's
+        # controller-side lookup has run out of places to look and the task
+        # fails here, before the plugin ever runs.
         return controller_missing_unarchive_result(original_src, unarchive_candidates(task, original_src)) unless resolved_local
         src = resolved_local
       end
