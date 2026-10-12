@@ -217,6 +217,13 @@ cause (the real krikri bugs and output gaps - not infra, not
 text, so ask first; do not file them unprompted. The issues are the hand-off:
 the `work-issues` skill reads them to decide what to fix.
 
+Every issue filed with the `divergence` label must be actionable: one root
+cause, one fix, a fenced repro. Never file status logs, coverage summaries,
+"verified OK" lists, umbrella/`Tracking:` issues, deliberate limits or
+anything with no single fix. That kind of note goes in `KNOWN_MISSING.md`
+(or the round record in step 10), not in the issue tracker. If you cannot
+write a repro for it, it is not an issue yet: say so in the report instead.
+
 1. `gh issue list --label divergence --state all` in the krikri repo: if a
    root cause already has an issue, reuse it (comment with the new evidence)
    instead of filing a duplicate.
@@ -225,7 +232,8 @@ the `work-issues` skill reads them to decide what to fix.
 3. For each approved one: `gh issue create --label divergence --title ... --body ...`.
    The body must let someone with no access to this results directory start
    work, so it has: the cause, the affected roles (with the OS each ran on),
-   a minimal repro or the exact diff hunk pasted in, the krikri commit and
+   a minimal repro or the exact diff hunk pasted in (inside a fenced code
+   block: the fix tooling drops issues without one), the krikri commit and
    version from `versions.txt`, and the original evidence path
    (`<dir>/<role>/compare_cold.diff`) as a pointer only. Keep home-directory
    paths out of the body. Say whether it is a behavioural bug or an output gap.
