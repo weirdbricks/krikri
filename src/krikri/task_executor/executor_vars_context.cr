@@ -1766,12 +1766,67 @@ module Krikri
       value.nil? ? @check_mode : value
     end
 
+    # Runtime resolution of a task's effective become: value. Mirrors
+    # ansible-core's TaskExecutor._set_become_plugin: an `ansible_become`
+    # var present in the task's vars context (inventory host vars
+    # included) decides become OUTRIGHT - the keyword ladder is only the
+    # fallback when the var is absent, so inventory
+    # `ansible_become: true` escalates a `file:` task even without any
+    # become: keyword (issue #3: the touched file came out owned by the
+    # login user instead of root). The var's value goes through the same
+    # boolean coercion ansible's boolean() applies; a value it can't
+    # interpret falls back to the keyword path instead of erroring (the
+    # lenient-degradation rule this codebase already applies to templated
+    # connection vars).
     private def resolve_task_become(task : Task, substitutor : VarSubstitutor) : Bool
+      if raw = substitutor.vars["ansible_become"]?
+        decided = ansible_become_var_boolean(raw, substitutor)
+        return decided unless decided.nil?
+      end
+
       expr = task.become_expr
       return task.become? unless expr
 
       rendered = substitutor.substitute(expr)
       ConditionalEvaluator.evaluate(rendered, {} of String => JSON::Any) rescue task.become?
+    end
+
+    # The effective become_user, with the same var-over-keyword origin
+    # order the become plugin's options resolve under (ansible's config
+    # manager: direct > vars > keyword): an `ansible_become_user` var in
+    # the task's vars context outranks a task-level `become_user:`
+    # keyword, which falls back to nil (the caller defaults to "root").
+    private def resolve_task_become_user(task : Task, vars_context : Hash(String, JSON::Any), substitutor : VarSubstitutor) : String?
+      if raw = vars_context["ansible_become_user"]?
+        if user = ansible_become_var_string(raw, substitutor)
+          return user
+        end
+      end
+      task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+    end
+
+    # ansible boolean()'s accepted forms (convert_bool.BOOLEANS_TRUE /
+    # BOOLEANS_FALSE), case-insensitive; nil for anything else so the
+    # caller falls back to the keyword ladder instead of guessing.
+    private def ansible_become_var_boolean(raw : JSON::Any, substitutor : VarSubstitutor) : Bool?
+      value = raw.raw
+      value = substitutor.substitute(value) if value.is_a?(String) && (value.includes?("{{") || value.includes?("{%"))
+      return value if value.is_a?(Bool)
+      return value != 0 if value.is_a?(Int)
+      return nil unless value.is_a?(String)
+      case value.strip.downcase
+      when "y", "yes", "on", "1", "true"  then true
+      when "n", "no", "off", "0", "false" then false
+      end
+    end
+
+    private def ansible_become_var_string(raw : JSON::Any, substitutor : VarSubstitutor) : String?
+      value = raw.raw
+      return nil unless value.is_a?(String)
+      return nil if value.empty?
+      rendered = substitutor.substitute(value)
+      return nil if rendered.empty?
+      rendered
     end
 
     # Runtime resolution of a templated `ignore_errors:` (Task#
