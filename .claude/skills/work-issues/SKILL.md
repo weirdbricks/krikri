@@ -1,12 +1,12 @@
 ---
 name: work-issues
-description: Decide what to fix next from krikri's GitHub issues and drive the fixes. Reads the open `divergence` issues (filed by the `launch-roles` triage skill), drops tracking/blocked/already-in-flight ones, proposes a ranked work list, then runs each chosen issue through `fix-divergence` (worktree, Crush, validation, merge, `Fixes #N`) and asks the user to re-run the affected roles to confirm. Use whenever the user asks to "work the issues", "fix the divergences", "pick what to fix", "what should we work on", or says "use crush" without naming a specific role. Does not triage results directories (that is `launch-roles`).
+description: Decide what to fix next from krikri's GitHub issues and drive the fixes. Reads the open `divergence` issues (filed by the `triage-round` triage skill), drops tracking/blocked/already-in-flight ones, proposes a ranked work list, then runs each chosen issue through `fix-divergence` (worktree, Crush, validation, merge, `Fixes #N`) and asks the user to re-run the affected roles to confirm. Use whenever the user asks to "work the issues", "fix the divergences", "pick what to fix", "what should we work on", or says "use crush" without naming a specific role. Does not triage results directories (that is `triage-round`).
 ---
 
 # Work krikri's divergence issues
 
 The input is GitHub, not a results directory. Triage already happened in
-`launch-roles`, which files one issue per root cause. This skill reads those
+`triage-round`, which files one issue per root cause. This skill reads those
 issues, decides what is worth doing now, and hands each one to
 `fix-divergence` for the mechanics. Read `fix-divergence` before step 3.
 
@@ -64,7 +64,7 @@ that skill says:
 - If the issue's cause turns out wrong or already fixed, comment on the issue
   with what you found instead of silently dropping it, and tell the user.
 - A new root cause found on the way gets its own issue (ask first, as in
-  `launch-roles` step 9); do not widen the current fix.
+  `triage-round` step 9); do not widen the current fix.
 - Validate and merge one at a time (version bumps collide otherwise).
 
 ## 4. Confirm with a re-run - by the user
@@ -87,7 +87,7 @@ After a fix lands on `main`:
    ./bin/krikri-role-tester --auto-mode --queue <queue-file>
    ```
 
-4. Triage that directory with `launch-roles`. The role must come back
+4. Triage that directory with `triage-round`. The role must come back
    `CLEAN` / `bytes=IDENTICAL`, or, if a remaining difference is a known,
    accepted output gap, the user says so explicitly. Otherwise comment on the
    issue (it stays open) and treat it as a new investigation.

@@ -142,7 +142,7 @@ from this repo.
 
 **The user runs `krikri-role-tester` themselves; Claude never starts it** (it
 provisions real servers, and babysitting it burned tokens). Claude's part
-starts from the results directory the user hands over - the `launch-roles`
+starts from the results directory the user hands over - the `triage-round`
 skill's first step is to ask for it, and it documents the layout.
 
 1. **Check `ROLES_TESTED.md` first** for a role shortlist - avoids re-discovering Galaxy-404s
@@ -186,7 +186,7 @@ skill's first step is to ask for it, and it documents the layout.
    roles hit the same root cause, that's one fix to make, not two. A difference in output
    *text* (e.g. Ansible's `Origin:` error context) is a real krikri gap, not something to
    mask; masks (`Compare::MASKS` in krikri-role-tester) are only for output that can never
-   be identical. The `launch-roles` skill walks through this and files GitHub issues for the confirmed root causes; the `work-issues` skill then picks issues to fix.
+   be identical. The `triage-round` skill walks through this and files GitHub issues for the confirmed root causes; the `work-issues` skill then picks issues to fix.
 
 4. **Fix phase (serial):** apply fixes one at a time against the unit tests (concurrent edits to
    the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).

@@ -1,6 +1,6 @@
 ---
-name: launch-roles
-description: Triage the results of a krikri-role-tester run - read the run's results directory (logs___<epoch>), skip byte-identical roles, group the rest by root cause, report, and offer to file one GitHub issue per root cause. Triage only: it never fixes anything (fixing is the `work-issues` skill, which reads the issues). Use whenever the user asks to "launch roles", "run a round", "triage a batch", "look at the results", "check the logs___ dir", or names a results directory. The user runs krikri-role-tester themselves; this skill never starts it. Its first step is always to ask for the results directory.
+name: triage-round
+description: Triage the results of a krikri-role-tester run - read the run's results directory (logs___<epoch>), skip byte-identical roles, group the rest by root cause, report, and offer to file one GitHub issue per root cause. Triage only: it never fixes anything (fixing is the `work-issues` skill, which reads the issues). Use whenever the user asks to "triage a batch", "triage a round", "look at the results", "check the logs___ dir", or names a results directory. The user runs krikri-role-tester themselves; this skill never starts it. Its first step is always to ask for the results directory.
 ---
 
 # Triage a krikri-role-tester run
