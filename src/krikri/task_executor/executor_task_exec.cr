@@ -305,13 +305,13 @@ module Krikri
       args_repr = ResultDisplay.python_repr(JSON::Any.new({
         "action" => JSON::Any.new("ansible.builtin.validate_argument_spec"),
         "args"   => JSON::Any.new({
-          "argument_spec"    => JSON::Any.new(options),
-          "provided_arguments" => JSON::Any.new({} of String => JSON::Any),
+          "argument_spec"         => JSON::Any.new(options),
+          "provided_arguments"    => JSON::Any.new({} of String => JSON::Any),
           "validate_args_context" => JSON::Any.new({
-            "type"                => JSON::Any.new("role"),
-            "name"                => JSON::Any.new(task.role_name || ""),
-            "argument_spec_name"  => JSON::Any.new("main"),
-            "path"                => JSON::Any.new(task.role_path || ""),
+            "type"               => JSON::Any.new("role"),
+            "name"               => JSON::Any.new(task.role_name || ""),
+            "argument_spec_name" => JSON::Any.new("main"),
+            "path"               => JSON::Any.new(task.role_path || ""),
           } of String => JSON::Any),
         } of String => JSON::Any),
       } of String => JSON::Any))
@@ -645,7 +645,7 @@ module Krikri
       # outcome here, not an error - only a clean non-zero exit from the
       # remote shell itself (the command was rejected outright, e.g.
       # permission denied) is worth surfacing.
-      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", conn.port, timeout: 15, identity_file: identity_file, extra_args: conn.common_args + conn.extra_args) rescue nil
+      issue_result = SSHManager.exec(connection_host, user, "(sleep 1; #{reboot_command}) &", conn.port, timeout: 15, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
       # Ansible stamps its elapsed clock the moment the shutdown command
       # returns (result['start'] in the action plugin) and reports elapsed as
       # integer seconds on EVERY path after that point - including when the
@@ -668,7 +668,7 @@ module Krikri
       deadline = Time.instant + reboot_timeout.seconds
       reconnected = false
       until Time.instant >= deadline
-        result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.common_args + conn.extra_args) rescue nil
+        result = SSHManager.exec(connection_host, user, test_command, conn.port, timeout: connect_timeout, identity_file: identity_file, extra_args: conn.ssh_extra_options) rescue nil
         if result && result[:exit_code] == 0
           reconnected = true
           break
@@ -1556,7 +1556,7 @@ module Krikri
           remote_tmp,
           conn.port,
           identity_file: conn.identity_file,
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
       rescue
         return params
@@ -1634,7 +1634,7 @@ module Krikri
         script,
         conn.port,
         identity_file: conn.identity_file,
-        extra_args: conn.common_args + conn.extra_args
+        extra_args: conn.ssh_extra_options
       )
       return nil unless result[:exit_code] == 0 && result[:stdout].strip == local_sha1
 
@@ -1684,7 +1684,7 @@ module Krikri
           mode: nil,
           identity_file: conn.identity_file,
           recursive: true,
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
       rescue
         return params
@@ -1814,7 +1814,7 @@ module Krikri
           remote_tmp,
           conn.port,
           identity_file: conn.identity_file,
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
       rescue
         return params
@@ -1923,7 +1923,7 @@ module Krikri
           remote_tmp,
           conn.port,
           identity_file: conn.identity_file,
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
       rescue
         return params
@@ -2010,7 +2010,7 @@ module Krikri
           mode: nil,
           identity_file: conn.identity_file,
           recursive: true,
-          extra_args: conn.common_args + conn.extra_args
+          extra_args: conn.ssh_extra_options
         )
       rescue
         return params
@@ -2110,20 +2110,25 @@ module Krikri
       final_params["_environment"] = substituted_env.to_json if substituted_env
 
       # Only debug:/assert: actually read the vars context inside the
-      # plugin process (BasePlugin itself only ever pulls 3 connection
-      # keys out of it - see PluginManager::NEEDS_FULL_VARS). Everyone
-      # else gets just those 3 keys instead of the full context, which
+      # plugin process (BasePlugin itself only ever pulls the connection
+      # keys out of it - see PluginManager::WIRE_VAR_KEYS, which is also
+      # the list this pruning walks). Everyone else gets just that
+      # handful of keys instead of the full context, which
       # for a typical templating-heavy task is tens to hundreds of KB of
       # JSON (up to ~570 KB seen after a package_facts: task) that would
       # otherwise be base64'd over SSH and immediately discarded by the
-      # plugin that receives it. `playbook_dir` is a fourth key, and not
-      # a connection detail: it is the module's own working directory
+      # plugin that receives it. `ansible_ssh_common_args`/
+      # `ansible_ssh_extra_args` are in that handful because a
+      # controller-only plugin's own ssh (fetch, wait_for_connection -
+      # issue #2) resolves its connection from exactly this payload.
+      # `playbook_dir` is a non-connection key: it is the module's own
+      # working directory
       # under a local connection (Ansible's local connection plugin
       # runs every module with cwd = the playbook's directory, so any
       # relative path a module resolves - tempfile's `path:`, for one -
       # is relative to the playbook, not to the shell the playbook was
       # launched from), and tempfile.cr needs it to reproduce that.
-      # `ansible_pkg_mgr` is a fifth carve-out: the dnf/yum plugins' real
+      # `ansible_pkg_mgr` is another carve-out: the dnf/yum plugins' real
       # controller-side analogue - the dnf ACTION plugin every `dnf:`/`yum:`
       # task runs through (round 5310001) - resolves its backend dispatch
       # from the pkg_mgr fact, so the plugin binary needs that one plainly,
@@ -2132,8 +2137,7 @@ module Krikri
                     vars_context
                   else
                     pruned = Hash(String, JSON::Any).new
-                    {"ansible_connection", "ansible_host", "ansible_ssh_private_key_file", "playbook_dir",
-                     "ansible_pkg_mgr"}.each do |key|
+                    PluginManager::WIRE_VAR_KEYS.each do |key|
                       if v = vars_context[key]?
                         pruned[key] = v
                       end

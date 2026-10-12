@@ -1,5 +1,7 @@
 require "json"
 require "../base_action_plugin"
+require "../cli_options"
+require "../connection_settings"
 require "../plugin_helpers/synchronize_rsync"
 require "../plugin_helpers/strict_bool_params"
 require "../passwords"
@@ -148,6 +150,21 @@ module Krikri
       private_key = @params["private_key"]? || @vars["ansible_ssh_private_key_file"]?.try(&.as_s?)
       conn_password = Passwords.connection(@vars, @host)
 
+      # ansible.posix's own action plugin folds the connection's
+      # ssh_args + ssh_common_args + ssh_extra_args into one `_ssh_args`
+      # string for the module's --rsh command, but ONLY under
+      # `use_ssh_args: yes` and only when that connection is the ssh
+      # transport (`use_ssh_args and self._connection.transport == 'ssh'`)
+      # - which is why a plain synchronize: task deliberately does NOT
+      # inherit ansible_ssh_common_args (IdentitiesOnly and friends), and
+      # why this is gated the same way instead of always applied.
+      # Resolved through the same ConnectionSettings every other
+      # transport in this engine uses; krikri has no ansible.cfg INI
+      # parsing at all (env/CLI only), so real's ansible.cfg `ssh_args`
+      # half of that join contributes nothing here - the CLI
+      # --ssh-common-args/--ssh-extra-args do, via CliOptions.
+      apply_ssh_args_param!
+
       # delegate_to: a local-transport host (localhost) while the task's
       # own host is a different, non-localhost host: Ansible runs
       # rsync ON THE CONTROLLER (the delegate's connection is local) and
@@ -283,6 +300,24 @@ module Krikri
       end
       return @vars["ansible_port"].as_i if @vars["ansible_port"]?.try(&.as_i?)
       fallback_host.port
+    end
+
+    # The `_ssh_args` module param real's action plugin sets for
+    # `use_ssh_args: yes` - a space-joined string SynchronizeRsync
+    # appends to its --rsh ssh command (its own comment quotes the
+    # module line this mirrors). Gated on the same two conditions real
+    # applies (the flag, and an ssh - not local - transport), so the
+    # default synchronize keeps its agent/IdentitiesOnly-agnostic rsh
+    # exactly like ansible.posix. No-op (and no `_ssh_args` key at all)
+    # otherwise, so the params handed to a module dispatch stay
+    # byte-identical to what real passes when the flag is off.
+    private def apply_ssh_args_param! : Nil
+      return unless SynchronizeRsync.bool(@params["use_ssh_args"]?, default: false)
+      return if local_connection?
+      conn = ConnectionSettings.resolve(@host, @vars)
+      args = CliOptions.extra_ssh_args + conn.ssh_extra_options
+      return if args.empty?
+      @params["_ssh_args"] = args.join(' ')
     end
   end
 end

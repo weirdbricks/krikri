@@ -105,9 +105,9 @@ module Krikri
     # no rendered per-task context.
     def self.resolve_play(host : Host, play_vars : Hash(String, JSON::Any)?) : ConnectionSettings
       merged = host.vars.dup
-      play_vars.try do |pv|
+      play_vars.try do |vars|
         (CONNECTION_VAR_KEYS + Passwords::CONNECTION_KEYS).each do |key|
-          merged[key] = pv[key] if pv.has_key?(key)
+          merged[key] = vars[key] if vars.has_key?(key)
         end
       end
       resolve(host, merged)
@@ -127,6 +127,18 @@ module Krikri
     def fingerprint : String
       [conn_host, user, port.to_s, identity_file.to_s, password.to_s,
        common_args.join('\u{1}'), extra_args.join('\u{1}')].join('\u{2}')
+    end
+
+    # The `-o`-style argv every ssh/scp/rsync invocation for THIS
+    # connection must carry (ansible_ssh_common_args first, then
+    # ansible_ssh_extra_args, exactly like ansible-core's own
+    # ssh_common_args/ssh_extra_args connection options). One method so
+    # no call site can spell the combination itself and forget half of
+    # it - the failure mode behind issue #2, where a path built its
+    # transport argv from the identity file and port alone and let ssh
+    # walk every agent identity instead of honoring IdentitiesOnly=yes.
+    def ssh_extra_options : Array(String)
+      common_args + extra_args
     end
 
     private def self.string_var(vars : Hash(String, JSON::Any)?, key : String) : String?
@@ -149,7 +161,7 @@ module Krikri
     private def self.port_var(vars : Hash(String, JSON::Any)?) : Int32?
       value = vars.try(&.["ansible_port"]?) || vars.try(&.["ansible_ssh_port"]?)
       return nil unless value
-      return nil if (value.as_s?.try { |s| s.includes?("{{") || s.includes?("{%") })
+      return nil if (value.as_s?.try { |candidate| candidate.includes?("{{") || candidate.includes?("{%") })
       value.as_i? || value.as_s?.try(&.to_i?)
     end
 

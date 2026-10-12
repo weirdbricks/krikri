@@ -736,7 +736,7 @@ module Krikri
       connection_host = conn.conn_host
       user = conn.user
       identity_file = conn.identity_file
-      extra_args = conn.common_args + conn.extra_args
+      extra_args = conn.ssh_extra_options
 
       jid = AsyncJobs.generate_jid
       dir = "~/.ansible_async"

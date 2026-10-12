@@ -790,9 +790,10 @@ module Krikri
     end
 
     # Plugins that actually read the "vars" field of their config JSON -
-    # everything else only ever reads the 3 connection keys BasePlugin
-    # itself pulls out (ansible_connection/ansible_host/
-    # ansible_ssh_private_key_file), confirmed by
+    # everything else only ever reads the connection keys BasePlugin
+    # itself pulls out (WIRE_VAR_KEYS below: ansible_connection/
+    # ansible_host/ansible_ssh_private_key_file/ansible_ssh_*_args),
+    # confirmed by
     # `grep -l '@vars\[' plugins/*.cr` -> debug.cr and assert.cr only
     # (debug: `msg: "{{ var }}"` needs live lookup against the full vars
     # context; assert: `that:` conditions evaluate against it the same
@@ -814,6 +815,36 @@ module Krikri
     def self.needs_full_vars?(module_name : String) : Bool
       NEEDS_FULL_VARS.includes?(simple_plugin_name(module_name))
     end
+
+    # The `vars` payload of every pruned (non-full-vars) plugin config -
+    # what build_plugin_config sends over the wire instead of the whole
+    # vars context.
+    #
+    # It must be enough, together with the config's own `host` entry, for
+    # the plugin PROCESS to resolve the same ConnectionSettings its own
+    # SSH calls dial with: the ansible_ssh_* args are the load-bearing
+    # half of issue #2 - a controller-only plugin (fetch's remote read,
+    # wait_for_connection's connection probe) runs as its own process and
+    # dials back out over ssh itself, so without ansible_ssh_common_args/
+    # ansible_ssh_extra_args in here its transport resolved an empty
+    # args list and ssh walked every agent identity instead of honoring
+    # `-o IdentitiesOnly=yes` ("Too many authentication failures").
+    # ansible_user/ansible_port/ansible_host do NOT need to repeat here:
+    # build_plugin_config writes their resolved values into the `host`
+    # entry ConnectionSettings falls back to.
+    #
+    # Deliberately NOT the password keys (ansible_password/
+    # ansible_ssh_pass/...): this JSON is also what crosses the wire to
+    # the REMOTE plugin binary, and a controller credential must not be
+    # shipped to the target - remote dispatch never dials out, so it has
+    # no use for one anyway. A controller-only plugin with PASSWORD auth
+    # therefore still cannot resolve a password in-process; that gap is
+    # outside issue #2's key/agent-auth scope.
+    WIRE_VAR_KEYS = [
+      "ansible_connection", "ansible_host", "ansible_ssh_private_key_file",
+      "ansible_ssh_common_args", "ansible_ssh_extra_args",
+      "playbook_dir", "ansible_pkg_mgr",
+    ]
 
     # Same @@local_md5_cache contract (computed once per distinct local
     # file per process), but aware that build.sh's fat plugin binary
@@ -860,7 +891,7 @@ module Krikri
       host_key = conn.spec_key
       user = conn.user
       identity_file = conn.identity_file
-      extra_args = conn.common_args + conn.extra_args
+      extra_args = conn.ssh_extra_options
 
       # Initialize plugin cache for this host
       @@uploaded_plugins[host_key] ||= Set(String).new
@@ -1650,7 +1681,7 @@ module Krikri
       # this spec.
       conn = ConnectionSettings.resolve(host, vars)
       connection_host = conn.conn_host
-      extra_args = conn.common_args + conn.extra_args
+      extra_args = conn.ssh_extra_options
 
       ensure_uploaded(host, plugin_name, vars)
 
@@ -1748,8 +1779,8 @@ module Krikri
       # vars_context - ansible_facts, every registered var accumulated so
       # far in the play, gathered package facts - and could reach
       # hundreds of KB deep into a long role. It no longer does.
-      # `TaskExecutor#build_plugin_config` prunes the wire vars to three
-      # connection keys for every module except `debug`/`assert`, and
+      # `TaskExecutor#build_plugin_config` prunes the wire vars to
+      # WIRE_VAR_KEYS for every module except `debug`/`assert`, and
       # those two are in `ActionPluginManager::CONTROLLER_ONLY_MODULES`,
       # so they never reach a module dispatch at all - which makes
       # `PluginManager::NEEDS_FULL_VARS` unreachable on the normal path.

@@ -618,7 +618,7 @@ module Krikri
             conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
             identity_file: get_identity_file,
-            extra_args: conn.common_args + conn.extra_args
+            extra_args: conn.ssh_extra_options
           )
         else
           SSHManager.exec(
@@ -628,7 +628,7 @@ module Krikri
             conn.port,
             timeout: timeout || SSHManager::DEFAULT_EXEC_TIMEOUT_SECONDS,
             identity_file: get_identity_file,
-            extra_args: conn.common_args + conn.extra_args
+            extra_args: conn.ssh_extra_options
           )
         end
       end
@@ -806,7 +806,7 @@ module Krikri
           remote_path,
           effective_connection.port,
           identity_file: get_identity_file,
-          extra_args: effective_connection.common_args + effective_connection.extra_args
+          extra_args: effective_connection.ssh_extra_options
         )
       end
     end
@@ -823,7 +823,7 @@ module Krikri
           local_path,
           effective_connection.port,
           identity_file: get_identity_file,
-          extra_args: effective_connection.common_args + effective_connection.extra_args
+          extra_args: effective_connection.ssh_extra_options
         )
       end
     end
