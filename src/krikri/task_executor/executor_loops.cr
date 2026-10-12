@@ -1850,6 +1850,11 @@ module Krikri
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil
+          # A batch-prepared (or solo) finalization failure carries its
+          # [ERROR] chain block stashed on the result (see
+          # stash_finalization_error_block) - print it in iteration order,
+          # just before this item's failed line, where Ansible puts it.
+          TaskExecutor.flush_deferred_finalization_error_block(result)
           ResultDisplay.display_result(host, result, @diff_mode, item_label: item_label, ignore_errors: resolve_task_ignore_errors(task, base_vars_context), no_log: resolve_task_no_log(task, base_vars_context), module_name: task.module_name, delegate_target: delegate_target, source_task: task, loop_item: item, loop_var_name: task.loop_var)
         end
 
