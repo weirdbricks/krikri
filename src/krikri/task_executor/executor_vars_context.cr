@@ -1,4 +1,5 @@
 require "../run_options"
+require "../deprecation_hint"
 require "./executor"
 require "krikri-jinja/krikri_jinja"
 require "../jinja_host_context"
@@ -3088,8 +3089,8 @@ module Krikri
     # two different tasks with the same text but different origins each
     # display. The one-time "Deprecation warnings can be disabled" hint
     # Ansible prints before the first deprecation (Display._deprecated's
-    # warning() call, itself deduped) is replicated below.
-    @@conditional_deprecation_hint_seen = false
+    # warning() call, itself deduped) is shared via Krikri::DeprecationHint
+    # (all deprecation kinds print it once per run, not once per emitter).
     @@conditional_deprecation_seen = Set(String).new
     @@when_error_chain_seen = Set(String).new
     # Same Display dedup for the arg-finalization chain: a looped task's
@@ -3116,10 +3117,7 @@ module Krikri
       text = conditional_deprecation_text(task, key, raw)
       return if text.empty?
       return unless @@conditional_deprecation_seen.add?(text)
-      unless @@conditional_deprecation_hint_seen
-        @@conditional_deprecation_hint_seen = true
-        STDERR.puts "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
-      end
+      DeprecationHint.print_hint_once
       STDERR.puts text
     end
 
