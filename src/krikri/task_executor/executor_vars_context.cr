@@ -3466,26 +3466,31 @@ module Krikri
       end
     end
 
-    # For copy:/template:/assemble: tasks that came from a role, a
-    # relative src: resolves against the role's files/ or templates/
-    # directory - the plugin subprocess itself has no concept of roles, so
-    # this has to happen here, before the config is handed off. An
-    # absolute src: (or a task not from a role) is left untouched.
+    # For copy:/template:/assemble:-style controller src resolution shared
+    # by script: and unarchive:: a relative src resolves through Ansible's
+    # _find_needle dwim stack - EXACTLY the ordered NeedleLookup.candidates
+    # list a miss reports in "Searched in:" - so the resolver can never
+    # skip a path the error message advertises. The resolver used to check
+    # only <role>/files/<src>, <playbook>/<src> and the cwd, so a role
+    # file addressed with its own files/ prefix (`script: files/x.py`
+    # living at <role>/files/x.py) resolved nowhere even though the
+    # reported search list contained it (lukapetrovic-git.ubuntu_patch's
+    # `script: files/get_upgraded_packages.py`, issue #10); the miss
+    # branch then failed with a Searched-in list naming the existing file.
+    # The plugin subprocess itself has no concept of roles, so this has to
+    # happen here, before the config is handed off. The cwd fallback stays
+    # as a last-resort extra beyond Ansible's list (kept for scripts run
+    # from a directory Ansible would not find the file from either).
     private def resolve_script_path(local_path : String, task : Task) : String?
-      if role_dir = task.role_files_dir
-        candidate = File.join(role_dir, local_path)
-        return File.expand_path(candidate) if File.exists?(candidate)
-      end
-      # Ansible's script action plugin resolves the src against the
-      # playbook's own basedir too (`files/` next to the playbook being
-      # the common layout) - not just a role's files/ dir and the
-      # controller's cwd. Running krikri-playbook from anywhere other
-      # than the playbook's own directory left a playbook-relative
-      # `files/...` src unresolvable ("the script files/m4-script.sh
-      # does not exist on the target (transfer failed?)") where
-      # ansible-playbook found it (found live via modules_systems.yml).
-      candidate = File.join(@playbook_dir, local_path)
-      return File.expand_path(candidate) if File.exists?(candidate)
+      candidates = if local_path.starts_with?('/') || local_path.starts_with?("~")
+                     [] of String
+                   else
+                     NeedleLookup.candidates(
+                       NeedleLookup.search_stack(task.role_path, task.role_parent_paths, needle_task_file_dir(task)),
+                       File.expand_path(@playbook_dir), "files", local_path)
+                   end
+      resolved = candidates.find { |candidate| File.exists?(candidate) }
+      return File.expand_path(resolved) if resolved
       return File.expand_path(local_path) if File.exists?(local_path)
       nil
     end
