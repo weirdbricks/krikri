@@ -186,7 +186,7 @@ skill's first step is to ask for it, and it documents the layout.
    roles hit the same root cause, that's one fix to make, not two. A difference in output
    *text* (e.g. Ansible's `Origin:` error context) is a real krikri gap, not something to
    mask; masks (`Compare::MASKS` in krikri-role-tester) are only for output that can never
-   be identical. The `launch-roles` skill walks through this.
+   be identical. The `launch-roles` skill walks through this and files GitHub issues for the confirmed root causes; the `work-issues` skill then picks issues to fix.
 
 4. **Fix phase (serial):** apply fixes one at a time against the unit tests (concurrent edits to
    the same evaluator/plugin code aren't safe to parallelize even though the discovery phase is).

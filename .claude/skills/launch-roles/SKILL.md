@@ -1,6 +1,6 @@
 ---
 name: launch-roles
-description: Triage the results of a krikri-role-tester run and drive the fixes — read the run's results directory (logs___<epoch>), skip byte-identical roles, group the rest by root cause, dispatch root-cause fixes to Crush, validate and land each fix, and have the user re-run to confirm. Use whenever the user asks to "launch roles", "run a round", "triage a batch", "look at the results", "check the logs___ dir", or names a results directory. The user runs krikri-role-tester themselves; this skill never starts it. Its first step is always to ask for the results directory.
+description: Triage the results of a krikri-role-tester run - read the run's results directory (logs___<epoch>), skip byte-identical roles, group the rest by root cause, report, and offer to file one GitHub issue per root cause. Triage only: it never fixes anything (fixing is the `work-issues` skill, which reads the issues). Use whenever the user asks to "launch roles", "run a round", "triage a batch", "look at the results", "check the logs___ dir", or names a results directory. The user runs krikri-role-tester themselves; this skill never starts it. Its first step is always to ask for the results directory.
 ---
 
 # Triage a krikri-role-tester run
@@ -11,7 +11,9 @@ yourself** — not `run`, not `--auto-mode`, not a re-run. It provisions real
 servers, and polling it is exactly the token burn this workflow replaces. Your
 job starts after it has produced a results directory.
 
-Steps 1-8 are read-only investigation. Steps 9 onward change code, by design.
+This skill triages; it does not fix. Steps 1-8 are read-only investigation, step 9
+publishes GitHub issues (only on the user's say-so), step 10 records the round. Fixing
+is the `work-issues` skill's job, driven by the issues step 9 files.
 
 ## 1. FIRST: ask for the results directory
 
@@ -99,7 +101,7 @@ krikri version, build type, commit, dirty or not.
 - `commit: … (dirty …)` → note it; the result is not reproducible from the
   commit alone.
 
-Record the commit — step 12's docs sync and any issue need it.
+Record the commit — step 10 and any issue need it.
 
 ## 4. Read report.txt and tally
 
@@ -112,17 +114,20 @@ Statuses (the `status` file and the third column):
 
 | Status | Meaning | Krikri signal? |
 |---|---|---|
-| `CLEAN` | recap counters match in cold and warm | maybe — check `bytes=` |
-| `DIVERGENT` | recap counters differ | yes |
+| `CLEAN` | recap counters match, nothing failed, and the output is byte-identical (tool >= 0.3.1) | no |
+| `MATCHED_FAILURE` | both engines failed with the same recap counters (or the same non-zero rc before any recap) and the output is byte-identical | no - a broken role or host, same on both engines |
+| `DIVERGENT` | recap counters differ, **or** the byte comparison is `DIFFERENT` even though the recaps match | yes |
 | `COMMUNITY_MODULE_MISSING` | only difference is a community module krikri does not track | deliberate gap, not a bug |
 | `GALAXY_MISSING` | role would not install | no |
 | `TF_APPLY_FAILED`, `SSH_TIMEOUT`, `BOOT_FAILED`, `NO_CAPACITY`, `CREDENTIALS_FAILED` | infra | no |
-| `TIMED_OUT_OR_CRASHED` | an engine run or the watchdog hit its time budget | possibly a krikri hang — read both `.out` tails |
+| `TIMED_OUT_OR_CRASHED` | an engine run or the watchdog hit its time budget | possibly a krikri hang - read both `.out` tails |
 | `STOPPED` | run was interrupted | no |
-| `ERROR` | tool error | no — report to the user |
+| `ERROR` | tool error | no - report to the user |
 
-`CLEAN` only means the five recap counters match. **Two engines that fail the
-same way are `CLEAN`.** The `bytes=` suffix is the stricter check.
+Results from tool < 0.3.1 (`versions.txt` says which) used the old, looser
+`CLEAN`: it only meant the five recap counters matched, so two engines that
+failed the same way, or printed different text, were `CLEAN`. For those, trust
+the `bytes=` suffix over the status.
 
 ## 5. Skip what is byte-identical
 
@@ -131,7 +136,9 @@ output in both phases. **Do not read its logs.** Count it and move on. This is
 the point of the byte comparison: it removes most roles from the LLM's
 attention.
 
-Everything else (`bytes=DIFFERENT`, or any non-CLEAN status) needs a decision.
+Everything else (`bytes=DIFFERENT`, or any status other than `CLEAN` and
+`MATCHED_FAILURE`) needs a decision. A `MATCHED_FAILURE` is not krikri signal,
+but list it for the user: the role is broken the same way on both engines.
 
 The only normalisations are: both engines use the inventory alias
 `testhost`, each side's own host IP becomes `<HOST_IP>`, and Ansible's
@@ -191,7 +198,7 @@ needs a pty here: `script -qec "ansible-playbook ..." /dev/null`.
 
 ## 8. Report to the user
 
-Before dispatching anything, report — this is where the user's input is needed
+Report before anything else happens — this is where the user's input is needed
 (what is worth fixing now):
 
 - What was tested (step 3) and the tally: `N identical / M different / K
@@ -200,100 +207,37 @@ Before dispatching anything, report — this is where the user's input is needed
   path (`<dir>/<role>/compare_cold.diff`), and your classification.
 - Blocked/GALAXY_MISSING roles, listed, not analysed.
 
-Then continue with the groups the user wants fixed. If the user already said
-to fix everything real, do not wait.
+Then go to step 9. Do not start fixing: that is a separate skill.
 
-## 9. Dispatch root causes to Crush
+## 9. Offer to file GitHub issues
 
-Once there is a deduped list of confirmed root causes, send them to Crush
-automatically.
+After the step 8 report, offer to file one GitHub issue per confirmed root
+cause (the real krikri bugs and output gaps - not infra, not
+`COMMUNITY_MODULE_MISSING`, not `MATCHED_FAILURE`). Filing an issue publishes
+text, so ask first; do not file them unprompted. The issues are the hand-off:
+the `work-issues` skill reads them to decide what to fix.
 
-Claude is the dispatcher, not a bystander, for each root cause:
+1. `gh issue list --label divergence --state all` in the krikri repo: if a
+   root cause already has an issue, reuse it (comment with the new evidence)
+   instead of filing a duplicate.
+2. Show the user the proposed issues (title + one-line body) and ask which to
+   file. Offer a clear "file all" / "file none" choice.
+3. For each approved one: `gh issue create --label divergence --title ... --body ...`.
+   The body must let someone with no access to this results directory start
+   work, so it has: the cause, the affected roles (with the OS each ran on),
+   a minimal repro or the exact diff hunk pasted in, the krikri commit and
+   version from `versions.txt`, and the original evidence path
+   (`<dir>/<role>/compare_cold.diff`) as a pointer only. Keep home-directory
+   paths out of the body. Say whether it is a behavioural bug or an output gap.
+4. Give the user the issue numbers and tell them to run `work-issues` when
+   they want fixes started.
 
-1. **Create the worktree yourself** (`git worktree add`) before handing off
-   — never ask Crush to create its own. One fresh worktree per root cause;
-   never reuse one across two different fixes running concurrently.
-2. Right before dispatching into a worktree that's been sitting, `git merge
-   --ff-only main` in it first — an earlier fix may have already merged and
-   bumped `VERSION`, and dispatching against a stale base guarantees a
-   collision later.
-3. Dispatch via `mcp__crush-api__crush_run` with the root cause, a minimal
-   repro, the affected role(s), and the evidence paths from the results
-   directory as context.
-4. **Max 2 concurrent Crush tasks against this repo at any time** — more
-   crashes the host (Crystal builds are CPU/memory-heavy). Queue the rest;
-   launch the next one only once a running slot frees up.
+## 10. Record the round
 
-See `fix-divergence` for the per-fix details (prompt contents, the
-dropped-`return` warning, no `version.cr` edits in the worktree).
-
-## 10. Validate every completed Crush job
-
-For every Crush task that finishes, validate it before it goes anywhere near
-`main` — **only Claude commits and pushes, never Crush, and never without
-this validation**:
-
-1. Read the diff as an outside reviewer would, not as a rubber stamp — check
-   version bump present (`src/krikri/version.cr`), plugin
-   three-place-registration if a plugin was touched, and a regression test
-   added where practical (or a stated reason in the intended commit message
-   if not, per `AGENTS.md`).
-2. Run `scripts/minitest.sh -- -p 4` (full suite) and `./build.sh` — both must pass clean
-   before anything is trusted.
-3. If validation finds real problems, push back and fix by hand rather than
-   deferring to Crush's implementation choices.
-4. Only once it checks out: Claude commits and pushes. Then delete the
-   worktree — also Claude's job, not Crush's.
-
-Validate and merge one at a time (a second worktree merging after the first
-may need its `VERSION` bump renumbered by hand).
-
-## 11. Confirm each fix with a re-run — by the user
-
-Passing the suite proves no regression; it does not prove the divergence is
-gone. After a fix for a role is merged to `main`:
-
-1. Tell the user the krikri binary must be rebuilt (`./build.sh --release`) —
-   the run only tests what is in the binary. `versions.txt` of the next run
-   will show the commit; check it contains the fix.
-2. Write a queue file with **only the affected roles**, in the results
-   directory's format (copy their lines from the old `queue.txt`, which keeps
-   each role's OS):
-
-   ```
-   hoplacloud.fail2ban any rocky
-   ```
-
-3. Give the user the command and ask them to run it and send back the new
-   directory:
-
-   ```
-   ./bin/krikri-role-tester --auto-mode --queue <queue-file>
-   ```
-
-4. Back at step 1 with the new directory. The role must come back
-   `bytes=IDENTICAL` (or, if the remaining difference is a *known, accepted*
-   output gap, say so explicitly). If it is still different, the root cause
-   was not fully fixed — treat it as a new investigation.
-
-Do this per fix as it lands, not batched at the end.
-
-## 12. Sync round docs
-
-Once every dispatched fix is merged and confirmed, update the tracking docs
-together in one commit (per `AGENTS.md`'s "Docs that must stay in sync"):
-
-- **GitHub issues**: file one issue per unfixed root cause (`gh issue create`,
-  label `divergence`), and make sure each merged fix's commit says `Fixes #N`.
-  Include the krikri commit from `versions.txt` and the evidence path. No
-  per-round narrative is written anywhere; `git log` is the record. Only
-  touch `KNOWN_MISSING.md` if a deliberate limit was decided.
-- **`ROLES_TESTED.md`**: one row per role tested — never bundled — each with
-  cold/warm timing for both engines (from the `report.txt` line). Every role
-  from `queue.txt` gets a row, including ones that stayed CLEAN or
-  byte-identical. Skip timings from a debug build.
-- **`README.md`**: bump the version badge to match the final `VERSION`
-  reached this round.
-
-This closes out the round — after this, `ROLES_TESTED.md` and `git log` are
-the source of truth for what the round did.
+Once triage is reported, update `ROLES_TESTED.md` in one commit: one row per
+role tested - never bundled - each with cold/warm timing for both engines (from
+the `report.txt` line). Every role from `queue.txt` gets a row, including ones
+that stayed CLEAN, byte-identical or `MATCHED_FAILURE`. Skip timings from a
+debug build. Only touch `KNOWN_MISSING.md` if a deliberate limit was decided.
+No per-round narrative is written anywhere; `git log` is the record. Ask
+before committing.
