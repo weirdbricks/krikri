@@ -4,6 +4,7 @@ require "json"
 require "../src/krikri/base_plugin"
 require "../src/krikri/plugin_helpers/apt_lock_retry"
 require "../src/krikri/plugin_helpers/apt_deb_install"
+require "../src/krikri/plugin_helpers/dnf_install_failures"
 
 module Krikri
   # Package Plugin - OS-agnostic package management
@@ -58,6 +59,10 @@ module Krikri
 
     include AptLockRetry
     include AptDebInstall
+    # The rpm branch's install-failure shape (dnf's own module wording
+    # and key order) is parsed by the same shared helper the dnf/yum
+    # plugins use - one source of truth for a live-verified shape.
+    include PluginHelpers::DnfInstallFailures
     property? check_mode : Bool
     # Resolved remote path of apt-get (see #apt_get_bin), nil until first
     # needed.
@@ -684,12 +689,29 @@ module Krikri
               msg: already_satisfied ? "Package #{name} already installed" : "Package #{name} installed"
             )
           else
-            PluginResult.new(
-              changed: false,
-              failed: true,
-              msg: "Failed to install #{name}: #{install_result[:stderr]}",
-              stderr: install_result[:stderr]
-            )
+            # A dnf install that failed on missing/filtered specs carries
+            # Ansible's dnf-module failure shape (canned msg, one entry
+            # per missing spec, no stderr key) - the raw stderr dump only
+            # fits outputs nothing parses (repo metadata/404 errors).
+            if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
+              PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to install some of the specified packages",
+                include_empty_msg: true,
+                failures: failures,
+                results: [] of String,
+                rc: install_result[:exit_code],
+                key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
+              )
+            else
+              PluginResult.new(
+                changed: false,
+                failed: true,
+                msg: "Failed to install #{name}: #{install_result[:stderr]}",
+                stderr: install_result[:stderr]
+              )
+            end
           end
         end
       when "absent"
