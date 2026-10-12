@@ -2994,6 +2994,17 @@ module Krikri
       task_hash.each do |key, value|
         key_str = key.to_s
         if legacy_conflicting_keys.includes?(key_str)
+          # ansible-core's ModuleArgsParser has no notion of these as
+          # attributes, so one written BEFORE the real module key is taken
+          # as the action itself and type-checked first: `sudo: yes` above
+          # `apt:` dies "unexpected parameter type in action: <class
+          # 'bool'>", not the conflict (sprylab.tomcat-ubuntu).
+          if module_name.nil? && legacy_conflict_key.nil? &&
+             (class_name = unexpected_meta_param_type(value))
+            raise MetaActionTypeError.new(origin_error_render(
+              "unexpected parameter type in action: <class '#{class_name}'>",
+              source_file, source_map, task_source_prefix(source_prefix, index)))
+          end
           legacy_conflict_key = key_str
         elsif key_str == "static"
           # `static:` is a pre-2.x include-timeout hint that ansible-core
