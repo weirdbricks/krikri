@@ -2812,11 +2812,16 @@ module Krikri
     # direct, non-chained undefined) keeps the three-stanza block, never
     # a mislabeled Origin.
     private def chain_value_failure_stanza(task : Task, msg : String) : String?
-      m = msg.match(/\A(Error while resolving value for '[^']+': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
+      m = msg.match(/\A(Error while resolving value for '([^']+)': )'([A-Za-z_][A-Za-z0-9_]*)' is undefined\z/)
       return nil unless m
-      origin = undef_chain_var_origin(task, m[2])
+      # Real 2.19.11 only follows the vars actually reachable from the
+      # failing arg (issue #36: other layers failing with the same
+      # message but unreachable from this param don't suppress the
+      # stanza) - pass the param's raw text as the reachability seed.
+      seed = task.params[m[2]]?
+      origin = undef_chain_var_origin(task, m[3], reachable_from: seed.is_a?(String) ? seed : nil)
       return nil unless origin
-      "'#{m[2]}' is undefined\n" +
+      "'#{m[3]}' is undefined\n" +
         origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
     end
 
@@ -2829,8 +2834,8 @@ module Krikri
     # fourth stanza): same layer merge, same exactly-one-match
     # protection - ambiguous or lineage-less definitions (extra vars,
     # inventory) yield nil so no origin ever gets mislabeled.
-    private def undef_chain_var_origin(task : Task, missing : String) : FileVarOrigin?
-      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing)
+    private def undef_chain_var_origin(task : Task, missing : String, reachable_from : String? = nil) : FileVarOrigin?
+      value_failure_var_origin(task, "'#{missing}' is undefined", skip_key: missing, required_text: missing, reachable_from: reachable_from)
     end
 
     # The unique var-layer DEFINITION whose plain-`{{ }}` own value
@@ -2841,7 +2846,15 @@ module Krikri
     # chain). Same layer merge, same exactly-one-match protection -
     # ambiguous or lineage-less definitions (extra vars, inventory)
     # yield nil so no origin ever gets mislabeled.
-    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil) : FileVarOrigin?
+    # REACHABLE_FROM: the failing param's raw text, when the caller knows
+    # it - real 2.19.11 resolves a chain's Origin through the vars the
+    # failing arg actually references, transitively, so sibling vars
+    # failing with the SAME message but unreachable from that arg don't
+    # make the origin ambiguous (issue #36: a role default
+    # `jail_name: '{{ jail_net_ip }}'` plus an unrelated role var also
+    # mentioning `jail_net_ip` kept the stanza hidden). nil (callers
+    # without the param text) keeps the previous all-layers behaviour.
+    private def value_failure_var_origin(task : Task, message : String, skip_key : String? = nil, required_text : String? = nil, reachable_from : String? = nil) : FileVarOrigin?
       merged = {} of String => JSON::Any
       origins = {} of String => VarOrigin
       merge_var_layer(merged, origins, @play_vars, @play_var_origins)
@@ -2852,9 +2865,12 @@ module Krikri
       merge_var_layer(merged, origins, task.vars, task.vars_origins)
       merge_var_layer(merged, origins, @extra_vars, @extra_var_origins)
 
+      reachable = candidate_reachable_keys(merged, reachable_from)
+
       matches = [] of FileVarOrigin
       merged.each do |key, value|
         next if skip_key && key == skip_key
+        next if reachable && !reachable.includes?(key)
         raw = value.raw
         next unless raw.is_a?(String) && raw.includes?("{{") &&
                     !raw.includes?("{%") && !raw.includes?("{#") &&
@@ -2871,6 +2887,34 @@ module Krikri
         end
       end
       matches.size == 1 ? matches[0] : nil
+    end
+
+    # Keys of MERGED transitively reachable from a failing param's text:
+    # the identifiers named in the seed text itself, then - through each
+    # reached var's own string value - the identifiers that var names,
+    # until nothing new appears (a visited set, so definition cycles
+    # terminate). Anything undefined in MERGED (the missing name itself)
+    # drops out here; only existing candidate layers survive.
+    private def candidate_reachable_keys(merged : Hash(String, JSON::Any), seed : String?) : Set(String)?
+      return nil unless seed
+      reachable = Set(String).new
+      frontier = [] of String
+      seed.scan(/[A-Za-z_][A-Za-z0-9_]*/).each do |match|
+        id = match[0]
+        next unless merged.has_key?(id) && reachable.add?(id)
+        frontier << id
+      end
+      until frontier.empty?
+        raw = merged[frontier.shift].raw
+        next unless raw.is_a?(String)
+        raw.scan(/[A-Za-z_][A-Za-z0-9_]*/).each do |match|
+          id = match[0]
+          if merged.has_key?(id) && reachable.add?(id)
+            frontier << id
+          end
+        end
+      end
+      reachable
     end
 
     # The _ansible_undef_chain_origin ResultDisplay asks for: a template
