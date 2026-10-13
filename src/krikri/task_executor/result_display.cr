@@ -1024,6 +1024,11 @@ module Krikri
         # not).
         if msg.starts_with?("Could not find or access '")
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg).with_chain(ErrorBlock::HANDLING, false, ErrorBlock::Node.new(msg)))
+        elsif msg.starts_with?("Destination directory ") && msg.ends_with?(" does not exist")
+          # The missing-parent check runs inside the copy MODULE that
+          # template's action plugin delegates to, so real renders the
+          # generic "Module failed:" chain, not a bare action failure.
+          root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new("Module failed.").with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg)))
         else
           root.with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg))
         end
