@@ -156,6 +156,38 @@ describe "role-local lookup_plugins/*.py custom lookups" do
     FileUtils.rm_rf(root) if root
   end
 
+  it "words an import failure while loading the plugin as 'failed to load'" do
+    root = File.tempname("lookup-plugins-load-failure")
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "lookup_plugins"))
+    Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))
+    File.write(File.join(root, "roles", "myrole", "lookup_plugins", "badimport.py"), <<-PYTHON)
+      from ansible.plugins.lookup import LookupBase
+      import krikri_no_such_module
+
+      class LookupModule(LookupBase):
+          def run(self, terms, variables=None, **kwargs):
+              return []
+      PYTHON
+    File.write(File.join(root, "roles", "myrole", "tasks", "main.yml"), <<-YAML)
+      - name: use a lookup whose file cannot import
+        ansible.builtin.set_fact:
+          x: "{{ query('badimport', ['x']) }}"
+      YAML
+
+    status, output = run_playbook(root, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - myrole
+      YAML
+
+    status.success?.must_equal(false, output)
+    output.must_include("The lookup plugin 'badimport' failed to load: No module named 'krikri_no_such_module'", output)
+  ensure
+    FileUtils.rm_rf(root) if root
+  end
+
   it "degrades an unknown lookup name to the previous undefined/[] behavior" do
     root = File.tempname("lookup-plugins-none")
     Dir.mkdir_p(File.join(root, "roles", "myrole", "tasks"))

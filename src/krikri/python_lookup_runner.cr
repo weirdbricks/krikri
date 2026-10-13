@@ -115,7 +115,10 @@ module Krikri
       unless result["ok"]?.try(&.as_bool?)
         kind = result["kind"]?.try(&.as_s?) || "error"
         detail = result["error"]?.try(&.as_s?) || "unknown error"
-        raise LookupUnavailableError.new(kind, "custom lookup '#{name}' failed: #{detail}")
+        # Ansible words an import failure while loading the plugin file
+        # as "failed to load", without the exception class name.
+        message = kind == "load" ? "The lookup plugin '#{name}' failed to load: #{detail}" : "custom lookup '#{name}' failed: #{detail}"
+        raise LookupUnavailableError.new(kind, message)
       end
       result["result"]? || JSON::Any.new(nil)
     end
@@ -214,7 +217,12 @@ module Krikri
                    "error": "ansible is not importable by the controller python3: %s"
                             % _unavailable}))
               return
-          module = _load_plugin(payload.get("path"))
+          try:
+              module = _load_plugin(payload.get("path"))
+          except ImportError as exc:
+              sys.stdout.write(json.dumps(
+                  {"ok": False, "kind": "load", "error": str(exc)}))
+              return
           plugin_class = getattr(module, "LookupModule", None)
           if plugin_class is None or not isinstance(plugin_class, type) or \\
                   not issubclass(plugin_class, LookupBase):
