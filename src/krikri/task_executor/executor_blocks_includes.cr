@@ -1681,8 +1681,29 @@ module Krikri
             resolve_loop_filetree(task, host, loop_vars_context) ||
             resolve_loop_lookup(task, loop_vars_context)
         end
-      rescue ex : WhenEvaluationError
+      rescue ex : LoopTypeError | LoopLookupError
+        # A loop source that IS defined but resolves to a non-list (or a
+        # with_<lookup>: refusal) keeps swallow_when_error's own
+        # emit_loop_source_error_block + BARE-msg fatal shape - the same
+        # treatment the ordinary task path's LoopTypeError | LoopLookupError
+        # rescue gives (round 5410000), which swallow_when_error replicates
+        # for this no-result-pipeline include path.
         swallow_when_error(task, host, ex)
+        return
+      rescue ex : WhenEvaluationError
+        # A genuinely undefined loop-source variable (`loop: "{{ ssls }}"`,
+        # `with_items: "{{ ssls }}"`) must print the same [ERROR] chain
+        # block ("Task failed." + task Origin, "<<< caused by >>>" with the
+        # Origin pinned at the loop VALUE token) and the prefixed
+        # {"changed": false, "msg": "Task failed: ..."} fatal the ordinary
+        # task path's loop-source rescue produces (executor_run_loop.cr,
+        # live-verified vs 2.19.11, issue #62) - the old swallow_when_error
+        # here printed a bare `fatal: [host]: FAILED! => 'ssls' is
+        # undefined` instead, with no chain block and no "Task failed: "
+        # prefix.
+        prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
+        emit_loop_error_chain(task, prefixed)
+        finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: base_vars_context)
         return
       end
 
