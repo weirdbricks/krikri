@@ -283,6 +283,11 @@ module Krikri
           if result[:exit_code] == 22 && (code = result[:stdout].strip.to_i?) && code >= 400
             return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{code}: #{HTTP::Status.new(code).description}")
           end
+          # Transport failures surface in Ansible as urllib's
+          # "Request failed: <urlopen error ...>" with the errno text.
+          if reason = {6 => "[Errno -2] Name or service not known", 7 => "[Errno 111] Connection refused"}[result[:exit_code]]?
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: Request failed: <urlopen error #{reason}>")
+          end
           return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
         end
       elsif d = data
