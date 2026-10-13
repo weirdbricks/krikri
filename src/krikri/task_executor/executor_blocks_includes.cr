@@ -1763,7 +1763,7 @@ module Krikri
           # ultimately skipped still got counted as `ok` AND `skipped`
           # for the same task. See the non-looped branch's comment below
           # for how this was found.
-          status = run_include_tasks_once(task, host, vars_context, item_display(item), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
+          status = run_include_tasks_once(task, host, vars_context, include_item_display_label(task, rendered_item, vars_context, host), defer_when_stats: true, defer_run: true, collected: deferred_iterations)
           looped_when_failed = true if status == :failed
           any_iteration_ran = true unless status == :skipped
         end
@@ -2253,7 +2253,7 @@ module Krikri
           vars_context["item"] = item unless loop_var
           vars_context[loop_var] = item if loop_var
           vars_context[index_var] = JSON::Any.new(idx.to_i64) if index_var
-          run_include_role_once(task, host, vars_context, item_display(item))
+          run_include_role_once(task, host, vars_context, include_item_display_label(task, item, vars_context, host))
         end
       else
         run_include_role_once(task, host, base_vars_context, nil)

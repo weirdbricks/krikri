@@ -975,6 +975,19 @@ module Krikri
       item_display(item)
     end
 
+    # Display-only label for the include-style per-iteration lines
+    # (`included:` and the handler include's skip suffix): unlike the
+    # executed-loop paths (whose label failure FAILS the item, see
+    # loop_item_display_label), these iterations have already been booked
+    # by the time the line prints, so a label failure here can only cost
+    # the display - ansible's callback then finds no _ansible_item_label
+    # and shows "None" rather than crashing.
+    private def include_item_display_label(task : Task, item : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : String
+      item_label_for(task, item, vars_context, host)
+    rescue Krikri::TaskExecutor::LoopLabelError
+      "None"
+    end
+
     private def item_display(item : JSON::Any) : String
       # Ansible's loop-item label is Python's repr of the item, not
       # JSON: booleans render True/False, dicts/lists use single-quoted
