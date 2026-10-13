@@ -397,6 +397,7 @@ module Krikri
       dependency_default_origins = Hash(String, VarOrigin).new
       dependency_defaults = load_meta_dependencies(role_dir, play, playbook_dir, seen, tasks, handlers, parent_names, parent_paths, parent_defaults, play_scope, parent_default_origins, dependency_default_origins)
 
+      warn_reserved_role_vars(File.join(role_dir, "defaults"))
       defaults = load_vars_file_main(File.join(role_dir, "defaults"))
       # Ansible keeps a role's defaults visible for the rest of the
       # PLAY once that role has run, not just for tasks physically inside
@@ -436,6 +437,7 @@ module Krikri
       # answers for the value that actually wins (see
       # Task#role_default_origins).
       defaults_origins = parent_default_origins.merge(dependency_default_origins).merge(load_vars_file_origins_main(File.join(role_dir, "defaults")))
+      warn_reserved_role_vars(File.join(role_dir, "vars"))
       own_vars = load_vars_file_main(File.join(role_dir, "vars"))
       own_var_origins = load_vars_file_origins_main(File.join(role_dir, "vars"))
       role_vars = own_vars.dup
@@ -1071,6 +1073,31 @@ module Krikri
         vars_file_origins(path).each { |key, origin| result[key] = origin }
       end
       result
+    end
+
+    # Reserved-name warnings for a role's defaults/ or vars/ directory:
+    # ansible-core 2.19 warns for a reserved name at the TOP LEVEL of
+    # every vars-style file the role loads (single main.* or a main/
+    # directory of files), at role load time - before the PLAY banner for
+    # a play-level role, at the include point for include_role (both
+    # paths go through load_role, so the two call sites below cover
+    # dependencies too). Same file discovery as load_vars_file_main so
+    # the Origin always names a file Ansible would actually have read.
+    private def self.warn_reserved_role_vars(dir : String) : Nil
+      files = if found = find_main_file(dir)
+                [found]
+              else
+                main_dir = File.join(dir, "main")
+                if Dir.exists?(main_dir)
+                  (Dir.glob(File.join(main_dir, "*.yml")) + Dir.glob(File.join(main_dir, "*.yaml")) + Dir.glob(File.join(main_dir, "*.json"))).sort
+                else
+                  [] of String
+                end
+              end
+      files.each do |path|
+        keys = cached_yaml(path).as_h?.try(&.keys.map(&.to_s)) || next
+        PlaybookParser.warn_reserved_toplevel_vars(path, keys)
+      end
     end
 
     # Origins for one vars-style YAML file's top-level keys (the keys come

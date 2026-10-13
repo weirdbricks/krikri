@@ -3969,6 +3969,53 @@ module Krikri
       nil
     end
 
+    # Top-level (column-1) variant for role defaults/vars files: a role
+    # vars file's keys sit at indent 0, so locate_reserved_key's
+    # indent >= 4 requirement never matches them - and the Origin column
+    # is simply indent + 1 = 1. First `key:` at column 1 wins, matching
+    # the top-level mapping the vars loader actually reads.
+    private def self.locate_reserved_toplevel_key(lines : Array(String), key : String) : Tuple(Int32, Int32)?
+      needle = /^(#{Regex.escape(key)}):\s*(\S|$)/
+      lines.each_with_index do |line, idx|
+        return {idx, 1} if line.match(needle)
+      end
+      nil
+    end
+
+    # ansible-core 2.19 warns the same way for reserved-name keys at the
+    # top level of ANY vars-style file a role loads (defaults/main.yml,
+    # vars/main.yml, and every file of a defaults/main/ directory), at
+    # role LOAD time - live-verified vs 2.19.11: for defaults/main.yml
+    # line 2 `remote_user: root` the warning (with its Origin block
+    # naming 2:1) prints on stderr BEFORE the "PLAY [..]" banner for a
+    # play-level role, at the include point for include_role. The role
+    # loader hands over one file's parsed top-level keys at a time;
+    # deduped per file+key because load_role re-reads the same files
+    # (the play-wide layer reloads defaults) and may load a role more
+    # than once, while Ansible warns once per file per run. Public:
+    # RoleLoader owns the cached parse of role vars files.
+    @@reserved_toplevel_var_warnings = Set(String).new
+    RESERVED_TOPLEVEL_WARN_MUTEX = Mutex.new
+
+    def self.warn_reserved_toplevel_vars(path : String, keys : Array(String)) : Nil
+      return unless keys.any? { |key| RESERVED_VAR_NAMES.includes?(key) }
+      return unless File.file?(path)
+      lines = source_lines(path) || return
+      keys.each do |key|
+        next unless RESERVED_VAR_NAMES.includes?(key)
+        found = locate_reserved_toplevel_key(lines, key)
+        next unless found
+        dedup_key = File.expand_path(path) + ":" + key
+        RESERVED_TOPLEVEL_WARN_MUTEX.synchronize do
+          next if @@reserved_toplevel_var_warnings.includes?(dedup_key)
+          @@reserved_toplevel_var_warnings << dedup_key
+          STDERR.puts "[WARNING]: Found variable using reserved name '#{key}'."
+          STDERR.puts reserved_origin_block(path, lines, found[0], found[1])
+          STDERR.puts
+        end
+      end
+    end
+
     # Same ansible-core 2.19 SourceContext format the task-failure Origin
     # blocks use (see executor_vars_context.cr's origin_context_block).
     private def self.reserved_origin_block(path : String, lines : Array(String), line_num : Int, column : Int) : String
