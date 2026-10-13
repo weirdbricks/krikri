@@ -816,6 +816,9 @@ module Krikri
           if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
           end
+          if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
+          end
           if failures = parse_dnf_install_failures(result[:stdout], result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end
@@ -874,6 +877,22 @@ module Krikri
         nevra = output.match(/Failing package is:\s*(\S+)/)
         return nil unless key_err && nevra
         "Failed to validate GPG signature for #{nevra[1]}: #{key_err[1]}"
+      end
+
+      # Ansible's dnf module catches the libdnf DepsolveError and fails with
+      # "Depsolve Error occurred: " + str(exception), which is the whole
+      # "Problem: ..." block (every "- ..." detail line) and not the CLI's
+      # trailing "(try to add '--allowerasing' ...)" hint (issue #60).
+      private def depsolve_failure_msg(output : String) : String?
+        lines = output.lines.map(&.rstrip)
+        start = lines.index { |line| line.lstrip.starts_with?("Problem") && line.includes?(":") }
+        return nil unless start
+        block = [] of String
+        lines[start..].each do |line|
+          break if line.lstrip.starts_with?("(try to add") || line.strip.empty?
+          block << line
+        end
+        "Depsolve Error occurred: \n" + block.join("\n")
       end
 
       private def group_install_noop?(output : String) : Bool
