@@ -456,7 +456,10 @@ module Krikri
     private def resolve_pip_binary : String | PluginResult
       if venv = @params["virtualenv"]?
         pip_path = "#{venv}/bin/pip"
-        unless remote_dir_exists?(venv)
+        # Ansible keys venv creation on bin/activate, not the directory: a
+        # pre-created empty dir (file: state=directory) still runs
+        # virtualenv_command, which fails on a host lacking it.
+        unless remote_file_exists?("#{venv}/bin/activate")
           if failure = create_virtualenv(venv)
             return failure
           end
