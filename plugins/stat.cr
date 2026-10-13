@@ -136,6 +136,7 @@ module Krikri
       stat_hash["readable"] = JSON::Any.new(File::Info.readable?(path))
       stat_hash["writeable"] = JSON::Any.new(File::Info.writable?(path))
       stat_hash["executable"] = JSON::Any.new(File::Info.executable?(path))
+      move_owner_names_last(stat_hash)
 
       is_link = stat_hash["islnk"].as_bool
       is_regular = stat_hash["isreg"].as_bool
@@ -146,6 +147,15 @@ module Krikri
       add_attributes(stat_hash, path) if get_attributes
 
       PluginResult.new(changed: false, failed: false, msg: "", stat: stat_hash, key_order: SUCCESS_KEY_ORDER)
+    end
+
+    # Ansible emits pw_name/gr_name after the access-check booleans.
+    private def move_owner_names_last(stat_hash : Hash(String, JSON::Any)) : Nil
+      {"pw_name", "gr_name"}.each do |key|
+        if value = stat_hash.delete(key)
+          stat_hash[key] = value
+        end
+      end
     end
 
     private def add_symlink_fields(stat_hash : Hash(String, JSON::Any), path : String) : Nil
@@ -182,8 +192,8 @@ module Krikri
       result = remote_exec("lsattr -vd #{shell_single_quote(path)}")
       version, attr_flags, attributes = result[:exit_code] == 0 ? PluginHelpers::FileAttributes.parse_lsattr(result[:stdout]) : {nil, "", [] of String}
       stat_hash["version"] = version ? JSON::Any.new(version) : JSON::Any.new(nil)
-      stat_hash["attr_flags"] = JSON::Any.new(attr_flags)
       stat_hash["attributes"] = JSON::Any.new(attributes.map { |attribute| JSON::Any.new(attribute) })
+      stat_hash["attr_flags"] = JSON::Any.new(attr_flags)
     end
   end
 end
