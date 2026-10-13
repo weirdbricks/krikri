@@ -36,7 +36,23 @@ module Krikri
       (default_colors[key]? || default_general[key]?) || ENV["ANSIBLE_#{key}"]? || ""
     end
 
+    # Ansible's file-family lookups run the term through os.path.expanduser
+    # BEFORE the search-path walk, so a leading `~` names the controller
+    # user's home, not a role-relative `files/~/.ssh/...` (issue #52: the
+    # andrewrothstein.ssh-user-keygen idiom `lookup('file',
+    # '~/.ssh/id_rsa.pub')` reads fine in ansible-playbook but raised
+    # "Unable to access the file" here). Only a bare `~` or `~/`-prefixed
+    # term expands; `~user/...` stays untouched (it implies a controller
+    # userdb lookup with no parallel in this engine).
+    def self.expand_home(path : String) : String
+      return path unless path == "~" || path.starts_with?("~/")
+      home = ENV["HOME"]?
+      return path unless home && !home.empty?
+      path == "~" ? home : File.join(home, path[2..])
+    end
+
     def self.resolve_lookup_path(path : String, role_path : String?) : String
+      path = expand_home(path)
       return path if path.starts_with?('/')
       role_path ? File.join(role_path, "files", path) : path
     end
@@ -52,6 +68,7 @@ module Krikri
     # into /etc/redis/redis.conf, and redis-server then refused to
     # start with "Bad directive or wrong number of arguments").
     def self.resolve_template_lookup_path(path : String, role_path : String?) : String
+      path = expand_home(path)
       return path if path.starts_with?('/') || role_path.nil?
       candidates = [
         File.join(role_path, "templates", path),
