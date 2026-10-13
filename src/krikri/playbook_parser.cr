@@ -1313,6 +1313,15 @@ module Krikri
   end
 
   class StaticImportUndefinedError < Exception
+    # The full [ERROR] block Ansible prints for this refusal, built at the
+    # raise site (it needs the source map). Nil when no source position is
+    # known - krikri-playbook.cr then falls back to the generic parse-error
+    # print. The message stays the plain text other rescue sites display.
+    getter render : String?
+
+    def initialize(message : String, @render : String? = nil)
+      super(message)
+    end
   end
 
   # Raised at PARSE time when an import_tasks: path templates fine but
@@ -2487,7 +2496,8 @@ module Krikri
             "Error when evaluating variable in import path '#{original_file_rel}': #{ex.message}\n" \
             "When using static imports, ensure that any variables used in their names are defined in " \
             "vars/vars_files or extra-vars passed in from the command line. Static imports cannot use " \
-            "variables from facts or inventory sources like group or host vars.")
+            "variables from facts or inventory sources like group or host vars.",
+            static_import_undefined_render(original_file_rel, ex.message.to_s, source_file, source_map, source_prefix, source_index))
         end
       end
 
@@ -4500,6 +4510,32 @@ module Krikri
       keyword = ErrorBlock::Node.new(failure.keyword_message, source_context: origin)
       keyword.with_chain(ErrorBlock::DIRECT_CAUSE, true, conversion)
       "[ERROR]: " + ErrorBlock.format_event(keyword)
+    end
+
+    # The stderr block Ansible prints when a STATIC import's path references
+    # a variable that is undefined at playbook-load time: the two-segment
+    # cause chain - the task-level evaluation error (Origin at the task's
+    # own mapping, the static-import hint as its help text) causing the bare
+    # undefined-variable error (Origin at the import_tasks VALUE itself, the
+    # opening quote) - live-verified vs 2.19.11. Nil when no source position
+    # is known - the exception then renders bare, like the other renders
+    # here.
+    private def self.static_import_undefined_render(import_path : String, cause : String, source_file : String?, source_map : YamlSourceMap?, source_prefix : String, source_index : Int32) : String?
+      return nil unless source_file && source_map
+      prefix = task_source_prefix(source_prefix, source_index)
+      task_pos = source_map.at?(prefix)
+      value_pos = source_map.at?("#{prefix}/import_tasks")
+      return nil unless task_pos && value_pos
+      path = File.expand_path(source_file)
+      cause_node = ErrorBlock::Node.new(cause, source_context: ErrorBlock.origin_context(path, value_pos[0], value_pos[1]))
+      node = ErrorBlock::Node.new(
+        "Error when evaluating variable in import path '#{import_path}'.",
+        source_context: ErrorBlock.origin_context(path, task_pos[0], task_pos[1]),
+        help_text: "When using static imports, ensure that any variables used in their names are defined in vars/vars_files\n" \
+                   "or extra-vars passed in from the command line. Static imports cannot use variables from facts or inventory\n" \
+                   "sources like group or host vars.")
+      node.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause_node)
+      "[ERROR]: " + ErrorBlock.format_event(node)
     end
 
     # The native value of an include directive's file path when the
