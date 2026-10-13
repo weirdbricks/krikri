@@ -213,7 +213,17 @@ module Krikri
           return PluginResult.new(changed: true, failed: true, msg: "Unable to list public keys") unless after_keys
 
           unless key_id_in_keys?(parsed, after_keys)
-            return PluginResult.new(changed: true, failed: true, msg: "apt-key did not return an error, but failed to add the key (check that the id is correct and *not* a subkey)")
+            # Ansible's fail_json(msg=..., **r) carries the whole r dict
+            # (id/short_id/fp/key_id/before/after) along with the message.
+            failure = PluginResult.new(changed: true, failed: true,
+              msg: "apt-key did not return an error, but failed to add the key (check that the id is correct and *not* a subkey)",
+              id: raw_id,
+              short_id: parsed[:short_key_id],
+              fp: parsed[:fingerprint],
+              key_id: parsed[:key_id],
+              before: before_keys)
+            failure.extra["after"] = JSON.parse(after_keys.to_json)
+            return failure
           end
 
           added = true
