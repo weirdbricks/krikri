@@ -935,8 +935,21 @@ module Krikri
         end
         key_name = (args[0]? || kwargs["key_name"]?).try(&.as_s?) || "key"
         value_name = (args[1]? || kwargs["value_name"]?).try(&.as_s?) || "value"
+        # YAML loading stringifies bare integer keys (`{300: [x]}`) and the
+        # JSON model cannot record that; ansible keeps them as ints here, so a
+        # dict whose keys are all canonical integers is taken to have had int keys.
+        # Dict literals built inside the engine carry int keys as a marker prefix.
+        marker = "#{KrikriJinja::KEY_MARKER}i:"
+        int_keys = !hash.empty? && hash.keys.all? { |k| k.matches?(/\A(0|-?[1-9][0-9]{0,17})\z/) }
         items = hash.map do |key, item|
-          JSON::Any.new({key_name => JSON::Any.new(key), value_name => item})
+          key_any = if key.starts_with?(marker) && (n = key[marker.size..].to_i64?)
+                      JSON::Any.new(n)
+                    elsif int_keys
+                      JSON::Any.new(key.to_i64)
+                    else
+                      JSON::Any.new(key)
+                    end
+          JSON::Any.new({key_name => key_any, value_name => item})
         end
         JSON::Any.new(items)
       end
