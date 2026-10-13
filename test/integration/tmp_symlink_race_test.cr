@@ -10,11 +10,13 @@ require "http/server"
 # the target through it (for the 6-digit range: plant all 900k paths and every
 # run hits one).
 #
-# The fix stages downloads through File.tempfile (unguessable name + O_EXCL +
-# 0600), so a pre-planted path is never used. Both properties are asserted
-# below: the planted path is untouched, and the download's own staging path
-# (exposed as `src` in the result) is no longer of the old predictable
-# 6-digit form.
+# The fix stages downloads through an O_EXCL/0600 pre-created file
+# inside a fresh ansible-tmp module dir (never a predictable /tmp path
+# written through a bare open), so a pre-planted path is never used.
+# Both properties are asserted below: the planted path is untouched, and
+# the download's own staging path (exposed as `src` in the result) is in
+# Ansible's module-tmpdir shape rather than the old predictable
+# 6-digit /tmp form.
 
 # crystal spec ran this setup in Spec.before_suite and captured
 # `RACE_BASE` in each example's closure; minitest compiles `it` bodies
@@ -74,11 +76,15 @@ describe "plugin temp-file symlink race hardening" do
     # ...and the pre-planted symlink was neither replaced nor followed...
     File.symlink?(planted).must_equal(true)
     File.read(target).must_equal("sentinel")
-    # ...and the staging path no longer uses the old 6-digit predictable
-    # scheme (this is what deterministically fails against the old code,
-    # whose result src was /tmp/.krikri-playbook-unarchive-<6 digits>).
+    # ...and the staging path is in Ansible's own module-tmpdir shape
+    # (this is what deterministically fails against the old code, whose
+    # result src was /tmp/.krikri-playbook-unarchive-<6 digits>), with
+    # the splitext'd basename: race.tar.gz -> race.tar<8 random>.gz
+    # (Python splitext keeps ".tar" in the stem, ext is just ".gz").
     staging = result["src"].as_s
     staging.wont_match(/-[0-9]{6}$/)
-    staging.must_match(/\.krikri-playbook-unarchive-[0-9a-z]+$/)
+    staging.must_match(/\/\.ansible\/tmp\/ansible-tmp-[\d.]+-\d+-\d+\/race\.tar[a-z0-9]{8}\.gz$/)
+    # ...and the ansible-tmp module dir was cleaned up with the file.
+    Dir.exists?(File.dirname(staging)).must_equal(false)
   end
 end
