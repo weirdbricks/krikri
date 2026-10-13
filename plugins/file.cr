@@ -344,7 +344,8 @@ module Krikri
       PluginResult.new(
         changed: false,
         failed: true,
-        msg: ex.message || "Unknown error"
+        msg: ex.message || "Unknown error",
+        path: path
       )
     end
 
@@ -488,7 +489,9 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: "File does not exist: #{path}. Use state=touch to create it."
+          msg: "file (#{path}) is absent, cannot continue",
+          path: path,
+          state: "absent"
         )
       end
 
