@@ -341,6 +341,7 @@ describe "apt_key plugin" do
       result["failed"].as_bool.must_equal(true)
       result["changed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("apt-key did not return an error, but failed to add the key (check that the id is correct and *not* a subkey)")
+      %w[id short_id fp key_id before after].each { |key| result.as_h.has_key?(key).must_equal(true) }
     end
     File.delete(state) rescue nil
   end
