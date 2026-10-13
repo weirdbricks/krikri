@@ -82,6 +82,21 @@ describe "local_action: / templated action: end to end" do
     output.wont_include("fatal:", output)
   end
 
+  it "headers an unnamed templated action: verbatim and shows debug without changed" do
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - action: "{{ pm }} msg=hi"
+            vars: {pm: debug}
+      YAML
+    status.success?.must_equal(true, output)
+    output.must_include("TASK [{{ pm }}]", output)
+    output.must_include(%("msg": "hi"), output)
+    output.wont_include(%("changed": false), output)
+  end
+
   it "fails the task cleanly when a templated action: name resolves to nothing" do
     status, output = run_playbook(<<-YAML)
       - hosts: localhost

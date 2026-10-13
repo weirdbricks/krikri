@@ -270,6 +270,16 @@ module Krikri
     end
 
     private def self.display_result_measured(host : Host, result : JSON::Any, diff_mode : Bool, item_label : String? = nil, ignore_errors : Bool = false, no_log : Bool = false, module_name : String? = nil, delegate_target : String? = nil, source_task : Task? = nil, loop_item : JSON::Any? = nil, loop_var_name : String? = nil) : Nil
+      # A templated action (`action: "{{ pm }} msg=hi"`) reaches display
+      # through the shared original task, whose module_name is still the
+      # raw template text - the resolved name only exists on the copy the
+      # executor made (stashed on the result, see apply_changed_failed_
+      # when). Every module-keyed display decision below (debug's
+      # changed-stripping, oneline's command handling) must see the name
+      # the task actually ran as, like real does.
+      if (resolved = result["_ansible_templated_module_name"]?.try(&.as_s?))
+        module_name = resolved
+      end
       # A validation-passed removed-param deprecation waits for this
       # result to learn whether Ansible's module run would have shown it
       # (normal/fail_json return) or dropped it (uncaught crash, skip,
