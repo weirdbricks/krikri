@@ -515,6 +515,18 @@ describe "file plugin" do
       result["msg"].as_s.must_include("chown failed: failed to look up user nonexistent_user_xyz_abc")
     end
 
+    it "carries path and the created directory's stat fields on the owner lookup failure" do
+      # Ansible's fail_json(path=...) runs add_path_info, and the leaf
+      # directory already exists by the time the chown lookup fails.
+      path = tmp_path("nonexistent-owner-stat-dir")
+      result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "owner" => "nonexistent_user_xyz_abc"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["path"].as_s.must_equal(path)
+      result["state"].as_s.must_equal("directory")
+      result["uid"].as_i64.must_equal(LibC.getuid.to_i64)
+    end
+
     it "fails when group: names a nonexistent group" do
       path = tmp_path("nonexistent-group-dir")
       result = PluginSpecHelper.run("file", {"path" => path, "state" => "directory", "group" => "nonexistent_group_xyz_abc"})

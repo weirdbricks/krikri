@@ -466,7 +466,8 @@ module Krikri
         return PluginResult.new(
           changed: false,
           failed: true,
-          msg: create_failure_msg || "Failed to create directory"
+          msg: create_failure_msg || "Failed to create directory",
+          path: path
         )
       end
 
