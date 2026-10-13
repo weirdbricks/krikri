@@ -1331,7 +1331,16 @@ module Krikri
       # the time the result (index 0) is read the context is no longer
       # needed. A member with no entry at all (the script halted before
       # reaching it) still yields nil, exactly as `cache[task]?` did.
-      {true, cache.delete(task).try(&.[0])}
+      result = cache.delete(task).try(&.[0])
+      # A when: that raised while the group was being built was cached
+      # without its [ERROR] chain: ansible prints that block just before the
+      # task's fatal line, so it is emitted here, when the task is reached,
+      # not at batch-build time (which would precede earlier members' output).
+      if result && result["failed"]?.try(&.as_bool?) == true &&
+         (msg = result["msg"]?.try(&.as_s?)) && conditional_evaluation_failure?(msg)
+        emit_when_error_chain(task, msg, host)
+      end
+      {true, result}
     end
 
     # Builds and runs the single SSH round trip for *group* against
