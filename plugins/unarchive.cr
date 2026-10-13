@@ -219,20 +219,60 @@ module Krikri
     private def resolve_src(src : String) : PluginResult | {String, String?}
       return {src, nil} unless src.starts_with?("http://") || src.starts_with?("https://")
 
-      # File.tempfile (unguessable name + O_EXCL + 0600), not a
-      # predictable Random.rand path: the archive download then followed
-      # a symlink planted at it. The O_EXCL pre-create means a planted
-      # path fails loudly instead of being written through.
-      tmp_file = File.tempfile(".krikri-playbook-unarchive-", nil)
-      tmp_download_path = tmp_file.path
-      tmp_file.close
+      # Ansible's unarchive downloads URL srcs into its own module
+      # tmpdir and echoes that staged path back as `src` - including
+      # inside 'Failed to find handler for "<src>"' - so stage in the
+      # same shape (see copy.cr's staged_src_echo for the tmpdir
+      # shape; remote_tmp defaults to ~/.ansible/tmp of the user this
+      # plugin process runs as). The file itself is still pre-created
+      # O_EXCL + 0600 rather than written through a bare open: a
+      # symlink planted at the download path would otherwise be
+      # followed, so a planted path fails loudly instead of being
+      # written through.
+      tmpdir = expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}")
+      Dir.mkdir_p(tmpdir, mode: 0o700)
+
+      # Python os.path.splitext on the URL basename (query string
+      # ignored) - for .tar.gz that yields ext ".gz", which is exactly
+      # how Ansible's staged name loses the ".tar" part.
+      basename = File.basename(URI.parse(src).path || src)
+      dot = basename.rindex('.')
+      stem, ext = dot && dot > 0 ? {basename[0...dot], basename[dot..]} : {basename, ""}
+
+      tmp_download_path = create_staged_download(tmpdir, stem, ext)
+      unless tmp_download_path
+        Dir.delete(tmpdir) rescue nil
+        return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: unable to create a temporary file")
+      end
+
       begin
         download(src, tmp_download_path)
       rescue ex
         File.delete(tmp_download_path) rescue nil
+        Dir.delete(tmpdir) rescue nil
         return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
       end
       {tmp_download_path, tmp_download_path}
+    end
+
+    # Python tempfile.mkstemp naming (stem prefix, ext suffix, 8 random
+    # lowercase-alnum chars) pre-created O_EXCL/0600 inside tmpdir -
+    # mkstemp retries on an existing name, so the loop does too. Raw
+    # LibC.open because Crystal's File.open mode strings have no
+    # exclusive-creation form (the stdlib's own mktemp opens the same
+    # way).
+    private def create_staged_download(tmpdir : String, stem : String, ext : String) : String?
+      10.times do
+        suffix = String.build(8) do |builder|
+          8.times { builder << "abcdefghijklmnopqrstuvwxyz0123456789"[Random.rand(36)] }
+        end
+        candidate = File.join(tmpdir, "#{stem}#{suffix}#{ext}")
+        fd = LibC.open(candidate, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_EXCL, 0o600)
+        next if fd == -1 # typically EEXIST - retry on a fresh name
+        LibC.close(fd)
+        return candidate
+      end
+      nil
     end
 
     private def validate_src_and_dest(src : String, dest : String) : String?
@@ -242,7 +282,20 @@ module Krikri
     end
 
     private def cleanup_after_unarchive(tmp_download_path : String?, src : String) : Nil
-      File.delete(tmp_download_path) if tmp_download_path && File.exists?(tmp_download_path)
+      if tmp_download_path
+        File.delete(tmp_download_path) if File.exists?(tmp_download_path)
+        # resolve_src staged the URL download inside the ansible-tmp
+        # module dir it created; drop that dir too once the file is
+        # gone (rmdir only succeeds when empty, so best-effort is safe).
+        tmpdir = File.dirname(tmp_download_path)
+        if File.basename(tmpdir).starts_with?("ansible-tmp-")
+          begin
+            Dir.delete(tmpdir)
+          rescue
+            nil
+          end
+        end
+      end
       # __cleanup_after_unarchive - set by TaskExecutor#stage_unarchive_
       # remote_src when src: named a controller-side path (unarchive's
       # own Ansible default, remote_src: false) that had to be
