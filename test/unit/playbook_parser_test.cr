@@ -1285,6 +1285,24 @@ describe Krikri::PlaybookParser do
       task.loop_items.try(&.map(&.as_s)).must_equal(["1", "2", "3"])
     end
 
+    it "defers a templated with_sequence: to runtime instead of dropping the task" do
+      # Issue #55 (cloned_interfaces.yml): expanding the spec at parse time
+      # fed LoopResolver the raw token `end="{{`, whose .to_i raised and
+      # silently dropped the whole task - Ansible templates the spec per
+      # host at runtime instead, so it must defer via the loop_template
+      # machinery like a templated loop:/with_items: source.
+      task = single_task(<<-YAML)
+        - name: t
+          ansible.builtin.debug:
+            msg: "{{ item }}"
+          with_sequence: start=0 end="{{ n | int - 1 }}" format=e%d
+        YAML
+
+      task.loop_items.must_be_nil
+      task.loop_template_kind.must_equal("with_sequence")
+      task.loop_template.must_equal(%(start=0 end="{{ n | int - 1 }}" format=e%d))
+    end
+
     it "parses a bare numeric with_sequence:" do
       task = single_task(<<-YAML)
         - name: t

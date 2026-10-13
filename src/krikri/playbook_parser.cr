@@ -3580,7 +3580,20 @@ module Krikri
         end
       elsif with_sequence = task_hash["with_sequence"]?
         spec = safe_yaml_to_string(with_sequence)
-        task.loop_items = LoopResolver.with_sequence(spec)
+        if spec.includes?("{{")
+          # A templated with_sequence (end="{{ n | int - 1 }}") can only be
+          # expanded once the host vars exist: expanding it here at parse
+          # time fed LoopResolver the raw `end="{{` token, whose .to_i
+          # raised and silently DROPPED the whole task. Ansible templates
+          # the whole spec per host (the quoted `end="{{ ... }}"` value's
+          # quotes are stripped by its k=v parsing) and only then expands
+          # it, so defer to the executor's loop_template machinery the same
+          # way a templated loop:/with_items: source defers.
+          task.loop_template_kind = "with_sequence"
+          task.loop_template = spec
+        else
+          task.loop_items = LoopResolver.with_sequence(spec)
+        end
       elsif with_indexed_items = task_hash["with_indexed_items"]?.try(&.as_a?)
         items = with_indexed_items.map { |item| JSON.parse(item.to_json) }
         task.loop_items = LoopResolver.with_indexed_items(items)

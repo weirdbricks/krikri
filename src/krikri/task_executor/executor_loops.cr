@@ -114,6 +114,28 @@ module Krikri
         raise LoopTypeError.new("The `loop` value must resolve to a 'list', not 'str'.")
       end
 
+      # A templated with_sequence spec (`start=0 end="{{ n | int - 1 }}"
+      # format=epair%d`) is mixed literal-plus-expression TEXT, not a bare
+      # variable reference, so it must be rendered as a whole string here
+      # (the same templating task params get) BEFORE LoopResolver parses
+      # it - the parser defers exactly this shape (it used to expand at
+      # parse time, where `end="{{` hit .to_i and silently dropped the
+      # task). Ansible's k=v parsing strips the quotes around a rendered
+      # `end="{{ ... }}"` value, so unquote each token's value too.
+      if kind == "with_sequence"
+        rendered = VarSubstitutor.new(vars: vars_context).substitute(template, strict: true)
+        unquoted = rendered.split.map do |token|
+          key, sep, value = token.partition('=')
+          next token if sep.empty?
+          value = value.strip
+          if value.size >= 2 && value[0] == value[-1] && (value[0] == '"' || value[0] == '\'')
+            value = value[1..-2]
+          end
+          "#{key}=#{value}"
+        end.join(" ")
+        return LoopResolver.with_sequence(unquoted)
+      end
+
       value = resolve_template_value(template, vars_context)
 
       # A complex template - `with_items: "{{ some_list | default([]) |
