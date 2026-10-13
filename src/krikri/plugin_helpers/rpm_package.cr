@@ -566,7 +566,7 @@ module Krikri
         # <e>" with results=[] and rc=1, NOT the failures-list shape
         # (robertdebock.atom, round 5410000; dnf.py:801/854-863). The
         # readability pre-check reproduces the witnessed shape.
-        if rpm_file = names.find { |name| name.strip.ends_with?(".rpm") && !name.strip.starts_with?("http") && !File.exists?(name.strip) }
+        if rpm_file = names.find { |name| name.strip.ends_with?(".rpm") && !name.strip.starts_with?("http") && !File.exists?(name.strip.lchop("file://")) }
           return PluginResult.new(
             changed: false,
             failed: true,
@@ -937,6 +937,7 @@ module Krikri
         name.starts_with?("http://") ||
           name.starts_with?("https://") ||
           name.starts_with?("ftp://") ||
+          name.starts_with?("file://") ||
           name.starts_with?("/")
       end
 
