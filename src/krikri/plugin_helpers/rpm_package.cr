@@ -847,25 +847,6 @@ module Krikri
         end
       end
 
-      # Real yum/dnf CLI's own no-op shape for an ALREADY-INSTALLED
-      # package GROUP is different from a plain package's: the CLI never
-      # prints "Nothing to do" for a group (verified live in a
-      # rockylinux:9 container - a second `yum -y install
-      # @"Development tools"` exits 0 with a full "Dependencies resolved."
-      # run whose "Transaction Summary" section lists NO
-      # `Install N Packages` / `Upgrade N Packages` count line at all,
-      # just the `====` rule and then `Complete!`), while a transaction
-      # that actually installs or upgrades anything always carries at
-      # least one such count line right after the Transaction Summary
-      # header. Round 900999 tcosta84.yum found the gap: its
-      # `yum: {name: "@Development tools", state: present}` warm rerun
-      # reported changed: false under ansible-playbook (whose module
-      # uses the yum Python API and knows nothing needs installing) but
-      # changed: true here on every run, because this handler trusted
-      # exit_code plus the plain-package "Nothing to do" text alone.
-      # Only consulted for batches that actually contained a group, so
-      # plain-package batches keep the existing "Nothing to do"
-      # detection untouched.
       # Ansible's dnf module checks the signature of a remote/local .rpm
       # itself before the transaction and fails with a module-level
       # "Failed to validate GPG signature for <nevra>: <libdnf error>"
@@ -895,6 +876,25 @@ module Krikri
         "Depsolve Error occurred: \n" + block.join("\n")
       end
 
+      # Real yum/dnf CLI's own no-op shape for an ALREADY-INSTALLED
+      # package GROUP is different from a plain package's: the CLI never
+      # prints "Nothing to do" for a group (verified live in a
+      # rockylinux:9 container - a second `yum -y install
+      # @"Development tools"` exits 0 with a full "Dependencies resolved."
+      # run whose "Transaction Summary" section lists NO
+      # `Install N Packages` / `Upgrade N Packages` count line at all,
+      # just the `====` rule and then `Complete!`), while a transaction
+      # that actually installs or upgrades anything always carries at
+      # least one such count line right after the Transaction Summary
+      # header. Round 900999 tcosta84.yum found the gap: its
+      # `yum: {name: "@Development tools", state: present}` warm rerun
+      # reported changed: false under ansible-playbook (whose module
+      # uses the yum Python API and knows nothing needs installing) but
+      # changed: true here on every run, because this handler trusted
+      # exit_code plus the plain-package "Nothing to do" text alone.
+      # Only consulted for batches that actually contained a group, so
+      # plain-package batches keep the existing "Nothing to do"
+      # detection untouched.
       private def group_install_noop?(output : String) : Bool
         in_summary = false
         output.each_line do |line|
