@@ -348,7 +348,10 @@ module Krikri
       # with_nested:/with_flattened: task immediately followed by a
       # non-looped task hits this.
       !!(needs_runtime_loop_source?(task) ||
-        task.until_condition || task.async_seconds ||
+        # A templated async: only becomes seconds after per-host
+        # resolution - async_raw set means async, so it must be excluded
+        # from batching exactly like a literal async_seconds.
+        task.until_condition || task.async_seconds || task.async_raw ||
         # A `timeout:` task must fail the moment its OWN wall-clock limit
         # expires - inside a batch it shares one SSH round trip with its
         # group, whose per-step results only come back as a whole, so a

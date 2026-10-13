@@ -2355,6 +2355,26 @@ module Krikri
 
       config = build_plugin_config(task, exec_host, substituted_params, wire_vars, substituted_become_user, substituted_env, become_flag: become)
 
+      # ansible resolves templated async:/poll: per host at execution
+      # time, so the parser leaves those as raw text; without resolving
+      # them here a task like async: "{{ n }}" silently ran synchronously
+      # and never printed the ASYNC POLL/OK lines. The shared Task is
+      # never mutated (vars are per host) - a shallow copy carries the
+      # resolved values into execute_async only.
+      resolved_async = task.async_seconds
+      if resolved_async.nil? && (raw_async = task.async_raw)
+        resolved_async = substitutor.substitute(raw_async).strip.to_i?
+      end
+      resolved_poll = task.poll_seconds
+      if resolved_poll.nil? && (raw_poll = task.poll_raw)
+        resolved_poll = substitutor.substitute(raw_poll).strip.to_i?
+      end
+      if resolved_async && (resolved_async != task.async_seconds || resolved_poll != task.poll_seconds)
+        task = task.dup
+        task.async_seconds = resolved_async
+        task.poll_seconds = resolved_poll
+      end
+
       if task.async_seconds && !resolve_task_check_mode(task, wire_vars)
         # async: writes this config verbatim to a job file; the detached
         # __async_run process resolves become:/become_user: back out of
