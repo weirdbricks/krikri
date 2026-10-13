@@ -2544,6 +2544,21 @@ module Krikri
       # Ansible's own "module (name) is missing interpreter line"
       # guard, which a shebangless old-style module fixture failed on
       # the real side while this engine ran it and succeeded.
+      # Ansible resolves a role's action_plugins/<name>.py before the
+      # library/<name> file, which roles ship only as a placeholder
+      # (gzm55.local_ssh_known_hosts). Running Python action plugins is
+      # unsupported, so say so instead of blaming the placeholder.
+      if (rp = task.role_path) && PythonModuleRunner.missing_interpreter_line?(source_text, new_style)
+        plugin = File.join(rp, "action_plugins", "#{module_name}.py")
+        if File.file?(plugin)
+          return JSON.parse({
+            "changed" => false,
+            "failed"  => true,
+            "msg"     => "role-local Python action plugin (#{plugin}) is not supported by krikri",
+          }.to_json)
+        end
+      end
+
       if PythonModuleRunner.missing_interpreter_line?(source_text, new_style)
         return JSON.parse({
           "changed" => false,
