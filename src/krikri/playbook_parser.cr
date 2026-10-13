@@ -412,6 +412,13 @@ module Krikri
     # Local connections only - see TaskExecutor#execute_async.
     property async_seconds : Int32?
     property poll_seconds : Int32?
+    # The parser only sees the task's raw YAML, so a templated value
+    # ("{{ n }}") cannot be turned into seconds here - ansible resolves
+    # these per host at execution time. Keeping the raw text lets the
+    # executor do that resolution instead of silently dropping async
+    # behavior for every templated value.
+    property async_raw : String?
+    property poll_raw : String?
     # block: / rescue: / always: - only set when module_name == "_block"
     # (a pseudo-module marking this Task as a block rather than a plugin
     # invocation). Blocks can nest, since these are themselves Task lists.
@@ -706,6 +713,8 @@ module Krikri
       @run_once = false
       @async_seconds = nil
       @poll_seconds = nil
+      @async_raw = nil
+      @poll_raw = nil
       @block_tasks = nil
       @rescue_tasks = nil
       @always_tasks = nil
@@ -3680,8 +3689,13 @@ module Krikri
       task.run_once = parse_become_value(task_hash["run_once"]?) || false
 
       # Parse async / poll
-      task.async_seconds = task_hash["async"]?.try { |v| safe_yaml_to_string(v).to_i? }
-      task.poll_seconds = task_hash["poll"]?.try { |v| safe_yaml_to_string(v).to_i? }
+      # A literal parses to seconds right away; a template only becomes a
+      # number after per-host variable resolution, which the parser can't
+      # do - the raw text is kept for the executor to resolve.
+      task.async_raw = task_hash["async"]?.try { |v| safe_yaml_to_string(v) }
+      task.poll_raw = task_hash["poll"]?.try { |v| safe_yaml_to_string(v) }
+      task.async_seconds = task.async_raw.try(&.to_i?)
+      task.poll_seconds = task.poll_raw.try(&.to_i?)
 
       task
     end
