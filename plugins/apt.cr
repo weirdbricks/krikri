@@ -1094,7 +1094,7 @@ module Krikri
     # string for the exact-pin common case).
     private def install_spec(pkg : String, candidates : Hash(String, String?)) : String
       base_name, pinned_version = split_name_version(pkg)
-      version = pinned_version || candidates[base_name]?
+      version = candidates[pkg]? || pinned_version || candidates[base_name]?
       version ? "#{base_name}=#{version}" : base_name
     end
 
@@ -1131,14 +1131,22 @@ module Krikri
     # outright, failing every `nodejs=16.*`-style pin on a host where the
     # candidate existed.
     private def pinned_version_installable?(name : String, version : String) : Bool
+      !resolve_pinned_version(name, version).nil?
+    end
+
+    # Ansible hands apt-get the concrete cache version a wildcard pin
+    # matched first (`unifi=5.6.42*` -> `'unifi=5.6.42-10376-1'`), never
+    # the raw pattern.
+    private def resolve_pinned_version(name : String, version : String) : String?
       probe = remote_exec("apt-cache policy #{shell_single_quote(name)}")
-      return false unless probe[:exit_code] == 0
-      probe[:stdout].split('\n').any? do |line|
+      return nil unless probe[:exit_code] == 0
+      probe[:stdout].split('\n').each do |line|
         tokens = line.strip.split
         tokens.delete("***")
-        next false unless first = tokens.first?
-        version_pin_matches?(version, first)
+        next unless first = tokens.first?
+        return first if version_pin_matches?(version, first)
       end
+      nil
     end
 
     # fnmatch.fnmatch semantics for an apt version pin: `*`, `?` and
@@ -1259,7 +1267,9 @@ module Krikri
           next if installed_probe && (pinned_version.nil? || ((iv = installed_ver_probe) && version_pin_matches?(pinned_version, iv)))
           next if @only_upgrade && !installed_probe
           if pinned_version
-            unless pinned_version_installable?(base_name, pinned_version)
+            if resolved = resolve_pinned_version(base_name, pinned_version)
+              candidates[pkg] = resolved
+            else
               # Ansible's failure travels through install()'s retvals into
               # fail_json - main() appends the cache keys BEFORE the
               # failed/msg pair lands (round-99500x apt_fail_candidate
