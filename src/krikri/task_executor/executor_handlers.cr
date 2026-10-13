@@ -653,7 +653,7 @@ module Krikri
             next
           end
           unless when_result
-            suffix = " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : item_display(item)}) "
+            suffix = " => (item=#{resolve_task_no_log(handler, vars_context) ? "(censored due to no_log)" : include_item_display_label(handler, item, vars_context, host)}) "
             unless Krikri::Oneline.enabled?
               puts "skipping: [#{host.name}]#{suffix}#{Krikri::ResultDisplay.skip_line_suffix(handler.when_condition, item)}".colorize(:cyan)
             end
@@ -666,7 +666,7 @@ module Krikri
           return JSON.parse({"changed" => false, "failed" => true, "handler_include_failure" => true}.to_json)
         end
 
-        puts "included: #{resolved_path} for #{host.name} => (item=#{item_display(item)})".colorize(:cyan)
+        puts "included: #{resolved_path} for #{host.name} => (item=#{include_item_display_label(handler, item, vars_context, host)})".colorize(:cyan)
         @results[host.name]["ok"] += 1
         any_iteration_ran = true
         deferred_iterations << included_tasks
