@@ -30,6 +30,14 @@ deleted from here.
 Do not re-litigate without new evidence - and if new evidence turns up, open an issue rather than
 arguing with the note in place.
 
+### Fact gathering does not need Python on the target
+
+Real Ansible's `Gathering Facts` fails on a host with no `/usr/bin/env python3` (`The module
+interpreter '/usr/bin/env python3' was not found`, recap `failed=1`). krikri's `setup` is a compiled
+binary and needs no Python, so it gathers facts and the play proceeds. This is inherent to the
+compiled-module design, not a defect; a role then failing later on that host (e.g. a variable only
+defined from facts) is the same role-side gap either way.
+
 ### No automatic cross-compilation of plugin binaries for a foreign-arch target
 
 krikri's modules are compiled binaries uploaded to the target and exec'd there, so an x86_64
