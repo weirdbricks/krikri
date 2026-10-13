@@ -1359,7 +1359,9 @@ module Krikri
       # the plugin binary run and report its own "Source file not found"
       # msg instead (live-verified against 2.19.11 under -c local).
       local_connection = PluginManager.local_connection?(host, vars_context)
-      if !src.starts_with?('/')
+      # A leading `~` takes _find_needle's absolute branch (no search list,
+      # message names the literal `~` path - live-verified vs 2.19.11).
+      if !src.starts_with?('/') && !src.starts_with?('~')
         # Search EXACTLY the candidate list Ansible's _find_needle
         # searches (NeedleLookup.candidates - the same list the not-found
         # error reports), so the "Searched in:" list can never name a path
@@ -1393,9 +1395,10 @@ module Krikri
         # miss fails here with Ansible's wording instead of reaching the
         # plugin binary. An absolute src builds no searched-paths list
         # in real (its absolute lookup branch never populates one).
-        is_directory = Dir.exists?(src) rescue false
+        lookup_path = src.starts_with?('~') ? (File.expand_path(src, home: true) rescue src) : src
+        is_directory = Dir.exists?(lookup_path) rescue false
         return params if is_directory
-        return controller_missing_copy_local_result(src, [] of String) unless File.exists?(src)
+        return controller_missing_copy_local_result(src, [] of String) unless File.exists?(lookup_path)
         return params
       end
 
