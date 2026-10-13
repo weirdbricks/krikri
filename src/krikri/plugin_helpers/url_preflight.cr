@@ -100,7 +100,38 @@ module Krikri
           return Failure.new(Kind::UnknownUrlType, "unknown url type: '#{url}'")
         end
 
+        control_character_failure(url, type).try { |failure| return failure }
+
         nil
+      end
+
+      # http.client.putrequest refuses a request-target containing
+      # [\x00-\x20\x7f] before connecting; fetch_url's catch-all folds the
+      # InvalidURL into info['msg'] with status -1 (the same dict shape as
+      # the other ConnectionFailure-style failures, no status_code).
+      private def self.control_character_failure(url : String, type : String?) : Failure?
+        return nil unless type == "http" || type == "https"
+        rest = url.partition(":")[2]
+        rest = rest.partition("#")[0]
+        target = if rest.starts_with?("//")
+                   after = rest[2..]
+                   idx = after.index(/[\/?]/)
+                   idx ? after[idx..] : ""
+                 else
+                   rest
+                 end
+        target = "/" + target if target.empty? || target.starts_with?("?")
+        found = target.each_char.find { |char| char.ord <= 0x20 || char.ord == 0x7f }
+        return nil unless found
+        repr = target.gsub("\\", "\\\\").gsub("\n", "\\n").gsub("\r", "\\r").gsub("\t", "\\t")
+        found_repr = case found
+                     when '\n' then "\\n"
+                     when '\r' then "\\r"
+                     when '\t' then "\\t"
+                     else           found.to_s
+                     end
+        Failure.new(Kind::ConnectionFailure,
+          "An unknown error occurred: URL can't contain control characters. '#{repr}' (found at least '#{found_repr}')")
       end
 
       # Python's own type split - urllib.request._splittype's
