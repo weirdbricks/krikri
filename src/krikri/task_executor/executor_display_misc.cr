@@ -161,6 +161,10 @@ module Krikri
 
     private def render_task_name_for_display(task : Task, host : Host) : String
       return task.name unless task.name.includes?("{{")
+      # An unnamed task's header is its action spelling verbatim: real
+      # prints `TASK [{{ pm }}]` for `action: "{{ pm }} ..."`, it never
+      # renders the module-name template into the banner.
+      return task.name if task.templated_action && !task.has_explicit_name?
       return lenient_task_name(task, host) if task.name.includes?("{%") || task.name.includes?("{#")
 
       vars_context = build_vars_context(task, host)

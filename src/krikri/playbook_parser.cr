@@ -66,6 +66,13 @@ module Krikri
     # when it doesn't resolve (Ansible: "couldn't resolve
     # module/action 'x'"), never be skipped like an unknown module.
     property templated_action : String?
+    # The module name resolve_templated_action rendered OUT of
+    # templated_action, stamped on the shallow copy it returns - the
+    # shared original task must keep the as-written template text, but
+    # display/register decisions that key on the module (debug's
+    # changed-stripping) run later against that original and need the
+    # resolved spelling; they read it back off the task's result.
+    property resolved_templated_name : String?
     property params : Hash(String, String)
     property vars : Hash(String, JSON::Any)
     # environment: - per-task env vars (Ansible keyword). Raw,
@@ -3083,11 +3090,13 @@ module Krikri
             # only resolvable at run time, so keep the whole free-form
             # string for the executor (Task#templated_action) instead of
             # pretending the raw text is an unimplemented plugin. The
-            # raw template text still becomes module_name (the fallback
-            # task name and any pre-execution inspection see the
-            # as-written spelling, like the dict form below).
+            # WHOLE leading template expression becomes module_name (the
+            # fallback task name and any pre-execution inspection see the
+            # as-written spelling, like the dict form below) - real
+            # renders `TASK [{{ pm }}]`, while the whitespace-split first
+            # token truncates the name to `TASK [{{]`.
             templated_action_string = s.strip
-            module_name = tokens[0]
+            module_name = s.strip[/\A(?:[^\s{]|\{\{.*?\}\})+/] || tokens[0]
           else
             module_name = tokens[0]
             rest = tokens[1]?

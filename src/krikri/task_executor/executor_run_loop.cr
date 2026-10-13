@@ -1972,6 +1972,10 @@ module Krikri
       resolved_task.module_name = resolved
       resolved_task.action_name = raw_name
       resolved_task.params = merged
+      # The copy is what every post-resolution display/register decision
+      # downstream of execute_task_once must see as the module - the
+      # shared original keeps the as-written template text.
+      resolved_task.resolved_templated_name = resolved
       resolved_task
     end
 
@@ -2087,7 +2091,7 @@ module Krikri
       # so an undefined variable in the args had to fail above (see
       # when_passes?'s defer_unavailable_module comment) before this skip
       # could happen. Same bookkeeping when_passes? would have performed.
-      if task.unavailable_module && python_module_source_for(task).nil?
+      if (unavailable = task.unavailable_module) && python_module_source_for(task).nil?
         # The exit-4 accounting for an unported module registers HERE,
         # after arg finalization succeeded (and only for a module that will
         # NOT run - a role-private library/ source dispatches below and is
@@ -2100,7 +2104,7 @@ module Krikri
         # undefined, and the registration used to happen back in
         # when_passes?, before this point). The Set dedups the looped
         # path's per-item registrations.
-        reachable_unavailable_modules << task.unavailable_module.not_nil!
+        reachable_unavailable_modules << unavailable
         # A LOOPED caller (defer_loop_stats) must not print or book-keep
         # here: its "skipping:" line has to print from finish_looped_task in
         # iteration order (executed items and when:-false skips all display
@@ -2458,7 +2462,7 @@ module Krikri
       # insert ahead of an existing `failed` key instead of appending, so
       # the registered item reads changed/stat/invocation/failed like
       # real's.
-      if idx = copy.keys.index("failed")
+      if copy.has_key?("failed")
         new_hash = Hash(String, JSON::Any).new
         copy.each do |k, v|
           new_hash["invocation"] = invocation if k == "failed"
@@ -2635,6 +2639,16 @@ module Krikri
     end
 
     private def apply_changed_failed_when(task : Task, result : JSON::Any, vars_context : Hash(String, JSON::Any), host : Host) : JSON::Any
+      # A templated action's resolved module name only exists on the
+      # shallow copy resolve_templated_action made inside execute_task_once,
+      # but the display runs later against the shared original task (whose
+      # module_name is still the raw `{{ }}` text). Stash it as a private
+      # key so the display path can prefer it - the same `_ansible_*`
+      # keys register strips, so a registered var never carries it.
+      if (resolved = task.resolved_templated_name) && (hash = result.as_h?) && !hash.has_key?("_ansible_templated_module_name")
+        hash["_ansible_templated_module_name"] = JSON::Any.new(resolved)
+        result = JSON.parse(hash.to_json)
+      end
       result = attach_module_redirect_deprecations(task, result)
       changed_when = task.changed_when
       failed_when = task.failed_when
