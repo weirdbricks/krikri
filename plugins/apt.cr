@@ -1302,7 +1302,9 @@ module Krikri
         next if build_dep
         base_name, pinned_version = split_name_version(pkg)
         installed, installed_ver = installed_status[base_name]?.try { |pair| pair } || {false, nil}
-        if installed && (pinned_version.nil? || installed_ver == pinned_version)
+        # Ansible fnmatches a wildcard pin against the installed version
+        # too, so an installed `bash=5.*` is a no-op, not a raw-glob install.
+        if installed && (pinned_version.nil? || ((iv = installed_ver) && version_pin_matches?(pinned_version, iv)))
           already_installed << pkg
         elsif !installed && @only_upgrade
           # Ansible's install(): `if not installed and only_upgrade:
