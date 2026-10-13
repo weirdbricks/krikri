@@ -1775,7 +1775,14 @@ module Krikri
         return apply_changed_failed_when(task, staged_assemble, vars_context, host)
       end
       substituted_params = staged_assemble
-      substituted_become_user = resolve_task_become_user(task, vars_context, substitutor)
+      # A strict-undefined become_user keyword fails this task (not the
+      # run), and no module/sudo may run afterward. No arg-finalization
+      # [ERROR] chain: that block is for task args, not keywords.
+      substituted_become_user = begin
+        resolve_task_become_user(task, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        return finalization_failure_json(ex, task)
+      end
 
       # Action-only directives: pre-action validation gate (see
       # execute_task_once's identical hook).
@@ -2215,7 +2222,14 @@ module Krikri
       # params: value (e.g. become_user: "{{ service_user }}", a common
       # real-playbook pattern) - task.become_user itself is never mutated
       # here, since Task is shared/reused across hosts and loop iterations.
-      substituted_become_user = resolve_task_become_user(task, vars_context, substitutor)
+      # Same "finalization failed" shape as the begin/rescue above: a
+      # strict-undefined become_user keyword fails this task (not the
+      # run), and no module/sudo may run afterward.
+      substituted_become_user = begin
+        resolve_task_become_user(task, vars_context, substitutor)
+      rescue ex : UndefinedVariableError
+        return finalization_failure_json(ex, task)
+      end
 
       # Ansible's add_host: the groups failure (action stage) and the
       # inventory.add_host name crash (result-processing stage, which
