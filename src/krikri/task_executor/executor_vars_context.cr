@@ -1824,7 +1824,21 @@ module Krikri
           return user
         end
       end
-      task.become_user.try { |raw_user| substitutor.substitute(raw_user) }
+      # The become_user KEYWORD strict-fails on an undefined variable like
+      # any other templated task keyword in ansible-core 2.19 ("Task
+      # failed: Error processing keyword 'become_user': 'x' is undefined")
+      # - the lenient substitution here used to render "undefined" and run
+      # `sudo -u undefined` instead of failing the task (issue #31). The
+      # ansible_become_user var path above stays lenient: that is a plain
+      # variable, not keyword templating, and its lenient degradation is
+      # the rule the become-var tests rely on.
+      task.become_user.try do |raw_user|
+        begin
+          substitutor.substitute(raw_user, strict: true)
+        rescue e : UndefinedVariableError
+          raise UndefinedVariableError.new("Task failed: Error processing keyword 'become_user': #{e.message}")
+        end
+      end
     end
 
     # ansible boolean()'s accepted forms (convert_bool.BOOLEANS_TRUE /
