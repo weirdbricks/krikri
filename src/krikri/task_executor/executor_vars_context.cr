@@ -378,6 +378,19 @@ module Krikri
       vars_context["ansible_run_tags"] = JSON::Any.new((run_tags.empty? ? ["all"] : run_tags).map { |tag| JSON::Any.new(tag) })
       vars_context["ansible_skip_tags"] = JSON::Any.new(Krikri::RunOptions.skip_tags.map { |tag| JSON::Any.new(tag) })
       vars_context["ansible_forks"] = JSON::Any.new((Krikri::RunOptions.forks || 5).to_i64)
+      # environment - ansible-core 2.19.11 resolves the play/task
+      # `environment:` keyword as an ordinary variable inside task
+      # templating, defaulting to an empty list when nothing sets it
+      # (live-verified: `debug: msg: "Command = {{ environment }} x"` on
+      # a task with no environment: renders "Command = [] x"). Left
+      # unbound, `{{ environment }}` hard-failed with "'environment' is
+      # undefined". Every user layer already merged above (play vars,
+      # vars_files, role/task vars, included_vars/facts) still wins via
+      # the has_key? check; the block-tag renderer's os.environ mapping
+      # (JinjaRenderer#render_measured!) is an explicit render scope,
+      # which the engine consults BEFORE this resolver-backed value, so
+      # the GROG.debug-variable idiom keeps seeing the controller's ENV.
+      vars_context["environment"] = JSON::Any.new([] of JSON::Any) unless vars_context.has_key?("environment")
       apply_path_magic_vars(vars_context)
 
       # ansible_connection - Ansible always resolves this magic var
