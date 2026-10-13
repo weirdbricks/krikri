@@ -13,7 +13,7 @@ require "json"
 describe "dnf local-rpm remote-rpm failure shape" do
   it "fails an unreadable .rpm name with the remote-rpm wrap" do
     result = PluginSpecHelper.run("dnf", {
-      "name" => "/tmp/krikri-definitely-missing-atom.x86_64.rpm",
+      "name"  => "/tmp/krikri-definitely-missing-atom.x86_64.rpm",
       "state" => "present",
     })
     result["failed"].as_bool.must_equal(true)
@@ -23,5 +23,17 @@ describe "dnf local-rpm remote-rpm failure shape" do
     result.as_h.has_key?("failures").must_equal(false)
     result["msg"].as_s.must_equal(
       "Error occurred attempting remote rpm operation: Could not open: /tmp/krikri-definitely-missing-atom.x86_64.rpm")
+  end
+
+  # Ansible hands file:// URLs straight to dnf, which opens the local path;
+  # an existing file must not trip the readability pre-check.
+  it "does not report an existing file:// rpm as unopenable" do
+    path = PluginSpecHelper.tmp_path("present.rpm")
+    File.write(path, "not a real rpm")
+    result = PluginSpecHelper.run("dnf", {
+      "name"  => "file://#{path}",
+      "state" => "present",
+    })
+    (result["msg"]?.try(&.as_s?) || "").includes?("Could not open").must_equal(false)
   end
 end
