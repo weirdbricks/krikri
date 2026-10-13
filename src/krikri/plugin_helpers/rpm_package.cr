@@ -813,6 +813,9 @@ module Krikri
           # entry per missing spec parsed out of dnf's output - NOT the
           # raw dnf stderr/stdout dump the fallback below keeps for
           # outputs nothing in parses (repo metadata/404-class errors).
+          if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
+          end
           if failures = parse_dnf_install_failures(result[:stdout], result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: failure_result("Failed to install some of the specified packages", failures, result[:exit_code])}
           end
@@ -860,6 +863,19 @@ module Krikri
       # Only consulted for batches that actually contained a group, so
       # plain-package batches keep the existing "Nothing to do"
       # detection untouched.
+      # Ansible's dnf module checks the signature of a remote/local .rpm
+      # itself before the transaction and fails with a module-level
+      # "Failed to validate GPG signature for <nevra>: <libdnf error>"
+      # (issue #60) instead of the CLI's generic install failure. The CLI
+      # output carries both pieces: "Public key for <file> is not installed"
+      # and "Failing package is: <nevra>".
+      private def gpg_validation_failure_msg(output : String) : String?
+        key_err = output.match(/(Public key for \S+ is not installed)/)
+        nevra = output.match(/Failing package is:\s*(\S+)/)
+        return nil unless key_err && nevra
+        "Failed to validate GPG signature for #{nevra[1]}: #{key_err[1]}"
+      end
+
       private def group_install_noop?(output : String) : Bool
         in_summary = false
         output.each_line do |line|
