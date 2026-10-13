@@ -385,7 +385,9 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: true,
-            msg: "Destination directory #{dest_dir} does not exist"
+            msg: "Destination directory #{dest_dir} does not exist",
+            checksum: content_sha1,
+            key_order: ["diff", "failed", "msg", "checksum"]
           )
         end
       end
