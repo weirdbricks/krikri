@@ -372,6 +372,10 @@ module Krikri
       # `cmd` key - Ansible's command module returns the argv LIST
       # itself (live-verified against 2.19.4: `cmd: ["echo", "hi"]`).
       cmd_parts = argv_parts || (cmd ? parse_command(cmd) : [] of String)
+      # Ansible reports the argv as given (live-verified vs 2.19.11:
+      # `command: test -e ~/x` -> "cmd": ["test","-e","~/x"]) even though
+      # run_command expands `~`/`$VAR` on the copy it executes.
+      reported_cmd = cmd_parts
 
       started_at = Time.utc
       begin
@@ -471,7 +475,7 @@ module Krikri
         # [Errno 2] No such file or directory: b'/bin/does-not-exist'" -
         # the exception text reaches the block (and only the block) as the
         # result's `exception` key.
-        return with_executable_warning(spawn_failure_result(ex, cmd_parts, command_name || ""))
+        return with_executable_warning(spawn_failure_result(ex, reported_cmd, command_name || ""))
       end
 
       # strip_empty_ends (bool, default true): when true, Ansible
@@ -505,7 +509,7 @@ module Krikri
         failed: exit_code != 0,
         msg: exit_code == 0 ? "" : "non-zero return code",
         include_empty_msg: true,
-        cmd: cmd_parts,
+        cmd: reported_cmd,
         stdout: final_stdout,
         stdout_lines: PluginHelpers::AnsibleSplitlines.split(final_stdout),
         stderr: final_stderr,
