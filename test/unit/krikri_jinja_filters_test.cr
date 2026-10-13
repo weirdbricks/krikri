@@ -95,6 +95,8 @@ describe Krikri::KrikriJinjaFilters do
     render("{{ 'a-b' | regex_replace('-', '_') }}", vars, host_context: context).must_equal("a_b")
     render("{{ {'a': 1} | dict2items | first | tojson }}", vars, host_context: context)
       .must_equal(%({"key": "a", "value": 1}))
+    render("{{ {300: ['x']} | dict2items | first | tojson }}", vars, host_context: context)
+      .must_equal(%({"key": 300, "value": ["x"]}))
     render("{{ [{'k': 1, 'v': 'x'}] | items2dict('k', 'v') | tojson }}", vars, host_context: context)
       .must_equal(%({"1": "x"}))
   end
