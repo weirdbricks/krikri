@@ -2124,7 +2124,12 @@ module Krikri
     ) : Hash(String, String)
       result = Hash(String, String).new
 
-      params.each do |key, value|
+      # ansible-core finalizes task args in alphabetical key order, so with
+      # several undefined args the one named in the error is the first by
+      # name (live-verified: get_url `checksum` before `url`, copy `dest`
+      # before `src`). `result` is reordered to the original order below.
+      params.keys.sort!.each do |key|
+        value = params[key]
         # assert's `that:` is the one module argument Ansible does NOT
         # pre-render: its action plugin compiles each item as a raw
         # EXPRESSION (that's why `that: [a.b >= {{ x }}]` reaches
@@ -2453,7 +2458,10 @@ module Krikri
         end
       end
 
-      result
+      ordered = Hash(String, String).new
+      params.each_key { |key| ordered[key] = result[key] if result.has_key?(key) }
+      result.each { |key, value| ordered[key] = value unless ordered.has_key?(key) }
+      ordered
     end
 
     # The msg Ansible produces when a task-arg templating failure
