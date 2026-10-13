@@ -3490,6 +3490,11 @@ module Krikri
           resolved_object = native.try(&.as_h?)
           unless resolved_object
             rendered = native ? native.to_s : substitutor.substitute(raw, strict: true)
+            # Ansible drops the whole environment when its template renders
+            # to `omit` (e.g. `environment: "{{ proxy_env | default(omit) }}"`
+            # with proxy_env undefined) instead of passing the omit marker
+            # through, which would fail JSON parsing downstream.
+            return nil if rendered.includes?(OMIT_SENTINEL)
             parsed = JSON.parse(rendered)
             object = parsed.as_h?
             # Ansible never fails a task over a non-dict environment
