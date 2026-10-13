@@ -185,6 +185,15 @@ For each group decide:
   later fix undetectable. Masks are only for output that can never be identical
   (a host IP, a probe-driven Ansible warning); they live in `Compare::MASKS`
   in the krikri-role-tester repo, and adding one is the user's call.
+- **Mask candidate (rare)** — a difference that can *never* be identical by
+  nature: a timestamp, temp path, random ID, PID, or a probe-driven Ansible
+  warning. Hold this to a high bar: if krikri could produce the same bytes with
+  any amount of work, it is an output gap, not a mask candidate. Never propose a
+  mask just to turn a role green. List candidates in the step 8 report with the
+  exact diff hunk and why it is non-reproducible, and let the user decide;
+  never edit `Compare::MASKS` yourself. A mask must be as narrow as possible
+  (match only the varying part), and every one added should be rare enough that
+  the list stays short.
 - **Both engines fail the same upstream way** — a broken role (missing
   variable, removed `include:` action, dead URL). Not a krikri problem, but the
   *text* may still differ — then it is an output gap as above.
@@ -205,6 +214,8 @@ Report before anything else happens — this is where the user's input is needed
   blocked`.
 - Per root-cause group: one line of cause, the affected roles, one evidence
   path (`<dir>/<role>/compare_cold.diff`), and your classification.
+- Mask candidates (step 7), if any: hunk, affected roles, why it can never be
+  identical. Usually there are none; say so only if asked.
 - Blocked/GALAXY_MISSING roles, listed, not analysed.
 
 Then go to step 9. Do not start fixing: that is a separate skill.
