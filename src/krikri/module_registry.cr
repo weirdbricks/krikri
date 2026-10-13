@@ -579,6 +579,20 @@ module Krikri
       "ansible.legacy.openssl_certificate_info"    => "community.crypto.x509_certificate_info",
       "community.crypto.openssl_certificate_info"  => "community.crypto.x509_certificate_info",
       "community.general.openssl_certificate_info" => "community.crypto.x509_certificate_info",
+      # snap moved out of ansible-core into community.general long before
+      # FQCNs existed, but ansible-core's builtin runtime still redirects
+      # the ansible.builtin./ansible.legacy. spellings onto
+      # community.general.snap (live-verified against 2.19.11: an
+      # `ansible.builtin.snap:` task on a host without the snap CLI
+      # resolves and RUNS, failing with the module's own 'Failed to find
+      # required executable "snap"' - it does not skip). pitabwire.
+      # ansible_role_microceph (round 1791896374) writes the FQCN
+      # spelling; krikri only registered community.general.snap, so the
+      # task was silently skipped as an unavailable module. The bare
+      # spelling needs no entry here - community.general is already in
+      # MODULE_SEARCH_COLLECTIONS.
+      "ansible.builtin.snap" => "community.general.snap",
+      "ansible.legacy.snap"  => "community.general.snap",
       # virt_net's collection namespace (see its AVAILABLE_PLUGINS entry).
       "community.libvirt.virt_net" => "virt_net",
     }
