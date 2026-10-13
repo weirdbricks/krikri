@@ -1,6 +1,7 @@
 #!/usr/bin/env crystal
 
 require "json"
+require "http/status"
 require "../src/krikri/base_plugin"
 
 module Krikri
@@ -275,8 +276,13 @@ module Krikri
         # shells out to `apt-key adv` rather than reimplementing a
         # keyserver protocol client.
         insecure_flag = true?(@params["validate_certs"]?, default: true) ? "" : "--insecure "
-        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(url)}")
+        result = remote_exec("curl --fail --silent --show-error --location #{insecure_flag}-w '%{http_code}' -o #{Shell.quote_arg(tmp_path)} #{shell_single_quote(url)}")
         unless result[:exit_code] == 0
+          # Ansible's fetch_url reports an HTTP failure as urllib's
+          # "HTTP Error <code>: <phrase>" under "Failed to download key at".
+          if result[:exit_code] == 22 && (code = result[:stdout].strip.to_i?) && code >= 400
+            return PluginResult.new(changed: false, failed: true, msg: "Failed to download key at #{url}: HTTP Error #{code}: #{HTTP::Status.new(code).description}")
+          end
           return PluginResult.new(changed: false, failed: true, msg: "Failed to fetch key from #{url}: #{result[:stderr]}")
         end
       elsif d = data
