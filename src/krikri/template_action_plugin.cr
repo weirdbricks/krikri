@@ -357,7 +357,10 @@ module Krikri
       # dict/list values. Without this the sentinel string every other path
       # compares against would leak into the written file verbatim.
       rendered = rendered.gsub(Krikri::OMIT_SENTINEL, "") if rendered.includes?(Krikri::OMIT_SENTINEL)
-      rendered += "\n" unless rendered.ends_with?("\n")
+      # An empty render stays empty (live-verified vs 2.19.11: a template
+      # whose output is "" writes a 0-byte file and reruns `ok` against an
+      # existing empty dest) - only non-empty output gets the newline.
+      rendered += "\n" unless rendered.empty? || rendered.ends_with?("\n")
       rendered
     end
 
