@@ -924,6 +924,19 @@ rescue ex : Krikri::PlaybookParser::InvalidIncludeAttributeError
     STDERR.puts "[ERROR]: #{ex.message}".colorize(:red)
   end
   exit 4
+rescue ex : Krikri::StaticImportUndefinedError
+  # A static import's path referencing an undefined variable is Ansible's
+  # own playbook-load refusal: the [ERROR] + Origin block on STDERR, rc=4
+  # (live-verified vs 2.19.11). The render was built at the raise site (it
+  # needs the source map); print it verbatim, falling back to the generic
+  # parse-error print when no source position was known.
+  if render = ex.render
+    STDERR.print render
+  else
+    puts "Error parsing playbook:".colorize(:red).bold
+    puts "  #{ex.message}".colorize(:red)
+  end
+  exit 4
 rescue ex
   puts "Error parsing playbook:".colorize(:red).bold
   puts "  #{ex.message}".colorize(:red)
@@ -1375,7 +1388,7 @@ playbook.plays.each_with_index do |play, _play_index|
       any_errors_fatal: play.any_errors_fatal?,
       max_fail_percentage: play.max_fail_percentage,
       unreachable_hosts: unreachable_hosts,
-    unreachable_ssh_errors: unreachable_ssh_errors,
+      unreachable_ssh_errors: unreachable_ssh_errors,
       strategy: play.strategy,
       gather_subset: play.gather_subset,
       gather_timeout: play.gather_timeout,
