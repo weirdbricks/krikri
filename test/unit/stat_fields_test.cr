@@ -34,6 +34,20 @@ describe Krikri::PluginHelpers::StatFields do
       hash["islnk"].as_bool.must_equal(false)
     end
 
+    it "orders keys like Ansible and formats a sticky mode without an extra zero" do
+      hash = Krikri::PluginHelpers::StatFields.build(
+        "/tmp", mode: DIRECTORY | 0o1777,
+        size: 1_i64, uid: 0_i64, gid: 0_i64, pw_name: "root", gr_name: "root",
+        atime: 1.0_f64, mtime: 1.0_f64, ctime: 1.0_f64,
+        inode: 1_i64, dev: 1_i64, nlink: 1_i64,
+        block_size: 4096_i64, blocks: 0_i64, device_type: 0_i64
+      )
+
+      hash["mode"].as_s.must_equal("1777")
+      hash.keys.first(8).must_equal(%w[exists path mode isdir ischr isblk isreg isfifo])
+      (hash.keys.index!("wusr") < hash.keys.index!("rusr")).must_equal(true)
+    end
+
     it "serializes sub-second timestamps as JSON floats, not ints or strings" do
       hash = Krikri::PluginHelpers::StatFields.build(
         "/tmp/f.txt", mode: REGULAR_FILE | 0o644,
@@ -97,7 +111,7 @@ describe Krikri::PluginHelpers::StatFields do
 
       hash["isuid"].as_bool.must_equal(true)
       hash["isgid"].as_bool.must_equal(false)
-      hash["mode"].as_s.must_equal("04755")
+      hash["mode"].as_s.must_equal("4755")
     end
 
     it "omits the special digit from mode when no special bits are set" do
