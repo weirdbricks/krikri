@@ -134,6 +134,19 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
     end
   end
 
+  it "derives the GPG failure nevra from the @commandline table row (dnf 4.14)" do
+    with_failing_dnf_shim(
+      " Package          Arch     Version     Repository     Size\nInstalling:\n epel-release     noarch   9-11.el9    @commandline   18 k\n",
+      "Public key for epel-release-latest-9.noarchabc.rpm is not installed\nError: GPG check FAILED\n") do
+      result = PluginSpecHelper.run("dnf",
+        {"name" => "http://example.invalid/epel-release-latest-9.noarch.rpm", "state" => "present"},
+        vars: {"ansible_pkg_mgr" => "dnf"})
+
+      result["msg"].as_s.must_equal(
+        "Failed to validate GPG signature for epel-release-9-11.el9.noarch: Public key for epel-release-latest-9.noarchabc.rpm is not installed")
+    end
+  end
+
   it "produces the same shape from package: (use: dnf)" do
     with_failing_dnf_shim(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
       result = PluginSpecHelper.run("package",

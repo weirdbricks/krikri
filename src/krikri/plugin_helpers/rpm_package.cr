@@ -855,9 +855,31 @@ module Krikri
       # and "Failing package is: <nevra>".
       private def gpg_validation_failure_msg(output : String) : String?
         key_err = output.match(/(Public key for \S+ is not installed)/)
-        nevra = output.match(/Failing package is:\s*(\S+)/)
+        nevra = output.match(/Failing package is:\s*(\S+)/).try(&.[1]) || commandline_nevra(output)
         return nil unless key_err && nevra
-        "Failed to validate GPG signature for #{nevra[1]}: #{key_err[1]}"
+        "Failed to validate GPG signature for #{nevra}: #{key_err[1]}"
+      end
+
+      # dnf 4.14 (EL9) never prints "Failing package is:"; the downloaded
+      # .rpm only shows up as an "@commandline" row of the transaction table
+      # (name, arch, [epoch:]version-release), and a long name wraps onto its
+      # own line. Ansible renders that package as name-version-release.arch.
+      private def commandline_nevra(output : String) : String?
+        lines = output.lines
+        lines.each_with_index do |line, i|
+          tokens = line.split
+          cmd = tokens.index("@commandline")
+          next unless cmd
+          if cmd == 3
+            name, arch, ver = tokens[0], tokens[1], tokens[2]
+          elsif cmd == 2 && i > 0 && (prev = lines[i - 1].split).size == 1
+            name, arch, ver = prev[0], tokens[0], tokens[1]
+          else
+            next
+          end
+          return "#{name}-#{ver.sub(/^\d+:/, "")}.#{arch}"
+        end
+        nil
       end
 
       # Ansible's dnf module catches the libdnf DepsolveError and fails with
