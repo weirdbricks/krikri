@@ -13260,7 +13260,7 @@ Local probe roles, not Galaxy roles: each probed task registers its result and d
 | `ElaoInfra.pip` | ubuntu | ⚠ both engines fail identically (broken role/host), byte-identical (round29865009, 0.9.1687 release). Times: cold py 0.47s vs cr 0.01s; warm py 0.48s vs cr 0.01s. |
 | `ElaoInfra.ssh` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29864974, 0.9.1687 release). Times: cold py 0.49s vs cr 0.01s; warm py 0.49s vs cr 0.01s. |
 | `L-P.acmetool` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29865022, 0.9.1687 release). Times: cold py 0.59s vs cr 0.01s; warm py 0.53s vs cr 0.01s. |
-| `Turgon37.apt` | ubuntu | ❌ divergent (round29864987, 0.9.1687 release): find result order is host directory order; not fixable, no issue. Times: cold py 100.12s vs cr 18.06s; warm py 73.24s vs cr 1.79s. |
+| `Turgon37.apt` | ubuntu | ❌ divergent (round29864987, 0.9.1687 release): krikri issue #51 (item repr with literal newlines); `find` result order also differs per host (same item set), not a krikri bug. Times: cold py 100.12s vs cr 18.06s; warm py 73.24s vs cr 1.79s. |
 | `Turgon37.cron` | rocky | ⚠ both engines fail identically (broken role/host), byte-identical (round29864992, 0.9.1687 release). Times: cold py 10.07s vs cr 6.38s; warm py 8.59s vs cr 0.62s. |
 | `andrewrothstein.eksctl` | rocky | ✅ clean, byte-identical cold and warm (round29864968, 0.9.1687 release). Times: cold py 23.14s vs cr 13.03s; warm py 5.47s vs cr 0.49s. |
 | `andrewrothstein.haveged` | rocky | ✅ clean, byte-identical cold and warm (round29865030, 0.9.1687 release). Times: cold py 13.68s vs cr 11.02s; warm py 8.64s vs cr 0.74s. |
