@@ -1751,6 +1751,14 @@ module Krikri
 
       playbook_dir = File.dirname(path)
 
+      # ansible-core 2.19 (constructor.py construct_mapping) warns on
+      # duplicate mapping keys at LOAD time, before any play output, and
+      # DataLoader caches the parse, so each file is warned on exactly
+      # once per load - the scan here is hoisted out of the per-play loop
+      # below so a multi-play playbook can't re-warn per play.
+      source_map = YamlSourceMap.scan(content)
+      warn_duplicate_map_keys(path, source_map)
+
       yaml.as_a.each_with_index do |play_yaml, index|
         if import_path = extract_import_playbook(play_yaml)
           begin
@@ -1801,7 +1809,7 @@ module Krikri
         end
 
         begin
-          play = parse_play(play_yaml, index, playbook_dir, File.expand_path(path), YamlSourceMap.scan(content))
+          play = parse_play(play_yaml, index, playbook_dir, File.expand_path(path), source_map)
           playbook.plays << play
         rescue ex : RemovedActionError
           # Bypasses the graceful per-play degradation below - see its
@@ -2504,6 +2512,9 @@ module Krikri
       imported_content = Vault.maybe_decrypt(File.read(resolved_path))
       imported_yaml = YAML.parse(imported_content)
       imported_source_map = YamlSourceMap.scan(imported_content)
+      # The imported file goes through Ansible's own DataLoader too, so
+      # duplicate keys in it warn the same way the playbook's own do.
+      warn_duplicate_map_keys(resolved_path, imported_source_map)
       # A comment-only (or entirely blank) tasks file - Ansible
       # treats this as zero tasks, not an error (ansistrano.deploy's own
       # tasks/empty.yml, a deliberate no-op include target - see
@@ -3953,6 +3964,29 @@ module Krikri
             io << " " * gutter.size << " " << " " * (column - 1) << "^ column " << column << "\n"
           end
         end
+      end
+    end
+
+    # ansible-core 2.19 (constructor.py construct_mapping) prints, at LOAD
+    # time and before any PLAY output, one warning per duplicate
+    # mapping-key occurrence, with the Origin at the DUPLICATE (second)
+    # key's own position and the help_text line after the excerpt:
+    #   [WARNING]: Found duplicate mapping key 'bookworm'.
+    #   Origin: /abs/path/pb.yml:6:7
+    #   <up to two preceding source lines + the duplicate key's line>
+    #        ^ column 7
+    #   Using last defined value only.
+    # The warning is cosmetic - the last value still wins. Public because
+    # role_loader warns the same way for the vars/task files it loads
+    # through the same YamlSourceMap scan. *io* exists for tests.
+    def self.warn_duplicate_map_keys(path : String, source_map : YamlSourceMap, io : IO = STDERR) : Nil
+      return if source_map.duplicate_keys.empty?
+      return unless File.file?(path)
+      lines = source_lines(path) || return
+      source_map.duplicate_keys.each do |key, line, col|
+        io << "[WARNING]: Found duplicate mapping key '#{key}'.\n"
+        io << reserved_origin_block(path, lines, line - 1, col)
+        io << "\nUsing last defined value only.\n\n"
       end
     end
 

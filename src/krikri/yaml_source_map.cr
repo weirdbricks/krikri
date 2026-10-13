@@ -18,7 +18,17 @@ module Krikri
   class YamlSourceMap
     alias Pos = Tuple(Int32, Int32)
 
+    # Duplicate mapping keys in document order, as (key, line, column) of
+    # the DUPLICATE occurrence's own mark - ansible-core's constructor
+    # warns once per occurrence after the first, points the Origin at the
+    # repeated key and says "Using last defined value only.", while the
+    # last value still wins.
+    alias DuplicateKey = Tuple(String, Int32, Int32)
+
     @positions = Hash(String, Pos).new
+    @duplicate_keys = Array(DuplicateKey).new
+
+    getter duplicate_keys
 
     def self.scan(content : String) : YamlSourceMap
       map = YamlSourceMap.new
@@ -56,6 +66,7 @@ module Krikri
       property index : Int32 # next sequence child index
       property pending_key : String?
       property path : String
+      getter seen_keys = Set(String).new
 
       def initialize(@kind, @path, @index = 0, @pending_key = nil)
       end
@@ -124,7 +135,17 @@ module Krikri
       if parent.kind == :map && parent.pending_key.nil?
         # A scalar mapping KEY: remembered as the pending path component
         # for the value node that follows. Keys themselves get no entry.
-        parent.pending_key = text || "<key#{parent.index += 1}>"
+        # libyaml hands the keys over in document order, so a repeat here
+        # is exactly what ansible-core's construct_mapping warns on (one
+        # warning per occurrence after the first, Origin at the repeated
+        # key), while the last value still wins.
+        if text
+          @duplicate_keys << {text, pos(mark)[0], pos(mark)[1]} if parent.seen_keys.includes?(text)
+          parent.seen_keys << text
+          parent.pending_key = text
+        else
+          parent.pending_key = "<key#{parent.index += 1}>"
+        end
         return
       end
 

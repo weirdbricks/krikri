@@ -62,7 +62,12 @@ module Krikri
     # <role>/tasks/main.yml:<line>:<col> of the name value).
     private def self.cached_source_map(path : String) : YamlSourceMap
       @@source_map_cache.fetch(path) do
-        @@source_map_cache[path] = YamlSourceMap.scan(Vault.maybe_decrypt(File.read(path)))
+        map = YamlSourceMap.scan(Vault.maybe_decrypt(File.read(path)))
+        # Inside the fetch block: the cache makes each file warn (and
+        # scan) at most once per run, the way Ansible's DataLoader file
+        # cache keeps its own duplicate-key warnings single-shot.
+        PlaybookParser.warn_duplicate_map_keys(path, map)
+        @@source_map_cache[path] = map
       end
     end
 
