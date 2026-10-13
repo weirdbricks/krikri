@@ -366,6 +366,14 @@ module Krikri
       # only ever shown as their own [WARNING] lines, `invocation` is hidden
       # unless -vvv (getent-style results carry one for `register`). At -vvv
       # and above Ansible keeps all of them inside the dumps.
+      #
+      # Ansible's become failure is a plain {changed, msg} dump; the
+      # `_connection_failure` marker only exists to keep failed_when: from
+      # reinterpreting it.
+      if (top = result.as_h?) && top.has_key?("_connection_failure") &&
+         top["msg"]?.try(&.as_s?).to_s.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}")
+        result = JSON::Any.new(top.reject("_connection_failure"))
+      end
       if Krikri::RunOptions.verbosity < 3 && (top = result.as_h?) && (top.has_key?("warnings") || top.has_key?("invocation") || top.has_key?("deprecations") || top.has_key?("_ansible_core_deprecations") || top.has_key?("_ansible_pause_console"))
         result = JSON::Any.new(top.reject("warnings", "invocation", "deprecations", "_ansible_core_deprecations", "_ansible_pause_console"))
       end
@@ -699,6 +707,17 @@ module Krikri
             ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
               .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(inner)))
           end
+        end
+        return
+      end
+      # A become failure on a local connection (sudo wants a password):
+      # the connection plugin's AnsibleConnectionFailure carries no obj/
+      # origin of its own, so real collapses to the single "Task failed."
+      # segment holding the whole message (live-verified vs 2.19.11).
+      if msg.starts_with?("Task failed: #{PluginManager::BECOME_PREMATURE_END}")
+        if origin = error_origin_context(source_task)
+          ErrorBlock.emit(ErrorBlock::Node.new("Task failed.", source_context: origin)
+            .with_chain(ErrorBlock::DIRECT_CAUSE, true, ErrorBlock::Node.new(msg["Task failed: ".size..])))
         end
         return
       end
