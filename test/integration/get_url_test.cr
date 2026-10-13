@@ -554,6 +554,19 @@ describe "get_url plugin" do
       File.delete(dest) if dest && File.exists?(dest)
     end
 
+    it "rejects a URL path with a space before sending a request" do
+      dest = File.tempname("get-url-spec")
+
+      result = PluginSpecHelper.run("get_url", {"url" => "http://127.0.0.1:1/a b.gpg", "dest" => dest})
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("An unknown error occurred: URL can't contain control characters. '/a b.gpg' (found at least ' ')")
+      result["status_code"]?.must_be_nil
+      result["response"]?.must_be_nil
+    ensure
+      File.delete(dest) if dest && File.exists?(dest)
+    end
+
     it "splits Python's URL typing the way urllib does (no RFC scheme required)" do
       # Python's own type split is `([^/:]+):` - everything up to the
       # first colon, so "127.0.0.1:80/x" types as "127.0.0.1" and gets
