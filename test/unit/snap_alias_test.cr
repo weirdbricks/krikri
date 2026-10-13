@@ -12,8 +12,8 @@ describe "snap alias" do
   {% for spelling in ["snap",
                       "ansible.builtin.snap",
                       "ansible.legacy.snap"] %}
-    it "resolves {{spelling.id}} onto community.general.snap" do
-      Krikri::PlaybookParser.resolve_module_name({{spelling}})
+    it "resolves {{ spelling.id }} onto community.general.snap" do
+      Krikri::PlaybookParser.resolve_module_name({{ spelling }})
         .must_equal("community.general.snap")
     end
   {% end %}

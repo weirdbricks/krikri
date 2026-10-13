@@ -439,7 +439,18 @@ module Krikri
         active.push(base_name)
         @@prepare_vars_depth += 1
         begin
-          rerender_nested_templates(raw_value, substitutor)
+          rendered = rerender_nested_templates(raw_value, substitutor)
+          # Ansible 2.19.11 turns a variable whose stored text uses block
+          # tags (`{% for %}`/`{% if %}`) and renders to nothing into None,
+          # while `{{ "" }}` and a literal '' stay "" - so
+          # `v.rstrip(";")` fails with "'NoneType' has no attribute
+          # 'rstrip'" there. inofix.yapkg's `yapkg_list` (a for-loop over
+          # an empty list) hit this; krikri kept "" and ran the task
+          # Ansible fails.
+          if rendered && (src = raw_value.raw).is_a?(String) && src.includes?("{%") && rendered.raw == ""
+            return JSON::Any.new(nil)
+          end
+          rendered
         ensure
           @@prepare_vars_depth -= 1
           active.pop
