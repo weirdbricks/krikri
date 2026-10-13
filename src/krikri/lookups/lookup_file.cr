@@ -318,6 +318,10 @@ module Krikri
       # doesn't exist, i.e. where the old code 404'd. An absolute path, or a
       # relative one outside any role context, passes through unchanged.
       private def resolve_lookup_path(path : String) : String
+        # expanduser-before-search is Ansible's own order (see
+        # LookupPlugins.expand_home) - without it a `~/...` term fell
+        # through to the role-relative search and 404'd (issue #52).
+        path = LookupPlugins.expand_home(path)
         return path if path.starts_with?('/')
         role_path = @vars["role_path"]?.try(&.as_s?)
         return path unless role_path
@@ -334,6 +338,8 @@ module Krikri
       # yielded the literal "undefined" that blockinfile wrote into
       # /etc/redis/redis.conf (hifis.redis, round 1300014).
       private def resolve_template_lookup_path(path : String) : String
+        # Same expanduser-before-search rule as resolve_lookup_path above.
+        path = LookupPlugins.expand_home(path)
         return path if path.starts_with?('/')
         role_path = @vars["role_path"]?.try(&.as_s?)
         return path unless role_path
