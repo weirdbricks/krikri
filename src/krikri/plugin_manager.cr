@@ -1420,6 +1420,23 @@ module Krikri
       false
     end
 
+    BECOME_PREMATURE_END = "Premature end of stream waiting for become success."
+
+    # sudo exits before the plugin ever runs (e.g. "sudo: a password is
+    # required"): ansible-core 2.19.11 books this as the local connection's
+    # become failure with the sudo stderr appended, not as unparseable
+    # module output. `_connection_failure` stays so failed_when: cannot
+    # reinterpret it; the display strips it.
+    def self.become_premature_end_result(output : String, stderr : String) : JSON::Any?
+      return nil unless output.strip.empty? && !stderr.strip.empty?
+      JSON.parse({
+        "changed"             => false,
+        "failed"              => true,
+        "msg"                 => "Task failed: #{BECOME_PREMATURE_END}\n>>> Standard Error\n#{stderr.strip}",
+        "_connection_failure" => true,
+      }.to_json)
+    end
+
     private def self.execute_local_plugin_impl(plugin_name : String, config : String, become : Bool, become_user : String?, become_password : String? = nil, task_timeout : Int64? = nil) : JSON::Any
       plugin_path = get_local_plugin_path(plugin_name)
       plugin_path = staged_local_plugin_path(plugin_name, plugin_path) if become && become_user
@@ -1536,6 +1553,9 @@ module Krikri
         begin
           normalize_module_result(JSON.parse(output))
         rescue ex
+          if sudo_user && (failure = become_premature_end_result(output, stderr.to_s))
+            return failure
+          end
           # Parsing failed - return error with details. Ansible's
           # own equivalent (a become/connection failure, e.g. "Premature
           # end of stream waiting for become success" - no module ever
