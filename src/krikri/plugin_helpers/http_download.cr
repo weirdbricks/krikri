@@ -163,6 +163,9 @@ module Krikri
           # ("Connection failure: timed out"). Crystal reports the two
           # with different messages.
           raise connect_timeout?(ex) ? FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error timed out>") : FetchError.new(FetchError::Kind::ConnectionFailure, "Connection failure: timed out")
+        rescue Socket::Addrinfo::Error
+          # getaddrinfo EAI_NONAME surfaces in urllib as socket.gaierror -2.
+          raise FetchError.new(FetchError::Kind::UrlError, "Request failed: <urlopen error [Errno -2] Name or service not known>")
         rescue ex : Socket::ConnectError
           # real fetch_url's failure msg is urllib's own URLError text
           # ("Request failed: <urlopen error [Errno 111] Connection

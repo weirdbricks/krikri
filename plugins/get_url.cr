@@ -131,6 +131,10 @@ module Krikri
         return preflight_failure_result(failure, url, dest)
       end
 
+      if bad = invalid_header_name
+        return PluginResult.new(changed: false, failed: true, msg: "Invalid header name #{python_bytes_repr(bad)}", url: url, status: -1)
+      end
+
       if true?(@params["_ansible_check_mode"]?)
         result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest, key_order: SUCCESS_KEY_ORDER)
         add_path_info(result, dest)
@@ -756,6 +760,22 @@ module Krikri
         ciphers: tls_ciphers,
         unredirected_headers: unredirected_headers,
       )
+    end
+
+    # http.client.putheader rejects a dict key containing ':' (or CR/LF,
+    # empty, or leading whitespace) before any connection is made, and
+    # fetch_url folds that ValueError into status -1 with the bare message.
+    private def invalid_header_name : String?
+      raw = @params["headers"]? || return nil
+      dict = (JSON.parse(raw).as_h? rescue nil) || return nil
+      dict.each_key do |key|
+        return key if key.empty? || key[0] == ':' || key[0].whitespace? || key.includes?(':') || key.includes?('\r') || key.includes?('\n')
+      end
+      nil
+    end
+
+    private def python_bytes_repr(name : String) : String
+      "b'#{name.gsub("\\", "\\\\").gsub("'", "\\'")}'"
     end
 
     private def timeout_span : Time::Span
