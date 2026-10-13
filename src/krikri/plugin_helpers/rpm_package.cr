@@ -229,6 +229,16 @@ module Krikri
         )
       end
 
+      # Ansible's dnf module surfaces libdnf's own repo error text
+      # ("Failed to download metadata for repo ...") as the msg, without
+      # the CLI's "Error: " prefix or a "Failed to update package cache:" wrapper.
+      private def cache_failure_msg(stderr : String) : String
+        if idx = stderr.index("Failed to download metadata for repo")
+          return stderr[idx..].lines.first.strip
+        end
+        "Failed to update package cache: #{stderr}"
+      end
+
       private def early_result_for_empty_names(names : Array(String)) : PluginResult?
         return nil unless names.empty?
 
@@ -241,7 +251,7 @@ module Krikri
           return PluginResult.new(
             changed: false,
             failed: result[:exit_code] != 0,
-            msg: result[:exit_code] == 0 ? cache_updated_msg : "Failed to update package cache: #{result[:stderr]}",
+            msg: result[:exit_code] == 0 ? cache_updated_msg : cache_failure_msg(result[:stderr]),
             include_empty_msg: true,
             results: [] of String,
             rc: 0,
