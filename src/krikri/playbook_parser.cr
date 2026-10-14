@@ -957,11 +957,17 @@ module Krikri
     # Ansible's phrasing and its worked-example hint. Any other error
     # keeps our YAML library's own message - Ansible's prose for
     # those comes from ITS parser and cannot be reproduced verbatim.
-    COLON_DETAIL   = "mapping values are not allowed in this context"
-    COLON_MESSAGE  = "Colons in unquoted values must be followed by a non-space character."
-    TAB_DETAIL     = "found a tab character"
-    TAB_MESSAGE    = "Tabs are usually invalid in YAML."
-    TRUNCATED_NOTE = "(source not shown: file truncated)"
+    COLON_DETAIL  = "mapping values are not allowed in this context"
+    COLON_MESSAGE = "Colons in unquoted values must be followed by a non-space character."
+    TAB_DETAIL    = "found a tab character"
+    TAB_MESSAGE   = "Tabs are usually invalid in YAML."
+    # ansible-core's loader refuses a collection used as a mapping key
+    # with its own wording (not libyaml's - libyaml parses `key: {{ x }}`
+    # happily as a flow-mapping key); verified against 2.19: rc=4, this
+    # exact message, and the same worked-example block the colon error
+    # appends, with a template-shaped example instead.
+    QUOTING_MESSAGE = "This may be an issue with missing quotes around a template block."
+    TRUNCATED_NOTE  = "(source not shown: file truncated)"
 
     # Crystal's YAML::ParseException message inlines the position and puts
     # libyaml's CONTEXT last:
@@ -995,6 +1001,16 @@ module Krikri
       super("Invalid YAML in #{@path}: #{@detail} at line #{@line}, column #{@column}")
     end
 
+    # The quoting refusal has no libyaml cause at all: the file parses
+    # fine here (and the position comes from the source map's
+    # collection-as-key detection, not from a parse exception), so the
+    # detail is Ansible's own message verbatim - no normalize.
+    def initialize(@path : String, @content : String, line : Int32, column : Int32, @detail : String)
+      @line = line
+      @column = column
+      super("Invalid YAML in #{@path}: #{@detail} at line #{@line}, column #{@column}")
+    end
+
     # Ansible echoes a tab in the offending source line as a single
     # space (verified by byte-diffing its output for a tab-indented file).
     private def echo(line : String) : String
@@ -1007,6 +1023,10 @@ module Krikri
 
     def tab_error? : Bool
       detail.downcase.includes?(TAB_DETAIL)
+    end
+
+    def quoting_error? : Bool
+      detail == QUOTING_MESSAGE
     end
 
     # ansible-playbook's own layout, verified against ansible-core
@@ -1023,6 +1043,8 @@ module Krikri
                   COLON_MESSAGE
                 elsif tab_error?
                   TAB_MESSAGE
+                elsif quoting_error?
+                  QUOTING_MESSAGE
                 else
                   detail
                 end
@@ -1058,21 +1080,33 @@ module Krikri
           io << " " * (prefix.size + @column - 1) << "^ column " << @column << "\n"
         end
 
-        unless colon_error?
+        # The quoting refusal reuses the colon error's whole worked-example
+        # layout (same blank lines, same Should be: structure) with a
+        # template-shaped example instead.
+        example, fixed =
+          if colon_error?
+            {"    raw: echo 'name: ansible'", "    raw: \"echo 'name: ansible'\""}
+          elsif quoting_error?
+            {"    raw: {{ some_var }}", "    raw: \"{{ some_var }}\""}
+          else
+            {nil, nil}
+          end
+
+        unless colon_error? || quoting_error?
           # Ansible closes the block with a blank line. The colon
           # case below has its own trailing newline after the hint.
           io << "\n"
         end
 
-        if colon_error?
+        if example && fixed
           io << "\n\n"
           io << "For example:\n"
           io << "\n"
-          io << "    raw: echo 'name: ansible'\n"
+          io << example << "\n"
           io << "\n"
           io << "Should be:\n"
           io << "\n"
-          io << "    raw: \"echo 'name: ansible'\"\n"
+          io << fixed << "\n"
           # ansible-playbook emits one further blank line after the
           # hint block - verified by byte-diffing its output.
           io << "\n"
@@ -1727,6 +1761,12 @@ module Krikri
         raise YamlSyntaxError.new(path, content, ex)
       end
 
+      # libyaml accepts what Ansible refuses: a file whose unquoted
+      # template parses as a collection used as a mapping key. The check
+      # sits AFTER the parse so a genuine syntax error keeps its own
+      # libyaml-derived report.
+      check_template_quoting(path, content)
+
       # Playbook is an array of plays. A non-list document (a bare
       # string, a mapping) is Ansible's own playbook-load refusal -
       # "[ERROR]: A playbook must be a list of plays, got a <class '...'>
@@ -1857,6 +1897,16 @@ module Krikri
           # Same bypass, same reason - a static import_role:'s missing
           # tasks_from: target is ansible-core's own playbook-load refusal
           # (rc=4), not a per-play soft-skip. See that class's own comment.
+          raise ex
+        rescue ex : YamlSyntaxError
+          # Same bypass - a YAML error inside ANY file the play loads
+          # (including a role's own task file, via RoleLoader's cache)
+          # is Ansible's playbook-load refusal (rc=4), not a per-play
+          # soft-skip; the top-level rescue renders it with its Origin
+          # block. The error may have originated in this very play's
+          # parse, so the per-play rescue below would otherwise degrade
+          # it into "Warning: Failed to parse play N" with the Origin
+          # block lost.
           raise ex
         rescue ex : InvalidRegisterError
           # Same bypass - Ansible refuses the whole run for an
@@ -2520,6 +2570,10 @@ module Krikri
       record_static_import(resolved_path)
 
       imported_content = Vault.maybe_decrypt(File.read(resolved_path))
+      # The import target goes through Ansible's DataLoader too, so the
+      # unquoted-template refusal applies to it like to any other file
+      # (before the parse, matching Ansible's load-time refusal).
+      check_template_quoting(resolved_path, imported_content)
       imported_yaml = YAML.parse(imported_content)
       imported_source_map = YamlSourceMap.scan(imported_content)
       # The imported file goes through Ansible's own DataLoader too, so
@@ -4056,6 +4110,21 @@ module Krikri
           end
         end
       end
+    end
+
+    # ansible-core 2.19's loader refuses at LOAD time (rc=4, on STDERR,
+    # with the same Origin block shape as every other YAML error) any
+    # file where an unquoted template parses as a collection used AS a
+    # mapping key - `owner: {{ x }}` is a flow mapping whose KEY is a
+    # flow mapping. Every other YAML error here comes from libyaml; this
+    # one doesn't (libyaml accepts the file), so the position comes from
+    # the source map's collection-key detection instead of a
+    # ParseException. Callers run it wherever YAML text is about to be
+    # parsed (playbook, role files, static imports), the way Ansible's
+    # single DataLoader path covers all of them.
+    def self.check_template_quoting(path : String, content : String) : Nil
+      return unless (pos = YamlSourceMap.scan(content).collection_key_pos)
+      raise YamlSyntaxError.new(path, content, pos[0], pos[1], YamlSyntaxError::QUOTING_MESSAGE)
     end
 
     # ansible-core 2.19 (constructor.py construct_mapping) prints, at LOAD
