@@ -657,6 +657,43 @@ module Krikri
       File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
     end
 
+    # ansible-core's RoleMetadata field-attribute set (taken from the
+    # installed core's RoleMetadata.fattributes, not from anything krikri
+    # implements): Ansible refuses any top-level meta/main.yml key outside
+    # it at role load, before any task runs, raising on the FIRST offending
+    # key in document order.
+    ROLE_METADATA_ATTRIBUTES = Set{
+      "allow_duplicates", "any_errors_fatal", "argument_specs", "become",
+      "become_exe", "become_flags", "become_method", "become_user",
+      "check_mode", "collections", "connection", "debugger", "dependencies",
+      "diff", "environment", "galaxy_info", "ignore_errors",
+      "ignore_unreachable", "module_defaults", "name", "no_log", "port",
+      "remote_user", "run_once", "throttle", "timeout", "vars",
+    }
+
+    private def self.validate_role_metadata_keys!(meta_path : String, meta_yaml : YAML::Any) : Nil
+      if meta_hash = meta_yaml.as_h?
+        meta_hash.each_key do |key|
+          key_str = key.to_s
+          next if ROLE_METADATA_ATTRIBUTES.includes?(key_str)
+
+          message = "'#{key_str}' is not a valid attribute for a RoleMetadata"
+          map = cached_source_map(meta_path)
+          pos = map.at?(key_str)
+          if pos && (line = pos[0]) > 0
+            # The map records the VALUE position; walk back to the key's
+            # own column on the same line (same walk-back
+            # include_attribute_render does).
+            src_line = File.read_lines(meta_path)[line - 1]?
+            key_idx = src_line.try(&.index("#{key_str}:"))
+            pos = {line, key_idx + 1} if key_idx
+          end
+          render = pos ? PlaybookParser.origin_error_render_at(message, meta_path, map, pos) : nil
+          raise PlaybookParser::InvalidIncludeAttributeError.new(key_str, "RoleMetadata", render)
+        end
+      end
+    end
+
     # Returns the accumulated defaults of every dependency loaded (later
     # dependencies winning over earlier ones on a name collision, matching
     # Ansible's load order), for the declaring role to merge under
@@ -667,6 +704,12 @@ module Krikri
       return collected unless File.exists?(meta_path)
 
       meta_yaml = cached_yaml(meta_path)
+      # Ansible validates the role's metadata (RoleMetadata's
+      # _validate_attributes) BEFORE its dependencies load, so this runs
+      # ahead of the dependency loop and raises on the first unknown key
+      # in document order - the same whole-run refusal rc=4 Ansible does.
+      validate_role_metadata_keys!(meta_path, meta_yaml)
+
       deps = meta_yaml["dependencies"]?.try(&.as_a?)
       return collected unless deps
 

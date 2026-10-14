@@ -5043,6 +5043,10 @@ module Krikri
     # `ok=0 changed=0 failed=0` with no indication anything was
     # wrong - the exact opposite of what Ansible does and what
     # the spec expects.
+    # `kind` is TaskInclude or IncludeRole here, but RoleLoader also
+    # raises this for a role meta/main.yml's unknown top-level keys
+    # (ansible-core's RoleMetadata._validate_attributes refuses those at
+    # role load the same way, issue #81).
     class InvalidIncludeAttributeError < Exception
       getter key : String
       getter kind : String
