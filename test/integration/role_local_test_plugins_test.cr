@@ -1,5 +1,7 @@
 require "../minitest_helper"
 require "file_utils"
+require "../../src/krikri/python_filter_runner"
+require "../../src/krikri/python_test_runner"
 
 # Ansible loads a role's own `test_plugins/*.py` (Python files exposing a
 # TestModule class whose tests() method returns a {test_name: callable}
@@ -188,5 +190,63 @@ describe "role-local test_plugins/*.py custom tests" do
     output.must_include("No test named 'totally_bogus_test_xyz'", output)
   ensure
     FileUtils.rm_rf(root) if root
+  end
+end
+
+describe "role-local test_plugins file that fails to import" do
+  serial! # replaces PythonTestRunner's process-wide warning sink
+
+  it "warns once with Ansible's wording and still serves the good file's tests" do
+    root = File.tempname("test-plugins-broken")
+    begin
+      Dir.mkdir_p(File.join(root, "test_plugins"))
+      broken = File.join(root, "test_plugins", "util.py")
+      good = File.join(root, "test_plugins", "good.py")
+      # `Sequence` moved to collections.abc in Python 3.10, so importing
+      # it from collections raises on every modern controller - the same
+      # unloadable-file shape real roles hit.
+      File.write(broken, <<-PYTHON)
+        from collections import Sequence
+
+
+        class TestModule(object):
+            def tests(self):
+                return {"variable_empty": self.variable_empty}
+
+            def variable_empty(self, value):
+                return value == ""
+        PYTHON
+      File.write(good, <<-PYTHON)
+        class TestModule(object):
+            def tests(self):
+                return {"is_good": lambda value: True}
+        PYTHON
+
+      captured = IO::Memory.new
+      previous = Krikri::PythonTestRunner.warning_sink
+      begin
+        Krikri::PythonTestRunner.warning_sink = captured
+        names = Krikri::PythonTestRunner.test_names([broken, good])
+      ensure
+        Krikri::PythonTestRunner.warning_sink = previous
+      end
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
+    names.includes?("is_good").must_equal(true)
+    names.includes?("variable_empty").must_equal(false)
+    lines = captured.to_s.lines
+    lines.size.must_equal(1, captured.to_s)
+    # The import error's tail is the interpreter's own collections path
+    # (version-dependent), so build the exact expected line from the
+    # same python3 the wrapper runs under.
+    python = Krikri::PythonFilterRunner.python_executable
+    flunk("no python3 on PATH; the wrapper cannot run") unless python
+    collections_py = `#{python} -c 'import collections; print(collections.__file__)'`.strip
+    lines.first.must_equal(
+      "[WARNING]: Skipping plugin (#{File.expand_path(broken)}), cannot load: " \
+      "cannot import name 'Sequence' from 'collections' (#{collections_py})"
+    )
   end
 end
