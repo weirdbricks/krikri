@@ -3164,7 +3164,7 @@ module Krikri
       # only refuses the name if the task is ever reached.
       action_mapping = false
       templated_action_string = nil.as(String?)
-      if module_name && ACTION_DIRECTIVE_KEYS.includes?(module_name)
+      if (directive_key = module_name) && ACTION_DIRECTIVE_KEYS.includes?(directive_key)
         is_local_action = module_name.includes?("local_action")
         if (mp = module_params) && (s = mp.as_s?)
           tokens = s.strip.split(/\s+/, 2)
@@ -3188,9 +3188,13 @@ module Krikri
           end
         elsif (mp2 = module_params) && (h = mp2.as_h?)
           action_mapping = true unless is_local_action
-          if action_mapping
+          # Real 2.19.11 prints the same mapping-form deprecation for a
+          # mapping `local_action:` as for a mapping `action:` (live
+          # verified), with the Origin at the mapping's first key; only
+          # the lazy-resolution flag above stays local_action-specific.
+          if action_mapping || is_local_action
             warn_action_mapping_deprecation(source_file, source_map,
-              task_source_prefix(source_prefix, index))
+              task_source_prefix(source_prefix, index), directive_key)
           end
           mod = ""
           # Ansible's dict-form action:/local_action: directive
@@ -3957,16 +3961,20 @@ module Krikri
     #   Use a string value for `action`.
     # with the Origin pointing at the mapping's FIRST KEY (5:5 = the
     # `module:` line's key column; the source map records the mapping's
-    # own start, which libyaml places at that first key). Deduped per
+    # own start, which libyaml places at that first key). Real also
+    # prints it for a mapping-form `local_action:` (same wording, since
+    # ansible-core's check only looks at the resolved action), so the
+    # source-map key is the directive AS WRITTEN
+    # (`action`/`local_action`/FQCN), not always `action`. Deduped per
     # origin like Display._deduplicate; without a resolvable source
     # position the Origin block is simply omitted, never the warning.
     @@action_mapping_deprecations = Set(String).new
     ACTION_DEPRECATION_MUTEX = Mutex.new
 
-    private def self.warn_action_mapping_deprecation(source_file : String?, source_map : YamlSourceMap?, prefix : String) : Nil
+    private def self.warn_action_mapping_deprecation(source_file : String?, source_map : YamlSourceMap?, prefix : String, directive_key : String) : Nil
       text = String.build do |io|
         io << "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n"
-        pos = source_map.try(&.at?("#{prefix}/action"))
+        pos = source_map.try(&.at?("#{prefix}/#{directive_key}"))
         if sf = source_file
           if pos && (line = pos[0]) > 0 && File.file?(sf) && (lines = source_lines(sf))
             col = pos[1]

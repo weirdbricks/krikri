@@ -47,4 +47,38 @@ describe "mapping-form action deprecation and lazy module resolution" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  # Real 2.19.11 prints the SAME mapping-form deprecation for a mapping
+  # `local_action:` as for a mapping `action:` - same wording, Origin at
+  # the mapping's first key - while krikri used to stay silent because
+  # only the lazy-resolution flag was gated on the directive.
+  it "warns at load for a mapping-form local_action with its own Origin key" do
+    playbook = File.tempname("local-action-mapping-deprecation", ".yml")
+    File.write(playbook, <<-YAML)
+      - name: repro
+        hosts: localhost
+        gather_facts: false
+        tasks:
+          - name: mapping local_action
+            local_action:
+              module: command
+              cmd: echo hi
+      YAML
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: stdout, error: stderr)
+    err = stderr.to_s
+
+    err.must_include("[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.")
+    # Same convention as the `action:` test above: the Origin is the
+    # mapping's first key (`module:`), not the `local_action:` line.
+    err.must_include("Origin: #{File.expand_path(playbook)}:7:9")
+    err.must_match(/\^ column \d+\n\nUse a string value for `action`\./)
+    # The warning must not break the task itself: the local_action still
+    # runs and the run reaches a PLAY RECAP.
+    stdout.to_s.must_include("PLAY RECAP")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
