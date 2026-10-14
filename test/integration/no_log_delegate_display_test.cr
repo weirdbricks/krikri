@@ -58,6 +58,24 @@ describe "no_log censoring and delegate_to display" do
     output.wont_include("another-secret-item")
   end
 
+  it "prints the censored result dict on a failed no_log loop item" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: failing secret loop
+            no_log: true
+            ansible.builtin.command: "false"
+            ignore_errors: true
+            loop:
+              - very-secret-item
+      YAML
+
+    output.must_include(%(failed: [localhost] (item=(censored due to no_log)) => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result", "changed": true}))
+    output.wont_include("very-secret-item")
+  end
+
   it "shows the delegation target on the host line" do
     inventory = File.tempname("no-log-delegate-inv", ".ini")
     File.write(inventory, "localhost ansible_connection=local\nnode1 ansible_connection=local\n")
