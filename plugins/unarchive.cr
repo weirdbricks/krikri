@@ -498,7 +498,7 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: msg)
       end
 
-      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files)
+      changed = handler == :tar ? tar_changed?(src, dest, exclude, include_files, keep_newer, extra_opts) : zip_changed?(src, dest, exclude, include_files, keep_newer)
 
       if changed
         result = handler == :tar ? extract_tar(src, dest, exclude, include_files, keep_newer, extra_opts) : extract_zip(src, dest, exclude, include_files, keep_newer)
@@ -673,11 +673,14 @@ module Krikri
     # Approximation of Ansible's much more involved zipinfo/
     # permission-based idempotency check: compares each member file's
     # content checksum (from inside the zip) against what's already at
-    # dest/member, ignoring members that are directories.
-    private def zip_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String)) : Bool
+    # dest/member, plus (Ansible 2.19 ZipArchive#is_unarchived) each
+    # member's zipinfo -T timestamp against the dest file's own mtime,
+    # ignoring members that are directories.
+    private def zip_changed?(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool = false) : Bool
       wanted = members(:zip, src).reject(&.ends_with?("/"))
       wanted = wanted.select { |member| include_files.empty? || include_files.includes?(member) }
       wanted = wanted.reject { |member| exclude.includes?(member) }
+      zip_timestamps = zip_member_timestamps(src)
 
       wanted.any? do |member|
         # A member escaping dest never exists on disk at any path we're
@@ -714,10 +717,125 @@ module Krikri
 
         next true unless remote_file_exists?(dest_path)
 
+        # Ansible's ZipArchive#is_unarchived compares the zipinfo -T
+        # timestamp against the existing file's mtime and reports changed
+        # (itemize `.f..t....??`) when they differ, re-extracting even
+        # though the CONTENT matches - krikri previously compared content
+        # only, so a second run over an already-extracted dest reported
+        # ok where real ansible reported changed. unzip's own written
+        # mtime and zipinfo -T's printed one can also legitimately
+        # differ (see #ansible_zip_epoch for the hour-wide DST case);
+        # ansible deliberately treats that as a change - its own
+        # comment: "this timestamp calculation has a rounding error
+        # somewhere... unzip and this timestamp can be one second off.
+        # When that happens, we report a change and re-unzip the file."
+        # stat's %Y (whole seconds) is equivalent to ansible's float
+        # compare against lstat mtime: unzip always writes whole-second
+        # mtimes.
+        if (zip_ts = zip_timestamps[member]?) &&
+           (dest_mtime = remote_exec("stat -c %Y #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip.to_i64?)
+          if keep_newer
+            # Ansible's keep_newer: an OLDER dest file is replaced
+            # (changed), a NEWER one is excluded from every further
+            # comparison - including the content check below - instead
+            # of being flagged.
+            if zip_ts > dest_mtime
+              next true
+            elsif zip_ts < dest_mtime
+              next false
+            end
+          elsif zip_ts != dest_mtime
+            next true
+          end
+        end
+
         archive_checksum = remote_exec("unzip -p #{shell_single_quote(src)} #{shell_single_quote(member)} 2>/dev/null | md5sum")[:stdout].strip
         dest_checksum = remote_exec("md5sum < #{shell_single_quote(dest_path)} 2>/dev/null")[:stdout].strip
         archive_checksum.split(" ").first? != dest_checksum.split(" ").first?
       end
+    end
+
+    # Ansible parses `zipinfo -T -s` with shape-strict checks: exactly 8
+    # whitespace-split fields (Python's split(None, 7), so a member name
+    # containing spaces survives intact in field 7), a permission string
+    # 7/8/10 chars long whose characters all come from "rwxstah-" - the
+    # checks that reject zipinfo's own "Archive:"/"files," header and
+    # footer lines - and a 15-char timestamp field.
+    private def zip_member_timestamps(src : String) : Hash(String, Int64)
+      timestamps = {} of String => Int64
+      remote_exec("zipinfo -T -s #{shell_single_quote(src)} 2>/dev/null")[:stdout].each_line do |line|
+        pcs = line.split(/\s+/, 8)
+        next unless pcs.size == 8
+        perms = pcs[0]
+        next unless perms.size.in?(7, 8, 10)
+        next unless "dl-?".includes?(perms[0]) && perms[1..].chars.all? { |perm_char| "rwxstah-".includes?(perm_char) }
+        next unless pcs[6].size == 15
+        timestamps[pcs[7]] = ansible_zip_epoch(pcs[6])
+      end
+      timestamps
+    end
+
+    # Ansible's ZipArchive#_valid_time_stamp: regex-parse
+    # "YYYYMMDD.HHMMSS", clamp years before 1980 (the DOS timestamp
+    # format's own floor) to 1980-01-01 and years past 2107 to
+    # 2107-12-31 23:59:59, then time.mktime - whose struct_time ansible
+    # builds with tm_isdst=0, NOT -1. That isdst=0 is the whole quirk:
+    # a zip's timestamp is a wall-clock time with no DST marking, but
+    # ansible forces the STANDARD-time interpretation, so for any member
+    # stored while DST was in effect the computed epoch lands one hour
+    # away from the epoch unzip actually wrote to the extracted file
+    # (unzip restores the UT extra field's exact epoch) - the
+    # guaranteed-mtime-mismatch that makes real ansible re-extract such
+    # zips on every run on a DST-zone host, and exactly what this mirror
+    # has to reproduce rather than "fix". (The 2038 clamp only fires on
+    # 32-bit time_t systems - ansible's _y2038_impacted - and krikri
+    # targets 64-bit Linux, where it never does.)
+    private def ansible_zip_epoch(timestamp : String) : Int64
+      match = timestamp.match(/^(\d{4})(\d{2})(\d{2})\.(\d{2})(\d{2})(\d{2})$/)
+      unless match
+        return ansible_mktime(1980, 1, 1, 0, 0, 0)
+      end
+
+      year = match[1].to_i
+      month = match[2].to_i
+      day = match[3].to_i
+      hour = match[4].to_i
+      minute = match[5].to_i
+      second = match[6].to_i
+
+      # Python's time.mktime rejects out-of-range fields (month 13, hour
+      # 24, ...) with ValueError, which ansible's try/except folds back
+      # to the 1980 epoch; glibc's mktime would instead normalize them,
+      # so the range has to be checked before the C call.
+      if !(1..12).includes?(month) || !(1..31).includes?(day) ||
+         hour > 23 || minute > 59 || second > 61
+        return ansible_mktime(1980, 1, 1, 0, 0, 0)
+      end
+
+      if year < 1980
+        ansible_mktime(1980, 1, 1, 0, 0, 0)
+      elsif year > 2107
+        ansible_mktime(2107, 12, 31, 23, 59, 59)
+      else
+        ansible_mktime(year, month, day, hour, minute, second)
+      end
+    end
+
+    # time.mktime's equivalent: local-TZ conversion with tm_isdst forced
+    # to 0 (see #ansible_zip_epoch for why that isdst=0 is deliberate).
+    # Runs in the plugin process's own local TZ - identical to the module
+    # process's TZ for ansible_connection=local (the only case where the
+    # archive and the compared files live on this machine anyway).
+    private def ansible_mktime(year : Int32, month : Int32, day : Int32, hour : Int32, minute : Int32, second : Int32) : Int64
+      tm = LibC::Tm.new
+      tm.tm_year = year - 1900
+      tm.tm_mon = month - 1
+      tm.tm_mday = day
+      tm.tm_hour = hour
+      tm.tm_min = minute
+      tm.tm_sec = second
+      tm.tm_isdst = 0
+      LibC.mktime(pointerof(tm))
     end
 
     private def extract_zip(src : String, dest : String, exclude : Array(String), include_files : Array(String), keep_newer : Bool) : Bool

@@ -107,6 +107,38 @@ private def fresh_dest(name : String) : String
   path
 end
 
+# Sets every extracted regular member's mtime to the epoch real
+# ansible's ZipArchive#is_unarchived computes for it: the zipinfo -T
+# "YYYYMMDD.HHMMSS" wall-clock time converted with tm_isdst=0 (local
+# STANDARD time, never DST). unzip itself restores the UT extra field's
+# exact epoch instead, so on a DST-zone host the freshly extracted mtime
+# sits a full hour away from what ansible's timestamp comparison expects
+# and a rerun reports changed (itemize `.f..t....??`) - real ansible
+# behavior this suite has to opt OUT of explicitly per fixture to assert
+# content-only idempotency. Symlinks are skipped: ansible never compares
+# timestamps for non-regular files.
+private def align_zip_member_mtimes(zip_path : String, dest : String)
+  `zipinfo -T -s #{zip_path}`.each_line do |line|
+    pcs = line.split(/\s+/, 8)
+    next unless pcs.size == 8
+    perms = pcs[0]
+    next unless perms[0]? == '-' && pcs[6].matches?(/\A\d{8}\.\d{6}\z/)
+    m = pcs[6].match!(/\A(\d{4})(\d{2})(\d{2})\.(\d{2})(\d{2})(\d{2})\z/)
+    tm = LibC::Tm.new
+    tm.tm_year = m[1].to_i - 1900
+    tm.tm_mon = m[2].to_i - 1
+    tm.tm_mday = m[3].to_i
+    tm.tm_hour = m[4].to_i
+    tm.tm_min = m[5].to_i
+    tm.tm_sec = m[6].to_i
+    tm.tm_isdst = 0
+    epoch = LibC.mktime(pointerof(tm)).to_i64
+    target = File.join(dest, pcs[7])
+    next if File.symlink?(target) || !File.exists?(target)
+    File.utime(Time.unix(epoch), Time.unix(epoch), target)
+  end
+end
+
 describe "unarchive plugin" do
   it "extracts a tar.gz, preserving directory structure" do
     dest = fresh_dest("tar-extract")
@@ -642,6 +674,10 @@ describe "unarchive plugin" do
   it "reports changed: false on an idempotent zip rerun" do
     dest = fresh_dest("zip-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+    # unzip restores the UT extra field's epoch, not the standard-time
+    # epoch ansible's zipinfo comparison computes - align before rerunning
+    # or a DST-zone host fails this purely on the mtime comparison.
+    align_zip_member_mtimes(File.join(TMP_DIR, "archive.zip"), dest)
 
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
 
@@ -661,8 +697,38 @@ describe "unarchive plugin" do
     dest = fresh_dest("zip-symlink-idempotent")
     PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "symlink.zip"), "dest" => dest})
     File.symlink?(File.join(dest, "link.txt")).must_equal(true)
+    # Only the regular member needs aligning - ansible never compares
+    # timestamps for non-regular (symlink) files.
+    align_zip_member_mtimes(File.join(TMP_DIR, "symlink.zip"), dest)
 
     result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "symlink.zip"), "dest" => dest})
+
+    result["changed"].as_bool.must_equal(false)
+  end
+
+  it "reports changed on a zip rerun whose member mtime diverges from the zip timestamp" do
+    # Regression: zip_changed? compared content checksums only, so a
+    # second run over an already-extracted dest reported ok even when the
+    # extracted file's mtime no longer matches the archive member's
+    # timestamp - real ansible 2.19 (ZipArchive#is_unarchived) re-extracts
+    # in that case and itemizes it as `.f..t....??`.
+    dest = fresh_dest("zip-mtime-changed")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+
+    # A time far from any fixture timestamp, valid on any host TZ.
+    File.utime(Time.unix(1_500_000_000), Time.unix(1_500_000_000), File.join(dest, "src", "a.txt"))
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+  end
+
+  it "reports changed: false on a zip rerun whose member mtime matches the zip timestamp" do
+    dest = fresh_dest("zip-mtime-equal")
+    PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
+    align_zip_member_mtimes(File.join(TMP_DIR, "archive.zip"), dest)
+
+    result = PluginSpecHelper.run("unarchive", {"src" => File.join(TMP_DIR, "archive.zip"), "dest" => dest})
 
     result["changed"].as_bool.must_equal(false)
   end
