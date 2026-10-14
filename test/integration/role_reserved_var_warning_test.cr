@@ -29,7 +29,8 @@ describe "reserved variable name warning in role defaults/vars files" do
       YAML
 
     output = IO::Memory.new
-    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+    # One real pipe for both streams: with two pipes the drain order is racy and the stderr-before-banner check flakes.
+    Process.run("sh", ["-c", "exec \"$0\" \"$@\" 2>&1", BINARY, "-i", INVENTORY, playbook], output: output, input: IO::Memory.new, chdir: src_dir)
     text = output.to_s
 
     text.must_include("[WARNING]: Found variable using reserved name 'remote_user'.")
