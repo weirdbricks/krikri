@@ -160,6 +160,15 @@ module Krikri
     end
 
     private def render_task_name_for_display(task : Task, host : Host) : String
+      # Real ansible-playbook strips the displayed name at both ends
+      # (2.19.11, live-verified: `name: "configure daemon "` prints
+      # `TASK [configure daemon]`, and a template rendering to an empty
+      # tail like "Install thing {{ v }}" with v="" prints `TASK [Install
+      # thing]`) - krikri used to print the raw whitespace verbatim.
+      untrimmed_task_name_for_display(task, host).strip
+    end
+
+    private def untrimmed_task_name_for_display(task : Task, host : Host) : String
       return task.name unless task.name.includes?("{{")
       # An unnamed task's header is its action spelling verbatim: real
       # prints `TASK [{{ pm }}]` for `action: "{{ pm }} ..."`, it never
