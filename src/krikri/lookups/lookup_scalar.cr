@@ -209,7 +209,14 @@ module Krikri
         regular << "all" if regular.empty?
 
         hosts = [] of String
-        regular.each { |pattern| inventory_match_one(pattern, groups).each { |host| hosts << host unless hosts.includes?(host) } }
+        # Real _enumerate_matches warns once per unique unmatched pattern
+        # (its _pattern_cache suppresses repeats within one manager, and
+        # the lookup builds a fresh manager per call, so the dedupe set
+        # is scoped to this call).
+        warned_patterns = Set(String).new
+        regular.each do |pattern|
+          inventory_match_one(pattern, groups, warned_patterns).each { |host| hosts << host unless hosts.includes?(host) }
+        end
         intersections.each do |pattern|
           allowed = inventory_match_one(pattern, groups)
           hosts = hosts.select { |host| allowed.includes?(host) }
@@ -255,34 +262,43 @@ module Krikri
       # carries glob metacharacters / is a ~-regex) over host names,
       # then the implicit-localhost fallback, then the subscript applied
       # INCLUSIVELY ([A:B] keeps B; [N] picks one, negatives allowed).
-      private def inventory_match_one(pattern : String, groups : Hash(String, Array(String))) : Array(String)
+      private def inventory_match_one(pattern : String, groups : Hash(String, Array(String)), warned_patterns : Set(String)? = nil) : Array(String)
         base, subscript = split_subscript(pattern)
-        matched = inventory_enumerate_matches(base, groups)
+        matched, matched_groups = inventory_enumerate_matches(base, groups)
+        # Real _enumerate_matches: a pattern that matched neither a group
+        # name nor a host name gets a "Could not match supplied host
+        # pattern" warning instead of silently yielding nothing. An empty
+        # but matched group stays silent, 'all' always matches, and an
+        # out-of-range subscript on matched hosts takes the error path
+        # instead - hence the check on the pre-subscript enumeration.
+        if warned_patterns && matched.empty? && !matched_groups && base != "all" && warned_patterns.add?(base)
+          STDERR.puts "[WARNING]: Could not match supplied host pattern, ignoring: #{base}"
+        end
         apply_host_subscript(matched, subscript)
       end
 
-      private def inventory_enumerate_matches(pattern : String, groups : Hash(String, Array(String))) : Array(String)
-        return groups["all"] || [] of String if pattern == "all"
+      private def inventory_enumerate_matches(pattern : String, groups : Hash(String, Array(String))) : {Array(String), Bool}
+        return {groups["all"] || [] of String, true} if pattern == "all"
         return inventory_regex_matches(pattern.lchop("~"), groups) if pattern.starts_with?("~")
 
         regex = fnmatch_regex(pattern)
         matching_groups = groups.keys.select { |name| name != "all" && regex.matches?(name) }
-        return matching_groups.flat_map { |name| groups[name] } if matching_groups.size > 0
+        return {matching_groups.flat_map { |name| groups[name] }, true} if matching_groups.size > 0
 
         # No group matched, or the pattern carries glob metacharacters -
         # Ansible also checks host names in that case (its own
         # "pattern might match host" branch).
         host_regex = fnmatch_regex(pattern)
-        (groups["all"] || [] of String).select { |host| host_regex.matches?(host) }
+        {(groups["all"] || [] of String).select { |host| host_regex.matches?(host) }, false}
       end
 
-      private def inventory_regex_matches(pattern : String, groups : Hash(String, Array(String))) : Array(String)
+      private def inventory_regex_matches(pattern : String, groups : Hash(String, Array(String))) : {Array(String), Bool}
         regex = Regex.new("^#{pattern}$")
         matching_groups = groups.keys.select { |name| name != "all" && regex.matches?(name) }
-        return matching_groups.flat_map { |name| groups[name] } if matching_groups.size > 0
-        (groups["all"] || [] of String).select { |host| regex.matches?(host) }
+        return {matching_groups.flat_map { |name| groups[name] }, true} if matching_groups.size > 0
+        {(groups["all"] || [] of String).select { |host| regex.matches?(host) }, false}
       rescue
-        [] of String
+        {[] of String, false}
       end
 
       private def split_subscript(pattern : String) : {String, {Int32, Int32?}?}
