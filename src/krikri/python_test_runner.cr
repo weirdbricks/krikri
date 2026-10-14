@@ -73,7 +73,11 @@ module Krikri
 
     # The set of test names exposed across *sources*. A source file that
     # fails to introspect (syntax error, no python3, a `tests()` that
-    # raises) contributes no names - never raises.
+    # raises) contributes no names - never raises. A file whose import
+    # raises additionally gets Ansible's "Skipping plugin" warning
+    # (Ansible prints one stderr line per unloadable file and keeps
+    # loading the rest); it is emitted only on a cache miss, i.e. once
+    # per file per process, matching Ansible's once-per-load behaviour.
     def test_names(sources : Array(String)) : Set(String)
       names = Set(String).new
       sources.each do |path|
@@ -95,6 +99,12 @@ module Krikri
         if result && result["ok"]?.try(&.as_bool?)
           result["names"]?.try(&.as_a?).try do |exposed|
             exposed.each { |exposed_name| set << exposed_name.to_s }
+          end
+          if skipped = result["skipped"]?.try(&.as_a?)
+            skipped.each do |entry|
+              error = entry["error"]?.try(&.as_s?) || "unknown error"
+              emit_skip_warning(path, error)
+            end
           end
         end
         @@names_cache[path] = {mtime, set}
@@ -130,6 +140,18 @@ module Krikri
     end
 
     @@names_cache = Hash(String, {Int64, Set(String)}).new
+
+    # Where "Skipping plugin" warnings go - STDERR in production,
+    # replaceable so a spec can capture the text without touching the
+    # process's STDERR.
+    class_property warning_sink : IO = STDERR
+
+    # Same plain, uncolored style as the other `[WARNING]:` lines
+    # (playbook_parser.cr); Ansible's wording has no trailing period and
+    # the path is absolute.
+    private def emit_skip_warning(path : String, error : String) : Nil
+      warning_sink.puts "[WARNING]: Skipping plugin (#{File.expand_path(path)}), cannot load: #{error}"
+    end
 
     # Runs the wrapper script below against one request. Returns the
     # parsed response JSON, or nil on ANY failure (no python3, nonzero
@@ -234,6 +256,20 @@ module Krikri
           return tests
 
 
+      def _load_all(paths):
+          # Ansible's PluginLoader warns about a plugin file that fails
+          # to import and keeps loading the rest, so one broken file
+          # must not take down its siblings' tests.
+          names = {}
+          skipped = []
+          for path in paths:
+              try:
+                  names.update(_plugin_tests(path))
+              except Exception as exc:
+                  skipped.append({"path": path, "error": str(exc)})
+          return names, skipped
+
+
       def _serialize(value):
           if isinstance(value, (set, frozenset)):
               return list(value)
@@ -244,11 +280,10 @@ module Krikri
 
       def main():
           payload = json.loads(sys.stdin.read())
-          names = {}
-          for path in payload.get("paths", []):
-              names.update(_plugin_tests(path))
+          names, skipped = _load_all(payload.get("paths", []))
           if payload.get("action") == "list":
-              sys.stdout.write(json.dumps({"ok": True, "names": sorted(names)}))
+              sys.stdout.write(json.dumps(
+                  {"ok": True, "names": sorted(names), "skipped": skipped}))
               return
           name = payload.get("name")
           func = names.get(name)
