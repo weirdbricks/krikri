@@ -2040,8 +2040,12 @@ module Krikri
           # oneline callback's aggregate line below already carries the
           # failure.
           if any_when_failed && !Krikri::Oneline.enabled?
-            connection_host = host.name
-            puts "fatal: [#{connection_host}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
+            # The task-level fatal closing a loop with a when:-failed
+            # item carries the delegated label too (CallbackBase.
+            # host_label reads the task keyword).
+            delegate_target = delegate_display_target(task, host, base_vars_context)
+            fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "fatal: [#{fatal_host_label}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
           end
           # A looped task with ignore_errors: that had at least one item
           # fail prints a single bare `...ignoring` after the per-item

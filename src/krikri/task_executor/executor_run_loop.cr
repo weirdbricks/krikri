@@ -629,7 +629,13 @@ module Krikri
         # generic chain is suppressed via the result's marker) and ride
         # the normal single-task failure pipeline (stats/halt/register).
         emit_loop_source_error_block(task, ex)
-        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context)
+        # exec_host rides along so the fatal line keeps the delegated
+        # label (a loop-source failure still prints [host -> delegate],
+        # CallbackBase.host_label reads the task keyword); the literal
+        # "undefined" a loop-variable delegate_to: leniently renders to
+        # before any item exists is dropped - real never templated
+        # delegate_to there either.
+        finish_single_task(task, host, loop_source_error_result(ex), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
         return
       rescue ex : WhenEvaluationError
         # Same shape execute_task_once's own WhenEvaluationError rescue
@@ -644,7 +650,7 @@ module Krikri
         # "msg": "Task failed: 'no_such_list' is undefined"}).
         prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
         emit_loop_error_chain(task, prefixed)
-        finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
+        finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
         return
       end
 
@@ -663,7 +669,7 @@ module Krikri
           # source rescue above.
           prefixed = ex.message.to_s.starts_with?("Task failed: ") ? ex.message.to_s : "Task failed: #{ex.message}"
           emit_loop_error_chain(task, prefixed)
-          finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context)
+          finish_single_task(task, host, loop_error_result(WhenEvaluationError.new(prefixed), task), vars_context: vars_context, exec_host: exec_host.name == "undefined" ? nil : exec_host)
           return
         end
         return
@@ -747,6 +753,26 @@ module Krikri
       fallback = Host.new(target_name, ENV["USER"]? || "root", 22)
       fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost" || target_name == "127.0.0.1"
       fallback
+    end
+
+    # The `-> target` label for display sites that have no already-
+    # resolved exec_host at hand (loop-source failure lines,
+    # include_vars:' own controller-side display paths, block-skip loop
+    # failures). Ansible's default callback stamps `host -> delegate` on
+    # every ok/changed/fatal line of a delegated task straight from the
+    # task keyword (CallbackBase.host_label), so the label exists even
+    # where the engine never built a connection - a loop-source failure
+    # or a failed_when:-suppressed include_vars: still prints it.
+    # Resolved leniently: nil when the delegate cannot be resolved at
+    # all (the plain host line, as before), and nil for the literal
+    # "undefined" a looped task's delegate_to: renders to before the
+    # loop variable is ever bound - a loop-source failure happens before
+    # any item exists, so real never templated delegate_to there either.
+    private def delegate_display_target(task : Task, host : Host, vars_context : Hash(String, JSON::Any)? = nil) : String?
+      return nil unless task.delegate_to
+      context = vars_context || (build_vars_context(task, host) rescue return nil)
+      delegate = (resolve_delegate_host(task, host, context) rescue return nil)
+      delegate != host && delegate.name != "undefined" ? delegate.name : nil
     end
 
     # Whether the task has any loop source at all - the same set
@@ -1156,6 +1182,12 @@ module Krikri
     private def swallow_when_error(task : Task, host : Host, ex : WhenEvaluationError, item_label : String? = nil, defer_stats : Bool = false, defer_display : Bool = false) : Bool
       msg = decorate_conditional_value_origin(task, ex.message || "Error while evaluating conditional", host)
       ignore_errors = resolve_task_ignore_errors(task, host: host)
+      # A delegated task's fatal/failed lines carry the `-> delegate`
+      # label even when the failure happened before any result pipeline
+      # ran (CallbackBase.host_label reads the task keyword) - real
+      # prints `fatal: [host -> delegate]`, not `fatal: [host]`.
+      delegate_target = delegate_display_target(task, host)
+      host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
       unless defer_stats
         if ignore_errors
           @results[host.name]["ok"] += 1
@@ -1182,7 +1214,7 @@ module Krikri
             puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"msg" => msg}.to_json))}".colorize(:red)
           else
             emit_loop_source_error_block(task, ex)
-            puts "fatal: [#{host.name}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
+            puts "fatal: [#{host_label}]#{suffix}: FAILED! => {\"msg\": #{msg.to_json}}".colorize(:red)
             puts "...ignoring".colorize(:red) if ignore_errors
           end
           register_name = task.register
@@ -1216,7 +1248,7 @@ module Krikri
           end
         elsif resolve_task_no_log(task)
           suffix = item_label ? " => (item=(censored due to no_log))" : ""
-          puts %(fatal: [#{host.name}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
+          puts %(fatal: [#{host_label}]#{suffix}: FAILED! => {"censored": "the output has been hidden due to the fact that 'no_log: true' was specified for this result"}).colorize(:red)
         elsif conditional_evaluation_failure?(msg)
           # ansible-core 2.19.11 (live-captured): a conditional-
           # evaluation failure prints a two-level [ERROR] chain block on
@@ -1230,19 +1262,19 @@ module Krikri
           emit_when_error_chain(task, msg, host) unless item_label
           display_msg = msg.starts_with?("Task failed: ") ? msg : "Task failed: #{msg}"
           if item_label
-            puts "failed: [#{host.name}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            puts "failed: [#{host_label}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
           elsif debug_module?(task)
             # Task-level conditional failures on a debug: dump the msg
             # alone - real 2.19.11 shows {"msg": "Task failed: ..."} with
             # no changed key (live-verified; see when_error_result).
-            puts "fatal: [#{host.name}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
+            puts "fatal: [#{host_label}]: FAILED! => {\"msg\": #{display_msg.to_json}}".colorize(:red)
           else
             # Every other module class keeps changed: false in the same
             # dump (live-verified, module-keyed; see when_error_result).
-            puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
+            puts "fatal: [#{host_label}]: FAILED! => {\"changed\": false, \"msg\": #{display_msg.to_json}}".colorize(:red)
           end
         else
-          puts "fatal: [#{host.name}]#{suffix}: FAILED! => #{msg}".colorize(:red)
+          puts "fatal: [#{host_label}]#{suffix}: FAILED! => #{msg}".colorize(:red)
         end
         puts "...ignoring".colorize(:red) if ignore_errors && !Krikri::Oneline.enabled?
       end

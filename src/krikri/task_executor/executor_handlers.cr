@@ -475,7 +475,7 @@ module Krikri
         executed_count += 1
         any_changed ||= result["changed"]?.try(&.as_bool) || false
         any_failed ||= Krikri.result_failed_flag(result)
-        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, source_task: handler, loop_item: item, loop_var_name: loop_var)
+        ResultDisplay.display_result(host, result, @diff_mode, item_label: item_display(item), ignore_errors: resolve_task_ignore_errors(handler, base_vars_context), no_log: resolve_task_no_log(handler, base_vars_context), module_name: handler.module_name, delegate_target: delegate_display_target(handler, host, base_vars_context), source_task: handler, loop_item: item, loop_var_name: loop_var)
       end
 
       # A looped handler whose every item was skipped (per-item when:,
@@ -561,7 +561,9 @@ module Krikri
         message = "included task files must contain a list of tasks"
         ErrorBlock.emit_stderr(ErrorBlock::Node.new(message))
         include_json = handler.include_file_native.try(&.to_json) || handler.include_file.to_s.to_json
-        puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+        delegate_target = delegate_display_target(handler, host, vars_context)
+        fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
         @results[host.name]["failed"] += 1
         halt_if_failed(handler, host, true, force_halt: true)
         return {resolved_path, [] of Task, true}

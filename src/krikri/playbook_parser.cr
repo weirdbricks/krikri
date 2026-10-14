@@ -4348,6 +4348,16 @@ module Krikri
       task.changed_when = task_hash["changed_when"]?.try { |v| condition_to_string(v) }
       task.failed_when = task_hash["failed_when"]?.try { |v| condition_to_string(v) }
 
+      # delegate_to: never reached this dedicated parser either - the
+      # generic #parse_task path parses it, but include_vars: tasks were
+      # left with a nil delegate_to, so their result lines printed
+      # `[host]` where real stamps `host -> delegate` on every ok/fatal
+      # line of a delegated task (CallbackBase.host_label reads the task
+      # keyword even though the action itself always runs controller-
+      # side; practical-ansible.nginx_project's "Read npm project meta",
+      # `delegate_to: localhost`, issue #89).
+      task.delegate_to = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
+
       # `register:` was never parsed here at all - unlike the generic
       # #parse_task path (which sets task.register for every OTHER
       # module), this dedicated include_vars: parser only calls
@@ -4874,6 +4884,28 @@ module Krikri
       end
     end
 
+    # parse_block_task's helper - fills the gap only: a descendant that
+    # sets its OWN delegate_to: keeps it (Ansible's precedence is task >
+    # block, the same fill-the-gap rule the import_tasks: handling above
+    # applies), while the enclosing block's value flows down through
+    # nested block:/rescue:/always: wrappers - so a doubly-nested block
+    # with no delegate_to: of its own still inherits the outermost one.
+    # Without this, tasks nested in a delegated block ran on the play
+    # host and printed `ok: [testhost]` where Ansible prints
+    # `ok: [testhost -> localhost]` (GitHub issue #89).
+    private def self.propagate_delegate_to_descendants(tasks : Array(Task), delegate_to : String) : Nil
+      tasks.each do |child|
+        child.delegate_to = delegate_to if child.delegate_to.nil?
+        # A child block's own (possibly just-filled) value is what its
+        # own children inherit - an inner block that set its own
+        # delegate_to: must override the outer one for its subtree.
+        effective = child.delegate_to || delegate_to
+        propagate_delegate_to_descendants(child.block_tasks || [] of Task, effective)
+        propagate_delegate_to_descendants(child.rescue_tasks || [] of Task, effective)
+        propagate_delegate_to_descendants(child.always_tasks || [] of Task, effective)
+      end
+    end
+
     private def self.parse_block_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), block_yaml : Array(YAML::Any), play : Play, file_dir : String, known_vars : Hash(String, JSON::Any)? = nil, role_path : String? = nil, playbook_dir : String? = nil, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0) : Task
       task = Task.new(name, "_block")
 
@@ -4969,6 +5001,21 @@ module Krikri
       prepend_block_name_to_descendants(task.block_tasks || [] of Task, name)
       prepend_block_name_to_descendants(task.rescue_tasks || [] of Task, name)
       prepend_block_name_to_descendants(task.always_tasks || [] of Task, name)
+
+      # A block's delegate_to: is inherited by every task nested inside it
+      # (block:/rescue:/always:), the child's own delegate_to: winning -
+      # Ansible runs and displays them against the delegated host
+      # (`ok: [host -> localhost]`). The block Task object itself never
+      # executes a module (execute_block only runs its children and
+      # flatten_tasks drops the container), so stamping the value on the
+      # block too is display-neutral; it exists so a NESTED block's
+      # children inherit this block's value through the recursion above.
+      if block_delegate = task_hash["delegate_to"]?.try { |v| safe_yaml_to_string(v) }
+        task.delegate_to = block_delegate
+        propagate_delegate_to_descendants(task.block_tasks || [] of Task, block_delegate)
+        propagate_delegate_to_descendants(task.rescue_tasks || [] of Task, block_delegate)
+        propagate_delegate_to_descendants(task.always_tasks || [] of Task, block_delegate)
+      end
 
       # Block-level settings gate/apply to the block as a whole; each
       # nested task still evaluates its own when:/tags:/etc in addition.

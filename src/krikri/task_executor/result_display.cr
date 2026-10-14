@@ -194,11 +194,12 @@ module Krikri
       emit_display_warning(text)
     end
 
-    # A collection-redirect deprecation (community.mysql.<module> ->
-    # ansible.mysql.<module>): one [DEPRECATION WARNING] console line per
-    # distinct message per run through emit_core_deprecation, exactly like
-    # Ansible's Display. nil module names (pseudo-tasks) and non-redirected
-    # modules are no-ops.
+    # A collection-level plugin deprecation (a community.mysql ->
+    # ansible.mysql redirect, community.general.proxmox_kvm's
+    # moved-content notice): one [DEPRECATION WARNING] console line per
+    # distinct message per run through emit_core_deprecation, exactly
+    # like Ansible's Display. nil module names (pseudo-tasks) and
+    # non-deprecated modules are no-ops.
     def self.emit_module_redirect_deprecation(module_name : String?) : Nil
       return unless module_name
       if text = Krikri::PlaybookParser.redirect_deprecation_text(module_name)

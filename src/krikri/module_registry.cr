@@ -610,57 +610,96 @@ module Krikri
                                      "Please migrate to community.docker.docker_compose_v2. " \
                                      "This feature was removed from collection 'community.docker' version 4.0.0."
 
-    # community.mysql 5.x's own meta/runtime.yml plugin_routing redirects
-    # these module FQCNs to their ansible.mysql.* homes with a deprecation
-    # (removal_version 6.0.0, warning_text "Use ansible.mysql.<module>
-    # instead.") - live-verified against the installed community.mysql
-    # 5.0.2's meta/runtime.yml and ansible-core 2.19.11's console
-    # output (mysql_replication/mysql_role redirect the same way but are
-    # not krikri-supported modules, so they are deliberately absent: an
-    # unsupported module's divergence is out of scope per the coverage
-    # bar). Real resolves a task's module at task-load time and
-    # record_deprecation warns there - once per distinct message per run
-    # (the Display dedups), with the one-time
+    # Collection-level plugin deprecations that fire at task-load time,
+    # keyed by module FQCN: the collection's own meta/runtime.yml
+    # plugin_routing deprecation entries - a redirect's warning_text or
+    # a moved-content notice - plus the collection that carries the
+    # deprecation and the version it will be removed in, live-verified
+    # against ansible-core 2.19.11's console output and the installed
+    # collections' meta/runtime.yml data. Real resolves a task's module
+    # at task-load time and record_deprecation warns there - once per
+    # distinct message per run (the Display dedups), with the one-time
     # "Deprecation warnings can be disabled" hint before the first - and
     # every task result the module actually produced carries the
     # `deprecations` entry (TaskExecutor's DeferredWarningContext). The
     # bare (non-FQCN) spellings resolve through MODULE_SEARCH_COLLECTIONS
-    # to the community.mysql FQCN and warn identically.
-    COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS = {
-      "community.mysql.mysql_db"        => "ansible.mysql.mysql_db",
-      "community.mysql.mysql_info"      => "ansible.mysql.mysql_info",
-      "community.mysql.mysql_query"     => "ansible.mysql.mysql_query",
-      "community.mysql.mysql_user"      => "ansible.mysql.mysql_user",
-      "community.mysql.mysql_variables" => "ansible.mysql.mysql_variables",
+    # and warn with the RESOLVED FQCN.
+    #
+    # Only deprecations observable in krikri's own runs belong here,
+    # whatever the module's support state: the community.mysql entries
+    # redirect to their ansible.mysql.* homes (removal_version 6.0.0,
+    # warning_text "Use ansible.mysql.<module> instead." - installed
+    # community.mysql 5.0.2; mysql_replication/mysql_role redirect the
+    # same way but are not krikri-supported modules, so they are
+    # deliberately absent: an unsupported module's divergence is out of
+    # scope per the coverage bar). community.general.proxmox_kvm is
+    # ALSO not krikri-supported - only its parse-time stderr
+    # deprecation is observable (the inoxio.proxmox_vms role round):
+    # community.general moved all proxmox content to community.proxmox
+    # and its meta/runtime.yml marks proxmox_kvm deprecated with
+    # removal_version 15.0.0, warning_text naming the new home.
+    REDIRECT_DEPRECATIONS = {
+      "community.mysql.mysql_db"        => {warning_text: "Use ansible.mysql.mysql_db instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_info"      => {warning_text: "Use ansible.mysql.mysql_info instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_query"     => {warning_text: "Use ansible.mysql.mysql_query instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_user"      => {warning_text: "Use ansible.mysql.mysql_user instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.mysql.mysql_variables" => {warning_text: "Use ansible.mysql.mysql_variables instead.", collection: "community.mysql", version: "6.0.0"},
+      "community.general.proxmox_kvm"   => {warning_text: "The proxmox content has been moved to community.proxmox.", collection: "community.general", version: "15.0.0"},
     }
 
+    # The table entry for a module name, together with the FQCN the
+    # warning must carry: an as-written FQCN matches the table directly,
+    # a bare (non-FQCN) spelling is qualified through
+    # MODULE_SEARCH_COLLECTIONS - real's loader resolves the bare name
+    # the same way before record_deprecation fires, so the console line
+    # echoes the resolved FQCN, never the as-written spelling. The
+    # qualification matters only for names krikri does not implement
+    # natively (proxmox_kvm): task.module_name keeps the as-written
+    # bare name when resolve_module_name comes up empty, so without it
+    # the bare spelling would go unwarned; a supported module's bare
+    # spelling already arrives here resolved.
+    private def self.redirect_deprecation_lookup(name : String) : {String, NamedTuple(warning_text: String, collection: String, version: String)}?
+      if name.includes?(".")
+        entry = REDIRECT_DEPRECATIONS[name]?
+        return entry ? {name, entry} : nil
+      end
+      MODULE_SEARCH_COLLECTIONS.each do |collection|
+        qualified = "#{collection}.#{name}"
+        if entry = REDIRECT_DEPRECATIONS[qualified]?
+          return {qualified, entry}
+        end
+      end
+      nil
+    end
+
     # The exact console [DEPRECATION WARNING] text ansible-core
-    # 2.19.11 prints for one of the redirects above (live-verified: the
-    # loader's warning_text joined onto the "has been deprecated." stem,
-    # followed by Display's removal-version tail naming the collection and
-    # version). nil for every name that is not one of the redirects.
-    def self.redirect_deprecation_text(fqcn : String) : String?
-      target = COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS[fqcn]? || return nil
-      "#{fqcn} has been deprecated. Use #{target} instead. " \
-      "This feature will be removed from collection 'community.mysql' version 6.0.0."
+    # 2.19.11 prints for one of the deprecations above (live-verified:
+    # the loader's warning_text joined onto the "has been deprecated."
+    # stem, followed by Display's removal-version tail naming the
+    # collection and version). nil for every name that is not one of
+    # the deprecations.
+    def self.redirect_deprecation_text(name : String) : String?
+      fqcn, entry = redirect_deprecation_lookup(name) || return nil
+      "#{fqcn} has been deprecated. #{entry[:warning_text]} " \
+      "This feature will be removed from collection '#{entry[:collection]}' version #{entry[:version]}."
     end
 
     # The `deprecations` result entry real attaches to every executed
-    # task result for a redirected module (live-verified via register:
+    # task result for a deprecated module (live-verified via register:
     # r.deprecations == [{"msg": "community.mysql.mysql_info has been
     # deprecated. Use ansible.mysql.mysql_info instead.",
     # "collection_name": "community.mysql", "version": "6.0.0",
     # "deprecator": {"resolved_name": "community.mysql", "type": null}}]
     # - note the msg carries NO removal tail; only the console line
-    # does). nil for every name that is not one of the redirects.
-    def self.redirect_deprecation_result_entry(fqcn : String) : JSON::Any?
-      target = COMMUNITY_MYSQL_REDIRECT_DEPRECATIONS[fqcn]? || return nil
+    # does). nil for every name that is not one of the deprecations.
+    def self.redirect_deprecation_result_entry(name : String) : JSON::Any?
+      fqcn, entry = redirect_deprecation_lookup(name) || return nil
       JSON.parse({
-        "msg"             => "#{fqcn} has been deprecated. Use #{target} instead.",
-        "collection_name" => "community.mysql",
-        "version"         => "6.0.0",
+        "msg"             => "#{fqcn} has been deprecated. #{entry[:warning_text]}",
+        "collection_name" => entry[:collection],
+        "version"         => entry[:version],
         "deprecator"      => {
-          "resolved_name" => "community.mysql",
+          "resolved_name" => entry[:collection],
           "type"          => nil,
         },
       }.to_json)

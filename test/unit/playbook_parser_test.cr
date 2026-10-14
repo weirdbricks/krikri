@@ -1709,6 +1709,63 @@ describe Krikri::PlaybookParser do
       inner.become_user.must_equal("someoneelse")
     end
 
+    # GitHub issue #89: a delegate_to: set at the BLOCK level was never
+    # inherited by the nested tasks at all - each child ran on the play
+    # host and printed `ok: [testhost]` where ansible-core prints
+    # `ok: [testhost -> localhost]`. Ansible inherits a
+    # block's delegate_to: into every task under block:/rescue:/always:,
+    # with the child's own delegate_to: winning (task > block).
+    it "inherits a block-level delegate_to: onto every task nested in block:/rescue:/always:" do
+      task = single_task(<<-YAML)
+        - name: my block
+          delegate_to: localhost
+          block:
+            - name: inner (no delegate of its own)
+              ansible.builtin.debug:
+                msg: hi
+          rescue:
+            - name: rescue (no delegate of its own)
+              ansible.builtin.debug:
+                msg: recovering
+          always:
+            - name: always (no delegate of its own)
+              ansible.builtin.debug:
+                msg: cleaning up
+        YAML
+
+      task.delegate_to.must_equal("localhost")
+      task.block_tasks.as(Array(Krikri::Task)).first.delegate_to.must_equal("localhost")
+      task.rescue_tasks.as(Array(Krikri::Task)).first.delegate_to.must_equal("localhost")
+      task.always_tasks.as(Array(Krikri::Task)).first.delegate_to.must_equal("localhost")
+    end
+
+    it "lets a child task's own delegate_to: override the enclosing block's, including through nested blocks" do
+      task = single_task(<<-YAML)
+        - name: my block
+          delegate_to: localhost
+          block:
+            - name: inner (keeps the block's delegate)
+              ansible.builtin.debug:
+                msg: hi
+            - name: inner (its own delegate)
+              delegate_to: otherhost
+              ansible.builtin.debug:
+                msg: hi
+            - name: nested block (no delegate of its own)
+              block:
+                - name: innermost (no delegate of its own)
+                  ansible.builtin.debug:
+                    msg: hi
+        YAML
+
+      children = task.block_tasks.as(Array(Krikri::Task))
+      children[0].delegate_to.must_equal("localhost")
+      children[1].delegate_to.must_equal("otherhost")
+      nested = children[2]
+      nested.delegate_to.must_equal("localhost")
+      nested.block_tasks.as(Array(Krikri::Task)).first.delegate_to.must_equal("localhost")
+    end
+
     it "leaves rescue_tasks/always_tasks nil when not specified" do
       task = single_task(<<-YAML)
         - name: my block
