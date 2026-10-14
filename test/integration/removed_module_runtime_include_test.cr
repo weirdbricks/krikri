@@ -76,7 +76,7 @@ describe "removed module reached at run time through a dynamic include" do
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"reason\": ", output)
     output.must_include("failed=1", output)
     output.must_include("PLAY RECAP", output)
-    fatal_lines = output.lines.select(&.starts_with?("fatal: [localhost]"))
+    fatal_lines = output.lines.select(&.includes?("fatal: [localhost]"))
     fatal_lines.size.must_equal(1, output)
     fatal_lines.first.wont_include("\"include\"", output)
   end
