@@ -1344,6 +1344,59 @@ describe Krikri::ConditionalEvaluator do
       end
     end
 
+    # Issue #73 (vaibhavpage.ansible_proxify): the "True"/"False"
+    # carve-out above exists for the string-ROUND-TRIPPED artifact of a
+    # whole-value boolean template, but it also accepted whole-value
+    # templates whose EXPRESSION genuinely yields a string - ansible-core
+    # 2.19's native typing keeps that string type through variable
+    # storage and fails the task ("derived from value of type 'str'"),
+    # where this engine coerced the rendered text back to a bool and ran
+    # (or skipped) instead. Jinja's `and`/`or` return an OPERAND, never a
+    # bool, so `p and 'x'` on a truthy `p` is the string 'x'.
+    it "raises for a whole-value template whose expression yields a string ({{ 'True' }})" do
+      v = Hash(String, JSON::Any).new
+      v["c"] = JSON::Any.new("{{ 'True' }}")
+      ex = assert_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("c", v, strict: true, raise_undefined: true)
+      end
+      ex.message.must_match(/type 'str'/)
+    end
+
+    it "raises for a whole-value template ending in a string `and`/`or` operand" do
+      v = Hash(String, JSON::Any).new
+      v["p"] = JSON::Any.new("http://x")
+      v["q"] = JSON::Any.new("")
+      v["a"] = JSON::Any.new("{{ p and 'x' }}")
+      v["d"] = JSON::Any.new("{{ p or q }}")
+      ex = assert_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("a", v, strict: true, raise_undefined: true)
+      end
+      ex.message.must_match(/type 'str'/)
+      ex = assert_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("d", v, strict: true, raise_undefined: true)
+      end
+      ex.message.must_match(/type 'str'/)
+    end
+
+    it "raises for a whole-value `| to_json` template (vaibhavpage.ansible_proxify's proxify_it)" do
+      v = Hash(String, JSON::Any).new
+      v["proxify_it"] = JSON::Any.new("{{ (proxy_env is defined and proxy_env.http_proxy is defined) | to_json }}")
+      ex = assert_raises(Krikri::ConditionalEvaluator::ConditionalBooleanError) do
+        Krikri::ConditionalEvaluator.evaluate("proxify_it", v, strict: true, raise_undefined: true)
+      end
+      ex.message.must_match(/type 'str'/)
+    end
+
+    it "still passes a whole-value template whose expression yields a REAL bool" do
+      v = Hash(String, JSON::Any).new
+      v["p"] = JSON::Any.new("http://x")
+      v["b"] = JSON::Any.new("{{ p != '' }}")
+      v["flag"] = JSON::Any.new(true)
+      v["wrapped"] = JSON::Any.new("{{ flag }}")
+      Krikri::ConditionalEvaluator.evaluate("b", v, strict: true, raise_undefined: true).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("wrapped", v, strict: true, raise_undefined: true).must_equal(true)
+    end
+
     it "raises when an 'or' chain of all-falsy non-boolean operands returns the LAST one, matching real Python semantics" do
       # Real bug found via stackhpc.systemd_networkd's own `when:
       # systemd_networkd_network or systemd_networkd_link or
