@@ -94,6 +94,15 @@ module Krikri
       true
     end
 
+    # Same dedup and STDERR routing as emit_stderr, for a block already
+    # rendered at its raise site (a RemovedModuleError's render carries
+    # the Origin context the raise site built from the source map).
+    def self.emit_rendered_stderr(text : String) : Bool
+      return false unless @@seen.add?(text)
+      STDERR.print text
+      true
+    end
+
     # Test hook: forget all displayed blocks.
     def self.reset_seen : Nil
       @@seen.clear

@@ -236,6 +236,14 @@ module Krikri
           # is the one path that made the pre-0.9.600 parse-time check
           # miss the case entirely.
           raise ex
+        rescue ex : RemovedModuleError
+          # A tombstone-removed module reached at RUN time through the
+          # included file is the include task's own fatal failure in
+          # Ansible (one fatal: line per host, failed=1, play halts for
+          # that host, rc=2) - not the whole-run load refusal a top-level
+          # occurrence is, so this must not ride the UnresolvedModuleError
+          # bypass below.
+          fail_include_removed_module(task, group_hosts, ex)
         rescue ex : UnresolvedModuleError
           # Same bypass, same reason: an included file's task naming a
           # module Ansible can't resolve anywhere aborts the whole
@@ -2144,6 +2152,51 @@ module Krikri
       halt_if_failed(task, host, true, force_halt: true)
     end
 
+    # A tombstone-removed module reached at RUN time through include_tasks:/
+    # include_role: is the include task's own fatal failure in Ansible
+    # (live-verified vs 2.19.x): the [ERROR]+Origin block goes to STDERR
+    # once even with several hosts, then one fatal: line per host -
+    # include_tasks dumps {"changed": false, "include": <as-written>,
+    # "reason": <custom message>}, include_role dumps only
+    # {"changed": false, "reason": ...} - failed=1 in the recap, the play
+    # halts for that host, ignore_errors does NOT apply (rc=2).
+    private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError) : Nil
+      if render = ex.render
+        ErrorBlock.emit_rendered_stderr(render)
+      else
+        ErrorBlock.emit_stderr(ErrorBlock::Node.new(ex.message || "module has been removed"))
+      end
+      include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
+      hosts.each do |host|
+        if Krikri::Oneline.enabled?
+          puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => ex.message || ""}.to_json))}".colorize(:red)
+        else
+          puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
+        end
+        @results[host.name]["failed"] += 1
+        halt_if_failed(task, host, true, force_halt: true)
+      end
+    end
+
+    # include_role:'s removed-module fatal carries only changed+reason -
+    # no "include" key (unlike include_tasks above, live-verified vs
+    # 2.19.x); no "Failed to load" text either.
+    private def fail_include_role_removed_module(task : Task, host : Host, ex : RemovedModuleError) : Nil
+      if render = ex.render
+        ErrorBlock.emit_rendered_stderr(render)
+      else
+        ErrorBlock.emit_stderr(ErrorBlock::Node.new(ex.message || "module has been removed"))
+      end
+      connection_host = host.name
+      if Krikri::Oneline.enabled?
+        puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => ex.message || ""}.to_json))}".colorize(:red)
+      else
+        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
+      end
+      @results[host.name]["failed"] += 1
+      halt_if_failed(task, host, true, force_halt: true)
+    end
+
     # include_role:'s own boolean keyword (public/allow_duplicates/
     # rolespec_validate) whose value is not convertible to a Python bool.
     # Ansible 2.19.11 (live-verified): this is an ORDINARY task failure, not
@@ -2424,6 +2477,12 @@ module Krikri
           task.role_default_origins,
           include_role_var_origins
         )
+      rescue ex : RemovedModuleError
+        # A tombstone-removed module inside the role's own tasks is the
+        # include_role task's own fatal failure in Ansible, like the
+        # role-not-found case below - not the whole-run load refusal.
+        fail_include_role_removed_module(task, host, ex)
+        return
       rescue ex : UnresolvedModuleError
         # Same bypass as HandlerNotFoundError's - an include_role:'d
         # role whose own tasks name a module Ansible can't resolve
