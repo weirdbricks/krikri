@@ -1079,6 +1079,17 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     end
   end
 
+  it "extract reports an undefined variable in morekeys before a container miss" do
+    # ansible-core 2.19.11: `extract(hostvars, ['apps', app.value.a])` with
+    # `app` undefined fails "'app' is undefined", not the 'apps' miss.
+    v = Hash(String, JSON::Any).new
+    v["hostvars"] = JSON.parse(%({"host-a": {"node_ip": "10.0.0.1"}}))
+    vars_engine = Krikri::VariableSubstitutor::FilterEngine.new(v)
+    assert_raises_message(Exception, "'app' is undefined") do
+      vars_engine.apply(JSON::Any.new("host-a"), "extract(hostvars, ['apps', app.value.a])")
+    end
+  end
+
   it "extract raises on an out-of-range list index, with Ansible's wording" do
     # Phase-3 slice 4: ansible-core 2.19.11 words a list miss with
     # the uniform getitem message (live-verified: `{{ 5 | extract(clist) }}`

@@ -1340,6 +1340,21 @@ module Krikri
           end
           keys = [value]
           if morekeys_arg = args[1]?
+            # Ansible reports an undefined variable inside morekeys
+            # ("'app' is undefined") before walking the container, so a miss
+            # on an earlier key never masks it.
+            pending = begin
+              KrikriJinja.evaluate_expression_value(morekeys_arg, @vars || Hash(String, JSON::Any).new)
+            rescue e : KrikriJinja::TemplateError
+              raise UndefinedVariableError.new(e.raw_message) if e.kind == KrikriJinja::ErrorKind::Undefined
+              nil
+            end
+            pending_items = pending.try { |any| any.raw.as?(Array) || [any] } || [] of KrikriJinja::AnyValue
+            pending_items.each do |item|
+              if (undef = item.raw.as?(KrikriJinja::Undefined))
+                raise UndefinedVariableError.new(KrikriJinja.undefined_message(undef))
+              end
+            end
             morekeys = resolve_expression(morekeys_arg)
             # A null morekeys is Ansible's None: absent, not a
             # key (live-verified: `x | extract(mapping, none)` ->
