@@ -1604,6 +1604,12 @@ unless unreachable_hosts.empty?
 end
 
 unless unavailable_modules_found.empty?
+  # Same wording as the parse-time check, so tooling that reads the log (the
+  # role tester's COMMUNITY_MODULE_MISSING reclassification) sees which
+  # modules this run skipped. The parse-time warning skips these modules.
+  unavailable_modules_found.to_a.sort.each do |module_name|
+    puts "uses unimplemented plugin: #{module_name}"
+  end
   exit 4
 end
 
