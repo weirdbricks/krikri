@@ -2161,11 +2161,7 @@ module Krikri
     # {"changed": false, "reason": ...} - failed=1 in the recap, the play
     # halts for that host, ignore_errors does NOT apply (rc=2).
     private def fail_include_removed_module(task : Task, hosts : Array(Host), ex : RemovedModuleError) : Nil
-      if render = ex.render
-        ErrorBlock.emit_rendered_stderr(render)
-      else
-        ErrorBlock.emit_stderr(ErrorBlock::Node.new(ex.message || "module has been removed"))
-      end
+      emit_include_removed_module_block(ex)
       include_json = task.include_file_native.try(&.to_json) || task.include_file.to_s.to_json
       hosts.each do |host|
         if Krikri::Oneline.enabled?
@@ -2178,15 +2174,29 @@ module Krikri
       end
     end
 
+    # Unlike the load-time refusal (message once, then Origin), the
+    # include task's failure is a wrapped exception, so Ansible prints the
+    # message three times: headline, blank, the message, blank,
+    # "<<< caused by >>>", blank, the message, then the Origin block
+    # (live-verified vs 2.19.x with a pty).
+    private def emit_include_removed_module_block(ex : RemovedModuleError) : Nil
+      message = ex.message || "module has been removed"
+      headline = "[ERROR]: #{message}\n"
+      wrapped = "[ERROR]: #{message}\n\n#{message}\n\n<<< caused by >>>\n\n#{message}\n"
+      if (render = ex.render) && render.starts_with?(headline)
+        ErrorBlock.emit_rendered_stderr(wrapped + render[headline.size..])
+      elsif render
+        ErrorBlock.emit_rendered_stderr(render)
+      else
+        ErrorBlock.emit_rendered_stderr(wrapped + "\n")
+      end
+    end
+
     # include_role:'s removed-module fatal carries only changed+reason -
     # no "include" key (unlike include_tasks above, live-verified vs
     # 2.19.x); no "Failed to load" text either.
     private def fail_include_role_removed_module(task : Task, host : Host, ex : RemovedModuleError) : Nil
-      if render = ex.render
-        ErrorBlock.emit_rendered_stderr(render)
-      else
-        ErrorBlock.emit_stderr(ErrorBlock::Node.new(ex.message || "module has been removed"))
-      end
+      emit_include_removed_module_block(ex)
       connection_host = host.name
       if Krikri::Oneline.enabled?
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => ex.message || ""}.to_json))}".colorize(:red)
