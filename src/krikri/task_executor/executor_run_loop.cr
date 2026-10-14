@@ -1054,9 +1054,11 @@ module Krikri
       # print is deferred and emitted by execute_task when it consumes the
       # nil (skipped) result from the batch cache, in proper task order.
       unless defer_display
-        # no_log censors the loop item on the skipping line too (Ansible prints `(item=(censored due to no_log))` - the item
-        # can itself be the secret)
-        shown = resolve_task_no_log(task) ? "(censored due to no_log)" : item_label
+        # Ansible only adds the `=> (item=...)` suffix when a loop item exists;
+        # with no loop it prints a bare `skipping: [host]` even under no_log
+        # (there is no item to censor), while loop items print the censored
+        # item because the item can itself be the secret.
+        shown = item_label ? (resolve_task_no_log(task) ? "(censored due to no_log)" : item_label) : nil
         suffix = shown ? " => (item=#{shown}) " : ""
         if Krikri::Oneline.enabled?
           # A plain skip renders the bare `host | SKIPPED` line; a loop
