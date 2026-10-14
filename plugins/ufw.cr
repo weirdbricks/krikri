@@ -103,7 +103,10 @@ module Krikri
     # shell PATH gap.
     REQUIRED_BINARIES = %w[ufw grep]
     EXTRA_BIN_DIRS    = %w[/sbin /usr/sbin /bin /usr/bin]
-    USER_RULES_FILES  = %w[
+    # get_bin_path's message lists only PATH plus the sbin dirs; /bin and
+    # /usr/bin are probed here but never reported.
+    REPORTED_EXTRA_DIRS = %w[/sbin /usr/sbin /usr/local/sbin]
+    USER_RULES_FILES    = %w[
       /lib/ufw/user.rules /lib/ufw/user6.rules
       /etc/ufw/user.rules /etc/ufw/user6.rules
       /var/lib/ufw/user.rules /var/lib/ufw/user6.rules
@@ -581,7 +584,7 @@ module Krikri
         printf 'bin:%s=%s\n' "$name" "$found"
       done
       searched=""
-      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{EXTRA_BIN_DIRS.join(' ')}; do
+      for d in $(printf '%s' "$PATH" | tr ':' ' ') #{REPORTED_EXTRA_DIRS.join(' ')}; do
         case ":$searched:" in *":$d:"*) ;; *) searched="${searched:+$searched:}$d" ;; esac
       done
       printf 'searched=%s\n' "$searched"
