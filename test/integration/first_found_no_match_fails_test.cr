@@ -106,6 +106,35 @@ describe "with_first_found: with no candidate matching (no skip:)" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 
+  it "fails (not a parse-time cast warning) when `- skip: True` sits inside the files: list" do
+    src_dir = File.tempname("first-found-skip-in-files-list")
+    Dir.mkdir_p(src_dir)
+    playbook = File.join(src_dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: os vars
+            include_vars: "{{ includefile }}"
+            with_first_found:
+              - files:
+                  - Nope.yml
+                  - skip: True
+            loop_control:
+              loop_var: includefile
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(false)
+    output.to_s.wont_include("Cast from")
+    output.to_s.must_include("No file was found when using first_found")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+
   it "still includes the matched file when a candidate exists" do
     src_dir = File.tempname("first-found-no-match-still-includes")
     Dir.mkdir_p(File.join(src_dir, "roles", "myrole", "tasks"))

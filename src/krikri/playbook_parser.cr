@@ -3781,12 +3781,19 @@ module Krikri
         if first && (hash = first.as_h?)
           files = hash["files"]?
           return [] of String unless files
-          return files.as_a?.try(&.map(&.as_s)) || [files.as_s]
+          return files.as_a?.try { |a| first_found_candidates(a) } || [files.as_s]
         end
-        return list.map(&.as_s)
+        return first_found_candidates(list)
       end
 
       [yaml.as_s]
+    end
+
+    # A non-string entry (criecm.common's `- skip: True` written inside the
+    # files: list) never names a file in ansible: it matches nothing, so
+    # the lookup ends in "No file was found" instead of a parse failure.
+    private def self.first_found_candidates(items : Array(YAML::Any)) : Array(String)
+      items.compact_map(&.as_s?)
     end
 
     private def self.first_found_skip?(yaml : YAML::Any) : Bool
