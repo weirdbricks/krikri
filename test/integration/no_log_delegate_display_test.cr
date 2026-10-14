@@ -58,6 +58,23 @@ describe "no_log censoring and delegate_to display" do
     output.wont_include("another-secret-item")
   end
 
+  it "prints a bare skipping line for a no_log task that is skipped without a loop" do
+    _status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: skipped secret task
+            no_log: true
+            ansible.builtin.set_fact:
+              ops_key: "secret123"
+            when: false
+      YAML
+
+    output.must_include("skipping: [localhost]\n")
+    output.wont_include("censored due to no_log")
+  end
+
   it "prints the censored result dict on a failed no_log loop item" do
     _status, output = run_playbook(<<-YAML)
       - hosts: localhost
