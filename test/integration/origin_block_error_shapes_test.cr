@@ -106,6 +106,31 @@ describe "task error Origin blocks (issue #12)" do
     out.must_include "6     - ansible.builtin.debug:\n7         msg: \"{{ item }}\"\n8       loop: \"{{ wordpress_sites }}\"\n              ^ column 13\n"
   end
 
+  it "pins the first list element's value token as the caused-by Origin of a block-sequence with_items undefined source" do
+    # `with_items:` written as a BLOCK SEQUENCE (item on the next line)
+    # puts no value token on the key line itself - real 2.19 reports the
+    # FIRST list element's opening char as the Origin, not the end of the
+    # `with_items:` line (issue #88).
+    code, out, _err, path = run_play_file([
+      "---",
+      "- hosts: localhost",
+      "  gather_facts: false",
+      "  connection: local",
+      "  tasks:",
+      "    - ansible.builtin.debug:",
+      "        msg: \"{{ item }}\"",
+      "      with_items:",
+      "        - \"{{ zones_id }}\"",
+    ].join("\n") + "\n")
+    code.must_equal(2)
+    out.must_include "[ERROR]: Task failed: 'zones_id' is undefined"
+    # The caused-by stanza's Origin is the first element's value token
+    # (line 9, column 11 = just past `        - `), with the excerpt and
+    # caret under that token.
+    out.must_include "Origin: #{path}:9:11\n"
+    out.must_include "7         msg: \"{{ item }}\"\n8       with_items:\n9         - \"{{ zones_id }}\"\n            ^ column 11\n"
+  end
+
   it "prints the bodyless lookup-failure block for a with_first_found: module task" do
     code, out, _err, _path = run_play_file([
       "---",

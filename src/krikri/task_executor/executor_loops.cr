@@ -1131,6 +1131,27 @@ module Krikri
         key_idx = line.index(key_text)
         next unless key_idx
         rest = line[(key_idx + kind.size + 1)..]
+        if rest.strip.empty?
+          # Block-sequence value (`with_items:` with the item on the next
+          # line): real 2.19 pins the Origin at the FIRST list element's
+          # value token, not at the end of the key line (issue #88).
+          # Sequence entries may sit at the SAME indent as their key in
+          # YAML, so only a dedent (the next task/play) ends the search;
+          # blank and comment-only lines are skipped in between.
+          key_indent = line.size - line.lstrip.size
+          ((idx + 1)...lines.size).each do |val_idx|
+            val_line = lines[val_idx]
+            val_stripped = val_line.strip
+            next if val_stripped.empty? || val_stripped.starts_with?("#")
+            break if (val_line.size - val_line.lstrip.size) < key_indent
+            if val_stripped.starts_with?("- ")
+              dash_idx = val_line.size - val_line.lstrip.size
+              after_dash = val_line[(dash_idx + 1)..]
+              return {val_idx, dash_idx + 2 + (after_dash.size - after_dash.lstrip.size)}
+            end
+            break
+          end
+        end
         column = key_idx + kind.size + 1 + (rest.size - rest.lstrip.size) + 1
         return {idx, column}
       end
