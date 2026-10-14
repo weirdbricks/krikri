@@ -409,6 +409,11 @@ module Krikri
         # value can itself be a secret (e.g. `loop: "{{ keepass_attrs }}"`
         # on a credential-reading task), so `(item=<value>)` must never
         # print verbatim.
+        if failed && item_label
+          # A failed loop item is printed in Ansible's loop-failure shape: item before the `=>`, then the censored result dict.
+          puts "failed: [#{host_label}] (item=(censored due to no_log)) => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\", \"changed\": #{changed}}".colorize(:red)
+          return
+        end
         suffix_only = item_label ? " => (item=(censored due to no_log))" : ""
         puts "#{status_only}: [#{host_label}]#{suffix_only}"
         return
