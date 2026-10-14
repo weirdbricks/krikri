@@ -773,6 +773,33 @@ describe "unarchive plugin" do
     File.read(File.join(dest, "a.txt")).must_equal("hello")
   end
 
+  it "fails a refused-connection URL src with unarchive.py's fetch_file wording" do
+    # Live-verified against ansible-core 2.19.11: fetch_file fails with
+    # "Failure downloading <url>, <info['msg']>" where info['msg'] is
+    # fetch_url's own URLError text - not a "Source ... failed to
+    # transfer" wrap of the socket layer's own message.
+    dest = fresh_dest("url-src-refused")
+    closed_server = TCPServer.new("127.0.0.1", 0)
+    closed_port = closed_server.local_address.port
+    closed_server.close
+    url = "http://127.0.0.1:#{closed_port}/x.tar.gz"
+
+    result = PluginSpecHelper.run("unarchive", {"src" => url, "dest" => dest, "remote_src" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_equal("Failure downloading #{url}, Request failed: <urlopen error [Errno 111] Connection refused>")
+  end
+
+  it "fails a 404 URL src with fetch_url's HTTPError text inside fetch_file's message" do
+    dest = fresh_dest("url-src-404")
+    url = "#{UNARCHIVE_BASE}/missing.tar.gz"
+
+    result = PluginSpecHelper.run("unarchive", {"src" => url, "dest" => dest, "remote_src" => "true"})
+
+    result["failed"].as_bool.must_equal(true)
+    result["msg"].as_s.must_match(/\AFailure downloading #{Regex.escape(url)}, HTTP Error 404: /)
+  end
+
   it "fails with a clear message when src or dest is missing" do
     result = PluginSpecHelper.run("unarchive", {"dest" => TMP_DIR})
 

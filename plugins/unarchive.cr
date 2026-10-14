@@ -4,6 +4,7 @@ require "json"
 require "http/client"
 require "uri"
 require "../src/krikri/base_plugin"
+require "../src/krikri/plugin_helpers/http_download"
 
 module Krikri
   # Unarchive plugin - extracts an archive into a directory. Compatible
@@ -118,8 +119,8 @@ module Krikri
   #   `tar`/`unzip` entirely, so there's no Crystal-side read loop for
   #   this to size
   # - `validate_certs` - only relevant to Ansible's shared
-  #   controller-side URL-fetch code path; this plugin's own #download
-  #   always validates certs (no insecure-fetch option exists here)
+  #   controller-side URL-fetch code path; the shared HTTPDownload helper
+  #   used here always validates certs (no insecure-fetch option exists here)
   # - `decrypt` (vault auto-decryption - `src` isn't read through
   #   `Vault.maybe_decrypt` here), SELinux options, `unsafe_writes`,
   #   `attributes`.
@@ -246,13 +247,38 @@ module Krikri
       end
 
       begin
-        download(src, tmp_download_path)
+        PluginHelpers::HTTPDownload.download(src, tmp_download_path, download_options)
       rescue ex
         File.delete(tmp_download_path) rescue nil
         Dir.delete(tmpdir) rescue nil
-        return PluginResult.new(changed: false, failed: true, msg: "Source '#{src}' failed to transfer: #{ex.message}")
+        return PluginResult.new(changed: false, failed: true, msg: "Failure downloading #{src}, #{download_failure_detail(ex)}")
       end
       {tmp_download_path, tmp_download_path}
+    end
+
+    private def download_options : PluginHelpers::HTTPDownload::Options
+      PluginHelpers::HTTPDownload::Options.new(
+        max_redirects: MAX_REDIRECTS,
+        connect_timeout: 15.seconds,
+        read_timeout: 30.seconds,
+        headers: HTTP::Headers{"User-Agent" => "ansible-httpget"},
+      )
+    end
+
+    # fetch_file (unarchive.py) interpolates fetch_url's info['msg']
+    # verbatim into "Failure downloading <url>, <msg>" - a UrlError,
+    # ConnectionFailure or HttpError carries exactly that text. A
+    # ContentCopy failure happens after fetch_url already returned, so
+    # there's no info['msg'] to use; the exception's own message is the
+    # closest honest detail available.
+    private def download_failure_detail(ex : Exception) : String
+      if ex.is_a?(PluginHelpers::HTTPDownload::FetchError)
+        case ex.kind
+        when .url_error?, .connection_failure?, .http_error?
+          return ex.info_msg
+        end
+      end
+      ex.message || ex.class.name
     end
 
     # Python tempfile.mkstemp naming (stem prefix, ext suffix, 8 random
@@ -304,34 +330,6 @@ module Krikri
       if @params["__cleanup_after_unarchive"]? == "true"
         File.delete(src) rescue nil
       end
-    end
-
-    # Binary-safe download with redirect-following - matches get_url.cr's
-    # own #download (a downloaded release tarball is arbitrary binary
-    # data, and GitHub's own release-asset URLs are themselves a 302
-    # redirect to a signed S3/Azure blob URL, so following redirects
-    # isn't optional here).
-    private def download(url : String, tmp_path : String, redirects_left : Int32 = MAX_REDIRECTS) : Nil
-      raise "too many redirects" if redirects_left < 0
-
-      uri = URI.parse(url)
-      client = HTTP::Client.new(uri)
-      client.connect_timeout = 15.seconds
-      client.read_timeout = 30.seconds
-
-      client.get(uri.request_target, headers: HTTP::Headers{"User-Agent" => "ansible-httpget"}) do |response|
-        if response.status.redirection? && (location = response.headers["Location"]?)
-          client.close
-          resolved = URI.parse(location).absolute? ? location : URI.parse(url).resolve(location).to_s
-          return download(resolved, tmp_path, redirects_left - 1)
-        end
-
-        raise "server returned #{response.status_code}" unless response.status.success?
-
-        File.open(tmp_path, "w") { |file| IO.copy(response.body_io, file) }
-      end
-    ensure
-      client.try(&.close)
     end
 
     private def detect_handler(src : String) : Symbol?
