@@ -681,7 +681,9 @@ module Krikri
           begin
             next unless when_passes?(task, item_context, host, item_label: item_label, defer_stats: true, item: item)
           rescue ex : WhenEvaluationError
-            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
+            delegate_target = delegate_display_target(task, host, item_context)
+            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
             next
@@ -700,7 +702,9 @@ module Krikri
             # and then reports "file not found: undefined". Same cause-text
             # convention as every other module's undefined-arg failure
             # (see prepare_batch_step's own finalization rescue).
-            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
+            delegate_target = delegate_display_target(task, host, item_context)
+            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
             puts "  Message: #{ex.message}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -717,7 +721,9 @@ module Krikri
           path = resolve_include_vars_path(task, candidate)
 
           unless path
-            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
+            delegate_target = delegate_display_target(task, host, item_context)
+            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: file not found: #{candidate}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -727,7 +733,9 @@ module Krikri
           loaded = begin
             RoleLoader.load_vars_file(path)
           rescue ex
-            puts "failed: [#{host.name}] => (item=#{item_label})".colorize(:red)
+            delegate_target = delegate_display_target(task, host, item_context)
+            failed_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+            puts "failed: [#{failed_host_label}] => (item=#{item_label})".colorize(:red)
             puts "  Message: include_vars: could not parse #{path}: #{ex.message}".colorize(:red)
             failed = true
             item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(true), "ansible_facts" => include_vars_failure_facts(name_key)} of String => JSON::Any)
@@ -744,7 +752,9 @@ module Krikri
           @hv_generation += 1
           vars_context = item_context
 
-          puts "ok: [#{host.name}] => (item=#{item_label})".colorize(:green)
+          delegate_target = delegate_display_target(task, host, item_context)
+          ok_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+          puts "ok: [#{ok_host_label}] => (item=#{item_label})".colorize(:green)
           executed = true
           item_results << JSON::Any.new({"item" => item, "changed" => JSON::Any.new(false), "failed" => JSON::Any.new(false), "ansible_facts" => include_vars_wrapped_facts(name_key, loaded)} of String => JSON::Any)
         end
@@ -920,7 +930,12 @@ module Krikri
       end
 
       ok_suffix = first_found_item_label ? " => (item=#{first_found_item_label})" : ""
-      puts "ok: [#{host.name}]#{ok_suffix}".colorize(:green)
+      # A delegated include_vars: still prints the `-> delegate` label on
+      # its ok line (CallbackBase.host_label reads the task keyword even
+      # though the action itself ran controller-side).
+      delegate_target = delegate_display_target(task, host, vars_context)
+      ok_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+      puts "ok: [#{ok_host_label}]#{ok_suffix}".colorize(:green)
       @results[host.name]["ok"] += 1
     end
 
@@ -1049,7 +1064,13 @@ module Krikri
         end
       end
 
-      puts "ok: [#{host.name}]".colorize(:green)
+      # A delegated include_vars: dir: load prints the `-> delegate`
+      # label on its ok line, same as the file: form (CallbackBase.
+      # host_label reads the task keyword even though the action itself
+      # ran controller-side).
+      delegate_target = delegate_display_target(task, host, vars_context)
+      ok_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+      puts "ok: [#{ok_host_label}]".colorize(:green)
       @results[host.name]["ok"] += 1
     end
 
@@ -1265,7 +1286,7 @@ module Krikri
         return
       end
 
-      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
+      ResultDisplay.display_result(host, result_json, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       include_vars_failure_stats(task, host)
     end
 
@@ -1319,7 +1340,13 @@ module Krikri
           @registered_vars[host.name][register_name] = JSON::Any.new(registered)
         end
       end
-      puts "ok: [#{host.name}]".colorize(:green)
+      # A failed_when:-suppressed delegated include_vars: still prints
+      # the `-> delegate` label on its ok line (CallbackBase.host_label
+      # reads the task keyword even though the action itself ran
+      # controller-side).
+      delegate_target = delegate_display_target(task, host)
+      ok_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+      puts "ok: [#{ok_host_label}]".colorize(:green)
       @results[host.name]["ok"] += 1
     end
 
@@ -1398,7 +1425,7 @@ module Krikri
       if register_name = task.register
         register_result(host, register_name, result) unless register_name.empty?
       end
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, source_task: task)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
     end
 
     # The "Could not find or access '<file>'" message Ansible 2.19.11
@@ -2118,7 +2145,9 @@ module Krikri
       if Krikri::Oneline.enabled?
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => message}.to_json))}".colorize(:red)
       else
-        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
+        delegate_target = delegate_display_target(task, host)
+        fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{message.to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
@@ -2146,7 +2175,9 @@ module Krikri
       if Krikri::Oneline.enabled?
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => message}.to_json))}".colorize(:red)
       else
-        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
+        delegate_target = delegate_display_target(task, host)
+        fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"reason\": #{message.to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
@@ -2167,7 +2198,9 @@ module Krikri
         if Krikri::Oneline.enabled?
           puts "#{host.name} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "include" => task.include_file_native || JSON.parse(task.include_file.to_s.to_json), "reason" => ex.message || ""}.to_json))}".colorize(:red)
         else
-          puts "fatal: [#{host.name}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
+          delegate_target = delegate_display_target(task, host)
+          fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+          puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"include\": #{include_json}, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
         end
         @results[host.name]["failed"] += 1
         halt_if_failed(task, host, true, force_halt: true)
@@ -2201,7 +2234,9 @@ module Krikri
       if Krikri::Oneline.enabled?
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "reason" => ex.message || ""}.to_json))}".colorize(:red)
       else
-        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
+        delegate_target = delegate_display_target(task, host)
+        fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"reason\": #{(ex.message || "").to_json}}".colorize(:red)
       end
       @results[host.name]["failed"] += 1
       halt_if_failed(task, host, true, force_halt: true)
@@ -2241,6 +2276,8 @@ module Krikri
       end
 
       connection_host = host.name
+      delegate_target = delegate_display_target(task, host)
+      fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
       brief = "Task failed: #{failure.brief}"
       if Krikri::Oneline.enabled?
         # The [ERROR] chain block and the fatal:/failed: shape are
@@ -2249,9 +2286,9 @@ module Krikri
         puts Krikri::Oneline.exception_line("(traceback unavailable)").colorize(:red)
         puts "#{connection_host} | FAILED! => #{ResultDisplay.dump_oneline_json(JSON.parse({"changed" => false, "msg" => brief}.to_json))}".colorize(:red)
       elsif item_label
-        puts "failed: [#{connection_host}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
+        puts "failed: [#{fatal_host_label}] (item=#{item_label}) => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
       else
-        puts "fatal: [#{connection_host}]: FAILED! => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
+        puts "fatal: [#{fatal_host_label}]: FAILED! => {\"changed\": false, \"msg\": #{brief.to_json}}".colorize(:red)
       end
       puts "...ignoring".colorize(:red) if ignore_errors && !Krikri::Oneline.enabled?
       halt_if_failed(task, host, true)

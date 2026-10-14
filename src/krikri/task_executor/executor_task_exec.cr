@@ -266,7 +266,7 @@ module Krikri
       # ignore_errors: stats semantics (ok+ignored, not failed) stay
       # identical to the rest of the engine.
       ignore_errors = resolve_task_ignore_errors(task, host: host)
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) if !errors.empty? && !ignore_errors
     end
@@ -286,7 +286,7 @@ module Krikri
         "msg"     => JSON::Any.new("Task failed: #{message}"),
       } of String => JSON::Any)
       ignore_errors = resolve_task_ignore_errors(task, host: host)
-      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, source_task: task)
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: ignore_errors, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       ResultDisplay.update_stats(@results[host.name], result, ignore_errors)
       @halted_hosts.add(host.name) unless ignore_errors
     end
@@ -981,7 +981,7 @@ module Krikri
           # exact line shapes (full skip-context dump for a normal
           # module, msg-only pretty for a debug: one).
           result = loop_label_failure_result(task, item, label_error, skip_condition: inherited_when)
-          Krikri::ResultDisplay.display_result(host, result, false, item_label: failed_label, module_name: task.module_name, source_task: task)
+          Krikri::ResultDisplay.display_result(host, result, false, item_label: failed_label, module_name: task.module_name, delegate_target: delegate_display_target(task, host, vars_context), source_task: task)
           next
         end
         suffix = skipped_loop_item_suffix_for(task, inherited_when, item, idx)
@@ -1009,7 +1009,9 @@ module Krikri
         # (live-verified vs 2.19.11, all-failed and mixed).
         if is_debug
           dump = JSON::Any.new({"msg" => JSON::Any.new("All items skipped")} of String => JSON::Any)
-          puts "fatal: [#{connection_host}]: FAILED! => #{Krikri::ResultDisplay.dump_suffix(dump)}".colorize(:red)
+          delegate_target = delegate_display_target(task, host, vars_context)
+          debug_fatal_host = delegate_target ? "#{host.name} -> #{delegate_target}" : connection_host
+          puts "fatal: [#{debug_fatal_host}]: FAILED! => #{Krikri::ResultDisplay.dump_suffix(dump)}".colorize(:red)
         end
         return true
       end
