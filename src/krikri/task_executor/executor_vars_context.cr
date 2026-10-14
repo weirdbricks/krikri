@@ -2673,10 +2673,22 @@ module Krikri
     end
 
     private def finalization_module_name(task : Task) : String
-      name = PlaybookParser.resolve_module_name(task.module_name) || task.module_name
+      name = PlaybookParser.resolve_module_name(task.module_name) ||
+             fallback_finalization_module_name(task.module_name)
       # engine-internal pseudo modules (_include_vars, ...) are real actions
       name = "ansible.builtin.#{name.lchop('_')}" if name.starts_with?('_')
       name
+    end
+
+    # When krikri has no plugin for the name, ansible's task-args
+    # finalization error still names the module the way its loader would
+    # resolve it: a bare name with an ansible_builtin_runtime.yml
+    # redirect shows the redirected FQCN (bare `docker_swarm_service:` ->
+    # 'community.docker.docker_swarm_service'), not the bare name as
+    # written.
+    private def fallback_finalization_module_name(as_written : String) : String
+      return as_written if as_written.includes?('.')
+      CollectionIndex.builtin_module_redirect(as_written) || as_written
     end
 
     # The `[ERROR]:` chain block ansible-core 2.19.11 prints on
