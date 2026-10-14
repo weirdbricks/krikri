@@ -3927,6 +3927,8 @@ module Krikri
               io << (idx + 1).to_s.rjust(label_width) << (src.empty? ? "" : " ") << src << "\n"
             end
             io << " " * label_width << " " << " " * (col - 1) << "^ column " << col << "\n"
+            # ansible separates the excerpt from the hint with a blank line
+            io << "\n"
           end
         end
         io << "Use a string value for `action`.\n"

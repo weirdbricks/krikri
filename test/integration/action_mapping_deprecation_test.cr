@@ -35,7 +35,7 @@ describe "mapping-form action deprecation and lazy module resolution" do
 
     err.must_include("[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.")
     err.must_include("[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.")
-    err.must_include("Use a string value for `action`.")
+    err.must_match(/\^ column \d+\n\nUse a string value for `action`\./)
     err.must_include("Origin: #{File.expand_path(playbook)}:7:9")
     err.must_include("couldn't resolve module/action 'ec2'")
     # The Origin context block legitimately echoes the `module:` source
