@@ -175,7 +175,11 @@ module Krikri
             rendered_file = renderer.substitute(file_entry.as_s? || "", strict: true)
             rendered_paths.each do |path|
               candidate = File.join(path, rendered_file)
-              return candidate if File.exists?(candidate)
+              next unless File.exists?(candidate)
+              # Ansible normpath/unfrackpaths the found path, so the lookup
+              # result is the collapsed one, ../ and all; a relative join is
+              # left alone (normalising could change leading ../ semantics).
+              return candidate.starts_with?("/") ? Path.new(candidate).normalize.to_s : candidate
             end
           end
         rescue ex : UndefinedVariableError

@@ -395,6 +395,26 @@ describe Krikri::VariableSubstitutor::ExpressionEvaluator do
     evaluator.evaluate("lookup('first_found', params)").must_equal(File.join(role_dir, "otherdir", "x.yml"))
   end
 
+  it "normalises .. in an explicit absolute paths: entry, like ansible's normpath/unfrackpath" do
+    # Real ansible-core 2.19 runs the found path through
+    # normpath/unfrackpath, so the lookup result is the collapsed path -
+    # `paths: ["<role>/otherdir/../vars"]` resolves to
+    # `<role>/vars/x.yml`, not the un-normalised join. The lookup form
+    # must match (the with_first_found: keyword form is covered by an
+    # integration test over the same rule).
+    role_dir = PluginSpecHelper.tmp_path("first_found_normalized_paths_spec")
+    `rm -rf #{role_dir}`
+    Dir.mkdir_p(File.join(role_dir, "vars"))
+    Dir.mkdir_p(File.join(role_dir, "otherdir"))
+    File.write(File.join(role_dir, "vars", "x.yml"), "greeting: hello\n")
+
+    v = Hash(String, JSON::Any).new
+    v["role_path"] = JSON::Any.new(role_dir)
+    v["params"] = JSON.parse(%({"files": ["x.yml"], "paths": ["#{role_dir}/otherdir/../vars"]}))
+    evaluator = Krikri::VariableSubstitutor::ExpressionEvaluator.new(v)
+    evaluator.evaluate("lookup('first_found', params)").must_equal(File.join(role_dir, "vars", "x.yml"))
+  end
+
   it "parses an inline first_found DICT literal whose files: value is a variable holding the candidate list" do
     # Real bug found benchmarking AerisCloud.vault (round 83346): the
     # DICT form passed INLINE (not through a params variable) with a

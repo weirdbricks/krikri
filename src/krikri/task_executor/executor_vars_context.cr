@@ -1350,7 +1350,10 @@ module Krikri
     # failed) and every var the role expected from that file - including
     # mysql_daemon - stayed undefined for the rest of the run.
     private def resolve_first_found_path(task : Task, candidate : String, substitutor : VarSubstitutor) : String?
-      return File.exists?(candidate) ? candidate : nil if candidate.starts_with?("/")
+      # Ansible normpath/unfrackpaths the found path before it becomes the
+      # loop item, so `{{ playbook_dir }}/vars/../vars/Debian.yml` is
+      # reported (and handed to include_vars:) as `.../vars/Debian.yml`.
+      return File.exists?(candidate) ? Path.new(candidate).normalize.to_s : nil if candidate.starts_with?("/")
 
       # An explicit paths: sub-key (the dict form's own `- files: [...]
       # paths: [...]`) names the ONLY directories Ansible searches -
