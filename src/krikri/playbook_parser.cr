@@ -3968,7 +3968,19 @@ module Krikri
     # later, unrelated same-named var never steals the position.
     private def self.locate_reserved_key(lines : Array(String), key : String, from_line : Int32) : Tuple(Int32, Int32)?
       needle = /^(\s*)#{Regex.escape(key)}:\s*(\S|$)/
+      # A same-named module/task key (`include_role: name: x`) precedes the
+      # `vars:` entry; ansible's Origin points at the vars entry, so the
+      # scan starts at the task's `vars:` line when there is one.
+      start = from_line - 1
       ((from_line - 1)...lines.size).each do |idx|
+        line = lines[idx]
+        break if idx > (from_line - 1) && line.strip.empty? == false && line.strip.starts_with?("- ") && line.size - line.lstrip.size < 4
+        if line =~ /^\s*(- )?vars:\s*$/
+          start = idx + 1
+          break
+        end
+      end
+      (start...lines.size).each do |idx|
         line = lines[idx]
         break if idx > (from_line - 1) && line.strip.empty? == false && line.strip.starts_with?("- ") && line.size - line.lstrip.size < 4
         if (m = line.match(needle)) && (line.size - line.lstrip.size) >= 4
