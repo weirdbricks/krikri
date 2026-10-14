@@ -693,6 +693,11 @@ module Krikri
         # do", rc 0), which says nothing about which packages were already
         # absent.
         if to_remove.empty?
+          # With `autoremove: true` Ansible still runs the autoremove
+          # transaction when every named package is already absent, so
+          # leftover unneeded dependencies make the task `changed`
+          # (antmelekhin.docker's cold run on Rocky).
+          return handle_autoremove if true?(@params["autoremove"]?) && !check_mode?
           return transaction_result(false)
         end
 
