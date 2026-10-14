@@ -39,4 +39,25 @@ describe "reserved variable name warning" do
   ensure
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
+
+  it "points include_role's `name` warning at the vars entry, not the module's own name key" do
+    dir = File.tempname("reserved-var-role")
+    Dir.mkdir_p(File.join(dir, "roles", "myrole", "tasks"))
+    File.write(File.join(dir, "roles", "myrole", "tasks", "main.yml"), "- debug: msg=hi\n")
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        gather_facts: false
+        tasks:
+          - include_role:
+              name: myrole
+            vars:
+              name: foo
+      YAML
+    output = IO::Memory.new
+    Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    output.to_s.must_include("Origin: #{playbook}:7:9")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end
