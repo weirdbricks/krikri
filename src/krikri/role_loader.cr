@@ -50,6 +50,11 @@ module Krikri
       @@parsed_yaml_cache.fetch(path) do
         text = Vault.maybe_decrypt(File.read(path))
         UnsafeValues.mark_yaml_text(text)
+        # Ansible's DataLoader refuses every file it reads (tasks, vars,
+        # meta, ...) whose unquoted template parses as a collection key,
+        # not just the playbook itself - role_loader is this codebase's
+        # single doorway for role-file YAML, so the check lives here.
+        PlaybookParser.check_template_quoting(path, text)
         @@parsed_yaml_cache[path] = YAML.parse(text)
       end
     end

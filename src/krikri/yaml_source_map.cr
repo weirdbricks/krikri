@@ -27,8 +27,19 @@ module Krikri
 
     @positions = Hash(String, Pos).new
     @duplicate_keys = Array(DuplicateKey).new
+    @collection_key_pos : Pos? = nil
 
     getter duplicate_keys
+
+    # The start mark of the mapping holding a collection used AS a mapping
+    # key (first occurrence in document order), 1-based line/column -
+    # ansible-core 2.19 refuses such a file at load time (rc=4, "This may
+    # be an issue with missing quotes around a template block."), because
+    # an unquoted ``key: {{ x }}`` parses as a flow mapping whose key is
+    # itself a mapping, and Ansible's loader rejects collection keys.
+    # krikri's own YAML layer happily builds that structure, so this is
+    # the only signal that the file needs the quoting refusal.
+    getter collection_key_pos : Pos?
 
     def self.scan(content : String) : YamlSourceMap
       map = YamlSourceMap.new
@@ -100,10 +111,16 @@ module Krikri
         case event.value.type
         when .document_start?
           stack.clear
-        when .mapping_start?
-          enter_collection(stack, :map, event.value.start_mark)
-        when .sequence_start?
-          enter_collection(stack, :seq, event.value.start_mark)
+        when .mapping_start?, .sequence_start?
+          # A collection arriving while the enclosing mapping has no
+          # pending scalar key can only BE that mapping's next key -
+          # record the enclosing mapping's own start mark (where its
+          # first ``{`` sits) before node_path consumes state. The
+          # enclosing mapping's position is already recorded: every
+          # container registers itself on entry, the document root at
+          # path "".
+          note_collection_key(stack)
+          enter_collection(stack, event.value.type.mapping_start? ? :map : :seq, event.value.start_mark)
         when .scalar?
           enter_leaf(stack, scalar_text(event), event.value.start_mark)
         when .alias?
@@ -120,6 +137,13 @@ module Krikri
     rescue
       # A scan failure must never break parsing; positions are optional.
       nil
+    end
+
+    private def note_collection_key(stack : Array(Container)) : Nil
+      parent = stack.last?
+      return unless parent && parent.kind == :map && parent.pending_key.nil?
+
+      @collection_key_pos ||= @positions[parent.path]?
     end
 
     private def enter_collection(stack : Array(Container), kind : Symbol, mark : LibYAML::Mark) : Nil
