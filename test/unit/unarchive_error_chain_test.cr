@@ -26,6 +26,13 @@ describe "unarchive task_error_chain shapes" do
       "Task failed: Module failed: " + UNARCHIVE_HANDLER_MSG)
   end
 
+  it "uses the generic Module-failed chain for a URL download failure" do
+    msg = "Failure downloading http://h/x.tar.gz, Request failed: <urlopen error [Errno 111] Connection refused>"
+    chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")
+
+    Krikri::ErrorBlock.brief_message(chain).must_equal("Task failed: Module failed: " + msg)
+  end
+
   it "keeps the collapsed chain for the controller-side src miss" do
     msg = "Task failed: Source '/x.tar' failed to transfer"
     chain = Krikri::ResultDisplay.task_error_chain("ansible.builtin.unarchive", msg, "Origin: /pb.yml:6")
