@@ -6022,14 +6022,105 @@ module Krikri
       # part of that shared tokenization, so non-command modules get the
       # same treatment on their k=v / _raw_params split.
       split_shell_like(strip_line_continuation_tokens(s)).each do |token, _end_offset|
-        key, sep, value = token.partition('=')
-        if sep.empty? || key.empty?
-          raw_tokens << token
+        # Ansible's parse_kv runs _decode_escapes over EVERY token (key and
+        # value alike) BEFORE the '=' split - observed vs 2.19.11:
+        # free-form `debug: msg="{{ s.split('\n') }}"` reaches the template
+        # with a REAL newline inside the '\n' (so split works), while the
+        # YAML dict form is decoded by YAML and the JinjaRenderer's
+        # verbatim expression strings are untouched. The leftover
+        # raw-params text keeps the ORIGINAL undecoded tokens, matching
+        # parse_kv's raw_params.append(orig_x) - that is what keeps
+        # command:/shell: free-form text un-decoded.
+        decoded = decode_kv_escapes(token)
+        eq = find_unescaped_kv_separator(decoded)
+        if eq.nil?
+          # parse_kv only rewrites `\=` to `=` when a token had no
+          # unescaped separator at all (its escaped-equals fallback);
+          # a plain no-'=' token keeps its original text.
+          raw_tokens << (decoded.includes?("\\=") ? decoded.gsub("\\=", "=") : token)
         else
-          params[key] = unquote_inline_value(value)
+          dchars = decoded.chars
+          params[dchars[0, eq].join.strip] = unquote_inline_value(dchars[(eq + 1)..].join.strip)
         end
       end
       {params, raw_tokens.empty? ? nil : raw_tokens.join(" ")}
+    end
+
+    # Mirrors ansible.parsing.splitter._decode_escapes: decodes the
+    # single-character escapes (\\ \' \" \a \b \f \n \r \t \v) and the
+    # fixed-width hex escapes (\xHH, \uHHHH, \UHHHHHHHH) exactly like
+    # Python's codecs unicode-escape does; an escape with too few hex
+    # digits or an unrecognized escaped character (including `\=`) is
+    # left verbatim, same as the upstream regex that simply fails to
+    # match it. Unknown escapes must stay untouched so `path=C:\Users`
+    # survives and `\=` keeps blocking the key/value split.
+    private def self.decode_kv_escapes(s : String) : String
+      return s unless s.includes?("\\")
+      chars = s.chars
+      size = chars.size
+      String.build do |b|
+        i = 0
+        while i < size
+          c = chars[i]
+          if c != '\\' || i + 1 >= size
+            b << c
+            i += 1
+            next
+          end
+          n = chars[i + 1]
+          case n
+          when 'a'
+            b << "\a"
+            i += 2
+          when 'b'
+            b << "\b"
+            i += 2
+          when 'f'
+            b << "\f"
+            i += 2
+          when 'n'
+            b << "\n"
+            i += 2
+          when 'r'
+            b << "\r"
+            i += 2
+          when 't'
+            b << "\t"
+            i += 2
+          when 'v'
+            b << "\v"
+            i += 2
+          when '\\', '\'', '"'
+            b << n
+            i += 2
+          when 'x', 'u', 'U'
+            width = n == 'x' ? 2 : (n == 'u' ? 4 : 8)
+            if i + 2 + width <= size && (cp = chars[i + 2, width].join.to_i?(16)) && cp <= 0x10FFFF && !(0xD800 <= cp <= 0xDFFF)
+              b << cp.chr
+              i += 2 + width
+            else
+              b << c
+              i += 1
+            end
+          else
+            b << c
+            i += 1
+          end
+        end
+      end
+    end
+
+    # parse_kv scans for the key/value '=' starting at index 1 (a leading
+    # '=' is never a separator) and skips any '=' preceded by a backslash
+    # - the escaped-equals form Ansible reserves for literal '=' values.
+    private def self.find_unescaped_kv_separator(decoded : String) : Int32?
+      chars = decoded.chars
+      i = 1
+      while i < chars.size
+        return i if chars[i] == '=' && chars[i - 1] != '\\'
+        i += 1
+      end
+      nil
     end
 
     # Returns each whitespace-delimited token alongside its END offset
