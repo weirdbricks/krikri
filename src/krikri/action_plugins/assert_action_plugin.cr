@@ -43,10 +43,8 @@ module Krikri
     end
 
     def execute : ActionResult
-      if (raw = @params["quiet"]?) &&
-         (msg = bool_param_error_msg("quiet", JSON::Any.new(raw)))
-        return ActionResult.final(Krikri.mark_failed_key_order(
-          ActionResult.plugin_result_json(false, true, msg), FAILED_KEY_ORDER_ASSERT))
+      if result = quiet_param_error_result
+        return result
       end
 
       that_json = @params["that"]?
@@ -58,6 +56,26 @@ module Krikri
       conditions = Array(String).from_json(that_json)
       substitutor = VarSubstitutor.new(vars: @vars, host_name: @host.name)
 
+      evaluate_conditions(conditions, substitutor) || success_result
+    end
+
+    private def quiet_param_error_result : ActionResult?
+      if (raw = @params["quiet"]?) &&
+         (msg = bool_param_error_msg("quiet", JSON::Any.new(raw)))
+        ActionResult.final(Krikri.mark_failed_key_order(
+          ActionResult.plugin_result_json(false, true, msg), FAILED_KEY_ORDER_ASSERT))
+      end
+    end
+
+    # The [ERROR] chain's second Origin points at the failing that: item,
+    # so each conditional-error arm tags its result with that item's index.
+    private def that_index_error(msg : String, current_index : Int32) : ActionResult
+      result = ActionResult.conditional_error_result_json(msg)
+      result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
+      ActionResult.final(result)
+    end
+
+    private def evaluate_conditions(conditions : Array(String), substitutor : VarSubstitutor) : ActionResult?
       # raise_undefined: true - Ansible is strict for assert:'s own
       # that: exactly as it is for when:, and reports it with the SAME
       # message ("Error while evaluating conditional: 'x' is undefined"),
@@ -98,7 +116,7 @@ module Krikri
             raise ConditionalEvaluator::TemplateDelimiterError.new(delimiter)
           end
           substituted = substitutor.substitute(condition)
-          next if ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
+          next if evaluate_that(substituted)
           failing = condition
           break
         end
@@ -108,20 +126,14 @@ module Krikri
         # registers changed=false+failed=true+msg, and the [ERROR]
         # chain's second Origin points at the failing that: item
         # (_ansible_that_index).
-        result = ActionResult.conditional_error_result_json("Task failed: #{ex.message}")
-        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
-        return ActionResult.final(result)
+        return that_index_error("Task failed: #{ex.message}", current_index)
       rescue ex : ConditionalEvaluator::UndefinedVariableError
         # ansible-core 2.19.11 prefixes assert:'s undefined-
         # conditional failure with "Task failed: " exactly like its
         # non-bool one (live-verified: `assert: that: x` on an undefined
         # var → fatal msg "Task failed: Error while evaluating
         # conditional: 'x' is undefined").
-        result = ActionResult.conditional_error_result_json(
-          "Task failed: Error while evaluating conditional: #{ex.message}")
-        # which that: item failed - the [ERROR] block's second Origin points at it
-        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
-        return ActionResult.final(result)
+        return that_index_error("Task failed: Error while evaluating conditional: #{ex.message}", current_index)
       rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError | VariableSubstitutor::UnknownTestError
         # A compile-time-rejected filter/test name in a `that:` item is
         # Ansible's "Syntax error in expression: " failure class, not
@@ -131,15 +143,9 @@ module Krikri
         # 'version_compare'."). Before this rescue the raise escaped
         # the plugin uncaught and killed the whole process (found via
         # adarnimrod.apache's ca-store Assertions preflight).
-        result = ActionResult.conditional_error_result_json(
-          "Task failed: Syntax error in expression: #{ex.message}")
-        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
-        return ActionResult.final(result)
+        return that_index_error("Task failed: Syntax error in expression: #{ex.message}", current_index)
       rescue ex : RenderExpressionError
-        result = ActionResult.conditional_error_result_json(
-          "Task failed: #{ex.message}")
-        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
-        return ActionResult.final(result)
+        return that_index_error("Task failed: #{ex.message}", current_index)
       rescue ex : FilterPluginError | TestPluginError
         # A test/filter plugin's RUNTIME failure inside a `that:` item
         # (the version test's "Version comparison failed: ..." among
@@ -156,10 +162,7 @@ module Krikri
         # killed the whole process with a bare Crystal stack dump, no
         # [ERROR] chain and no recap (found via vbotka.freebsd_packages,
         # round 5410000 - the role's collection-version sanity assert).
-        result = ActionResult.conditional_error_result_json(
-          "Task failed: #{ex.message}")
-        result.as_h["_ansible_that_index"] = JSON::Any.new(current_index.to_i64)
-        return ActionResult.final(result)
+        return that_index_error("Task failed: #{ex.message}", current_index)
       rescue ex : ConditionalEvaluator::ConditionalBooleanError
         # Ansible's assert: prefixes this specific failure
         # "Task failed: " rather than when:'s own "Error while
@@ -171,12 +174,22 @@ module Krikri
           "Task failed: #{ex.message}"))
       end
 
-      failing ? failure_result(failing) : success_result
+      failing ? failure_result(failing) : nil
     end
 
     # A condition that evaluated false: the first failing `that:` entry
     # decides the message, and the result echoes it as `assertion` /
     # `evaluated_to` so the callback can dump the failed assertion.
+    # A `+` operand-type failure raised from inside a lookup's argument
+    # (`lookup('ini', '... default=' + omit)`) bypasses the conditional
+    # evaluator's own wrapping; ansible fails it as an expression render
+    # error with the that: item as the chain's second Origin.
+    private def evaluate_that(substituted : String) : Bool
+      ConditionalEvaluator.evaluate(substituted, @vars, strict: true, raise_undefined: true)
+    rescue ex : PlusMinusOperandError
+      raise RenderExpressionError.new("Error rendering expression: #{ex.message}")
+    end
+
     private def failure_result(failing : String) : ActionResult
       fail_msg = @params["fail_msg"]? || @params["msg"]? || "Assertion failed"
       # a bare YAML bool item (`that: [false]`) is reported as the bool itself
