@@ -749,6 +749,7 @@ module Krikri
       if (idx = result["_ansible_that_index"]?.try(&.as_i64?)) &&
          (msg.starts_with?("Task failed: Error while evaluating conditional") ||
          msg.starts_with?("Task failed: Syntax error in expression") ||
+         msg.starts_with?("Task failed: Error rendering expression") ||
          msg.starts_with?("Task failed: The test plugin ") ||
          msg.starts_with?("Task failed: The filter plugin "))
         emit_assert_that_chain(source_task, msg["Task failed: ".size..], idx.to_i)
