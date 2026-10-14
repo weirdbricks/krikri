@@ -121,7 +121,7 @@ module Krikri
     # operand was undefined) - the two are independent because
     # changed_when:/failed_when: deliberately still get the lenient
     # undefined-operand handling here (not touched by this fix).
-  class UndefinedVariableError < Exception
+    class UndefinedVariableError < Exception
     end
 
     # Raised (before any substitution) when a conditional expression
@@ -3049,7 +3049,7 @@ module Krikri
         end
       end
 
-      value = evaluate_value(condition, vars, raise_undefined)
+      value = evaluate_value(condition, vars, raise_undefined, strict)
 
       # ansible-core 2.19 requires a conditional to end in a REAL
       # boolean: anything else fails the task with "Conditional result
@@ -3087,6 +3087,16 @@ module Krikri
           # strict conditional-boolean requirement) and always raised,
           # even for the common bare-variable idiom, not just the `and`
           # case found benchmarking jdauphant.dns.
+          #
+          # The carve-out now only covers values that reach this gate
+          # ALREADY stringified (an earlier pipeline stage rendered the
+          # template before the conditional ever saw it) - a bare
+          # variable whose stored value is still raw `{{ }}` template
+          # text gets its result type recovered structurally first (see
+          # #strict_typed_whole_span_value in #evaluate_value's
+          # bare-variable branch), so a template whose expression
+          # genuinely yields a string raises there instead of slipping
+          # through here (issue #73).
           unless raw_value == "undefined" || raw_value == "True" || raw_value == "False" ||
                  raw_value == Krikri::OMIT_SENTINEL
             raise ConditionalBooleanError.new(
@@ -3173,7 +3183,7 @@ module Krikri
     end
 
     # Evaluate a value (variable lookup or literal)
-    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false) : String | Int64 | Bool | Nil | Array(String)
+    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false, strict : Bool = false) : String | Int64 | Bool | Nil | Array(String)
       expr = expr.strip
 
       # Handle quoted strings
@@ -3498,6 +3508,43 @@ module Krikri
           # php_fpm, round 82024).
           strict_probe_templated_value(vars, value, raise_undefined, expr)
           rendered = render_raw_template_string(vars, raw, expr)
+          # ansible-core 2.19's native typing keeps a WHOLE-value
+          # `{{ expr }}` variable's own result TYPE through variable
+          # storage: `when: b` on `b: "{{ p != '' }}"` sees a real bool
+          # and passes, while `when: c` on `c: "{{ 'True' }}"` or
+          # `c: "{{ p and 'x' }}"` sees the STRING 'True'/'x' (Jinja's
+          # `and`/`or` return an operand unchanged, never a bool) and
+          # fails with "derived from value of type 'str'" - live-verified
+          # matrix vs 2.19 (issue #73). This codebase's render-to-text
+          # detour below loses exactly that distinction (every one of
+          # those templates renders to text that parse_json_or_python_
+          # literal re-types as a bool), which is why the strict String
+          # gate's "True"/"False" carve-out had to accept them ALL.
+          # Where the type CAN be decided here, decide it here - a
+          # genuinely-string result must raise like Ansible, and only a
+          # genuinely-bool one may take the bool shortcut; everything the
+          # helper cannot decide (escape hatch set, engine gap, undefined)
+          # returns nil and keeps the pre-existing render-then-retype
+          # behavior byte-identical, so the change is strictly additive.
+          if strict && (typed = strict_typed_whole_span_value(vars, raw, rendered, raise_undefined))
+            case typed_raw = typed.raw
+            when Bool
+              # The only shape Ansible accepts, recovered at the one
+              # point the type is still known.
+              return typed_raw
+            when String
+              # The template's result is genuinely a str - the same
+              # non-boolean shape the strict String gate below rejects,
+              # raised here because the re-typed text "True"/"False"
+              # would otherwise be exempted as if it were a preserved
+              # bool. The sentinels keep their own handling further down.
+              unless typed_raw == "undefined" || typed_raw == Krikri::OMIT_SENTINEL
+                raise ConditionalBooleanError.new(
+                  "Conditional result (#{typed_raw.empty? ? "False" : "True"}) was derived from value of type 'str'. " \
+                  "Conditionals must have a boolean result.")
+              end
+            end
+          end
           json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
         elsif raw.is_a?(Array) || raw.is_a?(Hash)
           # Ansible's recursive re-templating reaches EVERY level of a
@@ -3517,6 +3564,51 @@ module Krikri
         # ultimately traces back to a task-level `when:` (raise_undefined
         # true); every other caller keeps the long-standing lenient nil.
         raise UndefinedVariableError.new("'#{expr}' is undefined") if raise_undefined
+        nil
+      end
+    end
+
+    # The typed verdict for a bare conditional variable whose stored
+    # value is itself unrendered `{{ }}` template text - the one point
+    # where that variable's native type is still recoverable. Real
+    # ansible-core 2.19 keeps a whole-value `{{ expr }}` template's own
+    # result type through variable storage, so a whole-value template
+    # whose expression yields a bool is a bool, and one whose expression
+    # yields a string (`{{ 'True' }}`, `{{ p and 'x' }}`,
+    # `{{ (...) | to_json }}` - vaibhavpage.ansible_proxify's own
+    # proxify_it) is a str that the strict boolean check must reject,
+    # issue #73.
+    #
+    # Returns nil whenever the type cannot be decided HERE - the escape
+    # hatch is set, the template is not one whole span the engine can
+    # evaluate, or the evaluation failed - and the caller keeps its
+    # pre-existing render-then-retype behavior (the "True"/"False"
+    # carve-out) for those shapes. A template that is anything OTHER
+    # than one whole `{{ expr }}` span (multi-span/mixed text, block
+    # tags) is likewise decided WITHOUT the engine: real
+    # ansible-core's Template.render() returns a plain str the moment
+    # the template's AST is more than a single output node, so the
+    # stored value is a str no matter what the rendered text says -
+    # "True" from `{% if x %}True{% endif %}` is still a str and still
+    # fails the strict check there; the caller gets that rendered text
+    # itself as the typed value.
+    private def self.strict_typed_whole_span_value(vars : Hash(String, JSON::Any), raw : String, rendered : String, raise_undefined : Bool) : JSON::Any?
+      return nil if allow_broken_conditionals?
+      stripped = raw.strip
+      unless (raw.split("{{").size - 1) == 1 && (raw.split("}}").size - 1) == 1 &&
+             stripped.starts_with?("{{") && stripped.ends_with?("}}")
+        return JSON::Any.new(rendered)
+      end
+      # One whole span: the same memoized structured evaluation the
+      # re-render paths already use (`Rerender.whole_span_structured`)
+      # recovers the expression's own type (`{{ p != '' }}` -> bool,
+      # `{{ 'True' }}` -> str). An engine failure is a capability gap,
+      # not a verdict - nil sends the caller down the untouched legacy
+      # path rather than inventing a type Ansible never observed.
+      begin
+        VariableSubstitutor::Rerender.whole_span_structured(vars, raw)
+      rescue e : UndefinedVariableError
+        raise e if raise_undefined
         nil
       end
     end
