@@ -1816,6 +1816,7 @@ module Krikri
       if PluginManager.local_connection?(host, vars_context)
         resolved = params.dup
         resolved["src"] = src
+        resolved["__original_src_basename"] = File.basename(src)
         return resolved
       end
 
@@ -1840,6 +1841,7 @@ module Krikri
       resolved["src"] = remote_tmp
       resolved["remote_src"] = "true"
       resolved["__cleanup_after_unarchive"] = "true"
+      resolved["__original_src_basename"] = File.basename(src)
       resolved
     end
 
