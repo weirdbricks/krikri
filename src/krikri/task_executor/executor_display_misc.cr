@@ -227,7 +227,12 @@ module Krikri
     # markers, no truncation).
     private def render_bare_name_span(name : String, span : String, substitutor : VarSubstitutor, vars_context : Hash(String, JSON::Any), task : Task, host : Host, ctx : NameTemplateContext, state : NameTemplateErrorState, depth : Int32, error_origin : VarOrigin?) : String
       begin
-        return substitutor.substitute(span, strict: true)
+        # output: true - the banner text is a final user-facing rendering,
+        # and real renders a container there as Python repr, not JSON
+        # (issue #86: `name: install {{ pkg_list }}` prints
+        # `TASK [install ['ntp']]`). Same for the other substitute calls
+        # below that produce displayed name text.
+        return substitutor.substitute(span, strict: true, output: true)
       rescue e : UndefinedVariableError
         raw_template = depth < MAX_NAME_MARKER_DEPTH ? bare_var_raw_template(span, vars_context) : nil
         if raw_template
@@ -267,7 +272,7 @@ module Krikri
       rescue
         # A non-undefined span failure (bad filter, syntax) is not a
         # Marker in real either - keep the old lenient render for it.
-        return (substitutor.substitute(span) rescue span)
+        return (substitutor.substitute(span, output: true) rescue span)
       end
     end
 
@@ -318,7 +323,7 @@ module Krikri
 
       unless abort
         begin
-          return {active_substitutor.substitute(span, strict: true), false}
+          return {active_substitutor.substitute(span, strict: true, output: true), false}
         rescue e : RenderExpressionError
           # Real's task-NAME marker shows the BARE message ("error 1 -
           # 'z' is not in list", probed 2026-10-10) - no "Error rendering
@@ -465,7 +470,10 @@ module Krikri
     # reproduced here.
     private def lenient_task_name(task : Task, host : Host) : String
       vars_context = build_vars_context(task, host)
-      VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(task.name)
+      # output: true - same final-display reasoning as
+      # render_bare_name_span: containers in the banner render as
+      # Python repr, matching Ansible.
+      VarSubstitutor.new(vars: vars_context, host_name: host.name).substitute(task.name, output: true)
     rescue
       task.name
     end

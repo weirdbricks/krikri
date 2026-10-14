@@ -270,7 +270,22 @@ module Krikri
       private def structured_container(expr : String) : JSON::Any?
         value =
           if expr.matches?(REGEX_PLAIN_REFERENCE)
-            @lookup.resolve(expr)
+            resolved = @lookup.resolve(expr)
+            # resolve on a bare name returns a lazily-templated var's own
+            # stored `{{ }}` text (a STRING, never a container), so the
+            # container test below would always miss and the output path
+            # would fall back to the JSON-compact render. Ansible's templar
+            # resolves a lazily-templated value recursively at the use site
+            # (tehtbl.ntp's `ntp_packages` default chain shows Python repr
+            # `['ntp']` in the task banner, not `["ntp"]`), so re-run the
+            # stored template through the same re-render entry the vars
+            # lookup uses - but never for a value whose own template calls
+            # a lookup, which must not run twice.
+            if resolved && (rv = resolved.raw).is_a?(String) && !side_effecting_call?(rv)
+              @lookup.rerender_var_value(resolved)
+            else
+              resolved
+            end
           elsif side_effecting_call?(expr)
             nil
           else
