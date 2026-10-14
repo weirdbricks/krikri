@@ -113,11 +113,8 @@ describe "community.general cartesian lookup" do
     # The exact znerol.ssh_kba shape (round 5410000, verified on real
     # ansible-core 2.19.11 by the orchestrator):
     #   cartesian -> map(first) -> list -> zip -> list
-    # real data: NAMES ['a','a','b','b'] KEYS ['a k1','a k2','b k1','b k2']
-    #            ZIP [['a','a k1'],...] LEN 4. The list LITERALS render
-    # with each engine's own list convention (known shared limitation:
-    # wantlist/query results render ["a","b"] vs real ['a','b'] in the
-    # hand-rolled path) - the DATA must match, not the repr style.
+    # real data: NAMES ['a', 'a', 'b', 'b'] KEYS ['a k1', 'a k2', 'b k1', 'b k2']
+    #            ZIP [['a', 'a k1'], ...] LEN 4, rendered as Python repr.
     #
     # NOTE: minitest-safe and heredoc-indented; runs both engines end to
     # end against the real binary, including loop: + when: over the
@@ -145,9 +142,9 @@ describe "community.general cartesian lookup" do
     )
     combined = out + _err
     status.success?.must_equal(true, combined)
-    out.must_include(qescaped(%(NAMES|["a","a","b","b"])))
-    out.must_include(qescaped(%(KEYS|["a k1","a k2","b k1","b k2"])))
-    out.must_include(qescaped(%(ZIP|[["a","a k1"],["a","a k2"],["b","b k1"],["b","b k2"]])) + " LEN|4")
+    out.must_include(%(NAMES|['a', 'a', 'b', 'b']))
+    out.must_include(%(KEYS|['a k1', 'a k2', 'b k1', 'b k2']))
+    out.must_include(%(ZIP|[['a', 'a k1'], ['a', 'a k2'], ['b', 'b k1'], ['b', 'b k2']] LEN|4))
     out.must_include("hit-['b', 'k2']")
   end
 end
