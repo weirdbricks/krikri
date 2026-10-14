@@ -372,9 +372,6 @@ module Krikri
       unless zip_missing.empty?
         reasons << "Unable to find required '#{zip_missing.join("' or '")}' binary in the path."
       end
-      unless unzip
-        reasons << "Unable to find required 'unzip' or 'unzip' binary in the path."
-      end
       if unzip && (zip_reason = could_not_handle_reason("unzip -l", unzip, src))
         reasons << zip_reason
       end
@@ -399,7 +396,25 @@ module Krikri
         reasons << "Unable to find required 'gtar' or 'tar' binary in the path"
       end
 
+      # Live-verified order on 2.19.11: ZipZArchive's duplicate-spelled
+      # report lands after the tar family's, not next to ZipArchive's.
+      unless unzip
+        reasons << "Unable to find required 'unzip' or 'unzip' binary in the path."
+      end
+
       reasons.uniq
+    end
+
+    # A controller-side src: is copied by Ansible into the module tmpdir
+    # as mkstemp(stem, ext) and the module reports that staged path, not
+    # the original. The executor marks such srcs with
+    # __original_src_basename.
+    private def staged_src_echo(src : String) : String
+      name = @params["__original_src_basename"]? || return src
+      dot = name.rindex('.')
+      stem, ext = dot && dot > 0 ? {name[0...dot], name[dot..]} : {name, ""}
+      suffix = String.build(8) { |b| 8.times { b << "abcdefghijklmnopqrstuvwxyz0123456789"[Random.rand(36)] } }
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}/#{stem}#{suffix}#{ext}")
     end
 
     private def could_not_handle_reason(command : String, binary_path : String, src : String) : String?
@@ -477,7 +492,7 @@ module Krikri
         # dropped - the only stable replica. Found via the podman-diff
         # unarchive_edge_cases E6 harness case, where this engine said
         # "Unsupported archive format for <src>" instead.
-        head = %(Failed to find handler for "#{src}". Make sure the required command to extract the file is installed.)
+        head = %(Failed to find handler for "#{staged_src_echo(src)}". Make sure the required command to extract the file is installed.)
         reasons = handler_failure_reasons(src)
         msg = reasons.empty? ? head : "#{head}\n#{reasons.join("\n")}"
         return PluginResult.new(changed: false, failed: true, msg: msg)
