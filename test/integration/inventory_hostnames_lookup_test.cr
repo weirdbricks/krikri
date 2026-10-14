@@ -83,3 +83,57 @@ describe "lookup('inventory_hostnames', ...)" do
     {% end %}
   {% end %}
 end
+
+# Real InventoryManager._enumerate_matches prints a warning on stderr for
+# each unique pattern term that matched neither group nor host names
+# (verified against ansible-core 2.19 for both lookup() and query(): the
+# line appears just before the task's ok: output). Out-of-range subscripts
+# on matched hosts and ! / & terms stay silent - the former errors inside
+# the lookup instead, the latter match nothing by design.
+private def warning_line(pattern : String) : String
+  "[WARNING]: Could not match supplied host pattern, ignoring: #{pattern}"
+end
+
+describe "lookup('inventory_hostnames', ...) no-match warning" do
+  def run_pattern(expr : String)
+    dir = File.tempname("ih-warn", ".d")
+    Dir.mkdir(dir)
+    inventory = File.join(dir, "inventory.ini")
+    File.write(inventory, INVENTORY)
+    playbook = File.join(dir, "pb.yml")
+    File.write(playbook, pattern_playbook(expr))
+
+    stdout = IO::Memory.new
+    stderr = IO::Memory.new
+    Process.run(BINARY, ["-i", inventory, playbook], output: stdout, error: stderr)
+    {stdout.to_s, stderr.to_s}
+  ensure
+    FileUtils.rm_r(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "warns on stderr for lookup() with an unmatched pattern" do
+    stdout, stderr = run_pattern("lookup('inventory_hostnames', 'nosuchgroup')")
+    stdout[/TAG=(.*)"/, 1].must_equal("[]")
+    stderr.includes?(warning_line("nosuchgroup")).must_equal(true)
+  end
+
+  it "warns on stderr for query() with an unmatched pattern" do
+    _stdout, stderr = run_pattern("query('inventory_hostnames', 'nosuchgroup')")
+    stderr.includes?(warning_line("nosuchgroup")).must_equal(true)
+  end
+
+  it "does not warn for an out-of-range subscript on matched hosts" do
+    _stdout, stderr = run_pattern("lookup('inventory_hostnames', 'webservers[9]')")
+    stderr.empty?.must_equal(true)
+  end
+
+  it "does not warn for exclusion or intersection terms" do
+    _stdout, stderr = run_pattern("lookup('inventory_hostnames', 'all:!nosuchgroup:&alsonosuch')")
+    stderr.empty?.must_equal(true)
+  end
+
+  it "warns once for the same unmatched term repeated" do
+    _stdout, stderr = run_pattern("lookup('inventory_hostnames', 'nosuchgroup,nosuchgroup')")
+    stderr.scan(/Could not match supplied host pattern, ignoring: nosuchgroup/).size.must_equal(1)
+  end
+end
