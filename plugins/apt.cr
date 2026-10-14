@@ -1355,7 +1355,9 @@ module Krikri
         # run_command_environ_update, NOT in the command string - the
         # env prefix here is execution plumbing only and never reaches a
         # registered msg.
-        exec_cmd = "DEBIAN_FRONTEND=noninteractive #{install_cmd}"
+        # Ansible's module runs apt with LANGUAGE/LC_ALL=C so numbers are
+        # unformatted ("7370 kB", not "7,370 kB").
+        exec_cmd = "DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{install_cmd}"
         # `apt-get install` of named packages contends for the dpkg lock
         # - wrap with lock_timeout retry, matching Ansible's
         # `apt` module behavior. Also wraps Ansible's implicit
@@ -1409,6 +1411,8 @@ module Krikri
             msg: "'#{install_cmd}' failed: #{install_result[:stderr]}",
             stdout: install_result[:stdout],
             stderr: install_result[:stderr],
+            stdout_lines: PluginHelpers::AnsibleSplitlines.split(install_result[:stdout]),
+            stderr_lines: PluginHelpers::AnsibleSplitlines.split(install_result[:stderr]),
             rc: install_result[:exit_code],
             cache_update_time: @cache_update_time,
             key_order: ["stdout", "stderr", "rc", "cache_updated", "cache_update_time", "failed", "msg", "stdout_lines", "stderr_lines"]
@@ -1532,7 +1536,7 @@ module Krikri
         @allow_change_held_packages ? "--allow-change-held-packages" : "",
       ]
       remove_cmd = "#{apt_get_bin} -q -y #{flags.join(" ")} remove #{pkg_list}"
-      remove_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive #{remove_cmd}", lock_timeout, ->remote_exec(String)) }
+      remove_result = with_policy_rc_d { apt_with_lock_retry("DEBIAN_FRONTEND=noninteractive LANGUAGE=C LC_ALL=C #{remove_cmd}", lock_timeout, ->remote_exec(String)) }
       if remove_result[:exit_code] != 0
         # Real remove() failure: fail_json(msg="'apt-get remove %s'
         # failed: %s" % (packages, err), stdout=out, stderr=err, rc=rc)
