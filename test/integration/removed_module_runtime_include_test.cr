@@ -52,6 +52,8 @@ describe "removed module reached at run time through a dynamic include" do
     output.must_include("fatal: [localhost]: FAILED! => {\"changed\": false, \"include\": \"install.yml\"", output)
     output.must_include("failed=1", output)
     output.must_include("PLAY RECAP", output)
+    output.must_include("<<< caused by >>>", output)
+    output.scan("has been removed. This module").size.must_equal(4, output)
     output.must_include("Origin:", output)
     output.must_include("install.yml:1:3", output)
     output.wont_include("Failed to load", output)
