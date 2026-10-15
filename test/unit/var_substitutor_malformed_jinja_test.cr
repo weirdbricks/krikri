@@ -35,6 +35,14 @@ describe "Krikri::VarSubstitutor (var_substitutor_malformed_jinja_test.cr)" do
       end
     end
 
+    it "raises on a stray {% endif %} in strict (task-arg) mode, stays lenient otherwise" do
+      sub = Krikri::VarSubstitutor.new(vars: jvars({"o" => "root"}))
+      assert_raises_message(Krikri::VariableSubstitutor::TemplateSyntaxError, "Syntax error in template: Encountered unknown tag 'endif'.") do
+        sub.substitute("owner={{o}}{% endif %}", strict: true)
+      end
+      sub.substitute("{% if true %}a{% endif %}", strict: true).must_equal("a")
+    end
+
     it "still renders a valid dict-literal span whose body contains braces" do
       sub = Krikri::VarSubstitutor.new(vars: jvars({"v" => "x"}))
       sub.substitute("{{ {\"a\": 1} }} {{ v }}").must_equal("{\"a\":1} x")

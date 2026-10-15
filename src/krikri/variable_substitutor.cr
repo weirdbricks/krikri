@@ -1815,6 +1815,9 @@ module Krikri
       # why this isn't solved by passing a strict undefined class
       # to Crinja instead.
       scan_strict_block_tags_for_undefined(text) if strict
+      if strict && (stray = renderer.stray_end_tag_message(text))
+        raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{stray}")
+      end
       @@block_tag_escalation_depth += 1
       begin
         renderer.render(text)
