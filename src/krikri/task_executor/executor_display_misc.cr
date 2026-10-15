@@ -11,11 +11,17 @@ module Krikri
     # the host in the latter case.
     #
     # *task* is nil for the implicit Gathering Facts task's own report.
+    # *delegate_target* carries the delegate's name for a delegated task's
+    # unreachable - Ansible's default callback stamps `host -> delegate`
+    # on every line of a delegated task straight from the task keyword
+    # (CallbackBase.host_label), so the fatal line reads
+    # `fatal: [origin -> delegate]: UNREACHABLE!` even though the stats
+    # are booked on the origin host alone.
     # With print: false the report text is buffered instead (see
     # flush_pending_unreachable): run_task_batch books unreachable hosts
     # BEFORE its abort/halt decisions but must print the report under
     # the task banner, which is decided afterwards.
-    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true) : Nil
+    private def report_unreachable(task : Task?, host : Host, ssh_error : String? = nil, no_log : Bool = false, print : Bool = true, delegate_target : String? = nil) : Nil
       connection_host = host.vars["ansible_host"]?.try(&.as_s?) || host.name
       # Ansible embeds the transport's own error text in the msg
       # ("Task failed: Failed to connect to the host via ssh: ssh:
@@ -38,8 +44,11 @@ module Krikri
         if Krikri::Oneline.enabled?
           # The oneline callback's unreachable shape: `host | UNREACHABLE!:
           # <msg>` with the RAW msg text (not the JSON-quoted fatal dump).
+          # The delegated label rides the host slot the same way the
+          # default callback's fatal line carries it.
+          host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
           detail_msg = no_log ? "" : "Failed to connect to the host via ssh: #{detail}"
-          io << "#{host.name} | UNREACHABLE!: #{detail_msg}".colorize(:red)
+          io << "#{host_label} | UNREACHABLE!: #{detail_msg}".colorize(:red)
           io << "\n"
         else
           unless no_log
@@ -53,7 +62,8 @@ module Krikri
             head = ErrorBlock::Node.new("Task failed.", source_context: origin)
             ErrorBlock.emit_to(io, head.with_chain(ErrorBlock::DIRECT_CAUSE, true, cause))
           end
-          io << %(fatal: [#{host.name}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
+          unreachable_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
+          io << %(fatal: [#{unreachable_host_label}]: UNREACHABLE! => {"changed": false, "msg": #{msg.to_json}, "unreachable": true}).colorize(:red)
           io << "\n"
         end
       end

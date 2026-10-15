@@ -751,8 +751,62 @@ module Krikri
       end
 
       fallback = Host.new(target_name, ENV["USER"]? || "root", 22)
-      fallback.vars["ansible_connection"] = JSON::Any.new("local") if target_name == "localhost" || target_name == "127.0.0.1"
+      # Ansible's fallback for an unresolvable delegate name is a plain SSH
+      # host (connection plugin defaults to smart->ssh, not to the origin
+      # host's connection): a delegate not in inventory never inherits the
+      # origin's ansible_connection=local, so `delegate_to:
+      # some.invalid.name` from a local controller host really runs ssh
+      # against the name and fails that task UNREACHABLE (issue #102) -
+      # without the explicit "ssh" here, PluginManager.local_connection?'s
+      # vars fallback re-inherited the origin's "local" and ran the task
+      # on the controller.
+      if target_name == "localhost" || target_name == "127.0.0.1"
+        fallback.vars["ansible_connection"] = JSON::Any.new("local")
+      else
+        fallback.vars["ansible_connection"] = JSON::Any.new("ssh")
+      end
       fallback
+    end
+
+    # The vars a delegated task's actual dispatch (connection resolution,
+    # upload/exec, wire config) must see: the delegated host's own
+    # connection vars, not the origin host's context. build_vars_context
+    # is built for the ORIGIN host - it injects ansible_host as the
+    # origin's inventory name and merges the origin's inventory
+    # connection vars - and ConnectionSettings.resolve tiers the passed
+    # vars ABOVE the target host's own, so a delegated dispatch saw the
+    # origin's ansible_host/ansible_port/ansible_user: delegating from
+    # host A to inventory host B ssh'd back to A, and (issue #102) a
+    # not-in-inventory delegate name inherited the origin's
+    # ansible_connection=local outright and ran on the controller.
+    # Ansible builds a delegated connection from the delegated host's
+    # own vars, so the delegate's own values win here; ansible_host/
+    # ansible_ssh_host are dropped outright when the delegate defines
+    # none - the origin's injected value must never name the ssh target,
+    # and ansible falls back to the delegate's own name. The same
+    # fallback rule the not-in-inventory delegate applies: the
+    # delegate's own connection setting, local for the localhost
+    # spellings, ssh otherwise - a delegate never inherits the origin's
+    # connection plugin. Keys the delegate does not define keep the
+    # origin context's value (unchanged behavior; only ansible_host,
+    # which build_vars_context fabricates for every origin host, and
+    # ansible_connection are dropped, so a task-level connection var
+    # override on the delegated task itself still applies where
+    # ansible's own task-vars tier would put it).
+    private def delegated_dispatch_vars(exec_host : Host, vars_context : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+      dispatch = vars_context.dup
+      dispatch.delete("ansible_host")
+      dispatch.delete("ansible_ssh_host")
+      exec_host.vars.each do |key, value|
+        dispatch[key] = value if ConnectionSettings::CONNECTION_VAR_KEYS.includes?(key)
+      end
+      unless dispatch.has_key?("ansible_host") || dispatch.has_key?("ansible_ssh_host")
+        dispatch["ansible_host"] = JSON::Any.new(exec_host.name)
+      end
+      dispatch["ansible_connection"] =
+        exec_host.vars["ansible_connection"]? ||
+          JSON::Any.new(exec_host.name == "localhost" || exec_host.name == "127.0.0.1" ? "local" : "ssh")
+      dispatch
     end
 
     # The `-> target` label for display sites that have no already-
@@ -2064,6 +2118,15 @@ module Krikri
         return when_error_result(ex, task, host)
       end
 
+      # A delegated task's CONNECTION is the delegated host's, not the
+      # origin's: everything from the connection-plugin check below through
+      # the plugin dispatch must resolve against the delegate (see
+      # delegated_dispatch_vars). Param templating above and the
+      # when:/failed_when: evaluation below keep the ORIGIN's context -
+      # ansible templates a delegated task's args against the task's own
+      # (origin) vars and books the result on the origin host.
+      dispatch_vars = exec_host == host ? vars_context : delegated_dispatch_vars(exec_host, vars_context)
+
       # Ansible resolves the task's effective connection type through
       # its plugin loader right after the when: evaluates and BEFORE the
       # module ever runs, failing the task with "Task failed: the
@@ -2077,7 +2140,7 @@ module Krikri
       # value silently fell back to SSH: an unresolvable connection
       # turned into a bogus UNREACHABLE ("Failed to connect to the host
       # via ssh") instead of Ansible's one clean failed task.
-      if (conn_type = vars_context["ansible_connection"]?.try(&.as_s?)) &&
+      if (conn_type = dispatch_vars["ansible_connection"]?.try(&.as_s?)) &&
          PluginManager.connection_plugin_not_found?(conn_type)
         return apply_changed_failed_when(task, JSON.parse({
           "changed" => false,
@@ -2195,7 +2258,7 @@ module Krikri
       end
 
       if task.module_name == "ansible.builtin.reboot"
-        result = execute_reboot(substituted_params, exec_host, vars_context, resolve_task_check_mode(task, vars_context))
+        result = execute_reboot(substituted_params, exec_host, dispatch_vars, resolve_task_check_mode(task, dispatch_vars))
         return apply_changed_failed_when(task, result, vars_context, host)
       end
 
@@ -2220,7 +2283,7 @@ module Krikri
       if violation = copy_literal_type_failure(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
-      copied = inline_copy_source_content(task, substituted_params, exec_host, vars_context)
+      copied = inline_copy_source_content(task, substituted_params, exec_host, dispatch_vars)
       if copied.is_a?(JSON::Any)
         return apply_changed_failed_when(task, copied, vars_context, host)
       end
@@ -2238,17 +2301,17 @@ module Krikri
       if violation = unarchive_assemble_literal_type_failure(task, substituted_params)
         return apply_changed_failed_when(task, violation, vars_context, host)
       end
-      staged = stage_unarchive_remote_src(task, substituted_params, exec_host, vars_context)
+      staged = stage_unarchive_remote_src(task, substituted_params, exec_host, dispatch_vars)
       if staged.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged, vars_context, host)
       end
       substituted_params = staged
-      staged_script = stage_script_src(task, substituted_params, exec_host, vars_context)
+      staged_script = stage_script_src(task, substituted_params, exec_host, dispatch_vars)
       if staged_script.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged_script, vars_context, host)
       end
       substituted_params = staged_script
-      staged_assemble = stage_assemble_dir(task, substituted_params, exec_host, vars_context)
+      staged_assemble = stage_assemble_dir(task, substituted_params, exec_host, dispatch_vars)
       if staged_assemble.is_a?(JSON::Any)
         return apply_changed_failed_when(task, staged_assemble, vars_context, host)
       end
@@ -2405,8 +2468,8 @@ module Krikri
       end
 
       wire_vars = vars_context
-      if PluginManager.remote_execution?(task.module_name, exec_host, vars_context)
-        wire_vars = vars_context.dup
+      if PluginManager.remote_execution?(task.module_name, exec_host, dispatch_vars)
+        wire_vars = dispatch_vars.dup
         wire_vars["ansible_connection"] = JSON::Any.new("local")
       end
 
@@ -2439,7 +2502,7 @@ module Krikri
         # hosts take the SSH fire-and-forget path inside execute_async
         # (needs the substitutor/become_user context the local path
         # re-derives itself).
-        return apply_changed_failed_when(task, execute_async(task, exec_host, config, vars_context, substitutor, substituted_become_user), vars_context, host)
+        return apply_changed_failed_when(task, execute_async(task, exec_host, config, dispatch_vars, substitutor, substituted_become_user), vars_context, host)
       end
 
       # The arbitrary-Python-module runner: an unavailable module with a
@@ -2449,7 +2512,7 @@ module Krikri
       # when_passes? let it through (see its own comment), so a python
       # module behind a false when: still skips normally.
       if task.unavailable_module && (py_source = python_module_source_for(task))
-        result = execute_python_module(task, py_source, substituted_params, exec_host, vars_context, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout)
+        result = execute_python_module(task, py_source, substituted_params, exec_host, dispatch_vars, wire_vars, become, become_user, substituted_become_user, substituted_env, dispatch_timeout)
         if period = marker_task_timeout(result)
           return task_timeout_result(period)
         end
@@ -2460,7 +2523,7 @@ module Krikri
         task.module_name,
         config,
         exec_host,
-        vars_context,
+        dispatch_vars,
         become,
         become_user,
         dispatch_timeout

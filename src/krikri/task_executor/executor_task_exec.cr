@@ -742,7 +742,11 @@ module Krikri
       # recap'd `unreachable=1 failed=0` and halted the host at
       # Gathering Facts, this engine booked `failed=2` and ran on.
       if unreachable_task_result?(result)
-        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context))
+        # The fatal line carries the `-> delegate` label for a delegated
+        # task (CallbackBase.host_label) even though the unreachable is
+        # booked on the origin host.
+        delegate_target = exec_host.try { |delegate| delegate.name != host.name ? delegate.name : nil }
+        report_unreachable(task, host, result["stderr"]?.try(&.as_s?), no_log: resolve_task_no_log(task, vars_context), delegate_target: delegate_target)
         # Only a host whose unreachability is FATAL (not
         # ignore_unreachable:'d away) is remembered: an ignored
         # unreachable keeps being retried per task, exactly like
