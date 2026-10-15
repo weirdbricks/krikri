@@ -393,15 +393,14 @@ module Krikri
         reasons << "Unable to find required 'gtar' or 'tar' binary in the path"
       end
 
-      # Live-verified order on 2.19.11: ZipZArchive's duplicate-spelled
-      # report lands after the tar family's, not next to ZipArchive's.
+      # Real collects these reasons into a Python set, so the order of the
+      # missing-binary lines shuffles run to run (issue #112: three runs
+      # on 2.19.11 gave three different orders); any fixed order is as
+      # good as another.
       unless unzip
         reasons << "Unable to find required 'unzip' or 'unzip' binary in the path."
       end
 
-      # ZipArchive's own missing-binary report is the last line in real
-      # (gtar/tar, unzip/unzip, then unzip/zipinfo), despite ZipArchive
-      # being first in pick_handler's handler list.
       unless zip_missing.empty?
         reasons << "Unable to find required '#{zip_missing.join("' or '")}' binary in the path."
       end
@@ -409,16 +408,13 @@ module Krikri
       reasons.uniq
     end
 
-    # A controller-side src: is copied by Ansible into the module tmpdir
-    # as mkstemp(stem, ext) and the module reports that staged path, not
-    # the original. The executor marks such srcs with
+    # A controller-side src: is copied by Ansible's unarchive action into
+    # the module tmpdir under the fixed name `source` (issue #112) and the
+    # module reports that staged path, not the original. The executor marks such srcs with
     # __original_src_basename.
     private def staged_src_echo(src : String) : String
-      name = @params["__original_src_basename"]? || return src
-      dot = name.rindex('.')
-      stem, ext = dot && dot > 0 ? {name[0...dot], name[dot..]} : {name, ""}
-      suffix = String.build(8) { |b| 8.times { b << "abcdefghijklmnopqrstuvwxyz0123456789"[Random.rand(36)] } }
-      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}/#{stem}#{suffix}#{ext}")
+      @params["__original_src_basename"]? || return src
+      expand_tilde("~/.ansible/tmp/ansible-tmp-#{sprintf("%.7f", Time.local.to_unix_f)}-#{Process.pid}-#{Random.rand(100_000_000_000_000..999_999_999_999_999)}/source")
     end
 
     private def could_not_handle_reason(command : String, binary_path : String, src : String) : String?
