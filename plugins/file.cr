@@ -231,8 +231,15 @@ module Krikri
       # 2.19.11: {"changed": false, "msg": ...} exactly). Success
       # results always carry path/dest in real, so they keep the
       # unconditional merge.
-      add_path_info(result, path) unless path_less_failure?(result)
+      add_path_info(result, stat_path_for(result, path)) unless path_less_failure?(result)
       result
+    end
+
+    # A failure may name a different path than the task's (the first
+    # created ancestor, see create_directory) - the stat follows it.
+    private def stat_path_for(result : PluginResult, path : String) : String
+      return path unless result.failed?
+      result.extra["path"]?.try(&.as_s?) || path
     end
 
     # A failed result that carries neither path nor dest (see the note in
@@ -440,6 +447,7 @@ module Krikri
       # (collection1), and a root-owned 0755 ancestor denies that to a
       # non-root user ("Unable to delete file").
       create_failure_msg = nil
+      failing_component = path
       created = begin
         missing_components = [] of String
         cursor = path
@@ -448,6 +456,7 @@ module Krikri
           cursor = File.dirname(cursor)
         end
         missing_components.reverse_each do |component|
+          failing_component = component
           Dir.mkdir(component) unless Dir.exists?(component)
           apply_file_attributes(component, recursive: false)
         end
@@ -463,11 +472,17 @@ module Krikri
         false
       end
       unless created
+        # Ansible's ensure_directory fails on the first created ancestor
+        # whose owner/group can't be applied, and fail_json(path=<that
+        # ancestor>) makes add_path_info stat THAT directory (live-verified
+        # vs 2.19.11: nested new path /x/n1/a/b with an unknown owner
+        # reports path /x/n1 plus its uid/gid/mode/size/state). The
+        # leaf `path` here would not exist yet, so no stat fields rode along.
         return PluginResult.new(
           changed: false,
           failed: true,
           msg: create_failure_msg || "Failed to create directory",
-          path: path
+          path: failing_component
         )
       end
 

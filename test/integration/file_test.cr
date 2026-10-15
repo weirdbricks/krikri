@@ -515,6 +515,21 @@ describe "file plugin" do
       result["msg"].as_s.must_include("chown failed: failed to look up user nonexistent_user_xyz_abc")
     end
 
+    it "reports the first created ancestor, with its stat fields, when a nested new path fails the owner lookup" do
+      # Ansible fails on the first created ancestor, so fail_json's path
+      # (and add_path_info's stat) is that ancestor, not the missing leaf
+      # (gavika.aws_cloudwatchagent, issue #57).
+      top = tmp_path("nonexistent-owner-nested")
+      result = PluginSpecHelper.run("file", {"path" => "#{top}/a/b", "state" => "directory", "owner" => "nonexistent_user_xyz_abc"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["path"].as_s.must_equal(top)
+      result["state"].as_s.must_equal("directory")
+      result["uid"].as_i64.must_equal(LibC.getuid.to_i64)
+      result.as_h.has_key?("mode").must_equal(true)
+      result.as_h.has_key?("size").must_equal(true)
+    end
+
     it "carries path and the created directory's stat fields on the owner lookup failure" do
       # Ansible's fail_json(path=...) runs add_path_info, and the leaf
       # directory already exists by the time the chown lookup fails.
