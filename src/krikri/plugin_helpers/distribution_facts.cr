@@ -129,6 +129,16 @@ module Krikri
         nil
       end
 
+      # Ansible's get_distribution_codename() falls back, when os-release has
+      # no VERSION_CODENAME/UBUNTU_CODENAME, to the `distro` library's codename:
+      # the "(Blue Onyx)" / ", Foo" tail of VERSION=. That is where Rocky 9
+      # gets "Blue Onyx" although its os-release ships no VERSION_CODENAME.
+      def self.codename_from_version(version : String) : String?
+        if m = version.match(/\((\D+)\)|,\s*(\D+)/)
+          m[1]? || m[2]?
+        end
+      end
+
       # Names and groupings taken from Ansible's own OS_FAMILY_MAP
       # so the display names
       # #refine_debian now produces ("Linux Mint Debian Edition",

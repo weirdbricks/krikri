@@ -583,7 +583,14 @@ module Krikri
         # (correctly) fails to match any file and falls through to the next
         # candidate. Found benchmarking weareinteractive.openssl (round
         # 179) on Rocky 9.6.
-        facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? || ""
+        #
+        # Without VERSION_CODENAME, Ansible still reports the "(Blue Onyx)"
+        # tail of VERSION= (Rocky 9 -> "Blue Onyx"); an explicitly empty
+        # VERSION_CODENAME stays empty.
+        facts["ansible_distribution_release"] = os_info["VERSION_CODENAME"]? ||
+                                                os_info["UBUNTU_CODENAME"]? ||
+                                                ((v = os_info["VERSION"]?) && Krikri::PluginHelpers::DistributionFacts.codename_from_version(v)) ||
+                                                ""
 
         # Ansible computes the generic distro/version/release facts
         # first and then lets the matching distribution-FILE parser override
@@ -1044,7 +1051,6 @@ module Krikri
 
       nil
     end
-
 
     # Section-annotation wrapper: a crash inside one gatherer's parsing
     # (e.g. the round-5210000 ktechmidas.openvpn warm run's bare
