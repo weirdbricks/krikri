@@ -229,6 +229,46 @@ describe "ignore_errors: on an ordinary (non-when-related) task failure" do
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
 
+  # Same decoration must survive an include_tasks: hop inside the role:
+  # the included file's tasks are parsed outside the role, so without the
+  # origins travelling with the values they describe the location silently
+  # disappears from the failure (live-verified vs 2.19.11: a task reached
+  # via include_tasks: still reports "at '<role>/defaults/main.yml:...'".
+  it "labels a role-default-sourced conditional value reached via include_tasks with its role-file position" do
+    dir = File.tempname("when-role-include-origin", ".d")
+    Dir.mkdir(dir)
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "defaults"))
+    Dir.mkdir_p(File.join(dir, "roles", "testrole", "tasks"))
+    File.write(File.join(dir, "roles", "testrole", "defaults", "main.yml"), "some_var: {}\n")
+    File.write(File.join(dir, "roles", "testrole", "tasks", "sub.yml"), <<-YAML)
+      - name: dict conditional
+        ansible.builtin.debug:
+          msg: hi
+        when: some_var
+      YAML
+    File.write(File.join(dir, "roles", "testrole", "tasks", "main.yml"), <<-YAML)
+      - name: include sub
+        ansible.builtin.include_tasks: sub.yml
+      YAML
+    playbook = File.join(dir, "site.yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        roles:
+          - testrole
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+
+    status.success?.must_equal(false)
+    expected = "was derived from value of type 'dict' at '#{File.join(dir, "roles", "testrole", "defaults", "main.yml")}:1:11'"
+    output.to_s.must_include(expected, output.to_s)
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
   it "labels a set_fact-sourced conditional value with the set_fact value's position" do
     playbook = File.tempname("when-setfact-origin", ".yml")
     File.write(playbook, <<-YAML)
