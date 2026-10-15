@@ -432,6 +432,34 @@ describe "pip plugin" do
         FileUtils.rm_rf(shim_dir)
       end
     end
+
+    # Issue #122: a task `environment: PATH: /nonexistent-bin` hides every
+    # bare interpreter name from discovery's PATH-resolved probe, yet
+    # Ansible's module still runs pip (its sys.executable is absolute, so
+    # PATH never matters to it). Simulated with a PATH holding only sh:
+    # no python3, python3.N, python or pip3 can be resolved by name, so
+    # discovery has to reach the absolute /usr/bin spelling. The outcome
+    # of the install itself depends on the spec machine (PEP 668 on
+    # Debian-family hosts), so the assertion is only that discovery
+    # no longer reports "Unable to find any of pip3".
+    it "finds an absolute interpreter when the task PATH hides every bare python name" do
+      raise "this spec needs /usr/bin/python3 on the spec machine" unless File.exists?("/usr/bin/python3")
+
+      shim_dir = File.tempname("/tmp", ".krikri-spec-pip-bin")
+      Dir.mkdir(shim_dir)
+      File.symlink("/bin/sh", File.join(shim_dir, "sh"))
+      begin
+        result = PluginSpecHelper.run("pip", {
+          "name"         => "definitely-not-a-real-package-xyz",
+          "state"        => "absent",
+          "_environment" => {"PATH" => shim_dir}.to_json,
+        })
+
+        result["msg"]?.try(&.as_s).to_s.includes?("Unable to find any of pip3").must_equal(false)
+      ensure
+        FileUtils.rm_rf(shim_dir)
+      end
+    end
   end
 
   # virtualenv_command / virtualenv_site_packages argument plumbing,

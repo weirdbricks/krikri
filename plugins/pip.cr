@@ -303,9 +303,14 @@ module Krikri
     # ansible_python_interpreter when set (Ansible runs its pip
     # module under that interpreter, so sys.executable is exactly it),
     # then python3, then the versioned python3.N names interpreter
-    # discovery iterates, then a bare python. Returns the winning
-    # interpreter name (sanitized to a plain path token - this string
-    # is interpolated into later shell commands), or nil when no
+    # discovery iterates, then a bare python, then the absolute
+    # /usr/bin and /usr/local/bin spellings of the same names. The
+    # absolute entries are for a task whose `environment:` PATH hides
+    # every bare name: Ansible's module runs under an absolute
+    # interpreter (ansible_python_interpreter / sys.executable) so it
+    # still finds pip there, and this probe must too. Returns the
+    # winning interpreter name (sanitized to a plain path token - this
+    # string is interpolated into later shell commands), or nil when no
     # candidate could run pip as a module.
     private def discover_pip_module_interpreter : String?
       candidates = [] of String
@@ -313,9 +318,9 @@ module Krikri
         stripped = interp.strip
         candidates << stripped unless stripped.empty?
       end
-      candidates << "python3"
-      candidates.concat((6..14).to_a.reverse.map { |minor| "python3.#{minor}" })
-      candidates << "python"
+      names = ["python3"] + (6..14).to_a.reverse.map { |minor| "python3.#{minor}" } + ["python"]
+      candidates.concat(names)
+      candidates.concat(names.flat_map { |name| ["/usr/bin/#{name}", "/usr/local/bin/#{name}"] })
 
       quoted = candidates.uniq.map { |candidate| Shell.single_quote(candidate) }.join(" ")
       result = remote_exec("for interp in #{quoted}; do if \"$interp\" -m pip --version >/dev/null 2>&1; then echo \"$interp\"; exit 0; fi; done; exit 1")
