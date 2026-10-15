@@ -45,7 +45,7 @@ describe "loop: item whose native-type value is itself unrendered Jinja" do
           - name: assert
             ansible.builtin.assert:
               that:
-                - result.results[0].msg == "42"
+                - result.results[0].msg == 42
       YAML
 
     output = IO::Memory.new

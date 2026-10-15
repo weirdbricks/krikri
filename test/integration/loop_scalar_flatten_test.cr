@@ -57,9 +57,9 @@ describe "loop:/with_items: single-element list holding a template that resolves
             ansible.builtin.assert:
               that:
                 - loop_result.results | length == 1
-                - loop_result.results[0].msg == "42"
+                - loop_result.results[0].msg == 42
                 - with_items_result.results | length == 1
-                - with_items_result.results[0].msg == "42"
+                - with_items_result.results[0].msg == 42
       YAML
 
     status.success?.must_equal(true)

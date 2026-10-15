@@ -50,6 +50,47 @@ describe Krikri::ConditionalEvaluator do
       v = vars({"foo" => "baz"} of String => JSON::Any::Type)
       Krikri::ConditionalEvaluator.evaluate(%(foo != "bar"), v).must_equal(true)
     end
+
+    it "answers false for a string variable compared to an integer literal (Python str != int)" do
+      # Real Ansible/Jinja2 semantics, live-verified against
+      # ansible-playbook (issue #116): Python answers `'9' == 9` False,
+      # so `when: dmv == 9` with dmv: "9" must skip the task -
+      # arikkert.nrpe's `ansible_facts['distribution_major_version'] ==
+      # 9` check. The old numeric-string fallback here answered true
+      # and ran tasks Ansible skips.
+      v = vars({"dmv" => "9"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("dmv == 9", v).must_equal(false)
+    end
+
+    it "answers true for an integer variable compared to the same integer literal" do
+      v = vars({"dmv" => 9_i64} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("dmv == 9", v).must_equal(true)
+    end
+
+    it "mirrors != across a string and an integer" do
+      v = vars({"dmv" => "9"} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("dmv != 9", v).must_equal(true)
+      v["dmv"] = JSON::Any.new(9_i64)
+      Krikri::ConditionalEvaluator.evaluate("dmv != 9", v).must_equal(false)
+    end
+
+    it "keeps a trimmed numeric stdout a string so str-vs-str still compares equal" do
+      # dev-sec os_hardening's own `(expiry_warndays.stdout | trim) ==
+      # '7'`: the trim result is a str in real Jinja, and the old
+      # numeric-string fallback existed only to paper over krikri's own
+      # render-then-parse round trip re-typing it as Int64. With the
+      # typing recovered at that source, the comparison is str-vs-str
+      # and stays true without the fallback.
+      v = vars({"result" => JSON.parse(%({"stdout": "  7\\n"})).raw} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("result.stdout | trim == '7'", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("result.stdout | trim == 7", v).must_equal(false)
+    end
+
+    it "treats a bool operand as Python's int subclass (True == 1)" do
+      v = vars({"flag" => true} of String => JSON::Any::Type)
+      Krikri::ConditionalEvaluator.evaluate("flag == 1", v).must_equal(true)
+      Krikri::ConditionalEvaluator.evaluate("flag == 2", v).must_equal(false)
+    end
   end
 
   describe "numeric comparisons" do

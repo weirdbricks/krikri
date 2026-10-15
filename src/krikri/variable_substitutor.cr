@@ -1085,6 +1085,50 @@ module Krikri
         !expr.includes?("lookup(") && !expr.includes?("query(")
       end
 
+      # The pure, single-level bare indirection (`x: "{{ y }}"` - no
+      # filters, no dotted/bracket access, no surrounding text) whose
+      # referenced variable's type is still recoverable without a
+      # render-then-reparse round trip. The capture group holds the
+      # referenced name.
+      BARE_INDIRECTION_RE = /\A\{\{\s*([A-Za-z_]\w*)\s*\}\}\z/
+
+      # Resolves a whole-value bare indirection straight to the referenced
+      # variable's own value, preserving its TYPE the way ansible-core
+      # 2.19's native typing does: an indirected string stays a string
+      # (buluma.bind's `bind_python_version: "{{ bind_default_python_
+      # version }}"` against `bind_default_python_version: "3"` must
+      # compare equal to the STRING '3'), and an indirected number stays
+      # that number (robertdebock.java's `java_version == 8`). The
+      # render-then-reparse detour both callers used cannot tell the two
+      # apart - the rendered text "3" always re-typed as Int64, so the
+      # strict == this branch introduced turned the bind case False.
+      # Returns nil whenever the fast path does not apply - not a pure
+      # indirection, referenced variable missing, a non-scalar target, or
+      # a target that is itself a template this helper cannot resolve
+      # structurally - and every caller then falls back to its existing
+      # render path, so behavior elsewhere is unchanged.
+      def self.bare_indirection_value(vars : Hash(String, JSON::Any), raw : String, depth : Int32 = 0) : JSON::Any?
+        return nil if depth > 8
+        match = raw.strip.match(BARE_INDIRECTION_RE)
+        return nil unless match
+        name = match[1]
+        return nil if VarSubstitutor.unsafe_root?(vars, name) || HostvarsContext.origin_unsafe?(vars, name)
+        target = vars[name]?
+        return nil unless target
+        case t = target.raw
+        when String
+          return nil if UnsafeValues.unsafe_text?(t)
+          # The target's value is itself unrendered Jinja: only a further
+          # pure indirection can keep the chain's type recoverable here;
+          # anything else (filters, surrounding text, block tags) goes
+          # back to the caller's render path.
+          return bare_indirection_value(vars, t, depth + 1) if t.includes?("{{") || t.includes?("{%") || t.includes?("{#")
+          target
+        when Int64, Float64, Bool, Nil
+          target
+        end
+      end
+
       # *source_expr*: the expression the value was resolved FROM (its
       # leading identifier decides the unsafe gate) - nil keeps the old
       # always-render behavior for call sites with no expression in hand

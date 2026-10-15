@@ -203,4 +203,52 @@ describe Krikri::VariableSubstitutor::ComparisonEvaluator do
       evaluator.evaluate("outer.inner == 'resolved'").must_equal("true")
     end
   end
+
+  describe "strict equality by type (Python str != int)" do
+    # Real Ansible/Jinja2 semantics, live-verified against
+    # ansible-playbook (issue #116): Python answers `'9' == 9` False,
+    # so `when: dmv == 9` with dmv: "9" must skip the task - the old
+    # numeric-string fallback in values_equal? answered true and ran
+    # it (arikkert.nrpe's distribution_major_version check on RHEL9).
+    it "answers false for a string variable compared to an integer literal" do
+      v = vars({"dmv" => "9"} of String => JSON::Any::Type)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("dmv == 9").must_equal("false")
+    end
+
+    it "answers true for an integer variable compared to the same integer literal" do
+      v = vars({"dmv" => 9_i64} of String => JSON::Any::Type)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("dmv == 9").must_equal("true")
+    end
+
+    it "mirrors != across a string and an integer" do
+      v = vars({"dmv" => "9"} of String => JSON::Any::Type)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("dmv != 9").must_equal("true")
+      v["dmv"] = JSON::Any.new(9_i64)
+      evaluator.evaluate("dmv != 9").must_equal("false")
+    end
+
+    it "keeps a trimmed numeric stdout a string so str-vs-str still compares equal" do
+      # dev-sec os_hardening's own `(expiry_warndays.stdout | trim) ==
+      # '7'`: the trim result is a str in real Jinja, and the old
+      # numeric-string fallback existed only to paper over krikri's own
+      # render-then-parse round trip re-typing it as Int64. With the
+      # typing recovered at that source, the comparison is str-vs-str
+      # and stays true without the fallback.
+      v = Hash(String, JSON::Any).new
+      v["result"] = JSON.parse(%({"stdout": "  7\\n"}))
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("result.stdout | trim == '7'").must_equal("true")
+      evaluator.evaluate("result.stdout | trim == 7").must_equal("false")
+    end
+
+    it "treats a bool operand as Python's int subclass (True == 1)" do
+      v = vars({"flag" => true} of String => JSON::Any::Type)
+      evaluator = Krikri::VariableSubstitutor::ComparisonEvaluator.new(v)
+      evaluator.evaluate("flag == 1").must_equal("true")
+      evaluator.evaluate("flag == 2").must_equal("false")
+    end
+  end
 end
