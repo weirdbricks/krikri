@@ -317,6 +317,12 @@ module Krikri
         next if vars_context.nil?
         begin
           if evaluate_when_items(task, vars_context, host)
+            if inherit_on_error
+              # Ansible re-evaluates the block's when: on every child.
+              inherit_when_condition(when_condition, task.when_condition_list, task.block_tasks)
+              inherit_when_condition(when_condition, task.when_condition_list, task.rescue_tasks)
+              inherit_when_condition(when_condition, task.when_condition_list, task.always_tasks)
+            end
             run_hosts << host
           else
             skip_hosts << host
