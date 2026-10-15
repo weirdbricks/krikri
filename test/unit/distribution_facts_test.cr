@@ -51,6 +51,20 @@ describe Krikri::PluginHelpers::DistributionFacts do
     {% end %}
   end
 
+  describe ".codename_from_version" do
+    it "takes the parenthesised tail of VERSION= (Rocky 9)" do
+      Krikri::PluginHelpers::DistributionFacts.codename_from_version("9.6 (Blue Onyx)").must_equal("Blue Onyx")
+    end
+
+    it "takes the comma tail of VERSION= (older Ubuntu style)" do
+      Krikri::PluginHelpers::DistributionFacts.codename_from_version("14.04.6 LTS, Trusty Tahr").must_equal("Trusty Tahr")
+    end
+
+    it "returns nil when VERSION= carries no codename" do
+      Krikri::PluginHelpers::DistributionFacts.codename_from_version("12").must_be_nil
+    end
+  end
+
   describe ".family_for" do
     it "maps every display name #refine_debian can produce to a family" do
       # A display name with no family entry would fall through to
