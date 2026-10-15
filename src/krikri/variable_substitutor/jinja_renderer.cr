@@ -218,6 +218,22 @@ module Krikri
         text
       end
 
+      # ansible-core hard-fails a template holding a closing/branch tag
+      # with no opener (`x{% endif %}`) with "Encountered unknown tag
+      # 'endif'.", whereas #render's lenient give-back-the-text fallback
+      # would pass the raw tag text on to the module. Returns Jinja2's
+      # message for that one parse failure, nil for everything else
+      # (other parse gaps stay lenient).
+      def stray_end_tag_message(text : String) : String?
+        cached_template(text)
+        nil
+      rescue e : KrikriJinja::TemplateError
+        tag = e.raw_message[/\Aunknown tag "(end\w+|else|elif)"\z/, 1]?
+        tag ? "Encountered unknown tag '#{tag}'." : nil
+      rescue
+        nil
+      end
+
       # The test (or filter) name a krikri-jinja "unknown test" error names.
       def self.unknown_feature_name(error : KrikriJinja::TemplateError, kind : String) : String?
         message = error.message || return nil
