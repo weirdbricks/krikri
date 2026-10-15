@@ -2465,7 +2465,19 @@ module Krikri
     # from within the tasks dir) that this isn't specific to one role.
     def self.resolve_include_path(file_rel : String, file_dir : String) : String
       direct = File.expand_path(file_rel, file_dir)
-      return direct if File.exists?(direct)
+      if File.exists?(direct)
+        # Ansible's DataLoader.path_dwim_relative returns its first
+        # candidate - os.path.join(path, dirname, source) - RAW, without
+        # normalisation, so a source written with a literal `./`
+        # (`include_tasks: ./sub.yml`) keeps that `./` in its `included:`
+        # display line (os.path.join doesn't collapse it; File.expand_path
+        # does). Mirror the raw join for a relative source - os.path.join
+        # drops the leading dirs for an absolute one, so keep the old
+        # expand_path result there. Every consumer either File.reads the
+        # path or File.expand_paths it, and both accept the unnormalised
+        # form, so the literal `./` is display-only.
+        return file_rel.starts_with?("/") ? direct : File.join(file_dir, file_rel)
+      end
 
       if file_rel.starts_with?("tasks/")
         stripped = File.expand_path(file_rel[6..], file_dir)
