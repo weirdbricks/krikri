@@ -249,19 +249,24 @@ module Krikri
       ""
     end
 
-    # rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' gives one pkg per line.
+    # Ansible's rpm manager reports version and release separately plus arch
+    # and epoch; an absent epoch is the string "None" (rpm prints "(none)"),
+    # not null or "0".
     private def rpm_packages : Hash(String, JSON::Any)
       result = Hash(String, JSON::Any).new
-      stdout = capture("rpm", ["-qa", "--qf=%{NAME}\\t%{VERSION}-%{RELEASE}\\n"])
+      stdout = capture("rpm", ["-qa", "--qf=%{NAME}\\t%{EPOCH}\\t%{VERSION}\\t%{RELEASE}\\t%{ARCH}\\n"])
       stdout.each_line do |line|
         line = line.strip
         parts = line.split("\t")
-        next unless parts.size == 2
-        name, version = parts
+        next unless parts.size == 5
+        name, epoch, version, release, arch = parts
         next if name.empty?
         entry = JSON::Any.new({
           "name"    => JSON::Any.new(name),
           "version" => JSON::Any.new(version),
+          "release" => JSON::Any.new(release),
+          "epoch"   => JSON::Any.new(epoch == "(none)" ? "None" : epoch),
+          "arch"    => JSON::Any.new(arch),
           "source"  => JSON::Any.new("rpm"),
         })
         list = result[name]?.try(&.as_a?) || [] of JSON::Any

@@ -2234,12 +2234,20 @@ module Krikri
 
     def gather_date_time_facts(facts)
       now = Time.utc
-      local = Time.local
+      local = now.to_local
 
       date_time = {} of String => String
 
       date_time["epoch"] = now.to_unix.to_s
+      date_time["epoch_int"] = now.to_unix.to_s
       date_time["iso8601"] = now.to_s("%Y-%m-%dT%H:%M:%SZ")
+      date_time["iso8601_micro"] = now.to_s("%Y-%m-%dT%H:%M:%S.%6NZ")
+      date_time["iso8601_basic"] = local.to_s("%Y%m%dT%H%M%S%6N")
+      date_time["iso8601_basic_short"] = local.to_s("%Y%m%dT%H%M%S")
+      date_time["tz_offset"] = local.to_s("%z")
+      # strftime %W: Monday-first week of year, days before the first Monday are week 00.
+      week = (local.day_of_year - 1 + 7 - ((local.day_of_week.value + 6) % 7)) // 7
+      date_time["weeknumber"] = week.to_s.rjust(2, '0')
       date_time["date"] = local.to_s("%Y-%m-%d")
       date_time["time"] = local.to_s("%H:%M:%S")
       date_time["year"] = local.year.to_s
@@ -2253,6 +2261,18 @@ module Krikri
 
       tz = local.zone.name
       date_time["tz"] = tz unless tz.empty?
+
+      # python time.tzname[1]: the DST abbreviation, which equals the standard
+      # one for zones without DST (so "UTC" on UTC hosts).
+      dst_name = tz
+      {1, 7}.each do |month|
+        zone = Time.local(local.year, month, 1).zone
+        if zone.dst?
+          dst_name = zone.name
+          break
+        end
+      end
+      date_time["tz_dst"] = dst_name
 
       facts["ansible_date_time"] = date_time
     end
