@@ -50,6 +50,13 @@ module Krikri
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: url") unless url
       return PluginResult.new(changed: false, failed: true, msg: "missing required argument: dest") unless dest
 
+      # Real get_url strips surrounding whitespace (including newlines) off
+      # the url before doing anything with it - urllib's Request rejects the
+      # padded string with "unknown url type:    http" - while every result
+      # still reports the raw, unstripped string in its url: field
+      # (live-verified against ansible-core 2.19.11).
+      request_url = url.strip
+
       dest = expand_tilde(dest)
       # Real get_url's own `dest` param, verbatim. Every failure result
       # Ansible reports names THIS path, including a directory dest (whose
@@ -71,9 +78,9 @@ module Krikri
       # Pre-request filename guess, check-mode messaging only: in check
       # mode no request is made, so there's no final response to derive
       # from (Ansible HEADs the URL for this; we keep the guess).
-      dest = File.join(dest, url_filename(url)) if dest_is_dir
+      dest = File.join(dest, url_filename(request_url)) if dest_is_dir
 
-      checksum = resolved_checksum(url, dest_param)
+      checksum = resolved_checksum(url, request_url, dest_param)
       return checksum if checksum.is_a?(PluginResult)
 
       force = true?(@params["force"]?, default: false)
@@ -122,7 +129,7 @@ module Krikri
       # even for a scheme-less URL that would have failed had it been
       # requested at all.
       if failure = PluginHelpers::URLPreflight.check(
-           url,
+           request_url,
            ciphers: tls_ciphers,
            client_cert: @params["client_cert"]?,
            client_key: @params["client_key"]?,
@@ -136,7 +143,7 @@ module Krikri
       end
 
       if true?(@params["_ansible_check_mode"]?)
-        result = PluginResult.new(changed: true, failed: false, msg: "would download #{url} to #{dest} (check mode)", dest: dest, key_order: SUCCESS_KEY_ORDER)
+        result = PluginResult.new(changed: true, failed: false, msg: "would download #{request_url} to #{dest} (check mode)", dest: dest, key_order: SUCCESS_KEY_ORDER)
         add_path_info(result, dest)
         return result
       end
@@ -147,7 +154,7 @@ module Krikri
         return tmp_error
       end
 
-      download_to_dest(url, dest_param, checksum, dest_is_dir, force, last_mod_time)
+      download_to_dest(url, request_url, dest_param, checksum, dest_is_dir, force, last_mod_time)
     end
 
     # Parses the checksum: param (if any) into its {algorithm, hash}
@@ -163,7 +170,7 @@ module Krikri
     # real download against an empty expected hash and failed every
     # single time ("checksum mismatch: expected , got <real hash>")
     # where Ansible correctly skips verification.
-    private def resolved_checksum(url : String, dest : String) : {String, String}? | PluginResult
+    private def resolved_checksum(url : String, request_url : String, dest : String) : {String, String}? | PluginResult
       checksum_param = @params["checksum"]?
       return nil if checksum_param.nil? || checksum_param.strip.empty?
 
@@ -177,7 +184,7 @@ module Krikri
       end
 
       begin
-        parsed = parse_checksum(checksum_param, url, dest)
+        parsed = parse_checksum(checksum_param, request_url, dest)
         return parsed if parsed.is_a?(PluginResult)
         parsed.as({String, String})
       rescue ex
@@ -261,6 +268,7 @@ module Krikri
 
     private def download_to_dest(
       url : String,
+      request_url : String,
       dest_param : String,
       checksum : {String, String}?,
       dest_is_dir = false,
@@ -269,7 +277,7 @@ module Krikri
     ) : PluginResult
       tmp_path = staging_path(dest_param)
       info = begin
-        download(url, tmp_path, force, last_mod_time)
+        download(request_url, tmp_path, force, last_mod_time)
       rescue ex : PluginHelpers::HTTPDownload::FetchError
         File.delete(tmp_path) if File.exists?(tmp_path)
         return not_modified_result(ex.info_msg, url, dest_param) if ex.status_code == 304
