@@ -208,6 +208,74 @@ describe "loop_control.label templating failure (loop_label_failure_test.cr)" do
     File.delete(playbook) if playbook && File.exists?(playbook)
   end
 
+  it "says All items skipped in the task fatal when the label-failed item's when was False" do
+    playbook = File.tempname("loop-label-when-false", ".yml")
+    File.write(playbook, <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          is_suse: false
+        tasks:
+          - debug:
+              msg: hi
+            with_items:
+              - common_name: bob
+            loop_control:
+              loop_var: oc
+              label: "{{ oc.name }}"
+            when: is_suse
+      YAML
+    )
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+    status.success?.must_equal(false)
+    # The label-failed item carries the when:-False skip context on its
+    # result, so real's task-level fatal reports the aggregate as
+    # all-items-skipped rather than "One or more items failed"
+    # (live-verified vs 2.19.11).
+    text.must_include("Failed to template loop_control.label: object of type 'dict' has no attribute 'name'")
+    text.must_include(%q{fatal: [localhost]: FAILED! => {"msg": "All items skipped"}})
+    text.must_match(/failed=1\b/)
+    text.must_match(/skipped=0\b/)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
+  it "keeps One or more items failed in the task fatal when the label-failed item's when was True" do
+    playbook = File.tempname("loop-label-when-true", ".yml")
+    File.write(playbook, <<-YAML
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - debug:
+              msg: hi
+            with_items:
+              - common_name: bob
+            loop_control:
+              loop_var: oc
+              label: "{{ oc.name }}"
+            when: true
+      YAML
+    )
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    text = output.to_s
+    status.success?.must_equal(false)
+    # A passing when: means the label-failed result carries no skip
+    # context, so real's task-level fatal stays "One or more items failed"
+    # (live-verified vs 2.19.11).
+    text.must_include("Failed to template loop_control.label: object of type 'dict' has no attribute 'name'")
+    text.must_include(%q{fatal: [localhost]: FAILED! => {"msg": "One or more items failed"}})
+    text.includes?("All items skipped").must_equal(false)
+    text.must_match(/failed=1\b/)
+    text.must_match(/skipped=0\b/)
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
+
   it "keeps a working label rendering unchanged" do
     playbook = File.tempname("loop-label-ok", ".yml")
     File.write(playbook, <<-YAML

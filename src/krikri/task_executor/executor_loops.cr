@@ -1834,6 +1834,14 @@ module Krikri
       # per-item dump and NO trailing fatal (live-verified vs 2.19.11
       # across debug/fail/file).
       any_when_failed = false
+      # True while every executed item so far is a loop_control.label
+      # failure that carries the skip context (see
+      # loop_label_failure_result) - real's underlying per-item verdict for
+      # such an item was a when:-skip (the label templating happens on the
+      # skip result and converts it into a failure), so when no other
+      # verdict shows up the task-level fatal's msg is "All items skipped",
+      # not "One or more items failed" (live-verified vs 2.19.11).
+      all_items_label_skips = true
 
       executed_count = 0
       # The base context (everything except the per-item bindings) is
@@ -1922,6 +1930,9 @@ module Krikri
           any_unreachable ||= unreachable_task_result?(result)
           any_when_failed ||= failed && (result["_ansible_task_error_msg_only"]?.try(&.as_bool) == true ||
                                          result["_ansible_loop_label_failed"]?.try(&.as_bool) == true)
+          all_items_label_skips = all_items_label_skips &&
+                                  (result["_ansible_loop_label_failed"]?.try(&.as_bool) == true &&
+                                   !result["skip_reason"]?.nil? && !result["false_condition"]?.nil?)
 
           item_delegate = delegate_hosts.try(&.[idx])
           delegate_target = item_delegate && item_delegate != host ? item_delegate.name : nil
@@ -2046,7 +2057,13 @@ module Krikri
             # host_label reads the task keyword).
             delegate_target = delegate_display_target(task, host, base_vars_context)
             fatal_host_label = delegate_target ? "#{host.name} -> #{delegate_target}" : host.name
-            puts "fatal: [#{fatal_host_label}]: FAILED! => {\"msg\": \"One or more items failed\"}".colorize(:red)
+            # The msg-only fatal is the debug-family shape (see
+            # ResultDisplay) - only there does real swap the msg for "All
+            # items skipped" when every executed item was a label failure
+            # over a False when:; the plain skip verdicts such items were
+            # converted from are why (live-verified vs 2.19.11).
+            fatal_msg = (all_items_label_skips && debug_module?(task)) ? "All items skipped" : "One or more items failed"
+            puts "fatal: [#{fatal_host_label}]: FAILED! => {\"msg\": \"#{fatal_msg}\"}".colorize(:red)
           end
           # A looped task with ignore_errors: that had at least one item
           # fail prints a single bare `...ignoring` after the per-item
