@@ -103,14 +103,20 @@ module Krikri
     # /etc/ansible defaults), then the playbook dir itself. Live-verified
     # against 2.19.11: a missing role errors as "the role 'x' was not
     # found in /work/roles:/root/.ansible/roles:/usr/share/ansible/roles:
-    # /etc/ansible/roles:/work". Display-only - resolve_role_dir above
-    # keeps its own (superset) search order.
-    def self.role_search_display(playbook_dir : String) : String
+    # /etc/ansible/roles:/work". When the play declares `collections:`,
+    # ansible reports those collection names (plus "ansible.legacy") as a
+    # prefix in front of the paths - live-verified vs 2.19.11 with
+    # `collections: [community.general, ansible.posix]`:
+    #   "community.general:ansible.posix:ansible.legacy:/pb/roles:...:/pb"
+    # Display-only - resolve_role_dir above keeps its own (superset) search
+    # order.
+    def self.role_search_display(playbook_dir : String, collections : Array(String) = [] of String) : String
       basedir = File.expand_path(playbook_dir)
       paths = [File.join(basedir, "roles")]
       paths.concat(roles_paths)
       paths << basedir
-      paths.join(":")
+      prefix = collections.empty? ? "" : collections.join(":") + ":ansible.legacy:"
+      prefix + paths.join(":")
     end
 
     # The search-path list a role's OWN meta/main.yml DEPENDENCY reports
@@ -336,7 +342,7 @@ module Krikri
       # #load_meta_dependencies, which owns that file's source map.
       role_dir = resolve_role_dir(name, playbook_dir)
       unless role_dir
-        raise RoleNotFoundError.new(role_not_found_message(name, playbook_dir, dependency_declaring_dir))
+        raise RoleNotFoundError.new(role_not_found_message(name, playbook_dir, dependency_declaring_dir, play.collections))
       end
 
       # An already-loaded role contributes no defaults a second time -
@@ -789,11 +795,13 @@ module Krikri
     # The not-found message for a role load: the dependency context's own
     # search list when this load IS a meta/main.yml dependency (see
     # #role_search_display_dependency), the play-level one otherwise.
-    private def self.role_not_found_message(name : String, playbook_dir : String, dependency_declaring_dir : String?) : String
+    private def self.role_not_found_message(name : String, playbook_dir : String, dependency_declaring_dir : String?, collections : Array(String) = [] of String) : String
       if dependency_declaring_dir
+        # A meta/main.yml dependency is loaded collection-independently, so
+        # it never gets the play's collections in its search list.
         "the role '#{name}' was not found in #{role_search_display_dependency(playbook_dir, dependency_declaring_dir)}"
       else
-        "the role '#{name}' was not found in #{role_search_display(playbook_dir)}"
+        "the role '#{name}' was not found in #{role_search_display(playbook_dir, collections)}"
       end
     end
 

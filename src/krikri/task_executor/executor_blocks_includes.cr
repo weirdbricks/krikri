@@ -2536,6 +2536,10 @@ module Krikri
       role_name = substitutor.substitute(task.include_role_name.as(String))
 
       inherited = include_inherited_play(task)
+      # The play's `collections:` reach the role's not-found search-path
+      # display (live-verified vs 2.19.11: the prefix shows for an
+      # include_role: in a play that sets collections:).
+      inherited.collections = task.include_role_collections || [] of String
 
       # ansible_parent_role_names: the ancestor role-name chain leading to
       # THIS include_role: call - if this include_role task itself

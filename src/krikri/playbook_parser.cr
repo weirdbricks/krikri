@@ -636,6 +636,10 @@ module Krikri
     # every exporter role with a different tasks_from: per call - one
     # role directory, several distinct task-file entry points).
     property include_role_tasks_from : String?
+    # The enclosing play's `collections:` at parse time - the runtime
+    # include_role search-path display carries that prefix (live-verified
+    # vs 2.19.11), but the executor only has the task, not the play.
+    property include_role_collections : Array(String)?
     # The `name:` (or `role:`) value's own line/column inside the task's
     # source - the runtime role-not-found failure's Origin block points
     # there, not at the task's first key (live-verified vs 2.19.11).
@@ -769,6 +773,7 @@ module Krikri
       @include_role_vars = nil
       @include_role_dir = nil
       @include_role_tasks_from = nil
+      @include_role_collections = nil
       @include_role_name_origin = nil
       @include_role_bool_failure = nil
       @validate_argument_spec_options = nil
@@ -3085,7 +3090,7 @@ module Krikri
               # <playbook>/roles:...:<playbook>, not .../tasks/sub/roles).
               # Resolution itself (role_exists?) keeps its wider
               # role-relative search, which is a superset.
-              message = "the role '#{role_name_raw}' was not found in #{RoleLoader.role_search_display(playbook_dir || file_dir)}"
+              message = "the role '#{role_name_raw}' was not found in #{RoleLoader.role_search_display(playbook_dir || file_dir, play.collections)}"
               # Ansible's Origin for this raise points at the `name:` VALUE
               # (not the task's first key), live-verified vs 2.19.11. The
               # source map only has a `name` entry for the mapping form -
@@ -5655,6 +5660,7 @@ module Krikri
       task.include_role_name = role_name
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)
+      task.include_role_collections = play.collections
       # The role-name value's own source position - the runtime
       # role-not-found failure's Origin points there (not at the task's
       # first key), live-verified vs 2.19.11.
