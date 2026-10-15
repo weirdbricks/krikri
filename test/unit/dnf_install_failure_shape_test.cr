@@ -164,4 +164,25 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
     end
   end
+
+  it "produces the same shape from package: state latest (issue 114)" do
+    # Real ansible fails `state: latest` for a missing package like
+    # `state: present` (msg "Failed to install some of the specified
+    # packages", failures ["No package libpng12 available."], rc 1);
+    # reporting changed: true for a failed dnf/yum transaction is a
+    # divergence, not a mere wording gap.
+    with_failing_dnf_shim(MISSING_PKG_STDOUT, MISSING_PKG_STDERR) do
+      result = PluginSpecHelper.run("package",
+        {"name" => "libpng12", "state" => "latest", "use" => "dnf"})
+
+      result["failed"].as_bool.must_equal(true)
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Failed to install some of the specified packages")
+      result["failures"].as_a.map(&.as_s).must_equal(["No package redhat-lsb-core available."])
+      result["results"].as_a.must_equal([] of JSON::Any)
+      result["rc"].as_i.must_equal(1)
+      result.as_h.has_key?("stderr").must_equal(false)
+      result.as_h.keys.first(5).must_equal(["msg", "failures", "results", "rc", "failed"])
+    end
+  end
 end
