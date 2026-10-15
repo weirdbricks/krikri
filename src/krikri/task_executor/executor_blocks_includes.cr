@@ -1509,6 +1509,15 @@ module Krikri
           when_errored = true
         end
 
+        if when_result
+          # Ansible inherits a block's when: onto every child, so a task
+          # that changes a variable the condition reads (e.g. set_fact of
+          # ansible_hostname) makes the later children skip.
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.block_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.rescue_tasks)
+          inherit_when_condition(task.when_condition.as(String), task.when_condition_list, task.always_tasks)
+        end
+
         unless when_errored || when_result
           # A block's when: is inherited by every task inside block: and
           # always: (verified against ansible-playbook: each gets
