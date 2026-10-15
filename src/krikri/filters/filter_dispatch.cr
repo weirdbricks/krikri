@@ -379,7 +379,9 @@ module Krikri
             # re-render keeps that failure; already-rendered values pass
             # through the marker check untouched.
             JSON::Any.new(as_array(value).map do |item|
-              extracted = item.raw.is_a?(Hash) ? (item[attr]? || JSON::Any.new(nil)) : JSON::Any.new(nil)
+              # Ansible resolves a dotted attribute path through nested dicts,
+              # not as one literal key.
+              extracted = dotted_attr_value(item, attr) || JSON::Any.new(nil)
               if (vars = @vars) && (raw_s = extracted.try(&.raw.as?(String))) &&
                  (raw_s.includes?("{{") || raw_s.includes?("{%") || raw_s.includes?("{#")) &&
                  !chain_root_unsafe? && !UnsafeValues.unsafe_text?(raw_s)
