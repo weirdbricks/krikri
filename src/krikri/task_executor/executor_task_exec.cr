@@ -125,6 +125,37 @@ module Krikri
       options = task.validate_argument_spec_options || Hash(String, JSON::Any).new
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
 
+      # The inline (user-written) form's `argument_spec:` may itself be a
+      # Jinja STRING - the real-world idiom
+      # `"{{ (lookup('ansible.builtin.file', role_path ~
+      # '/meta/argument_specs.yml') | from_yaml).argument_specs.main.options }}"`
+      # - resolved against the task's vars context at execution time. (In
+      # real this templating happens during task-arg finalization, before
+      # the action plugin ever runs.)
+      if raw_spec = task.validate_argument_spec_raw_options
+        begin
+          rendered = substitutor.substitute(raw_spec, strict: true)
+          parsed = Krikri.parse_json_or_python_literal(rendered)
+          options = parsed.as_h? || options
+        rescue ex : UndefinedVariableError
+          return validate_args_templating_failure(task, host, ex.message || "", options)
+        end
+      end
+
+      # The action plugin validates combine_vars(args_from_task_vars,
+      # provided_arguments) in BOTH forms (2.19.11 source + live: an
+      # inline task's required option is satisfied by a play var of the
+      # same name) - the inline task's own `provided_arguments:` dict
+      # merely wins over same-named vars.
+      provided = task.validate_argument_spec_provided
+      effective = if provided && !provided.empty?
+                    merged = vars_context.dup
+                    provided.each { |option_name, value| merged[option_name] = value }
+                    merged
+                  else
+                    vars_context
+                  end
+
       # Real's action collects every spec option present in task_vars and
       # templates the values as ONE dict INSIDE the plugin
       # (ActionModule.get_args_from_task_vars: `self._templar.template(args)`),
@@ -138,12 +169,12 @@ module Krikri
       # template text as a provided value passed validation here and pushed
       # the failure two tasks later, at the role's own assert.
       options.each do |option_name, _spec|
-        value = vars_context[option_name]? || next
+        value = effective[option_name]? || next
         raw = value.raw
         next unless raw.is_a?(String) && (raw.includes?("{{") || raw.includes?("{%"))
         begin
           rendered = substitutor.substitute(raw, strict: true)
-          vars_context[option_name] = Krikri.parse_json_or_python_literal(rendered)
+          effective[option_name] = Krikri.parse_json_or_python_literal(rendered)
         rescue ex : UndefinedVariableError
           return validate_args_templating_failure(task, host, ex.message || "", options)
         end
@@ -185,7 +216,7 @@ module Krikri
           resolved_default = default
         end
 
-        value = vars_context[option_name]?
+        value = effective[option_name]?
 
         if value.nil?
           # Ansible applies spec defaults with set_default=False
@@ -244,6 +275,17 @@ module Krikri
       errors << "missing required arguments: #{missing_required.sort.join(", ")}" unless missing_required.empty?
       errors.concat(type_errors)
 
+      # ArgumentSpecValidator appends its UnsupportedError LAST (after the
+      # required/type checks): provided_arguments keys the spec doesn't
+      # declare fail with "<names>. Supported parameters include:
+      # <declared options>." (live-captured 2.19.11, issue #103 inline
+      # repro). Only the inline form has provided_arguments at all - the
+      # vars path already filters to spec names.
+      if provided && !provided.empty?
+        unsupported = provided.keys.reject { |key| options.has_key?(key) }.sort!
+        errors << "#{unsupported.join(", ")}. Supported parameters include: #{options.keys.join(", ")}." unless unsupported.empty?
+      end
+
       result = if errors.empty?
                  # Ansible's passing action result carries
                  # {"changed": false, "msg": "The arg spec validation
@@ -256,11 +298,32 @@ module Krikri
                    "changed" => JSON::Any.new(false),
                  } of String => JSON::Any)
                else
+                 message = "Validation of arguments failed:\n#{errors.join("\n")}"
+                 # Real prints the [ERROR] chain block before the fatal
+                 # line for this failure too - an <unknown>-Origin segment
+                 # for the role-synthesized task (the failure carries no
+                 # source location of its own), the task's own source
+                 # location for the inline form (live-captured 2.19.11).
+                 if task.validate_argument_spec_inline?
+                   emit_validate_args_inline_failure_block(task, "Action failed: #{message}")
+                 else
+                   emit_validate_args_spec_failure_block(task, "Action failed: #{message}", options)
+                 end
                  JSON::Any.new({
                    "changed"         => JSON::Any.new(false),
                    "failed"          => JSON::Any.new(true),
-                   "msg"             => JSON::Any.new("Validation of arguments failed:\n#{errors.join("\n")}"),
+                   "msg"             => JSON::Any.new(message),
                    "argument_errors" => JSON::Any.new(errors.map { |e| JSON::Any.new(e) }),
+                   # Real's failing action result carries the spec it
+                   # validated against and the caller context ({} for the
+                   # inline form, the role context for the synthesized
+                   # one) - both surface in the fatal JSON dump.
+                   "argument_spec_data"    => JSON::Any.new(options),
+                   "validate_args_context" => JSON::Any.new(validate_args_context_hash(task)),
+                   # Internal: tells ResultDisplay the [ERROR] block was
+                   # already emitted above (stripped from the dump like
+                   # every _ansible_* key).
+                   "_ansible_validate_args_error_emitted" => JSON::Any.new(true),
                  } of String => JSON::Any)
                end
 
@@ -307,30 +370,94 @@ module Krikri
     @@validate_args_error_blocks_seen = Set(String).new
 
     private def emit_validate_args_error_block(task : Task, message : String, options : Hash(String, JSON::Any)) : Nil
-      args_repr = ResultDisplay.python_repr(JSON::Any.new({
-        "action" => JSON::Any.new("ansible.builtin.validate_argument_spec"),
-        "args"   => JSON::Any.new({
-          "argument_spec"         => JSON::Any.new(options),
-          "provided_arguments"    => JSON::Any.new({} of String => JSON::Any),
-          "validate_args_context" => JSON::Any.new({
-            "type"               => JSON::Any.new("role"),
-            "name"               => JSON::Any.new(task.role_name || ""),
-            "argument_spec_name" => JSON::Any.new("main"),
-            "path"               => JSON::Any.new(task.role_path || ""),
-          } of String => JSON::Any),
-        } of String => JSON::Any),
-      } of String => JSON::Any))
-
       text = String.build do |io|
         io << "[ERROR]: Task failed: " << message << "\n"
         io << "\nTask failed.\n"
         io << "Origin: <unknown>\n"
-        io << "\n" << shorten_event_text(args_repr) << "\n"
+        io << "\n" << shorten_event_text(validate_args_action_repr(task, options)) << "\n"
         io << "\n<<< caused by >>>\n\n"
         io << message << "\n"
         if origin = value_failure_var_origin(task, message)
           io << origin_context_block(origin.path, File.read_lines(origin.path), origin.line, origin.column)
         end
+        io << "\n"
+      end
+      return unless @@validate_args_error_blocks_seen.add?(text)
+      puts text
+    end
+
+    # The python-repr'd action-call event text all validate-args [ERROR]
+    # blocks embed as their Origin-less segment body: the action name plus
+    # its args (spec, provided_arguments, validate_args_context). The
+    # context is {} for the inline (user-written) form - real injects the
+    # role context into the SYNTHESIZED task's args only.
+    private def validate_args_action_repr(task : Task, options : Hash(String, JSON::Any)) : String
+      ResultDisplay.python_repr(JSON::Any.new({
+        "action" => JSON::Any.new("ansible.builtin.validate_argument_spec"),
+        "args"   => JSON::Any.new({
+          "argument_spec"         => JSON::Any.new(options),
+          "provided_arguments"    => JSON::Any.new(task.validate_argument_spec_provided || {} of String => JSON::Any),
+          "validate_args_context" => JSON::Any.new(validate_args_context_hash(task)),
+        } of String => JSON::Any),
+      } of String => JSON::Any))
+    end
+
+    # The validate_args_context the failing result (and repr) carries:
+    # the role machinery's context for the synthesized task, {} for the
+    # inline form (real's action reads it from the task args, which only
+    # the role invocation populates).
+    private def validate_args_context_hash(task : Task) : Hash(String, JSON::Any)
+      if task.validate_argument_spec_inline?
+        {} of String => JSON::Any
+      else
+        {
+          "type"               => JSON::Any.new("role"),
+          "name"               => JSON::Any.new(task.role_name || ""),
+          "argument_spec_name" => JSON::Any.new("main"),
+          "path"               => JSON::Any.new(task.role_path || ""),
+        } of String => JSON::Any
+      end
+    end
+
+    # The [ERROR] block real 2.19.11 prints before the fatal line when the
+    # SPEC VALIDATION itself fails (not the templating crash above): a
+    # single-level AnsibleActionFail with no cause chain, so the block is
+    # just the headline, the <unknown>-Origin segment and the shortened
+    # python-repr of the action call - no "Task failed." segment and no
+    # "caused by" stanza (live-captured vs 2.19.11, issue #103 role repro).
+    private def emit_validate_args_spec_failure_block(task : Task, message : String, options : Hash(String, JSON::Any)) : Nil
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << message << "\n"
+        io << "Origin: <unknown>\n"
+        io << "\n" << shorten_event_text(validate_args_action_repr(task, options)) << "\n"
+        io << "\n"
+      end
+      return unless @@validate_args_error_blocks_seen.add?(text)
+      puts text
+    end
+
+    # Same failure for the INLINE (user-written) task: real's segment
+    # carries the task's own source location as the Origin (the name key's
+    # position, like every other task-level error), with no repr body
+    # (live-captured vs 2.19.11, issue #103 inline repro).
+    private def emit_validate_args_inline_failure_block(task : Task, message : String) : Nil
+      path = task.source_file || @playbook_file
+      return unless path && File.file?(path)
+
+      lines = File.read_lines(path)
+      if located = locate_name_line(lines, task)
+        name_idx, name_col = located
+      else
+        # A nameless task's origin is the module key line itself - the
+        # same fallback emit_when_error_chain uses.
+        return unless task.source_line > 0 && task.source_line <= lines.size
+        name_idx = task.source_line - 1
+        name_col = task.source_col > 0 ? task.source_col : (lines[name_idx].size - lines[name_idx].lstrip.size + 1)
+      end
+
+      text = String.build do |io|
+        io << "[ERROR]: Task failed: " << message << "\n"
+        io << origin_context_block(path, lines, name_idx + 1, name_col)
         io << "\n"
       end
       return unless @@validate_args_error_blocks_seen.add?(text)

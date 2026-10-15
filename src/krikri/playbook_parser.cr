@@ -672,6 +672,29 @@ module Krikri
     # vars against.
     property validate_argument_spec_options : Hash(String, JSON::Any)?
 
+    # True for a USER-written `validate_argument_spec:` task (any spelling),
+    # false for the role-synthesized one. The inline form validates against
+    # the task's vars context COMBINED with its own `provided_arguments:`
+    # (ansible-core's action plugin always validates
+    # combine_vars(args_from_task_vars, provided_arguments) - verified in
+    # the 2.19.11 plugin source and live: a play var satisfies an inline
+    # required option), and its validate_args_context is {} (the role
+    # machinery is what injects the role context into the synthesized
+    # task's args), while its [ERROR] block pins Origin at the task's own
+    # source location instead of <unknown>.
+    property? validate_argument_spec_inline : Bool = false
+    # Inline-only: an `argument_spec:` written as a Jinja STRING (the
+    # real-world form
+    # `"{{ (lookup('ansible.builtin.file', role_path ~ '/meta/argument_specs.yml') | from_yaml).argument_specs.main.options }}"`)
+    # is resolved at EXECUTION time with the task's vars context - a
+    # literal dict is pre-parsed into validate_argument_spec_options
+    # instead and this stays nil.
+    property validate_argument_spec_raw_options : String?
+    # Inline-only: the task's own `provided_arguments:` dict (literal
+    # form). These override same-named vars in the vars context
+    # (combine_vars order) and are templated at execution time.
+    property validate_argument_spec_provided : Hash(String, JSON::Any)?
+
     def initialize(@name : String, @module_name : String)
       @params = Hash(String, String).new
       @vars = Hash(String, JSON::Any).new
@@ -749,6 +772,9 @@ module Krikri
       @include_role_name_origin = nil
       @include_role_bool_failure = nil
       @validate_argument_spec_options = nil
+      @validate_argument_spec_inline = false
+      @validate_argument_spec_raw_options = nil
+      @validate_argument_spec_provided = nil
     end
 
     def block? : Bool
@@ -3094,6 +3120,21 @@ module Krikri
         return include_vars_task
       end
 
+      # An inline (user-written) `validate_argument_spec:` task - real
+      # ansible runs this controller-side action plugin anywhere, not just
+      # as the role-synthesized validation task; krikri used to treat it
+      # as an unimplemented module and merely skip it. Same pseudo-module
+      # dispatch as include_vars above: the executor's
+      # execute_validate_argument_spec handles it, so when:/ignore_errors:/
+      # tags: keep behaving like any other controller-side task.
+      if va_spec_yaml = directive(task_hash, "validate_argument_spec")
+        # An unnamed task's banner is the action AS WRITTEN (FQCN or short)
+        written = ["validate_argument_spec", "ansible.builtin.validate_argument_spec", "ansible.legacy.validate_argument_spec"].find { |key| task_hash.has_key?(key) } || "validate_argument_spec"
+        va_spec_task = parse_validate_argument_spec_task(name || written, task_hash, va_spec_yaml, play)
+        va_spec_task.has_explicit_name = !name.nil?
+        return va_spec_task
+      end
+
       # Find the module (first key that's not a special keyword). Built
       # once as a frozen Set constant (SPECIAL_KEYS above) - this used to
       # allocate a ~110-element array plus two map copies per parsed task,
@@ -4275,6 +4316,37 @@ module Krikri
     INCLUDE_VARS_DIR_ARGS  = ["dir", "depth", "files_matching", "ignore_files", "extensions", "ignore_unknown_extensions"]
     INCLUDE_VARS_FILE_ARGS = ["file", "_raw_params"]
     INCLUDE_VARS_ALL_ARGS  = ["name", "hash_behaviour"]
+
+    # The inline `validate_argument_spec:` task (see the dispatch comment
+    # above): the action's own args are `argument_spec` (required - a
+    # literal dict here, or a Jinja string kept raw for execution-time
+    # templating) and `provided_arguments` (optional). Everything else
+    # (when:/ignore_errors:/tags:/vars:/register:/notify:) goes through
+    # the shared parse_common_task_attributes like every other
+    # controller-side pseudo-module.
+    private def self.parse_validate_argument_spec_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, play : Play? = nil) : Task
+      task = Task.new(name, "_validate_argument_spec")
+      task.validate_argument_spec_inline = true
+
+      if hash = value.as_h?
+        spec = hash["argument_spec"]?
+        if spec_hash = spec.try(&.as_h?)
+          options = Hash(String, JSON::Any).new
+          spec_hash.each { |key, spec_value| options[key.to_s] = Vault.yaml_value_to_json(spec_value) }
+          task.validate_argument_spec_options = options
+        elsif spec_raw = spec.try(&.as_s?)
+          task.validate_argument_spec_raw_options = spec_raw
+        end
+        if provided_hash = hash["provided_arguments"]?.try(&.as_h?)
+          provided = Hash(String, JSON::Any).new
+          provided_hash.each { |key, provided_value| provided[key.to_s] = Vault.yaml_value_to_json(provided_value) }
+          task.validate_argument_spec_provided = provided
+        end
+      end
+
+      parse_common_task_attributes(task, task_hash, play)
+      task
+    end
 
     private def self.parse_include_vars_task(name : String, task_hash : Hash(YAML::Any, YAML::Any), value : YAML::Any, source_file : String? = nil, source_map : YamlSourceMap? = nil, source_prefix : String = "", source_index : Int32 = 0, play : Play? = nil) : Task
       task = Task.new(name, "_include_vars")
