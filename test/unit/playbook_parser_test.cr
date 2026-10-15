@@ -119,6 +119,25 @@ describe Krikri::PlaybookParser do
       playbook.plays[0].tasks[0].name.must_equal("ansible.builtin.debug")
     end
 
+    it "applies play-level ignore_errors to tasks and block children unless they set their own (issue #99)" do
+      playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
+        - hosts: all
+          gather_facts: false
+          ignore_errors: true
+          tasks:
+            - command: "false"
+            - command: "false"
+              ignore_errors: false
+            - block:
+                - command: "false"
+        YAML
+
+      tasks = playbook.plays[0].tasks
+      tasks[0].ignore_errors?.must_equal(true)
+      tasks[1].ignore_errors?.must_equal(false)
+      tasks[2].block_tasks.try(&.[0].ignore_errors?).must_equal(true)
+    end
+
     it "joins a list hosts: value with commas for the fallback play name" do
       playbook = Krikri::PlaybookParser.parse_string(<<-YAML)
         - hosts: [web, db]
