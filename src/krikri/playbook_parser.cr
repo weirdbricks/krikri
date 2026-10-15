@@ -3318,7 +3318,15 @@ module Krikri
       end
 
       unless module_name
-        raise "No module found in task '#{name || "at index #{index + 1}"}'"
+        # A task carrying only keywords (name:, environment:, ...) is a
+        # whole-playbook load refusal in ansible-core 2.19.11 (rc=4,
+        # "no module/action detected in task." + Origin), not a task to
+        # skip - the rest of the play never runs.
+        raise ConflictingActionStatementsError.new(
+          "no module/action detected in task.",
+          origin_error_render(
+            "no module/action detected in task.",
+            source_file, source_map, task_source_prefix(source_prefix, index)))
       end
 
       # `include:` (bare, ansible.builtin.include, or ansible.legacy.
