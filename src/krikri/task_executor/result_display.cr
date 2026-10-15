@@ -682,6 +682,11 @@ module Krikri
       # stanza points at the failing value's own defining site - not a
       # shape this generic display path can rebuild.
       return if result["_ansible_loop_error_emitted"]?.try(&.as_bool?) == true
+      # The validate-args spec-failure block likewise comes straight from
+      # the executor (emit_validate_args_spec_failure_block /
+      # emit_validate_args_inline_failure_block) - real's single-level
+      # AnsibleActionFail chain, not this generic two-segment shape.
+      return if result["_ansible_validate_args_error_emitted"]?.try(&.as_bool?) == true
       # A task `timeout:` deadline kill (the executor's task_timeout_
       # result) or an out-of-range timeout value (its
       # task_timeout_invalid_result): real's chain is the COLLAPSED
