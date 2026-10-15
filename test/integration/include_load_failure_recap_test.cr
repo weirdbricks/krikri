@@ -65,7 +65,10 @@ describe "include_tasks: whose included file fails to load" do
     })
 
     status.exit_code.must_equal(2)
-    output.must_include("Failed to load included tasks")
+    # A missing role is the include task's own fatal failure in Ansible
+    # (issue #94), not a "Failed to load included tasks" degradation.
+    output.must_include("<<< caused by >>>")
+    output.must_include(%("include": "instance.yml"))
     output.wont_include("never reached")
     output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
@@ -89,7 +92,8 @@ describe "include_tasks: whose included file fails to load" do
     })
 
     status.exit_code.must_equal(2)
-    output.must_include("Failed to load included tasks")
+    output.must_include("<<< caused by >>>")
+    output.must_include(%("include": "instance.yml"))
     output.must_include("ok=0    changed=0    unreachable=0    failed=1")
   end
 

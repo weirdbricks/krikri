@@ -3031,12 +3031,27 @@ module Krikri
             # tasks before failing) so it's caught at the same static
             # parse time Ansible catches it at.
             unless RoleLoader.role_exists?(role_name_raw, file_dir)
-              message = "the role '#{role_name_raw}' was not found in #{RoleLoader.role_search_display(file_dir)}"
+              # The search-path DISPLAY follows the playbook dir, not the
+              # including file's own directory - Ansible's loader reports
+              # the standard playbook-basedir list no matter how deep in
+              # a role's tasks the import sits (2.19.11: import_role: in
+              # roles/r3/tasks/sub/x.yml still reports
+              # <playbook>/roles:...:<playbook>, not .../tasks/sub/roles).
+              # Resolution itself (role_exists?) keeps its wider
+              # role-relative search, which is a superset.
+              message = "the role '#{role_name_raw}' was not found in #{RoleLoader.role_search_display(playbook_dir || file_dir)}"
               # Ansible's Origin for this raise points at the `name:` VALUE
-              # (not the task's first key), live-verified vs 2.19.11.
+              # (not the task's first key), live-verified vs 2.19.11. The
+              # source map only has a `name` entry for the mapping form -
+              # a k=v string form (`import_role: name=...`) has no `name`
+              # KEY at all, and real points at the import_role VALUE's
+              # first char there instead (site.yml:5:20), so fall back to
+              # the value's own position when the name path is unmapped.
+              directive_prefix = "#{task_source_prefix(source_prefix, index)}/#{written_directive_key(task_hash, "import_role")}"
+              name_prefix = "#{directive_prefix}/name"
+              render_prefix = (source_map && source_map.at?(name_prefix)) ? name_prefix : directive_prefix
               render = origin_error_render(
-                message, source_file, source_map,
-                "#{task_source_prefix(source_prefix, index)}/#{written_directive_key(task_hash, "import_role")}/name")
+                message, source_file, source_map, render_prefix)
               raise RoleNotFoundError.new(message, render)
             end
           end
