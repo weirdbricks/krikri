@@ -3117,6 +3117,10 @@ module Krikri
           raise ConditionalBooleanError.new(
             "Conditional result (#{raw_value == 0 ? "False" : "True"}) was derived from value of type 'int'. " \
             "Conditionals must have a boolean result.")
+        when Float64
+          raise ConditionalBooleanError.new(
+            "Conditional result (#{raw_value == 0 ? "False" : "True"}) was derived from value of type 'float'. " \
+            "Conditionals must have a boolean result.")
         when Array
           raise ConditionalBooleanError.new(
             "Conditional result (#{raw_value.empty? ? "False" : "True"}) was derived from value of type 'list'. " \
@@ -3157,6 +3161,8 @@ module Krikri
         !value.empty? && value != "false" && value != "False" && value != "undefined"
       when Int32, Int64
         value != 0
+      when Float64
+        value != 0.0
       when Nil
         raise ConditionalBooleanError.new(
           "Conditional result (False) was derived from value of type 'NoneType'. " \
@@ -3193,7 +3199,7 @@ module Krikri
     end
 
     # Evaluate a value (variable lookup or literal)
-    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false, strict : Bool = false) : String | Int64 | Bool | Nil | Array(String)
+    private def self.evaluate_value(expr : String, vars : Hash(String, JSON::Any), raise_undefined : Bool = false, strict : Bool = false) : String | Int64 | Float64 | Bool | Nil | Array(String)
       expr = expr.strip
 
       # Handle quoted strings
@@ -3246,12 +3252,11 @@ module Krikri
 
       # A bare float literal (`5.1`) on one side of a comparison, e.g.
       # `when: zsh_version.stdout | float < 5.1` (buluma.p10k's own
-      # minimum-version gate). This method's return union has no Float64
-      # case, so the literal is returned as a String instead - safe here
-      # because #compare_values already falls back to a numeric parse of
-      # `to_s` for either side, so a String holding "5.1" compares
-      # correctly against a real Int64/Float-rendered-as-String operand.
-      # Previously fell through to the dotted-path guard just below,
+      # minimum-version gate). Returned as a real Float64 - same reason
+      # an arithmetic result keeps its Float64 (see #json_any_to_value):
+      # stringifying it used to force values_equal?'s numeric-string
+      # fallback (which also made `"9" == 9` true). Previously this fell
+      # through to the dotted-path guard just below,
       # which only excludes float literals from the DOTTED lookup branch
       # (correctly) but doesn't itself resolve them - execution continued
       # to the plain "vars.has_key?" lookup, found no variable literally
@@ -3260,8 +3265,9 @@ module Krikri
       # buluma.p10k's own ZSH-version check, which Ansible evaluates
       # fine (integer literals already worked; only non-integer numeric
       # literals were missing this case).
-      return expr if expr.to_f64?
-
+      if float_val = expr.to_f64?
+        return float_val
+      end
       # A filter chain (`mylist | length > 0`, or a bare `when: mylist |
       # length` truthiness check), a parenthesized sub-expression
       # (possibly with trailing dotted/indexed access - dev-sec
@@ -3409,7 +3415,26 @@ module Krikri
         return true if rendered == "True"
         return false if rendered == "False"
 
-        return json_any_to_value(Krikri.parse_json_or_python_literal(rendered))
+        parsed = Krikri.parse_json_or_python_literal(rendered)
+        # Render-then-parse cannot tell a numeric-looking STRING result
+        # from a real number: "7" off dev-sec os_hardening's
+        # `expiry_warndays.stdout | trim` re-parses as Int64 7, where
+        # real Jinja keeps a string-producing filter's result a str
+        # (`(expiry_warndays.stdout | trim) == '7'` is str-vs-str, and
+        # `'9' == 9` is False like Python's own `==`). When the
+        # structured (Crinja) path CAN resolve the same chain and says
+        # the result is a String, the string render's re-typing lost
+        # that - recover it. Anything the structured path cannot
+        # evaluate keeps the re-typed value, exactly as before.
+        if parsed.raw.is_a?(Int64) || parsed.raw.is_a?(Float64)
+          structured = begin
+            evaluator.evaluate_structured(expr)
+          rescue
+            nil
+          end
+          parsed = structured if structured && structured.raw.is_a?(String)
+        end
+        return json_any_to_value(parsed)
       end
 
       # Handle the empty-dict literal (`when: my_dict == {}`) - a dict
@@ -3517,6 +3542,18 @@ module Krikri
           # Ansible's "'system_user' is undefined" (inmotionhosting.
           # php_fpm, round 82024).
           strict_probe_templated_value(vars, value, raise_undefined, expr)
+          # Same bare-indirection native typing the {{ }}-wrapped
+          # ComparisonEvaluator path got (Rerender.bare_indirection_value):
+          # without it, `when: bind_python_version == '3'` re-typed the
+          # rendered "3" as Int64 and the strict == answered False where
+          # Ansible keeps the string. Deliberately skipped under strict -
+          # there a whole-value template whose result is a str must still
+          # reach the strict boolean gate below and raise.
+          unless strict
+            if typed = VariableSubstitutor::Rerender.bare_indirection_value(vars, raw)
+              return json_any_to_value(typed)
+            end
+          end
           rendered = render_raw_template_string(vars, raw, expr)
           # ansible-core 2.19's native typing keeps a WHOLE-value
           # `{{ expr }}` variable's own result TYPE through variable
@@ -3699,8 +3736,12 @@ module Krikri
     end
 
     # Converts a resolved JSON::Any into the same union evaluate_value
-    # already returns for a bare variable lookup.
-    private def self.json_any_to_value(value : JSON::Any) : String | Int64 | Bool | Nil | Array(String)
+    # already returns for a bare variable lookup. A Float64 keeps its
+    # real type (the union carries it for the same reason an arithmetic
+    # result does): stringifying it here is what used to force
+    # values_equal?'s numeric-string fallback - and made `"9" == 9`
+    # answer true.
+    private def self.json_any_to_value(value : JSON::Any) : String | Int64 | Float64 | Bool | Nil | Array(String)
       case value.raw
       when String
         value.as_s
@@ -3713,7 +3754,7 @@ module Krikri
         # union member directly, no narrowing round-trip.
         value.raw.as(Int64 | Int32).to_i64
       when Float64
-        value.as_f.to_s
+        value.as_f
       when Bool
         value.as_bool
       when Nil
@@ -3726,15 +3767,18 @@ module Krikri
     end
 
     # Compare two values (for <, >, <=, >=)
-    # `==`/`!=`: a raw match first, then a numeric-string fallback - see
-    # ComparisonEvaluator#values_equal? (the {{ }}-side counterpart to
-    # this bare when:/assert:-condition evaluator) for why: a value that
-    # went through a filter chain/parenthesized sub-expression may come
-    # back as a real Int64 while the other side is a quoted string
-    # literal (or vice versa) purely as an artifact of this codebase's
-    # string-heavy evaluation pipeline, not because the two values are
-    # actually different.
-    private def self.values_equal?(left : String | Int64 | Bool | Nil | Array(String), right : String | Int64 | Bool | Nil | Array(String)) : Bool
+    # `==`/`!=`: strict on operand type, matching real Python/Jinja2
+    # (live-verified against ansible-playbook - arikkert.nrpe's
+    # `ansible_facts['distribution_major_version'] == 9` is SKIPPED on
+    # RHEL9, not run): `'9' == 9` and `'a' == 7` are plain False, so
+    # only type-equal values compare equal. The one cross-type equality
+    # Python does allow here is Bool against int (True == 1, False == 0:
+    # bool is an int subclass) - and int against float. The old
+    # numeric-string fallback made `"9" == 9` answer True and ran tasks
+    # Ansible skips; the filter-chain case that motivated it (a string-
+    # producing filter's result re-typed as Int64 by the render-then-
+    # parse round trip) is fixed at that source instead.
+    private def self.values_equal?(left : String | Int64 | Float64 | Bool | Nil | Array(String), right : String | Int64 | Float64 | Bool | Nil | Array(String)) : Bool
       return true if left == right
 
       left_num = numeric_or_nil(left)
@@ -3742,15 +3786,20 @@ module Krikri
       !left_num.nil? && !right_num.nil? && left_num == right_num
     end
 
-    private def self.numeric_or_nil(value : String | Int64 | Bool | Nil | Array(String)) : Float64?
+    # Only the operand classes Python cross-compares numerically - a
+    # String is deliberately absent, because Python never answers
+    # `'7' == 7` true (and a numeric string against a real number is
+    # exactly that comparison).
+    private def self.numeric_or_nil(value : String | Int64 | Float64 | Bool | Nil | Array(String)) : Float64?
       case value
-      when Int64  then value.to_f64
-      when String then value.to_f64?
+      when Int64   then value.to_f64
+      when Float64 then value
+      when Bool    then value ? 1.0 : 0.0
       end
     end
 
-    private def self.compare_values(left : String | Int64 | Bool | Nil | Array(String),
-                                    right : String | Int64 | Bool | Nil | Array(String)) : Int32
+    private def self.compare_values(left : String | Int64 | Float64 | Bool | Nil | Array(String),
+                                    right : String | Int64 | Float64 | Bool | Nil | Array(String)) : Int32
       # Try numeric comparison first
       if left.is_a?(Int64) && right.is_a?(Int64)
         return left <=> right

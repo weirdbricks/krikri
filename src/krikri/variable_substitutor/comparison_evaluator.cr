@@ -247,6 +247,20 @@ module Krikri
           # (`(int_neg[0] <= 'hello world')` answered "False" where real
           # Jinja2 raises on the comparison against Undefined).
           return JSON::Any.new(nil) if parsed.raw == "undefined"
+          # Render-then-parse cannot tell a numeric-looking STRING result
+          # from a real number ("7" off `expiry_warndays.stdout | trim`
+          # re-parses as Int64 7, where real Jinja keeps a string-
+          # producing filter's result a str) - recover the real type from
+          # the structured (Crinja) path when it can resolve the same
+          # chain and says String, keeping the re-typed value otherwise.
+          if parsed.raw.is_a?(Int64) || parsed.raw.is_a?(Float64)
+            structured = begin
+              ExpressionEvaluator.new(@vars).evaluate_structured(expr)
+            rescue
+              nil
+            end
+            parsed = structured if structured && structured.raw.is_a?(String)
+          end
           return parsed
         end
 
@@ -279,6 +293,15 @@ module Krikri
               return JSON::Any.new(raw.strip)
             end
             if raw.includes?("{{")
+              unless VarSubstitutor.unsafe_root?(@vars, name) || UnsafeValues.unsafe_text?(raw)
+                # A pure `{{ other }}` indirection resolves straight to the
+                # referenced variable's own typed value - render-then-reparse
+                # here turned "3" into Int64 3 and broke `x == '3'` under
+                # type-strict equality (see Rerender.bare_indirection_value).
+                if typed = Rerender.bare_indirection_value(@vars, raw)
+                  return typed
+                end
+              end
               rendered = render_raw_template_string(raw, name)
               return rendered_string_to_typed(rendered)
             end
@@ -320,26 +343,38 @@ module Krikri
         JSON::Any.new(rendered)
       end
 
-      # `==`/`!=`: a raw match first (handles Bool/Nil, and same-type
-      # values that already match), then a numeric-string fallback - a
-      # value that went through a filter chain/parenthesized
-      # sub-expression (dev-sec os_hardening's own `(expiry_warndays.stdout
-      # | trim) == '7'`) may come back as a real Int64 while the other
-      # side is a quoted string literal (or vice versa) purely as an
-      # artifact of this codebase's string-heavy evaluation pipeline, not
-      # because the two values are actually different - "7" and 7 should
-      # compare equal here the same way compare_values already treats
-      # them for `<`/`>`/etc, just applied to `==`/`!=` too.
-      #
-      # Equality stays type-lenient on purpose: real Python answers False
-      # (never an error) for `{} == 6`, `'a' == 7`, `None == 0` - only the
-      # ORDERING comparisons below are class-strict.
+      # `==`/`!=`: strict on operand type, matching real Python/Jinja2
+      # (live-verified against ansible-playbook): `'9' == 9` and
+      # `'a' == 7` are plain False, so only type-equal values compare
+      # equal. The one cross-type equality Python does allow here is
+      # Bool against int (True == 1, False == 0: bool is an int
+      # subclass) - and int against float. The old numeric-string
+      # fallback made `"9" == 9` answer True and ran tasks Ansible
+      # skips; the filter-chain case that motivated it (dev-sec
+      # os_hardening's own `(expiry_warndays.stdout | trim) == '7'`,
+      # whose string result the render-then-parse round trip re-typed as
+      # Int64) is fixed at that source instead - see the String recovery
+      # in #evaluate_simple_value_typed's filter-chain branch, so that
+      # comparison is now str-vs-str like Ansible's.
       private def values_equal?(left : JSON::Any, right : JSON::Any) : Bool
         return true if left.raw == right.raw
 
-        left_num = numeric_or_nil(left)
-        right_num = numeric_or_nil(right)
+        left_num = equality_numeric_or_nil(left)
+        right_num = equality_numeric_or_nil(right)
         !left_num.nil? && !right_num.nil? && left_num == right_num
+      end
+
+      # Only the operand classes Python cross-compares numerically - a
+      # String is deliberately absent, unlike #numeric_or_nil which also
+      # parses numeric strings for the deliberately-lenient ORDERING
+      # comparisons below (real Python answers `'7' == 7` False, never
+      # an error, and only the ordering comparisons are class-strict).
+      private def equality_numeric_or_nil(value : JSON::Any) : Float64?
+        case raw = value.raw
+        when Int64   then raw.to_f64
+        when Float64 then raw
+        when Bool    then raw ? 1.0 : 0.0
+        end
       end
 
       private def numeric_or_nil(value : JSON::Any) : Float64?
