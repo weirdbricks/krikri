@@ -912,6 +912,14 @@ module Krikri
 
     private def resolve_loop_items_or_raise(task : Task, host : Host, vars_context : Hash(String, JSON::Any), & : -> Array(JSON::Any)?) : Array(JSON::Any)?
       yield
+    rescue ex : VariableSubstitutor::FilterEngine::FilterFailureError
+      # A filter that EXISTS but failed while running keeps the generic
+      # "Task failed:" shape below - FilterFailureError subclasses
+      # UnknownFilterError, so without this narrower rescue first it
+      # would be mislabeled a template syntax error. ansible-core 2.19
+      # only reports "Syntax error in template: No filter named 'x'."
+      # for a filter name it cannot resolve at all (issue #119).
+      raise WhenEvaluationError.new(ex.message)
     rescue ex : VariableSubstitutor::FilterEngine::UnknownFilterError
       # Same degrade-to-failed-task treatment as the UndefinedVariableError
       # case below - a loop: source referencing a filter this engine
@@ -921,9 +929,12 @@ module Krikri
       # as an unrescued exception all the way out of #run and crashed the
       # ENTIRE krikri-playbook process instead of just failing this one
       # task, losing every other host/task the run would otherwise have
-      # completed. Ansible's own AnsibleFilterError for an unknown
-      # filter fails only the task.
-      raise WhenEvaluationError.new(ex.message)
+      # completed. ansible-core 2.19 reports the unknown filter as a
+      # template syntax error pinned at the loop keyword's VALUE token
+      # with a BARE registered msg (no "Task failed:" prefix) - the same
+      # LoopLookupError(origin_known: true) shape the FirstFoundLookupError
+      # rescue below uses, not a when:-evaluation failure (issue #119).
+      raise LoopLookupError.new("Syntax error in template: #{ex.message}", origin_known: true)
     rescue ex : FirstFoundLookupError
       # Same channel again: a templated `loop: "{{ query('first_found',
       # params) }}"` whose lookup finds nothing (and has no skip: true)
