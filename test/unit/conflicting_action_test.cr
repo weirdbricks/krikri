@@ -39,6 +39,15 @@ describe "conflicting action statement detection" do
     ex.message.must_equal("unexpected parameter type in action: <class 'bool'>")
   end
 
+  it "refuses a keyword-only task with no module as a whole-playbook error" do
+    content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: check schema\n      environment: {A: b}\n    - debug: msg=hi\n"
+    ex = assert_raises(Krikri::ConflictingActionStatementsError) do
+      Krikri::PlaybookParser.parse_string(content)
+    end
+    ex.message.must_equal("no module/action detected in task.")
+    ex.render.as(String).lines.first.must_equal("[ERROR]: no module/action detected in task.")
+  end
+
   it "keeps parsing a plain multi-key task without conflict" do
     content = "---\n- name: p\n  hosts: web1\n  tasks:\n    - name: ok task\n      ansible.builtin.debug:\n        msg: hi\n      when: true\n      tags: [a]\n"
     play = Krikri::PlaybookParser.parse_string(content).plays[0]
