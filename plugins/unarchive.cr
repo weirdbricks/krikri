@@ -193,10 +193,31 @@ module Krikri
       validate_bool_params!
 
       begin
-        run(src, dest)
+        res = run(src, dest)
+        if warning = relative_dest_warning(dest)
+          attach_warning(res, warning)
+        end
+        res
       ensure
         cleanup_after_unarchive(tmp_download_path, src)
       end
+    end
+
+    # Ansible's unarchive module main() itself warns on every result the
+    # MODULE produces (success, changed, or a failure like the
+    # no-handler-found one) when dest is relative - but the module only
+    # runs after the action-plugin gates, so a gated failure (src lookup
+    # miss, dest not an existing dir) never carries the warning, and the
+    # creates:-skip and bool-validation failures don't either (they
+    # short-circuit before main()'s warning site).
+    private def relative_dest_warning(dest : String) : String?
+      return nil if dest.starts_with?("/")
+      "Relative destination path '#{dest}' was resolved to absolute path '#{File.expand_path(dest)}'."
+    end
+
+    private def attach_warning(res : PluginResult, warning : String) : PluginResult
+      res.extra["warnings"] = JSON.parse([warning].to_json)
+      res
     end
 
     private def creates_skip_result : PluginResult?

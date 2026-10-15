@@ -908,4 +908,31 @@ describe "unarchive plugin" do
     msg.scan("could not handle archive: ").size.must_equal(6)
     msg.scan(/Command "[^"]*\/tar" could not handle archive: Unable to list files in the archive: /).size.must_equal(5)
   end
+
+  it "warns on a relative dest whenever the module runs, even on a failure" do
+    # Real ansible's unarchive module main() warns ("Relative destination
+    # path '...' was resolved to absolute path '...'") on every module
+    # result - the handler-lookup failure included - while the
+    # action-plugin gates never produce it (the module never runs there).
+    dir = PluginSpecHelper.tmp_path("unarchive-relative-dest-warn")
+    FileUtils.mkdir_p(dir)
+    not_archive = File.join(TMP_DIR, "not-an-archive.txt")
+    File.write(not_archive, "this is not an archive")
+
+    result = PluginSpecHelper.run("unarchive", {"src" => not_archive, "dest" => "."}, chdir: dir)
+
+    result["failed"].as_bool.must_equal(true)
+    result["warnings"].as_a.map(&.as_s).must_equal(
+      ["Relative destination path '.' was resolved to absolute path '#{dir}'."])
+  end
+
+  it "does not warn when dest is absolute" do
+    not_archive = File.join(TMP_DIR, "not-an-archive.txt")
+    File.write(not_archive, "this is not an archive")
+
+    result = PluginSpecHelper.run("unarchive", {"src" => not_archive, "dest" => fresh_dest("abs-dest-no-warn")})
+
+    result["failed"].as_bool.must_equal(true)
+    result["warnings"]?.must_be_nil
+  end
 end
