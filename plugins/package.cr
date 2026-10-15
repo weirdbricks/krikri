@@ -589,6 +589,36 @@ module Krikri
       nil
     end
 
+    # The failure shape real ansible's dnf module reports for a transaction
+    # that couldn't install some requested specs: the canned msg with one
+    # deduped `failures` entry per unresolvable spec and no stderr key -
+    # the raw stderr dump only fits outputs nothing parses (repo
+    # metadata/404-class errors). Shared by the "present" and "latest"
+    # branches because ansible fails them identically: a `state: latest`
+    # for a nonexistent package is a failed task with rc 1, not a
+    # changed: true success.
+    private def dnf_install_failure_result(name : String, install_result : NamedTuple(exit_code: Int32, stdout: String, stderr: String)) : PluginResult
+      if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to install some of the specified packages",
+          include_empty_msg: true,
+          failures: failures,
+          results: [] of String,
+          rc: install_result[:exit_code],
+          key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
+        )
+      else
+        PluginResult.new(
+          changed: false,
+          failed: true,
+          msg: "Failed to install #{name}: #{install_result[:stderr]}",
+          stderr: install_result[:stderr]
+        )
+      end
+    end
+
     # Handle DNF/YUM package management
     # See #execute's `names`/`pkg_tokens` comment: commands are built
     # from the parsed elements (each atomically quoted), messages keep
@@ -689,29 +719,9 @@ module Krikri
               msg: already_satisfied ? "Package #{name} already installed" : "Package #{name} installed"
             )
           else
-            # A dnf install that failed on missing/filtered specs carries
-            # Ansible's dnf-module failure shape (canned msg, one entry
-            # per missing spec, no stderr key) - the raw stderr dump only
-            # fits outputs nothing parses (repo metadata/404 errors).
-            if failures = parse_dnf_install_failures(install_result[:stdout], install_result[:stderr])
-              PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to install some of the specified packages",
-                include_empty_msg: true,
-                failures: failures,
-                results: [] of String,
-                rc: install_result[:exit_code],
-                key_order: PluginHelpers::DnfInstallFailures::DNF_INSTALL_FAILURE_ORDER
-              )
-            else
-              PluginResult.new(
-                changed: false,
-                failed: true,
-                msg: "Failed to install #{name}: #{install_result[:stderr]}",
-                stderr: install_result[:stderr]
-              )
-            end
+            # Same Ansible-shaped failure the "latest" branch reports -
+            # see dnf_install_failure_result for why.
+            dnf_install_failure_result(name, install_result)
           end
         end
       when "absent"
@@ -775,6 +785,13 @@ module Krikri
         end
 
         update_result = remote_exec("dnf install -y #{shell_pkg} || yum install -y #{shell_pkg}")
+        # Real ansible fails `state: latest` for unresolvable specs exactly
+        # like `state: present` (msg "Failed to install some of the
+        # specified packages", failures ["No package libpng12 available."],
+        # rc 1) - a nonzero dnf/yum exit is a failed task, never
+        # changed: true.
+        return dnf_install_failure_result(name, update_result) if update_result[:exit_code] != 0
+
         # Check if actually updated
         was_updated = !update_result[:stdout].includes?("Nothing to do")
 
