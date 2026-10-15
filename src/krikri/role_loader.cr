@@ -839,6 +839,14 @@ module Krikri
       (before_count...tasks.size).each do |i|
         task = tasks[i]
         task.when_condition = task.when_condition ? "(#{role_when}) and (#{task.when_condition})" : role_when
+        # Ansible evaluates the dependency's when: before any of the task's
+        # own items, so a false role when: must short-circuit before a later
+        # item reads a registered-but-skipped result (e.g. `pkg.rc`). The
+        # strict per-item path only looks at the list, so it needs the
+        # role condition as its first item too.
+        if items = task.when_condition_list
+          task.when_condition_list = [role_when] + items
+        end
       end
     end
 
