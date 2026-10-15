@@ -1588,6 +1588,18 @@ module Krikri
         if (role_vars = enclosing.role_vars) && !role_vars.empty?
           nested_task.role_vars = role_vars
         end
+        # ansible-core 2.19 decorates a non-boolean `when:` failure with the
+        # definition site of the offending value even when the task lives in
+        # an included file inside a role (live-verified vs 2.19.11:
+        # "at '<role>/defaults/main.yml:<line>:<col>'"); the origins travel
+        # with the values they describe, so leaving them behind here silently
+        # strips the location from nested/include_tasks tasks.
+        if (default_origins = enclosing.role_default_origins) && !default_origins.empty?
+          nested_task.role_default_origins = default_origins
+        end
+        if (var_origins = enclosing.role_var_origins) && !var_origins.empty?
+          nested_task.role_var_origins = var_origins
+        end
         nested_task.role_files_dir = enclosing.role_files_dir
         nested_task.role_templates_dir = enclosing.role_templates_dir
         nested_task.role_vars_dir = enclosing.role_vars_dir
