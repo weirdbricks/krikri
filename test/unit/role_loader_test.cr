@@ -806,4 +806,28 @@ describe Krikri::RoleLoader do
     (error.message || "").must_equal(
       "the role 'outer/nope' was not found in #{Krikri::RoleLoader.role_search_display(roles_root)}")
   end
+
+  it "prefixes the not-found search list with the play's collections" do
+    # Live-verified vs 2.19.11: when the play declares `collections:`,
+    # the reported list starts with those collection names followed by
+    # "ansible.legacy" before the usual directory paths.
+    play = fresh_play
+    play.collections = ["community.general", "ansible.posix"]
+
+    error = assert_raises(Krikri::RoleNotFoundError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent_role_xyz"), play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "the role 'nonexistent_role_xyz' was not found in #{Krikri::RoleLoader.role_search_display(roles_root, play.collections)}")
+    (error.message || "").includes?("community.general:ansible.posix:ansible.legacy:").must_equal(true)
+  end
+
+  it "keeps the not-found search list without a prefix when the play has no collections" do
+    error = assert_raises(Krikri::RoleNotFoundError) do
+      Krikri::RoleLoader.load_roles(roles_yaml("- nonexistent_role_xyz"), fresh_play, roles_root)
+    end
+    (error.message || "").must_equal(
+      "the role 'nonexistent_role_xyz' was not found in #{Krikri::RoleLoader.role_search_display(roles_root)}")
+    (error.message || "").includes?("ansible.legacy:").must_equal(false)
+  end
 end
