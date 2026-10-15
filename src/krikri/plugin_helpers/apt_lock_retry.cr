@@ -164,6 +164,23 @@ module Krikri
     # (no space after "W:").
     APT_FETCH_SECURE_REPO_PREPEND = "W:Updating from such a repository can't be done securely, and is therefore disabled by default., W:See apt-secure(8) manpage for repository creation and user configuration details."
 
+    # One failed attempt's reason bookkeeping, shared by the apt and
+    # apt_repository update-cache retry loops: returns the attempt's
+    # warning/final-msg text paired with the signature_failed flag for the
+    # NEXT attempt. The prepend decision uses the flag as it stood BEFORE
+    # this attempt - apt only marks a repo untrusted after its first failed
+    # update, so the very first failed attempt's text is quoted bare
+    # (verified against ansible-core 2.19.11: attempt 1's warn carries only
+    # the GPG/E: lines, the two untrusted-repo lines appear from attempt 2
+    # on). Encapsulated here so both loops structurally cannot compose the
+    # text from a flag that already includes the current attempt - the
+    # apt_repository loop used to do exactly that and warned with the
+    # prepend from its very first failure.
+    def apt_fetch_attempt_reason(reason : String, signature_failed_before : Bool) : {String, Bool}
+      last_reason = signature_failed_before && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+      {last_reason, signature_failed_before || !reason.empty?}
+    end
+
     # apt.py's FetchFailedException retry loop verbatim: `for retry in
     # range(update_cache_retries)` around cache.update(), exponential
     # backoff (2**retry plus a random sub-second jitter, capped at
@@ -208,10 +225,7 @@ module Krikri
           break
         end
         reason = apt_fetch_failure_reason(result)
-        signature_failed = true unless reason.empty?
-        # the initial attempt's exception text never carries the prepend -
-        # apt marks the repo untrusted only AFTER its first failed update
-        last_reason = signature_failed && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+        last_reason, signature_failed = apt_fetch_attempt_reason(reason, signature_failed)
         warned_reason = last_reason
       end
       {recovered: recovered, warnings: warnings, last_reason: last_reason}

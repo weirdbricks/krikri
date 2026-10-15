@@ -71,6 +71,28 @@ describe Krikri::AptLockRetry do
     end
   end
 
+  describe "#apt_fetch_attempt_reason" do
+    it "quotes the first failed attempt's text bare and flips the flag only for later attempts" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      reason = Krikri::AptLockRetryTestProbe.new.apt_fetch_failure_reason(GPG_RESULT)
+
+      first = probe.apt_fetch_attempt_reason(reason, false)
+      first[0].must_equal(reason)
+      first[1].must_equal(true)
+
+      second = probe.apt_fetch_attempt_reason(reason, first[1])
+      second[0].must_equal("#{Krikri::AptLockRetry::APT_FETCH_SECURE_REPO_PREPEND}, #{reason}")
+      second[1].must_equal(true)
+    end
+
+    it "keeps the bare-exception class empty and the flag untouched" do
+      probe = Krikri::AptLockRetryTestProbe.new
+      outcome = probe.apt_fetch_attempt_reason("", false)
+      outcome[0].must_equal("")
+      outcome[1].must_equal(false)
+    end
+  end
+
   describe "#apt_fetch_failed_update_retry" do
     it "quotes the failed attempt's exception text in the warnings and final reason" do
       harness = FetchRetryHarness.new

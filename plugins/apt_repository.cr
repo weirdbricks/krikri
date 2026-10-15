@@ -428,16 +428,19 @@ module Krikri
       attempt = 0
       last_reason = ""
       signature_failed = false
+      # ansible computes randomize (secrets.randbelow(1000)/1000.0) once
+      # before its loop, so one call's attempts all share the same jitter
+      # rather than re-drawing it per attempt
+      randomize = Random.rand(1000) / 1000.0
       while attempt < retries
         cache_result = remote_exec("apt-get update")
         if cache_result[:exit_code] == 0 && !apt_fetch_failed?(cache_result)
           return {failed: false, last_reason: ""}
         end
         reason = apt_fetch_failure_reason(cache_result)
-        signature_failed = true unless reason.empty?
-        last_reason = signature_failed && !reason.empty? ? "#{APT_FETCH_SECURE_REPO_PREPEND}, #{reason}" : reason
+        last_reason, signature_failed = apt_fetch_attempt_reason(reason, signature_failed)
         @warnings << "Failed to update cache after #{attempt + 1} due to #{last_reason} retry, retrying"
-        delay = apt_repository_retry_delay(attempt, max_delay)
+        delay = apt_repository_retry_delay(attempt, max_delay, randomize)
         ::sleep(delay.seconds)
         @warnings << "Sleeping for #{delay.round.to_i} seconds, before attempting to update the cache again"
         attempt += 1
