@@ -147,7 +147,17 @@ module Krikri
           next
         end
         substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-        file_rel = substitutor.substitute(task.include_file.as(String))
+        file_rel = begin
+          substitutor.substitute(task.include_file.as(String), strict: true)
+        rescue ex : UndefinedVariableError
+          # Ansible fails the include task at task-args finalization when
+          # its path template references an undefined variable, before any
+          # file lookup happens - a non-strict render turns the var into
+          # the literal text "undefined" and reports the rendered name as
+          # missing instead (live-verified vs 2.19.11).
+          fail_include_tasks_undefined_var(task, host, ex)
+          next
+        end
         resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
         unless File.exists?(resolved_path)
@@ -1973,7 +1983,16 @@ module Krikri
       end
 
       substitutor = VarSubstitutor.new(vars: vars_context, host_name: host.name)
-      file_rel = substitutor.substitute(task.include_file.as(String))
+      file_rel = begin
+        substitutor.substitute(task.include_file.as(String), strict: true)
+      rescue ex : UndefinedVariableError
+        # Same undefined-path failure shape as the batched include path
+        # above (live-verified vs 2.19.11). Returns :ok because the
+        # failure's stats are booked inside the helper - the looped
+        # caller aggregates a :failed return into a SECOND booking.
+        fail_include_tasks_undefined_var(task, host, ex)
+        return :ok
+      end
       resolved_path = PlaybookParser.resolve_include_path(file_rel, task.include_file_dir.as(String))
 
       unless File.exists?(resolved_path)
@@ -2149,6 +2168,30 @@ module Krikri
       # ok+ignored, not failed, matching Ansible. halt_if_failed
       # already correctly skips halting under ignore_errors: - this
       # method's own stats increment never did.
+      if task.ignore_errors?
+        @results[host.name]["ok"] += 1
+        @results[host.name]["ignored"] += 1
+      else
+        @results[host.name]["failed"] += 1
+      end
+      halt_if_failed(task, host, true)
+    end
+
+    # include_tasks: whose path template references an undefined variable -
+    # the ordinary finalization-failure shape (ignore_errors: applies, the
+    # host halts only when the failure stands), unlike the missing-file
+    # failure below whose ignore_errors: never applies.
+    private def fail_include_tasks_undefined_var(task : Task, host : Host, ex : UndefinedVariableError) : Nil
+      # include_tasks is free-form, so its failing arg is always
+      # _raw_params - the same key convention the include_vars path's
+      # undefined branch uses.
+      wrapped = UndefinedVariableError.new("Error while resolving value for '_raw_params': #{ex.message}")
+      emit_finalization_error_block(task, wrapped)
+      result = finalization_failure_json(wrapped, task)
+      if register_name = task.register
+        register_result(host, register_name, result) unless register_name.empty?
+      end
+      ResultDisplay.display_result(host, result, @diff_mode, ignore_errors: task.ignore_errors?, module_name: task.module_name, delegate_target: delegate_display_target(task, host), source_task: task)
       if task.ignore_errors?
         @results[host.name]["ok"] += 1
         @results[host.name]["ignored"] += 1

@@ -2771,7 +2771,11 @@ module Krikri
       name_line = locate_name_line(lines, task)
       if name_line
         name_idx, name_col = name_line
-        module_line = locate_module_key_line(lines, name_idx, task.module_name)
+        # Engine-internal pseudo modules (include_tasks parses as
+        # _include_tasks) never appear as-written in the source - locate
+        # by the user-visible FQCN finalization_module_name resolves to,
+        # whose short form still matches a bare-name line.
+        module_line = locate_module_key_line(lines, name_idx, finalization_module_name(task))
         return unless module_line
         module_idx, module_col = module_line
         two_level = false
@@ -2786,7 +2790,12 @@ module Krikri
         two_level = true
       end
 
-      param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || {module_idx, module_col})
+      # Free-form include_tasks: has no locatable `_raw_params:` key in the
+      # source - its value sits on the module key's own line, where
+      # free_form_value_position's after-the-colon scan finds it
+      # (live-verified vs 2.19.11: `include_tasks: "{{ state }}.yml"` ->
+      # innermost Origin column 38, the value token's quote).
+      param_idx, param_col = free_form ? free_form_value_position(lines, module_idx, task.module_name) : (locate_param_value_line(lines, module_idx, msg) || (["include_tasks", "_include_tasks"].includes?(task.module_name) ? free_form_value_position(lines, module_idx, finalization_module_name(task)) : {module_idx, module_col}))
 
       # When the fourth chained stanza is emitted, the third level's text
       # shortens to the prefix alone - the inner message moves entirely
