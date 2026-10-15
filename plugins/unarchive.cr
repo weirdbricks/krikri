@@ -369,9 +369,6 @@ module Krikri
       # exists both handlers probe the same `unzip -l` and their
       # could-not-handle reasons are identical - ZipZ's copy dedups.
       zip_missing = %w[unzip zipinfo].select { |name| found[name].nil? }
-      unless zip_missing.empty?
-        reasons << "Unable to find required '#{zip_missing.join("' or '")}' binary in the path."
-      end
       if unzip && (zip_reason = could_not_handle_reason("unzip -l", unzip, src))
         reasons << zip_reason
       end
@@ -400,6 +397,13 @@ module Krikri
       # report lands after the tar family's, not next to ZipArchive's.
       unless unzip
         reasons << "Unable to find required 'unzip' or 'unzip' binary in the path."
+      end
+
+      # ZipArchive's own missing-binary report is the last line in real
+      # (gtar/tar, unzip/unzip, then unzip/zipinfo), despite ZipArchive
+      # being first in pick_handler's handler list.
+      unless zip_missing.empty?
+        reasons << "Unable to find required '#{zip_missing.join("' or '")}' binary in the path."
       end
 
       reasons.uniq
