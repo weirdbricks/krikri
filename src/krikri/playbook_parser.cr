@@ -2260,7 +2260,27 @@ module Krikri
       end
       play.handlers = role_handlers + own_handlers
 
+      # Play-level ignore_errors: reaches every task and handler (ansible
+      # prints `...ignoring` and carries on); a task's or block's own
+      # ignore_errors: still wins.
+      if play_ignore = yaml["ignore_errors"]?
+        apply_play_ignore_errors(play.tasks, parse_ignore_errors(play_ignore), template_expression(play_ignore))
+        apply_play_ignore_errors(play.handlers, parse_ignore_errors(play_ignore), template_expression(play_ignore))
+      end
+
       play
+    end
+
+    private def self.apply_play_ignore_errors(tasks : Array(Task), value : Bool, expr : String?) : Nil
+      tasks.each do |task|
+        # An explicit block value was already inherited by its children.
+        next if task.ignore_errors_explicit?
+        task.ignore_errors = value
+        task.ignore_errors_expr = expr
+        [task.block_tasks, task.rescue_tasks, task.always_tasks].each do |children|
+          children.try { |list| apply_play_ignore_errors(list, value, expr) }
+        end
+      end
     end
 
     # Parse a list of task-shaped YAML nodes, skipping (with a warning) any
