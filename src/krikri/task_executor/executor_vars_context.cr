@@ -3311,32 +3311,32 @@ module Krikri
     # guessed at. A compound when: expression has no single defining
     # var, so real's lineage there labels the when: token itself -
     # handled below for the one captured shape ('int', issue #21).
-    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil) : String
+    private def decorate_conditional_value_origin(task : Task, msg : String, host : Host? = nil, operand : String? = nil) : String
       return msg unless msg.includes?("Conditionals must have a boolean result")
       return msg if msg.includes?(" at '") || msg.includes?(" at \"")
-      raw = task.when_condition.to_s.strip
+      raw = operand || task.when_condition.to_s.strip
       unless raw.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-        # Compound when: (`x is defined and x|length` etc.): the tested
-        # value comes from the expression itself, and real reports the
-        # when: value token's position - the same position as the
-        # second Origin: block. Captured from 2.19.11 for the int
-        # shape (`...|length`) only; other types stay undecorated
-        # rather than guessed at.
-        return msg unless msg.includes?("was derived from value of type 'int'")
+        # An and/or chain returns one operand's own value, so real labels
+        # the error with that operand variable's defining origin
+        # (`nvm_dir and not nvm_profile` with both "" -> nvm_dir's play-var
+        # position, live-verified 2.19.11).
+        if (h = host) && (deciding = deciding_bare_operand(task, h, raw))
+          return decorate_conditional_value_origin(task, msg, h, deciding)
+        end
+        # Any other compound when: (`x is defined and x|length`,
+        # `lst | d([], true)`): the tested value is created by the
+        # expression itself, and real reports the when: value token's
+        # position - the same position as the second Origin: block,
+        # whatever the value's type (int, str, list, ... live-verified).
         return msg unless (tok = when_token_position(task))
-        # String (not Regex) sub: a Regex match here would clobber the `$1`
-        # the sub-blocks below read in this same method.
-        return msg.sub("was derived from value of type 'int'",
-          "was derived from value of type 'int' at '#{tok[0]}:#{tok[1]}:#{tok[2]}'")
+        return with_origin_clause(msg, "'#{tok[0]}:#{tok[1]}:#{tok[2]}'")
       end
       if h = host
         origin = var_origin_for(task, h, raw, runtime_marker: true)
         case origin
         when FileVarOrigin
           return msg if origin.column <= 0
-          return msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
-            "was derived from value of type '#{$1}' at '#{origin.path}:#{origin.line}:#{origin.column}'"
-          end
+          return with_origin_clause(msg, "'#{origin.path}:#{origin.line}:#{origin.column}'")
         when TextVarOrigin
           # Real's CLI-extra-var lineage: `at "<CLI option '-e'>"` -
           # double quotes, no position (live-verified 2.19.11).
@@ -3361,6 +3361,45 @@ module Krikri
       msg.sub(/was derived from value of type '([a-zA-Z]+)'/) do
         "was derived from value of type '#{$1}' at '#{path}:#{pos[0]}:#{pos[1]}'"
       end
+    end
+
+    # `msg` with " at <location>" appended to its "was derived from value
+    # of type 'T'" clause (location already quoted).
+    private def with_origin_clause(msg : String, location : String) : String
+      return msg unless (type_match = msg.match(/was derived from value of type '([a-zA-Z]+)'/))
+      clause = "was derived from value of type '#{type_match[1]}'"
+      msg.sub(clause, "#{clause} at #{location}")
+    end
+
+    # The bare-variable operand whose own value an `a and b` / `a or b`
+    # chain returned (first falsy for `and`, first truthy for `or`), or nil
+    # when the chain mixes operators, reaches a non-variable operand first
+    # (`not x` and comparisons yield bools, filters/calls create fresh
+    # values) or the variable is unresolvable.
+    private def deciding_bare_operand(task : Task, host : Host, expr : String) : String?
+      return nil if expr.includes?('(') || expr.includes?('"') || expr.includes?('\'') || expr.includes?('|')
+      is_or = expr.matches?(/\sor\s/)
+      return nil if is_or && expr.matches?(/\sand\s/)
+      operands = expr.split(is_or ? /\s+or\s+/ : /\s+and\s+/)
+      return nil if operands.size < 2
+      vars = build_vars_context(task, host)
+      operands.each do |operand|
+        operand = operand.strip
+        return nil unless operand.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+        value = vars[operand]? || (return nil)
+        truthy = case raw = value.raw
+                 when Nil     then false
+                 when Bool    then raw
+                 when String  then !raw.empty?
+                 when Int64   then raw != 0
+                 when Float64 then raw != 0.0
+                 when Array   then !raw.empty?
+                 when Hash    then !raw.empty?
+                 else              true
+                 end
+        return operand if truthy == is_or
+      end
+      nil
     end
 
     # Locates `name`'s value position in the playbook file: the play
