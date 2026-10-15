@@ -2026,7 +2026,8 @@ module Krikri
         # non-looped path, and report_unreachable has already halted (or
         # ignored) the host, so the failed-based halt below is skipped.
         if any_unreachable
-          report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context))
+          delegate_target = delegate_display_target(task, host, base_vars_context)
+          report_unreachable(task, host, @unreachable_ssh_errors[host.name]?, no_log: resolve_task_no_log(task, base_vars_context), delegate_target: delegate_target)
           @unreachable_hosts << host.name unless task.ignore_unreachable?
         else
           aggregate_result = JSON.parse({
