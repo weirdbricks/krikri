@@ -2092,8 +2092,16 @@ module Krikri
           rescue JSON::ParseException
             nil
           end
-        elsif raw.includes?("{{") || raw.includes?("{%") || raw.includes?("{#")
+        elsif raw.includes?("{%") || raw.includes?("{#")
           nil
+        elsif raw.includes?("{{")
+          # Mixed text around a span (`"{{ cfg }}:/config"`) is a plain
+          # string in Ansible and must not stop a sibling whole-span leaf
+          # (`env: "{{ envv }}"`) from staying a native dict; bailing here
+          # stringified that sibling into Python-repr text.
+          rendered = substitutor.substitute(raw, strict: true, output: true)
+          return nil if rendered.includes?(OMIT_SENTINEL)
+          JSON::Any.new(rendered)
         else
           node
         end

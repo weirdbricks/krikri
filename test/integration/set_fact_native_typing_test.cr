@@ -135,6 +135,32 @@ describe "set_fact keeps a Jinja string expression a string (2.19 native typing)
     output.must_include("SUM=6")
   end
 
+  it "keeps a whole-span dict leaf native next to a mixed-text list item" do
+    # calvinbui.ansible_sonarr_docker shape: `volumes: ["{{ cfg }}:/config"]`
+    # beside `env: "{{ envv }}"` in one set_fact dict. Ansible keeps env a
+    # dict; krikri used to stringify it into Python-repr text.
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        vars:
+          envv: {PUID: "1000"}
+          cfg: /tmp/cfg
+        tasks:
+          - set_fact:
+              params:
+                volumes:
+                  - "{{ cfg }}:/config"
+                env: "{{ envv }}"
+          - debug:
+              msg: "E={{ params.env | type_debug }} V={{ params.volumes[0] }}"
+      YAML
+
+    status.success?.must_equal(true)
+    output.must_include("E=dict")
+    output.must_include("V=/tmp/cfg:/config")
+  end
+
   it "keeps a quoted module mode string a string (mode: \"{{ '0644' }}\")" do
     # Module params string-coerce through their own argspec, so a quoted
     # "0644" must reach the module as the string "0644" (octal digits),
