@@ -212,4 +212,60 @@ describe "Krikri::VarSubstitutor (variable_substitutor_blocktag_undefined_test.c
       end
     end
   end
+
+  describe "strict block-tag missing dict key consumed by a slice (issue #113)" do
+    include RaisesAssertion
+
+    # Issue #113: a set_fact arg like
+    #   "{% if inventory_hostname in groups['mdm'][::2] %}1{% else %}0{% endif %}"
+    # (and the same with `groups['mdm']` / `groups.mdm[::2]`) consumed a
+    # MISSING dict key inside a block tag. ansible-core 2.19.11 fails the
+    # arg finalization with "Error while resolving value for 'im': object
+    # of type 'dict' has no attribute 'mdm'"; krikri rendered the block
+    # leniently (or fell back to the literal text) and reported ok. The
+    # bare-identifier pre-scan deliberately skips attribute/key access,
+    # so the strict template probe now owns these shapes.
+    def issue113_vars : Hash(String, JSON::Any)
+      groups = JSON.parse(%({"all": ["localhost", "hostb"], "ungrouped": ["localhost", "hostb"]}))
+      {"groups" => groups} of String => JSON::Any
+    end
+
+    it "raises the dict-attribute message for a bracket key sliced with [::2] inside {% if %}" do
+      sub = Krikri::VarSubstitutor.new(vars: issue113_vars)
+      assert_raises_message(Krikri::UndefinedVariableError, /^object of type 'dict' has no attribute 'mdm'$/) do
+        sub.substitute("{% if inventory_hostname in groups['mdm'][::2] %}1{% else %}0{% endif %}", strict: true)
+      end
+    end
+
+    it "raises the dict-attribute message for a plain bracket key inside {% if %}" do
+      sub = Krikri::VarSubstitutor.new(vars: issue113_vars)
+      assert_raises_message(Krikri::UndefinedVariableError, /^object of type 'dict' has no attribute 'mdm'$/) do
+        sub.substitute("{% if inventory_hostname in groups['mdm'] %}1{% else %}0{% endif %}", strict: true)
+      end
+    end
+
+    it "raises the dict-attribute message for a dotted attribute sliced with [::2] inside {% if %}" do
+      sub = Krikri::VarSubstitutor.new(vars: issue113_vars)
+      assert_raises_message(Krikri::UndefinedVariableError, /^object of type 'dict' has no attribute 'mdm'$/) do
+        sub.substitute("{% if inventory_hostname in groups.mdm[::2] %}1{% else %}0{% endif %}", strict: true)
+      end
+    end
+
+    it "renders the true branch when the sliced key IS defined" do
+      sub = Krikri::VarSubstitutor.new(vars: issue113_vars)
+      sub.substitute("{% if inventory_hostname in groups['all'][::2] %}1{% else %}0{% endif %}", strict: true)
+        .must_equal("1")
+    end
+
+    it "does not raise for a missing dict key guarded by is defined" do
+      sub = Krikri::VarSubstitutor.new(vars: issue113_vars)
+      sub.substitute("{% if groups.mdm is defined %}1{% else %}0{% endif %}", strict: true).must_equal("0")
+    end
+
+    it "does not raise for a missing key on a defined dict guarded by is defined" do
+      v = {"d" => JSON.parse(%({"k": 1}))} of String => JSON::Any
+      sub = Krikri::VarSubstitutor.new(vars: v)
+      sub.substitute("{% if d.missing is defined %}1{% else %}0{% endif %}", strict: true).must_equal("0")
+    end
+  end
 end

@@ -1818,6 +1818,23 @@ module Krikri
       if strict && (stray = renderer.stray_end_tag_message(text))
         raise VariableSubstitutor::TemplateSyntaxError.new("Syntax error in template: #{stray}")
       end
+      # The bare-identifier scan above deliberately skips missing-attribute/
+      # missing-key references (`groups['mdm']`, `groups.mdm`), so a block-tag
+      # arg like `{% if inventory_hostname in groups['mdm'][::2] %}` still
+      # rendered leniently to the false branch where ansible-core 2.19 fails
+      # the arg finalization ("Error while resolving value for 'im': object
+      # of type 'dict' has no attribute 'mdm'", live-verified). The strict
+      # template probe re-renders the whole text once with Ansible's
+      # strict-undefined environment and reports exactly that message; it
+      # never fires for lenient guards (`is defined`, `| default`) because
+      # those consume no undefined value, and is skipped entirely when the
+      # text carries a side-effecting lookup (same no-double-execute
+      # convention the expression probes use). Probe-only run cost: this
+      # method is only ever reached for `{%`/`{#`-bearing text.
+      if strict && !Krikri.probe_has_side_effecting_call?(text) &&
+         (msg = VariableSubstitutor::JinjaRenderer.strict_render_undefined_message(text, @vars))
+        raise UndefinedVariableError.new(msg)
+      end
       @@block_tag_escalation_depth += 1
       begin
         renderer.render(text)
