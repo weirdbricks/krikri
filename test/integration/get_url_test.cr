@@ -146,6 +146,24 @@ describe "get_url plugin" do
     File.delete(dest) if dest && File.exists?(dest)
   end
 
+  it "strips surrounding whitespace off the url before downloading, but reports the raw url" do
+    # Real Ansible strips leading/trailing whitespace (including
+    # newlines) off the url before requesting it - urllib rejects the
+    # padded string with "unknown url type:    http" - yet keeps
+    # reporting the raw, unstripped string in the result's url: field
+    # (live-verified against ansible-core 2.19.11).
+    dest = File.tempname("get-url-spec")
+    raw_url = "   #{GET_URL_TEST_BASE}/file.txt\n\n  "
+    result = PluginSpecHelper.run("get_url", {"url" => raw_url, "dest" => dest})
+
+    result["changed"].as_bool.must_equal(true)
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    File.read(dest).must_equal(FILE_CONTENT)
+    result["url"].as_s.must_equal(raw_url)
+  ensure
+    File.delete(dest) if dest && File.exists?(dest)
+  end
+
   it "accepts headers: as a real dict (JSON text), not just the comma-separated string form" do
     # Real bug found benchmarking caddy_ansible.caddy_ansible: its own
     # `headers: '{{ caddy_github_headers }}'` (a real dict, `{}` by
