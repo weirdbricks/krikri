@@ -117,16 +117,44 @@ module Krikri
       # Krikri.strict_undefined_probe_message, which this complements for
       # MIXED-text/container values an expression probe cannot parse.
       def self.strict_render_undefined_message(text : String, vars : Hash(String, JSON::Any)) : String?
+        miss, slice_swallowed = strict_render_probe_verdict(text, vars)
+        return miss if miss
+        # A slice consumed the missing attribute (the engine's slice
+        # evaluation raises a bare "cannot slice" that drops the
+        # undefined's own hint), so the first probe could not name the
+        # miss. Re-probe with every slice bracket turned into a plain
+        # subscript: the intermediate chain link now travels through the
+        # engine's undefined-chaining path, whose consumption raises with
+        # the hint ("'dict object' has no attribute 'mdm'") real
+        # ansible-core reports for `{% if h in groups['mdm'][::2] %}`.
+        # Quoted/nested bracket tokens are left alone (a quoted key is
+        # never a slice), and a rewrite that still can't name a miss
+        # simply declines like the first pass did.
+        return nil unless slice_swallowed
+        rewritten = text.gsub(/\[[^\[\]'"]*\]/) { |bracket| bracket.includes?(':') ? "[0]" : bracket }
+        return nil unless rewritten != text
+        miss2, _ = strict_render_probe_verdict(rewritten, vars)
+        miss2
+      end
+
+      # One strict render of *text*; {ansible's message, nil} for an
+      # undefined consumption / clean render, and whether the render
+      # failed on a SLICE applied to an undefined value instead (the
+      # engine reports that as a kind=Runtime "cannot slice ..." without
+      # the hint, so the caller can run its hint-recovering second pass).
+      private def self.strict_render_probe_verdict(text : String, vars : Hash(String, JSON::Any)) : {String?, Bool}
         new(vars).render_strict_probe(text)
-        nil
+        {nil, false}
       rescue e : KrikriJinja::TemplateError
-        return nil unless e.kind == KrikriJinja::ErrorKind::Undefined
+        return {nil, true} if e.kind == KrikriJinja::ErrorKind::Runtime &&
+                              e.raw_message.matches?(/cannot slice KrikriJinja::(Strict)?Undefined\z/)
+        return {nil, false} unless e.kind == KrikriJinja::ErrorKind::Undefined
         msg = e.raw_message
-        return nil if msg.includes?("has no element")
-        return nil if msg.matches?(/has no attribute '\d+'\z/)
-        msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute")
+        return {nil, false} if msg.includes?("has no element")
+        return {nil, false} if msg.matches?(/has no attribute '\d+'\z/)
+        {msg.gsub(/'(\w+) object' has no attribute/, "object of type '\\1' has no attribute"), false}
       rescue
-        nil
+        {nil, false}
       end
 
       # The instance half of .strict_render_undefined_message: one strict
