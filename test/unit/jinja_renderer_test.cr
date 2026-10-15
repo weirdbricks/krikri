@@ -1070,6 +1070,13 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ "host-a" | extract(hostvars) | dict2items | map(attribute="key") | list }})).must_equal("['node_ip']")
   end
 
+  it "map(attribute='a.b') resolves a dotted path through nested dicts" do
+    v = Hash(String, JSON::Any).new
+    v["d"] = JSON.parse(%({"ansible_facts": {"q": {"y": 2}}}))
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ [d] | map(attribute='ansible_facts.q') | list }})).must_equal("[{'y': 2}]")
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)

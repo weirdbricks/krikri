@@ -571,6 +571,34 @@ module Krikri
         JSON::Any.new(py_truthy(value))
       end
 
+      # map(attribute='a.b') resolves the dotted path through nested dicts:
+      # Ansible gives the nested value, where krikri-jinja's map looked up
+      # the literal key "a.b" and yielded undefined for every item
+      # (ansible_facts.q through a registered result list, triplepoint's
+      # secure_device ufw policies). Only the dotted form is intercepted;
+      # every other map form keeps krikri-jinja's own implementation.
+      original_map = KrikriJinja::BUILTIN_FILTERS["map"]
+      KrikriJinja.default_engine.register_filter("map") do |value, args, kwargs, context|
+        attr = kwargs["attribute"]?.try(&.raw.as?(String))
+        if attr && attr.includes?('.')
+          default = kwargs["default"]? || KrikriJinja::AnyValue.new(nil)
+          has_default = !default.raw.nil? && !default.raw.is_a?(KrikriJinja::Undefined)
+          items = KrikriJinja.to_iterable(value).map do |item|
+            found = attr.split('.').reduce(item.as(KrikriJinja::AnyValue?)) do |current, part|
+              current && KrikriJinja.get_attr(current, part)
+            end
+            if found.nil? || found.raw.is_a?(KrikriJinja::Undefined)
+              has_default ? default : KrikriJinja::AnyValue.new(context.undefined)
+            else
+              found
+            end
+          end
+          KrikriJinja::AnyValue.new(KrikriJinja::GeneratorValue.new(items))
+        else
+          original_map.call(value, args, kwargs, context)
+        end
+      end
+
       KrikriJinja.register_default_json_filter("bool") do |value, _args, _kwargs|
         raw = value.raw
         JSON::Any.new(case raw

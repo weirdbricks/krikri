@@ -301,6 +301,20 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     result.must_equal(["/a", "/b"])
   end
 
+  it "extracts a dotted attribute path through nested hashes via map(attribute=...)" do
+    value = JSON.parse(%([{"ansible_facts": {"q": {"y": 2}}}]))
+    result = engine.apply(value, %(map(attribute='ansible_facts.q')))
+    result.as_a.size.must_equal(1)
+    result.as_a[0].as_h["y"].as_i.must_equal(2)
+  end
+
+  it "yields nil for a dotted attribute path with a missing intermediate key" do
+    value = JSON.parse(%([{"ansible_facts": {"q": {"y": 2}}}, {"other": 1}]))
+    result = engine.apply(value, %(map(attribute='ansible_facts.q'))).as_a
+    result[0].as_h["y"].as_i.must_equal(2)
+    result[1].raw.nil?.must_equal(true)
+  end
+
   it "chains map(attribute=...) into sort into join - the exact shape find:'s output needs" do
     value = JSON.parse(%([{"path": "/z"}, {"path": "/a"}, {"path": "/m"}]))
     result = engine.apply_chain(value, %(map(attribute='path') | sort | join(',')))
