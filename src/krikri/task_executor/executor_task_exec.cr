@@ -101,7 +101,12 @@ module Krikri
     private def first_existing(roots : Array(String), candidate : String) : String?
       roots.each do |root|
         path = File.join(root, candidate)
-        return path if File.exists?(path)
+        next unless File.exists?(path)
+        # Ansible runs a found path through normpath/unfrackpath, so the
+        # surfaced path (a with_first_found: loop item, the loaded file's
+        # name) is the collapsed one. A relative join is left alone -
+        # normalising could flip leading ../ out of the root's meaning.
+        return path.starts_with?("/") ? Path.new(path).normalize.to_s : path
       end
       nil
     end

@@ -127,3 +127,40 @@ describe "with_first_found: a custom paths: entry containing {{ role_path }}" do
     FileUtils.rm_rf(src_dir) if src_dir
   end
 end
+
+describe "with_first_found: an absolute candidate containing .. or ." do
+  it "reports the normalised path as the loop item" do
+    # Real ansible-core 2.19 normpath/unfrackpaths every found path before
+    # it becomes the loop item - confirmed against a live run with
+    # `with_first_found: ["{{ playbook_dir }}/vars/../vars/Debian.yml"]`:
+    # it prints `item=<playbook_dir>/vars/Debian.yml`, not the raw
+    # un-normalised candidate text. krikri used to surface the candidate
+    # unchanged, so roles printing/matching on the item saw the ../ form.
+    src_dir = File.tempname("first-found-normalized-item")
+    Dir.mkdir_p(File.join(src_dir, "vars"))
+    File.write(File.join(src_dir, "vars", "Debian.yml"), "myvar: from_debian_yml\n")
+    File.write(File.join(src_dir, "pb.yml"), <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: include os vars
+            include_vars: "{{ item }}"
+            with_first_found:
+              - "{{ playbook_dir }}/vars/../vars/Debian.yml"
+          - name: show myvar
+            debug:
+              var: myvar
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, File.join(src_dir, "pb.yml")], output: output, error: output, chdir: src_dir)
+
+    status.success?.must_equal(true)
+    out = output.to_s
+    out.must_include("(item=#{File.join(src_dir, "vars", "Debian.yml")})")
+    out.wont_include("../")
+  ensure
+    FileUtils.rm_rf(src_dir) if src_dir
+  end
+end
