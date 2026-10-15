@@ -240,6 +240,16 @@ module Krikri
         begin
           VariableSubstitutor::JinjaRenderer.evaluate_structured(condition, vars, strict: true)
         rescue e : KrikriJinja::TemplateError
+          # indent's runtime TypeError on a non-string ("unsupported operand
+          # type(s) for +=: 'NoneType' and 'str'") is Ansible's filter-plugin
+          # failure, not an expression-rendering one: real 2.19 fails the
+          # task with "The filter plugin 'ansible.builtin.indent' failed:
+          # ..." (issue #115), so it must not be reshaped into the plain
+          # RenderExpressionError wording a list-method failure gets.
+          if e.raw_message.includes?("unsupported operand type(s) for +=:")
+            raise FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.indent' failed: #{e.raw_message}", e.raw_message)
+          end
           raise RenderExpressionError.new(e.raw_message) unless e.kind == KrikriJinja::ErrorKind::Undefined
         rescue e : UndefinedVariableError
           raise e
