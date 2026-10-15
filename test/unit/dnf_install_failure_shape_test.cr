@@ -131,6 +131,8 @@ describe "dnf/yum failed install - Ansible's per-spec failures shape (issue 19)"
       result["msg"].as_s.must_equal(
         "Failed to validate GPG signature for epel-release-9-11.el9.noarch: Public key for epel-release-latest-9.noarchabc.rpm is not installed")
       result.as_h.has_key?("failures").must_equal(false)
+      result.as_h.has_key?("rc").must_equal(false)
+      result.as_h.has_key?("results").must_equal(false)
     end
   end
 

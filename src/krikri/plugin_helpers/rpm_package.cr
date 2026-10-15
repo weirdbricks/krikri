@@ -818,8 +818,11 @@ module Krikri
           # entry per missing spec parsed out of dnf's output - NOT the
           # raw dnf stderr/stdout dump the fallback below keeps for
           # outputs nothing in parses (repo metadata/404-class errors).
+          # Ansible's dnf fails the GPG check via a bare fail_json(msg=...)
+          # with no rc/results keys, unlike its depsolve failure which does
+          # carry both.
           if gpg_msg = gpg_validation_failure_msg(result[:stdout] + "\n" + result[:stderr])
-            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
+            return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: gpg_msg)}
           end
           if depsolve_msg = depsolve_failure_msg(result[:stdout] + "\n" + result[:stderr])
             return {changed: false, message: nil, output: result[:stdout], failure: PluginResult.new(changed: false, failed: true, msg: depsolve_msg, results: [] of String, rc: result[:exit_code], key_order: %w[changed msg rc results failed])}
