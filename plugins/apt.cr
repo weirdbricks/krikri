@@ -1655,15 +1655,68 @@ module Krikri
         end
       end
 
-      if @check_mode
+      # Ansible's install() (state: latest flows through it with
+      # upgrade=True) fnmatches a wildcard version pin against the
+      # INSTALLED version before anything else: `bash=5.*` on a host
+      # already at 5.2-1 is a plain no-op - no apt-get call at all - and
+      # when the installed version does NOT match, the raw glob never
+      # reaches apt-get either: install() resolves the pin against the
+      # apt cache's version table and pins the CONCRETE match
+      # (`bash=5.2-1`), failing "no available installation candidate"
+      # when nothing matches - the same handling handle_install applies
+      # for its own installed-version short-circuit and spec resolution.
+      # Handing the glob to apt-get verbatim instead makes apt-get itself
+      # reject the spec ("E: Version '5.*' ... was not found") where real
+      # Ansible either no-ops or succeeds.
+      wildcard_skipped = [] of String
+      active_packages = packages
+      any_wildcard_pin = packages.any? do |pkg|
+        pin = split_name_version(pkg)[1]
+        !pin.nil? && pin.matches?(/[*?\[]/)
+      end
+      if any_wildcard_pin
+        wildcard_status = dpkg_installed_status(packages)
+        active_packages = packages.compact_map do |pkg|
+          base_name, pinned_version = split_name_version(pkg)
+          next pkg if pinned_version.nil? || !pinned_version.matches?(/[*?\[]/)
+
+          installed, installed_ver = wildcard_status[base_name]?.try { |pair| pair } || {false, nil}
+          # Already installed at a version the glob matches: Ansible's
+          # package_status() no-op - the package never reaches the apt-get
+          # command line (or the check-mode simulate run below).
+          if installed && (iv = installed_ver) && version_pin_matches?(pinned_version, iv)
+            wildcard_skipped << pkg
+            next nil
+          end
+          if resolved = resolve_pinned_version(base_name, pinned_version)
+            "#{base_name}=#{resolved}"
+          else
+            return PluginResult.new(
+              changed: false,
+              failed: true,
+              msg: "no available installation candidate for #{pkg}",
+              cache_update_time: @cache_update_time,
+              key_order: ["cache_updated", "cache_update_time", "failed", "msg"]
+            )
+          end
+        end
+      end
+
+      # Every wildcard-pinned package was already installed at a version
+      # its glob matches: nothing is left for apt-get (or the check-mode
+      # simulate run) to act on at all - the same "already at latest
+      # version" wording the unchanged path reports, changed: false.
+      if wildcard_skipped.present? && active_packages.empty?
+        messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
+      elsif @check_mode
         # `grep -i upgrade` matched the ALWAYS-present "N upgraded, M newly
         # installed" summary line of simulate output, so check mode never
         # converged to ok. `^Inst` only matches an actual install/upgrade
         # action line.
-        check_cmds = packages.map { |pkg| "apt-get install --simulate #{shell_single_quote(pkg)} 2>&1 | grep '^Inst'" }
+        check_cmds = active_packages.map { |pkg| "apt-get install --simulate #{shell_single_quote(pkg)} 2>&1 | grep '^Inst'" }
         check_result = remote_exec(check_cmds.join(" || "))
         if check_result[:exit_code] == 0
-          messages << "Would upgrade #{packages.join(", ")} to latest"
+          messages << "Would upgrade #{active_packages.join(", ")} to latest"
           changed = true
         else
           messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
@@ -1701,7 +1754,7 @@ module Krikri
         # install tree=2.0.2-1`). The plugin previously built its own
         # `apt-get install -y <opts> <flags> <name>` line, which no real
         # capture or apt.py format string produces.
-        spec_list = packages.map do |pkg|
+        spec_list = active_packages.map do |pkg|
           base_name, pinned_version = split_name_version(pkg)
           resolvable, candidate = apt_candidate(base_name)
           version = pinned_version || candidate
@@ -1764,7 +1817,7 @@ module Krikri
         summary = upgrade_result[:stdout][/(\d+) upgraded, (\d+) newly installed/]?
         was_upgraded = summary ? summary.scan(/\d+/).sum(&.[0].to_i) > 0 : upgrade_result[:exit_code] == 0
         if was_upgraded
-          messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} upgraded to latest"
+          messages << "Package#{packages.size > 1 ? "s" : ""} #{active_packages.join(", ")} upgraded to latest"
           changed = true
         else
           messages << "Package#{packages.size > 1 ? "s" : ""} #{packages.join(", ")} already at latest version"
