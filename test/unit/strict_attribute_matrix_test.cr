@@ -86,6 +86,27 @@ describe "strict missing-attribute matrix (ansible-core 2.19 semantics)" do
       "{{ false and d.missing == 'x' }}", strict: true).must_equal("False")
   end
 
+  # Live-verified vs 2.19.11: Ansible wraps each hostvars entry in its
+  # HostVarsVars type, so a miss on the entry itself reports that wrapper -
+  # while a dict nested inside the entry is still an ordinary 'dict'.
+  it "labels a hostvars per-host entry miss 'HostVarsVars' and a nested dict under it 'dict'" do
+    vars = matrix_vars_hash
+    vars["hostvars"] = JSON.parse(%({"myhost": {"plain": {"a": 1}}}))
+    vars["inventory_hostname"] = JSON::Any.new("myhost")
+
+    error = assert_raises(Krikri::UndefinedVariableError) do
+      Krikri::VarSubstitutor.new(vars: vars).substitute(
+        "{{ hostvars[inventory_hostname].missing }}", strict: true)
+    end
+    error.message.must_equal("object of type 'HostVarsVars' has no attribute 'missing'")
+
+    error = assert_raises(Krikri::UndefinedVariableError) do
+      Krikri::VarSubstitutor.new(vars: vars).substitute(
+        "{{ hostvars[inventory_hostname].plain.missing }}", strict: true)
+    end
+    error.message.must_equal("object of type 'dict' has no attribute 'missing'")
+  end
+
   it "raises/tolerates the same shapes in when:/changed_when: conditions" do
     vars = matrix_vars_hash
     dict_miss = "object of type 'dict' has no attribute 'missing'"

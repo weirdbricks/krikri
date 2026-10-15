@@ -552,10 +552,22 @@ module Krikri
     current = VariableSubstitutor::VariableLookup.new(vars).resolve(expr[0...base_end])
     return nil unless current
 
+    # Ansible wraps every hostvars entry in its own HostVarsVars type, so a
+    # miss on the entry itself names that wrapper rather than 'dict'
+    # (live-verified vs 2.19.11). Identity with the hostvars root marks the
+    # step that yields the per-host entry, and only one level deep - a
+    # nested dict under the entry is an ordinary dict again, and the root
+    # itself keeps its plain-dict label.
+    hostvars_raw = vars["hostvars"]?.try(&.raw)
+    hostvars_root = hostvars_raw.is_a?(Hash) ? hostvars_raw : nil
+    in_hostvars_entry = false
     expr[base_end..].scan(/\.[A-Za-z_][A-Za-z0-9_]*|\[[^\[\]]+\]/).each do |match|
-      miss, next_value = dict_chain_step(current, match[0], vars)
+      miss, next_value = dict_chain_step(current, match[0], vars, in_hostvars_entry)
       return miss if miss
       return nil unless next_value
+      in_hostvars_entry = !hostvars_root.nil? &&
+                          (current_raw = current.raw).is_a?(Hash) && current_raw.same?(hostvars_root) &&
+                          next_value.raw.is_a?(Hash)
       current = next_value
     end
     nil
@@ -565,13 +577,15 @@ module Krikri
   # when this step subscripts a resolvable dict with a key it doesn't have,
   # {nil, next_value} when it resolves, {nil, nil} when this walker can't
   # name the miss (generic message territory).
-  private def self.dict_chain_step(current : JSON::Any, token : String, vars : Hash(String, JSON::Any)) : {String?, JSON::Any?}
+  private def self.dict_chain_step(current : JSON::Any, token : String, vars : Hash(String, JSON::Any), hostvars_entry : Bool) : {String?, JSON::Any?}
     case raw = current.raw
     when Hash
       key = dict_chain_key(token, vars)
       return {nil, nil} unless key
       unless raw.has_key?(key)
-        @@miss_type = "dict"
+        # A miss here lands on the container Ansible typed the value with:
+        # for a hostvars per-host entry that's the HostVarsVars wrapper.
+        @@miss_type = hostvars_entry ? "HostVarsVars" : "dict"
         return {key, nil}
       end
       {nil, raw[key]}
