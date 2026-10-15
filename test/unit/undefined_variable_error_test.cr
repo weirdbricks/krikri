@@ -182,6 +182,44 @@ describe "Krikri::VarSubstitutor (undefined_variable_error_test.cr)" do
     end
   end
 
+  # Issue #101 (live-verified against ansible-core 2.19): indexing past
+  # the end of a list a METHOD call produced (`s.split(':')[1]` with
+  # s="a", the same shape a registered `r.stdout.split(':')[1]` hits)
+  # failed real arg finalization with "object of type 'list' has no
+  # attribute 1", but here it silently rendered the "undefined" sentinel
+  # and the task succeeded - the strict probe's bracket-index machinery
+  # was only ever reached from the bare-reference branch, which parens
+  # rule out, and a defined root passed the access-chain probe by.
+  describe "strict bracket-index failures on a method-call base (issue #101)" do
+    it "raises the list-out-of-range message indexing past the split result's end" do
+      vars = {"s" => JSON.parse(%("a"))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /object of type 'list' has no attribute 1/) do
+        sub.substitute("{{ s.split(':')[1] }}", strict: true)
+      end
+    end
+
+    it "raises the same message for a registered-result dotted base" do
+      vars = {"r" => JSON.parse(%({"stdout": "a"}))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      assert_raises_message(Krikri::UndefinedVariableError, /object of type 'list' has no attribute 1/) do
+        sub.substitute("{{ r.stdout.split(':')[1] }}", strict: true)
+      end
+    end
+
+    it "still resolves the in-range method-call index" do
+      vars = {"s" => JSON.parse(%("a:b"))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ s.split(':')[1] }}", strict: true).must_equal("b")
+    end
+
+    it "keeps the default() guard lenient over a method-call index miss" do
+      vars = {"s" => JSON.parse(%("a"))}
+      sub = Krikri::VarSubstitutor.new(vars: vars, host_name: "h1")
+      sub.substitute("{{ s.split(':')[1] | default('x') }}", strict: true).must_equal("x")
+    end
+  end
+
   # Round 952063 (christiangda.amazon_cloudwatch_agent): the strict
   # undefined probes matched Jinja2's bare boolean/null literal spellings
   # against REGEX_BARE_VAR_REF as if they were variable NAMES, so both a

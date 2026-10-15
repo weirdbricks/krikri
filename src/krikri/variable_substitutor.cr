@@ -2656,6 +2656,25 @@ module Krikri
         if undefined_name = Krikri.undefined_access_chain_source(inner, @vars)
           raise UndefinedVariableError.new(Krikri.strict_undefined_message(undefined_name, @vars)) unless Krikri.undefined_tolerant_first_filter?(inner)
         end
+        # Issue #101 (round-confirmed vs ansible-core 2.19): indexing PAST
+        # THE END of a list a method call produced (`s.split(':')[1]` with
+        # s="a", or a registered result's `r.stdout.split(':')[1]`) fails
+        # real arg finalization with "object of type 'list' has no
+        # attribute 1" - but every earlier probe here passes that shape by
+        # (a defined root means undefined_access_chain_source returns nil,
+        # and the parens rule the chained-subscript and bare-ref branches
+        # out), so the expression silently rendered the "undefined"
+        # sentinel and the task succeeded. The bare-ref branch below owns
+        # this wording for bare shapes; this is the same probe, run before
+        # the non-bare early-return for the shapes only it can see. Its own
+        # guards keep everything else exactly as lenient as today: a
+        # `| default(...)` after the index is not a TRAILING bracket, so it
+        # never reaches the check (Ansible answers that leniently too), and
+        # a side-effecting lookup(...)/query(...) base is never evaluated a
+        # second time.
+        if msg = Krikri.bracket_index_failure_message(inner, @vars)
+          raise UndefinedVariableError.new(msg)
+        end
         # Every other shape (literals, function calls, operators,
         # filter chains whose source is defined, ...) is left alone
         # regardless of strict: - see UndefinedVariableError's own
