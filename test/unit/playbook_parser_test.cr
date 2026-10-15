@@ -3558,6 +3558,27 @@ describe Krikri::PlaybookParser do
     ensure
       FileUtils.rm_rf(role_root) if role_root
     end
+
+    it "keeps a literal ./ in the resolved path when the direct candidate exists" do
+      # Ansible's DataLoader.path_dwim_relative returns its first
+      # candidate - os.path.join(path, dirname, source) - raw, without
+      # normalisation, so `include_tasks: ./sub_role.yml` inside a role's
+      # tasks/main.yml prints `included: <role>/tasks/./sub_role.yml`
+      # (the `./` survives); this engine's File.expand_path collapsed it.
+      # The fallback candidates below the direct one keep their own
+      # expand_path behaviour - only the direct hit goes out unnormalised.
+      scratch = File.join("/tmp/krikri-issue-124", "literal-dot-slash")
+      FileUtils.rm_rf(scratch)
+      role_root = File.join(scratch, "role-root")
+      Dir.mkdir_p(File.join(role_root, "tasks"))
+      File.write(File.join(role_root, "tasks", "sub_role.yml"), "- name: noop\n  ansible.builtin.debug: {msg: hi}\n")
+
+      resolved = Krikri::PlaybookParser.resolve_include_path("./sub_role.yml", File.join(role_root, "tasks"))
+      resolved.must_equal(File.join(role_root, "tasks", "./sub_role.yml"))
+      File.exists?(resolved).must_equal(true)
+    ensure
+      FileUtils.rm_rf(scratch) if scratch
+    end
   end
 
   describe "meta: task vars: parsing" do
