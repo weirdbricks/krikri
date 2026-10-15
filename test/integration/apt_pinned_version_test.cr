@@ -78,7 +78,7 @@ describe "apt plugin pinned-version validation" do
   # being rejected outright (round 1200000: nodejs=16.*, git=100:2.52.0*,
   # ntp=1:4.2.* all failed on hosts where the candidate existed).
   it "accepts a wildcard pin that matches a version in the cache table" do
-    with_bad_pin_shim("pkgname=never-used") do |env, log|
+    with_bad_pin_shim("pkgname=never-used") do |env, _log|
       result = PluginSpecHelper.run("apt", {
         "name"         => "pkgname=1.*",
         "state"        => "present",
@@ -99,6 +99,114 @@ describe "apt plugin pinned-version validation" do
 
       result["failed"].as_bool.must_equal(true)
       result["msg"].as_s.must_equal("no available installation candidate for pkgname=9.*")
+    end
+  end
+end
+
+# state=latest's own wildcard-pin handling: real install() fnmatches the
+# pin against the INSTALLED version first, so an installed `bash=5.*` on a
+# 5.2-1 host is a no-op with no apt-get call at all, and otherwise the
+# concrete cache version (`bash=5.2-1`) - never the raw glob - is what
+# reaches the apt-get command line.
+
+# Stub PATH dir: `dpkg-query` reports bash installed at $KRIKRI_APT_INSTALLED
+# (unset = not installed, real dpkg-query's empty-stdout exit-1 shape for an
+# unknown name), `apt-cache policy` carries 5.2-1 in its version table (the
+# stand-in for Ansible's in-process cache lookup), `apt-get` logs every
+# invocation to $KRIKRI_APT_CALLS and exits 0 with no output (no summary
+# line, so the plugin's was_upgraded fallback reads exit code 0 as
+# "upgraded"), `stat` reports a static mtime.
+private def with_latest_wildcard_shim(installed_version : String, &)
+  dir = File.join(Dir.tempdir, "krikri-apt-latest-wild-#{Random.rand(1_000_000)}")
+  log = File.join(dir, "calls.log")
+  FileUtils.mkdir_p(dir)
+  apt_shim = <<-'SHIM'
+    #!/bin/sh
+    echo "$@" >> "$KRIKRI_APT_CALLS"
+    exit 0
+  SHIM
+  dpkg_shim = <<-'SHIM'
+    #!/bin/sh
+    if [ -n "$KRIKRI_APT_INSTALLED" ]; then
+      echo "ii  $KRIKRI_APT_INSTALLED bash"
+      exit 0
+    fi
+    exit 1
+  SHIM
+  File.write(File.join(dir, "apt-get"), apt_shim)
+  File.write(File.join(dir, "dpkg-query"), dpkg_shim)
+  File.write(File.join(dir, "apt-cache"), <<-'CACHE_SHIM')
+    #!/bin/sh
+    printf 'bash:\n  Installed: (none)\n  Candidate: 5.2-1\n  Version table:\n     5.2-1 500\n'
+  CACHE_SHIM
+  File.write(File.join(dir, "stat"), "#!/bin/sh\necho 100\n")
+  File.chmod(File.join(dir, "apt-get"), 0o755)
+  File.chmod(File.join(dir, "dpkg-query"), 0o755)
+  File.chmod(File.join(dir, "apt-cache"), 0o755)
+  File.chmod(File.join(dir, "stat"), 0o755)
+  env = {"PATH" => "#{dir}:/usr/bin:/bin", "KRIKRI_APT_CALLS" => log, "KRIKRI_APT_INSTALLED" => installed_version}.to_json
+  yield env, log
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
+describe "apt plugin state=latest wildcard pin handling" do
+  # Installed at a version the glob fnmatches: real install()'s
+  # package_status() short-circuit makes this a plain no-op - changed:
+  # false and no apt-get invocation, where this engine used to run
+  # `apt-get install 'bash=5.*'` and fail on the raw glob.
+  it "treats a wildcard pin matching the installed version as a no-op without calling apt-get" do
+    with_latest_wildcard_shim("5.2-1") do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "bash=5.*",
+        "state"        => "latest",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool?).must_be_nil
+      result["changed"].as_bool.must_equal(false)
+      result["msg"].as_s.must_equal("Package bash=5.* already at latest version")
+      apt_get_calls = File.exists?(log) ? File.read_lines(log) : [] of String
+      apt_get_calls.select(&.includes?(" install ")).empty?.must_equal(true)
+    end
+  end
+
+  # Installed BELOW the glob's match (4.x installed, pin wants 5.*): the
+  # pin is resolved against the cache's version table and the concrete
+  # version is pinned onto the apt-get spec, never the raw pattern.
+  it "passes the resolved concrete version, not the glob, to apt-get" do
+    with_latest_wildcard_shim("4.3-1") do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "bash=5.*",
+        "state"        => "latest",
+        "_environment" => env,
+      })
+
+      result["failed"]?.try(&.as_bool?).must_be_nil
+      result["changed"].as_bool.must_equal(true)
+      install_calls = File.exists?(log) ? File.read_lines(log).select(&.includes?(" install ")) : [] of String
+      install_calls.size.must_equal(1)
+      install_calls[0].includes?("bash=5.2-1").must_equal(true)
+      install_calls[0].includes?("bash=5.*").must_equal(false)
+    end
+  end
+
+  # The installed version doesn't match the glob and the cache table has
+  # no matching version either: install()'s own pre-apt-get failure, the
+  # wording handle_install already produces - apt-get itself is never
+  # reached with the unresolvable spec.
+  it "fails a wildcard pin matching no installed or cache version with Ansible's wording" do
+    with_latest_wildcard_shim("5.2-1") do |env, log|
+      result = PluginSpecHelper.run("apt", {
+        "name"         => "bash=9.*",
+        "state"        => "latest",
+        "_environment" => env,
+      })
+
+      result["failed"].as_bool.must_equal(true)
+      result["msg"].as_s.must_equal("no available installation candidate for bash=9.*")
+      apt_get_calls = File.exists?(log) ? File.read_lines(log) : [] of String
+      apt_get_calls.select(&.includes?(" install ")).empty?.must_equal(true)
     end
   end
 end
