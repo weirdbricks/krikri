@@ -210,6 +210,24 @@ module Krikri
       end
     end
 
+    # The engine hands native filters boxed AnyValue payloads (Markup,
+    # Undefined, tuples) that py_type_name's JSON::Any input can't carry, so
+    # an error raised from a native filter needs its own mapping to the
+    # Python type name ansible-core would report for the same value.
+    private def self.py_raw_type_name(raw) : String
+      case raw
+      when Nil                     then "NoneType"
+      when Bool                    then "bool"
+      when Int64                   then "int"
+      when Float64                 then "float"
+      when String                  then "str"
+      when Array                   then "list"
+      when Hash                    then "dict"
+      when KrikriJinja::TupleValue then "tuple"
+      else                              raw.class.to_s
+      end
+    end
+
     # Python's `str()` of a JSON value, for tests that read their operand as
     # text (path and pattern tests).
     def self.py_str(value : JSON::Any) : String
@@ -1084,6 +1102,39 @@ module Krikri
         # An already-structured value passes through unchanged.
         next value unless text = value.as_s?
         yaml_to_json(YAML.parse(text))
+      end
+
+      # Re-registering over the engine's own `indent` (whose non-string guard
+      # hardcodes 'int' as the failing operand type) because real ansible-core
+      # 2.19 names the INPUT's actual Python type in the failure: `{{ none |
+      # indent(2) }}` fails "unsupported operand type(s) for +=: 'NoneType'
+      # and 'str'", a number fails 'int'/'float', a container 'list'/'dict'
+      # (live-verified against 2.19.11). The success path below stays
+      # identical to the engine's own filter; only the failure's type name
+      # changes (issue #115).
+      KrikriJinja.register_default_filter("indent") do |v, args, kwargs, _c|
+        unless v.raw.is_a?(String) || v.raw.is_a?(KrikriJinja::Markup)
+          raise KrikriJinja::TemplateError.new(
+            "unsupported operand type(s) for +=: '#{py_raw_type_name(v.raw)}' and 'str'", 0)
+        end
+        amount = (args[0]?.try(&.raw.as?(Int64)) || kwargs["width"]?.try(&.raw.as?(Int64)))
+        if args[0]? && amount.nil?
+          raise KrikriJinja::TemplateError.new("can't multiply sequence by non-int of type '#{args[0].raw.class}'", 0) unless args[0].raw.is_a?(String)
+          next v if v.raw.is_a?(KrikriJinja::Markup)
+          next KrikriJinja::AnyValue.new(KrikriJinja.stringify(v))
+        end
+        amount ||= 4i64
+        first = (kwargs["first"]? || kwargs["indentfirst"]? || KrikriJinja::AnyValue.new(false)).raw == true || args[1]?.try(&.raw) == true
+        blank = (kwargs["blank"]? || args[2]? || KrikriJinja::AnyValue.new(false)).raw == true
+        if amount <= 0
+          KrikriJinja::AnyValue.new(KrikriJinja.stringify(v))
+        else
+          prefix = first ? " " * amount : ""
+          lines = KrikriJinja.stringify(v).split('\n')
+          lines_out = [prefix + lines[0]]
+          lines_out.concat(lines[1..].map { |line| (!blank && line.empty?) ? line : (" " * amount) + line })
+          KrikriJinja::AnyValue.new(lines_out.join('\n'))
+        end
       end
     end
   end

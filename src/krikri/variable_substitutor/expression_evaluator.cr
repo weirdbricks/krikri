@@ -2892,6 +2892,24 @@ module Krikri
           raise Krikri::FilterPluginError.new(
             "The filter plugin 'ansible.builtin.length' failed: #{cause}", cause)
         end
+        # indent's own TypeError (real Python's `s += prefix` on a
+        # non-string: "unsupported operand type(s) for +=: 'NoneType' and
+        # 'str'") is likewise the CORRECT semantic failure, not an engine
+        # capability gap - the hand-rolled chain has no `indent` at all, so
+        # falling back there misreported the whole failure as "No filter
+        # named 'indent'." instead of real 2.19.11's filter-plugin wrapper
+        # naming the INPUT's type (NoneType/int/float/bool/list/dict, issue
+        # #115). The engine prefixes its message with "line N:" and the
+        # "for +=:" wording is unique to indent (the engine's arithmetic
+        # operand errors say "+"/"-" etc. without "type(s)"), so the match
+        # is unambiguous.
+        if msg = ex.message
+          if msg.includes?("unsupported operand type(s) for +=:")
+            cause = msg.sub(/\Aline \d+: /, "")
+            raise Krikri::FilterPluginError.new(
+              "The filter plugin 'ansible.builtin.indent' failed: #{cause}", cause)
+          end
+        end
         evaluate_with_filter_fallback(expr)
       rescue
         evaluate_with_filter_fallback(expr)
