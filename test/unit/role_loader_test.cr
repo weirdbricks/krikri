@@ -278,6 +278,26 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).must_equal(["base task", "dependent task"])
   end
 
+  it "puts a dependency's when: ahead of a dependency task's own multi-item when: list" do
+    build_role("guarded_dep") { |role| role.tasks(<<-YAML) }
+      - name: probe
+        ansible.builtin.debug:
+          msg: nope
+        when:
+          - first_item
+          - pkg.rc != 0
+      YAML
+
+    build_role("guarded_top") do |role|
+      role.tasks("- ansible.builtin.debug:\n    msg: top\n")
+      role.meta("dependencies:\n  - { role: guarded_dep, when: dep_gate }\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_roles(roles_yaml("- guarded_top"), fresh_play, roles_root)
+
+    tasks.first.when_condition_list.must_equal(["dep_gate", "first_item", "pkg.rc != 0"])
+  end
+
   # Real bug found benchmarking andrewrothstein.github-release (0.9.622):
   # `src:` is Ansible's own `RoleRequirement` key, used both for a
   # `requirements.yml` entry AND for a role's `meta/main.yml` dependency
