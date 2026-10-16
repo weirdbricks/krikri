@@ -636,6 +636,11 @@ module Krikri
     # every exporter role with a different tasks_from: per call - one
     # role directory, several distinct task-file entry points).
     property include_role_tasks_from : String?
+    # vars_from: - loads vars/<name>.yml instead of vars/main.yml as the
+    # role's own vars. Issue #128 found krikri parsed (and validated) the
+    # key but discarded it, so a role gated on a var defined only in the
+    # alt vars file failed its `when:` as undefined while Ansible passed.
+    property include_role_vars_from : String?
     # The enclosing play's `collections:` at parse time - the runtime
     # include_role search-path display carries that prefix (live-verified
     # vs 2.19.11), but the executor only has the task, not the play.
@@ -773,6 +778,7 @@ module Krikri
       @include_role_vars = nil
       @include_role_dir = nil
       @include_role_tasks_from = nil
+      @include_role_vars_from = nil
       @include_role_collections = nil
       @include_role_name_origin = nil
       @include_role_bool_failure = nil
@@ -5672,6 +5678,7 @@ module Krikri
       task.include_role_name = role_name
       task.include_role_dir = file_dir
       task.include_role_tasks_from = role_args["tasks_from"]?.try(&.as_s)
+      task.include_role_vars_from = role_args["vars_from"]?.try(&.as_s)
       task.include_role_collections = play.collections
       # The role-name value's own source position - the runtime
       # role-not-found failure's Origin points there (not at the task's
