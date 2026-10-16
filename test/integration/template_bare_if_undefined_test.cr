@@ -82,4 +82,50 @@ describe "a bare {% if undefined_var %} condition in a real .j2 template" do
     status.success?.must_equal(true)
     dest.must_equal("no\n")
   end
+
+  it "keeps `| default(False)` (capitalized) lenient too: takes the false branch" do
+    # Jinja2 accepts the capitalized Python literals; missing them made
+    # the strict block-tag scan treat the bare `False` argument as a
+    # variable lookup and fail it ("'False' is undefined", issue #130).
+    status, _output, dest = run_template_task(
+      "{% if some_undefined_var | default(False) %}yes{% else %}no{% endif %}\n",
+    )
+    status.success?.must_equal(true)
+    dest.must_equal("no\n")
+  end
+
+  it "treats bare `True`/`False` literals inside a block tag as literals" do
+    status, _output, dest = run_template_task(
+      "{% if True %}yes{% else %}no{% endif %}|{% if False %}yes{% else %}no{% endif %}\n",
+    )
+    status.success?.must_equal(true)
+    dest.must_equal("yes|no\n")
+  end
+end
+
+describe "default(False) inside a set_fact block tag" do
+  it "matches Ansible instead of failing with 'False' is undefined" do
+    playbook = File.tempname("default-false", ".yml")
+    File.write(playbook, <<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: A default(False) in a plain expression
+            set_fact:
+              b1: "{{ nosuch | default(False) }}"
+          - name: B default(False) inside a jinja block tag
+            set_fact:
+              b2: '{% if not nosuch | default(False) %}True{% else %}False{% endif %}'
+          - debug:
+              msg: "b1={{ b1 }} b2={{ b2 }}"
+      YAML
+
+    output = IO::Memory.new
+    status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+    status.success?.must_equal(true)
+    output.to_s.must_include("b1=False b2=True")
+  ensure
+    File.delete(playbook) if playbook && File.exists?(playbook)
+  end
 end
