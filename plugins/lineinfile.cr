@@ -47,6 +47,13 @@ module Krikri
       validate_bool_params!
 
       line = @params["line"]?
+      # An explicit None line (`line: "{{ item }}"` with a null item, or a
+      # bare `line:`) rode the wire as NONE_SENTINEL and BasePlugin demoted
+      # it to "" - but ansible-core sees Python None and rejects the task
+      # with "line is required with state=present", while a real "" stays a
+      # legitimate (empty) line. Restoring nil makes the validate checks
+      # above fire the same way Ansible's module does.
+      line = nil if explicit_null_param?("line")
       regexp = @params["regexp"]?
       search_string = @params["search_string"]?
       firstmatch = true?(@params["firstmatch"]?)
