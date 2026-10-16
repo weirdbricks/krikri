@@ -526,6 +526,83 @@ module Krikri
       end
     end
 
+    # jinja2's wordwrap is `"\n".join(textwrap.wrap(...))`. The vendored
+    # shard splits words on its own, which packs lines differently from
+    # textwrap: a space before a split long word stays on its line, and
+    # whitespace at a line end is dropped. So the port below mirrors
+    # textwrap's chunking (wordsep_re) and line-filling rules directly.
+    TEXTWRAP_WS      = "[ \\t\\n\\x0b\\x0c\\r]"
+    TEXTWRAP_WORDSEP = Regex.new(
+      "(" + TEXTWRAP_WS + "+" \
+                          "|(?<=[\\w!\"'&.,?])-{2,}(?=\\w)" \
+                          "|[^ \\t\\n\\x0b\\x0c\\r]+?(?:" \
+                          "-(?:(?<=[^\\d\\W]{2}-)|(?<=[^\\d\\W]-[^\\d\\W]-))(?=[^\\d\\W]-?[^\\d\\W])" \
+                          "|(?=" + TEXTWRAP_WS + "|\\z)" \
+                                                 "|(?<=[\\w!\"'&.,?])(?=-{2,}\\w)" \
+                                                 "))"
+    )
+    TEXTWRAP_WHITESPACE = Regex.new(TEXTWRAP_WS + "+")
+
+    # textwrap's _split: every match is a chunk, and any text between matches
+    # is kept too (re.split does the same), so no input is silently dropped.
+    private def self.textwrap_chunks(text : String, pattern : Regex) : Array(String)
+      chunks = [] of String
+      pos = 0
+      while match = pattern.match(text, pos)
+        start = match.begin(0)
+        chunks << text[pos...start] if start > pos
+        chunks << match[0]
+        pos = match.end(0)
+      end
+      chunks << text[pos..] if pos < text.size
+      chunks
+    end
+
+    # textwrap's _handle_long_word: a chunk wider than the remaining space is
+    # split, filling the current line first. With break_on_hyphens the cut
+    # moves to just after the last hyphen that fits, when a non-hyphen comes
+    # before it.
+    private def self.textwrap_handle_long_word(chunks : Array(String), cur_line : Array(String), cur_len : Int32, width : Int32, break_long_words : Bool, break_on_hyphens : Bool) : Nil
+      space_left = width < 1 ? 1 : width - cur_len
+      if break_long_words
+        chunk = chunks.last
+        cut = space_left
+        if break_on_hyphens && chunk.size > space_left
+          limit = Math.min(space_left, chunk.size) - 1
+          hyphen = limit >= 0 ? (chunk.rindex('-', limit) || -1) : -1
+          cut = hyphen + 1 if hyphen > 0 && chunk[0, hyphen].each_char.any? { |char| char != '-' }
+        end
+        cur_line << chunk[0, cut]
+        chunks[-1] = chunk[cut..]
+      elsif cur_line.empty?
+        cur_line << chunks.pop
+      end
+    end
+
+    # textwrap's _wrap_chunks. Leading whitespace is dropped from every line
+    # after the first, and trailing whitespace from every line.
+    private def self.textwrap_wrap(text : String, width : Int32, break_long_words : Bool, break_on_hyphens : Bool) : Array(String)
+      pattern = break_on_hyphens ? TEXTWRAP_WORDSEP : TEXTWRAP_WHITESPACE
+      chunks = textwrap_chunks(text, pattern).reject(&.empty?).reverse!
+      lines = [] of String
+      until chunks.empty?
+        cur_line = [] of String
+        cur_len = 0
+        chunks.pop if !lines.empty? && chunks.last.strip.empty?
+        while !chunks.empty? && cur_len + chunks.last.size <= width
+          chunk = chunks.pop
+          cur_line << chunk
+          cur_len += chunk.size
+        end
+        if !chunks.empty? && chunks.last.size > width
+          textwrap_handle_long_word(chunks, cur_line, cur_len, width, break_long_words, break_on_hyphens)
+        end
+        cur_line.pop if !cur_line.empty? && cur_line.last.strip.empty?
+        lines << cur_line.join unless cur_line.empty?
+      end
+      lines
+    end
+
     def self.register : Nil
       KrikriJinja.default_engine.finalize = ->(value : KrikriJinja::AnyValue) { ansible_finalize(value) }
       # ansible-core exposes `omit` as a Jinja GLOBAL in every templating
@@ -1037,9 +1114,46 @@ module Krikri
         KrikriJinja.from_json_any(VariableSubstitutor::FilterCore.extract(KrikriJinja.to_json_any(container), keys, label))
       end
 
-      # `root`: the filesystem-root prefix of a path, "/" or "".
-      KrikriJinja.register_default_json_filter("root") do |value, _args, _kwargs|
-        JSON::Any.new((value.raw.as?(String) || value.to_s).starts_with?("/") ? "/" : "")
+      # ansible's `root` is the math nth-root filter (mathstuff.inversepower:
+      # math.sqrt when base==2, else x ** (1.0/base)), not a path helper;
+      # its ValueError/TypeError wrapper reports "root() can only be used
+      # on numbers".
+      KrikriJinja.register_default_json_filter("root") do |value, args, kwargs|
+        num = case raw = value.raw
+              when Int64, Float64 then raw.to_f
+              else
+                # ansible rejects even numeric strings: math.sqrt("4") is a TypeError there.
+                raise KrikriJinja::TemplateError.new("root() can only be used on numbers", 0)
+              end
+        base = (args[0]? || kwargs["base"]?).try do |arg|
+          case arg_raw = arg.raw
+          when Int64, Float64 then arg_raw.to_f
+          when String         then arg_raw.to_f?
+          end
+        end || 2.0
+        # Crystal's sqrt/pow return NaN instead of raising on a negative
+        # base with no real root - that's the ValueError ansible wraps.
+        result = if base == 2.0
+                   Math.sqrt(num)
+                 else
+                   num ** (1.0 / base)
+                 end
+        raise KrikriJinja::TemplateError.new("root() can only be used on numbers", 0) if result.nan?
+        JSON::Any.new(result)
+      end
+
+      # Ansible's wordwrap is jinja2's: textwrap.wrap joined by the newline
+      # sequence, with break_on_hyphens on by default. The shard's splitter
+      # differs (see textwrap_wrap), so this registration replaces it.
+      KrikriJinja.register_default_json_filter("wordwrap") do |value, args, kwargs|
+        width = (args[0]? || kwargs["width"]?).try(&.raw.as?(Int64)) || 79_i64
+        raise KrikriJinja::TemplateError.new("invalid width #{width} (must be > 0)", 0) unless width > 0
+        break_long_words = (arg = args[1]? || kwargs["break_long_words"]?) ? py_truthy(arg) : true
+        wrapstring = (arg = args[2]? || kwargs["wrapstring"]?) ? py_str(arg) : ""
+        wrapstring = "\n" if wrapstring.empty?
+        break_on_hyphens = (arg = args[3]? || kwargs["break_on_hyphens"]?) ? py_truthy(arg) : true
+        lines = textwrap_wrap(py_str(value), width.clamp(1_i64, Int32::MAX.to_i64).to_i32, break_long_words, break_on_hyphens)
+        JSON::Any.new(lines.join(wrapstring))
       end
 
       # dict2items/items2dict are implemented here rather than delegated, so

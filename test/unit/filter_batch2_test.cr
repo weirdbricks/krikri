@@ -168,9 +168,8 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
       filter_batch2_crinja_render("{{ {'a': 1} | items | list }}").must_equal("[['a', 1]]")
     end
 
-    it "root returns the filesystem-root prefix of a path" do
-      filter_batch2_crinja_render("{{ '/etc/hosts' | root }}").must_equal("/")
-      filter_batch2_crinja_render("{{ 'x/y' | root }}").must_equal("")
+    it "root is the square root of a number, not a path helper" do
+      filter_batch2_crinja_render("{{ 4 | root }}").must_equal("2.0")
     end
   end
 
@@ -194,7 +193,7 @@ describe "filter batch 2 (P2.8-P2.14, P2.15 verification)" do
     it "the alias spellings agree between engines" do
       v = Hash(String, JSON::Any).new
       v["l"] = JSON.parse(%([1, 2, 3]))
-      v["p"] = JSON::Any.new("/etc/hosts")
+      v["p"] = JSON::Any.new(4_i64)
       filter_batch2_crinja_render("{{ l | count }}", v).must_equal(renderer_render("{{ l | count }}", v))
       filter_batch2_crinja_render("{{ p | root }}", v).must_equal(renderer_render("{{ p | root }}", v))
     end

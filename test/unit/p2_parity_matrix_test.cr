@@ -139,7 +139,7 @@ describe "P2.16 cross-engine parity matrix" do
     "count alias of length"     => {"{{ list | count }}", "3"},
     "d alias of default"        => {"{{ missing_var | d('fallback') }}", "fallback"},
     "items alias of dict2items" => {"{{ dict_var | items | length }}", "2"},
-    "root path prefix"          => {"{{ '/etc/hosts' | root }}", "/"},
+    "root is sqrt by default"   => {"{{ 4 | root }}", "2.0"},
   }
 
   # Compile-time row generation: minitest's `it` compiles to a generated
