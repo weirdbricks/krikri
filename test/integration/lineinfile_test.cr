@@ -840,4 +840,34 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
   ensure
     File.delete(path) if path && File.exists?(path)
   end
+
+  # The unit-level shape of the EXDEV bug (issue #129): the temp file
+  # must be created next to the symlink's TARGET, not the symlink, so
+  # an edit through a link into a different directory lands in the
+  # target and leaves no temp behind in the link's directory. A real
+  # cross-filesystem EXDEV (e.g. /tmp link -> /dev/shm target) needs
+  # two filesystems and is verified live against a real host, not here.
+  it "edits through a symlink into a different directory without touching the link" do
+    link_dir = PluginSpecHelper.tmp_path("lineinfile-symlink", "links")
+    target_dir = PluginSpecHelper.tmp_path("lineinfile-symlink", "targets")
+    FileUtils.mkdir_p(link_dir)
+    FileUtils.mkdir_p(target_dir)
+    target = File.join(target_dir, "target.conf")
+    link = File.join(link_dir, "link.conf")
+    File.write(target, "a=1\n")
+    File.symlink(target, link)
+
+    result = PluginSpecHelper.run("lineinfile", {
+      "path"  => link,
+      "line"  => "nameserver 10.0.0.1",
+      "state" => "present",
+    })
+
+    falsey?(result["failed"]?.try(&.as_bool)).must_equal(true)
+    result["changed"].as_bool.must_equal(true)
+    File.symlink?(link).must_equal(true)
+    File.read(target).must_include("a=1")
+    File.read(target).must_include("nameserver 10.0.0.1")
+    Dir.children(link_dir).reject { |entry| entry == "link.conf" }.must_equal([] of String)
+  end
 end
