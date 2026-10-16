@@ -173,6 +173,14 @@ module Krikri
     # include_role: path does (same parent-chain stamping as
     # executor_blocks_includes.cr's run_include_role_once, so a nested
     # import_role: inside the loaded role displays under ITS own name).
+    # A role-argument value (vars_from:) templated against the play's vars,
+    # the same substitution tasks_from: gets; a value that does not render
+    # is passed through unchanged.
+    private def self.render_role_arg(value : String?, play : Play) : String?
+      return value unless value && value.includes?("{{")
+      (VarSubstitutor.new(vars: play.vars).substitute(value) rescue value)
+    end
+
     # Returns nil when the load fails - a role that loaded fine at parse
     # time but fails to load now would be a krikri bug; listing the bare
     # statement beats crashing the listing for it.
@@ -189,6 +197,11 @@ module Krikri
         tasks_from = (VarSubstitutor.new(vars: play.vars).substitute(tasks_from) rescue tasks_from)
       end
 
+      # vars_from: templated the same way tasks_from is just above (issue
+      # #128 - the key was parsed but never used, so vars/<name> was
+      # never loaded).
+      vars_from = render_role_arg(task.include_role_vars_from, play)
+
       begin
         RoleLoader.load_single_role(
           role_name,
@@ -201,7 +214,8 @@ module Krikri
           tasks_from,
           child_parent_names,
           child_parent_paths,
-          child_parent_defaults
+          child_parent_defaults,
+          vars_from: vars_from
         )[0]
       rescue
         nil

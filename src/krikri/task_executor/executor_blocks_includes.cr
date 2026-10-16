@@ -2636,7 +2636,10 @@ module Krikri
           # The ancestor chain's defaults origins travel with the values
           # (see Task#role_default_origins).
           task.role_default_origins,
-          include_role_var_origins
+          include_role_var_origins,
+          # vars_from: passed through raw exactly like tasks_from above
+          # (no pre-rendering anywhere in that path) - issue #128.
+          task.include_role_vars_from
         )
       rescue ex : RemovedModuleError
         # A tombstone-removed module inside the role's own tasks is the

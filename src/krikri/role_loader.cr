@@ -177,12 +177,12 @@ module Krikri
     # deduplicated the way a role listed twice under roles: would be.
     # allow_duplicates: false on the include itself isn't honored (dedup
     # only happens within a single call's own meta dependency chain).
-    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, invocation_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new) : {Array(Task), Array(Task)}
+    def self.load_single_role(name : String, invocation_vars : Hash(String, JSON::Any), invocation_tags : Array(String), play : Play, playbook_dir : String, tasks_from : String? = nil, parent_names : Array(String) = [] of String, parent_paths : Array(String) = [] of String, parent_defaults : Hash(String, JSON::Any) = Hash(String, JSON::Any).new, parent_default_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, invocation_var_origins : Hash(String, VarOrigin) = Hash(String, VarOrigin).new, vars_from : String? = nil) : {Array(Task), Array(Task)}
       seen = Set(String).new
       tasks = [] of Task
       handlers = [] of Task
 
-      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, tasks_from, parent_names, parent_paths, parent_defaults, parent_default_origins, invocation_var_origins)
+      load_role(name, invocation_vars, invocation_tags, play, playbook_dir, seen, tasks, handlers, tasks_from, parent_names, parent_paths, parent_defaults, parent_default_origins, invocation_var_origins, vars_from: vars_from)
 
       {tasks, handlers}
     end
@@ -331,6 +331,10 @@ module Krikri
       # dependency-context search list (see
       # #role_search_display_dependency).
       dependency_declaring_dir : String? = nil,
+      # vars_from: - loads vars/<name> instead of vars/main.yml as the
+      # role's own vars, resolved like tasks_from (issue #128 found
+      # krikri parsed the include_role key but discarded it).
+      vars_from : String? = nil,
     )
       # When a play-level `roles:` entry's own meta/main.yml DEPENDENCY
       # names a role that is nowhere on disk, the raise carries the
@@ -449,8 +453,7 @@ module Krikri
       # Task#role_default_origins).
       defaults_origins = parent_default_origins.merge(dependency_default_origins).merge(load_vars_file_origins_main(File.join(role_dir, "defaults")))
       warn_reserved_role_vars(File.join(role_dir, "vars"))
-      own_vars = load_vars_file_main(File.join(role_dir, "vars"))
-      own_var_origins = load_vars_file_origins_main(File.join(role_dir, "vars"))
+      own_vars, own_var_origins = load_role_own_vars(role_dir, vars_from)
       role_vars = own_vars.dup
       role_var_origins = own_var_origins.dup
       invocation_vars.each do |key, value|
@@ -666,6 +669,29 @@ module Krikri
       # accepted extensions.
       ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "tasks", "#{tasks_from}.#{e}")) }
       File.join(role_dir, "tasks", "#{tasks_from}.#{ext || "yml"}")
+    end
+
+    # vars_from: resolves exactly like tasks_from (same extension rules,
+    # issue #128) but against the role's vars/ directory.
+    private def self.resolve_role_vars_path(role_dir : String, vars_from : String?) : String
+      return File.join(role_dir, "vars", vars_from) if vars_from.ends_with?(".yml") || vars_from.ends_with?(".yaml") || vars_from.ends_with?(".json")
+
+      ext = %w[yml yaml json].find { |e| File.exists?(File.join(role_dir, "vars", "#{vars_from}.#{e}")) }
+      File.join(role_dir, "vars", "#{vars_from}.#{ext || "yml"}")
+    end
+
+    # The role's own vars (values and origins): vars_from: swaps the
+    # vars/main.yml entry point for vars/<name>, exactly as tasks_from
+    # swaps the tasks entry point - Ansible loads only the named file
+    # (issue #128).
+    private def self.load_role_own_vars(role_dir : String, vars_from : String?) : {Hash(String, JSON::Any), Hash(String, VarOrigin)}
+      if vars_from
+        vars_path = resolve_role_vars_path(role_dir, vars_from)
+        return {load_vars_file(vars_path), vars_file_origins(vars_path)}
+      end
+
+      vars_dir = File.join(role_dir, "vars")
+      {load_vars_file_main(vars_dir), load_vars_file_origins_main(vars_dir)}
     end
 
     # ansible-core's RoleMetadata field-attribute set (taken from the

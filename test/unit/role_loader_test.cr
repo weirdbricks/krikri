@@ -678,6 +678,34 @@ describe Krikri::RoleLoader do
     tasks.map(&.name).must_equal(["install entry"])
   end
 
+  it "vars_from: loads vars/<name>.yml instead of vars/main.yml" do
+    build_role("vars_from_role") do |role|
+      role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+      role.vars("krikri_flag: \"false\"\n")
+      write(File.join(roles_root, "roles", "vars_from_role", "vars", "alt.yml"), "krikri_flag: \"true\"\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_single_role(
+      "vars_from_role", Hash(String, JSON::Any).new, [] of String, fresh_play, roles_root, nil, vars_from: "alt"
+    )
+
+    tasks[0].role_vars.as(Hash(String, JSON::Any))["krikri_flag"].as_s.must_equal("true")
+  end
+
+  it "vars_from: without the keyword the role still loads vars/main.yml" do
+    build_role("vars_default") do |role|
+      role.tasks("- name: t\n  ansible.builtin.debug:\n    msg: hi\n")
+      role.vars("krikri_flag: \"default-value\"\n")
+      write(File.join(roles_root, "roles", "vars_default", "vars", "alt.yml"), "krikri_flag: alt-value\n")
+    end
+
+    tasks, _ = Krikri::RoleLoader.load_single_role(
+      "vars_default", Hash(String, JSON::Any).new, [] of String, fresh_play, roles_root
+    )
+
+    tasks[0].role_vars.as(Hash(String, JSON::Any))["krikri_flag"].as_s.must_equal("default-value")
+  end
+
   it "sets role_parent_names from load_single_role's own parent_names argument" do
     # ansible_parent_role_names - the ancestor role-name chain leading to
     # an include_role: call. Several real collections (prometheus.
