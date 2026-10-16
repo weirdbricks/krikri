@@ -264,6 +264,16 @@ module Krikri
     # rename for a direct in-place write when the rename fails (Ansible's own escape hatch for paths a rename can't touch, e.g.
     # /proc or container bind-mounts).
     #
+    # Ansible's atomic_move resolves a symlink dest to its TARGET
+    # (os.path.realpath) BEFORE creating the temp file, so the temp
+    # always lands in the real dest's directory and the rename never
+    # crosses a filesystem; building it next to the symlink instead
+    # fails with EXDEV when the target is on another filesystem
+    # (issue #129). Resolving to the target is also what makes a
+    # lineinfile task pointing at a symlink edit the file it points at
+    # rather than replacing the symlink - and the previous in-place
+    # File.write here followed it too, so keep that behavior.
+    #
     # Returns nil on success, or a failed PluginResult.
     private def write_with_optional_validate(path : String, content : String) : PluginResult?
       validate_cmd = @params["validate"]?
@@ -271,7 +281,8 @@ module Krikri
         return PluginResult.new(changed: false, failed: true, msg: "validate must contain %s: #{validate_cmd}")
       end
 
-      temp_file = File.join(File.dirname(path), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
+      dest = File.symlink?(path) ? File.realpath(path) : path
+      temp_file = File.join(File.dirname(dest), ".krikri-playbook-lineinfile-#{Random::Secure.hex(8)}.tmp")
       begin
         # SECURITY: created EMPTY at 0600 and settled to its final mode
         # (0666 & ~umask for a new dest - Ansible's atomic_move gives a new
@@ -296,30 +307,26 @@ module Krikri
           # Left in place deliberately, same reasoning as copy.cr's
           # identical choice - the computed content is almost always
           # what's actually wrong, and the real dest was never touched.
-          File.delete(temp_file) if File.exists?(temp_file) && temp_file.starts_with?(File.dirname(path))
+          File.delete(temp_file) if File.exists?(temp_file) && temp_file.starts_with?(File.dirname(dest))
           return PluginResult.new(changed: false, failed: true, msg: "failed to validate: rc:#{validation[:rc]} error:#{validation[:output]}")
         end
       end
 
       # Preserve an existing dest's ownership (the mode is already
       # settled on the empty temp above; a rename would otherwise reset
-      # it to the temp file's). Best-effort chown,
-      # same as copy.cr - non-root can't chown, and the rename still
-      # yields a correct file.
-      if !File.symlink?(path) && (info = File.info?(path, follow_symlinks: false))
+      # it to the temp file's). Read the owner off dest itself - the
+      # realpath - so a symlinked dest keeps its target's owner the
+      # same way a plain dest keeps its own (the symlink's own owner
+      # is a different identity, frequently root's). Best-effort
+      # chown, same as copy.cr - non-root can't chown, and the rename
+      # still yields a correct file.
+      if (info = File.info?(dest, follow_symlinks: false))
         begin
           File.chown(temp_file, uid: info.owner_id.to_i, gid: info.group_id.to_i)
         rescue File::Error
           nil
         end
       end
-
-      # Ansible's atomic_move resolves a symlink dest to its TARGET
-      # (os.path.realpath) before renaming, so a lineinfile task pointing
-      # at a symlink edits the file it points at rather than replacing
-      # the symlink - and the previous in-place File.write here followed
-      # it too, so keep that behavior.
-      dest = File.symlink?(path) ? File.realpath(path) : path
 
       begin
         File.rename(temp_file, dest)
