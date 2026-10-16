@@ -56,6 +56,10 @@ describe Krikri::KrikriJinjaFilters do
   it "registers the collection filters and Ansible value helpers" do
     render("{{ {'a': 1, 'b': 2} | omit('a') | tojson }}").must_equal(%({"b": 2}))
     render("{{ [] | mandatory }}").must_equal("[]")
+    # A defined null is NOT undefined: Ansible's mandatory passes a null
+    # through (rendering empty) and fails only on a genuinely undefined
+    # variable, which this engine fails upstream of the filter (issue #132).
+    render("{{ x | mandatory }}", {"x" => JSON::Any.new(nil)}).must_equal("")
     render("{{ 'x' | type_debug }}").must_equal("str")
     render("{{ [3, 1, 2] | sort | intersect([2, 1]) | join(',') }}").must_equal("1,2")
     render("{{ [1, 2, 3] | difference([2]) | join(',') }}").must_equal("1,3")

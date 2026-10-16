@@ -737,11 +737,18 @@ module Krikri
         end
       end
 
-      KrikriJinja.register_default_json_filter("mandatory") do |value, args, _kwargs|
-        if value.raw.nil?
-          message = args[0]?.try(&.as_s) || "Mandatory variable not defined."
-          raise KrikriJinja::TemplateError.new(message, 0)
-        end
+      # A pass-through that only ever fails on a genuinely UNDEFINED value:
+      # that case never reaches this body (the strict-undefined probe in
+      # variable_substitutor.cr fails it upstream with Ansible's own
+      # filter-plugin wrapper, and a strict engine undefined raises inside
+      # the JSON-filter conversion before this filter runs), so anything
+      # arriving here as JSON null is a DEFINED null - Ansible treats null
+      # as defined and renders it as an empty string (issue #132; the old
+      # raw.nil? raise failed exactly that case, and its TemplateError even
+      # bounced the Crinja delegation into the hand-rolled FilterEngine,
+      # which has no mandatory at all, surfacing as "No filter named
+      # 'mandatory'").
+      KrikriJinja.register_default_json_filter("mandatory") do |value, _args, _kwargs|
         value
       end
 
