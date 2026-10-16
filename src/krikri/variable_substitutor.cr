@@ -158,7 +158,13 @@ module Krikri
     "set", "endset", "include", "extends", "block",
     "endblock", "macro", "endmacro", "filter", "endfilter",
     "call", "endcall", "in", "is", "not", "and", "or",
-    "true", "false", "none", "recursive", "loop", "self",
+    "true", "false", "none",
+    # Jinja2/Ansible accept the capitalized literal forms too; missing
+    # them made the strict scan treat bare `False`/`True`/`None` inside a
+    # block tag as a variable lookup and fail it (issue #130:
+    # `default(False)` raising "'False' is undefined").
+    "True", "False", "None",
+    "recursive", "loop", "self",
     "super", "caller", "args", "kwargs", "varargs",
     "import", "from", "as", "with", "without",
     "scoped", "endscoped", "autoescape", "endautoescape",
