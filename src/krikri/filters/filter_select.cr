@@ -76,15 +76,23 @@ module Krikri
       # Jinja2's own genuine error text for that case, but reached
       # here for the wrong reason (a selectattr bug, not a real empty
       # candidate set).
+      # Jinja2's make_attrgetter turns an all-digit path segment into an
+      # integer list index ('1.rc' on [[1, {"rc": 0}]] indexes the list at
+      # 1, then reads "rc"), not a dict key "1" - a segment that is not a
+      # digit on a list never matches.
       private def dotted_attr_value(item : JSON::Any, attr : String) : JSON::Any?
         attr.split('.').reduce(item) do |current, key|
           return nil unless current
-          current.raw.is_a?(Hash) ? current[key]? : nil
+          if (arr = current.raw.as?(Array)) && (idx = key.to_i64?)
+            arr[idx]?
+          else
+            current.raw.is_a?(Hash) ? current[key]? : nil
+          end
         end
       end
 
       private def selectattr_matches?(item : JSON::Any, attr : String, test : String, compare_value : JSON::Any?) : Bool
-        attr_value = item.raw.is_a?(Hash) ? dotted_attr_value(item, attr) : nil
+        attr_value = dotted_attr_value(item, attr)
 
         # A dict-list entry's own attribute can itself be an unrendered
         # template string - openstack.ansible-hardening's own

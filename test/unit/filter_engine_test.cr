@@ -494,6 +494,40 @@ describe Krikri::VariableSubstitutor::FilterEngine do
     engine.apply_chain(all_exist, %(rejectattr('stat.exists') | list)).as_a.must_be_empty
   end
 
+  it "selectattr() resolves a dotted path through nested dicts" do
+    # Issue #127: a dotted attr must follow the nested value, not be
+    # treated as one literal top-level key - selectattr('a.b', 'equalto',
+    # 0) kept nothing, so a following `first` raised "No first item,
+    # sequence was empty." where Ansible selects the matching entries.
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([{"a": {"b": 0}}, {"a": {"b": 1}}]))
+
+    result = engine.apply(value, %(selectattr('a.b', 'equalto', 0)))
+    result.as_a.size.must_equal(1)
+    result.as_a[0]["a"]["b"].as_i.must_equal(0)
+  end
+
+  it "selectattr() treats an all-digit dotted segment as a list index" do
+    # Jinja2's make_attrgetter converts an all-digit path segment to an
+    # integer index: '1.rc' on [[1, {"rc": 0}]] reads the second list
+    # element's "rc", not a dict key "1" (issue #127's zip shape).
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([[1, {"rc": 0}], [1, {"rc": 1}]]))
+
+    result = engine.apply(value, %(selectattr('1.rc', 'equalto', 0)))
+    result.as_a.size.must_equal(1)
+    result.as_a[0][1]["rc"].as_i.must_equal(0)
+  end
+
+  it "rejectattr() resolves a dotted path through nested dicts" do
+    engine = Krikri::VariableSubstitutor::FilterEngine.new(Hash(String, JSON::Any).new)
+    value = JSON.parse(%([{"a": {"b": 0}}, {"a": {"b": 1}}]))
+
+    result = engine.apply(value, %(rejectattr('a.b', 'equalto', 0)))
+    result.as_a.size.must_equal(1)
+    result.as_a[0]["a"]["b"].as_i.must_equal(1)
+  end
+
   it "unescapes a real Python/Jinja2 string literal's own backslash escapes when used as a filter argument" do
     # Real bug found benchmarking prometheus.prometheus._common's own
     # preflight.yml: `reject('match', '.+:\d+$')`, written inside a
