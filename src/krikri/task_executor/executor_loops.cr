@@ -2264,11 +2264,32 @@ module Krikri
       result = nil
       attempt = 0
       condition_met = false
+      action_level_escape = false
 
       while attempt < total_runs
         attempt += 1
         result = execute_task_once(task, host, vars_context, item_label: item_label, exec_host: exec_host, defer_loop_stats: defer_loop_stats)
         break unless result
+
+        # An action-level failure (the result's _ansible_action_level marker,
+        # e.g. unarchive's missing-dest check) is an EXCEPTION in Ansible's
+        # executor: it propagates out of handler.run() and escapes the whole
+        # attempt loop - task_executor.py converts it to a result only in the
+        # exception handler OUTSIDE the for-attempt loop - so it is never
+        # retried, never evaluated against until:, and never gets the loop's
+        # attempts key. The first result is the final one, exactly as the
+        # plugin produced it (issue #131, live-verified vs 2.19.11).
+        if result_hash = result.as_h?
+          if Krikri.result_failed_flag(result) &&
+             result_hash["_ansible_action_level"]?.try(&.as_bool?) == true
+            if register_name && !register_name.empty?
+              register_result(host, register_name, result)
+              vars_context[register_name] = @registered_vars[host.name][register_name]
+            end
+            action_level_escape = true
+            break
+          end
+        end
 
         if register_name && !register_name.empty?
           register_result(host, register_name, result)
@@ -2309,7 +2330,7 @@ module Krikri
       # it; the fatal path just never gets to show it off). A single-run
       # until task (retries: 0) gets NEITHER key (Ansible never engages the
       # loop machinery).
-      if result && total_runs > 1
+      if result && total_runs > 1 && !action_level_escape
         result_hash = result.as_h.dup
         result_hash["attempts"] = JSON::Any.new((condition_met ? attempt : total_runs - 1).to_i64)
         unless condition_met

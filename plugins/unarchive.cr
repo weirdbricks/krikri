@@ -171,14 +171,21 @@ module Krikri
       return resolved if resolved.is_a?(PluginResult)
       src, tmp_download_path = resolved
 
-      if error = validate_src_and_dest(src, dest)
-        # real: AnsibleActionFail in the controller-side action plugin - a bare
-        # "Task failed: <msg>" block with no "Module failed." segment
-        return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
-          # Ansible's unarchive action-failure order (unarchive.cr's plugin
-          # binary does not link base_action_plugin.cr, so the shared
-          # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
-          key_order: ["failed", "exception", "msg", "changed"])
+      if validation = validate_src_and_dest(src, dest)
+        action_level, error = validation
+        if action_level
+          # real: AnsibleActionFail in the controller-side action plugin - a bare
+          # "Task failed: <msg>" block with no "Module failed." segment
+          return PluginResult.new(changed: false, failed: true, msg: error, _ansible_action_level: true,
+            # Ansible's unarchive action-failure order (unarchive.cr's plugin
+            # binary does not link base_action_plugin.cr, so the shared
+            # Krikri::FAILED_KEY_ORDER_EXCEPTION_FIRST list is spelled out).
+            key_order: ["failed", "exception", "msg", "changed"])
+        end
+        # The source failure is the module's own failure - a plain module-level
+        # result, which the executor's retry loop treats like any other
+        # module failure (Ansible retries it too).
+        return PluginResult.new(changed: false, failed: true, msg: error)
       end
 
       # AnsibleModule validates bool-typed params at module setup -
@@ -322,9 +329,17 @@ module Krikri
       nil
     end
 
-    private def validate_src_and_dest(src : String, dest : String) : String?
-      return "Source '#{src}' failed to transfer" unless remote_file_exists?(src)
-      return "dest '#{dest}' must be an existing dir" unless remote_dir_exists?(dest)
+    # Ansible's unarchive action plugin checks dest BEFORE anything touches
+    # src (unarchive.py: _execute_remote_stat(dest) runs before the file
+    # transfer and before the module's own source check ever gets a chance),
+    # so a missing dest with a missing src reports the DEST error, not the
+    # source error (issue #131). The Bool marks which check fired: the dest
+    # failure is the action plugin's own AnsibleActionFail, while the source
+    # failure is the module's own ordinary failure - which Ansible's executor
+    # DOES retry (live-verified vs 2.19.11).
+    private def validate_src_and_dest(src : String, dest : String) : {Bool, String}?
+      return {true, "dest '#{dest}' must be an existing dir"} unless remote_dir_exists?(dest)
+      return {false, "Source '#{src}' failed to transfer"} unless remote_file_exists?(src)
       nil
     end
 
