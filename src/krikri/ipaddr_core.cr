@@ -1,13 +1,17 @@
 require "json"
 
 # Crystal reimplementation of the `ansible.utils` ipaddr filter family (ipaddr,
-# ipwrap, ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
+# ipv4, ipv6, ipsubnet, ipmath, next_nth_usable,
 # previous_nth_usable, network_in_network, network_in_usable, ip4_hex),
 # mirrored against ansible-core 2.19.4 + ansible.utils + netaddr
 # 1.3.0 live (every query probed against ansible-playbook on this
 # host - see the specs in test/unit/ipaddr_test.cr). Operates on
 # JSON::Any so both the hand-rolled FilterEngine and the Crinja
 # registration in jinja_filters.cr can share one implementation.
+#
+# ipwrap is deliberately NOT part of this family: it is an
+# ansible.utils collection filter, not core, and krikri must fail it
+# the way ansible-core does ("No filter named 'ipwrap'") - issue #134.
 #
 # The query dispatch mirrors the installed collection's own
 # `ipaddr_utils.ipaddr()` query_func_map exactly - including the
@@ -28,7 +32,8 @@ module Krikri
     end
 
     FAMILY_FILTERS = Set{
-      "ipaddr", "ipwrap", "ipv4", "ipv6", "ipsubnet", "ipmath",
+      # no "ipwrap" - ansible.utils-only, rejected as unknown (#134)
+      "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
       "next_nth_usable", "previous_nth_usable", "network_in_network",
       "network_in_usable", "ip4_hex",
     }
@@ -711,26 +716,6 @@ module Krikri
     end
 
     # ---- sibling filters ----
-
-    def ipwrap(value : JSON::Any, query : String = "") : JSON::Any
-      if value.raw.is_a?(Array)
-        JSON::Any.new(value.as_a.map do |element|
-          if ipaddr(element, query).raw == false
-            element
-          else
-            wrapped = ipaddr(element, "wrap")
-            wrapped.raw == false ? element : wrapped
-          end
-        end)
-      else
-        checked = ipaddr(value, query)
-        return value if checked.raw == false
-        wrapped = ipaddr(checked, "wrap")
-        wrapped.raw == false ? value : wrapped
-      end
-    rescue IpError
-      value
-    end
 
     def ipsubnet(value : JSON::Any, query : String, index : String? = nil) : JSON::Any
       vtype = ipaddr(value, "type")

@@ -79,6 +79,9 @@ module Krikri
       # to eliminate. (to_nice_yaml used to sit in that exclusion list too,
       # but joined the dispatch itself once lazy-leaf deferral needed its
       # fail-on-access guard - see the to_nice_yaml case below.)
+      # ipwrap deliberately absent from this set: it is an ansible.utils
+      # filter, not core, so an unknown-name failure is correct here
+      # (issue #134).
       KNOWN_FILTER_NAMES = Set.new(%w[
         fileglob realpath default d upper lower capitalize title trim
         strip dirname basename length count replace split sort unique
@@ -94,7 +97,7 @@ module Krikri
         rekey_on_member extract from_yaml_all vault unvault ternary
         intersect difference lists_mergeby list_mergeby random map_format
         strftime format
-        ipaddr ipwrap ipv4 ipv6 ipsubnet ipmath next_nth_usable
+        ipaddr ipv4 ipv6 ipsubnet ipmath next_nth_usable
         previous_nth_usable network_in_network network_in_usable
         ip4_hex
       ])

@@ -1135,10 +1135,9 @@ module Krikri
         IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "")
       end
 
-      KrikriJinja.register_default_json_filter("ipwrap") do |value, args, _kwargs|
-        IpAddrCore.ipwrap(value, args[0]?.try(&.as_s) || "")
-      end
-
+      # No ipwrap here: it is an ansible.utils collection filter, not a
+      # core one, so krikri fails it like ansible-core does ("No filter
+      # named 'ipwrap'") - issue #134.
       KrikriJinja.register_default_json_filter("ipv4") do |value, args, _kwargs|
         IpAddrCore.ipaddr(value, args[0]?.try(&.as_s) || "", 4, "ipv4")
       end

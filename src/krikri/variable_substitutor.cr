@@ -210,7 +210,10 @@ module Krikri
     "shuffle", "comment", "password_hash", "b32decode",
     "b32encode", "human_readable", "human_to_bytes", "to_bytes",
     "subelements", "start_with", "end_with", "match", "search",
-    "ipaddr", "ipwrap", "bool", "checksum", "shorthash", "hash",
+    # ipwrap deliberately absent: it is an ansible.utils filter, not
+    # core, so the strict scan reports "No filter named" like
+    # ansible-core (issue #134).
+    "ipaddr", "bool", "checksum", "shorthash", "hash",
     "mandatory", "match_regex", "search_regex", "ternary",
   }
 
