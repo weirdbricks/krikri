@@ -109,6 +109,19 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render("{{ s | wordwrap(5) }}").must_equal("Extra\nspace\ns.")
   end
 
+  it "wordwrap keeps the space before a split long word and drops trailing whitespace at the end of the text, like textwrap" do
+    # Real divergence from ansible-playbook (issue #137, robertdebock.functions):
+    # textwrap keeps the space that ends a line before a split long word
+    # ("with \ninteg") but drops whitespace at the very end of the text.
+    v = Hash(String, JSON::Any).new
+    v["s"] = JSON::Any.new("A line with integers. 1, 2 & 3.")
+    t = Hash(String, JSON::Any).new
+    t["s"] = JSON::Any.new("Extra spaces. ")
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render("{{ s | wordwrap(5) }}").must_equal("A\nline\nwith \ninteg\ners.\n1, 2\n& 3.")
+    Krikri::VariableSubstitutor::JinjaRenderer.new(t).render("{{ s | wordwrap(5) }}").must_equal("Extra\nspace\ns.")
+  end
+
   it "re-renders a nested-template variable back to its real array type, not the array's stringified text" do
     # Real bug found benchmarking robertdebock.docker (round 104):
     # `docker_pip_packages: "{{ _docker_pip_packages[ansible_facts[

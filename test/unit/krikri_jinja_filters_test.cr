@@ -133,7 +133,7 @@ describe "Krikri::KrikriJinjaFilters Ansible tests and remaining filters" do
     render("{{ users | subelements('keys') | length }}",
       {"users" => JSON.parse(%([{"name": "root", "keys": ["k1", "k2"]}, {"name": "bob", "keys": ["k3"]}]))})
       .must_equal("3")
-    render("{{ '/etc/hosts' | root }}").must_equal("/")
+    render("{{ 4 | root }}").must_equal("2.0")
   end
 
   it "shuffles with Python's seeded permutation" do
