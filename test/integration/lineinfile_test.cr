@@ -871,3 +871,66 @@ describe "lineinfile plugin - parameter coverage (firstmatch/search_string/valid
     Dir.children(link_dir).reject { |entry| entry == "link.conf" }.must_equal([] of String)
   end
 end
+
+# End-to-end through the executor's templating wire, not just the plugin
+# binary: the explicit-null case only exists after `{{ item }}` resolves
+# to Python null and rides NONE_SENTINEL to the plugin.
+private PROJECT_ROOT = File.expand_path("../..", __DIR__)
+private BINARY       = File.join(PROJECT_ROOT, "bin", "krikri-playbook")
+private INVENTORY    = File.join(PROJECT_ROOT, "test", "fixtures", "inventory-explicit-localhost.ini")
+
+private def run_playbook(yaml : String)
+  playbook = File.tempname("lineinfile-null", ".yml")
+  File.write(playbook, yaml)
+  output = IO::Memory.new
+  status = Process.run(BINARY, ["-i", INVENTORY, playbook], output: output, error: output)
+  {status, output.to_s}
+ensure
+  File.delete(playbook) if playbook && File.exists?(playbook)
+end
+
+describe "lineinfile plugin - explicit null line" do
+  it "fails with 'line is required with state=present' when line is a whole-span expression resolving to null, and leaves the target file untouched (ansible-core sees Python None and rejects the task; issue #135)" do
+    path = PluginSpecHelper.tmp_path("lineinfile-null-item.txt")
+    File.delete(path) if File.exists?(path)
+
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: null line
+            ansible.builtin.lineinfile:
+              path: #{path}
+              line: "{{ item }}"
+              create: true
+            with_items: [null]
+      YAML
+
+    status.exit_code.wont_equal(0)
+    output.must_include("line is required with state=present")
+    output.wont_include("changed: [localhost]")
+    File.exists?(path).must_equal(false)
+  end
+
+  it "still accepts a real empty-string line as a legitimate (empty) line" do
+    path = PluginSpecHelper.tmp_path("lineinfile-empty-string.txt")
+    File.delete(path) if File.exists?(path)
+
+    status, output = run_playbook(<<-YAML)
+      - hosts: localhost
+        connection: local
+        gather_facts: false
+        tasks:
+          - name: empty string line
+            ansible.builtin.lineinfile:
+              path: #{path}
+              line: ""
+              create: true
+      YAML
+
+    status.exit_code.must_equal(0)
+    output.must_include("changed: [localhost]")
+    File.read(path).must_equal("\n")
+  end
+end
