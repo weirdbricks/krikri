@@ -161,15 +161,8 @@ describe Krikri::IpAddrCore do
     end
   end
 
-  # ---- ipwrap ----
-
-  it "brackets v6, leaves v4 and garbage alone" do
-    Krikri::IpAddrCore.ipwrap(j("2001:db8::1")).must_equal(j("[2001:db8::1]"))
-    Krikri::IpAddrCore.ipwrap(j("192.168.0.1")).must_equal(j("192.168.0.1"))
-    Krikri::IpAddrCore.ipwrap(j("nope")).must_equal(j("nope"))
-    list = JSON.parse(%q(["2001:db8::1", "192.168.0.1", "nope"]))
-    Krikri::IpAddrCore.ipwrap(list).as_a.map(&.as_s).must_equal(["[2001:db8::1]", "192.168.0.1", "nope"])
-  end
+  # (No ipwrap tests: the filter is not implemented at all - it is an
+  # ansible.utils filter, not core, and is rejected as unknown, #134.)
 
   # ---- ipsubnet ----
 
@@ -246,6 +239,6 @@ describe Krikri::IpAddrCore do
   it "list inputs flatten through the FilterEngine path" do
     engine = Krikri::VariableSubstitutor::FilterEngine.new
     list = JSON.parse(%q(["2001:db8::1", "192.168.0.1", "nope"]))
-    engine.apply(list, "ipwrap").as_a.map(&.as_s).must_equal(["[2001:db8::1]", "192.168.0.1", "nope"])
+    engine.apply(list, "ipaddr").as_a.map(&.raw).must_equal(["2001:db8::1", "192.168.0.1"])
   end
 end

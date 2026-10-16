@@ -1516,7 +1516,10 @@ module Krikri
           # "skipped") that would recur in any role using this common
           # required-facts guard pattern.
           JSON::Any.new(FilterCore.difference(as_array(value), as_array(resolve_expression(filter_args))))
-        when "ipaddr", "ipwrap", "ipv4", "ipv6", "ipsubnet", "ipmath",
+        # ipwrap is not in this when-list: it is an ansible.utils
+        # collection filter, not core, so it falls through to krikri's
+        # unknown-filter failure like ansible-core does (issue #134).
+        when "ipaddr", "ipv4", "ipv6", "ipsubnet", "ipmath",
              "next_nth_usable", "previous_nth_usable",
              "network_in_network", "network_in_usable", "ip4_hex"
           # ansible.utils ipaddr family - shared core in ipaddr_core.cr,
@@ -1528,8 +1531,6 @@ module Krikri
           case filter_name
           when "ipaddr"
             IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?))
-          when "ipwrap"
-            IpAddrCore.ipwrap(value, resolved_query_arg(args[0]?))
           when "ipv4"
             IpAddrCore.ipaddr(value, resolved_query_arg(args[0]?), 4, "ipv4")
           when "ipv6"
