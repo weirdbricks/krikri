@@ -169,5 +169,42 @@ describe "facts plugin" do
       network.wont_be_nil
       network.not_nil!.as_s.must_match(/^(\d+\.){3}\d+$/)
     end
+
+    # issue #133: Ansible's default_ipv4 carries alias/broadcast/macaddress/
+    # mtu/prefix/type that krikri never gathered - a role reading
+    # `ansible_default_ipv4.alias` failed with "object of type 'dict' has
+    # no attribute 'alias'". Types are asserted too because Ansible's
+    # exact JSON shape is what templates observe: prefix is a STRING
+    # (parse_ip_output keeps the address/prefix split's text) while mtu is
+    # an INT (interfaces[device]['mtu'] = int(...)); broadcast is always
+    # present, an empty string when the inet line has no `brd`. Only
+    # verifiable against this host's live `ip` output (the parsing is
+    # inline in gather_network_facts, not a factored helper).
+    it "includes alias/broadcast/macaddress/mtu/prefix/type with Ansible's types" do
+      result = PluginSpecHelper.run("facts", {} of String => String)
+
+      default_ipv4 = result["ansible_facts"]["ansible_default_ipv4"]?
+      skip "no default route on this host" unless default_ipv4 && default_ipv4["address"]?
+
+      interface = default_ipv4["interface"]?
+      skip "no interface on the default route" unless interface
+
+      default_ipv4["alias"]?.must_equal(interface)
+      broadcast = default_ipv4["broadcast"]?
+      broadcast.wont_be_nil
+      broadcast.not_nil!.as_s.must_match(/^(\d+\.){3}\d+$|^$/)
+      prefix = default_ipv4["prefix"]?
+      prefix.wont_be_nil
+      prefix.not_nil!.as_s.must_match(/^\d+$/)
+      mtu = default_ipv4["mtu"]?
+      mtu.wont_be_nil
+      mtu.not_nil!.as_i.wont_equal(0)
+      macaddress = default_ipv4["macaddress"]?
+      macaddress.wont_be_nil
+      macaddress.not_nil!.as_s.must_match(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/)
+      type = default_ipv4["type"]?
+      type.wont_be_nil
+      type.not_nil!.as_s.must_match(/^(ether|loopback|infiniband|ppp|tunnel|unknown|bridge|bonding)$/)
+    end
   end
 end

@@ -176,6 +176,18 @@ module Krikri
     alias FactValue = String | Int64 | Bool | Hash(String, String) | Array(String) | Array(Hash(String, String)) | Hash(String, JSON::Any) | Hash(String, Int64 | String) | Array(Hash(String, Int64 | String))
     alias FactSet = Hash(String, FactValue)
 
+    # Ansible's LinuxNetwork.INTERFACE_TYPE map (network/linux.py): sysfs
+    # /sys/class/net/<iface>/type numbers to the fact string, unknown
+    # numbers reporting "unknown" - default_ipv4.type is sourced from the
+    # same file the same way (issue #133).
+    ANSIBLE_INTERFACE_TYPES = {
+      "1"     => "ether",
+      "32"    => "infiniband",
+      "512"   => "ppp",
+      "772"   => "loopback",
+      "65534" => "tunnel",
+    } of String => String
+
     # Raised for a positive gather_subset token Ansible rejects -
     # get_collector_names raises TypeError("Bad subset '%s' given to
     # Ansible. ...") and setup's fail_json surfaces it as a module
@@ -1102,9 +1114,15 @@ module Krikri
       interface = route_fields[4]?.to_s
       gateway = route_fields[1]? == "via" ? route_fields[2]?.to_s : ""
       if !ipv4.empty?
-        default_ipv4 = {"address" => ipv4}
+        default_ipv4 = {"address" => ipv4} of String => Int64 | String
         default_ipv4["interface"] = interface unless interface.empty?
         default_ipv4["gateway"] = gateway unless gateway.empty?
+        # Ansible's parse_ip_output sets default_ipv4['alias'] to the last
+        # word of the matching inet line, which on Linux is always the
+        # interface name itself (issue #133: a role reading
+        # ansible_default_ipv4.alias failed with "object of type 'dict'
+        # has no attribute 'alias'").
+        default_ipv4["alias"] = interface unless interface.empty?
 
         # `network` and `netmask` - Ansible's default_ipv4 always
         # carries the subnet address ("192.168.1.0") and dotted netmask
@@ -1116,14 +1134,46 @@ module Krikri
         # failed the whole render with "object of type 'dict' has no
         # attribute 'network'".
         unless interface.empty?
-          inet_line = `ip -4 addr show dev #{interface} 2>/dev/null | grep 'inet ' | head -1`.strip
-          if inet_match = inet_line.match(/inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)/)
+          # Ansible's parse_ip_output selects the inet line whose ADDRESS
+          # equals the default route's source address (not merely the
+          # first line) - with secondary addresses on the same interface
+          # the first line can belong to a different subnet, so match on
+          # the address like Ansible does, falling back to the first line
+          # to keep the pre-existing behavior when it's absent.
+          inet_lines = `ip -4 addr show dev #{interface} 2>/dev/null | grep 'inet '`.split("\n").map(&.strip).reject(&.empty?)
+          inet_line = inet_lines.find { |line| line.includes?("inet #{ipv4}/") } || inet_lines.first?
+          if inet_line && (inet_match = inet_line.match(/inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)/))
             prefix = inet_match[2].to_i
             octets = inet_match[1].split('.').map(&.to_u8)
             mask_octets = prefix == 0 ? [0, 0, 0, 0] : (0...4).map { |i| prefix >= (i + 1) * 8 ? 255_u8 : (prefix > i * 8 ? (256 - (1 << (8 * (i + 1) - prefix))).to_u8 : 0_u8) }
             default_ipv4["netmask"] = mask_octets.join('.')
             default_ipv4["network"] = octets.zip(mask_octets).map { |octet, mask| octet & mask }.join('.')
+            # Ansible keeps prefix as the STRING from the inet line's
+            # address/prefix split and always sets broadcast - an empty
+            # string when the line carries no `brd` (lo-like interfaces),
+            # never a missing key (issue #133; live-verified against
+            # ansible-core 2.19.4, which emitted "prefix": "24" as a JSON
+            # string and "broadcast" as a plain string there).
+            default_ipv4["prefix"] = inet_match[2]
+            default_ipv4["broadcast"] = inet_line.match(/brd\s+(\d+\.\d+\.\d+\.\d+)/).try(&.[1]) || ""
           end
+
+          # macaddress/mtu/type come from the same per-interface sysfs
+          # files Ansible's get_interfaces_info reads (address, mtu,
+          # type through its INTERFACE_TYPE map), not from `ip -o link`
+          # - mtu is an INT in Ansible's output, macaddress is skipped
+          # for empty/all-zero addresses, unmapped type numbers report
+          # "unknown" (issue #133; live-verified: "mtu": 1500,
+          # "type": "ether").
+          if mtu = read_trimmed("/sys/class/net/#{interface}/mtu")
+            default_ipv4["mtu"] = mtu.to_i64
+          end
+          mac = read_trimmed("/sys/class/net/#{interface}/address")
+          if mac && !mac.empty? && mac != "00:00:00:00:00:00"
+            default_ipv4["macaddress"] = mac
+          end
+          sysfs_type = read_trimmed("/sys/class/net/#{interface}/type") || ""
+          default_ipv4["type"] = ANSIBLE_INTERFACE_TYPES.fetch(sysfs_type, "unknown")
         end
 
         facts["ansible_default_ipv4"] = default_ipv4
