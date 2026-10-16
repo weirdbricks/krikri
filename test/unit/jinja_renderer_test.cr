@@ -1077,6 +1077,40 @@ describe Krikri::VariableSubstitutor::JinjaRenderer do
     renderer.render(%({{ [d] | map(attribute='ansible_facts.q') | list }})).must_equal("[{'y': 2}]")
   end
 
+  it "selectattr('a.b') resolves a dotted path through nested dicts" do
+    # Issue #127: krikri-jinja's builtin selectattr looked up the literal
+    # key "a.b" and never matched, so a following `first` failed with
+    # "No first item, sequence was empty." where Ansible selects the
+    # matching entries.
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ [{'a': {'b': 0}}, {'a': {'b': 1}}] | selectattr('a.b', 'equalto', 0) | list | length }})).must_equal("1")
+  end
+
+  it "selectattr('1.rc') treats an all-digit dotted segment as a list index" do
+    # Jinja2's make_attrgetter converts an all-digit path segment to an
+    # integer index: '1.rc' on [[1, {"rc": 0}]] reads the second list
+    # element's "rc", not a dict key "1" (issue #127's zip shape).
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ [[1, {'rc': 0}]] | selectattr('1.rc', 'equalto', 0) | list | length }})).must_equal("1")
+  end
+
+  it "zip then selectattr then first picks the pair whose second element matches" do
+    # Issue #127's exact shape: zip pairs each left element with its
+    # right dict, selectattr('1.rc') follows the index-then-key path, and
+    # `first` on the result must yield the same pair Ansible yields.
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ [1, 2] | zip([{'rc': 1}, {'rc': 0}]) | selectattr('1.rc', 'equalto', 0) | first }})).must_equal("[2, {'rc': 0}]")
+  end
+
+  it "rejectattr('a.b') resolves a dotted path through nested dicts" do
+    v = Hash(String, JSON::Any).new
+    renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)
+    renderer.render(%({{ [{'a': {'b': 0}}, {'a': {'b': 1}}] | rejectattr('a.b', 'equalto', 0) | list | length }})).must_equal("1")
+  end
+
   it "from_yaml_all parses a multi-document YAML string" do
     v = Hash(String, JSON::Any).new
     renderer = Krikri::VariableSubstitutor::JinjaRenderer.new(v)

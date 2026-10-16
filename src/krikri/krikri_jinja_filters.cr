@@ -599,6 +599,69 @@ module Krikri
         end
       end
 
+      # selectattr/rejectattr resolve a dotted attribute path through
+      # nested dicts and list indices, exactly like map's dotted attribute
+      # form: krikri-jinja's builtins looked up the literal key "a.b" and
+      # never matched, so a following `first` failed with "No first item,
+      # sequence was empty." (issue #127, zabbix-agent2's
+      # zip-then-selectattr shape). Jinja2's make_attrgetter turns an
+      # all-digit segment into an integer list index, so '1.rc' reads the
+      # second list element's "rc" rather than a dict key "1". Only the
+      # dotted form is intercepted; every other form keeps krikri-jinja's
+      # own implementation.
+      original_selectattr = KrikriJinja::BUILTIN_FILTERS["selectattr"]
+      original_rejectattr = KrikriJinja::BUILTIN_FILTERS["rejectattr"]
+      dotted_attr_lookup = ->(item : KrikriJinja::AnyValue, attr : String, context : KrikriJinja::Context) do
+        found = attr.split('.').reduce(item.as(KrikriJinja::AnyValue?)) do |current, part|
+          next nil unless current
+          raw = current.raw
+          if raw.is_a?(Array)
+            (idx = part.to_i64?) ? raw[idx]? : nil
+          else
+            KrikriJinja.get_attr(current, part)
+          end
+        end
+        (found.nil? || found.raw.is_a?(KrikriJinja::Undefined)) ? KrikriJinja::AnyValue.new(context.undefined) : found
+      end
+      dotted_attr_select = ->(value : KrikriJinja::AnyValue, args : Array(KrikriJinja::AnyValue), kwargs : Hash(String, KrikriJinja::AnyValue), context : KrikriJinja::Context, keep : Bool) do
+        attr = args[0]?.try(&.raw.as?(String)) ||
+               raise KrikriJinja::TemplateError.new("selectattr/rejectattr requires an attribute", 0)
+        items = KrikriJinja.to_iterable(value)
+        fname = args[1]?.try(&.raw.as?(String)) || kwargs["test"]?.try(&.raw.as?(String))
+        if fname
+          test = context.test(fname)
+          raise KrikriJinja::TemplateError.new("unknown test #{fname.inspect}", 0) unless test
+          rest = args.size > 2 ? args[2..] : [] of KrikriJinja::AnyValue
+          items.select do |item|
+            val = dotted_attr_lookup.call(item, attr, context)
+            result = test.call(val, rest, kwargs, context)
+            keep ? result : !result
+          end
+        else
+          items.select do |item|
+            val = dotted_attr_lookup.call(item, attr, context)
+            result = !KrikriJinja.undefined?(val) && KrikriJinja.truthy?(val)
+            keep ? result : !result
+          end
+        end
+      end
+      KrikriJinja.default_engine.register_filter("selectattr") do |value, args, kwargs, context|
+        attr = args[0]?.try(&.raw.as?(String))
+        if attr && attr.includes?('.')
+          KrikriJinja::AnyValue.new(KrikriJinja::GeneratorValue.new(dotted_attr_select.call(value, args, kwargs, context, true)))
+        else
+          original_selectattr.call(value, args, kwargs, context)
+        end
+      end
+      KrikriJinja.default_engine.register_filter("rejectattr") do |value, args, kwargs, context|
+        attr = args[0]?.try(&.raw.as?(String))
+        if attr && attr.includes?('.')
+          KrikriJinja::AnyValue.new(KrikriJinja::GeneratorValue.new(dotted_attr_select.call(value, args, kwargs, context, false)))
+        else
+          original_rejectattr.call(value, args, kwargs, context)
+        end
+      end
+
       KrikriJinja.register_default_json_filter("bool") do |value, _args, _kwargs|
         raw = value.raw
         JSON::Any.new(case raw
